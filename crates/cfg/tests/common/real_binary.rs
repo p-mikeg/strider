@@ -7,7 +7,7 @@ use object::{Object, ObjectSymbol};
 
 /// Maps a fixture function name to the category file that defines it.
 /// The original monolithic `test.c` was split into per-category fixtures
-/// (`fixtures/cases/<category>.c`) by the analyzer-crate review; this map
+/// (`fixtures/cases/<category>.c`) by the strider-crate review; this map
 /// preserves the cfg-integration test interface across that split.
 pub fn category_for_fn(fn_name: &str) -> &'static str {
     match fn_name {
@@ -87,11 +87,13 @@ pub fn symbol_decode_addr(binary_path: &str, fn_name: &str) -> u64 {
     }
 }
 
-/// Builds a CFG for the named function using `sla_spec`/`pspec` to decode.
+/// Builds a CFG for the named function using `arch` to derive endianness +
+/// preset and `sla_spec`/`pspec` to decode.
 ///
 /// The ELF is loaded from `binary_path`. The returned reader owns its backing
 /// regions, so no leak or `'static` lifetime gymnastics are required.
 pub fn build_cfg(
+    arch: &target::SleighArch,
     binary_path: &str,
     fn_name: &str,
     sla_spec: rsleigh::sla_spec::SlaSpec,
@@ -101,7 +103,7 @@ pub fn build_cfg(
     let mem_reader =
         reader::ElfFileMemReader::from_path(binary_path).expect("build ElfFileMemReader");
     let sleigh = rsleigh::Sleigh::new(sla_spec, pspec, mem_reader).expect("create Sleigh");
-    cfg::Builder::new(sleigh, addr, cfg::OptionsBuilder::new().build())
+    cfg::Builder::for_arch(arch, sleigh, addr, cfg::OptionsBuilder::new().build())
         .build()
         .unwrap_or_else(|e| panic!("CFG build failed for '{fn_name}': {e:?}"))
 }

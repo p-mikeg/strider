@@ -61,3 +61,6 @@ mod if_pat_symmetric;
 
 #[path = "matching/asm_fingerprint.rs"]
 mod asm_fingerprint;
+
+#[path = "matching/wide_const.rs"]
+mod wide_const;

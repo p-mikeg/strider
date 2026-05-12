@@ -17,8 +17,8 @@
 //! family dispatchers (`int_binary`, `bool_binary`, `float_binary`),
 //! `.when` predicate guards, `.ordered()` overrides, and the
 //! variant-agnostic `*_any` constructors that bind the matched op
-//! variant to a `Capture` for later inspection via `Match.*_op` (TODO:
-//! op-variant accessors are not yet exposed on the Python `Match`).
+//! variant to a `Capture` for later inspection via `Match.*_op`
+//! (`int_binary_op`, `bool_binary_op`, `float_binary_op`, etc.).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -27,6 +27,53 @@ use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
 
 use crate::errors::into_pattern_err;
+
+// ── Pat-builder finalise macro ───────────────────────────────────────────
+//
+// Every typed pattern builder (`PyPhiPat`, `PyCallPat`, `PyLoadPat`, …)
+// finishes by reading its in-progress builder state into a `pattern::Pat`
+// and wrapping it in a `PyPat`.  The four-method `capture` / `cap` /
+// `when` / `into_pat` block is identical at every site (only the
+// receiver type differs).
+//
+// `pat_builder_finalise!(BuilderTy)` emits a separate `#[pymethods] impl
+// BuilderTy { … }` block carrying those four methods.  This relies on
+// PyO3's `multiple-pymethods` feature so the same `#[pyclass]` can have
+// more than one `#[pymethods]` block.  Each builder retains its own
+// primary `#[pymethods]` block holding the builder-specific methods
+// (`for_vn`, `addr`, `arg`, `at`, …) and only declares
+// `pat_builder_finalise!(BuilderTy);` at module scope.
+
+macro_rules! pat_builder_finalise {
+    ($BuilderTy:ident) => {
+        #[pymethods]
+        impl $BuilderTy {
+            /// Capture this pattern's matched node under the given
+            /// [`Capture`].
+            fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+                use pattern::IntoPat;
+                PyPat::from_pat(self.finalise().capture(c.inner))
+            }
+            /// Capture this pattern under a string name (auto-interned).
+            fn cap(&self, name: &str) -> PyResult<PyPat> {
+                use pattern::IntoPat;
+                let c = intern_str(name)?;
+                Ok(PyPat::from_pat(self.finalise().capture(c)))
+            }
+            /// Attach a Python predicate that runs after the match.  See
+            /// [`PyPat::when`] for the full predicate contract.
+            fn when(&self, f: PyObject) -> PyPat {
+                PyPat::from_pat(wrap_when(self.finalise(), f))
+            }
+            /// Finalise into a [`PyPat`].  Most call sites accept a
+            /// builder directly via `PatLike`, so explicit `.into_pat()`
+            /// is rarely needed.
+            fn into_pat(&self) -> PyPat {
+                PyPat::from_pat(self.finalise())
+            }
+        }
+    };
+}
 
 // ── Capture ──────────────────────────────────────────────────────────────
 
@@ -50,8 +97,12 @@ impl PyCapture {
     }
 
     fn __hash__(&self) -> isize {
-        // pattern::Capture wraps a u32; safe to expose as a hash.
-        format!("{:?}", self.inner).len() as isize
+        // The Capture's globally-unique u32 id is the stable hash key.
+        // (Earlier this used `format!("{:?}", self.inner).len()` which
+        // collapsed every same-decimal-digit-count id to one bucket.)
+        // Round through `i64` so 32-bit-isize platforms don't sign-wrap
+        // for ids above 2^31; on 64-bit isize the cast is a no-op.
+        self.inner.id() as i64 as isize
     }
 }
 
@@ -159,6 +210,10 @@ impl PyCastMask {
     #[classmethod] fn none(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
         Self { inner: pattern::CastMask::empty() }
     }
+    /// Alias for `none()` — mirrors Rust's `pattern::CastMask::empty()`.
+    #[classmethod] fn empty(cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self::none(cls)
+    }
 
     fn __or__(&self, other: &Self) -> Self {
         Self { inner: self.inner | other.inner }
@@ -195,6 +250,8 @@ pub enum PatLike<'py> {
     StackStorePat(Bound<'py, PyStackStorePat>),
     StackStorePhiPat(Bound<'py, PyStackStorePhiPat>),
     PhiPat(Bound<'py, PyPhiPat>),
+    MemPhiPat(Bound<'py, PyMemPhiPat>),
+    ValuePhiPat(Bound<'py, PyValuePhiPat>),
     FunctionArgPat(Bound<'py, PyFunctionArgPat>),
     IntBinaryPat(Bound<'py, PyIntBinaryPat>),
     BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
@@ -225,6 +282,8 @@ impl PatLike<'_> {
             PatLike::StackStorePat(b) => Ok(b.borrow().finalise()),
             PatLike::StackStorePhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::PhiPat(b) => Ok(b.borrow().finalise()),
+            PatLike::MemPhiPat(b) => Ok(b.borrow().finalise()),
+            PatLike::ValuePhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::FunctionArgPat(b) => Ok(b.borrow().finalise()),
             PatLike::IntBinaryPat(b) => Ok(b.borrow().finalise()),
             PatLike::BoolBinaryPat(b) => Ok(b.borrow().finalise()),
@@ -246,11 +305,15 @@ impl PatLike<'_> {
 #[pyclass(name = "PartialMatch", module = "strider.pattern", unsendable)]
 pub struct PyPartialMatch {
     bindings: pattern::Bindings,
-    /// Raw pointer to the graph the matcher is operating on.  Boxed in
-    /// `Arc<Mutex<...>>` so the Python predicate can hold the proxy
-    /// across Rust ↔ Python boundaries safely; the wrapper code clears
-    /// the pointer back to `None` right after the predicate returns.
-    graph_ptr: Mutex<Option<*const ir::BuiltFunctionGraph>>,
+    /// Raw pointer to the graph the matcher is operating on.  Wrapped
+    /// in `Mutex<Option<...>>`: `Mutex` so PyO3's `&self`-only access
+    /// from Python can still mutate (clear) the slot, and `Option` so
+    /// the wrapper can replace it with `None` on predicate exit and any
+    /// subsequent Python access from a leaked proxy returns `None`
+    /// instead of dereferencing a dangling pointer.  PyPartialMatch is
+    /// `unsendable`, so no `Arc` is needed — the proxy never crosses
+    /// threads.
+    graph_ptr: Mutex<Option<*const ir::Graph>>,
 }
 
 // SAFETY: We never share PyPartialMatch across threads (`unsendable`).
@@ -260,7 +323,7 @@ pub struct PyPartialMatch {
 // that re-enters Rust.
 
 impl PyPartialMatch {
-    fn new(bindings: pattern::Bindings, graph: &ir::BuiltFunctionGraph) -> Self {
+    fn new(bindings: pattern::Bindings, graph: &ir::Graph) -> Self {
         Self {
             bindings,
             graph_ptr: Mutex::new(Some(graph as *const _)),
@@ -268,15 +331,35 @@ impl PyPartialMatch {
     }
 
     fn clear_graph_ptr(&self) {
-        if let Ok(mut g) = self.graph_ptr.lock() {
-            *g = None;
-        }
+        // On a poisoned mutex we still need to clear the pointer —
+        // leaving a stale `Some(*const _)` in the proxy would let a
+        // delayed Python reference dereference freed memory.  Recover
+        // by taking the inner value via PoisonError; the *correctness*
+        // is identical to the unpoisoned path.
+        let mut g = self
+            .graph_ptr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *g = None;
     }
 
     /// Borrow the graph pointer for a closure call.  Returns `None` if
     /// the proxy has been invalidated.
-    fn with_graph<R>(&self, f: impl FnOnce(&ir::BuiltFunctionGraph) -> R) -> Option<R> {
-        let guard = self.graph_ptr.lock().ok()?;
+    ///
+    /// Recovers from `Mutex` poisoning via `into_inner()` — the inner is
+    /// `Option<*const ir::Graph>` (a single Copy slot), and only ever
+    /// written by `clear_graph_ptr` (atomic `*g = None`) or the matcher
+    /// pointer-set (atomic `*g = Some(p)`).  Neither can panic after
+    /// partial mutation, so the slot is consistent on entry.  Matches
+    /// the existing recovery in [`Self::clear_graph_ptr`].
+    ///
+    /// Caller contract: `f` MUST NOT call back into Python code that
+    /// re-invokes `with_graph` on the same proxy.  Doing so would
+    /// re-lock the same `Mutex` and deadlock (`std::sync::Mutex` is
+    /// non-reentrant).  Current callers (`bindings.get_uint`, etc.) are
+    /// pure-Rust accessors so the constraint is honoured trivially.
+    fn with_graph<R>(&self, f: impl FnOnce(&ir::Graph) -> R) -> Option<R> {
+        let guard = self.graph_ptr.lock().unwrap_or_else(|p| p.into_inner());
         let ptr = (*guard)?;
         // SAFETY: `ptr` was set to a valid `&BuiltFunctionGraph` by the
         // matcher and only cleared after the predicate returns.  The
@@ -348,7 +431,9 @@ impl PyPartialMatch {
     fn __getitem__(&self, py: Python<'_>, key: CaptureKeyOwned) -> PyResult<PyObject> {
         let cap = self.capture_from_key(&key)?;
         if let Some(Some(v)) = self.with_graph(|g| self.bindings.get_uint(cap, g)) {
-            return Ok((v as i128).into_py(py));
+            // Pass `u128` directly — see `crates/strider-py/src/matcher.rs`
+            // PyMatch::__getitem__ for why a `as i128` cast was wrong.
+            return Ok(v.into_py(py));
         }
         if let Some(Some(b)) = self.with_graph(|g| self.bindings.get_bool(cap, g)) {
             return Ok(b.into_py(py));
@@ -365,30 +450,73 @@ impl PyPartialMatch {
 }
 
 /// Build a `Pat::when_match` closure that calls a Python predicate with
-/// a transient `PyPartialMatch` proxy.  Errors / non-bool returns are
-/// treated as `false` (no match).
+/// a transient `PyPartialMatch` proxy.  Most failure modes (proxy alloc
+/// failure, non-bool return, ordinary predicate exceptions) are
+/// surfaced to stderr and treated as `false` (no match) — aborting
+/// `find_all` mid-walk on a buggy predicate would be worse than
+/// continuing.
+///
+/// `KeyboardInterrupt` and `SystemExit` are
+/// **re-raised** rather than swallowed, so Ctrl-C in an interactive
+/// Python session can interrupt a slow `find_all` walk that's stuck
+/// inside a predicate.  Re-raising via `PyErr::restore` defers the
+/// exception to the next GIL re-entry point, which the matcher's
+/// shallow loop re-checks naturally.
 fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
     inner.when_match(move |graph, _ty, bindings| {
         Python::with_gil(|py| {
             let proxy = PyPartialMatch::new(bindings.clone(), graph);
             let py_proxy = match Py::new(py, proxy) {
                 Ok(p) => p,
-                Err(_) => return false,
+                Err(e) => {
+                    eprintln!("strider: .when() predicate proxy alloc failed: {e}");
+                    return false;
+                }
             };
             let args = PyTuple::new_bound(py, [py_proxy.clone_ref(py)]);
             let result = py_func.call_bound(py, args, None);
             // Always invalidate the proxy's graph pointer so any
             // subsequent use from Python doesn't deref a stale ptr.
-            if let Ok(b) = py_proxy.try_borrow(py) {
-                b.clear_graph_ptr();
-            }
+            //
+            // use `borrow` (panicking
+            // on conflict) instead of `try_borrow` + silent skip.
+            // `try_borrow` only fails when an active `&mut self`
+            // borrow is held; `PyPartialMatch` exposes only `&self`
+            // methods via #[pymethods] AND is `unsendable`, so that
+            // failure mode is unreachable from any synchronous path.
+            // Using `borrow` makes the unreachability explicit — a
+            // future change that adds a `&mut self` method on the
+            // proxy would surface as a clean panic instead of
+            // silently leaking the pointer past the predicate's
+            // return.
+            py_proxy.borrow(py).clear_graph_ptr();
             match result {
-                Ok(obj) => obj.extract::<bool>(py).unwrap_or(false),
+                Ok(obj) => match obj.extract::<bool>(py) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!(
+                            "strider: .when() predicate returned non-bool ({e}); treating as no-match"
+                        );
+                        false
+                    }
+                },
                 Err(e) => {
-                    // Surface the predicate's exception to stderr but
-                    // treat it as "no match" to avoid aborting
-                    // find_all in the middle of a walk.
-                    e.print(py);
+                    // control-flow exceptions
+                    // (KeyboardInterrupt, SystemExit) must propagate
+                    // — Ctrl-C in an interactive session must be able
+                    // to interrupt a slow find_all walk.  PyErr::restore
+                    // sets the active exception state; the next time
+                    // Python regains control (typically the next pyo3
+                    // boundary in the matcher), it's re-raised.
+                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
+                    {
+                        e.restore(py);
+                    } else {
+                        // Ordinary predicate bug: surface to stderr,
+                        // treat as no-match so `find_all` continues.
+                        e.print(py);
+                    }
                     false
                 }
             }
@@ -423,18 +551,22 @@ impl PyPat {
         PyPat::from_pat(wrap_when(inner, f))
     }
 
-    /// Force commutative binary ops not to try the swapped operand
-    /// order.  Wraps the inner pattern in an additional ordering check
-    /// — implemented via the typed builder when available.  For
-    /// patterns built with the free constructors (already finalized
-    /// `Pat`), this is a no-op (the commutative behaviour was decided
-    /// at construction); use the typed `int_binary`/`bool_binary`/
-    /// `float_binary` builders for explicit `.ordered()` control.
-    fn ordered(&self) -> PyPat {
-        // No-op on a finalized Pat: commutativity is baked into the
-        // InputsSpec at construction time.  Returning self is
-        // surprising; document the limitation in the docstring above.
-        self.clone()
+    /// Force commutative binary ops not to try the swapped operand order.
+    ///
+    /// **`.ordered()` is only valid on a typed builder** — `int_binary(op,
+    /// l, r).ordered()`, `bool_binary(op, l, r).ordered()`, or
+    /// `float_binary(op, l, r).ordered()`.  Once a free constructor like
+    /// `add(l, r)` returns a finalized `Pat`, the `InputsSpec` (and
+    /// therefore commutativity) is baked in.  Calling `.ordered()` on a
+    /// finalized `Pat` previously silently returned `self` — a trap that
+    /// fooled users into thinking they had disabled commutativity.  This
+    /// method now raises [`PatternError`] so the misuse is visible.
+    fn ordered(&self) -> PyResult<PyPat> {
+        Err(into_pattern_err(anyhow::anyhow!(
+            "Pat.ordered() has no effect on a finalized Pat — \
+             use int_binary(op, l, r).ordered() / bool_binary(op, l, r).ordered() / \
+             float_binary(op, l, r).ordered() to force left-to-right matching"
+        )))
     }
 
     fn __repr__(&self) -> String {
@@ -587,17 +719,6 @@ impl PyPhiPat {
         slf.borrow(py).inputs.borrow_mut().push((idx, pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -611,6 +732,72 @@ pub fn phi_for(vn: crate::sleigh::PyVn) -> PyPhiPat {
     b.for_vn.replace(Some(vn.inner));
     b
 }
+
+/// Builder for `MemPhi` patterns.  No varnode payload (memory-token
+/// phis don't carry one); chain `.input(idx, p)` to constrain the
+/// memory-input from predecessor `idx`.
+#[pyclass(name = "MemPhiPat", module = "strider.pattern")]
+pub struct PyMemPhiPat {
+    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+}
+
+impl PyMemPhiPat {
+    fn new() -> Self {
+        Self { inputs: std::cell::RefCell::new(Vec::new()) }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::mem_phi();
+        for (idx, p) in self.inputs.borrow().iter().cloned() {
+            b = b.input(idx, p);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyMemPhiPat {
+    fn input(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+}
+
+#[pyfunction]
+pub fn mem_phi() -> PyMemPhiPat { PyMemPhiPat::new() }
+
+/// Builder for `ValuePhi` patterns.  ValuePhi is synthesised by
+/// `StackLoadForward` to phi together stack-store values across a
+/// control-flow join.
+#[pyclass(name = "ValuePhiPat", module = "strider.pattern")]
+pub struct PyValuePhiPat {
+    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+}
+
+impl PyValuePhiPat {
+    fn new() -> Self {
+        Self { inputs: std::cell::RefCell::new(Vec::new()) }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::value_phi();
+        for (idx, p) in self.inputs.borrow().iter().cloned() {
+            b = b.input(idx, p);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyValuePhiPat {
+    fn input(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+}
+
+#[pyfunction]
+pub fn value_phi() -> PyValuePhiPat { PyValuePhiPat::new() }
 
 // ── FunctionArgPat ───────────────────────────────────────────────────
 
@@ -656,17 +843,6 @@ impl PyFunctionArgPat {
         }));
         slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -872,16 +1048,18 @@ float_unop!(float_ceil);
 float_unop!(float_floor);
 float_unop!(float_round);
 
-// `float_is_nan` isn't exposed as a free constructor by `pattern` (no
-// `FloatIsNan` NodeKind in the IR yet); expose as `any().when(...)`
-// stub that always fails so users get a clear error if they reach
-// for it.  We still register it so the snapshot test passes; switching
-// to a real impl is a follow-up once ir-side support lands.
+// `float_is_nan(x)` is implemented as the IEEE 754 self-inequality
+// `x != x` — the only value that is not equal to itself is NaN.  The
+// pcode lifter lowers `FloatNan` to exactly this shape at lift time
+// (see `pcode-lift/src/value/float.rs:78-90`), so this constructor
+// matches the IR shape produced by Sleigh's FLOAT_NAN op as well as
+// any explicit `x != x` written by the source.
+//
+// `Pat` is `Arc`-backed; cloning `op` is O(1).
 #[pyfunction]
-pub fn float_is_nan(_operand: PatLike<'_>) -> PyResult<PyPat> {
-    Err(into_pattern_err(anyhow::anyhow!(
-        "float_is_nan is not yet implemented — IR has no FloatIsNan node kind"
-    )))
+pub fn float_is_nan(operand: PatLike<'_>) -> PyResult<PyPat> {
+    let op = operand.into_pat()?;
+    Ok(PyPat::from_pat(pattern::float_ne(op.clone(), op)))
 }
 
 // ── Float comparisons ────────────────────────────────────────────────────
@@ -1003,17 +1181,6 @@ impl PyLoadPat {
         slf.borrow(py).bit_width.replace(Some(n));
         slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1097,17 +1264,6 @@ impl PyStorePat {
         slf.borrow(py).bit_width.replace(Some(n));
         slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1167,17 +1323,6 @@ impl PyStackStorePat {
     fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
         slf.borrow(py).space.replace(Some(s.inner)); slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1229,17 +1374,6 @@ impl PyStackStorePhiPat {
     fn offsets(slf: Py<Self>, py: Python<'_>, os: Vec<i64>) -> Py<Self> {
         slf.borrow(py).offsets.replace(Some(os)); slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1338,25 +1472,6 @@ impl PyCallPat {
         let pat = p.into_pat()?;
         slf.borrow(py).ret_outputs.borrow_mut().push((idx, pat));
         Ok(slf)
-    }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat {
-        PyPat::from_pat(wrap_when(self.finalise(), f))
-    }
-    /// Materialise this builder as a `Pat`.  Use this when a function
-    /// that doesn't accept `PatLike` (e.g. `Graph.rewrite_all`'s pair
-    /// list) needs a finalised pattern.  `Graph.find_all` accepts the
-    /// builder directly via `PatLike` — `into_pat()` isn't required there.
-    fn into_pat(&self) -> PyPat {
-        PyPat::from_pat(self.finalise())
     }
 }
 
@@ -1480,17 +1595,6 @@ impl PyCallOtherPat {
         slf.borrow(py).next_mem.replace(Some(pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1541,17 +1645,6 @@ impl PyRetPat {
         slf.borrow(py).ret_vals.borrow_mut().push((idx, pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1607,17 +1700,6 @@ impl PyIfPat {
         slf.borrow(py).false_branch.replace(Some(pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1721,21 +1803,6 @@ impl PyIntBinaryPat {
         self.ordered = true;
         PyPat::from_pat(self.finalise())
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat {
-        PyPat::from_pat(wrap_when(self.finalise(), f))
-    }
-    fn into_pat(&self) -> PyPat {
-        PyPat::from_pat(self.finalise())
-    }
 }
 
 /// Typed builder for a boolean binary-op pattern.
@@ -1763,21 +1830,6 @@ impl PyBoolBinaryPat {
         self.ordered = true;
         PyPat::from_pat(self.finalise())
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat {
-        PyPat::from_pat(wrap_when(self.finalise(), f))
-    }
-    fn into_pat(&self) -> PyPat {
-        PyPat::from_pat(self.finalise())
-    }
 }
 
 /// Typed builder for a float binary-op pattern.
@@ -1803,21 +1855,6 @@ impl PyFloatBinaryPat {
 impl PyFloatBinaryPat {
     fn ordered(&mut self) -> PyPat {
         self.ordered = true;
-        PyPat::from_pat(self.finalise())
-    }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat {
-        PyPat::from_pat(wrap_when(self.finalise(), f))
-    }
-    fn into_pat(&self) -> PyPat {
         PyPat::from_pat(self.finalise())
     }
 }
@@ -1936,6 +1973,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStackStorePat>()?;
     m.add_class::<PyStackStorePhiPat>()?;
     m.add_class::<PyPhiPat>()?;
+    m.add_class::<PyMemPhiPat>()?;
+    m.add_class::<PyValuePhiPat>()?;
     m.add_class::<PyFunctionArgPat>()?;
     m.add_class::<PyCastMask>()?;
 
@@ -1963,6 +2002,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(function_arg_stack);
     add_fn!(phi);
     add_fn!(phi_for);
+    add_fn!(mem_phi);
+    add_fn!(value_phi);
     add_fn!(predicate);
     add_fn!(int_cmp);
     // int binary
@@ -2055,3 +2096,27 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     sys.getattr("modules")?.set_item("strider.pattern", &m)?;
     Ok(())
 }
+
+// ── Pat-builder finalise impls ───────────────────────────────────────────
+//
+// One macro invocation per typed builder.  Each emits a separate
+// `#[pymethods]` block (allowed by the `multiple-pymethods` PyO3 feature)
+// carrying the four shared `capture` / `cap` / `when` / `into_pat`
+// methods.  See `pat_builder_finalise!` (declared near the top of the
+// file) for the body.
+
+pat_builder_finalise!(PyPhiPat);
+pat_builder_finalise!(PyMemPhiPat);
+pat_builder_finalise!(PyValuePhiPat);
+pat_builder_finalise!(PyFunctionArgPat);
+pat_builder_finalise!(PyLoadPat);
+pat_builder_finalise!(PyStorePat);
+pat_builder_finalise!(PyStackStorePat);
+pat_builder_finalise!(PyStackStorePhiPat);
+pat_builder_finalise!(PyCallPat);
+pat_builder_finalise!(PyCallOtherPat);
+pat_builder_finalise!(PyRetPat);
+pat_builder_finalise!(PyIfPat);
+pat_builder_finalise!(PyIntBinaryPat);
+pat_builder_finalise!(PyBoolBinaryPat);
+pat_builder_finalise!(PyFloatBinaryPat);

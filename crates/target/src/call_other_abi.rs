@@ -78,10 +78,8 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
         // (up to 7), r0 = return value.  See `arch/arm/kernel/entry-common.S`
         // and the EABI variant in `arch/arm/include/uapi/asm/unistd.h`.
-        // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
-        // (up to 7), r0 = return value.  All three 32-bit ARM presets
-        // share this ABI; if Thumb ever needs a different one, split the
-        // alternation into separate arms.
+        // All three 32-bit ARM presets share this ABI; if Thumb ever
+        // needs a different one, split the alternation into separate arms.
         (crate::ArchPreset::Arm | crate::ArchPreset::ArmBe | crate::ArchPreset::ArmThumb,
          "swi") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
@@ -140,6 +138,17 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
             memory_edge:     false,
         })),
 
+        // x86 RDTSCP: like RDTSC but ALSO writes ECX (= IA32_TSC_AUX
+        // MSR's low 32 bits).  Without the ECX clobber, a pattern
+        // reading post-RDTSCP ECX would incorrectly see the pre-call
+        // value.  No memory edge: TSC reads don't observe RAM.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "rdtscp") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &[],
+            implicit_writes: &["EAX", "EDX", "ECX"],
+            memory_edge:     false,
+        })),
+
         // x86 RDMSR — read model-specific register.  Sleigh emits
         //   `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`
         // so ECX is an explicit pcode arg and the EDX/EAX writes are
@@ -170,6 +179,77 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // FS:/GS:-based loads depend on the new base.
         (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
          "writefsbase" | "writegsbase") => PURE_WITH_MEM_EDGE,
+
+        // x86_64 MONITOR (0F 01 C8) — sets up address-range monitor.
+        // Sleigh emits `monitor()` with zero pcode operands; the
+        // implicit register reads are not surfaced as pcode args, so
+        // they belong in `implicit_reads`.  Per Intel SDM Vol. 2B §4-39:
+        // RAX = linear address to monitor, ECX = extensions (must be 0),
+        // EDX = hints (must be 0).  Memory edge: the operation interacts
+        // with the cache subsystem and pairs with a subsequent MWAIT.
+        (crate::ArchPreset::X86_64,
+         "monitor") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["RAX", "ECX", "EDX"],
+            implicit_writes: &[],
+            memory_edge:     true,
+        })),
+        // x86 32-bit MONITOR — same operation, EAX-relative address.
+        (crate::ArchPreset::X86,
+         "monitor") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["EAX", "ECX", "EDX"],
+            implicit_writes: &[],
+            memory_edge:     true,
+        })),
+
+        // AMD MONITORX (0F 01 FA) — like MONITOR but available outside
+        // CPL 0 with vendor-specific cache hints.  Implicit reads match
+        // MONITOR per AMD64 Vol. 3.
+        (crate::ArchPreset::X86_64,
+         "monitorx") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["RAX", "ECX", "EDX"],
+            implicit_writes: &[],
+            memory_edge:     true,
+        })),
+        (crate::ArchPreset::X86,
+         "monitorx") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["EAX", "ECX", "EDX"],
+            implicit_writes: &[],
+            memory_edge:     true,
+        })),
+
+        // x86 MWAIT (0F 01 C9) / MWAITX (0F 01 FB) — entries a low-power
+        // state until the armed cache line is written.  Per Intel SDM
+        // Vol. 2B §4-44: EAX = hints, ECX = extensions (must be 0).
+        // No GPR writes.  Memory edge: serialises with the prior
+        // MONITOR's cache-line arming and acts as a memory-order point.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "mwait" | "mwaitx") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["EAX", "ECX"],
+            implicit_writes: &[],
+            memory_edge:     true,
+        })),
+
+        // x86_64 SYSRET (0F 07) — fast return from a SYSCALL into ring 3.
+        // Sleigh defines `sysret` only on the x86 stack; arch-specific
+        // here so a hypothetical non-x86 Sleigh spec that coincidentally
+        // names a user-op `sysret` cannot silently inherit NoReturn.
+        // For kernel-internal analysis this terminates the function (the
+        // kernel-context control does not return to its kernel-context
+        // caller); a future `ReturnToUserMode` classification could
+        // differentiate user-mode trampolines.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "sysret") => NO_RETURN,
+
+        // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
+        // IA32_KERNEL_GS_BASE.  No GPR or RAM write on its own, but
+        // the MSR swap silently changes the virtual base used by
+        // every subsequent `%gs:`-relative load/store.  Without
+        // memory_edge = true, StackLoadForward / LoadReadOnly would
+        // forward `%gs:`-loads across the swap.  Analogous to
+        // wr{fs,gs}base above.  Arch-specific so it cannot misclassify
+        // a non-x86 user-op coincidentally named `swapgs`.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "swapgs") => PURE_WITH_MEM_EDGE,
 
         // x86's INT instruction also lifts to "swi" in some Sleigh
         // contexts.  We don't have a global model (the vector is in
@@ -242,10 +322,11 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         "setISAMode"     => NO_OP,
 
         // ─── NoReturn (traps; control flow ends here) ─────────────
+        // x86 `sysret` lives in classify_arch_specific so a non-x86
+        // user-op of the same name cannot silently inherit NO_RETURN.
         "SoftwareBreakpoint"            => NO_RETURN,
         "UndefinedInstructionException" => NO_RETURN,
         "invalidInstructionException"   => NO_RETURN,
-        "sysret"                        => NO_RETURN,
         "trap"                          => NO_RETURN,
 
         // ─── PURE: visible markers / pure compute, no memory edge ─
@@ -294,9 +375,9 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // and destination; opaque value, no RAM effect.
         "UnkSytemRegRead" => PURE,
 
-        // x86 SWAPGS — swaps a synthetic GS_base MSR; no general-reg or
-        // RAM effect.
-        "swapgs" => PURE,
+        // x86 `swapgs` lives in classify_arch_specific so a non-x86
+        // user-op of the same name cannot silently inherit
+        // PURE_WITH_MEM_EDGE.
 
         // ARM permanently-undefined instruction — Sleigh emits
         // CALLOTHER + a branch to the trap handler; the user-op itself
@@ -319,6 +400,18 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         "DataMemoryBarrier"                 => PURE_WITH_MEM_EDGE,
         "DataSynchronizationBarrier"        => PURE_WITH_MEM_EDGE,
         "InstructionSynchronizationBarrier" => PURE_WITH_MEM_EDGE,
+
+        // x86/x86_64 standalone memory fences — explicit ordering
+        // primitives with no register channel.  Emitted by Sleigh's
+        // x86 spec as the lowercase mnemonic.  Memory-edge so opt
+        // passes that walk the memory chain (StackLoadForward,
+        // LoadReadOnly) cannot forward across them — matches the
+        // semantic that subsequent loads must observe prior stores
+        // in program order.  Without this entry, any binary using
+        // SSE memory fences would lift to UnknownCallOtherError.
+        "lfence" => PURE_WITH_MEM_EDGE,
+        "mfence" => PURE_WITH_MEM_EDGE,
+        "sfence" => PURE_WITH_MEM_EDGE,
 
         // x86 port I/O — port + value pcode-explicit; the user-op
         // itself affects external (port) state.
@@ -387,7 +480,7 @@ mod tests {
             "Hint_Prefetch", "Yield",
             "cpuid", "NEON_rev64", "SVE_fnmla", "MP_INT_ABS",
             "ExclusiveMonitorPass", "ExclusiveMonitorsStatus",
-            "swapgs", "UnkSytemRegRead", "software_udf",
+            "UnkSytemRegRead", "software_udf",
         ] {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
@@ -395,6 +488,96 @@ mod tests {
             assert!(abi.implicit_writes.is_empty(), "{n}");
             assert!(!abi.memory_edge, "{n}: must NOT advance mem edge (opt passes need to forward)");
         }
+    }
+
+    #[test]
+    fn sysret_and_swapgs_are_x86_only() {
+        // Regression: `sysret` and `swapgs` are x86/x86_64-specific
+        // user-ops.  They must not silently match on non-x86 arches.
+        // Previously they lived in `classify_arch_independent` and
+        // would have been classified even on ARM/AArch64/MIPS/PowerPC.
+        for arch in [
+            crate::ArchPreset::Arm,
+            crate::ArchPreset::ArmBe,
+            crate::ArchPreset::ArmThumb,
+            crate::ArchPreset::Aarch64,
+            crate::ArchPreset::Aarch64Be,
+            crate::ArchPreset::MipsLe32,
+            crate::ArchPreset::MipsBe32,
+            crate::ArchPreset::MipsLe64,
+            crate::ArchPreset::MipsBe64,
+            crate::ArchPreset::Ppc32Le,
+            crate::ArchPreset::Ppc32Be,
+            crate::ArchPreset::Ppc64Le,
+            crate::ArchPreset::Ppc64Be,
+        ] {
+            assert_eq!(classify(arch, "sysret"), None, "sysret on {arch:?}");
+            assert_eq!(classify(arch, "swapgs"), None, "swapgs on {arch:?}");
+        }
+        // Still classified on x86 / x86_64.
+        assert_eq!(
+            classify(crate::ArchPreset::X86, "sysret"),
+            Some(CallOtherClass::NoReturn)
+        );
+        assert_eq!(
+            classify(crate::ArchPreset::X86_64, "sysret"),
+            Some(CallOtherClass::NoReturn)
+        );
+    }
+
+    #[test]
+    fn monitor_mwait_implicit_register_channels() {
+        // Sleigh emits `monitor()` / `mwait()` with zero pcode operands,
+        // so the implicit register reads need to live in `implicit_reads`.
+        // Per Intel SDM Vol. 2B §4-39 (MONITOR) and §4-44 (MWAIT).
+        let m64 = classify(crate::ArchPreset::X86_64, "monitor").expect("monitor x86_64");
+        let CallOtherClass::Call(abi) = m64 else {
+            panic!("expected Call(abi) for monitor")
+        };
+        assert_eq!(abi.implicit_reads, &["RAX", "ECX", "EDX"]);
+        assert!(abi.implicit_writes.is_empty());
+        assert!(abi.memory_edge);
+
+        let m32 = classify(crate::ArchPreset::X86, "monitor").expect("monitor x86");
+        let CallOtherClass::Call(abi) = m32 else { panic!() };
+        assert_eq!(abi.implicit_reads, &["EAX", "ECX", "EDX"]);
+
+        let mwait = classify(crate::ArchPreset::X86_64, "mwait").expect("mwait classified");
+        let CallOtherClass::Call(abi) = mwait else { panic!() };
+        assert_eq!(abi.implicit_reads, &["EAX", "ECX"]);
+        assert!(abi.implicit_writes.is_empty());
+        assert!(abi.memory_edge);
+
+        // AMD variants share the same shape.
+        assert!(matches!(
+            classify(crate::ArchPreset::X86_64, "monitorx"),
+            Some(CallOtherClass::Call(_))
+        ));
+        assert!(matches!(
+            classify(crate::ArchPreset::X86_64, "mwaitx"),
+            Some(CallOtherClass::Call(_))
+        ));
+
+        // Not classified on non-x86 — `monitor` is also an English word
+        // and could appear in a future spec; the arch-specific guard
+        // prevents misclassification.
+        assert_eq!(classify(crate::ArchPreset::Aarch64, "monitor"), None);
+        assert_eq!(classify(crate::ArchPreset::Aarch64, "mwait"), None);
+    }
+
+    #[test]
+    fn swapgs_is_memory_chain_marker() {
+        // SWAPGS exchanges IA32_GS_BASE ↔ IA32_KERNEL_GS_BASE.  Subsequent
+        // %gs:-relative loads/stores depend on the new base, so swapgs must
+        // be on the IR memory chain — analogous to wr{fs,gs}base, which use
+        // PURE_WITH_MEM_EDGE.  Without memory_edge=true, StackLoadForward /
+        // LoadReadOnly could incorrectly forward across swapgs in kernel
+        // entry/exit code.
+        let cls = classify(crate::ArchPreset::X86_64, "swapgs").unwrap();
+        let CallOtherClass::Call(abi) = cls else { panic!("expected Call(abi)") };
+        assert!(abi.implicit_reads.is_empty());
+        assert!(abi.implicit_writes.is_empty());
+        assert!(abi.memory_edge, "swapgs must advance memory edge (kernel GS base swap)");
     }
 
     #[test]
@@ -473,7 +656,23 @@ mod tests {
     }
 
     #[test]
+    fn rdtscp_writes_eax_edx_ecx_no_memory_edge() {
+        // RDTSCP differs from RDTSC: writes ECX (= IA32_TSC_AUX MSR low
+        // 32 bits) in addition to EAX/EDX.  Pattern queries reading
+        // post-RDTSCP ECX must see the clobber.
+        let class = classify(crate::ArchPreset::X86_64, "rdtscp").expect("rdtscp classified");
+        let CallOtherClass::Call(abi) = class else {
+            panic!("expected Call, got {class:?}")
+        };
+        assert_eq!(abi.implicit_reads, &[] as &[&str]);
+        assert_eq!(abi.implicit_writes, &["EAX", "EDX", "ECX"]);
+        assert!(!abi.memory_edge);
+    }
+
+    #[test]
     fn empty_abi_ops_use_call_with_empty_abi() {
+        // swapgs intentionally excluded — it has memory_edge=true and is
+        // covered by `swapgs_is_memory_chain_marker` instead.
         for n in [
             "NEON_rev64",
             "NEON_sqshl",
@@ -481,7 +680,6 @@ mod tests {
             "SVE_fnmla",
             "MP_INT_ABS",
             "UnkSytemRegRead",
-            "swapgs",
             "ExclusiveMonitorPass",
             "ExclusiveMonitorsStatus",
         ] {
@@ -759,6 +957,37 @@ mod tests {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap();
             match class {
                 CallOtherClass::NoOp | CallOtherClass::NoReturn | CallOtherClass::Call(_) => {}
+            }
+        }
+    }
+
+    /// Regression: x86/x86_64 memory fences (mfence,
+    /// sfence, lfence) MUST classify as PURE_WITH_MEM_EDGE so any binary
+    /// using SSE memory fences lifts cleanly.  Without this entry, the
+    /// CallOther emitted by Sleigh would raise UnknownCallOtherError at
+    /// the IR layer.
+    #[test]
+    fn x86_memory_fences_classify_as_pure_with_mem_edge() {
+        for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
+            for name in ["mfence", "sfence", "lfence"] {
+                let cls = classify(preset, name)
+                    .unwrap_or_else(|| panic!("({preset:?}, {name}) must classify"));
+                let abi = match cls {
+                    CallOtherClass::Call(abi) => abi,
+                    other => panic!("({preset:?}, {name}) classified as {other:?}, expected Call"),
+                };
+                assert!(
+                    abi.implicit_reads.is_empty(),
+                    "({preset:?}, {name}) must have empty implicit_reads"
+                );
+                assert!(
+                    abi.implicit_writes.is_empty(),
+                    "({preset:?}, {name}) must have empty implicit_writes"
+                );
+                assert!(
+                    abi.memory_edge,
+                    "({preset:?}, {name}) must advance memory edge — fences are ordering primitives"
+                );
             }
         }
     }

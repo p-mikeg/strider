@@ -16,7 +16,7 @@ def test_call_to_overridden_address_lifts_without_error():
     """End-to-end: passing per_address_ccs through strider.run lifts
     successfully and yields the expected single-Call shape."""
     arch = SleighArch.x86_64()
-    cc = CallingConvention.x86_64_systemv_abi()
+    cc = CallingConvention.x86_64_systemv()
     mem = MemoryMap()
     mem.add_region(0x1000, _x86_64_call_then_ret_bytes())
 
@@ -40,7 +40,7 @@ def test_call_to_overridden_address_lifts_without_error():
 def test_per_address_ccs_default_empty_does_not_break_normal_calls():
     """Smoke check the default-empty path matches today's behaviour."""
     arch = SleighArch.x86_64()
-    cc = CallingConvention.x86_64_systemv_abi()
+    cc = CallingConvention.x86_64_systemv()
     mem = MemoryMap()
     mem.add_region(0x1000, _x86_64_call_then_ret_bytes())
     result = strider.run(arch, cc, mem, entry=0x1000)
@@ -107,7 +107,7 @@ def test_per_address_ccs_honoured_in_both_pipeline_paths(
     use_custom_pipeline, with_override, expected_hits
 ):
     arch = SleighArch.x86_64()
-    cc = CallingConvention.x86_64_systemv_abi()
+    cc = CallingConvention.x86_64_systemv()
     mem = MemoryMap()
     mem.add_region(0x1000, _x86_64_arg_thru_hook_to_sink_bytes())
     sl = strider.Sleigh(arch, mem)

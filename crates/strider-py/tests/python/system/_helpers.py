@@ -42,7 +42,7 @@ ARCHES: list[ArchSpec] = [
     # `x86_linux_kernel`.  Mirrors the Rust `Arch::X86Kernel`
     # variant in crates/strider/tests/common/mod.rs.
     ArchSpec("x86_kernel", strider.SleighArch.x86, strider.CallingConvention.x86_linux_kernel),
-    ArchSpec("x64", strider.SleighArch.x86_64, strider.CallingConvention.x86_64_systemv_abi),
+    ArchSpec("x64", strider.SleighArch.x86_64, strider.CallingConvention.x86_64_systemv),
     ArchSpec("aarch64", strider.SleighArch.aarch64, strider.CallingConvention.aarch64_aapcs64),
     ArchSpec("aarch64be", strider.SleighArch.aarch64be, strider.CallingConvention.aarch64_aapcs64),
     ArchSpec("arm", strider.SleighArch.arm, strider.CallingConvention.arm_aapcs),

@@ -10,13 +10,30 @@
 //!
 //! # Passes
 //!
+//! Default pipeline (`default_pipeline()` — fixed-point loop):
+//!
 //! | Pass | What it does |
 //! |------|-------------|
-//! | [`ConstantFold`] | Constant evaluation, comparisons, and algebraic identities (`x+0→x`, `x^x→0`, …) |
+//! | [`ConstantFold`] | Constant evaluation, comparisons, and algebraic identities (`x+0→x`, `x^x→0`, AND-mask merging, …) |
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
-//! | [`RedundantPhis`] | Eliminates `VarPhi`, `MemPhi`, and `ControlState` nodes with a single reachable predecessor |
+//! | [`FlagCmpCanonicalize`] | Flag-tree → single `IntCmpOp` rewrite (AArch64 NZCV-style flag chains) |
+//! | [`IfCondInversion`] | `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}` |
+//! | [`RedundantPhis`] | Eliminates `VarPhi` / `MemPhi` / `ControlState` with a single reachable predecessor |
 //! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
-//! | [`LoadReadOnly`] | Folds constant-address loads by reading from a caller-supplied read-only memory region |
+//!
+//! Layered on top by `Strider::build_optimizer_pipeline` (not in
+//! `default_pipeline()` because they need calling-convention or ROM data):
+//!
+//! | Pass | What it does |
+//! |------|-------------|
+//! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
+//! | [`StackStoreDetect`] | Promotes SP-relative `Store` to `StackStore { offset }` |
+//! | [`StackLoadForward`] | Forwards values from `StackStore` to subsequent same-offset `Load` |
+//! | [`FunctionArgDetect`] (post-pass) | Canonicalises register/stack arg reads to `FunctionArg` |
+//! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
+//!
+//! Indirect-branch resolution is driven separately by the orchestrator
+//! (see [`indirect_branch_resolve`]); it is not a pipeline pass.
 
 #![cfg_attr(
     test,
@@ -28,11 +45,9 @@
     )
 )]
 
-extern crate self as opt;
-
 pub mod error;
 mod pipeline;
-pub mod sp_expr;
+pub(crate) mod sp_expr;
 mod worklist;
 pub use error::Result;
 mod constant_fold;
@@ -55,14 +70,14 @@ pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use function_args::FunctionArgDetect;
 pub use if_cond_inversion::IfCondInversion;
 pub use indirect_branch_resolve::{
-    AnchorAddr, AnchorCallingContext, IndirectBranchResolve, ResolvedTargets,
-    apply_link_register, apply_tail_call, classify_anchor, classify_anchor_with_rom,
-    classify_anchor_with_rom_and_sp, find_placeholder_return_for_anchor,
+    AnchorCallingContext, ResolvedTargets, apply_link_register, apply_tail_call,
+    classify_anchor, classify_anchor_with_rom, classify_anchor_with_rom_and_sp,
+    find_placeholder_return_for_anchor,
 };
-pub use known_bits::{KnownBits, Kb, analyze as analyze_known_bits};
+pub use known_bits::{KnownBits, KnownBitsMap, Kb, analyze as analyze_known_bits};
 pub use load_readonly::LoadReadOnly;
 pub use reader::ReadOnlyMemory;
-pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
+pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline, OptimizerRaw};
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};
@@ -144,11 +159,6 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 /// 2. [`DeadBranchElimination`] — removes `If(const)` branches and
 ///    strips dead control edges.  A later iteration could re-make the
 ///    condition phi-dependent, but the branch is already gone.
-///
-/// CallOther no-op handling is now done at construction time in
-/// `target::call_other_abi::classify` — the pre-existing `CallOtherElide`
-/// pass is gone.  See
-/// `docs/superpowers/specs/2026-05-05-callother-classification-design.md`.
 #[must_use]
 pub fn destructive_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
@@ -166,9 +176,10 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// passes in the same iteration and will be propagated further in subsequent
 /// iterations without any extra configuration.
 ///
-/// Equivalent to running [`stable_default_pipeline`] followed by
-/// [`destructive_default_pipeline`] in order — the two halves' passes
-/// are concatenated, preserving the previous default's pass ordering.
+/// Constructed as [`stable_default_pipeline`] followed by the
+/// destructive passes from [`destructive_default_pipeline`] — single
+/// source of truth so a future addition to either half lands in
+/// `default_pipeline` automatically.
 ///
 /// Passes included (in order):
 /// 1. [`ConstantFold`] — constant evaluation and algebraic identities
@@ -177,17 +188,9 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 4. [`IfCondInversion`] — `If(BoolNeg(C)) → If(C)` with branches swapped
 /// 5. [`RedundantPhis`] — `VarPhi` / `MemPhi` / `ControlState` elimination
 /// 6. [`DeadBranchElimination`] — `If(const)` branch pruning
-///
-/// CallOther no-op handling is now done at construction time in
-/// `target::call_other_abi::classify` — the pre-existing `CallOtherElide`
-/// pass is gone.
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold);
-    p.add(KnownBits);
-    p.add(FlagCmpCanonicalize);
-    p.add(IfCondInversion);
+    let mut p = stable_default_pipeline();
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
     p

@@ -1,10 +1,10 @@
 //! Handle for a `FunctionArg` IR node accessed through [`Matcher`].
 
-use ir::BuiltFunctionGraph;
+use ir::Graph;
 use ir::node::{FunctionArgSource, NodeId, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 /// A cheap reference to a `FunctionArg` node within a specific
-/// [`BuiltFunctionGraph`].
+/// [`Graph`].
 ///
 /// Returned by [`Matcher::function_arg`][super::Matcher::function_arg] and
 /// [`Matcher::function_args`][super::Matcher::function_args].  The handle
@@ -12,7 +12,7 @@ use ir::node::{FunctionArgSource, NodeId, NodeOutputId, NodeOutputKind, NodeOutp
 /// methods are infallible without a runtime `NodeKind` check.
 #[derive(Clone, Copy)]
 pub struct FunctionArgHandle<'g> {
-    pub(super) fn_graph: &'g BuiltFunctionGraph,
+    pub(super) graph: &'g Graph,
     pub(super) node_id: NodeId,
     pub(super) source: FunctionArgSource,
     pub(super) index: u32,
@@ -30,7 +30,7 @@ impl<'g> FunctionArgHandle<'g> {
     /// correctly-constructed `FunctionArg`, but the method signature surfaces
     /// the possibility rather than panicking.
     pub fn output(&self) -> Option<NodeOutputId> {
-        self.fn_graph.graph.node_outputs(self.node_id).into_iter().next()
+        self.graph.node_outputs(self.node_id).into_iter().next()
     }
 
     /// The argument's ABI source (register or stack slot).
@@ -49,7 +49,7 @@ impl<'g> FunctionArgHandle<'g> {
     /// happen for a correctly-constructed `FunctionArg`, but the method
     /// signature surfaces the possibility rather than panicking.
     pub fn width(&self) -> Option<NodeOutputType> {
-        match self.fn_graph.graph.output_kind(self.output()?) {
+        match self.graph.output_kind(self.output()?) {
             NodeOutputKind::OutputType(t) => Some(t),
             _ => None,
         }

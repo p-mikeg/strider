@@ -61,7 +61,7 @@ def _lift(kernel: pathlib.Path, symbol: str, *, arch_name: str):
         cc = strider.CallingConvention.aarch64_aapcs64()
     elif arch_name == "x86_64":
         sleigh_arch = strider.SleighArch.x86_64()
-        cc = strider.CallingConvention.x86_64_systemv_abi()
+        cc = strider.CallingConvention.x86_64_systemv()
     else:
         raise AssertionError(f"unsupported arch: {arch_name}")
 

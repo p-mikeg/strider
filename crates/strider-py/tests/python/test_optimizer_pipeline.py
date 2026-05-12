@@ -9,6 +9,20 @@ def test_empty_pipeline():
     assert pipe.post_pass_count() == 0
 
 
+def test_python_default_pipeline_matches_rust_pinned_count():
+    """Pin Python's manually-listed default
+    pipeline pass count against the Rust-side factory function.  The
+    Rust counterpart asserts the same numbers in
+    crates/opt/tests/pipeline_subsets.rs::*_pass_count_pinned.
+    Adding a Rust pass without updating PipelineState::from_default in
+    crates/strider-py/src/opt.rs would make the Python pipeline a
+    behaviourally-different subset of the Rust one — silent drift.
+    """
+    assert strider.OptimizerPipeline.default().pass_count() == 6
+    assert strider.OptimizerPipeline.stable_default().pass_count() == 4
+    assert strider.OptimizerPipeline.destructive_default().pass_count() == 2
+
+
 def test_default_pipeline_nonempty():
     pipe = strider.OptimizerPipeline.default()
     assert pipe.pass_count() > 0
@@ -177,3 +191,29 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     assert g.node_count() >= 1
     # Also: pre/post should be sensible integers.
     assert pre >= 1
+
+
+def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
+    """Regression: a wrapper that has
+    already been drained by a prior `Graph.optimize` (or
+    `strider.run`) call must surface a typed error on a second call,
+    not silently no-op with an empty pipeline.
+    """
+    import pytest
+
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(x86_memory_elf))
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    g = s.analyze_cfg(cfg).graph
+
+    pipe = strider.OptimizerPipeline.empty()
+    pipe.add(strider.opt.ConstantFold())
+    g.optimize(pipe)  # drains pipe
+    # Second call: must raise StriderError, not silently succeed.
+    with pytest.raises(strider.errors.StriderError):
+        g.optimize(pipe)

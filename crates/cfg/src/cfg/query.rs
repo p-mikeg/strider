@@ -10,7 +10,7 @@ use crate::Result;
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// half-open function range `[start_addr, start_addr + fn_max_size)`.
 ///
-/// Shared by [`crate::Builder::is_branch_tail_call_nocheck`] (cfg-time
+/// Shared by `crate::Builder::is_branch_tail_call_nocheck` (cfg-time
 /// classification) and `strider`'s orchestrator (post-cfg `Single(K)`
 /// resolution).  Both layers must agree on the predicate.
 ///
@@ -28,16 +28,19 @@ pub fn is_addr_tail_call(
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
 ) -> bool {
+    // Compute lower / upper bounds once, then test membership in the
+    // half-open `[lower, upper)` window.  `lower == 0` disables the
+    // lower-bound check (caller permits code before start_addr in the
+    // unbounded case); `upper = None` disables the upper-bound check
+    // (caller didn't supply a function size).
     let lower_bound_strict = fn_max_size.is_some() || !allow_code_before_start_addr;
-    if target < start_addr && lower_bound_strict {
+    let lower = if lower_bound_strict { start_addr } else { 0 };
+    if target < lower {
         return true;
     }
-    if let Some(fn_max_size) = fn_max_size {
-        // Half-open range: targets at or above `end_exclusive` are tail
-        // calls.  `saturating_add` caps at `u64::MAX` so the boundary
-        // case `target == u64::MAX` is still classified correctly.
-        let end_exclusive = start_addr.saturating_add(fn_max_size);
-        if end_exclusive <= target {
+    if let Some(sz) = fn_max_size {
+        let upper = start_addr.saturating_add(sz);
+        if target >= upper {
             return true;
         }
     }
@@ -125,9 +128,8 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     ///
     /// Content-keyed lookup that is stable across CFG rebuilds (same
     /// machine address always produces the same key).  Used by the
-    /// `opt` crate's `IndirectBranchResolve` pass and by `strider`'s
-    /// switch handler to correlate a machine address with the region
-    /// that owns it.
+    /// indirect-branch resolver and by `strider`'s switch handler to
+    /// correlate a machine address with the region that owns it.
     ///
     /// CORRECTNESS: only matches regions whose `start_addr.machine_addr`
     /// equals `addr` exactly.  Mid-region matches return `None` — the
@@ -138,14 +140,24 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// lookup transparently distinguishes pre- and post-split halves.
     #[must_use]
     pub fn region_id_at_start(&self, addr: super::types::MachineInsnAddr) -> Option<RegionId> {
-        for rid in self.graph.node_indices() {
-            if let Some(region) = self.graph.node_weight(rid)
-                && region.start_addr.machine_addr == addr
-            {
-                return Some(rid);
-            }
-        }
-        None
+        // O(log R) range query instead of an O(R) graph scan: locate the
+        // greatest start_addr ≤ (addr, pcode=u64::MAX), then verify it
+        // matches the requested machine address exactly.  The BTreeMap
+        // was promoted from the Builder at construction time.
+        use std::collections::Bound;
+        let lower = super::types::PcodeInsnAddr {
+            machine_addr: addr,
+            insn_index: 0,
+        };
+        let upper = super::types::PcodeInsnAddr {
+            machine_addr: addr,
+            insn_index: u64::MAX,
+        };
+        let mut range = self
+            .start_addr_to_region_id
+            .range((Bound::Included(lower), Bound::Included(upper)));
+        let (_, &rid) = range.next()?;
+        Some(rid)
     }
 }
 

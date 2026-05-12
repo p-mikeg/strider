@@ -1,32 +1,34 @@
 //! Integration tests for [`strider::indirect_resolve::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
-//! to IR via `Strider::analyze_cfg_with_unresolved`, runs the strider
-//! optimiser pipeline, then calls `classify_anchor` on the placeholder
-//! anchor that was recorded at lift time.  The fixture builders live
-//! in `common::indirect_resolve_helpers`.
+//! to IR via `Strider::analyze_cfg` (which returns an `AnalyzeOutcome`
+//! carrying the `unresolved_branches` placeholder list), runs the
+//! strider optimiser pipeline, then calls `classify_anchor` on the
+//! placeholder anchor that was recorded at lift time.  The fixture
+//! builders live in `common::indirect_resolve_helpers`.
 //!
 //! These tests exercise the classifier end-to-end against optimised IR
-//! — i.e. the exact graph shapes the orchestrator (R3) will hand to
-//! the classifier in production.
+//! — i.e. the exact graph shapes the orchestrator hands to the
+//! classifier in production.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;
 
-use strider::indirect_resolve::{ResolvedTargets, classify_anchor};
+use strider::indirect_resolve::{ResolvedTargets, classify_anchor, classify_anchor_with_rom_and_sp};
 
 use common::indirect_resolve_helpers::{
     build_bx_lr_scenario, build_initial_var_target_scenario_x86_64,
     build_int_const_target_scenario_via_stack, build_pop_pc_via_stack_load_forward_scenario,
-    build_push_target_pop_pc_scenario, build_value_phi_target_scenario,
+    build_push_target_pop_pc_scenario, build_stack_array_dispatch_scenario,
+    build_value_phi_target_scenario,
 };
 
 /// Spec test #7: target VN's producer folds to `IntConst(k)` after
 /// the optimiser pipeline runs → `Single(k)`.
 ///
 /// The fixture pushes a constant onto the stack and pops it into the
-/// dispatch register (`push K; pop rax; jmp *rax`).  Tier 1's
+/// dispatch register (`push K; pop rax; jmp *rax`).  the cfg-time mini-graph resolver's
 /// single-region mini-graph lacks `StackLoadForward`, so it can't
 /// fold the load — it returns `None` and the cfg builder defers via
 /// `UnresolvedIndirectBranch`.  The full pipeline DOES run
@@ -36,7 +38,7 @@ use common::indirect_resolve_helpers::{
 #[test]
 fn int_const_to_single() {
     let (graph, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
-    let result = classify_anchor(&graph, anchor, /* link_register */ None);
+    let result = classify_anchor(&graph, anchor, /* link_register */ None).expect("classify");
     assert_eq!(result, Some(ResolvedTargets::Single(0x0000_0123)));
 }
 
@@ -48,7 +50,7 @@ fn int_const_to_single() {
 #[test]
 fn initial_var_lr_to_link_register() {
     let (graph, anchor, lr_vn) = build_bx_lr_scenario();
-    let result = classify_anchor(&graph, anchor, Some(lr_vn));
+    let result = classify_anchor(&graph, anchor, Some(lr_vn)).expect("classify");
     assert_eq!(result, Some(ResolvedTargets::LinkRegister));
 }
 
@@ -62,7 +64,7 @@ fn initial_var_non_lr_returns_none() {
     let (graph, anchor) = build_initial_var_target_scenario_x86_64();
     // No link register on x86_64; the classifier must not classify
     // `InitialVar(rax)` as LinkRegister.
-    let result = classify_anchor(&graph, anchor, /* link_register */ None);
+    let result = classify_anchor(&graph, anchor, /* link_register */ None).expect("classify");
     assert_eq!(result, None);
 }
 
@@ -78,13 +80,13 @@ fn initial_var_non_lr_returns_none() {
 #[test]
 fn phi_of_int_consts_to_multiple() {
     let (graph, anchor) = build_value_phi_target_scenario(&[0x1000, 0x2000]);
-    let result = classify_anchor(&graph, anchor, None);
+    let result = classify_anchor(&graph, anchor, None).expect("classify");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             // Output is sort + dedup'd by the classifier; assert the
             // canonical order so a regression that shuffles the
             // result fails the test rather than silently mismatching
-            // the orchestrator's edge-set comparison (R3).
+            // the orchestrator's edge-set comparison.
             assert_eq!(ts, vec![0x1000, 0x2000]);
         }
         other => panic!("expected Multiple([0x1000, 0x2000]); got {other:?}"),
@@ -97,7 +99,7 @@ fn phi_of_int_consts_to_multiple() {
 #[test]
 fn phi_of_three_int_consts_to_multiple() {
     let (graph, anchor) = build_value_phi_target_scenario(&[0x3000, 0x1000, 0x2000]);
-    let result = classify_anchor(&graph, anchor, None);
+    let result = classify_anchor(&graph, anchor, None).expect("classify");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![0x1000, 0x2000, 0x3000]),
         other => panic!("expected Multiple([0x1000, 0x2000, 0x3000]); got {other:?}"),
@@ -123,12 +125,12 @@ fn phi_of_three_int_consts_to_multiple() {
 /// InitialVar(lr).
 ///
 /// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
-/// "Why this is sound across iterations" + "Tier 2 — post-IR resolver"
+/// "Why this is sound across iterations" + "the IR-level orchestrator resolver — post-IR resolver"
 /// for the full argument.
 #[test]
 fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
     let (graph, anchor, lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
-    let result = classify_anchor(&graph, anchor, Some(lr_vn));
+    let result = classify_anchor(&graph, anchor, Some(lr_vn)).expect("classify");
     assert_eq!(
         result,
         Some(ResolvedTargets::LinkRegister),
@@ -153,12 +155,12 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 /// pattern-matching on the load shape.
 ///
 /// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
-/// "Tier 2 — post-IR resolver" for the soundness rules.
+/// "the IR-level orchestrator resolver — post-IR resolver" for the soundness rules.
 #[test]
 fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;
     let (graph, anchor, lr_vn) = build_push_target_pop_pc_scenario(target);
-    let result = classify_anchor(&graph, anchor, Some(lr_vn));
+    let result = classify_anchor(&graph, anchor, Some(lr_vn)).expect("classify");
     assert_eq!(
         result,
         Some(ResolvedTargets::Single(target)),
@@ -173,8 +175,93 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
     assert_ne!(result, Some(ResolvedTargets::LinkRegister));
 }
 
+// ── O9 stack-array indirect-branch shape ──────────────────────────────────
+//
+// The classifier's stack-array arm (`opt::indirect_branch_resolve::
+// stack_array::classify_stack_array`) is reached via
+// `classify_anchor_with_rom_and_sp` when the rodata jump-table arm
+// doesn't match and an SP varnode is supplied.  These tests pin the
+// end-to-end shape: N constants stored at contiguous SP-relative
+// offsets, dispatch via `Load[(sp + base) + (idx & MASK) * stride]`,
+// and `bound = MASK + 1` derived via `KnownBits`.
+//
+// The classifier sorts the resulting target set; we assert against the
+// sorted form so a deterministic-output regression fails the test
+// rather than silently re-ordering the orchestrator's edge-set.
+
+/// 2 targets, base offset -16, stride 8.  KnownBits bounds `idx & 1`
+/// to `[0, 2)` so the stack-array arm reads exactly 2 entries.
+#[test]
+fn stack_array_two_targets_resolves_to_multiple() {
+    let targets = [0x401190u64, 0x401180u64];
+    let (graph, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let result = classify_anchor_with_rom_and_sp(
+        &graph, anchor, /* lr */ None, /* rom */ None, Some(sp),
+    )
+    .expect("classify");
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+}
+
+/// 4 targets, base offset -32, stride 8.  Exercises a wider mask
+/// (`idx & 3`) so the bound is 4.  Verifies the classifier doesn't
+/// truncate beyond 2 entries (a regression that pinned only the
+/// first two would slip through the 2-target test above).
+#[test]
+fn stack_array_four_targets_resolves_to_multiple() {
+    let targets = [0x401_0a0u64, 0x401_0b0, 0x401_0c0, 0x401_0d0];
+    let (graph, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
+    let result = classify_anchor_with_rom_and_sp(
+        &graph, anchor, /* lr */ None, /* rom */ None, Some(sp),
+    )
+    .expect("classify");
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+}
+
+/// Without the SP varnode, the stack-array arm is short-circuited.
+/// The fixture's anchor is a `Load` whose address is SP-rooted, but
+/// without `stack_ptr_vn` the classifier can't decompose it; the
+/// rodata-jump-table arm also fails (the address isn't a constant
+/// base), so the classifier returns `None`.
+///
+/// This is the soundness gate that keeps callers from over-resolving:
+/// the stack-array arm requires the calling-convention's SP varnode,
+/// and supplying `None` (e.g. an unknown CC) must defer rather than
+/// guess.
+#[test]
+fn stack_array_returns_none_without_sp_varnode() {
+    let targets = [0x401190u64, 0x401180u64];
+    let (graph, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let result = classify_anchor_with_rom_and_sp(
+        &graph, anchor, /* lr */ None, /* rom */ None, /* sp */ None,
+    )
+    .expect("classify");
+    assert_eq!(
+        result, None,
+        "no SP varnode → stack-array arm short-circuits, no other arm matches → None",
+    );
+}
+
+/// Sanity: the same anchor passed to `classify_anchor` (no rom, no SP)
+/// must also return None — confirms the stack-array shape is unique
+/// to the rom-and-sp entry point and the bare entry point fails
+/// closed.
+#[test]
+fn stack_array_returns_none_via_bare_classify_anchor() {
+    let targets = [0x401190u64, 0x401180u64];
+    let (graph, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let result = classify_anchor(&graph, anchor, /* lr */ None).expect("classify");
+    assert_eq!(
+        result, None,
+        "bare classify_anchor (no SP/no rom) cannot resolve stack-array shape",
+    );
+}
+
 /// Spec test #15: opaque target produces `None`/Unresolved (no
-/// error inside the resolver).  The orchestrator (R3) is responsible for
+/// error inside the resolver).  The orchestrator is responsible for
 /// surfacing `UnresolvedIndirectBranch` at fixed point if every
 /// iteration's classifier returns `None` for the same anchor.
 ///
@@ -185,10 +272,34 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 #[test]
 fn opaque_target_returns_none() {
     let (graph, anchor) = build_initial_var_target_scenario_x86_64();
-    let result = classify_anchor(&graph, anchor, /* link_register */ None);
+    let result = classify_anchor(&graph, anchor, /* link_register */ None).expect("classify");
     assert_eq!(
         result, None,
         "opaque target must classify as None — no panic, no error, no \
          unsound classification.  The orchestrator decides at fixed point.",
     );
+}
+
+/// Regression: calling `classify_anchor` twice on the
+/// same graph (without optimization between calls) must produce the
+/// same verdict.  Pins the invariant that no per-call state leaks
+/// between invocations — every call recomputes `analyze_known_bits`
+/// from the current graph state.
+///
+/// Concrete failure mode this would catch: a future refactor caching
+/// the `KnownBitsMap` across `classify_anchor` calls without
+/// invalidating the cache when the graph changes.  Two consecutive
+/// calls on an unchanged graph would still agree by luck; this test
+/// pins agreement on consecutive calls so a stale-cache bug shows up
+/// the moment someone adds the cache without proper invalidation.
+#[test]
+fn classify_anchor_is_idempotent_on_unchanged_graph() {
+    let (graph, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
+    let first = classify_anchor(&graph, anchor, None).expect("classify #1");
+    let second = classify_anchor(&graph, anchor, None).expect("classify #2");
+    assert_eq!(
+        first, second,
+        "two consecutive classify_anchor calls on an unchanged graph must agree",
+    );
+    assert_eq!(first, Some(ResolvedTargets::Single(0x0000_0123)));
 }

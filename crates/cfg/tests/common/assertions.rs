@@ -10,14 +10,14 @@ pub fn region_count<R: rsleigh::MemReader>(cfg: &Cfg<R>) -> usize {
 }
 
 pub fn count_edges_of_kind<R: rsleigh::MemReader>(cfg: &Cfg<R>, kind: RegionEdgeKind) -> usize {
-    cfg.graph.edge_references().filter(|e| *e.weight() == kind).count()
+    cfg.graph().edge_references().filter(|e| *e.weight() == kind).count()
 }
 
 pub fn outgoing_edge_kinds<R: rsleigh::MemReader>(
     cfg: &Cfg<R>,
     id: petgraph::graph::NodeIndex,
 ) -> Vec<RegionEdgeKind> {
-    cfg.graph
+    cfg.graph()
         .edges_directed(id, petgraph::Direction::Outgoing)
         .map(|e| *e.weight())
         .collect()
@@ -25,19 +25,19 @@ pub fn outgoing_edge_kinds<R: rsleigh::MemReader>(
 
 /// Returns `true` when the graph contains a cycle (i.e. a loop back-edge).
 pub fn has_cycle<R: rsleigh::MemReader>(cfg: &Cfg<R>) -> bool {
-    petgraph::algo::is_cyclic_directed(&cfg.graph)
+    petgraph::algo::is_cyclic_directed(cfg.graph())
 }
 
 /// Returns `true` when every edge source and target is a valid node.
 pub fn all_edge_endpoints_valid<R: rsleigh::MemReader>(cfg: &Cfg<R>) -> bool {
-    cfg.graph.edge_references().all(|e| {
-        cfg.graph.node_weight(e.source()).is_some() && cfg.graph.node_weight(e.target()).is_some()
+    cfg.graph().edge_references().all(|e| {
+        cfg.graph().node_weight(e.source()).is_some() && cfg.graph().node_weight(e.target()).is_some()
     })
 }
 
 /// Returns `true` when the entry node has no predecessors.
 pub fn entry_has_no_predecessors<R: rsleigh::MemReader>(cfg: &Cfg<R>) -> bool {
-    cfg.graph.edges_directed(cfg.entry, petgraph::Incoming).count() == 0
+    cfg.graph().edges_directed(cfg.entry(), petgraph::Incoming).count() == 0
 }
 
 /// Returns `true` when every region that has any `IfCase*` edge has EXACTLY
@@ -82,7 +82,7 @@ pub fn assert_looping_function<R: rsleigh::MemReader>(cfg: &Cfg<R>, name: &str) 
 
 /// Global invariants that every well-formed CFG must satisfy.
 pub fn assert_global_invariants<R: rsleigh::MemReader>(cfg: &Cfg<R>, name: &str) {
-    assert!(cfg.graph.node_weight(cfg.entry).is_some(), "{name}: entry node missing");
+    assert!(cfg.graph().node_weight(cfg.entry()).is_some(), "{name}: entry node missing");
     assert!(entry_has_no_predecessors(cfg), "{name}: entry has predecessors");
     assert!(all_edge_endpoints_valid(cfg), "{name}: invalid edge endpoints");
     assert!(all_conditional_regions_well_formed(cfg), "{name}: conditional pair invariant violated");

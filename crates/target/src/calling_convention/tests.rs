@@ -2,7 +2,7 @@ use super::*;
 
 fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .unwrap()
         .regs()
         .unwrap()
@@ -28,7 +28,7 @@ fn cases() -> Vec<Case> {
     vec![
         Case {
             name: "x86-64 SysV",
-            cc: CallingConvention::x86_64_systemv_abi,
+            cc: CallingConvention::x86_64_systemv,
             arch: crate::arch::SleighArch::x86_64,
             arg_count: 6,
             callee_saved_count: 6,
@@ -151,7 +151,9 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc64_elf_v1,
             arch: crate::arch::SleighArch::ppc64be,
             arg_count: 8,
-            callee_saved_count: 19,
+            // r2 + r14..r31 (18) + LR — added LR per
+            // CLAUDE.md deliberate-tradeoff (consistent with PPC32).
+            callee_saved_count: 20,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -163,7 +165,8 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc64_elf_v2,
             arch: crate::arch::SleighArch::ppc64le,
             arg_count: 8,
-            callee_saved_count: 19,
+            // See PowerPC ELFv1 (BE) above.
+            callee_saved_count: 20,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -344,32 +347,32 @@ fn assert_disjoint(
 fn presets_resolve_correct_register_sets() {
     for c in cases() {
         let (built, _) = build_case(&c);
-        assert_eq!(built.arg_passing_regs.len(), c.arg_count, "{}: args", c.name);
+        assert_eq!(built.arg_passing_regs().len(), c.arg_count, "{}: args", c.name);
         assert_eq!(
-            built.callee_saved_regs.len(),
+            built.callee_saved_regs().len(),
             c.callee_saved_count,
             "{}: callee-saved",
             c.name
         );
         assert_eq!(
-            built.ret_val_regs.len(),
+            built.ret_val_regs().len(),
             c.ret_count,
             "{}: return values",
             c.name
         );
-        assert_all_distinct(&built.arg_passing_regs, c.name);
-        assert_all_distinct(&built.callee_saved_regs, c.name);
-        assert_all_distinct(&built.ret_val_regs, c.name);
+        assert_all_distinct(built.arg_passing_regs(), c.name);
+        assert_all_distinct(built.callee_saved_regs(), c.name);
+        assert_all_distinct(built.ret_val_regs(), c.name);
         assert_disjoint(
-            &built.arg_passing_regs,
-            &built.callee_saved_regs,
+            built.arg_passing_regs(),
+            built.callee_saved_regs(),
             "arg_passing_regs",
             "callee_saved_regs",
             c.name,
         );
         assert_disjoint(
-            &built.ret_val_regs,
-            &built.callee_saved_regs,
+            built.ret_val_regs(),
+            built.callee_saved_regs(),
             "ret_val_regs",
             "callee_saved_regs",
             c.name,
@@ -387,11 +390,11 @@ fn presets_resolved_registers_have_expected_size() {
     for c in cases() {
         let (built, _) = build_case(&c);
         for vn in built
-            .arg_passing_regs
+            .arg_passing_regs()
             .iter()
-            .chain(&built.callee_saved_regs)
-            .chain(&built.ret_val_regs)
-            .chain(std::iter::once(&built.stack_ptr_vn))
+            .chain(built.callee_saved_regs())
+            .chain(built.ret_val_regs())
+            .chain(std::iter::once(&built.stack_ptr_vn()))
         {
             assert_eq!(
                 vn.size, c.reg_size_bytes,
@@ -417,26 +420,26 @@ fn presets_stack_pointer_and_arg_offsets() {
         let sp = regs
             .name_to_vn(c.stack_ptr_name)
             .unwrap_or_else(|| panic!("{}: {} must resolve", c.name, c.stack_ptr_name));
-        assert_eq!(built.stack_ptr_vn, sp, "{}: stack_ptr_vn", c.name);
+        assert_eq!(built.stack_ptr_vn(), sp, "{}: stack_ptr_vn", c.name);
         for (label, set) in [
-            ("arg_passing_regs", &built.arg_passing_regs),
-            ("callee_saved_regs", &built.callee_saved_regs),
-            ("ret_val_regs", &built.ret_val_regs),
+            ("arg_passing_regs", built.arg_passing_regs()),
+            ("callee_saved_regs", built.callee_saved_regs()),
+            ("ret_val_regs", built.ret_val_regs()),
         ] {
             assert!(
-                !set.contains(&built.stack_ptr_vn),
+                !set.contains(&built.stack_ptr_vn()),
                 "{}: stack pointer must not appear in {label}",
                 c.name,
             );
         }
         assert_eq!(
-            built.stack_arg_offsets,
+            built.stack_arg_offsets(),
             c.stack_arg_offsets.to_vec(),
             "{}: stack_arg_offsets",
             c.name,
         );
         assert_eq!(
-            built.ret_stack_pop, c.ret_stack_pop,
+            built.ret_stack_pop(), c.ret_stack_pop,
             "{}: ret_stack_pop",
             c.name,
         );
@@ -459,6 +462,7 @@ fn build_returns_error_for_unknown_register_name() {
             ret_stack_pop: 0,
             link_register_reg_name: None,
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         };
         let result = cc.build(&regs);
         let err = result.expect_err("expected UnknownRegName error");
@@ -485,6 +489,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
         ret_stack_pop: 0,
         link_register_reg_name: None,
         syscall_number_reg_name: None,
+        no_memory_clobber: false,
     };
     assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
 }
@@ -494,7 +499,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
 fn dump_mips_register_names() {
     let arch = crate::arch::SleighArch::mipsle32();
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .unwrap().regs().unwrap();
     let candidates = ["a0", "a1", "a2", "a3", "v0", "v1", "sp", "ra",
                       "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
@@ -601,7 +606,7 @@ fn link_reg_cases() -> Vec<LinkRegCase> {
         },
         LinkRegCase {
             name: "x86-64 SysV",
-            cc: CallingConvention::x86_64_systemv_abi,
+            cc: CallingConvention::x86_64_systemv,
             arch: crate::arch::SleighArch::x86_64,
             expected_lr_name: None,
         },
@@ -636,7 +641,7 @@ fn link_register_vn_set_for_link_register_presets() {
             )
         });
         assert_eq!(
-            built.link_register_vn,
+            built.link_register_vn(),
             Some(expected_vn),
             "{}: link_register_vn must be the {:?} varnode",
             c.name,
@@ -659,34 +664,47 @@ fn link_register_vn_none_for_stack_push_presets() {
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         assert!(
-            built.link_register_vn.is_none(),
+            built.link_register_vn().is_none(),
             "{}: link_register_vn must be None on stack-push ISAs, got {:?}",
             c.name,
-            built.link_register_vn,
+            built.link_register_vn(),
         );
     }
 }
 
-/// On ARM AAPCS the link register is callee-saved.  Pin that the
-/// resolved `link_register_vn` is the same varnode as the `lr` entry in
-/// `callee_saved_regs` — guards against the two lookup paths (the new
-/// `link_register_reg_name` and the existing `callee_saved_regs` list)
-/// diverging silently if one preset drops the `lr` entry.
+/// CLAUDE.md "Note (link-register handling)" documents that
+/// `aarch64_aapcs64`, `arm_aapcs`, MIPS o32/n64, and the PowerPC
+/// presets list their LR in `callee_saved_regs` — even though the
+/// official ABI specs mark them caller-saved/volatile — so the
+/// indirect-branch resolver's `LinkRegister` arm fires on functions
+/// returning via the entry LR.  Pin that the two lookup paths (the
+/// `link_register_reg_name` resolution AND the `callee_saved_regs`
+/// list) agree for every link-register preset.  AArch64 / MIPS / PPC
+/// previously could drop their LR from `callee_saved_regs` without
+/// triggering this test; this regression case pins the agreement.
 #[test]
 fn link_register_vn_resolves_to_callee_saved_lr() {
-    let regs = regs_for(crate::arch::SleighArch::arm());
-    let built = CallingConvention::arm_aapcs()
-        .build(&regs)
-        .unwrap_or_else(|e| panic!("ARM AAPCS build failed: {e:?}"));
-    let lr_vn = regs
-        .name_to_vn("lr")
-        .unwrap_or_else(|| panic!("ARM AAPCS: 'lr' must resolve"));
-    assert_eq!(built.link_register_vn, Some(lr_vn));
-    assert!(
-        built.callee_saved_regs.contains(&lr_vn),
-        "ARM AAPCS: 'lr' must also be present in callee_saved_regs, got {:?}",
-        built.callee_saved_regs,
-    );
+    for c in link_reg_cases() {
+        let Some(_) = c.expected_lr_name else {
+            // Stack-push ISAs (x86 / x86_64) have no LR — already
+            // covered by `link_register_vn_none_for_stack_push_presets`.
+            continue;
+        };
+        let regs = regs_for((c.arch)());
+        let built = (c.cc)()
+            .build(&regs)
+            .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
+        let lr_vn = built
+            .link_register_vn()
+            .unwrap_or_else(|| panic!("{}: link_register_vn must be Some", c.name));
+        assert!(
+            built.callee_saved_regs().contains(&lr_vn),
+            "{}: link-register varnode must be present in callee_saved_regs \
+             (CLAUDE.md deliberate-tradeoff invariant); got callee_saved_regs={:?}",
+            c.name,
+            built.callee_saved_regs(),
+        );
+    }
 }
 
 /// An unknown `stack_ptr_reg_name` must surface as `UnknownRegName`, the
@@ -706,6 +724,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         ret_stack_pop: 0,
         link_register_reg_name: None,
         syscall_number_reg_name: None,
+        no_memory_clobber: false,
     };
     let result = cc.build(&regs);
     let err = result.expect_err("expected UnknownRegName error");
@@ -720,7 +739,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
 fn probe_float_regs() {
 fn try_resolve(arch: crate::arch::SleighArch, names: &[&str]) {
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe).unwrap().regs().unwrap();
+    let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe).unwrap().regs().unwrap();
     for n in names {
         let v = regs.name_to_vn(n);
         println!("  {n:?} -> {v:?}");
@@ -746,4 +765,42 @@ println!("=== mips32le ===");
 try_resolve(crate::arch::SleighArch::mipsle32(), &[
     "f0", "f1", "f2", "f3", "f12", "F0", "F12",
 ]);
+}
+
+// ── no_memory_clobber field ──────────────────────────────────────────────────
+
+#[test]
+fn x86_64_all_preserving_has_no_memory_clobber_true() {
+    // The "all-preserving" CC (used for __fentry__ / mcount-style hooks)
+    // promises zero observable side-effects.  The Call's memory output must
+    // be suppressible at IR-build time so LoadReadOnly / StackLoadForward
+    // can forward across these calls.
+    assert!(
+        CallingConvention::x86_64_all_preserving().no_memory_clobber(),
+        "x86_64_all_preserving must declare no_memory_clobber = true"
+    );
+}
+
+#[test]
+fn standard_presets_have_no_memory_clobber_false() {
+    // Every standard preset must keep the default no_memory_clobber = false
+    // so its Call nodes correctly clobber memory.  Only x86_64_all_preserving
+    // opts out.
+    let presets: &[(&str, CallingConvention)] = &[
+        ("x86_64_systemv", CallingConvention::x86_64_systemv()),
+        ("x86_cdecl", CallingConvention::x86_cdecl()),
+        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64()),
+        ("arm_aapcs", CallingConvention::arm_aapcs()),
+        ("mips_o32", CallingConvention::mips_o32()),
+        ("mips_n64", CallingConvention::mips_n64()),
+        ("powerpc_sysv32", CallingConvention::powerpc_sysv32()),
+        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1()),
+        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2()),
+    ];
+    for (name, cc) in presets {
+        assert!(
+            !cc.no_memory_clobber(),
+            "{name}: standard presets must have no_memory_clobber = false"
+        );
+    }
 }

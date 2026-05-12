@@ -4,7 +4,7 @@
 //! Three named sentinel structs preserve test-asserted public API:
 //!
 //! - [`RewriteSkip`] — opts a rewrite rule out without surfacing a hard
-//!   error. The `rewrite_rule` interpreter detects this via [`is_skip`]
+//!   error. The `rewrite_rule` interpreter detects this via `is_skip`
 //!   and converts it back to "no change".
 //! - [`NotBuildable`] — pattern is match-only (wildcards, guards, control
 //!   patterns) and has no build semantics. Surfaced when a pattern that
@@ -16,7 +16,7 @@
 //! assert which error path fired.
 
 /// Sentinel produced by [`skip`]; detected by the `rewrite_rule`
-/// interpreter via [`is_skip`] and converted to "no change".
+/// interpreter via `is_skip` and converted to "no change".
 #[derive(Debug, thiserror::Error)]
 #[error("rewrite rule opted to skip")]
 pub struct RewriteSkip;

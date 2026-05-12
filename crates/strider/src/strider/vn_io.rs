@@ -17,8 +17,8 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     pub(super) fn value_lifter(&mut self) -> pcode_lift::ValueLifter<'_, R> {
         pcode_lift::ValueLifter::new(
             &mut self.builder,
-            &self.cfg.sleigh,
-            self.strider.arch.endianness,
+            self.cfg.sleigh(),
+            self.strider.arch.endianness(),
         )
     }
 

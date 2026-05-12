@@ -10,6 +10,32 @@ use anyhow::bail;
 use crate::Result;
 use crate::ValueLifter;
 
+/// Asserts that a varnode `vn` lives in CONST space.  Sleigh encodes the
+/// "this is a literal constant value" varnode by setting `addr_space ==
+/// CONST` with the constant in `addr_off`.  Several opcode handlers
+/// (Subpiece's `byte_offset`, Extract/Insert's `lsb`/`bit_count`,
+/// PtrAdd's `elem_size`) read `vn.addr_off` directly as a literal value
+/// and would silently mis-decode any non-CONST input.  This is a
+/// defensive structural guard: GHIDRA's Sleigh emitter always produces
+/// CONST in these slots, but a malformed `.sla` spec or a fuzzer-built
+/// `Insn` would otherwise produce a structurally valid but semantically
+/// wrong IR shape.
+fn ensure_const_space(
+    vn: &rsleigh::Vn,
+    opcode: rsleigh::Opcode,
+    slot_label: &str,
+) -> Result<()> {
+    if vn.addr_space != rsleigh::VnSpace::CONST {
+        bail!(
+            "opcode {opcode:?}: {slot_label} must be a CONST-space varnode \
+             (got addr_space {:?}); Sleigh's contract requires this slot \
+             to encode a literal value",
+            vn.addr_space,
+        );
+    }
+    Ok(())
+}
+
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a no-op `Cast` instruction.
     ///
@@ -29,6 +55,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// so we reject it explicitly.
     pub(super) fn handle_subpiece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input_vn = &insn.inputs[0];
+        ensure_const_space(&insn.inputs[1], insn.opcode, "Subpiece byte-offset")?;
         let byte_offset = insn.inputs[1].addr_off;
         if byte_offset >= u64::from(input_vn.size) {
             bail!(
@@ -78,9 +105,27 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_piece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // inputs[0] = hi (most significant), inputs[1] = lo (least significant).
         // Lowered to: Or(ShiftLeft(ZeroExtend(hi), lo_bits), ZeroExtend(lo)).
-        let hi = self.read_vn(&insn.inputs[0])?;
-        let lo = self.read_vn(&insn.inputs[1])?;
+        let hi_vn = &insn.inputs[0];
+        let lo_vn = &insn.inputs[1];
         let out_vn = crate::require_output_vn(insn)?;
+        // Sleigh's Piece contract: `hi.size + lo.size == out.size`.  A
+        // malformed spec emitting an unbalanced Piece would silently drop
+        // or duplicate bits since the lowering uses `hi.shift_by(lo.bits)`
+        // and OR-merges with a zero-extended `lo`.
+        let pieces_sum = u64::from(hi_vn.size) + u64::from(lo_vn.size);
+        if pieces_sum != u64::from(out_vn.size) {
+            bail!(
+                "Piece size invariant: hi.size ({}) + lo.size ({}) = {} \
+                 must equal out.size ({}); opcode {:?}",
+                hi_vn.size,
+                lo_vn.size,
+                pieces_sum,
+                out_vn.size,
+                insn.opcode,
+            );
+        }
+        let hi = self.read_vn(hi_vn)?;
+        let lo = self.read_vn(lo_vn)?;
         let out_ty: NodeOutputType = out_vn.size.try_into()?;
         let hi_ty = self.builder.get_output_type(hi)?.to_natural_int_type();
         let hi_int = self.builder.convert_to_int_if_needed(hi, hi_ty)?;
@@ -109,6 +154,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // inputs[0] = value, inputs[1] = lsb (CONST), inputs[2] = bit_count (CONST)
         // Lowered to: Truncate(ShiftRight(x, lsb), narrow_ty), with an extra
         // And mask when len < narrow_ty.bit_width() to preserve "upper bits zero".
+        ensure_const_space(&insn.inputs[1], insn.opcode, "Extract lsb")?;
+        ensure_const_space(&insn.inputs[2], insn.opcode, "Extract bit_count")?;
         let input = self.read_vn(&insn.inputs[0])?;
         let lsb = insn.inputs[1].addr_off as u8;
         let len = insn.inputs[2].addr_off as u8;
@@ -129,10 +176,16 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         };
         let narrowed = self.builder.truncate_if_needed(shifted, narrow_ty)?;
         let out = if (len as usize) < narrow_ty.bit_width() {
-            let mask_val = if len >= 64 {
-                u64::MAX
+            // Compute the AND-mask in u128 so a U128 narrow_ty with
+            // 64 ≤ len < 128 produces a mask covering the requested
+            // upper bits.  Using u64 here would cap the mask at
+            // 0xFFFF_FFFF_FFFF_FFFF, then `build_int_const` would
+            // zero-extend to u128 and the result would zero bits
+            // 64..127 of the narrowed value.
+            let mask_val: u128 = if (len as usize) >= 128 {
+                u128::MAX
             } else {
-                (1u64 << len) - 1
+                (1u128 << len) - 1
             };
             let mask = self.builder.build_int_const(mask_val, narrow_ty)?;
             self.builder.build_int_binary_operation(
@@ -150,6 +203,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_insert(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // inputs[0] = dest, inputs[1] = src, inputs[2] = lsb (CONST), inputs[3] = bit_count (CONST).
         // Lowered to: Or(And(dest, !mask_shifted), ShiftLeft(And(src, mask_raw), lsb)).
+        ensure_const_space(&insn.inputs[2], insn.opcode, "Insert lsb")?;
+        ensure_const_space(&insn.inputs[3], insn.opcode, "Insert bit_count")?;
         let dest = self.read_vn(&insn.inputs[0])?;
         let src = self.read_vn(&insn.inputs[1])?;
         let lsb = insn.inputs[2].addr_off as u8;
@@ -165,10 +220,14 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;
         let src_wide = self.builder.convert_to_int_if_needed(src_int, out_ty)?;
 
-        let mask_raw = if len >= 64 {
-            u64::MAX
+        // Compute masks in u128 so a U128 (or U80) `out_ty` with
+        // `lsb + len > 64` produces correct bits in slots 64..127.
+        // Using u64 here would silently zero those slots through
+        // `build_int_const`'s u64→u128 zero-extension.
+        let mask_raw: u128 = if (len as usize) >= 128 {
+            u128::MAX
         } else {
-            (1u64 << len) - 1
+            (1u128 << len) - 1
         };
         let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
         let not_mask_shifted = !mask_shifted;
@@ -211,6 +270,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     }
 
     pub(super) fn handle_ptr_add(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        ensure_const_space(&insn.inputs[2], insn.opcode, "PtrAdd elem_size")?;
         let base = self.read_vn(&insn.inputs[0])?;
         let index = self.read_vn(&insn.inputs[1])?;
         let elem_size = insn.inputs[2].addr_off;

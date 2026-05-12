@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::var::Capture;
@@ -14,7 +13,8 @@ pub(crate) mod any;
 pub(crate) mod guards;
 pub use builders::{
     BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
-    IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
+    IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
+    ValuePhiPat,
 };
 // `BinaryOpPat<Op>` underlies the three aliases above; not re-exported
 // directly because the crate-private `BinaryOpKind` bound has no
@@ -22,14 +22,18 @@ pub use builders::{
 pub use ctor::*;
 
 /// Predicate function type used by the [`guards::GuardPat`] combinator
-/// (produced by [`IntoPat::when`]).
+/// (produced by [`IntoPat::when`]).  The first arg is the underlying
+/// `ir::Graph` (no CC fields) — matches use the rewrite-friendly
+/// matcher path.  Predicates that need CC info should query a
+/// [`Match`](crate::Match)-side accessor (`get_vn` etc.) post-match
+/// rather than during the guard check.
 pub(crate) type PredicateFn =
-    Arc<dyn Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync>;
+    Arc<dyn Fn(&ir::Graph, NodeOutputType, NodeOutputId) -> bool + Send + Sync>;
 
 /// Predicate function type used by the [`guards::GuardPat`] combinator
 /// for the bindings-aware variant (produced by [`Pat::when_match`]).
 pub(crate) type MatchPredicateFn = Arc<
-    dyn Fn(&BuiltFunctionGraph, NodeOutputType, &crate::matcher::Bindings) -> bool + Send + Sync,
+    dyn Fn(&ir::Graph, NodeOutputType, &crate::matcher::Bindings) -> bool + Send + Sync,
 >;
 
 // ── any_*_const constructors ──────────────────────────────────────────────────
@@ -107,7 +111,7 @@ impl Pat {
     /// triggers the other-ordering retry automatically.
     pub fn when_match<F>(self, f: F) -> Pat
     where
-        F: Fn(&BuiltFunctionGraph, NodeOutputType, &crate::matcher::Bindings) -> bool
+        F: Fn(&ir::Graph, NodeOutputType, &crate::matcher::Bindings) -> bool
             + Send
             + Sync
             + 'static,
@@ -141,9 +145,16 @@ pub trait IntoPat: Into<Pat> + Sized {
         }))
     }
     /// After matching, additionally run `f` — fails if it returns `false`.
+    ///
+    /// **Zero-value-output kinds.**  `f` receives the matched root's
+    /// single value output.  Roots that produce zero value outputs
+    /// (control-flow nodes — `If`, `Return`, `ControlState`, …) cannot
+    /// satisfy this signature; the guard silently fails (no match) on
+    /// such roots.  Use [`Pat::when_match`] (which receives the full
+    /// bindings instead) when guarding control-flow patterns.
     fn when<F>(self, f: F) -> Pat
     where
-        F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
+        F: Fn(&ir::Graph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
     {
         let inner: Pat = self.into();
         Pat::from_dyn(Arc::new(crate::pat::guards::GuardPat {

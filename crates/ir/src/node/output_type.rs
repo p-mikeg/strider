@@ -20,6 +20,10 @@ pub enum NodeOutputType {
     U80,
     U128,
     U256,
+    /// 512-bit unsigned integer (AVX-512 `zmm` registers).  Stored
+    /// off-side via [`crate::wide_const::WideConstStorage::U512`]
+    /// because the value doesn't fit in `IntConst`'s `u128` payload.
+    U512,
     /// 32-bit IEEE 754 single-precision float.
     F32,
     /// 64-bit IEEE 754 double-precision float.
@@ -58,15 +62,35 @@ const TYPE_INFO: &[TypeInfo] = &[
     TypeInfo { name: "u80",  byte_size: 10, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "u128", byte_size: 16, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "u256", byte_size: 32, category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "u512", byte_size: 64, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "f32",  byte_size: 4,  category: NodeOutputTypeCategory::Float },
     TypeInfo { name: "f64",  byte_size: 8,  category: NodeOutputTypeCategory::Float },
     TypeInfo { name: "f80",  byte_size: 10, category: NodeOutputTypeCategory::Float },
 ];
 
 impl NodeOutputType {
+    /// Returns the type's [`TypeInfo`] entry.  Implemented as an
+    /// exhaustive `match` rather than `&TYPE_INFO[self as usize]` so
+    /// adding a new variant is a compile-time error rather than a
+    /// runtime out-of-bounds index.  The `TYPE_INFO` table itself is
+    /// validated against the enum order by the
+    /// `type_info_table_matches_variants` test.
     #[inline]
     fn info(self) -> &'static TypeInfo {
-        &TYPE_INFO[self as usize]
+        match self {
+            Self::Bool => &TYPE_INFO[0],
+            Self::U8 => &TYPE_INFO[1],
+            Self::U16 => &TYPE_INFO[2],
+            Self::U32 => &TYPE_INFO[3],
+            Self::U64 => &TYPE_INFO[4],
+            Self::U80 => &TYPE_INFO[5],
+            Self::U128 => &TYPE_INFO[6],
+            Self::U256 => &TYPE_INFO[7],
+            Self::U512 => &TYPE_INFO[8],
+            Self::F32 => &TYPE_INFO[9],
+            Self::F64 => &TYPE_INFO[10],
+            Self::F80 => &TYPE_INFO[11],
+        }
     }
 
     /// Returns the canonical name of this type as a static string.
@@ -95,7 +119,8 @@ impl NodeOutputType {
     /// Whether a constant of this type fits in a `u64` (i.e. `byte_size <= 8`).
     ///
     /// Returns `true` for `Bool`, `U8`, `U16`, `U32`, `U64`, `F32`, and `F64`.
-    /// Returns `false` for `U128` and `U256`.
+    /// Returns `false` for `U80` (10 bytes), `U128`, `U256`, `U512`, and `F80`
+    /// (10 bytes).
     #[inline]
     #[must_use]
     pub fn fits_u64(self) -> bool {
@@ -137,16 +162,23 @@ impl NodeOutputType {
             NodeOutputType::U80 | NodeOutputType::F80 => NodeOutputType::U80,
             NodeOutputType::U128 => NodeOutputType::U128,
             NodeOutputType::U256 => NodeOutputType::U256,
+            NodeOutputType::U512 => NodeOutputType::U512,
         }
     }
 
     /// Returns the all-ones bit mask for this integer type, as `u128`.
     /// `Bool` returns `1`; integer widths up to 128 bits return their
-    /// natural bit widths.  `U256` returns `u128::MAX` because the mask
-    /// can't represent 256 bits in a `u128`; callers that need to mask a
-    /// 256-bit value must use [`Self::get_unsigned_int`], which rejects
-    /// `U256` outright.  Float types return `0` (defensive - no caller
-    /// should ask).
+    /// natural bit widths (e.g. `U64` returns `0xFFFF_FFFF_FFFF_FFFF`).
+    /// `U128` returns `u128::MAX`.  `U256` and `U512` also return
+    /// `u128::MAX` because the mask cannot represent 256+ bits in a
+    /// `u128` carrier — callers that need to mask a 256-bit value must
+    /// route through `IntConstWide` / `Graph::wide_consts`.  Wide-type
+    /// rejection happens at the `IntConst` build site
+    /// ([`crate::FunctionBuilder::build_int_const`] returns `Err`
+    /// for `U256` / `U512`); `bit_mask_u128` and
+    /// [`Self::get_unsigned_int`] do not reject `U256` themselves —
+    /// they return the conservative `u128`-width approximation.
+    /// Float types return `0` (defensive — no caller should ask).
     #[must_use]
     pub fn bit_mask_u128(self) -> u128 {
         if self.is_bool() {
@@ -168,6 +200,12 @@ impl NodeOutputType {
     /// For widths >= 128 returns `val` unchanged (the carrier is `u128`, so
     /// `U128` returns its full mask and `U256` returns `val` as-is - callers
     /// that need to distinguish the two must check the type explicitly).
+    ///
+    /// **Bool exception.**  `Bool` is excluded even though
+    /// [`Self::bit_mask_u128`] returns `1` for it: `Bool` is its own
+    /// category in [`crate::node::NodeKind`], so callers reading a `Bool` constant
+    /// should match the `BoolConst` arm directly rather than going
+    /// through this helper.
     #[must_use]
     pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
         if !self.is_integer() {
@@ -217,6 +255,7 @@ impl TryFrom<u32> for NodeOutputType {
             10 => Ok(Self::U80),
             16 => Ok(Self::U128),
             32 => Ok(Self::U256),
+            64 => Ok(Self::U512),
             n => Err(anyhow::anyhow!("unsupported node output size: {n} bytes")),
         }
     }
@@ -319,7 +358,7 @@ mod tests {
     // ── F80 / U80 (x87 80-bit FPU) ────────────────────────────────────────
 
     /// `U80` and `F80` widths must be 10 bytes / 80 bits — the x87 ST0
-    /// register width that the analyzer needs in order to handle x86
+    /// register width that the lifter needs in order to handle x86
     /// floats without erroring at `analyze_cfg` setup.
     #[test]
     fn u80_f80_widths() {
@@ -331,7 +370,7 @@ mod tests {
 
     /// `U80` is an integer type; `F80` is a float type.  The category
     /// classifier drives `is_integer` / `is_float`, used by validator
-    /// signature checks (Layer A) and by the analyzer's coerce helpers.
+    /// signature checks (Layer A) and by the lifter's coerce helpers.
     #[test]
     fn u80_is_integer_and_f80_is_float() {
         assert!(NodeOutputType::U80.is_integer());
@@ -341,7 +380,7 @@ mod tests {
     }
 
     /// `to_natural_int_type` must map `F80 → U80` (mirrors `F64 → U64`)
-    /// and `U80 → U80` (identity).  This is the path the analyzer's
+    /// and `U80 → U80` (identity).  This is the path the lifter's
     /// `read_reg_vn` / `write_reg_vn` use when bridging between float
     /// and integer views of the same SSA variable.
     #[test]
@@ -394,10 +433,31 @@ mod tests {
     }
 
     /// `TryFrom<u32> for NodeOutputType` must accept 10 → U80 so the
-    /// analyzer's varnode→type conversion succeeds for x87 80-bit regs.
+    /// lifter's varnode→type conversion succeeds for x87 80-bit regs.
     #[test]
     fn try_from_u32_10_is_u80() {
         let ty: NodeOutputType = 10u32.try_into().expect("10 must convert to U80");
         assert_eq!(ty, NodeOutputType::U80);
+    }
+
+    /// `bit_mask_u128` for `U256` and `U512` must return
+    /// `u128::MAX` — the conservative `u128`-width approximation, since
+    /// these widths exceed the carrier.  Pins the `bits >= 128` guard.
+    #[test]
+    fn bit_mask_u128_for_u256_and_u512_is_u128_max() {
+        assert_eq!(NodeOutputType::U256.bit_mask_u128(), u128::MAX);
+        assert_eq!(NodeOutputType::U512.bit_mask_u128(), u128::MAX);
+    }
+
+    /// `get_unsigned_int` for `U256`/`U512` passes through
+    /// values within the `u128` carrier (no false rejection).
+    #[test]
+    fn get_unsigned_int_for_u256_passes_through_small_values() {
+        assert_eq!(
+            NodeOutputType::U256.get_unsigned_int(0xDEAD_BEEFu128),
+            Some(0xDEAD_BEEFu128),
+        );
+        assert_eq!(NodeOutputType::U256.get_unsigned_int(u128::MAX), Some(u128::MAX));
+        assert_eq!(NodeOutputType::U512.get_unsigned_int(42u128), Some(42u128));
     }
 }

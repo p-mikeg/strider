@@ -94,11 +94,41 @@ fn phi_for_wrong_vn_rejects() {
     a::none(&g, phi_for(other));
 }
 
+/// `phi_for(vn).input(idx, p)` must address predecessor
+/// slot `idx`, not the raw input index.  Per `node_signature`, the
+/// `VarPhi` input layout is `[phi_token, ...per-predecessor values]`,
+/// so predecessor 0's value lives at raw input index 1.  Pre-fix the
+/// builder pushed `(idx, p)` directly, so `input(0, _)` targeted the
+/// phi-token (a `PhiToken`-typed edge no value pattern can match).
+#[test]
+fn phi_input_addresses_predecessor_slot_not_phi_token() {
+    let (g, reg) = graph_phi_for_reg();
+    // Predecessor values are u64 1 and u64 2.  At least one of
+    // `input(0, int_const(1))` and `input(0, int_const(2))` must match.
+    let m1 = Matcher::new(&g)
+        .find_all(&phi_for(reg).input(0, int_const(1u64)).into());
+    let m2 = Matcher::new(&g)
+        .find_all(&phi_for(reg).input(0, int_const(2u64)).into());
+    assert!(
+        !m1.is_empty() || !m2.is_empty(),
+        "phi.input(0, _) must reach predecessor 0's value (got 0 matches for both 1 and 2)"
+    );
+    // And `input(0, int_const(99))` (a value that is NOT in the phi)
+    // must NOT match — proving the index is reaching a value slot, not
+    // landing on the phi-token where a value pattern always fails.
+    let none_match = Matcher::new(&g)
+        .find_all(&phi_for(reg).input(0, int_const(99u64)).into());
+    assert!(
+        none_match.is_empty(),
+        "phi.input(0, int_const(99)) should not match (99 is not a predecessor value)"
+    );
+}
+
 // ── FunctionArg ──────────────────────────────────────────────────────────────
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
 fn graph_fn_arg_stack() -> ir::BuiltFunctionGraph {
-    use opt::{FunctionArgDetect, Optimizer};
+    use opt::{FunctionArgDetect, OptimizerRaw};
     let sp = sp_vn();
     let mut t = Tb::raw(vec![sp], &[], &[sp], &[], None, 0);
 
@@ -110,7 +140,7 @@ fn graph_fn_arg_stack() -> ir::BuiltFunctionGraph {
     let mut g = t.ret_val(v);
 
     FunctionArgDetect::new(vec![], sp, vec![4])
-        .optimize(&mut g.graph, g.entry)
+        .optimize_raw(&mut g.graph, g.entry)
         .expect("FunctionArgDetect");
     g
 }

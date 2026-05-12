@@ -1,14 +1,22 @@
-use rustc_hash::FxHashMap;
+use cranelift_entity::SecondaryMap;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
+use ir::{ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::worklist::WorkSet;
 
 #[cfg(test)]
 mod tests;
+
+/// Per-output known-bits side-table.  Defaults to `Kb::default()`
+/// (`{ones: 0, zeros: 0}` = "no info") for unrecorded outputs, which is
+/// equivalent to "absent" in the previous `FxHashMap`-based form.
+/// Migrated from `FxHashMap<NodeOutputId, Kb>` to `SecondaryMap` to
+/// avoid hashing in the inner loop — at 10k+ nodes this is the
+/// hottest probe in the entire `KnownBits` pass.
+pub type KnownBitsMap = SecondaryMap<NodeOutputId, Kb>;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 
@@ -26,23 +34,62 @@ fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
 ///
 /// Both `ones` and `zeros` are masked to the output type's width and must
 /// never overlap (`ones & zeros == 0`).
+///
+/// External callers construct via [`Kb::try_new`] (validates the
+/// invariant) or [`Kb::default`] (all-unknown, the canonical neutral
+/// value).  Read the bit masks via [`Kb::ones`] / [`Kb::zeros`].
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Kb {
     /// Bits that are definitely 1.
-    pub ones: u64,
-    /// Bits that are definitely 0.
-    pub zeros: u64,
+    ///
+    /// `pub(crate)` because the `ones & zeros == 0` invariant is
+    /// enforced only by [`Kb::merge`] / [`Kb::from_const`] /
+    /// [`Kb::try_new`] — external struct-literal construction
+    /// (`Kb { ones: 0xFF, zeros: 0xFF }`) silently violates it.
+    pub(crate) ones: u64,
+    /// Bits that are definitely 0.  Same caveat as [`Self::ones`].
+    pub(crate) zeros: u64,
 }
 
 impl Kb {
-    fn from_const(val: u128, ty: NodeOutputType) -> Self {
-        let masked = ty.get_unsigned_int(val).unwrap_or(0);
-        let type_mask = u64_type_mask(ty).unwrap_or(0);
-        let masked_u64 = u64::try_from(masked).unwrap_or(0);
-        Kb {
+    /// Build a `Kb` from `(ones, zeros)` bit masks, validating the
+    /// `ones & zeros == 0` invariant.  Returns `Err` when the masks
+    /// overlap — every bit must be definitely-one, definitely-zero,
+    /// or unknown, never two of those at once.
+    ///
+    /// Prefer this over the struct-literal constructor when the
+    /// caller has computed `ones`/`zeros` from external data (e.g. a
+    /// pattern-match capture or a user-supplied annotation).
+    /// Internal analysis paths that derive `Kb` from a known-correct
+    /// shape (`from_const`, `merge`) skip this check by construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when `ones & zeros != 0`.
+    pub fn try_new(ones: u64, zeros: u64) -> anyhow::Result<Self> {
+        if ones & zeros != 0 {
+            return Err(anyhow::anyhow!(
+                "Kb::try_new: ones & zeros must be 0, got ones={ones:#x} zeros={zeros:#x}",
+            ));
+        }
+        Ok(Self { ones, zeros })
+    }
+
+    /// Build the `Kb` for an integer constant.  Returns `None` for
+    /// types this analysis doesn't track (`Bool`, floats, U128, U256):
+    /// the caller treats `None` as "fully unknown" and skips
+    /// propagation, which is the correct sound behaviour for a
+    /// 64-bit-bound bit-tracker.  Previously this collapsed to
+    /// all-ones-zeros (i.e. `ones=0, zeros=0`) silently — same effect
+    /// as "unknown" but indistinguishable from a deliberate zero.
+    fn from_const(val: u128, ty: NodeOutputType) -> Option<Self> {
+        let type_mask = u64_type_mask(ty)?;
+        let masked = ty.get_unsigned_int(val)?;
+        let masked_u64 = u64::try_from(masked).ok()?;
+        Some(Kb {
             ones: masked_u64,
             zeros: type_mask ^ masked_u64,
-        }
+        })
     }
 
     /// Returns `Ok(true)` if merging `other` into `self` changed anything.
@@ -86,6 +133,18 @@ impl Kb {
     pub fn max_value(self, type_mask: u64) -> u64 {
         (!self.zeros) & type_mask
     }
+
+    /// Bits that are definitely 1.
+    #[must_use]
+    pub fn ones(self) -> u64 {
+        self.ones
+    }
+
+    /// Bits that are definitely 0.
+    #[must_use]
+    pub fn zeros(self) -> u64 {
+        self.zeros
+    }
 }
 
 // ── Per-node known-bits computation ───────────────────────────────────────────
@@ -94,22 +153,21 @@ impl Kb {
 /// value output.  Returns `(output_id, Kb)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
 pub fn node_known_bits(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     node_id: NodeId,
-    known: &FxHashMap<NodeOutputId, Kb>,
+    known: &KnownBitsMap,
 ) -> Result<Option<(NodeOutputId, Kb)>> {
-    let kind = *fg.graph.node_kind(node_id);
+    let kind = *ctx.node_kind(node_id);
 
     // Find the first integer value output.
-    let Some(out) = fg
-        .graph
+    let Some(out) = ctx
         .node_outputs(node_id)
         .into_iter()
-        .find(|&o| fg.graph.output_kind(o).is_integer())
+        .find(|&o| ctx.output_kind(o).is_integer())
     else {
         return Ok(None);
     };
-    let out_kind = fg.graph.output_kind(out);
+    let out_kind = ctx.output_kind(out);
     let ty = out_kind.as_value_or_err()?;
     // KnownBits tracks 64-bit masks only; types wider than U64 (U128/U256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
@@ -118,12 +176,17 @@ pub fn node_known_bits(
     };
 
     let kb = match kind {
-        NodeKind::IntConst(v) => Kb::from_const(v, ty),
+        NodeKind::IntConst(v) => match Kb::from_const(v, ty) {
+            Some(kb) => kb,
+            // Untracked type (Bool, float, U128, U256) — defer to default
+            // "fully unknown" via the worklist's missing-entry path.
+            None => return Ok(None),
+        },
 
         NodeKind::IntBinaryOp(op) => {
-            let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-            let l = known.get(&lhs).copied().unwrap_or_default();
-            let r = known.get(&rhs).copied().unwrap_or_default();
+            let [lhs, rhs] = ctx.node_inputs_exact::<2>(node_id)?;
+            let l = known[lhs];
+            let r = known[rhs];
             match op {
                 IntBinaryOp::And => Kb {
                     ones: l.ones & r.ones,
@@ -151,13 +214,12 @@ pub fn node_known_bits(
                     // wrapped large literal shifts back into range,
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
-                    let rhs_mask = fg
-                        .graph
+                    let rhs_mask = ctx
                         .output_kind(rhs)
                         .as_value()
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
-                    let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
+                    let rhs_kb = known[rhs];
                     if rhs_kb.all_known(rhs_mask) {
                         let bit_width = ty.bit_width() as u64;
                         if rhs_kb.ones >= bit_width {
@@ -192,13 +254,12 @@ pub fn node_known_bits(
                     // `>= bit_width` returns 0 (sleigh/src/opbehavior.cc:432).
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
-                    let rhs_mask = fg
-                        .graph
+                    let rhs_mask = ctx
                         .output_kind(rhs)
                         .as_value()
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
-                    let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
+                    let rhs_kb = known[rhs];
                     if rhs_kb.all_known(rhs_mask) {
                         let bit_width = ty.bit_width() as u64;
                         if rhs_kb.ones >= bit_width {
@@ -233,8 +294,8 @@ pub fn node_known_bits(
             // negate — `IntUnaryOp::Neg` — has no closed-form known-bits
             // propagation: it depends on the borrow chain across the
             // input's bits, so it falls through to the unknown case.)
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let kb = known.get(&input).copied().unwrap_or_default();
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
+            let kb = known[input];
             Kb {
                 ones: kb.zeros & type_mask,
                 zeros: kb.ones & type_mask,
@@ -243,8 +304,8 @@ pub fn node_known_bits(
 
         NodeKind::Truncate => {
             // Upper bits of the source are discarded; lower bits are preserved.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let kb = known.get(&input).copied().unwrap_or_default();
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
+            let kb = known[input];
             Kb {
                 ones: kb.ones & type_mask,
                 zeros: kb.zeros & type_mask,
@@ -253,21 +314,64 @@ pub fn node_known_bits(
 
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             // Upper bits are explicitly zeroed by the extension.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let input_kind = fg.graph.output_kind(input);
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
+            let input_kind = ctx.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
-            let input_mask = u64_type_mask(input_ty).unwrap_or(0);
-            let kb = known.get(&input).copied().unwrap_or_default();
+            // Bail when the input width is unsupported (U80/U128/U256) —
+            // mirrors the SignExtend arm below.  Returning `Ok(None)`
+            // leaves the output's KB at "fully unknown"; the previous
+            // `unwrap_or(0)` here would have set `input_mask = 0` and
+            // marked every bit as known-zero, silently corrupting
+            // analysis on wide-to-wider ZeroExtends.
+            let Some(input_mask) = u64_type_mask(input_ty) else {
+                return Ok(None);
+            };
+            let kb = known[input];
             Kb {
                 ones: kb.ones,
                 zeros: kb.zeros | (type_mask ^ input_mask), // upper bits are 0
             }
         }
 
+        NodeKind::Extend(ExtendOp::SignExtend) => {
+            // Upper bits replicate the input's sign bit.  When the sign bit
+            // is statically known, the entire upper region is determined;
+            // otherwise we still pass the lower bits through.
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
+            let input_kind = ctx.output_kind(input);
+            let input_ty = input_kind.as_value_or_err()?;
+            let Some(input_mask) = u64_type_mask(input_ty) else {
+                return Ok(None);
+            };
+            let kb = known[input];
+            // Sign bit = highest bit of the input width.
+            let sign_bit = (input_mask >> 1) + 1;
+            let upper_mask = type_mask & !input_mask;
+            if kb.ones & sign_bit != 0 {
+                // Sign bit known 1 → upper bits all known 1.
+                Kb {
+                    ones: (kb.ones & input_mask) | upper_mask,
+                    zeros: kb.zeros & input_mask,
+                }
+            } else if kb.zeros & sign_bit != 0 {
+                // Sign bit known 0 → upper bits all known 0.
+                Kb {
+                    ones: kb.ones & input_mask,
+                    zeros: (kb.zeros & input_mask) | upper_mask,
+                }
+            } else {
+                // Sign bit unknown → keep only the lower bits' knowledge.
+                Kb {
+                    ones: kb.ones & input_mask,
+                    zeros: kb.zeros & input_mask,
+                }
+            }
+        }
+
         NodeKind::Popcount | NodeKind::Lzcount => {
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let input_kind = fg.graph.output_kind(input);
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
+            let input_kind = ctx.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
             let bits_needed = if max_val == 0 {
@@ -317,7 +421,7 @@ pub fn node_known_bits(
 /// shape that requires `node_inputs_exact` to read a fixed input
 /// arity.  In practice the only path to error is malformed IR;
 /// well-formed graphs always converge.
-pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, Kb>> {
+pub fn analyze(ctx: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `output_uses`.  `WorkSet` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
@@ -329,17 +433,17 @@ pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, 
     // surface a hard error on a zero-input zombie.  Reachability is
     // the validator's existing scope-of-correctness boundary
     // (Layer A in `ir::validate`), so it's the right scope here too.
-    let mut known: FxHashMap<NodeOutputId, Kb> = FxHashMap::default();
-    let mut work = WorkSet::seeded(function.preorder());
+    let mut known: KnownBitsMap = SecondaryMap::new();
+    let mut work = WorkSet::seeded(ir::walk::walk_graph(ctx.graph_ref(), ctx.entry()));
     while let Some(node_id) = work.pop() {
-        let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
+        let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
             continue;
         };
-        let merged = known.entry(out).or_default().merge(kb)?;
+        let merged = known[out].merge(kb)?;
         if !merged {
             continue;
         }
-        for (consumer, _idx) in function.graph.output_uses(out) {
+        for (consumer, _idx) in ctx.output_uses(out) {
             work.push(consumer);
         }
     }
@@ -356,18 +460,18 @@ pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, 
 /// information along data-dependency chains before deciding replacements.
 pub struct KnownBits;
 
-impl OptimizerOnBuilt for KnownBits {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+impl Optimizer for KnownBits {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         // Phase 1 — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).
-        let known = analyze(function)?;
+        let known = analyze(ctx.as_view())?;
 
         // Phase 2 — replace fully-determined outputs with constants.  Drive
         // via WorkSet so a rewritten node's consumers are re-checked in the
         // same call: a freshly-introduced IntConst can let a sibling whose
         // *other* operand was previously unknown become fully-determined.
-        let mut work = WorkSet::seeded(function.preorder());
+        let mut work = WorkSet::seeded(ctx.preorder());
         let mut result = OptimizationResult::NoChange;
         // Inline up to 4 outputs / 8 consumers per iteration — these
         // bounds cover the vast majority of IR nodes (most ops have
@@ -378,13 +482,13 @@ impl OptimizerOnBuilt for KnownBits {
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         while let Some(node_id) = work.pop() {
             // Already-constant nodes have nothing to rewrite.
-            if matches!(*function.graph.node_kind(node_id), NodeKind::IntConst(_)) {
+            if matches!(*ctx.node_kind(node_id), NodeKind::IntConst(_)) {
                 continue;
             }
             outputs.clear();
-            outputs.extend(function.graph.node_outputs(node_id));
+            outputs.extend(ctx.node_outputs(node_id));
             for &out in &outputs {
-                let Some(ty) = function.graph.output_kind(out).as_value() else {
+                let Some(ty) = ctx.output_kind(out).as_value() else {
                     continue;
                 };
                 if !ty.is_integer() {
@@ -394,21 +498,23 @@ impl OptimizerOnBuilt for KnownBits {
                 let Some(type_mask) = u64_type_mask(ty) else {
                     continue;
                 };
-                let Some(&kb) = known.get(&out) else { continue };
+                // SecondaryMap returns `Kb::default()` (zero-known) for
+                // unrecorded outputs — `all_known` then returns false,
+                // which short-circuits the same way the prior
+                // `Some(&kb) = known.get(&out) else { continue };` did.
+                let kb = known[out];
                 if !kb.all_known(type_mask) {
                     continue;
                 }
                 consumers.clear();
-                for (consumer, _) in function.graph.output_uses(out) {
+                for (consumer, _) in ctx.output_uses(out) {
                     consumers.push(consumer);
                 }
-                let new_out = function.graph.make_int_const(kb.ones, ty)?;
+                let new_out = ctx.make_int_const(kb.ones, ty)?;
                 // Absorb the rewritten node's fingerprint into the new const.
-                let new_node = function.graph.get_node_from_output(new_out);
-                function
-                    .graph
-                    .extend_asm_fingerprint_from(new_node, node_id);
-                if function.graph.replace_all_uses(out, new_out)? {
+                let new_node = ctx.get_node_from_output(new_out);
+                ctx.extend_asm_fingerprint_from(new_node, node_id);
+                if ctx.replace_all_uses(out, new_out)? {
                     result = OptimizationResult::Changed;
                     for &consumer in &consumers {
                         work.push(consumer);

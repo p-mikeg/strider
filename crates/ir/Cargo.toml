@@ -16,6 +16,8 @@ dot.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 ethnum.workspace = true
+hashbrown = { version = "0.16", features = ["raw-entry"] }
+rustc-hash = "2"
 
 [dev-dependencies]
 proptest = "1"

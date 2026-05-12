@@ -30,7 +30,7 @@ impl Pattern for VarPat {
         if ctx.require_value_output(target).is_none() {
             return false;
         }
-        let node = ctx.graph.graph.get_node_from_output(target);
+        let node = ctx.graph.get_node_from_output(target);
         b.bind_capture(
             self.capture,
             Binding {
@@ -77,7 +77,7 @@ impl Pattern for CapturePat {
             b.restore(mark);
             return false;
         }
-        let node = ctx.graph.graph.get_node_from_output(target);
+        let node = ctx.graph.get_node_from_output(target);
         let output = ctx.require_value_output(target).map(|_| target);
         if b.bind_capture(self.capture, Binding { node, output }) {
             true
@@ -88,7 +88,7 @@ impl Pattern for CapturePat {
     }
 
     fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
-        let outputs = ctx.graph.graph.node_outputs(node);
+        let outputs = ctx.graph.node_outputs(node);
         if !outputs.is_empty() {
             // Default behavior: iterate value outputs; bind both node + output.
             for out in outputs {

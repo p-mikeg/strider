@@ -1,4 +1,4 @@
-//! Computed-goto fixture tests for the tier-2 indirect-branch resolver.
+//! Computed-goto fixture tests for the IR-level indirect-branch resolver.
 //!
 //! `fixtures/cases/indirect_branch.c::indirect_branch_resolved` lowers
 //! the indirect goto to a load from a local stack array of label
@@ -11,21 +11,22 @@
 //!
 //! Resolving this lowering requires **cross-region stack-load
 //! forwarding** (`StackStoreDetect` + `StackLoadForward` joined
-//! across the function's region graph) — round 1 of the
-//! indirect-branch fixed-point design does not yet implement that
-//! layer.  Tier 1's mini-graph runs `ConstantFold` + `KnownBits` on
+//! across the function's region graph), routed through the
+//! IR-level resolver's stack-array classifier arm
+//! (`opt::indirect_branch_resolve::classify_stack_array`).  The
+//! cfg-time mini-graph resolver runs `ConstantFold` + `KnownBits` on
 //! a single region only and cannot prove the loaded target is one of
-//! the pushed label addresses.  Tier 2 in round 1 has the
-//! `LinkRegister` / `IntConst` / `Multiple-of-IntConsts` arms but
-//! no stack-array-of-labels arm.
+//! the pushed label addresses; the IR-level resolver gets visibility
+//! into cross-region flow + `StackLoadForward` results and resolves
+//! the dispatch into `ResolvedTargets::Multiple`.
 //!
-//! Consequence: every arch's lifted CFG carries an
-//! `UnresolvedIndirectBranch` terminator at the goto site for the arches
-//! whose lifter shape doesn't yet match the F3 stack-array arm.  Those
-//! arches keep `#[ignore]` reasons describing the specific gap; when the
-//! gap closes, the ignore can be lifted and the assertion ("no
-//! `UnresolvedIndirectBranch` terminator survives") will start holding
-//! without any test rewrite.
+//! Consequence: x86, x86_64, AArch64, ARM (LE/BE/Thumb), and MIPS-32
+//! pass end-to-end.  Seven arches keep `#[ignore]` for specific
+//! lifter-shape gaps documented on each test (AArch64-BE `Or(SP,K)` +
+//! `Truncate`-wrapped labels, MIPS64 PIC GOT-indirect, PPC32/64).
+//! When a gap closes, the ignore can be lifted and the assertion
+//! ("no `UnresolvedIndirectBranch` terminator survives") will start
+//! holding without any test rewrite.
 //!
 //! See:
 //!   - docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md
@@ -59,14 +60,14 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let sleigh_arch = arch.sleigh();
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
+    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
     let ana = strider::Strider::new(sleigh_arch, regs, arch.cc())
         .expect("Strider::new");
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, mem)
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
     let raw_addr = obj
         .symbol_by_name("indirect_branch_resolved")
@@ -84,27 +85,27 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let mut cfg_opts_b = cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
         .set_read_only_memory(rom_for_cfg);
-    if let Some(lr) = ana.calling_convention().link_register_vn {
+    if let Some(lr) = ana.calling_convention().link_register_vn() {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
-    let cfg = cfg::Builder::with_endianness(sleigh, addr, cfg_opts, sleigh_arch.endianness)
+    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for indirect_branch_resolved: {e:?}"));
 
-    // F3: the stack-array shape resolves only at TIER 2 (post-IR
+    // F3: the stack-array shape resolves only at IR-LEVEL (post-IR
     // optimisation, on the optimised graph).  The CFG already contains
     // `UnresolvedIndirectBranch` terminators; we lift to IR, run the
     // optimiser pipeline (with rom for `LoadReadOnly`), then call the
-    // tier-2 classifier directly on each unresolved anchor.  Asserting
+    // IR-level classifier directly on each unresolved anchor.  Asserting
     // that EVERY anchor classifies into `ResolvedTargets::Multiple`
-    // (or any non-`None` resolution) is the F3 contract — failing on
+    // (or any non-`None` resolution) is the stack-array contract — failing on
     // any anchor surfaces the gap.
     let mut graph = ana.analyze_cfg(&cfg)
         .unwrap_or_else(|e| panic!("analyze_cfg for indirect_branch_resolved on {}: {e:?}", arch.name()));
     let unresolved = graph.unresolved_branches.clone();
     if unresolved.is_empty() {
-        // Tier 1 already resolved this fixture (e.g. -O? collapse).
+        // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
         // The test's promise is "no UnresolvedIndirectBranch survives";
         // that promise holds vacuously.  Mirror common::analyze's
         // post-lift sanity by running the optimiser pipeline so any
@@ -126,8 +127,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     p.run(&mut graph.graph.graph, graph.graph.entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
-    let lr_vn = ana.calling_convention().link_register_vn;
-    let sp_vn = Some(ana.calling_convention().stack_ptr_vn);
+    let lr_vn = ana.calling_convention().link_register_vn();
+    let sp_vn = Some(ana.calling_convention().stack_ptr_vn());
     let rom_for_classify: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
     );
@@ -152,7 +153,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             }
         }
         // If no placeholder survived, the optimizer collapsed the
-        // dispatch entirely (e.g. tier 1 + ConstantFold proved a
+        // dispatch entirely (e.g. cfg-time resolver + ConstantFold proved a
         // single target and the placeholder became an ABI Return).
         // The test's promise holds vacuously.
         if live_anchors.is_empty() {
@@ -169,7 +170,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
                 lr_vn,
                 Some(rom_for_classify.as_ref()),
                 sp_vn,
-            );
+            )
+            .expect("classify_anchor_with_rom_and_sp ok in test");
             if resolved.is_some() {
                 any_resolved = true;
                 break;
@@ -179,7 +181,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             panic!(
                 "indirect_branch_resolved on {} has unresolved indirect \
                  branch at {anchor_addr:?} after optimisation — neither \
-                 tier-1 nor tier-2 (incl. F3 stack-array arm) classified \
+                 cfg-time nor IR-level (incl. stack-array classifier arm) classified \
                  the dispatch",
                 arch.name(),
             );
@@ -187,12 +189,12 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     }
 }
 
-// One #[test] per architecture.  F3 (stack-array tier-2 classifier
+// One #[test] per architecture.  stack-array IR-level classifier (stack-array
 // arm) covers x86 / x64 / aarch64 / arm / arm-be / arm-thumb /
 // mips32le / mips32be — those tests pass without `#[ignore]`.  Seven
 // archs remain ignored (aarch64be / mips64 / ppc32 / ppc64 — both
 // endiannesses each), each with a focused reason naming the lifter
-// quirk that keeps the F3 stack-array shape match from firing.
+// quirk that keeps the stack-array classifier shape match from firing.
 // Closing the remaining seven is incremental — the assertion body is
 // identical across arches and does not need a rewrite when each
 // arch's specific shape gap is closed.

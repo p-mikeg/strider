@@ -62,17 +62,23 @@ pub(super) fn check_layer_c_control_state(
         if !matches!(graph.node_kind(node), NodeKind::ControlState) {
             continue;
         }
+        // gate the entire ControlState check on
+        // reachability, not just the empty-input branch.  A non-reachable
+        // ControlState zombie with stale non-Control inputs (left by some
+        // future pass that surgery-edits without scrubbing) would
+        // otherwise produce a false-positive
+        // `ControlStateNonControlPredecessor` error and mask real
+        // problems elsewhere.  The validator's stated tolerance for
+        // detached zombies (see `validate`'s doc) requires this gate to
+        // apply to both branches.
+        if !reachable.contains(node) {
+            continue;
+        }
         let inputs = graph.node_inputs(node);
         if inputs.is_empty() {
-            // Zero-predecessor ControlStates are *expected* for zombies left
-            // behind by `RedundantPhis::detach_unreachable_nodes`; they live
-            // in the arena but are not reachable from the entry. The
-            // invariant only applies to reachable ControlState nodes.
-            if reachable.contains(node) {
-                errs.push(ValidationError::EmptyControlStatePredecessors {
-                    control_state: node,
-                });
-            }
+            errs.push(ValidationError::EmptyControlStatePredecessors {
+                control_state: node,
+            });
             continue;
         }
         for (idx, target) in inputs.into_iter().enumerate() {
@@ -99,8 +105,21 @@ pub(super) fn check_layer_c_control_state(
 /// per-predecessor information lives in the side-table
 /// `Graph::stack_phi_offsets`, not in its inputs, so the per-predecessor
 /// arity rule does not apply to it.
-pub(super) fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>) {
+pub(super) fn check_layer_c_phis(
+    graph: &Graph,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
     for node in graph.nodes.keys() {
+        // Optimisation passes (`RedundantPhis`, `DeadBranchElimination`)
+        // detach phi inputs and leave the zero-input zombie node in the
+        // arena rather than physically removing it.  Reaching one here
+        // would falsely trip `PhiTokenNotFromControlState` (input[0] is
+        // gone).  Layer A is already reachability-scoped for the same
+        // reason; mirror that.
+        if !reachable.contains(node) {
+            continue;
+        }
         let is_phi = matches!(
             graph.node_kind(node),
             NodeKind::VarPhi(_)
@@ -112,7 +131,8 @@ pub(super) fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>)
             continue;
         }
 
-        let inputs: Vec<NodeOutputId> = graph.node_inputs(node).into_iter().collect();
+        let inputs: smallvec::SmallVec<[NodeOutputId; 4]> =
+            graph.node_inputs(node).into_iter().collect();
         if inputs.is_empty() {
             continue; // Layer A fires a count or kind mismatch for empty-input phis; skip here.
         }
@@ -205,14 +225,24 @@ pub(super) fn check_layer_c_asm_fingerprints(
 /// [`opt::FunctionArgDetect`] pass emits one canonical node per argument
 /// index; having two would mean patterns keyed by `matcher.function_arg(i)`
 /// become ambiguous.
+///
+/// Reachability-scoped — every other Layer-C per-node check is
+/// reachability-gated, and `RedundantPhis` may leave a stale
+/// `FunctionArg` zombie in the arena while a new canonical one is live.
+/// Without scoping, the validator would flag a structurally valid graph
+/// with `DuplicateFunctionArg`.
 pub(super) fn check_layer_c_function_arg_uniqueness(
     graph: &Graph,
+    reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
     use std::collections::HashMap;
 
     let mut by_index: HashMap<u32, NodeId> = HashMap::new();
     for node in graph.nodes.keys() {
+        if !reachable.contains(node) {
+            continue;
+        }
         let index = match *graph.node_kind(node) {
             NodeKind::FunctionArg { index, .. } => index,
             _ => continue,
@@ -225,6 +255,73 @@ pub(super) fn check_layer_c_function_arg_uniqueness(
             });
         } else {
             by_index.insert(index, node);
+        }
+    }
+}
+
+/// Layer C: verify every reachable `IntConstWide(id)` node references
+/// a live entry in `Graph::wide_consts` and that the stored value's
+/// byte size matches the node's declared output type.
+///
+/// Emits [`ValidationError::DanglingWideConstId`] when the id is not
+/// present in the side-table (caller bypassed `intern_wide_const`),
+/// and [`ValidationError::WideConstWidthMismatch`] when the storage
+/// width contradicts the output type (e.g. U256 storage with U512
+/// declared output).
+pub(super) fn check_layer_c_wide_consts(
+    graph: &Graph,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    use crate::node::NodeOutputType;
+    for node in graph.nodes.keys() {
+        if !reachable.contains(node) {
+            continue;
+        }
+        let NodeKind::IntConstWide(id) = graph.node_kind(node) else {
+            continue;
+        };
+        if graph.wide_consts.get(*id).is_none() {
+            errs.push(ValidationError::DanglingWideConstId {
+                node,
+                id: *id,
+            });
+            continue;
+        }
+        let actual = graph.wide_const(*id).byte_size();
+        let outputs = graph.node_outputs(node);
+        let Some(out) = outputs.into_iter().next() else {
+            continue;
+        };
+        let NodeOutputKind::OutputType(ty) = graph.output_kind(out) else {
+            continue;
+        };
+        let expected = match ty {
+            NodeOutputType::U256 => 32,
+            NodeOutputType::U512 => 64,
+            _ => {
+                // Output type isn't U256/U512 — this is a Layer-A signature
+                // mismatch (IntConstWide's signature is `outputs: [INT_VAL]`,
+                // any int passes Layer A but only U256/U512 are semantically
+                // valid).  Surface as a width mismatch for the rare case
+                // where a synthetic graph produces, say, IntConstWide on a
+                // U64 output.
+                errs.push(ValidationError::WideConstWidthMismatch {
+                    node,
+                    output_type: ty,
+                    expected_bytes: 0,
+                    actual_bytes: actual,
+                });
+                continue;
+            }
+        };
+        if expected != actual {
+            errs.push(ValidationError::WideConstWidthMismatch {
+                node,
+                output_type: ty,
+                expected_bytes: expected,
+                actual_bytes: actual,
+            });
         }
     }
 }

@@ -14,7 +14,7 @@
 
 use ir::node::{NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, FunctionBuilder};
-use opt::{Optimizer, RedundantPhis};
+use opt::{OptimizerRaw, RedundantPhis};
 use pattern::{CastMask, Matcher, Pat, Capture, add, any_int_const, initial_var_for};
 
 /// Collapses single-predecessor `VarPhi` / `MemPhi` / `ControlState`
@@ -24,7 +24,7 @@ use pattern::{CastMask, Matcher, Pat, Capture, add, any_int_const, initial_var_f
 /// which sits between the matcher's input descent and the InitialVar
 /// the patterns are looking for.
 fn collapse_phis(g: &mut BuiltFunctionGraph) {
-    RedundantPhis.optimize(&mut g.graph, g.entry).expect("RedundantPhis");
+    RedundantPhis.optimize_raw(&mut g.graph, g.entry).expect("RedundantPhis");
 }
 
 // ── Fixture builder ─────────────────────────────────────────────────────────

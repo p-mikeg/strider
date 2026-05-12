@@ -1,4 +1,4 @@
-//! Integration tests for the jump-table classifier (R4).
+//! Integration tests for the jump-table classifier.
 //!
 //! Each test builds a synthetic `BuiltFunctionGraph` via the fixture
 //! helpers in `common::indirect_resolve_helpers`, runs the stable optimiser
@@ -13,10 +13,11 @@
 //!     reproduces the shape directly.
 //!   * The classifier under test is graph-shape-driven, not
 //!     CFG-driven; every byte path eventually goes through
-//!     `analyze_cfg_with_unresolved` which builds the same IR shapes.
-//!   * Real-binary integration tests for jump tables land in R5;
-//!     R4 just proves the classifier shape + bound + read mechanics
-//!     work in isolation.
+//!     `analyze_cfg` (which returns an `AnalyzeOutcome` carrying the
+//!     `unresolved_branches` list) and builds the same IR shapes.
+//!   * This file proves the classifier shape + bound + read mechanics
+//!     work in isolation; real-binary integration tests for jump
+//!     tables live in `indirect_branch.rs` and `jump_table_lifting.rs`.
 //!
 //! The rom is a toy `TableRom` that returns successive 4-byte values
 //! at fixed offsets; it stands in for the ELF's `.rodata` view that
@@ -38,7 +39,7 @@ use common::indirect_resolve_helpers::{
 /// `base + i * stride`, capped at `entries.len()`.  Reads outside
 /// the configured table range return None.
 ///
-/// Used by the R4 integration tests to provide the rom that the
+/// Used by the integration tests to provide the rom that the
 /// classifier reads jump-table entries from.
 struct TableRom {
     base: u64,
@@ -92,7 +93,7 @@ impl opt::ReadOnlyMemory for PartialRom {
     }
 }
 
-/// Spec catalogue test #13 (R4 headline).
+/// Spec catalogue test #13 (headline).
 ///
 /// `idx & 0x7; load[base + idx*stride]; jmp *target` →
 /// `Multiple([table[0], …, table[7]])`.
@@ -113,7 +114,7 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
         size: 4,
     };
     let (graph, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom));
+    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(
@@ -142,7 +143,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
         size: 4,
     };
     let (graph, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom));
+    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, entries);
@@ -167,7 +168,7 @@ fn jump_table_unbounded_idx_returns_none() {
         size: 4,
     };
     let (graph, anchor) = build_jump_table_unbounded_scenario(base, stride);
-    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom));
+    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
         "unbounded idx must NOT classify to Multiple — the orchestrator \
@@ -185,7 +186,7 @@ fn jump_table_no_rom_returns_none() {
     let stride = 4;
     let idx_mask = 0x3u64;
     let (graph, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(&graph, anchor, None, /* rom */ None);
+    let result = classify_anchor_with_rom(&graph, anchor, None, /* rom */ None).expect("classify_anchor_with_rom");
     assert_eq!(result, None);
 }
 
@@ -209,7 +210,7 @@ fn jump_table_partial_rom_returns_none() {
         cutoff: 4,
     };
     let (graph, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom));
+    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
         "partial rom read must fail closed (None), NOT produce a partial \
@@ -249,7 +250,7 @@ fn jump_table_zero_bound_returns_none() {
         size: 4,
     };
     let (graph, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom));
+    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
         "bound = 0 must return None — Multiple([]) would wrongly imply \
@@ -275,7 +276,7 @@ fn non_jump_table_load_shape_falls_through() {
         entries: vec![0x100, 0x200],
         size: 4,
     };
-    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom));
+    let result = classify_anchor_with_rom(&graph, anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
         "non-jump-table Load shape must fall through to None, NOT \

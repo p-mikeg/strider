@@ -14,7 +14,7 @@ impl Outputs<'_> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.0.is_empty()
     }
 
     pub fn get(&self, index: usize) -> Option<&NodeOutputId> {
@@ -34,6 +34,16 @@ impl<'a> IntoIterator for Outputs<'a> {
 impl Index<usize> for Outputs<'_> {
     type Output = NodeOutputId;
 
+    /// Index into the output slot list by position.
+    ///
+    /// # Panics
+    ///
+    /// Panics on out-of-bounds.  For fallible access prefer `iter()`,
+    /// `node_outputs_exact::<N>(node)`, or
+    /// `Graph::node_outputs(node).into_iter().nth(idx)`.  The validator
+    /// (Layer A in `crate::validate`) pins the per-node-kind output
+    /// arity, so `outputs[N]` for a known kind+slot is a documented
+    /// invariant; arbitrary indices on opaque-arity nodes are not.
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
     }
@@ -68,7 +78,7 @@ impl Inputs<'_> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.use_list.is_empty()
     }
 
     pub fn get(&self, index: usize) -> Option<&NodeOutputId> {
@@ -91,6 +101,15 @@ impl<'a> IntoIterator for Inputs<'a> {
 impl Index<usize> for Inputs<'_> {
     type Output = NodeOutputId;
 
+    /// Index into the input slot list by position.
+    ///
+    /// # Panics
+    ///
+    /// Panics on out-of-bounds.  Prefer the fallible `get(idx)` or
+    /// `node_inputs_exact::<N>(node)?` for opaque-arity nodes; for
+    /// validator-pinned slots (e.g. `Call`'s slot 0 = ctrl, 1 = mem)
+    /// the index is a documented invariant of the per-kind expected
+    /// signature in `crate::node_signature`.
     fn index(&self, index: usize) -> &Self::Output {
         &self.graph.inputs[self.use_list[index]].output_id
     }

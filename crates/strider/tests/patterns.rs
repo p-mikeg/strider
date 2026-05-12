@@ -3,7 +3,7 @@
 //! Each test issues a `pattern::Matcher` query mirroring a realistic
 //! user-facing query (e.g. "find every (a*b)+c expression"; "find every
 //! recursive call site").  These tests are the canonical contract that
-//! the pattern crate continues to compose with the analyzer's IR shape.
+//! the pattern crate continues to compose with the strider lifter's IR shape.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
@@ -12,7 +12,7 @@ use common::*;
 use pattern::{Matcher, Pat, add, mul, call, any};
 
 // mul_then_add covers `add(mul(_,_), _)` across all archs via:
-//   * Analyzer side: Truncate-narrowing rules in ConstantFold (mips32
+//   * Strider lifter side: Truncate-narrowing rules in ConstantFold (mips32
 //     hot path), drop-high-half-in-Or-Trunc, drop-low-mask-under-Trunc,
 //     Truncate(Extend(x)) round-trip.
 //   * Matcher side: `Matcher::ignore_casts()` lets the matcher walk

@@ -15,7 +15,8 @@ fn ud2_region_finishes_as_noreturn() {
     //   pcode[1]: BranchIndirect
     let bytes = vec![0x0fu8, 0x0b];
     let entry = 0x1000u64;
-    let cfg = Builder::new(
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
         make_sleigh_with_bytes(bytes, entry),
         entry,
         OptionsBuilder::new().build(),
@@ -23,21 +24,20 @@ fn ud2_region_finishes_as_noreturn() {
     .build()
     .expect("cfg");
 
-    let any_noreturn = cfg
-        .graph
-        .node_weights()
+    let any_noreturn = cfg.graph()
+                .node_weights()
         .any(|r| matches!(r.terminator, RegionTerminator::NoReturn));
     assert!(
         any_noreturn,
         "expected at least one NoReturn region; got terminators: {:?}",
-        cfg.graph
+        cfg.graph()
             .node_weights()
             .map(|r| &r.terminator)
             .collect::<Vec<_>>(),
     );
     // The trailing BranchIndirect must NOT have been processed —
     // there should be no UnresolvedIndirectBranch terminator.
-    let any_unresolved = cfg.graph.node_weights().any(|r| {
+    let any_unresolved = cfg.graph().node_weights().any(|r| {
         matches!(
             r.terminator,
             RegionTerminator::UnresolvedIndirectBranch { .. }

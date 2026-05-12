@@ -36,9 +36,9 @@ pub type BuildValueFn<T> = Arc<dyn Fn(&BuildCtx<'_>) -> Result<T> + Send + Sync>
 /// output type (always `Bool`).
 #[must_use]
 pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
-    let inputs = ctx.graph.graph.node_inputs(ctx.root);
+    let inputs = ctx.graph.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;
-    match ctx.graph.graph.output_kind(inp) {
+    match ctx.graph.output_kind(inp) {
         NodeOutputKind::OutputType(t) => Some(t),
         _ => None,
     }

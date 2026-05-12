@@ -3,17 +3,16 @@
 //! The implementation is split into three submodules along the contracts
 //! that the validator's three layers each protect:
 //!
-//! - [`store`] — node arena, dedup cache, side-tables. Layer A's input.
-//! - [`uses`]  — bidirectional use-list bookkeeping. Layer B's contract.
-//! - [`access`] — read-only typed accessors. Layer A's lookup surface.
+//! - `store` — node arena, dedup cache, side-tables. Layer A's input.
+//! - `uses`  — bidirectional use-list bookkeeping. Layer B's contract.
+//! - `access` — read-only typed accessors. Layer A's lookup surface.
 //!
 //! All public API names live in this module via the original paths:
 //! `ir::graph::Graph`, `ir::graph::Graph::create_node`, etc., regardless of
 //! which submodule's `impl Graph { ... }` block defines each method.
 
-use std::collections::HashMap;
-
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
+use hashbrown::HashMap;
 
 use crate::node::{
     Node, NodeId, NodeInput, NodeInputId, NodeOutput, NodeOutputId, NodeOutputKind,
@@ -66,9 +65,9 @@ pub struct Graph {
     /// shape for cacheable kinds doesn't apply here — the choice is purely to
     /// keep the kind enum small and `Copy`.
     ///
-    /// Populated at IR construction time by the analyzer.  Not all `CallOther`
+    /// Populated at IR construction time by the strider lifter.  Not all `CallOther`
     /// nodes are guaranteed to have an entry — e.g. nodes synthesised by tests
-    /// that don't go through the analyzer.  Use [`Graph::call_other_name`].
+    /// that don't go through the strider lifter.  Use [`Graph::call_other_name`].
     ///
     /// Stored as a `SecondaryMap<NodeId, Option<String>>`: O(1) array index
     /// without hashing.  The `Option` distinguishes "name not set" from
@@ -92,10 +91,13 @@ pub struct Graph {
     /// Stored as `SecondaryMap<NodeId, Vec<u64>>` for O(1) array indexing
     /// and small-set merge — the typical fingerprint is 1–4 entries.
     /// The default value is the empty `Vec`, which represents "no
-    /// contributors recorded".  Region nodes (`ControlState`, phis,
-    /// `Entry`, `InitialMemory`, `InitialVar`, `FunctionArg`, `IfCase`)
-    /// legitimately stay empty; the validator's opt-in fingerprint check
-    /// exempts those kinds and flags any other reachable empty entry.
+    /// contributors recorded".  Structural nodes — `Entry`,
+    /// `InitialMemory`, `InitialVar`, `FunctionArg`, `ControlState`,
+    /// `MemPhi`, `VarPhi`, `ValuePhi`, `StackStorePhi` — legitimately
+    /// stay empty; the validator's opt-in fingerprint check
+    /// (`asm_fingerprint_exempt` in `validate/layer_c.rs`) exempts those
+    /// kinds and flags any other reachable empty entry.  (`IfCase` is
+    /// not a `NodeKind` — it's a CFG edge label only.)
     pub(crate) asm_fingerprints: SecondaryMap<NodeId, Vec<u64>>,
     /// Per-Call clobber-list override.
     ///
@@ -115,6 +117,24 @@ pub struct Graph {
     /// per-NodeId and benefits from the `SecondaryMap`'s O(1) array
     /// lookup with no hashing.
     pub(crate) call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>,
+    /// Wide-integer constant values (U256, U512) referenced by
+    /// [`crate::node::NodeKind::IntConstWide`].
+    ///
+    /// Wide values don't fit in `IntConst`'s `u128` payload; the IR
+    /// stores them off-side here and the node carries a
+    /// [`crate::wide_const::WideConstId`] index instead.  Interning
+    /// (via [`Self::intern_wide_const`]) dedups by value so two
+    /// `IntConstWide(id)` nodes referencing the same id are
+    /// structurally equal under [`Self::create_node`]'s dedup cache.
+    pub(crate) wide_consts:
+        PrimaryMap<crate::wide_const::WideConstId, crate::wide_const::WideConstStorage>,
+    /// Reverse-dedup index for [`Self::wide_consts`]: value → id.
+    /// Owned by [`Self::intern_wide_const`]; never read directly by
+    /// other code.
+    pub(crate) wide_const_dedup: rustc_hash::FxHashMap<
+        crate::wide_const::WideConstStorage,
+        crate::wide_const::WideConstId,
+    >,
 }
 
 impl Default for Graph {
@@ -138,7 +158,37 @@ impl Graph {
             call_other_names: SecondaryMap::new(),
             asm_fingerprints: SecondaryMap::new(),
             call_clobbered_overrides: SecondaryMap::new(),
+            wide_consts: PrimaryMap::new(),
+            wide_const_dedup: rustc_hash::FxHashMap::default(),
         }
+    }
+
+    /// Interns `value` and returns its [`crate::wide_const::WideConstId`].
+    /// Subsequent calls with an equal value return the same id — the
+    /// dedup invariant the [`Self::create_node`] cache relies on so
+    /// two `IntConstWide(id)` nodes referencing the same logical value
+    /// share a single `NodeId`.
+    pub fn intern_wide_const(
+        &mut self,
+        value: crate::wide_const::WideConstStorage,
+    ) -> crate::wide_const::WideConstId {
+        if let Some(&id) = self.wide_const_dedup.get(&value) {
+            return id;
+        }
+        let id = self.wide_consts.push(value.clone());
+        self.wide_const_dedup.insert(value, id);
+        id
+    }
+
+    /// Looks up a wide-const value by id.  The id must have been
+    /// produced by [`Self::intern_wide_const`] on this graph; ids
+    /// from other graphs are not portable.
+    #[must_use]
+    pub fn wide_const(
+        &self,
+        id: crate::wide_const::WideConstId,
+    ) -> &crate::wide_const::WideConstStorage {
+        &self.wide_consts[id]
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,

@@ -5,8 +5,10 @@
     clippy::unreachable
 )]
 
+mod common;
+
+use common::Graph;
 use expect_test::expect;
-use graphmock::Graph;
 use graphwalk::{WalkPhase, entity_postorder};
 use itertools::Itertools;
 use std::fmt::Write;
@@ -15,7 +17,7 @@ macro_rules! test_postorder {
     ($name:ident, $graph:literal, $expected_full:expr, $expected_rpo:expr) => {
         #[test]
         fn $name() {
-            let g = graphmock::graph($graph);
+            let g = common::graph($graph);
             let (full, rpo) = collect_postorder(&g);
             $expected_full.assert_eq(&full);
             $expected_rpo.assert_eq(&rpo);
@@ -149,7 +151,7 @@ test_postorder! {
 
 #[test]
 fn empty_roots_yields_nothing() {
-    let g = graphmock::graph("a -> b");
+    let g = common::graph("a -> b");
     let mut po = entity_postorder(&g, core::iter::empty());
     assert!(po.next().is_none());
     assert!(po.next_event().is_none());
@@ -157,7 +159,7 @@ fn empty_roots_yields_nothing() {
 
 #[test]
 fn self_loop_emits_pre_and_post_once() {
-    let g = graphmock::graph("a -> a");
+    let g = common::graph("a -> a");
     let mut po = entity_postorder(&g, [g.entry()]);
     let events: Vec<_> = core::iter::from_fn(|| po.next_event()).collect();
     assert_eq!(events.len(), 2);
@@ -171,7 +173,7 @@ fn multi_root_preserves_root_order_in_rpo() {
     // Doc-comment in PostOrderContext::reset promises: if `u` precedes `v` in
     // `roots` and there's no path from v to u, then `u` precedes `v` in any RPO.
     // Build two disjoint chains (a -> b, x -> y) and pass roots in [a, x] order.
-    let g = graphmock::graph(
+    let g = common::graph(
         "a -> b
          x -> y",
     );
@@ -193,7 +195,7 @@ fn nop_tracker_on_a_tree() {
     use graphwalk::{PostOrder, NopTracker};
 
     // Tree (no cycles, no joins): a -> {b, c}; b -> d.
-    let g = graphmock::graph(
+    let g = common::graph(
         "a -> b, c
          b -> d",
     );
@@ -214,7 +216,7 @@ fn duplicate_root_visited_once() {
     // PostOrderContext::next_event drops a second Pre for an already-visited
     // node.  Passing the same root twice must yield exactly one (Pre, Post)
     // pair, not two — this is what makes idempotent root lists safe.
-    let g = graphmock::graph("a -> b");
+    let g = common::graph("a -> b");
     let a = g.node("a");
     let mut po = entity_postorder(&g, [a, a]);
     let events: Vec<_> = core::iter::from_fn(|| po.next_event()).collect();

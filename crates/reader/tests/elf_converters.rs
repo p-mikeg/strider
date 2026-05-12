@@ -274,7 +274,7 @@ fn elf_exec_segments_include_pf_x_and_exclude_others() {
     assert_eq!(regions[0].start_addr(), 0x1000);
 }
 
-// ── Task 1: a FILTER-REJECTED malformed section is silent, not an error ──
+// ── A FILTER-REJECTED malformed section is silent, not an error ─────────────
 
 /// Pinned contract: when the filter rejects a section, the converter must
 /// NOT call `section.data()` on it — so a malformed rejected section

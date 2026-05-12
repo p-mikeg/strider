@@ -80,8 +80,11 @@
 //! Binary operations that are mathematically commutative (`add`, `mul`, `and`,
 //! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`, `float_add`, `float_mul`)
 //! automatically try both operand orderings.  Symmetric integer comparisons
-//! (`int_eq`, `int_carry`, `int_scarry`) and float comparisons (`float_eq`,
-//! `float_ne`) likewise retry with swapped operands.  Variant-agnostic
+//! (`int_eq`, `int_carry`, `int_scarry`) and `float_eq` likewise retry with
+//! swapped operands.  `float_ne` is **not** primitive: the lifter lowers
+//! `FLOAT_NOTEQUAL(a, b)` to `BoolNeg(FloatEqual(a, b))`, and the inner
+//! `FloatEqual` is what's auto-commutative — `float_ne` inherits the
+//! commutativity through that lowering.  Variant-agnostic
 //! constructors (`int_binary_any`, `bool_binary_any`, `float_binary_any`,
 //! `int_cmp_any`, `float_cmp_any`) inspect the matched op and apply the
 //! same rule per-match.  Call `.ordered()` on the returned builder to opt
@@ -142,7 +145,7 @@ mod pat;
 mod rewrite;
 mod var;
 
-pub use rewrite::{BoxedRule, apply_rules_in_order, boxed_rule, rewrite_rule};
+pub use rewrite::{BoxedRule, RewriteCtx, RewriteCtxView, apply_rules_in_order, boxed_rule, rewrite_rule};
 pub use pat::traits::BuildCtx;
 pub use pat::ctor::consts::first_value_input_type;
 pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};
@@ -162,8 +165,8 @@ pub use var::Capture;
 #[rustfmt::skip]
 pub use pat::{
     BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat,
-    IfPat, IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat,
-    StackStorePhiPat, StorePat,
+    IfPat, IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StackStorePat,
+    StackStorePhiPat, StorePat, ValuePhiPat,
 };
 
 // ── Wildcards, captures, predicates ──────────────────────────────────────────
@@ -211,8 +214,9 @@ pub use pat::{
 
 #[rustfmt::skip]
 pub use pat::{
-    any_bool_const, any_float_const, any_int_const,
-    bool_const, float_const, int_const, int_const_any_of, signed_int_const,
+    any_bool_const, any_float_const, any_int_const, any_wide_int_const,
+    bool_const, float_const, int_const, int_const_any_of, int_const_wide,
+    signed_int_const,
 };
 
 // ── Memory, phi, function-arg ────────────────────────────────────────────────
@@ -220,7 +224,7 @@ pub use pat::{
 #[rustfmt::skip]
 pub use pat::{
     function_arg, function_arg_any, function_arg_reg, function_arg_stack,
-    load, phi, phi_for, stack_store, stack_store_phi, store,
+    load, mem_phi, phi, phi_for, stack_store, stack_store_phi, store, value_phi,
 };
 
 // ── Control flow & entry values ──────────────────────────────────────────────

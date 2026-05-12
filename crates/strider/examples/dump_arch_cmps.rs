@@ -322,7 +322,7 @@ fn dump_arch(arch_label: &str, arch: SleighArch, samples: Vec<Sample>) -> anyhow
         buf.extend_from_slice(&s.bytes);
     }
     let reader = VecMemReader::new(buf, BASE);
-    let mut sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)?;
+    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)?;
     let regs = sleigh.regs()?;
 
     for (s, &addr) in samples.iter().zip(starts.iter()) {

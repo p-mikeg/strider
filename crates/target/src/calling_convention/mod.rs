@@ -78,68 +78,284 @@ pub struct CallingConvention {
     /// Resolved into [`BuiltCallingConvention::syscall_number_vn`] by
     /// [`Self::build`].  Set on the `*_linux_syscall` presets only.
     syscall_number_reg_name: Option<&'static str>,
+    /// `true` if calls under this convention preserve **all** observable
+    /// state, including memory.  When set, [`build_call_with_cc`](
+    /// `ir::FunctionBuilder::build_call_with_cc`) skips emitting a Memory
+    /// output on the resulting Call node and does not advance the region's
+    /// memory chain — so passes like `LoadReadOnly` and `StackLoadForward`
+    /// can forward loads across the call.
+    ///
+    /// `false` for every standard ABI; `true` only on
+    /// [`Self::x86_64_all_preserving`] and analogous "transparent hook"
+    /// presets (e.g. Linux-kernel `__fentry__` / `mcount` callbacks that
+    /// preserve all caller state).
+    no_memory_clobber: bool,
 }
 
 /// A calling convention whose register names have been resolved to concrete
 /// [`rsleigh::Vn`] varnodes.
 ///
-/// Produced by [`CallingConvention::build`].  The field semantics mirror
-/// [`CallingConvention`]; see that type's field docs for details.
+/// Produced by [`CallingConvention::build`] (canonical path) or
+/// [`Self::try_from_parts`] (test/override construction).  Fields are
+/// `pub(crate)`: callers read them through the typed accessors below
+/// rather than touching the storage directly.  This keeps the type
+/// immutable post-construction (no `.callee_saved_regs.push(x)` after
+/// `build` returned) and gives the accessor return types — `&[Vn]` for
+/// slices, `Vn` / `i64` / `bool` for `Copy` scalars — a single source
+/// of truth as the storage shape evolves.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BuiltCallingConvention {
-    /// Varnodes for the ABI's argument-passing registers, in positional order.
+    pub(crate) arg_passing_regs: Vec<rsleigh::Vn>,
+    pub(crate) callee_saved_regs: Vec<rsleigh::Vn>,
+    pub(crate) ret_val_regs: Vec<rsleigh::Vn>,
+    pub(crate) ret_val_regs_float: Vec<rsleigh::Vn>,
+    pub(crate) stack_ptr_vn: rsleigh::Vn,
+    pub(crate) stack_arg_offsets: Vec<i64>,
+    pub(crate) ret_stack_pop: i64,
+    pub(crate) link_register_vn: Option<rsleigh::Vn>,
+    pub(crate) syscall_number_vn: Option<rsleigh::Vn>,
+    pub(crate) no_memory_clobber: bool,
+}
+
+/// Owned-field bag for [`BuiltCallingConvention::try_from_parts`].  Used by
+/// callers (typically tests building one-off override CCs) that need to
+/// construct a `BuiltCallingConvention` without going through
+/// [`CallingConvention::build`].  Field names mirror the
+/// `BuiltCallingConvention`'s storage one-to-one; the field-by-field
+/// docs live on the accessors of [`BuiltCallingConvention`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BuiltCallingConventionParts {
+    /// Argument-passing register varnodes, in positional order.
     pub arg_passing_regs: Vec<rsleigh::Vn>,
-    /// Varnodes the callee must preserve across the call.  Excludes the
-    /// stack pointer; SP's callee-side preservation is expressed through
-    /// [`Self::ret_stack_pop`] instead.
+    /// Callee-saved register varnodes (excludes SP).
     pub callee_saved_regs: Vec<rsleigh::Vn>,
-    /// Varnodes used to return a value to the caller, in positional order.
+    /// Integer return-value register varnodes, in positional order.
     pub ret_val_regs: Vec<rsleigh::Vn>,
-    /// Varnodes used to return a *float* value to the caller, in positional
-    /// order (e.g. `[q0, q1]` on aarch64, `[XMM0, XMM1]` on x86_64).  These
-    /// have different widths from [`Self::ret_val_regs`] and are tracked
-    /// separately so the analyzer can include both in `Return`'s input list
-    /// without polluting integer-only patterns.
+    /// Float return-value register varnodes, in positional order.
     pub ret_val_regs_float: Vec<rsleigh::Vn>,
-    /// The hardware stack-pointer varnode (e.g. `RSP` on x86-64, `sp` on
-    /// AArch64).  Deliberately absent from all three resolved register lists
-    /// ([`Self::arg_passing_regs`], [`Self::callee_saved_regs`],
-    /// [`Self::ret_val_regs`]) — SP's cross-call behaviour is expressed
-    /// through [`Self::ret_stack_pop`] instead.  This invariant is pinned by
-    /// the `presets_stack_pointer_and_arg_offsets` unit test.
+    /// Hardware stack-pointer varnode.
     pub stack_ptr_vn: rsleigh::Vn,
-    /// Byte offsets from the call-time stack pointer for each positional
-    /// stack argument.  Entry `i` is the offset for the `i`-th stack arg
-    /// (after register arguments are exhausted).
+    /// Per-positional-arg call-time stack offsets.
     pub stack_arg_offsets: Vec<i64>,
-    /// Net byte change the callee's `ret` inflicts on the caller's stack
-    /// pointer.  On stack-push ISAs (x86, x86_64) `ret` pops the return
-    /// address, so this equals the pointer size (4 / 8).  On link-register
-    /// ISAs (ARM, AArch64, MIPS, PowerPC) the call does not touch SP, so
-    /// this is 0.
+    /// Net SP delta the callee's `ret` inflicts (0 on link-register ISAs).
     pub ret_stack_pop: i64,
-    /// The varnode that holds the return address across a call on
-    /// link-register ISAs (ARM, AArch64, MIPS, PowerPC), or `None` on
-    /// stack-push ISAs (x86, x86_64) where the return address lives on
-    /// the stack.  Resolved from
-    /// [`CallingConvention::link_register_reg_name`] by
-    /// [`CallingConvention::build`].  Consumed by the indirect-branch
-    /// resolver to classify `BranchIndirect` whose target is the
-    /// function-entry value of this varnode as a `Return`.
+    /// Link-register varnode on link-register ISAs, `None` on stack-push ISAs.
     pub link_register_vn: Option<rsleigh::Vn>,
-    /// The varnode that holds the syscall number on entry to a kernel
-    /// from a user-mode `syscall` / `svc` / `int 0x80` instruction, or
-    /// `None` on userland and kernel-internal CCs.  Resolved from
-    /// [`CallingConvention::syscall_number_reg_name`] by
-    /// [`CallingConvention::build`].  Consumed by future syscall-aware
-    /// analyses (e.g. a `SyscallNumberDetect` pass parallel to
-    /// `FunctionArgDetect`); `None` on the userland presets is the
-    /// "no syscall semantics" sentinel and is checked by the
-    /// `*_linux_syscall` preset tests.
+    /// Syscall-number register varnode for `*_linux_syscall` CCs.
     pub syscall_number_vn: Option<rsleigh::Vn>,
+    /// `true` when calls under this CC preserve memory (zero-side-effect hooks).
+    pub no_memory_clobber: bool,
+}
+
+impl BuiltCallingConvention {
+    /// Validating constructor.  Builds a
+    /// `BuiltCallingConvention` from explicit parts and checks the
+    /// canonical ABI invariants:
+    ///
+    /// - `arg_passing_regs ∩ callee_saved_regs == ∅`
+    /// - `ret_val_regs ∩ callee_saved_regs == ∅`
+    /// - `ret_val_regs_float ∩ callee_saved_regs == ∅`
+    /// - `stack_ptr_vn` is not in any of the four register lists
+    /// - No duplicates within any single list
+    /// - When `link_register_vn` is `Some`, it must be present in
+    ///   `callee_saved_regs` (CLAUDE.md "Note (link-register
+    ///   handling)" deliberate tradeoff)
+    /// - `ret_stack_pop` is non-negative
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` describing the first invariant violation
+    /// detected.  The error is intentionally specific so a CC author
+    /// debugging a typo (e.g. listing the same Vn in both
+    /// `arg_passing_regs` and `callee_saved_regs`) sees the offending
+    /// names rather than a downstream miscompile.
+    pub fn try_from_parts(
+        parts: BuiltCallingConventionParts,
+    ) -> std::result::Result<Self, anyhow::Error> {
+        // Disjointness: arg-passing must not overlap callee-saved.
+        for vn in &parts.arg_passing_regs {
+            if parts.callee_saved_regs.contains(vn) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: varnode {:?} appears in both \
+                     arg_passing_regs and callee_saved_regs (a single varnode \
+                     cannot be both caller-supplied and callee-preserved)",
+                    vn,
+                ));
+            }
+        }
+        // Ret-val regs must not overlap callee-saved (the callee writes
+        // them to deliver results — they cannot be required-preserved).
+        for vn in parts.ret_val_regs.iter().chain(parts.ret_val_regs_float.iter()) {
+            if parts.callee_saved_regs.contains(vn) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: varnode {:?} appears in both \
+                     ret_val_regs/ret_val_regs_float and callee_saved_regs",
+                    vn,
+                ));
+            }
+        }
+        // Stack-pointer must not be in any reg-list.
+        for (list_name, list) in [
+            ("arg_passing_regs", &parts.arg_passing_regs),
+            ("callee_saved_regs", &parts.callee_saved_regs),
+            ("ret_val_regs", &parts.ret_val_regs),
+            ("ret_val_regs_float", &parts.ret_val_regs_float),
+        ] {
+            if list.contains(&parts.stack_ptr_vn) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: stack_ptr_vn {:?} appears in {} \
+                     (the SP is implicit and must not be in any reg list)",
+                    parts.stack_ptr_vn,
+                    list_name,
+                ));
+            }
+        }
+        // No duplicates within a list.
+        for (list_name, list) in [
+            ("arg_passing_regs", &parts.arg_passing_regs),
+            ("callee_saved_regs", &parts.callee_saved_regs),
+            ("ret_val_regs", &parts.ret_val_regs),
+            ("ret_val_regs_float", &parts.ret_val_regs_float),
+        ] {
+            for (i, vn) in list.iter().enumerate() {
+                if list[i + 1..].contains(vn) {
+                    return Err(anyhow::anyhow!(
+                        "BuiltCallingConvention: duplicate varnode {:?} in {}",
+                        vn,
+                        list_name,
+                    ));
+                }
+            }
+        }
+        // Link-register-as-callee-saved invariant (CLAUDE.md note).
+        if let Some(lr) = parts.link_register_vn
+            && !parts.callee_saved_regs.contains(&lr)
+        {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: link_register_vn {:?} must also \
+                 be present in callee_saved_regs (CLAUDE.md deliberate \
+                 tradeoff so InitialVar(lr) propagates through call sites)",
+                lr,
+            ));
+        }
+        // ret_stack_pop is non-negative (a negative value would mean the
+        // callee's `ret` *grew* the stack, which no real ABI does).
+        if parts.ret_stack_pop < 0 {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: ret_stack_pop must be >= 0, got {}",
+                parts.ret_stack_pop,
+            ));
+        }
+        let BuiltCallingConventionParts {
+            arg_passing_regs,
+            callee_saved_regs,
+            ret_val_regs,
+            ret_val_regs_float,
+            stack_ptr_vn,
+            stack_arg_offsets,
+            ret_stack_pop,
+            link_register_vn,
+            syscall_number_vn,
+            no_memory_clobber,
+        } = parts;
+        Ok(Self {
+            arg_passing_regs,
+            callee_saved_regs,
+            ret_val_regs,
+            ret_val_regs_float,
+            stack_ptr_vn,
+            stack_arg_offsets,
+            ret_stack_pop,
+            link_register_vn,
+            syscall_number_vn,
+            no_memory_clobber,
+        })
+    }
+
+    /// Argument-passing register varnodes, in positional order.
+    #[must_use]
+    pub fn arg_passing_regs(&self) -> &[rsleigh::Vn] {
+        &self.arg_passing_regs
+    }
+
+    /// Callee-saved register varnodes.  Excludes the stack pointer;
+    /// SP's callee-side preservation is expressed through
+    /// [`Self::ret_stack_pop`].
+    #[must_use]
+    pub fn callee_saved_regs(&self) -> &[rsleigh::Vn] {
+        &self.callee_saved_regs
+    }
+
+    /// Integer return-value register varnodes, in positional order.
+    #[must_use]
+    pub fn ret_val_regs(&self) -> &[rsleigh::Vn] {
+        &self.ret_val_regs
+    }
+
+    /// Float return-value register varnodes (e.g. `[q0, q1]` on
+    /// AArch64, `[XMM0, XMM1]` on x86_64).  Tracked separately from
+    /// [`Self::ret_val_regs`] because their widths differ.
+    #[must_use]
+    pub fn ret_val_regs_float(&self) -> &[rsleigh::Vn] {
+        &self.ret_val_regs_float
+    }
+
+    /// Hardware stack-pointer varnode.  Deliberately absent from the
+    /// three register-list accessors above — SP's cross-call behaviour
+    /// is expressed through [`Self::ret_stack_pop`] instead.
+    #[must_use]
+    pub fn stack_ptr_vn(&self) -> rsleigh::Vn {
+        self.stack_ptr_vn
+    }
+
+    /// Byte offsets from the call-time SP for each positional stack arg.
+    #[must_use]
+    pub fn stack_arg_offsets(&self) -> &[i64] {
+        &self.stack_arg_offsets
+    }
+
+    /// Net byte change the callee's `ret` inflicts on the caller's SP.
+    /// `8` on x86_64 (pops return address); `0` on link-register ISAs.
+    #[must_use]
+    pub fn ret_stack_pop(&self) -> i64 {
+        self.ret_stack_pop
+    }
+
+    /// Link-register varnode on link-register ISAs (ARM, AArch64, MIPS,
+    /// PowerPC); `None` on stack-push ISAs (x86, x86_64).  Consumed by
+    /// the indirect-branch resolver to classify return-shaped indirect
+    /// branches.
+    #[must_use]
+    pub fn link_register_vn(&self) -> Option<rsleigh::Vn> {
+        self.link_register_vn
+    }
+
+    /// Syscall-number register varnode for `*_linux_syscall` CCs;
+    /// `None` on userland and kernel-internal CCs.
+    #[must_use]
+    pub fn syscall_number_vn(&self) -> Option<rsleigh::Vn> {
+        self.syscall_number_vn
+    }
+
+    /// `true` when calls under this CC preserve memory (zero-side-effect
+    /// hooks like `__fentry__` / `mcount`).  Consumed by the IR builder's
+    /// `build_call_with_cc` to suppress the Call's Memory output so
+    /// `LoadReadOnly` / `StackLoadForward` can forward across the call.
+    #[must_use]
+    pub fn no_memory_clobber(&self) -> bool {
+        self.no_memory_clobber
+    }
 }
 
 impl CallingConvention {
+    /// Returns `true` if calls under this convention preserve memory
+    /// across the call (i.e. the IR's Call node should NOT advance the
+    /// memory chain).  See the `Self::no_memory_clobber` field docs.
+    #[must_use]
+    pub fn no_memory_clobber(&self) -> bool {
+        self.no_memory_clobber
+    }
+
     /// Returns the x86-64 System V ABI calling convention.
     ///
     /// Argument registers: RDI, RSI, RDX, RCX, R8, R9
@@ -150,7 +366,7 @@ impl CallingConvention {
     /// as callee-saved — `ret` pops the return address, so the caller observes
     /// SP shifted by `ret_stack_pop` across the call.
     #[must_use]
-    pub fn x86_64_systemv_abi() -> CallingConvention {
+    pub fn x86_64_systemv() -> CallingConvention {
         CallingConvention {
             stack_ptr_reg_name: "RSP",
             arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
@@ -167,6 +383,7 @@ impl CallingConvention {
             // is no architectural link register.
             link_register_reg_name: None,
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -199,6 +416,10 @@ impl CallingConvention {
             ret_stack_pop: 0,
             link_register_reg_name: None,
             syscall_number_reg_name: None,
+            // The defining property of "all-preserving": memory is also
+            // preserved.  build_call_with_cc skips the Memory output so
+            // LoadReadOnly / StackLoadForward forward across the call.
+            no_memory_clobber: true,
         }
     }
 
@@ -235,6 +456,7 @@ impl CallingConvention {
             // register table only registers `x30`.
             link_register_reg_name: Some("x30"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -272,6 +494,7 @@ impl CallingConvention {
             // Sleigh registers it under the lowercase `lr` name.
             link_register_reg_name: Some("lr"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -311,6 +534,7 @@ impl CallingConvention {
             // (`$31`); Sleigh's mips32 register table uses lowercase `ra`.
             link_register_reg_name: Some("ra"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -340,6 +564,7 @@ impl CallingConvention {
             // Same as O32: the return address lives in `$ra`.
             link_register_reg_name: Some("ra"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -371,6 +596,7 @@ impl CallingConvention {
             // Sleigh's PPC register table uses uppercase `LR`.
             link_register_reg_name: Some("LR"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -399,6 +625,15 @@ impl CallingConvention {
                 "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
                 "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",
                 "r30", "r31",
+                // include `LR` per the CLAUDE.md
+                // "Note (link-register handling)" deliberate tradeoff
+                // (consistent with `powerpc_sysv32`).  PPC64 ELFv1
+                // §3.4 marks LR as volatile/caller-saved, but listing
+                // it here makes `InitialVar(lr)` propagate through
+                // call sites so the indirect-branch resolver's
+                // `LinkRegister` arm fires for functions returning
+                // via the entry LR.
+                "LR",
             ],
             ret_val_regs: &["r3", "r4"],
             ret_val_regs_float: &["f1", "f2"],
@@ -407,6 +642,7 @@ impl CallingConvention {
             // Same as 32-bit PPC SysV: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -432,6 +668,9 @@ impl CallingConvention {
                 "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
                 "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",
                 "r30", "r31",
+                // see powerpc64_elf_v1 above for
+                // the CLAUDE.md deliberate-tradeoff rationale.
+                "LR",
             ],
             ret_val_regs: &["r3", "r4"],
             ret_val_regs_float: &["f1", "f2"],
@@ -440,6 +679,7 @@ impl CallingConvention {
             // Same as ELFv1: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -479,6 +719,7 @@ impl CallingConvention {
             // is no architectural link register.
             link_register_reg_name: None,
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -514,7 +755,15 @@ impl CallingConvention {
             Some(name) => Some(vn_for_name(sleigh_regs, name)?),
             None => None,
         };
-        Ok(BuiltCallingConvention {
+        // Route through `try_from_parts` so the disjointness invariants
+        // (SP not in any reg list, arg/callee-saved disjoint, no
+        // duplicates within a list, link-reg in callee-saved when set,
+        // non-negative ret_stack_pop) are enforced at build time.  The
+        // documented presets all satisfy them; routing here means a
+        // future preset with a typo (SP in arg_passing_regs, missing
+        // link-reg, etc.) fails at construction rather than producing
+        // a downstream miscompile.
+        BuiltCallingConvention::try_from_parts(BuiltCallingConventionParts {
             arg_passing_regs,
             callee_saved_regs,
             ret_val_regs,
@@ -524,6 +773,7 @@ impl CallingConvention {
             ret_stack_pop: self.ret_stack_pop,
             link_register_vn,
             syscall_number_vn,
+            no_memory_clobber: self.no_memory_clobber,
         })
     }
 }
@@ -550,7 +800,7 @@ impl CallingConvention {
     }
 
     /// Returns the Linux kernel-internal CC for x86_64.  Identical to
-    /// [`Self::x86_64_systemv_abi`] — the kernel writes its C in
+    /// [`Self::x86_64_systemv`] — the kernel writes its C in
     /// SystemV (the syscall-entry assembly does the
     /// `r10`→`rcx` shuffle before calling C handlers, so by the time
     /// any kernel function is entered its args are already in their
@@ -558,7 +808,7 @@ impl CallingConvention {
     /// "this is kernel code" is explicit at the call site.
     #[must_use]
     pub fn x86_64_linux_kernel() -> CallingConvention {
-        Self::x86_64_systemv_abi()
+        Self::x86_64_systemv()
     }
 
     /// Returns the Linux kernel-internal CC for AArch64.  Identical
@@ -620,7 +870,7 @@ impl CallingConvention {
     /// Syscall number in `RAX`; return in `RAX`.
     #[must_use]
     pub fn x86_64_linux_syscall() -> CallingConvention {
-        let mut cc = Self::x86_64_systemv_abi();
+        let mut cc = Self::x86_64_systemv();
         cc.arg_passing_regs = &["RDI", "RSI", "RDX", "R10", "R8", "R9"];
         cc.ret_val_regs = &["RAX"];
         cc.ret_val_regs_float = &[];

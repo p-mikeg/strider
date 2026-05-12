@@ -70,11 +70,11 @@ fn return_ends_region() {
     assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 }
 
-/// `BranchIndirect` whose target tier-1 cannot prove must terminate
+/// `BranchIndirect` whose target cfg-time cannot prove must terminate
 /// the region rather than silently fall through to the catch-all
 /// "didn't finish processing" branch.  The builder defers the branch
 /// via `RegionTerminator::UnresolvedIndirectBranch{target_vn, addr}`
-/// so the strider-level outer loop can attempt tier-2 resolution
+/// so the strider-level outer loop can attempt IR-level resolution
 /// against the optimised IR — no cfg-build error.  This test pins
 /// that contract: no error, and the freshly-finished region carries
 /// the deferred terminator.
@@ -106,7 +106,7 @@ fn branch_indirect_ends_region() {
     match &regions[0].terminator {
         cfg::RegionTerminator::UnresolvedIndirectBranch { addr: deferred_addr, .. } => {
             assert_eq!(
-                deferred_addr.machine_addr.addr, base,
+                deferred_addr.machine_addr_u64(), base,
                 "deferred terminator must record the offending pcode address",
             );
         }

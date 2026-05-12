@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::pat::any::{AnyPat, VarPat};
@@ -20,7 +19,7 @@ pub fn any() -> Pat {
 ///
 /// If `c` is already bound the output must equal the stored binding.
 /// Equivalent in behavior to `any().capture(c)`, but constructs a dedicated
-/// [`VarPat`] rather than wrapping [`AnyPat`] in a [`CapturePat`] — one
+/// `VarPat` rather than wrapping `AnyPat` in a `CapturePat` — one
 /// fewer vtable hop and no backtracking snapshot per match.
 #[must_use]
 pub fn var(c: Capture) -> Pat {
@@ -53,16 +52,15 @@ pub fn int_const(v: impl Into<i128>) -> Pat {
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
             return false;
         };
         // Determine the output type from the node's single value output.
         let ty = ctx
             .graph
-            .graph
             .node_outputs(node)
             .into_iter()
-            .find_map(|out| ctx.graph.graph.output_kind(out).as_value());
+            .find_map(|out| ctx.graph.output_kind(out).as_value());
         let Some(ty) = ty else { return false; };
         let mask = ty.bit_mask_u128();
         (stored & mask) == (v_unsigned & mask)
@@ -108,15 +106,14 @@ where
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
             return false;
         };
         let ty = ctx
             .graph
-            .graph
             .node_outputs(node)
             .into_iter()
-            .find_map(|out| ctx.graph.graph.output_kind(out).as_value());
+            .find_map(|out| ctx.graph.output_kind(out).as_value());
         let Some(ty) = ty else { return false; };
         let mask = ty.bit_mask_u128();
         let stored_masked = stored & mask;
@@ -144,7 +141,7 @@ where
 /// `mov eax, 0xffffffce; ret` — the high 32 bits of `RAX` are zero
 /// (zero-extended from a 32-bit move), so the IR carries
 /// `IntConst(0x00000000FFFFFFCE)` at U64.  The conventional
-/// [`int_const(-50)`] does an exact-bit-pattern match at the output
+/// `int_const(-50)` does an exact-bit-pattern match at the output
 /// width and reads that value as `+4294967246`; `signed_int_const(-50)`
 /// recognises the U32-narrow signed form and matches.  Symmetrically
 /// it also matches the U32-only IntConst and the U64
@@ -165,15 +162,14 @@ pub fn signed_int_const(v: impl Into<i128>) -> Pat {
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
             return false;
         };
         let Some(ty) = ctx
             .graph
-            .graph
             .node_outputs(node)
             .into_iter()
-            .find_map(|out| ctx.graph.graph.output_kind(out).as_value())
+            .find_map(|out| ctx.graph.output_kind(out).as_value())
         else {
             return false;
         };
@@ -246,7 +242,42 @@ pub fn float_const(bits: u64) -> Pat {
 /// `any().when(f)`.
 pub fn predicate<F>(f: F) -> Pat
 where
-    F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
+    F: Fn(&ir::Graph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
 {
     any().when(f)
+}
+
+/// Matches a [`NodeKind::IntConstWide`] node whose stored value (looked
+/// up in [`ir::Graph::wide_consts`]) equals `value`.  Use this for
+/// `U256` / `U512` constants — narrow widths (`U8`..`U128`) go through
+/// [`int_const`].
+///
+/// The discriminant gate prefilters by `IntConstWide` kind; the
+/// post-match check fetches the actual `WideConstStorage` by id and
+/// compares it against `value`.
+#[must_use]
+pub fn int_const_wide(value: ir::wide_const::WideConstStorage) -> Pat {
+    // KindSpec::variant gates by discriminant; we use a sentinel
+    // WideConstId(0) — the discriminant is what matters here.
+    let sentinel_kind = NodeKind::IntConstWide(ir::wide_const::WideConstId::from_u32(0));
+    NodePat::matcher(KindSpec::variant(&sentinel_kind), InputsSpec::None)
+        .with_post_match(Arc::new(move |ctx, node, _b| {
+            let NodeKind::IntConstWide(id) = *ctx.graph.node_kind(node) else {
+                return false;
+            };
+            ctx.graph.wide_const(id) == &value
+        }))
+        .into_pat()
+}
+
+/// Matches any [`NodeKind::IntConstWide`] node, regardless of value, and
+/// binds the matched node to `c`.  Pair with
+/// [`crate::Match::get_wide_bytes`] to recover the raw little-endian
+/// bytes post-match.
+#[must_use]
+pub fn any_wide_int_const(c: crate::var::Capture) -> Pat {
+    let sentinel_kind = NodeKind::IntConstWide(ir::wide_const::WideConstId::from_u32(0));
+    NodePat::matcher(KindSpec::variant(&sentinel_kind), InputsSpec::None)
+        .into_pat()
+        .capture(c)
 }

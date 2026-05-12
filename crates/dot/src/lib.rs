@@ -193,7 +193,13 @@ fn json_quote(s: &str) -> String {
             // in `as_html_from_dot`'s output.
             '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
-                let _ = std::fmt::write(&mut out, format_args!("\\u{:04x}", c as u32));
+                use std::fmt::Write;
+                // writing to a `String` via `Write` is infallible
+                // (`String::write_str` returns `Ok(())` unconditionally),
+                // but clippy::expect_used flags the literal `.expect`.
+                // `let _ =` documents that the `fmt::Result` is
+                // intentionally discarded.
+                let _ = write!(out, "\\u{:04x}", c as u32);
             }
             c => out.push(c),
         }

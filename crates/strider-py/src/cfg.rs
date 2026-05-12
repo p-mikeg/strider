@@ -8,25 +8,18 @@
 //! was eagerly cached at construction time so callers can still build
 //! a `Strider` from the same PySleigh after `build_cfg`.
 
+use std::path::Path;
+
 use pyo3::prelude::*;
 
-use crate::dot::{dot_style_for, dump_dot, dump_html, html_str};
-use crate::errors::into_lift_err;
+use crate::dot::dot_style_for;
+use crate::errors::{into_lift_err, into_strider_err};
 use crate::reader::AnyMemReader;
 use crate::sleigh::PySleigh;
 
 #[pyclass(name = "Cfg", module = "strider")]
 pub struct PyCfg {
     pub(crate) inner: cfg::Cfg<AnyMemReader>,
-}
-
-impl PyCfg {
-    /// Borrow the inner `cfg::Cfg` for downstream consumers
-    /// (`Strider::analyze_cfg`, `dot::GraphDot::new`).
-    #[allow(dead_code)]
-    pub(crate) fn inner(&self) -> &cfg::Cfg<AnyMemReader> {
-        &self.inner
-    }
 }
 
 #[pyfunction(signature = (sleigh, entry, allow_code_before_start_addr=false, function_max_size=None))]
@@ -38,6 +31,7 @@ pub fn build_cfg(
     function_max_size: Option<u64>,
 ) -> PyResult<PyCfg> {
     let mut sleigh_borrow = sleigh.borrow_mut(py);
+    let arch = sleigh_borrow.arch;
     let inner_sleigh = sleigh_borrow
         .take_inner()
         .ok_or_else(|| into_lift_err(anyhow::anyhow!("Sleigh already in use")))?;
@@ -52,7 +46,11 @@ pub fn build_cfg(
     }
     let opts = opts_builder.build();
 
-    let built = cfg::Builder::new(inner_sleigh, entry, opts)
+    // Use `for_arch` so the CallOther classifier sees the actual arch
+    // preset.  (`Builder::new` was deleted in round 12 W5c — it used
+    // to default to `X86_64` and silently mis-classified arch-specific
+    // user-ops on non-x86 targets.)
+    let built = cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .build()
         .map_err(into_lift_err)?;
 
@@ -65,18 +63,18 @@ impl PyCfg {
     fn to_html(&self, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark_cfg");
         let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
-        dump_html(&d, path)
+        d.dump_as_html(Path::new(path)).map_err(into_strider_err)
     }
     #[pyo3(signature = (path,))]
     fn to_dot(&self, path: &str) -> PyResult<()> {
         let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some("dark_cfg")));
-        dump_dot(&d, path)
+        d.dump_as_dot(Path::new(path)).map_err(into_strider_err)
     }
     #[pyo3(signature = (style=None))]
     fn html_str(&self, style: Option<&str>) -> PyResult<String> {
         let style = style.unwrap_or("dark_cfg");
         let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
-        html_str(&d)
+        d.as_html_from_dot().map_err(into_strider_err)
     }
 }
 

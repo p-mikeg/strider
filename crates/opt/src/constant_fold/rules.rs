@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use ir::node::NodeId;
-use ir::{BuiltFunctionGraph, IntUnaryOp};
+use ir::IntUnaryOp;
 
 use crate::error::Result;
 use crate::pipeline::OptimizationResult;
@@ -93,11 +93,11 @@ static REASSOC_AND_MASK_RULES: LazyLock<Vec<pattern::BoxedRule>> =
 /// - `(a & C1) & C2 → a & (C1 & C2)`
 /// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
 pub(super) fn apply_reassoc_and_mask_rules(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&REASSOC_AND_MASK_RULES)(fg, node)?;
+    let changed = apply_rules_in_order(&REASSOC_AND_MASK_RULES)(ctx, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -134,9 +134,9 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // captured `x`'s output type must equal the rule root's `ty`.
     let zext_round_trip = {
         let x = Capture::new();
-        let pat = truncate(zero_extend(var(x))).when_match(move |fg, ty, b| {
+        let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| fg.graph.output_kind(out).as_value())
+                .and_then(|out| ctx.output_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -147,9 +147,9 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // truncate cuts them off and recovers the original bits).
     let sext_round_trip = {
         let x = Capture::new();
-        let pat = truncate(sign_extend(var(x))).when_match(move |fg, ty, b| {
+        let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| fg.graph.output_kind(out).as_value())
+                .and_then(|out| ctx.output_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -173,13 +173,13 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
         let a = Capture::new();
         let b = Capture::new();
         let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
-            move |fg, ty, bnd| {
+            move |ctx, ty, bnd| {
                 bnd.get(a)
-                    .and_then(|out| fg.graph.output_kind(out).as_value())
+                    .and_then(|out| ctx.output_kind(out).as_value())
                     .is_some_and(|a_ty| a_ty == ty)
                     && bnd
                         .get(b)
-                        .and_then(|out| fg.graph.output_kind(out).as_value())
+                        .and_then(|out| ctx.output_kind(out).as_value())
                         .is_some_and(|b_ty| b_ty == ty)
             },
         );
@@ -217,8 +217,8 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
         } else {
             or(var(a), and(any_int_const(c), var(b)))
         };
-        let pat = truncate(inner).when_match(move |fg, ty, bnd| {
-            let Some(c_val) = bnd.get_uint(c, fg) else { return false; };
+        let pat = truncate(inner).when_match(move |ctx, ty, bnd| {
+            let Some(c_val) = bnd.get_uint(c, ctx) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -242,8 +242,8 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
         } else {
             and(any_int_const(c), var(x))
         };
-        let pat = truncate(inner).when_match(move |fg, ty, bnd| {
-            let Some(c_val) = bnd.get_uint(c, fg) else { return false; };
+        let pat = truncate(inner).when_match(move |ctx, ty, bnd| {
+            let Some(c_val) = bnd.get_uint(c, ctx) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -277,11 +277,11 @@ static BITCAST_EXTEND_RULES: LazyLock<Vec<pattern::BoxedRule>> =
 /// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
 /// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
 pub(super) fn apply_bitcast_extend_rules(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&BITCAST_EXTEND_RULES)(fg, node)?;
+    let changed = apply_rules_in_order(&BITCAST_EXTEND_RULES)(ctx, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -300,8 +300,8 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         let x = Capture::new();
         let c = Capture::new();
         let pat: Pat = and(var(x), any_int_const(c)).into();
-        let pat = pat.when_match(move |fg, ty, b| {
-            b.get_uint(c, fg) == ty.get_unsigned_int(u128::MAX)
+        let pat = pat.when_match(move |ctx, ty, b| {
+            b.get_uint(c, ctx) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
@@ -313,8 +313,8 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         let x = Capture::new();
         let c = Capture::new();
         let pat: Pat = xor(var(x), any_int_const(c)).into();
-        let pat = pat.when_match(move |fg, ty, b| {
-            b.get_uint(c, fg) == ty.get_unsigned_int(u128::MAX)
+        let pat = pat.when_match(move |ctx, ty, b| {
+            b.get_uint(c, ctx) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, bit_not(var(x))))
     };
@@ -366,11 +366,11 @@ static IDENTITY_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build_i
 /// - `x | 0 → x`, `x | x → x`
 /// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
 pub(super) fn apply_identity_rules(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&IDENTITY_RULES)(fg, node)?;
+    let changed = apply_rules_in_order(&IDENTITY_RULES)(ctx, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -451,11 +451,21 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             ))
         },
         // 5. ZeroExtend(IntConst(v)) => int_const(v, ty)
+        //
+        // `v: uint` already masks to the IntConst input's width, and
+        // ZeroExtend's output width is by definition >= the input
+        // width, so `v` is already small enough to fit the output.
+        // Mask defensively against the output type anyway: rule 4
+        // (Truncate) does the same thing and the symmetry keeps the
+        // build path safe under future widenings of `IntConst`'s
+        // u128 storage.
         {
             let v = Capture::new();
             boxed_rule(rewrite_rule(
                 zero_extend(any_int_const(v)),
-                int_const_with!([v: uint] => v),
+                int_const_with!([v: uint, ty] =>
+                    ty.get_unsigned_int(v).ok_or_else(pattern::skip)?
+                ),
             ))
         },
         // 6. SignExtend(IntConst(v)) =>
@@ -551,9 +561,9 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         // `int_x = 5 → 5 → true → 1` loses information.
         {
             let x = Capture::new();
-            let pat = cast_to_bool(cast_to_int(var(x))).when_match(move |fg, _ty, b| {
+            let pat = cast_to_bool(cast_to_int(var(x))).when_match(move |ctx, _ty, b| {
                 b.get(x)
-                    .and_then(|out| fg.graph.output_kind(out).as_value())
+                    .and_then(|out| ctx.output_kind(out).as_value())
                     == Some(NodeOutputType::Bool)
             });
             boxed_rule(rewrite_rule(pat, var(x)))
@@ -568,11 +578,11 @@ static CONST_EVAL_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build
 /// integer comparisons, truncate, extend (zero/sign), popcount, lzcount,
 /// cast_to_bool, and cast_to_int.
 pub(super) fn apply_const_eval_rules(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&CONST_EVAL_RULES)(fg, node)?;
+    let changed = apply_rules_in_order(&CONST_EVAL_RULES)(ctx, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -619,14 +629,14 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
         {
             let l = Capture::new();
             let pat: Pat = bool_and(any_bool_const(l), pattern::any()).into();
-            let pat = pat.when_match(move |fg, _ty, b| b.get_bool(l, fg) == Some(false));
+            let pat = pat.when_match(move |ctx, _ty, b| b.get_bool(l, ctx) == Some(false));
             boxed_rule(rewrite_rule(pat, bool_const_with!([] => false)))
         },
         // BOr(BoolConst(true), _) => bool_const(true)  (absorbing element)
         {
             let l = Capture::new();
             let pat: Pat = bool_or(any_bool_const(l), pattern::any()).into();
-            let pat = pat.when_match(move |fg, _ty, b| b.get_bool(l, fg) == Some(true));
+            let pat = pat.when_match(move |ctx, _ty, b| b.get_bool(l, ctx) == Some(true));
             boxed_rule(rewrite_rule(pat, bool_const_with!([] => true)))
         },
         // BoolUnaryOp(op)(BoolConst(v)) => bool_const(!v)
@@ -716,13 +726,13 @@ static BOOL_FLOAT_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build
 /// - `x ^ true → !x` (commutative)
 /// - `!!x → x`
 pub(super) fn apply_bool_float_rules(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&BOOL_FLOAT_RULES)(fg, node)?;
+    let changed = apply_rules_in_order(&BOOL_FLOAT_RULES)(ctx, node)?;
     // CastToFloat lowering is too stateful for a rule (it does graph surgery);
     // handle it separately after the rule sweep.
-    let cast_changed = try_lower_cast_to_float(fg, node)?;
+    let cast_changed = try_lower_cast_to_float(ctx, node)?;
     Ok(OptimizationResult::from_changed(changed) | cast_changed)
 }

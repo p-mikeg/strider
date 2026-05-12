@@ -168,7 +168,8 @@ fn split_first_half_becomes_fallthrough() {
     //                                  target is 0x1002 which is NOT the
     //                                  natural fallthrough 0x1006).
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
-    let cfg = Builder::new(
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
         make_sleigh_with_bytes(bytes, 0x1000),
         0x1000,
         OptionsBuilder::new().build(),
@@ -178,10 +179,10 @@ fn split_first_half_becomes_fallthrough() {
 
     let mut first_half: Option<&Region> = None;
     let mut second_half: Option<&Region> = None;
-    for r in cfg.graph.node_weights() {
-        if r.start_addr.machine_addr.addr == 0x1000 {
+    for r in cfg.graph().node_weights() {
+        if r.start_addr.machine_addr_u64() == 0x1000 {
             first_half = Some(r);
-        } else if r.start_addr.machine_addr.addr == 0x1002 {
+        } else if r.start_addr.machine_addr_u64() == 0x1002 {
             second_half = Some(r);
         }
     }
@@ -275,10 +276,10 @@ fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
 
 // Pins the `UnresolvedIndirectBranch` variant's shape: `(target_vn,
 // addr)` — both fields needed to anchor the placeholder
-// `Return(target_value)` strider emits during lifting.  Tier 1
+// `Return(target_value)` strider emits during lifting.  the cfg-time mini-graph resolver
 // surfaces this terminator when the cfg-time mini-graph resolver
 // cannot prove a `BranchIndirect`'s target; the strider fixed-point
-// loop then attempts tier-2 resolution against the optimised IR.
+// loop then attempts IR-level resolution against the optimised IR.
 #[test]
 fn unresolved_indirect_branch_variant_is_constructible() {
     use cfg::test_api::{MachineInsnAddr, PcodeInsnAddr};
@@ -288,10 +289,7 @@ fn unresolved_indirect_branch_variant_is_constructible() {
         addr_off: 0x100,
         addr_space: rsleigh::VnSpace::REGISTER,
     };
-    let pcode_addr = PcodeInsnAddr {
-        machine_addr: MachineInsnAddr { addr: 0x1000 },
-        insn_index: 3,
-    };
+    let pcode_addr = PcodeInsnAddr::new(MachineInsnAddr::new(0x1000), 3);
     let term = RegionTerminator::UnresolvedIndirectBranch {
         target_vn,
         addr: pcode_addr,

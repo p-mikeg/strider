@@ -106,6 +106,18 @@ pipe.add(strider.opt.LoadReadOnly(mem))
 graph.optimize(pipe)
 ```
 
+> **Note:** `build_cfg(sleigh, …)` *consumes* the inner `rsleigh::Sleigh`
+> handle.  The Python `Sleigh` wrapper holds it inside an `Option`, and
+> after `build_cfg` returns the wrapper is left empty — any subsequent
+> use of that same Python `Sleigh` object (e.g. handing it to
+> `Strider.analyze_cfg`, `opt.StackStoreDetect`, `opt.StackLoadForward`,
+> or another `build_cfg` call) will raise.  Construct any consumers
+> that need it (`Strider`, the stack passes) *before* the `build_cfg`
+> call as the snippet above shows, or rebuild a fresh handle via
+> `strider.Sleigh(arch, mem)` for downstream use.  The convenience
+> `strider.run(...)` entry hides this detail by owning the Sleigh
+> internally.
+
 ## Custom optimizer pipeline
 
 ```python
@@ -188,8 +200,10 @@ The `_` and `any_` strings are reserved wildcards (they convert to
   `bool_bin_any`, `bool_un_any`, `float_bin_any`, `float_un_any`,
   `float_cmp_any` — bind the matched op variant to a Capture.
 
-`float_is_nan` is registered but raises `PatternError` until the IR
-gains a `FloatIsNan` node kind.
+`float_is_nan(x)` desugars to `BoolNeg(FloatEqual(x, x))` — the same
+shape the pcode lifter emits for Sleigh's `FLOAT_NAN` op, so it matches
+both that lifted shape and any explicit `x != x` written in the source.
+No dedicated `FloatIsNan` IR node is needed.
 
 ## Match accessors
 
@@ -265,9 +279,12 @@ result = strider.run(
 
 ```python
 class MyROM(strider.ReadOnlyMemory):
-    def read(self, space_id: int, addr: int, size: int) -> Optional[int]:
-        # space_id: 0 = RAM, 1 = REGISTER, 2 = CONST, 3 = UNIQUE
-        if space_id != 0 or addr < ROM_BASE or addr >= ROM_BASE + len(ROM):
+    def read(self, addr: int, size: int) -> Optional[int]:
+        # The Rust adapter only forwards RAM-space reads to Python — every
+        # other address space is folded by varnode aliasing or constant
+        # propagation before reaching `LoadReadOnly`, so the override sees
+        # only the calls it can answer.
+        if addr < ROM_BASE or addr >= ROM_BASE + len(ROM):
             return None
         chunk = ROM[addr - ROM_BASE : addr - ROM_BASE + size]
         return int.from_bytes(chunk, "little")
@@ -292,7 +309,6 @@ PatternError | RewriteError`) is in `strider.errors`.
 
 ## What's NOT in v1
 
-- `float_is_nan` constructor (no `FloatIsNan` IR node yet).
 - Pattern constructors for `Piece`, `Extract`, `Insert`, `SegmentOp`,
   `CPoolRef`, `New` — they aren't exposed by the `pattern` Rust crate
   either; once those land in Rust we'll expose them in Python.

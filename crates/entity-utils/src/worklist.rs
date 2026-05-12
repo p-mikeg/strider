@@ -53,8 +53,7 @@ impl<E: EntityRef> Worklist<E> {
     ///
     /// Has no effect if `entity` is already queued.
     pub fn enqueue(&mut self, entity: E) {
-        if !self.workset.contains(entity) {
-            self.workset.insert(entity);
+        if self.workset.insert(entity) {
             self.worklist.push_back(entity);
         }
     }
@@ -207,11 +206,34 @@ mod tests {
     }
 
     #[test]
-    fn debug_format_smoke() {
+    fn debug_format_pins_derive() {
         // `Worklist` derives Debug; this is a regression pin so the derive
         // can't be silently removed.  We don't assert a specific format string.
         let mut wl: Worklist<Id> = Worklist::new();
         wl.enqueue(Id(1));
         let _ = format!("{wl:?}");
+    }
+
+    /// `enqueue` deduplicates at 10k-item scale.  Pins the
+    /// single-pass `if workset.insert(e) { push }` shape —
+    /// re-enqueueing the same id never duplicates the queue.
+    #[test]
+    fn enqueue_dedup_at_ten_thousand_scale() {
+        let n: u32 = 10_000;
+        let mut wl: Worklist<Id> = Worklist::new();
+        for i in 0..n {
+            wl.enqueue(Id(i));
+        }
+        assert_eq!(wl.len(), n as usize);
+        for i in 0..n {
+            wl.enqueue(Id(i));
+        }
+        assert_eq!(wl.len(), n as usize, "no duplicates after re-enqueue");
+        let mut count = 0usize;
+        while wl.dequeue().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, n as usize);
+        assert!(wl.is_empty());
     }
 }

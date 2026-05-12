@@ -21,8 +21,9 @@
 //!
 //! * `strider`, which uses it as the inner-loop dispatch for translating
 //!   a CFG region into the per-region IR;
-//! * `cfg`, which uses it (planned) to build a stand-alone single-block
-//!   mini-IR for resolving the targets of indirect branches.
+//! * `cfg`, which uses it to build a stand-alone single-block mini-IR
+//!   for resolving the targets of indirect branches (see
+//!   `crates/cfg/src/cfg/builder/indirect_resolve.rs`).
 
 pub mod value;
 pub mod vn_io;

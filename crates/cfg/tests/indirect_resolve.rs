@@ -78,10 +78,7 @@ fn const_vn(val: u64, size: u32) -> Vn {
 /// pcode address.
 fn ri(machine: u64, insn_index: u64, insn: Insn) -> RegionInstruction {
     RegionInstruction {
-        addr: PcodeInsnAddr {
-            machine_addr: MachineInsnAddr { addr: machine },
-            insn_index,
-        },
+        addr: PcodeInsnAddr::new(MachineInsnAddr::new(machine), insn_index),
         insn,
     }
 }
@@ -338,7 +335,7 @@ fn unknown_memory_returns_ok_none() {
         None,
         target::Endianness::Little,
     )
-    .expect("soft contract: tier 1 returns Ok rather than Err on unresolved");
+    .expect("soft contract: cfg-time resolver returns Ok rather than Err on unresolved");
     assert!(res.is_none(), "got {res:?}");
 }
 
@@ -358,10 +355,7 @@ fn lift_region<R: rsleigh::MemReader>(
         let lift = sleigh.lift_one(cur).expect("lift_one");
         for (i, insn) in lift.insns.iter().enumerate() {
             out.push(RegionInstruction {
-                addr: PcodeInsnAddr {
-                    machine_addr: MachineInsnAddr { addr: cur },
-                    insn_index: i as u64,
-                },
+                addr: PcodeInsnAddr::new(MachineInsnAddr::new(cur), i as u64),
                 insn: insn.clone(),
             });
         }
@@ -388,7 +382,7 @@ fn find_branch_indirect_target(region: &[RegionInstruction]) -> Vn {
 /// `BranchIndirect reg` with no prior write to `reg` and no
 /// link-register classification → `Ok(None)`.  The producer is
 /// `InitialVar(reg)` but `cc_link_register_vn` is `None`, so the
-/// LinkRegister arm doesn't fire and tier 1 defers to the
+/// LinkRegister arm doesn't fire and cfg-time resolver defers to the
 /// strider-level outer loop.
 #[test]
 fn runtime_input_returns_ok_none() {
@@ -465,7 +459,7 @@ fn malformed_branch_indirect_returns_ok_none() {
     assert!(res.is_none(), "got {res:?}");
 }
 
-/// Tier-1 unresolved cases return `Ok(None)`; the strict-failure
+/// cfg-time unresolved cases return `Ok(None)`; the strict-failure
 /// semantic lives at the strider-level outer loop (cfg-build defers
 /// the branch via `RegionTerminator::UnresolvedIndirectBranch`).
 ///
@@ -473,7 +467,7 @@ fn malformed_branch_indirect_returns_ok_none() {
 /// `BranchIndirect reg` with no prior write and no link-register
 /// classification).
 #[test]
-fn tier_1_unresolved_returns_ok_none() {
+fn cfg_time_unresolved_returns_ok_none() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![ri(0x1000, 0, branch_indirect(target))];
@@ -485,17 +479,17 @@ fn tier_1_unresolved_returns_ok_none() {
         None,
         target::Endianness::Little,
     )
-    .expect("soft contract: tier 1 returns Ok rather than Err on unresolved");
+    .expect("soft contract: cfg-time resolver returns Ok rather than Err on unresolved");
     assert!(
         res.is_none(),
         "unresolvable target must produce Ok(None), got {res:?}"
     );
 }
 
-/// Tier-1 resolved cases return `Ok(Some(ResolvedTargets))`.  Same
+/// cfg-time resolved cases return `Ok(Some(ResolvedTargets))`.  Same
 /// input shape as `resolves_direct_const_to_single`.
 #[test]
-fn tier_1_resolved_const_returns_ok_some_single() {
+fn cfg_time_resolved_const_returns_ok_some_single() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![

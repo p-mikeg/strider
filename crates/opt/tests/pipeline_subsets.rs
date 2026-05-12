@@ -11,7 +11,7 @@
 //!   * `default_pipeline()` is shape-equivalent to "stable then destructive".
 //!
 //! The tests don't run the pipelines on real graphs (that's covered by
-//! the per-pass test suites and the strider-side tier2_optimizer_tiers
+//! the per-pass test suites and the strider-side optimizer_pipeline_subsets
 //! tests).  Here we pin the *registration* contract — that the right
 //! passes land in the right buckets, by name.
 
@@ -112,4 +112,34 @@ fn full_pipeline_passes_are_stable_then_destructive_in_order() {
     let mut expected = stable_names.clone();
     expected.extend_from_slice(&destructive_names);
     assert_eq!(full_names, expected);
+}
+
+// ── Python ↔ Rust pipeline-shape sync ──
+//
+// The Python wrapper `strider_py::opt::PipelineState` rebuilds the three
+// named pipelines manually (it can't directly clone a Rust pipeline because
+// `Box<dyn Optimizer>` isn't re-extractable through PyO3).  Drift between
+// the manual Python list and the Rust factory functions silently produces
+// graphs that look different on the two paths.
+//
+// The two assertions below pin the invariant: any Rust-side change that
+// adds/drops a pass must also update the Python side, or this test fails.
+// The Python side has corresponding `pass_count()` accessors that a Python
+// test can call and compare against these expected numbers.
+
+#[test]
+fn default_pipeline_pass_count_pinned() {
+    // Bumping this number requires updating `PipelineState::from_default`
+    // in `crates/strider-py/src/opt.rs` to mirror the new pass list.
+    assert_eq!(default_pipeline().optimizer_count(), 6);
+}
+
+#[test]
+fn stable_default_pipeline_pass_count_pinned() {
+    assert_eq!(stable_default_pipeline().optimizer_count(), 4);
+}
+
+#[test]
+fn destructive_default_pipeline_pass_count_pinned() {
+    assert_eq!(destructive_default_pipeline().optimizer_count(), 2);
 }

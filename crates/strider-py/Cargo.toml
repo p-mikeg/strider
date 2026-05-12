@@ -6,9 +6,25 @@ edition = { workspace = true }
 [lib]
 name = "strider"
 crate-type = ["cdylib"]
+# strider-py is a Python extension module; its pyo3 bindings need a
+# Python runtime to load and dispatch.  Tests of the FFI surface live
+# in `tests/python/` and run via `pytest` after `maturin develop`.
+# The crate has no inline `#[cfg(test)]` blocks, so disable the cargo
+# `lib test` target — it would try to link `_Py_TrueStruct` /
+# `Py_DecRef` / etc. statically against a test harness that has no
+# Python interpreter.  Required after enabling pyo3's
+# `multiple-pymethods` feature, which pulls in `inventory`-style
+# registration that activates more Python-symbol lookups at
+# compile time than `cargo test --workspace` can resolve.
+test = false
+doctest = false
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["abi3-py39", "extension-module", "anyhow"] }
+# `multiple-pymethods` lets a single `#[pyclass]` carry more than one
+# `#[pymethods]` block, which is what the `pat_builder_finalise!` macro
+# needs to splice the four shared finalise methods (capture/cap/when/
+# into_pat) into every typed pattern builder without duplicating them.
+pyo3 = { version = "0.22", features = ["abi3-py39", "extension-module", "anyhow", "multiple-pymethods"] }
 anyhow = { workspace = true }
 
 strider = { workspace = true }

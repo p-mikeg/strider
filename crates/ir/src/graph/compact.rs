@@ -64,7 +64,16 @@ impl Graph {
     /// (`stack_phi_offsets`, `call_other_names`, `asm_fingerprints`,
     /// `call_clobbered_overrides`) are remapped through the
     /// translation table; entries for dropped nodes are dropped.
-    pub fn retain_reachable(&mut self, entry: NodeId) -> NodeIdRemap {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the two-pass remap invariant is violated.
+    /// By construction this cannot fire — pass 1 installs every
+    /// reachable node into `remap.nodes`, and pass 2 iterates the
+    /// same `reachable` set — but propagating as `Err` rather than
+    /// panicking keeps every error path typed so Python users see a
+    /// clean exception.
+    pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
         // 1. Compute reachable set.
         let reachable: Vec<NodeId> = walk_graph(self, entry).collect();
 
@@ -112,10 +121,14 @@ impl Graph {
             // so the lookup cannot return None.  Same logic applies to
             // `remap.outputs[old_input.output_id]` below: every input's
             // output producer is reachable iff the input's owning node
-            // is reachable, which it is here by construction.
-            #[allow(clippy::expect_used)]
-            let new_node_id = remap.nodes[old_node_id]
-                .expect("just installed in pass 1");
+            // is reachable.  Both are propagated as `Err` rather than
+            // `expect` so a hypothetical invariant violation surfaces
+            // as a typed error, not a Python crash.
+            let new_node_id = remap.nodes[old_node_id].ok_or_else(|| {
+                anyhow::anyhow!(
+                    "retain_reachable: reachable node {old_node_id:?} missing from pass-1 remap"
+                )
+            })?;
             let old_input_ids: Vec<NodeInputId> = self.nodes[old_node_id]
                 .inputs
                 .as_slice(&self.input_pool)
@@ -123,10 +136,13 @@ impl Graph {
             let mut new_input_ids: Vec<NodeInputId> = Vec::with_capacity(old_input_ids.len());
             for old_input_id in old_input_ids {
                 let old_input = &self.inputs[old_input_id];
-                #[allow(clippy::expect_used)]
-                let new_output_id = remap.outputs[old_input.output_id].expect(
-                    "input references an output whose producing node was unreachable",
-                );
+                let new_output_id = remap.outputs[old_input.output_id].ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "retain_reachable: input {old_input_id:?} references output {:?} \
+                         whose producing node is unreachable (use-list invariant violation)",
+                        old_input.output_id
+                    )
+                })?;
                 let input_index = old_input.input_index;
                 let new_input = NodeInput::new(new_output_id, new_node_id, input_index);
                 let new_input_id = new_inputs.push(new_input);
@@ -153,6 +169,13 @@ impl Graph {
         for input_id in all_input_ids {
             self.link_input_to_output_list(input_id);
         }
+
+        // 6b. GC the wide-const side-table BEFORE rebuilding the dedup
+        // cache.  The dedup cache keys on `Node` (which carries the
+        // `NodeKind`, including `IntConstWide(WideConstId)`); rewriting
+        // wide-const ids must happen first so the cache is built over
+        // the post-GC payloads.
+        self.gc_wide_consts();
 
         // 7. Rebuild the dedup cache from scratch.
         self.node_to_id.clear();
@@ -220,6 +243,72 @@ impl Graph {
         self.asm_fingerprints = new_asm_fingerprints;
         self.call_clobbered_overrides = new_call_clobbered_overrides;
 
-        remap
+        Ok(remap)
+    }
+
+    /// Rebuilds [`Self::wide_consts`] + [`Self::wide_const_dedup`] over
+    /// only the values referenced by surviving `IntConstWide` nodes.
+    /// Each `IntConstWide(old_id)` in the arena is rewritten in place
+    /// to carry the new id assigned by the rebuilt side-table.
+    ///
+    /// Called from [`Self::retain_reachable`] after the node arena
+    /// remap has settled — at that point `self.nodes.keys()` only
+    /// iterates surviving nodes, so the live-id scan correctly excludes
+    /// zombie `IntConstWide` references.
+    ///
+    /// **Not safe to call standalone on a non-compacted graph:** the
+    /// scan would include zombie nodes' wide-const ids, defeating the
+    /// GC purpose.  `pub(crate)` rather than fully private only because
+    /// `retain_reachable` is in a sibling module; callers outside that
+    /// path should call `retain_reachable` instead.
+    pub(crate) fn gc_wide_consts(&mut self) {
+        use crate::node::NodeKind;
+        use crate::wide_const::{WideConstId, WideConstStorage};
+
+        // Build the live-id set + collect every IntConstWide node's old id.
+        let mut live_old_ids: Vec<WideConstId> = Vec::new();
+        let mut wide_nodes: Vec<crate::node::NodeId> = Vec::new();
+        for node in self.nodes.keys() {
+            if let NodeKind::IntConstWide(id) = self.nodes[node].kind {
+                wide_nodes.push(node);
+                live_old_ids.push(id);
+            }
+        }
+        if live_old_ids.is_empty() && self.wide_consts.is_empty() {
+            return;
+        }
+
+        // Rebuild the side-table + dedup map over only live values.
+        let mut new_consts: cranelift_entity::PrimaryMap<WideConstId, WideConstStorage> =
+            cranelift_entity::PrimaryMap::new();
+        let mut new_dedup: rustc_hash::FxHashMap<WideConstStorage, WideConstId> =
+            rustc_hash::FxHashMap::default();
+        let mut old_to_new: rustc_hash::FxHashMap<WideConstId, WideConstId> =
+            rustc_hash::FxHashMap::default();
+        for old_id in live_old_ids {
+            if old_to_new.contains_key(&old_id) {
+                continue;
+            }
+            let value = self.wide_consts[old_id].clone();
+            let new_id = if let Some(&existing) = new_dedup.get(&value) {
+                existing
+            } else {
+                let id = new_consts.push(value.clone());
+                new_dedup.insert(value, id);
+                id
+            };
+            old_to_new.insert(old_id, new_id);
+        }
+        self.wide_consts = new_consts;
+        self.wide_const_dedup = new_dedup;
+
+        // Rewrite the surviving IntConstWide nodes' payloads in place.
+        for node in wide_nodes {
+            if let NodeKind::IntConstWide(ref mut id) = self.nodes[node].kind
+                && let Some(&new_id) = old_to_new.get(id)
+            {
+                *id = new_id;
+            }
+        }
     }
 }

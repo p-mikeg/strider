@@ -8,14 +8,18 @@
 use object::{Object, ObjectSymbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let binary_path = "fixtures/out/x86/test.elf";
+    // Use a real fixture that ships with the workspace.  Build via
+    // `make -C fixtures` if the file isn't present (the example expects
+    // the fixture to be pre-built — see CLAUDE.md).
+    let binary_path = "fixtures/out/x86/arithmetic.elf";
+    let symbol = "add";
 
     let obj = reader::load_elf(binary_path)?;
     let mem_reader = reader::ElfFileMemReader::from_object(&obj)?;
     let rom = reader::ElfFileMemReader::from_object(&obj)?;
 
     let arch = strider::SleighArch::x86();
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
     let strider = strider::Strider::new(
         arch,
         sleigh.regs()?,
@@ -27,11 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let addr = obj
-        .symbol_by_name("struct_test")
-        .ok_or("'fib' symbol not found in binary")?
+        .symbol_by_name(symbol)
+        .ok_or_else(|| format!("'{symbol}' symbol not found in binary {binary_path}"))?
         .address();
 
-    let cfg = cfg::Builder::new(sleigh, addr, cfg_options).build()?;
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, addr, cfg_options).build()?;
 
     let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark_cfg());
     dot.dump_as_html("cfg.html")?;

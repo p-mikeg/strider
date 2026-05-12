@@ -33,7 +33,7 @@ fn check_node_output_kinds(
 }
 
 #[track_caller]
-fn check_node_output_defintions(
+fn check_node_output_definitions(
     graph: &Graph,
     node_id: NodeId,
     expected: impl IntoIterator<Item = (NodeId, u32)>,
@@ -65,7 +65,7 @@ fn create_single_node() {
         node_id,
         vec![NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    check_node_output_defintions(&graph, node_id, vec![(node_id, 0)]);
+    check_node_output_definitions(&graph, node_id, vec![(node_id, 0)]);
 }
 
 /// `kind_of_output` agrees with the two-step `node_kind(get_node_from_output(out))`
@@ -109,6 +109,38 @@ fn cacheable_node_is_deduplicated() {
         graph.nodes.len(),
         1,
         "deduplication must not create a second node"
+    );
+}
+
+/// Repeated `create_node` calls with the same cacheable-kind key must
+/// return the same `NodeId` and grow the arena exactly once.  This pins
+/// the behavioural contract of the borrowed-key dedup-cache lookup
+/// (`raw_entry_mut().from_hash(…)`): a cache *hit* must allocate
+/// neither the owned key nor a duplicate node.  Bulk-shape variant of
+/// `cacheable_node_is_deduplicated` to guard against accidental hash
+/// mismatches between the borrowed `(&Node, &[…], &[…])` probe shape
+/// and the owned `(Node, Vec<…>, Vec<…>)` insert shape.
+#[test]
+fn cacheable_node_dedup_is_stable_across_many_calls() {
+    let mut graph = Graph::new();
+    let first = graph.create_node(
+        NodeKind::IntConst(0xdead_beefu128),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let arena_after_first = graph.nodes.len();
+    for _ in 0..1000 {
+        let id = graph.create_node(
+            NodeKind::IntConst(0xdead_beefu128),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        assert_eq!(id, first, "cache hit must return the original id");
+    }
+    assert_eq!(
+        graph.nodes.len(),
+        arena_after_first,
+        "no new nodes should be allocated on repeated cache hits",
     );
 }
 

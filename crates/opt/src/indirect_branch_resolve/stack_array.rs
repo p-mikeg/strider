@@ -1,4 +1,4 @@
-//! Stack-array-of-labels arm of the tier-2 indirect-branch classifier.
+//! Stack-array-of-labels arm of the indirect-branch classifier.
 //!
 //! At -O0, gcc and clang lower a C `goto *targets[idx]` to:
 //!
@@ -20,7 +20,7 @@
 //!     [`super::jump_table::bound_via_predecessor_if`] machinery.
 //!   * For each `i in 0..N`, look up the stored value at SP-offset
 //!     `K + i*stride` via the new
-//!     [`opt::stack_load_forward::find_stack_stored_value_at_offset`]
+//!     `opt::stack_load_forward::find_stack_stored_value_at_offset`
 //!     helper.
 //!   * Each stored value must be `IntConst`; collect into
 //!     `ResolvedTargets::Multiple([c0, c1, ...])`.
@@ -46,7 +46,7 @@
 
 use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use ir::node::{NodeKind, NodeOutputId};
-use ir::{BuiltFunctionGraph, Graph, IntBinaryOp};
+use ir::{Graph, IntBinaryOp};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 use crate::stack_load_forward::{StackStoredValueMemo, find_stack_stored_value_at_offset};
 
@@ -75,12 +75,12 @@ use pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var
 ///   be non-deterministic, can't enumerate.
 #[must_use]
 pub fn classify_stack_array(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
-    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
+    known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = &fg.graph;
+    let graph = ctx.graph_ref();
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM, `& 0xFFFFFFFFFFFFFFFE` for 64-bit
@@ -89,11 +89,11 @@ pub fn classify_stack_array(
     // through the wrapper, run the rest of the classification on the
     // underlying Load, and `& mask` each enumerated target before
     // returning.  Non-And anchors take the path with `mask = !0`.
-    let (load_anchor, target_mask) = strip_target_mask(fg, anchor_output);
+    let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_output);
 
-    let shape = match_stack_array_shape(fg, load_anchor, stack_ptr_vn)?;
-    let bound = bound_via_known_bits(fg, shape.idx_output, known)
-        .or_else(|| bound_via_predecessor_if(fg, anchor_output, shape.idx_output))?;
+    let shape = match_stack_array_shape(ctx, load_anchor, stack_ptr_vn)?;
+    let bound = bound_via_known_bits(ctx, shape.idx_output, known)
+        .or_else(|| bound_via_predecessor_if(ctx, anchor_output, shape.idx_output))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
     }
@@ -114,7 +114,17 @@ pub fn classify_stack_array(
             &mut memo,
             &mut walk_memo,
         )?;
-        let c = graph.int_const_val(value)?;
+        // peel
+        // `Truncate(IntConst)` and `Extend(IntConst)` wrappers before
+        // checking for a constant.  AArch64-BE's lifter wraps stored
+        // label addresses in `Truncate` for 32-bit ARM Thumb-interworking
+        // (mask to pointer width); ConstantFold rules 4-6 normally fold
+        // these, but the StackStore→StackLoadForward path can land us on
+        // a not-yet-folded shape.  SOUND: both wrappers are deterministic
+        // functions of the inner constant, exactly mirroring the
+        // `Truncate(IntConst)` / `Extend(IntConst)` arms in
+        // `classify_anchor_with_rom_and_sp`.
+        let c = peel_to_u64_const(graph, value)?;
         targets.push(c & target_mask);
     }
     targets.sort_unstable();
@@ -123,6 +133,72 @@ pub fn classify_stack_array(
         None
     } else {
         Some(ResolvedTargets::Multiple(targets))
+    }
+}
+
+/// Peel `Truncate(IntConst)` / `Extend(IntConst)` wrappers and return
+/// the inner constant masked to its consumer-declared output width.
+/// companion to the
+/// `flatten_add_tree` Or-arm fix: AArch64-BE lifter shapes wrap stored
+/// label addresses in `Truncate(IntConst, U32)` (32-bit ARM
+/// Thumb-interworking); ConstantFold normally folds these but the
+/// `StackStore` → `StackLoadForward` propagation can leave the wrapper
+/// in place when the load's declared output type matches the truncate.
+///
+/// Implements the `Truncate(IntConst)` / `Extend(IntConst)` peel that
+/// `classify.rs`'s top-level arm explicitly delegates to ConstantFold
+/// (rules 4-6).  This peel handles the stack-array path where the
+/// `StackStore` → `StackLoadForward` propagation can leave the
+/// `Truncate` wrapper in place if the load's declared output type
+/// matches the truncate width.
+///
+/// SOUND: both wrappers are deterministic functions of the inner
+/// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend
+/// requires the input width to recover the sign.  Truncate masks to
+/// the output width.
+fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
+    // Direct IntConst — fast path.
+    if let Some(c) = graph.int_const_val(out) {
+        return Some(c);
+    }
+    let producer = graph.get_node_from_output(out);
+    let kind = *graph.node_kind(producer);
+    match kind {
+        NodeKind::Truncate => {
+            let inputs: Vec<NodeOutputId> =
+                graph.node_inputs(producer).into_iter().collect();
+            let inner = *inputs.first()?;
+            let inner_kind = *graph.node_kind(graph.get_node_from_output(inner));
+            if let NodeKind::IntConst(k) = inner_kind {
+                let out_ty = graph.output_kind(out).as_value()?;
+                let masked = k & out_ty.bit_mask_u128();
+                #[allow(clippy::cast_possible_truncation)]
+                return Some(masked as u64);
+            }
+            None
+        }
+        NodeKind::Extend(op) => {
+            let inputs: Vec<NodeOutputId> =
+                graph.node_inputs(producer).into_iter().collect();
+            let inner = *inputs.first()?;
+            let inner_kind = *graph.node_kind(graph.get_node_from_output(inner));
+            let NodeKind::IntConst(k) = inner_kind else {
+                return None;
+            };
+            match op {
+                ir::ExtendOp::ZeroExtend => {
+                    #[allow(clippy::cast_possible_truncation)]
+                    Some(k as u64)
+                }
+                ir::ExtendOp::SignExtend => {
+                    let in_ty = graph.output_kind(inner).as_value()?;
+                    let signed = in_ty.get_signed_int(k)?;
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    Some(signed as u64)
+                }
+            }
+        }
+        _ => None,
     }
 }
 
@@ -173,11 +249,11 @@ const MAX_STRIP_LAYERS: usize = 4;
 // `int_const_val` returned `u64`, and `get_uint` returns `u128`.
 // Real dispatch masks fit in `u64` on every supported arch.
 fn strip_target_mask(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
-    let graph = &fg.graph;
-    let matcher = Matcher::new(fg);
+    let graph = ctx.graph_ref();
+    let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
@@ -188,7 +264,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let and_p = and_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &and_p.into())
-            && let (Some(c128), Some(other)) = (m.get_uint(c_var, fg), m.output(other_var))
+            && let (Some(c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -209,7 +285,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let or_p = or_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &or_p.into())
-            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, fg), m.output(other_var))
+            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -234,11 +310,11 @@ struct StackArrayShape {
 }
 
 fn match_stack_array_shape(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
-    let graph = &fg.graph;
+    let graph = ctx.graph_ref();
     let load_node = graph.get_node_from_output(anchor_output);
     let NodeKind::Load(_) = *graph.node_kind(load_node) else {
         return None;
@@ -262,7 +338,7 @@ fn match_stack_array_shape(
     // `decompose_sp`) to `Terminal { offset: K }`.
     let mut idx_stride: Option<(NodeOutputId, u64, usize)> = None;
     for (i, t) in terms.iter().enumerate() {
-        if let Some((idx, stride)) = extract_idx_and_stride(fg, *t) {
+        if let Some((idx, stride)) = extract_idx_and_stride(ctx, *t) {
             // First match wins; if there are multiple idx*stride
             // sub-expressions in the address (unlikely in practice
             // but defensible), the others would force the
@@ -283,7 +359,7 @@ fn match_stack_array_shape(
         if i == idx_pos {
             continue;
         }
-        let mut visiting = rustc_hash::FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
         match decompose_sp(graph, *t, stack_ptr_vn, &mut sp_memo, &mut visiting) {
             Some(SpExpr::Terminal { base: _, offset }) => {
                 if found_sp {
@@ -351,7 +427,26 @@ fn flatten_add_tree(
     // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
     // `Neg(IntConst)`, so the per-term decompose step downstream catches
     // that constant via the `None` arm at line ~307.
-    if let (NodeKind::IntBinaryOp(IntBinaryOp::Add), Ok([lhs, rhs])) = (
+    // also flatten
+    // `IntBinaryOp::Or` when used as add-equivalent.  AArch64-BE's
+    // Sleigh lift can emit `Or(sp, K)` for stack-pointer-plus-offset
+    // address computation when `sp`'s upper bits are guaranteed zero
+    // (which they are for any address in the canonical 48-bit virtual
+    // range), making OR and ADD bitwise equivalent for non-overlapping
+    // operands.  The downstream per-term decompose still needs to see
+    // through this to attribute the operand back to `InitialVar(sp)`.
+    //
+    // SOUND: when both operands have non-overlapping bit footprints,
+    // `Or(a, b) == Add(a, b)`.  The classifier's existing per-term
+    // soundness checks (every term either resolves to a constant, an
+    // InitialVar(sp) reference, or an idx-scaled-by-stride pattern)
+    // re-validate the shape downstream.  Misclassification surfaces
+    // as a per-term `None` (defer-via-unresolved) rather than a
+    // wrong dispatch.
+    if let (
+        NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::Or),
+        Ok([lhs, rhs]),
+    ) = (
         graph.node_kind(node),
         graph.node_inputs_exact::<2>(node),
     ) {
@@ -379,7 +474,7 @@ fn flatten_add_tree(
 /// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
 /// lifter output should fail closed rather than wrap silently.
 fn extract_idx_and_stride(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     candidate: NodeOutputId,
 ) -> Option<(NodeOutputId, u64)> {
     // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
@@ -391,15 +486,15 @@ fn extract_idx_and_stride(
     // shift shape, mirroring the prior match's arm order.
     use pattern::{Capture, Matcher, any_int_const, mul, shl, var};
 
-    let candidate_node = fg.graph.get_node_from_output(candidate);
-    let matcher = Matcher::new(fg);
+    let candidate_node = ctx.get_node_from_output(candidate);
+    let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
 
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const(stride_var));
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat.into()) {
-        let stride_u128 = m.get_uint(stride_var, fg)?;
+        let stride_u128 = m.get_uint(stride_var, ctx.graph_ref())?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
         // in `u64` everywhere we run.
@@ -414,7 +509,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const(s_var));
     let m = matcher.match_at(candidate_node, &shl_pat.into())?;
-    let s_u128 = m.get_uint(s_var, fg)?;
+    let s_u128 = m.get_uint(s_var, ctx.graph_ref())?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
     // stride.  `get_uint` returns `u128`; out-of-range values reject
@@ -512,9 +607,9 @@ mod tests {
         p.run(&mut fg.graph, fg.entry).unwrap();
         let load = fg
             .all_node_ids()
-            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives — StackLoadForward not in pipeline");
-        let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
+        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
         (fg, load_out)
     }
 
@@ -522,8 +617,8 @@ mod tests {
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
         let (fg, load_out) = build_two_target_array(targets, -24, 8);
-        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
-        let result = classify_stack_array(&fg, load_out, sp64(), &known);
+        let known = crate::analyze_known_bits((&fg).into()).expect("kb analyze");
+        let result = classify_stack_array((&fg).into(), load_out, sp64(), &known);
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -554,11 +649,11 @@ mod tests {
         p.run(&mut fg.graph, fg.entry).unwrap();
         let load = fg
             .all_node_ids()
-            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
-        let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
-        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
-        assert_eq!(classify_stack_array(&fg, load_out, sp64(), &known), None);
+        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
+        let known = crate::analyze_known_bits((&fg).into()).expect("kb analyze");
+        assert_eq!(classify_stack_array((&fg).into(), load_out, sp64(), &known), None);
     }
 
     #[test]
@@ -605,22 +700,20 @@ mod tests {
         p.run(&mut fg.graph, fg.entry).unwrap();
         let load = fg
             .all_node_ids()
-            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
-        let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
-        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
-        assert_eq!(classify_stack_array(&fg, load_out, sp64(), &known), None);
+        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
+        let known = crate::analyze_known_bits((&fg).into()).expect("kb analyze");
+        assert_eq!(classify_stack_array((&fg).into(), load_out, sp64(), &known), None);
     }
 
     // ── strip_target_mask characterization tests ──────────────────
     //
-    // These tests pin the contract of `strip_target_mask` before R2's
-    // refactor migrates the manual NodeKind matching to `pattern::and` /
-    // `pattern::or`.  The pre-refactor implementation hand-rolled
-    // commutative operand checks; pattern's auto-commutative `and` /
-    // `or` express the same shape with auto-handled operand swapping.
-    // We therefore pin both operand orderings explicitly so the
-    // refactor cannot accidentally narrow what we accept.
+    // These tests pin both operand orderings explicitly so a future
+    // refactor of `strip_target_mask` cannot accidentally narrow what
+    // we accept.  `pattern::and` / `pattern::or` are auto-commutative,
+    // so a regression that drops one ordering would still pass the
+    // commutative-pair check but fail this characterization.
     //
     // The target shapes covered:
     //   * Bare anchor — no wrapper, returns `(anchor, !0)`.
@@ -689,7 +782,7 @@ mod tests {
     #[test]
     fn strip_target_mask_no_wrapper_returns_all_ones() {
         let (fg, anchor) = build_load_anchor();
-        let (out, mask) = strip_target_mask(&fg, anchor);
+        let (out, mask) = strip_target_mask((&fg).into(), anchor);
         assert_eq!(out, anchor, "no wrapper: anchor passes through");
         assert_eq!(mask, !0u64, "no wrapper: mask must be all-ones");
     }
@@ -700,7 +793,7 @@ mod tests {
         let wrapped = build_binop_wrapped(
             &mut fg.graph, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask(&fg, wrapped);
+        let (out, mask) = strip_target_mask((&fg).into(), wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
         assert_eq!(mask, 0xFFFE, "And(load, K) yields mask K");
     }
@@ -711,7 +804,7 @@ mod tests {
         let wrapped = build_binop_wrapped(
             &mut fg.graph, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
         );
-        let (out, mask) = strip_target_mask(&fg, wrapped);
+        let (out, mask) = strip_target_mask((&fg).into(), wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
         assert_eq!(mask, 0xFFFE, "And(K, load) yields mask K");
     }
@@ -729,7 +822,7 @@ mod tests {
         let and_layer = build_binop_wrapped(
             &mut fg.graph, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask(&fg, and_layer);
+        let (out, mask) = strip_target_mask((&fg).into(), and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
         assert_eq!(mask, 0xFFFE, "and-then-or yields the And's mask");
     }
@@ -746,7 +839,7 @@ mod tests {
         let and_layer = build_binop_wrapped(
             &mut fg.graph, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask(&fg, and_layer);
+        let (out, mask) = strip_target_mask((&fg).into(), and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
         assert_eq!(mask, 0xFFFE, "And's mask still applies");
     }
@@ -762,7 +855,7 @@ mod tests {
         let outer_and = build_binop_wrapped(
             &mut fg.graph, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask(&fg, outer_and);
+        let (out, mask) = strip_target_mask((&fg).into(), outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");
         assert_eq!(mask, 0xFF, "nested Ands intersect their masks");
     }

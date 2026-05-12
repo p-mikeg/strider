@@ -542,6 +542,41 @@ fn build_call_other_modeled_with_output_returns_typed_value() -> Result<()> {
 }
 
 #[test]
+fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
+    // C2 (strider): pin Graph::memory_output_of as the named accessor
+    // for what handle_call_other previously read as `node_outputs[1]`.
+    let mut b = builder_with_region()?;
+    let (node, _, _) = b.build_call_other_modeled(
+        4,
+        "cpuid",
+        &[],
+        Some(NodeOutputType::U32),
+        &[],
+        &[],
+        &[],
+    )?;
+    let mem_out = b.graph().memory_output_of(node)?;
+    assert_eq!(b.graph().output_kind(mem_out), NodeOutputKind::Memory);
+    Ok(())
+}
+
+#[test]
+fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let c = b.build_int_const(7u64, NodeOutputType::U32)?;
+    let int_node = b.graph().get_node_from_output(c);
+    let err = b
+        .graph()
+        .memory_output_of(int_node)
+        .expect_err("IntConst has no Memory output");
+    assert!(
+        err.to_string().contains("no Memory output"),
+        "got: {err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
@@ -550,6 +585,88 @@ fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
     assert!(
         err.to_string().contains("is not a value edge"),
         "got: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
+    // Pin the contract: create_node_attributed unions every contributor's
+    // asm-fingerprint into the resulting node, so opt-pass synthesised
+    // nodes carry a superset of their contributors' attribution.
+    let mut b = builder_with_region()?;
+    // Seed two IntConsts under different lift_addrs.
+    b.set_lift_addr(Some(0x100));
+    let l = b.build_int_const(5u64, NodeOutputType::U8)?;
+    let l_node = b.body().graph.get_node_from_output(l);
+    b.set_lift_addr(Some(0x104));
+    let r = b.build_int_const(7u64, NodeOutputType::U8)?;
+    let r_node = b.body().graph.get_node_from_output(r);
+    // Synthesise a fresh Or node attributing both.  Use the IR graph's
+    // create_node_attributed directly (rather than going through the
+    // builder) to test the helper in isolation.
+    b.set_lift_addr(None);
+    let or_node = b.body_mut().graph.create_node_attributed(
+        NodeKind::IntBinaryOp(IntBinaryOp::Or),
+        [l, r],
+        [crate::node::NodeOutputKind::OutputType(NodeOutputType::U8)],
+        &[l_node, r_node],
+    );
+    let fp = b.body().graph.asm_fingerprint(or_node);
+    assert!(
+        fp.contains(&0x100) && fp.contains(&0x104),
+        "create_node_attributed must union both contributors' fingerprints; got {fp:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
+    // Pin the asm-fingerprint contract: when create_node hits the
+    // dedup cache (returning a previously-built equivalent NodeId),
+    // the wrapping FunctionBuilder must STILL union the current
+    // lift_addr into the cached node's fingerprint.  Without this
+    // union the second lift's contributing address would be silently
+    // lost — patterns matching the cached node would not see the
+    // second lift's attribution.
+    let mut b = builder_with_region()?;
+
+    // First build of IntConst(42, U64) under lift_addr 0x100.
+    b.set_lift_addr(Some(0x100));
+    let c1 = b.build_int_const(42u64, NodeOutputType::U64)?;
+    let c1_node = b.body().graph.get_node_from_output(c1);
+
+    // Second build under lift_addr 0x104.  Same kind+type+inputs, so
+    // create_node returns the cached NodeId.
+    b.set_lift_addr(Some(0x104));
+    let c2 = b.build_int_const(42u64, NodeOutputType::U64)?;
+    let c2_node = b.body().graph.get_node_from_output(c2);
+
+    assert_eq!(c1_node, c2_node, "cache must return the same NodeId");
+    let fp = b.body().graph.asm_fingerprint(c1_node);
+    assert!(
+        fp.contains(&0x100),
+        "fingerprint must retain first lift's address (0x100); got {fp:?}"
+    );
+    assert!(
+        fp.contains(&0x104),
+        "fingerprint must union the cache-hit lift's address (0x104); got {fp:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_call_other_terminal_closes_region() -> Result<()> {
+    // Regression: build_call_other_terminal must terminate the region so
+    // subsequent region-bound builder calls correctly fail.  Mirrors the
+    // pattern of build_return / build_branch / build_indirect_branch
+    // which all call terminate_cur_region().
+    let mut b = builder_with_region()?;
+    b.build_call_other_terminal(0, "ud2")?;
+    let ctrl = b.cur_region_control();
+    assert!(
+        ctrl.is_err(),
+        "cur_region_control must fail after build_call_other_terminal terminates the region; got: {ctrl:?}"
     );
     Ok(())
 }
@@ -636,7 +753,7 @@ fn piece_composition_auto_casts_float_input() -> Result<()> {
     let float_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
     let int_lo = b.build_int_const(0u64, NodeOutputType::U32)?;
 
-    // Replicate the analyzer's Piece composition.
+    // Replicate the pcode-lift Piece composition.
     let out_ty = NodeOutputType::U64;
     let hi_ty = b.get_output_type(float_val)?.to_natural_int_type();
     let hi_int = b.convert_to_int_if_needed(float_val, hi_ty)?;
@@ -879,7 +996,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
 //
 // The fix in `FunctionBuilder::new_raw` extends the same overlap-filter that
 // REGISTER space uses to UNIQUE space: when both an outer and an inner
-// varnode are touched, the outer wins, and the analyzer's register-aliasing
+// varnode are touched, the outer wins, and the pcode-lift register-aliasing
 // logic rebuilds the inner via shift/truncate when needed.
 
 fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
@@ -952,7 +1069,7 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
 //
 // The mitigation that lives at the IR layer is `convert_to_int_if_needed`:
 // when called on a Bool with an integer target type, it must produce a
-// CastToInt-wrapped value of the integer type.  The analyzer's `write_reg_vn`
+// CastToInt-wrapped value of the integer type.  The pcode-lift `write_reg_vn`
 // invokes this helper at every variable write; this test pins the helper's
 // contract so future refactors don't silently regress the bool-into-int cycle.
 
@@ -1099,7 +1216,7 @@ fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
 }
 
 /// End-to-end: write a Bool to a 1-byte register variable through the
-/// coerce-then-write sequence the analyzer's `write_reg_vn` uses.  Reading
+/// coerce-then-write sequence pcode-lift's `write_reg_vn` uses.  Reading
 /// the variable back must return an integer-typed output, never the raw
 /// Bool — that was the root state that fed Bool into AnyInt-expecting
 /// phi consumers post-optimization.
@@ -1117,7 +1234,7 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     let rhs = b.build_int_const(2u64, NodeOutputType::U32)?;
     let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::U32)?;
 
-    // Mirror the analyzer's write_reg_vn coercion: convert to reg's
+    // Mirror pcode-lift's write_reg_vn coercion: convert to reg's
     // declared int type (U8 for a 1-byte flag), then write.
     let reg_ty: NodeOutputType = flag.size.try_into()?;
     let coerced = b.convert_to_int_if_needed(bool_val, reg_ty)?;
@@ -1404,5 +1521,220 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
         b.body().graph.node_kind(b_id),
         NodeKind::IntConst(2)
     ));
+    Ok(())
+}
+
+#[test]
+fn lift_at_scopes_lift_addr_and_restores_on_exit() -> Result<()> {
+    // Pin lift_at's restore-on-exit contract.  After
+    // the closure returns, the lift_addr must be back to whatever it
+    // was before — even if the closure left it set on the way in.
+    let mut b = builder_with_region()?;
+    assert_eq!(b.lift_addr(), None);
+    let inner = b.lift_at(0x100, |b| {
+        assert_eq!(b.lift_addr(), Some(0x100));
+        b.lift_addr()
+    });
+    assert_eq!(inner, Some(0x100));
+    assert_eq!(b.lift_addr(), None, "lift_at must restore prior addr");
+
+    // Nested: outer lift_at(0xA), inner lift_at(0xB), closure must see
+    // both in turn and return to outer.
+    b.set_lift_addr(Some(0x200));
+    let mid = b.lift_at(0xA, |b| {
+        b.lift_at(0xB, |b| b.lift_addr());
+        b.lift_addr()
+    });
+    assert_eq!(mid, Some(0xA));
+    assert_eq!(b.lift_addr(), Some(0x200));
+    Ok(())
+}
+
+#[test]
+fn lift_at_attributes_node_to_inner_addr_only() -> Result<()> {
+    // The closure-form scope-guard's primary observable: a node
+    // created inside the closure picks up the inner addr, and a node
+    // created after the closure picks up whatever was set before.
+    let mut b = builder_with_region()?;
+    b.set_lift_addr(Some(0x10));
+    let outside_pre = b.build_int_const(1u64, NodeOutputType::U64)?;
+    let inside = b.lift_at(0xC0DE, |b| b.build_int_const(2u64, NodeOutputType::U64))?;
+    let outside_post = b.build_int_const(3u64, NodeOutputType::U64)?;
+
+    let pre_node = b.body().graph.get_node_from_output(outside_pre);
+    let in_node = b.body().graph.get_node_from_output(inside);
+    let post_node = b.body().graph.get_node_from_output(outside_post);
+
+    assert_eq!(b.body().graph.asm_fingerprint(pre_node), &[0x10]);
+    assert_eq!(b.body().graph.asm_fingerprint(in_node), &[0xC0DE]);
+    assert_eq!(b.body().graph.asm_fingerprint(post_node), &[0x10]);
+    Ok(())
+}
+
+#[test]
+fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U256([0x1234, 0xabcd, 0, 0]);
+    let out = b.build_int_const_wide(v.clone(), NodeOutputType::U256)?;
+    let node = b.body().graph.get_node_from_output(out);
+    let NodeKind::IntConstWide(id) = b.body().graph.node_kind(node) else {
+        panic!("expected IntConstWide, got {:?}", b.body().graph.node_kind(node));
+    };
+    assert_eq!(b.body().graph.wide_const(*id), &v);
+    Ok(())
+}
+
+#[test]
+fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U512([1, 2, 3, 4, 5, 6, 7, 8]);
+    let out = b.build_int_const_wide(v.clone(), NodeOutputType::U512)?;
+    let node = b.body().graph.get_node_from_output(out);
+    let NodeKind::IntConstWide(id) = b.body().graph.node_kind(node) else {
+        panic!();
+    };
+    assert_eq!(b.body().graph.wide_const(*id), &v);
+    Ok(())
+}
+
+#[test]
+fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U256([42, 0, 0, 0]);
+    let o1 = b.build_int_const_wide(v.clone(), NodeOutputType::U256)?;
+    let o2 = b.build_int_const_wide(v, NodeOutputType::U256)?;
+    let n1 = b.body().graph.get_node_from_output(o1);
+    let n2 = b.body().graph.get_node_from_output(o2);
+    assert_eq!(n1, n2, "structural dedup must reuse the same NodeId");
+    Ok(())
+}
+
+/// Regression: `build_int_const` and `make_int_const`
+/// must reject `U512` (and `U256`) because both store the value in `u128`.
+/// Without the guard, the resulting `IntConst` would claim a width its
+/// storage cannot represent — silent type confusion.
+#[test]
+fn build_int_const_rejects_u256_and_u512() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let err256 = b
+        .build_int_const(0u64, NodeOutputType::U256)
+        .expect_err("U256 must be rejected — use build_int_const_wide");
+    assert!(err256.to_string().contains("U256"), "got: {err256}");
+    let err512 = b
+        .build_int_const(0u64, NodeOutputType::U512)
+        .expect_err("U512 must be rejected — use build_int_const_wide");
+    assert!(err512.to_string().contains("U512"), "got: {err512}");
+    Ok(())
+}
+
+#[test]
+fn make_int_const_rejects_u256_and_u512() {
+    use crate::graph::Graph;
+    let mut g = Graph::new();
+    let err256 = g
+        .make_int_const(0u64, NodeOutputType::U256)
+        .expect_err("U256 rejected");
+    assert!(err256.to_string().contains("U256"), "got: {err256}");
+    let err512 = g
+        .make_int_const(0u64, NodeOutputType::U512)
+        .expect_err("U512 rejected");
+    assert!(err512.to_string().contains("U512"), "got: {err512}");
+}
+
+#[test]
+fn build_int_const_wide_rejects_non_wide_output_type() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U256([0; 4]);
+    let err = b
+        .build_int_const_wide(v, NodeOutputType::U128)
+        .expect_err("U128 must be rejected — use build_int_const");
+    assert!(err.to_string().contains("non-wide output type"), "got: {err}");
+    Ok(())
+}
+
+#[test]
+fn build_int_const_wide_rejects_storage_byte_size_mismatch() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v_256 = crate::wide_const::WideConstStorage::U256([0; 4]);
+    let err = b
+        .build_int_const_wide(v_256, NodeOutputType::U512)
+        .expect_err("U256 storage with U512 output must be rejected");
+    assert!(err.to_string().contains("byte_size"), "got: {err}");
+    Ok(())
+}
+
+#[test]
+fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
+    use crate::validate::validate;
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U256([0x1234_5678, 0, 0, 0]);
+    let out = b.build_int_const_wide(v, NodeOutputType::U256)?;
+    // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
+    let entry_ctrl = b.body().graph.node_outputs(b.body().entry).into_iter().next().unwrap();
+    // Build a minimal Return — needs Memory input; pull it from InitialMemory.
+    let mem_node = b
+        .body()
+        .graph
+        .all_node_ids()
+        .find(|n| matches!(b.body().graph.node_kind(*n), NodeKind::InitialMemory))
+        .unwrap();
+    let mem_out = b.body().graph.node_outputs(mem_node).into_iter().next().unwrap();
+    let _ret = b
+        .body_mut()
+        .graph
+        .create_node(NodeKind::Return, [entry_ctrl, mem_out, out], []);
+    let entry_id = b.body().entry;
+    let g = &b.body().graph;
+    validate(g, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
+    Ok(())
+}
+
+#[test]
+fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
+    use crate::wide_const::WideConstStorage;
+    let mut b = builder_with_region()?;
+    let _live = b.build_int_const_wide(WideConstStorage::U256([1; 4]), NodeOutputType::U256)?;
+    // Build an additional wide const that we'll never wire into the
+    // reachable graph — `compact()` should drop it.
+    let _zombie =
+        b.build_int_const_wide(WideConstStorage::U256([2; 4]), NodeOutputType::U256)?;
+    // Zombie isn't referenced by `_live` and the only Return walk-spine
+    // visits `_live` (we wire it through Return to keep it reachable).
+    let mem_node = b
+        .body()
+        .graph
+        .all_node_ids()
+        .find(|n| matches!(b.body().graph.node_kind(*n), NodeKind::InitialMemory))
+        .unwrap();
+    let mem_out = b
+        .body()
+        .graph
+        .node_outputs(mem_node)
+        .into_iter()
+        .next()
+        .unwrap();
+    let entry_ctrl = b
+        .body()
+        .graph
+        .node_outputs(b.body().entry)
+        .into_iter()
+        .next()
+        .unwrap();
+    let _ret = b
+        .body_mut()
+        .graph
+        .create_node(NodeKind::Return, [entry_ctrl, mem_out, _live], []);
+
+    let pre = b.body().graph.wide_consts.len();
+    assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
+
+    let mut bfg = b.build()?;
+    bfg.compact()?;
+
+    let post = bfg.graph.wide_consts.len();
+    assert_eq!(
+        post, 1,
+        "compact must drop the unreferenced zombie wide const; got {post} entries"
+    );
     Ok(())
 }

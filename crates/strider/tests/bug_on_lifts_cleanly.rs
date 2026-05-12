@@ -12,20 +12,18 @@
 use cfg::{Builder, OptionsBuilder, RegionTerminator};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{CallingConvention, SleighArch, Strider};
+use strider::SleighArch;
 
 #[test]
 fn x86_64_ud2_terminates_cleanly() {
+    let strider = strider::test_utils::strider_x86_64();
     let arch = SleighArch::x86_64();
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
-        .expect("strider");
 
     let bytes = vec![0x0fu8, 0x0b]; // ud2
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
-    let cfg = Builder::with_endianness(sleigh, entry, OptionsBuilder::new().build(), arch.endianness)
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
         .build()
         .expect("cfg");
 
@@ -36,7 +34,7 @@ fn x86_64_ud2_terminates_cleanly() {
         outcome.unresolved_branches.len(),
     );
     assert!(
-        cfg.graph
+        cfg.graph()
             .node_weights()
             .any(|r| matches!(r.terminator, RegionTerminator::NoReturn)),
         "expected at least one NoReturn region in cfg",
@@ -45,17 +43,15 @@ fn x86_64_ud2_terminates_cleanly() {
 
 #[test]
 fn aarch64_brk_terminates_cleanly() {
+    let strider = strider::test_utils::strider_aarch64();
     let arch = SleighArch::aarch64();
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::aarch64_aapcs64())
-        .expect("strider");
 
     // brk #0x800 = 0xD4210000 (LE: 00 00 21 D4)
     let bytes = vec![0x00u8, 0x00, 0x21, 0xd4];
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
-    let cfg = Builder::with_endianness(sleigh, entry, OptionsBuilder::new().build(), arch.endianness)
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
         .build()
         .expect("cfg");
 
@@ -66,7 +62,7 @@ fn aarch64_brk_terminates_cleanly() {
         outcome.unresolved_branches.len(),
     );
     assert!(
-        cfg.graph
+        cfg.graph()
             .node_weights()
             .any(|r| matches!(r.terminator, RegionTerminator::NoReturn)),
         "expected at least one NoReturn region in cfg",

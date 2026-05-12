@@ -20,6 +20,7 @@ use rsleigh::{Vn, VnSpace};
 fn real_cfg() -> cfg::Cfg<reader::ElfFileMemReader> {
     let p = binary("x64", "add");
     build_cfg(
+        &target::SleighArch::x86_64(),
         p.to_str().unwrap(),
         "add",
         rsleigh::sla_spec::SLA_SPEC_X86_64,
@@ -62,7 +63,7 @@ fn unique_formats_as_unique_offset_size() {
 #[test]
 fn register_known_offset_returns_register_name() {
     let cfg = real_cfg();
-    let regs = cfg.sleigh.regs().unwrap();
+    let regs = cfg.sleigh().regs().unwrap();
     // Pick a well-known x86-64 register. Try a few names until one resolves.
     let candidates = ["RAX", "RDI", "RSI", "EAX", "AX"];
     let (name, vn) = candidates

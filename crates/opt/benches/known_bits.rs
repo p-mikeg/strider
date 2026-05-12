@@ -5,7 +5,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ir::node::NodeOutputType;
 use ir::{FunctionBuilder, IntBinaryOp};
-use opt::{KnownBits, Optimizer};
+use opt::{KnownBits, OptimizerRaw};
 
 fn build_or_and_chain(n: usize) -> ir::BuiltFunctionGraph {
     let mut b = FunctionBuilder::empty().unwrap();
@@ -35,7 +35,7 @@ fn bench_chain(c: &mut Criterion) {
                 || build_or_and_chain(n),
                 |mut fg| {
                     let mut iters = 0usize;
-                    while KnownBits.optimize(&mut fg.graph, fg.entry).unwrap().changed() {
+                    while KnownBits.optimize_raw(&mut fg.graph, fg.entry).unwrap().changed() {
                         iters += 1;
                         if iters > 200 {
                             panic!("did not converge");

@@ -32,6 +32,7 @@ macro_rules! arch_tests {
     (
         mod $mod_name:ident,
         arch = $arch:literal,
+        sleigh_arch = $sleigh_arch:expr,
         sla  = $sla:expr,
         pspec = $pspec:expr
         $(, ignore = $reason:literal)?
@@ -43,7 +44,7 @@ macro_rules! arch_tests {
 
             fn cfg_of(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader> {
                 let p = super::common::binary($arch, fn_name);
-                common::build_cfg(p.to_str().unwrap(), fn_name, $sla, $pspec)
+                common::build_cfg(&$sleigh_arch, p.to_str().unwrap(), fn_name, $sla, $pspec)
             }
 
             fn bin_for(fn_name: &str) -> std::path::PathBuf {
@@ -149,7 +150,7 @@ macro_rules! arch_tests {
                 // so the comparison works for both ARM and ARM Thumb.
                 let expected = symbol_decode_addr(b.to_str().unwrap(), "add");
                 let c = cfg_of("add");
-                assert_eq!(c.graph[c.entry].start_addr.machine_addr.addr, expected);
+                assert_eq!(c.graph[c.entry].start_addr.machine_addr_u64(), expected);
             }
 
             // ── fallthrough edges ─────────────────────────────────────────────
@@ -193,6 +194,7 @@ macro_rules! arch_tests {
 arch_tests!(
     mod x86,
     arch  = "x86",
+    sleigh_arch = target::SleighArch::x86(),
     sla   = rsleigh::sla_spec::SLA_SPEC_X86,
     pspec = rsleigh::pspec::PSPEC_X86
 );
@@ -200,6 +202,7 @@ arch_tests!(
 arch_tests!(
     mod x64,
     arch  = "x64",
+    sleigh_arch = target::SleighArch::x86_64(),
     sla   = rsleigh::sla_spec::SLA_SPEC_X86_64,
     pspec = rsleigh::pspec::PSPEC_X86_64
 );
@@ -207,6 +210,7 @@ arch_tests!(
 arch_tests!(
     mod aarch64,
     arch  = "aarch64",
+    sleigh_arch = target::SleighArch::aarch64(),
     sla   = rsleigh::sla_spec::SLA_SPEC_AARCH64,
     pspec = rsleigh::pspec::PSPEC_AARCH64
 );
@@ -214,6 +218,7 @@ arch_tests!(
 arch_tests!(
     mod arm,
     arch  = "arm",
+    sleigh_arch = target::SleighArch::arm(),
     sla   = rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
     // PSPEC_ARM_V45 (32-bit ARM mode) matches the `-marm` build flag.
     // PSPEC_ARMCORTEX is Thumb-only (Cortex-M) and would mis-decode the
@@ -224,6 +229,7 @@ arch_tests!(
 arch_tests!(
     mod arm_thumb,
     arch  = "arm_thumb",
+    sleigh_arch = target::SleighArch::arm_thumb(),
     sla   = rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
     // PSPEC_ARMCORTEX selects Thumb-2 decoding for the `-mthumb` fixtures.
     pspec = rsleigh::pspec::PSPEC_ARMCORTEX
@@ -232,6 +238,7 @@ arch_tests!(
 arch_tests!(
     mod arm_be,
     arch  = "arm_be",
+    sleigh_arch = target::SleighArch::arm_be(),
     // BE-instruction-encoding mirror of the `arm` module above; the
     // `arm_be` fixtures are built with `clang --target=armeb-linux-gnueabi
     // -mno-thumb` so 4-byte ARM instructions decode under PSPEC_ARM_V45.
@@ -242,6 +249,7 @@ arch_tests!(
 arch_tests!(
     mod aarch64be,
     arch  = "aarch64be",
+    sleigh_arch = target::SleighArch::aarch64be(),
     sla   = rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
     pspec = rsleigh::pspec::PSPEC_AARCH64
 );
@@ -249,6 +257,7 @@ arch_tests!(
 arch_tests!(
     mod mips64le,
     arch  = "mips64le",
+    sleigh_arch = target::SleighArch::mipsle64(),
     sla   = rsleigh::sla_spec::SLA_SPEC_MIPS64LE,
     pspec = rsleigh::pspec::PSPEC_MIPS64
 );
@@ -256,6 +265,7 @@ arch_tests!(
 arch_tests!(
     mod mips64be,
     arch  = "mips64be",
+    sleigh_arch = target::SleighArch::mipsbe64(),
     sla   = rsleigh::sla_spec::SLA_SPEC_MIPS64BE,
     pspec = rsleigh::pspec::PSPEC_MIPS64
 );
@@ -263,6 +273,7 @@ arch_tests!(
 arch_tests!(
     mod ppc32be,
     arch  = "ppc32be",
+    sleigh_arch = target::SleighArch::ppc32be(),
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_32_BE,
     pspec = rsleigh::pspec::PSPEC_PPC_32
 );
@@ -270,6 +281,7 @@ arch_tests!(
 arch_tests!(
     mod ppc32le,
     arch  = "ppc32le",
+    sleigh_arch = target::SleighArch::ppc32le(),
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_32_LE,
     pspec = rsleigh::pspec::PSPEC_PPC_32
 );
@@ -277,6 +289,7 @@ arch_tests!(
 arch_tests!(
     mod ppc64be,
     arch  = "ppc64be",
+    sleigh_arch = target::SleighArch::ppc64be(),
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_64_BE,
     pspec = rsleigh::pspec::PSPEC_PPC_64
 );
@@ -284,6 +297,7 @@ arch_tests!(
 arch_tests!(
     mod ppc64le,
     arch  = "ppc64le",
+    sleigh_arch = target::SleighArch::ppc64le(),
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_64_LE,
     pspec = rsleigh::pspec::PSPEC_PPC_64
 );

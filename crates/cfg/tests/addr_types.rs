@@ -10,7 +10,7 @@ use cfg::test_api::MachineInsnAddr;
 #[test]
 fn machine_insn_addr_from_u64() {
     let a: MachineInsnAddr = 0x1000u64.into();
-    assert_eq!(a.addr, 0x1000);
+    assert_eq!(a.as_u64(), 0x1000);
 }
 
 #[test]

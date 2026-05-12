@@ -840,3 +840,53 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
     );
 }
 
+
+#[test]
+fn handle_int_sub_rejects_width_mismatch() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    // Mismatched widths: lhs is 4-byte (REGISTER), rhs is 2-byte CONST,
+    // out is 4-byte.  Sleigh's IntSub requires equal widths; the
+    // lifter must surface this as Err rather than silently coerce.
+    let insn = Insn {
+        opcode: Opcode::IntSub,
+        output: Some(reg(0)),
+        inputs: vec![reg(4), const_vn(1, 2)].into(),
+    };
+    let res = lifter.lift(&insn);
+    assert!(
+        res.is_err(),
+        "IntSub with mismatched widths must Err, got {res:?}"
+    );
+    let msg = res.unwrap_err().to_string();
+    assert!(
+        msg.contains("IntSub width mismatch"),
+        "error message should name the invariant; got {msg}"
+    );
+}
+
+#[test]
+fn int_sub_lowers_to_add_with_inner_neg() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let insn = Insn {
+        opcode: Opcode::IntSub,
+        output: Some(reg(0)),
+        inputs: vec![reg(4), reg(8)].into(),
+    };
+    assert!(lifter.lift(&insn).unwrap());
+    // Lift-time canonicalisation contract: no `IntBinaryOp::Sub` survives;
+    // every Sub is rewritten as Add(_, Neg(_)).
+    use ir::node::NodeKind;
+    let saw_neg = graph_has_kind(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg));
+    let saw_add = graph_has_kind(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add));
+    assert!(
+        saw_neg && saw_add,
+        "IntSub lift must produce both an inner Neg and an outer Add"
+    );
+}
+
+// Note: IntLessEqual lowering shape is covered by the existing
+// `lift_int_less_equal_lowers_to_boolneg_less` test earlier in this file.

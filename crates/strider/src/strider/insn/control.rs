@@ -24,7 +24,7 @@ use super::super::IrStrider;
 /// ```
 ///
 /// The last comparison's false-branch goes UNCONDITIONALLY to the
-/// final target's region — this is sound because tier-2's `Multiple`
+/// final target's region — this is sound because the IR-level indirect-branch resolver's `Multiple`
 /// classification is exhaustive for the runtime index range
 /// (KnownBits / predecessor `If(idx < N)` provide the upper bound),
 /// so the runtime always picks one of `targets`.  Sending the
@@ -166,7 +166,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let mut targets_and_regions: Vec<(u64, ir::RegionId)> =
             Vec::with_capacity(targets.len());
         for &target in targets {
-            let machine_addr = cfg::MachineInsnAddr { addr: target };
+            let machine_addr = cfg::MachineInsnAddr::new(target);
             let cfg_region = self
                 .cfg
                 .region_id_at_start(machine_addr)
@@ -175,7 +175,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             targets_and_regions.push((target, ir_region));
         }
         // Prefer the orchestrator's pinned NodeOutputId when available
-        // — the dispatch must compare the SAME value tier 2 classified.
+        // — the dispatch must compare the SAME value the IR-level indirect-branch resolver classified.
         // Falls back to a fresh `read_vn` when the cfg builder didn't
         // populate `target_value`.
         let idx = match target_value {
@@ -232,7 +232,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let space = target_vn.addr_space;
         let space_info = self
             .cfg
-            .sleigh
+            .sleigh()
             .space_info(space)
             .ok_or_else(|| anyhow::anyhow!("no space info for call target space {space:?}"))?;
         let target_addr = target_vn.addr_off;
@@ -263,10 +263,10 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// resolved constant target) and a Return that hands the
     /// caller's frame back.
     pub(crate) fn handle_tail_call(&mut self, target: u64) -> Result<()> {
-        let default_code_space = self.cfg.sleigh.default_code_space();
+        let default_code_space = self.cfg.sleigh().default_code_space();
         let space_info = self
             .cfg
-            .sleigh
+            .sleigh()
             .space_info(default_code_space)
             .ok_or_else(|| {
                 anyhow::anyhow!("no space info for default code space {default_code_space:?}")

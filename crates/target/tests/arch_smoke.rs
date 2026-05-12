@@ -13,7 +13,7 @@ use target::SleighArch;
 
 fn assert_preset_resolves(label: &str, arch: SleighArch) {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .unwrap_or_else(|e| panic!("{label}: Sleigh::new failed: {e:?}"));
     sleigh
         .regs()
@@ -118,9 +118,34 @@ fn presets_endianness_matches_arch() {
     ];
     for (label, arch, expected) in cases {
         assert_eq!(
-            arch.endianness, *expected,
+            arch.endianness(), *expected,
             "{label}: expected {expected:?}, got {:?}",
-            arch.endianness,
+            arch.endianness(),
         );
     }
+}
+
+#[test]
+fn arm_be_preset_resolves() {
+    assert_preset_resolves("arm_be", SleighArch::arm_be());
+}
+
+#[test]
+fn arm_be_endianness_is_big() {
+    use target::Endianness;
+    assert_eq!(SleighArch::arm_be().endianness(), Endianness::Big);
+}
+
+#[test]
+fn arch_preset_variant_casing_compiles() {
+    use target::ArchPreset;
+    let _v: &[ArchPreset] = &[
+        ArchPreset::X86_64, ArchPreset::X86,
+        ArchPreset::Arm, ArchPreset::ArmBe, ArchPreset::ArmThumb,
+        ArchPreset::Aarch64, ArchPreset::Aarch64Be,
+        ArchPreset::MipsBe32, ArchPreset::MipsLe32,
+        ArchPreset::MipsBe64, ArchPreset::MipsLe64,
+        ArchPreset::Ppc32Be, ArchPreset::Ppc32Le,
+        ArchPreset::Ppc64Be, ArchPreset::Ppc64Le,
+    ];
 }

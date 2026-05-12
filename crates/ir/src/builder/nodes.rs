@@ -78,28 +78,66 @@ impl FunctionBuilder {
     /// `val` is masked to `output_type`'s bit width before storage.  Accepts
     /// any value convertible to `u128` — most callers pass a `u64` literal.
     ///
+    /// Delegates to [`crate::Graph::make_int_const`] (the single source of
+    /// truth for primitive integer-constant construction) and unions any
+    /// active `lift_addr` into the returned node's asm-fingerprint.
+    ///
     /// # Errors
     ///
-    /// Returns an error when `output_type` is not an integer type, or is
-    /// `U256` (which is not yet representable in the u128 storage that
-    /// `IntConst` uses).
+    /// Returns an error when `output_type` is not an integer type, or
+    /// when it is `U256` / `U512` (not representable in the `u128` storage
+    /// that `IntConst` uses — use [`Self::build_int_const_wide`] instead).
     pub fn build_int_const(
         &mut self,
         val: impl Into<u128>,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        if !output_type.is_integer() {
+        let addr = self.lift_addr;
+        let out = self.graph_mut().make_int_const(val, output_type)?;
+        if let Some(addr) = addr {
+            let node = self.graph().get_node_from_output(out);
+            self.graph_mut().extend_asm_fingerprint(node, &[addr]);
+        }
+        Ok(out)
+    }
+
+    /// Builds an integer constant whose value exceeds `u128` — `U256`
+    /// (32 bytes) or `U512` (64 bytes).  Interns `value` via
+    /// [`crate::Graph::intern_wide_const`] so two builds with equal
+    /// values share the same `WideConstId` (and hence the same
+    /// `NodeId` under the dedup cache).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when:
+    /// - `output_type` is not `U256` or `U512` (use [`Self::build_int_const`]
+    ///   for narrower widths).
+    /// - `value.byte_size()` doesn't match `output_type`'s byte size
+    ///   (e.g. `U256` storage with `U512` declared output).
+    pub fn build_int_const_wide(
+        &mut self,
+        value: crate::wide_const::WideConstStorage,
+        output_type: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        let expected = match output_type {
+            NodeOutputType::U256 => 32usize,
+            NodeOutputType::U512 => 64usize,
+            other => {
+                return Err(anyhow!(
+                    "build_int_const_wide called with non-wide output type {other:?}; \
+                     use build_int_const for ≤ U128"
+                ));
+            }
+        };
+        if value.byte_size() != expected {
             return Err(anyhow!(
-                "build_int_const called with non-integer type {output_type:?}"
+                "WideConstStorage byte_size {} does not match output type {output_type:?} \
+                 (expected {expected})",
+                value.byte_size()
             ));
         }
-        if matches!(output_type, NodeOutputType::U256) {
-            return Err(anyhow!(
-                "build_int_const(U256) not yet supported - IntConst storage is u128"
-            ));
-        }
-        let val = val.into() & output_type.bit_mask_u128();
-        Ok(self.build_single_output_pure(NodeKind::IntConst(val), [], output_type))
+        let id = self.body_mut().graph.intern_wide_const(value);
+        Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
     }
 
     /// Emits an integer binary operation node with automatic type coercion.
@@ -486,8 +524,7 @@ impl FunctionBuilder {
 
         let res = self.terminate_cur_region()?;
 
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)?;
+        self.require_terminator_kinds(&res)?;
         self.validate_value_inputs(&ret_inputs)?;
 
         self.create_node(
@@ -519,8 +556,7 @@ impl FunctionBuilder {
     pub fn build_indirect_branch(&mut self, target_value: NodeOutputId) -> Result<()> {
         let res = self.terminate_cur_region()?;
 
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)?;
+        self.require_terminator_kinds(&res)?;
         self.validate_value_inputs(std::slice::from_ref(&target_value))?;
 
         self.create_node(
@@ -541,8 +577,7 @@ impl FunctionBuilder {
     /// mistyped (graph-construction bug).
     pub fn build_branch(&mut self, dest: RegionId) -> Result<()> {
         let res = self.terminate_cur_region()?;
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)?;
+        self.require_terminator_kinds(&res)?;
         self.link_region(dest, res.control, res.memory, res.region_id)
     }
 
@@ -594,18 +629,7 @@ impl FunctionBuilder {
         offset: NodeOutputId,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let seg_kind = self.graph().output_kind(segment);
-        if !seg_kind.is_value() {
-            return Err(anyhow!(
-                "output {segment:?} is not a value edge (got {seg_kind:?})"
-            ));
-        }
-        let off_kind = self.graph().output_kind(offset);
-        if !off_kind.is_value() {
-            return Err(anyhow!(
-                "output {offset:?} is not a value edge (got {off_kind:?})"
-            ));
-        }
+        self.validate_value_inputs(&[segment, offset])?;
         Ok(self.build_single_output_pure(
             NodeKind::SegmentOp { op_id },
             [segment, offset],

@@ -1,7 +1,7 @@
 //! Shared end-to-end pipeline runners + placeholder-anchor finders for the
-//! tier-2 fixture builders.
+//! IR-level fixture builders.
 //!
-//! Split out from the previous monolithic `indirect_resolve_helpers.rs` (W7) so each
+//! Split out from the previous monolithic `indirect_resolve_helpers.rs` so each
 //! sub-module imports only the helpers it actually needs.  This module owns
 //! the lift-and-optimise harness used by every classify / inplace / cache
 //! fixture; it does not build any specific scenario itself.
@@ -46,7 +46,7 @@ pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<ir::Value> {
 /// Run `Strider::analyze_cfg` on a hand-assembled byte
 /// sequence + the standard SystemV-x86_64 calling convention, then run
 /// the full optimiser pipeline.  Returns the resulting graph plus the
-/// (single) tier-2 placeholder anchor's `NodeOutputId` and the
+/// (single) IR-level placeholder anchor's `NodeOutputId` and the
 /// convention's link-register VN (always `None` on x86_64 — that arch
 /// pushes return addresses on the stack).
 ///
@@ -59,17 +59,17 @@ pub fn run_pipeline_x86_64(
     let base = 0x1000u64;
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create x86_64 sleigh");
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build");
 
     let regs = arch.probe_regs().expect("probe regs");
     let strider =
-        Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi()).expect("Strider::new");
-    let lr_vn = strider.calling_convention().link_register_vn;
+        Strider::new(arch, regs, CallingConvention::x86_64_systemv()).expect("Strider::new");
+    let lr_vn = strider.calling_convention().link_register_vn();
     let outcome = strider
         .analyze_cfg(&cfg)
         .expect("analyze_cfg");
@@ -86,7 +86,7 @@ pub fn run_pipeline_x86_64(
     assert_eq!(
         outcome.unresolved_branches.len(),
         1,
-        "fixture must have exactly one tier-2 placeholder",
+        "fixture must have exactly one IR-level placeholder",
     );
     // Resolve the *current* anchor after the optimiser ran — the
     // original recorded NodeOutputId may be orphaned if any pass

@@ -32,7 +32,15 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // born from a pcode insn picks up its parent machine-instruction
         // address; later optimisation passes only ever absorb fingerprints,
         // never set them.
-        let machine_addr = addr.machine_addr.addr;
+        //
+        // We can't use `FunctionBuilder::lift_at` here because the inner
+        // method also borrows the rest of `self` (cfg / strider / vn-cache).
+        // The manual `set_lift_addr(Some) … set_lift_addr(None)` pair is
+        // fine in practice because `process_insn_inner` returns a Result
+        // the caller propagates — the only way the post-clear is skipped
+        // is a panic, and Sleigh / IR builder errors all surface as typed
+        // `Result::Err` from this path.
+        let machine_addr = addr.machine_addr_u64();
         self.builder.set_lift_addr(Some(machine_addr));
         let res = self.process_insn_inner(region_id, insn, region_lookup);
         self.builder.set_lift_addr(None);
@@ -71,7 +79,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             // `Return` and `BranchIndirect` share a handler that emits a
             // calling-convention `Return`.  This is correct for the
             // link-register-return case (e.g. ARM `bx lr`); the cfg
-            // builder's tier-1 indirect-branch resolver detects tail
+            // builder's cfg-time mini-graph resolver detects tail
             // calls / jump tables / computed gotos and routes them via
             // dedicated terminators (`Switch`, `UnresolvedIndirectBranch`),
             // both handled in the special-terminator post-pass.
@@ -117,11 +125,11 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let user_op_id = id_vn.addr_off;
         let user_op_id_u32 = u32::try_from(user_op_id)
             .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;
-        let name = self.cfg.sleigh.user_op_name(user_op_id_u32).ok_or_else(|| {
+        let name = self.cfg.sleigh().user_op_name(user_op_id_u32).ok_or_else(|| {
             anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
         })?;
 
-        let class = target::call_other_abi::classify(self.strider.arch.preset, name)
+        let class = target::call_other_abi::classify(self.strider.arch.preset(), name)
             .ok_or_else(|| ir::error::UnknownCallOtherError {
                 name: name.to_string(),
             })?;
@@ -201,17 +209,30 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
                 // 6. Memory edge: strider decides whether to advance.
                 if abi.memory_edge {
-                    let mem_out = self.builder.body().graph.node_outputs(node)[1];
+                    let mem_out = self.builder.body().graph.memory_output_of(node)?;
                     self.builder.advance_cur_region_memory(mem_out)?;
                 }
 
                 // 7. Rebind tracked variables via the aliasing-aware
                 //    write_vn (so EAX clobber updates RAX-tracked
                 //    variable through the appropriate insert/extract).
+                //
+                //    The pcode-explicit output is written first; any
+                //    implicit-writes entry that matches `out_vn` is
+                //    skipped so the clobber-slot doesn't overwrite the
+                //    modeled value.  Concrete case: `rdpkru` emits
+                //    `EAX = rdpkru_u32()` in pcode while the ABI table
+                //    also lists `EAX` as an implicit-write — without
+                //    this skip the modeled CallOther output becomes a
+                //    dead node and pattern queries reading EAX see the
+                //    clobber slot instead.
                 if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), value) {
                     self.write_vn(out_vn, val)?;
                 }
                 for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
+                    if insn.output.as_ref() == Some(vn) {
+                        continue;
+                    }
                     self.write_vn(vn, slot)?;
                 }
 

@@ -31,13 +31,13 @@ fn get_vn_for_callother_clobber_slot_uses_function_default() {
             NodeOutputKind::OutputType(NodeOutputType::U64),
         ],
     );
-    let mut bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
-    bfg.call_other_clobbered = Box::new([rax]);
+    let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
+    bfg.set_call_other_clobbered_for_test(Box::new([rax]));
 
     let c = Capture::new();
     let slot2 = bfg.graph.node_outputs(callother).into_iter().nth(2).unwrap();
     let mut bindings = Bindings::default();
-    bindings.bind_capture(c, Binding::new(callother, Some(slot2)));
+    bindings.bind_capture_for_test(c, Binding::new(callother, Some(slot2)));
     let m = pattern::Match::new_for_test(callother, bindings);
     assert_eq!(m.get_vn(c, &bfg), Some(rax));
 }
@@ -66,13 +66,13 @@ fn get_vn_for_callother_with_value_output_skips_value_slot() {
             NodeOutputKind::OutputType(NodeOutputType::U64),
         ],
     );
-    let mut bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
-    bfg.call_other_clobbered = Box::new([rax]);
+    let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
+    bfg.set_call_other_clobbered_for_test(Box::new([rax]));
 
     let c = Capture::new();
     let slot3 = bfg.graph.node_outputs(callother).into_iter().nth(3).unwrap();
     let mut bindings = Bindings::default();
-    bindings.bind_capture(c, Binding::new(callother, Some(slot3)));
+    bindings.bind_capture_for_test(c, Binding::new(callother, Some(slot3)));
     let m = pattern::Match::new_for_test(callother, bindings);
     assert_eq!(m.get_vn(c, &bfg), Some(rax));
 
@@ -80,7 +80,7 @@ fn get_vn_for_callother_with_value_output_skips_value_slot() {
     let c2 = Capture::new();
     let slot2 = bfg.graph.node_outputs(callother).into_iter().nth(2).unwrap();
     let mut bindings2 = Bindings::default();
-    bindings2.bind_capture(c2, Binding::new(callother, Some(slot2)));
+    bindings2.bind_capture_for_test(c2, Binding::new(callother, Some(slot2)));
     let m2 = pattern::Match::new_for_test(callother, bindings2);
     assert_eq!(m2.get_vn(c2, &bfg), None);
 }
@@ -109,13 +109,13 @@ fn get_vn_for_callother_clobber_slot_uses_override_when_set() {
         ],
     );
     graph.set_call_clobbered_override(callother, vec![rbx]);
-    let mut bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
-    bfg.call_other_clobbered = Box::new([rax]);
+    let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
+    bfg.set_call_other_clobbered_for_test(Box::new([rax]));
 
     let c = Capture::new();
     let slot2 = bfg.graph.node_outputs(callother).into_iter().nth(2).unwrap();
     let mut bindings = Bindings::default();
-    bindings.bind_capture(c, Binding::new(callother, Some(slot2)));
+    bindings.bind_capture_for_test(c, Binding::new(callother, Some(slot2)));
     let m = pattern::Match::new_for_test(callother, bindings);
     assert_eq!(m.get_vn(c, &bfg), Some(rbx),
                "per-CallOther override must shadow function-default");

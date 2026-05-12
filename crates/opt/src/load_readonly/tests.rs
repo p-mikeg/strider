@@ -1,7 +1,6 @@
-use crate::pipeline::Optimizer;
-use crate::test_support::make_fn;
+use crate::pipeline::OptimizerRaw;
+use crate::test_support::{make_fn, return_kind};
 use super::*;
-use anyhow::anyhow;
 use crate::error::Result;
 use ir::node::{NodeKind, NodeOutputType};
 
@@ -19,17 +18,6 @@ impl ReadOnlyMemory for TestRom {
     }
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
-    let ret = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or_else(|| anyhow!("no return node found in function"))?;
-    let val = fg.graph.node_inputs(ret)[2];
-    Ok(*fg.graph.kind_of_output(val))
-}
-
 // ── original tests ────────────────────────────────────────────────────────────
 
 #[test]
@@ -38,8 +26,8 @@ fn load_from_rom_const_addr() -> Result<()> {
         let addr = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
-    assert!(LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(42));
+    assert!(LoadReadOnly(TestRom).optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(42));
     Ok(())
 }
 
@@ -49,11 +37,11 @@ fn load_non_rom_addr_no_change() -> Result<()> {
         let addr = b.build_int_const(0xDEADu64, NodeOutputType::U64)?;
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
-    assert!(!LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(!LoadReadOnly(TestRom).optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // Load node should still be present.
     assert!(
         fg.all_node_ids()
-            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+            .any(|n| matches!(fg.node_kind(n), NodeKind::Load(_)))
     );
     Ok(())
 }
@@ -70,7 +58,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
     // addr is an Add node, not a const → LoadReadOnly must not fire.
-    assert!(!LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(!LoadReadOnly(TestRom).optimize_raw(&mut fg.graph, fg.entry)?.changed());
     Ok(())
 }
 
@@ -96,7 +84,7 @@ fn load_oversize_read_no_change() -> Result<()> {
         // Request 8 bytes — limited ROM returns None.
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
-    assert!(!LoadReadOnly(Limited).optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(!LoadReadOnly(Limited).optimize_raw(&mut fg.graph, fg.entry)?.changed());
     Ok(())
 }
 
@@ -118,7 +106,7 @@ fn load_other_space_no_change() -> Result<()> {
         let addr = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
         b.build_load(addr, rsleigh::VnSpace::REGISTER, NodeOutputType::U64)
     })?;
-    assert!(!LoadReadOnly(RamOnly).optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(!LoadReadOnly(RamOnly).optimize_raw(&mut fg.graph, fg.entry)?.changed());
     Ok(())
 }
 
@@ -130,8 +118,8 @@ fn load_u8_masks_to_byte() -> Result<()> {
         let addr = b.build_int_const(0x2000u64, NodeOutputType::U64)?;
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)
     })?;
-    assert!(LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
+    assert!(LoadReadOnly(TestRom).optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
 
@@ -145,14 +133,10 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
         let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
         b.build_int_binary_operation(l1, l2, ir::IntBinaryOp::Add, NodeOutputType::U64)
     })?;
-    assert!(LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(LoadReadOnly(TestRom).optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // Both loads must have folded out of the reachable subgraph.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let remaining_loads = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
-        .count();
+    let remaining_loads =
+        crate::test_support::count_reachable((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(remaining_loads, 0, "both loads must have folded");
     Ok(())
 }

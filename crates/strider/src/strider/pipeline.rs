@@ -40,19 +40,19 @@ pub struct RegionLiftHandles {
     /// Wrapped in `Arc` so the orchestrator's per-iteration
     /// `RegionIndex::from_handles` can `Arc::clone` instead of
     /// deep-cloning the map (the map is never mutated post-build).
-    // TODO(Task17): remove after incremental indirect-resolve lands —
+    // TODO: remove after incremental indirect-resolve lands —
     // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     pub exit_vn_to_value:
         std::sync::Arc<std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>>,
 }
 
 /// The full result of a strider lift, exposing the lifted IR plus the
-/// placeholder-anchor side-table the tier-2 resolver consumes plus
-/// per-region IR-handle snapshots.
+/// placeholder-anchor side-table the indirect-branch resolver consumes
+/// plus per-region IR-handle snapshots.
 ///
 /// Returned by [`Strider::analyze_cfg`].  Callers that only need the
-/// graph can use `outcome.graph` directly; tier-2-aware callers read
-/// `unresolved_branches` and `region_handles`.
+/// graph can use `outcome.graph` directly; indirect-branch-resolver-aware
+/// callers read `unresolved_branches` and `region_handles`.
 pub struct AnalyzeOutcome {
     /// The lifted IR ready for the optimiser pipeline.
     pub graph: ir::BuiltFunctionGraph,
@@ -83,18 +83,19 @@ impl std::fmt::Display for AnalyzeOutcome {
 }
 
 /// Per-call lift options for [`Strider::analyze_cfg_with`].  Empty
-/// defaults match the legacy `analyze_cfg(cfg)` behaviour: the
-/// orchestrator uses this with both fields set; strider-py's
-/// custom-pipeline path uses it with `per_address_ccs` set.
+/// defaults match [`Strider::analyze_cfg`]'s convenience
+/// behaviour: the orchestrator uses this with both fields set;
+/// strider-py's custom-pipeline path uses it with `per_address_ccs` set.
 pub struct AnalyzeOptions<'a> {
     /// Pre-computed varnode set.  When `None`, `Strider` calls
-    /// [`Strider::find_all_unique_vns`] itself.  When `Some`, must be
+    /// `Strider::find_all_unique_vns` itself.  When `Some`, must be
     /// sorted by `pcode_lift::vn_sort_key` and must include every
     /// varnode any instruction in `cfg` references.  Under-tracking
     /// drops pcode reads; over-tracking is safe but allocates one
     /// extra `InitialVar` per superfluous vn.  The orchestrator passes
     /// `Some(cached_vns)` so it shares one vn table across rebuild
     /// iterations.
+    ///
     pub all_vns: Option<Vec<rsleigh::Vn>>,
 
     /// Per-target-address CC override map.  Keys are direct-call
@@ -120,9 +121,16 @@ impl Default for AnalyzeOptions<'_> {
 /// Holds the target architecture description and the resolved calling
 /// convention.  Create one `Strider` per architecture/ABI combination and
 /// reuse it to analyse multiple functions.
+///
+/// `Clone` is cheap: every field is itself `Clone`/`Copy`.  The strider-py
+/// `run` path uses this to detach a `Strider` snapshot from a `PyRef` so
+/// it can release the GIL across `strider::run` (otherwise Python threads
+/// would be unable to make progress while a long lift / fixed-point loop
+/// runs).
+#[derive(Clone)]
 pub struct Strider {
     pub(super) calling_convention: crate::BuiltCallingConvention,
-    pub(super) arch: crate::SleighArch,
+    pub(crate) arch: crate::SleighArch,
     /// Cached `SleighRegs` table from Strider construction.  Used by the
     /// CallOther per-op-ABI dispatch in `IrStrider::handle_call_other`
     /// to resolve `CallOtherAbi::implicit_reads`/`implicit_writes` register
@@ -162,17 +170,12 @@ impl Strider {
         &self.calling_convention
     }
 
-    /// Returns the [`crate::SleighArch`] this Strider was built with.
-    #[must_use]
-    pub(crate) fn arch(&self) -> &crate::SleighArch {
-        &self.arch
-    }
-
     /// Builds an optimizer pipeline containing the default passes plus the
     /// convention-aware stack-argument passes:
     ///
     /// 1. All passes from [`opt::default_pipeline`] (constant folding,
-    ///    known-bits, redundant-phi, dead-branch).
+    ///    known-bits, flag-cmp canonicalisation, if-cond inversion,
+    ///    redundant-phi, dead-branch).
     /// 2. [`opt::StackStoreDetect`] inside the fixed-point loop, using the
     ///    convention's stack-pointer varnode.
     /// 3. [`opt::CallStackArgCollect`] as a post-pass (runs once after
@@ -202,12 +205,13 @@ impl Strider {
     /// iterations of the indirect-branch fixed-point orchestrator.
     ///
     /// Composed of passes whose rewrites survive a later iteration that
-    /// adds new phi inputs: `ConstantFold`, `KnownBits`,
-    /// `StackStoreDetect`, `StackLoadForward`, and the
-    /// `FunctionArgDetect` post-pass.  The destructive passes
-    /// (`RedundantPhis` / `DeadBranchElimination`) are deferred to the
-    /// final iteration because they remove nodes that the
-    /// orchestrator's per-iteration index pins.
+    /// adds new phi inputs.  Inherits `ConstantFold`, `KnownBits`,
+    /// `FlagCmpCanonicalize`, and `IfCondInversion` from
+    /// `opt::stable_default_pipeline()`, then adds `StackStoreDetect`,
+    /// `StackLoadForward`, and the `FunctionArgDetect` post-pass.  The
+    /// destructive passes (`RedundantPhis` / `DeadBranchElimination`)
+    /// are deferred to the final iteration because they remove nodes
+    /// that the orchestrator's per-iteration index pins.
     #[must_use]
     pub fn build_stable_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
         let mut p = opt::stable_default_pipeline();
@@ -334,14 +338,14 @@ impl Strider {
 
         ir_strider
             .builder
-            .set_entry_region(ir_region_of(cfg.entry)?)?;
+            .set_entry_region(ir_region_of(cfg.entry())?)?;
 
         // Translate instructions for each region.
         for &cfg_rid in &cfg_region_ids {
             let ir_region = ir_region_of(cfg_rid)?;
             ir_strider.builder.set_region(ir_region);
             let region = cfg
-                .graph
+                .graph()
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
             // Regions with non-trivial terminators have their
@@ -376,11 +380,11 @@ impl Strider {
             let term_addr = region
                 .insns
                 .last()
-                .map(|wrapped| wrapped.addr.machine_addr.addr);
+                .map(|wrapped| wrapped.addr.machine_addr_u64());
             ir_strider.builder.set_lift_addr(term_addr);
             let term_res = (|| -> Result<()> {
                 match special_terminator {
-                    Some(SpecialTerm::Unresolved(target_vn, addr)) => {
+                    Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
                         ir_strider.handle_unresolved_indirect_branch(&target_vn, addr)?;
                     }
                     Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
@@ -405,19 +409,42 @@ impl Strider {
 
         // Link fallthrough edges.  Walk the CFG's edges directly —
         // there's no need to mirror the petgraph.
-        for edge_idx in cfg.graph.edge_indices() {
-            let Some(weight) = cfg.graph.edge_weight(edge_idx) else {
+        //
+        // Branch edges are wired by `handle_branch` inside the per-insn
+        // loop above when the trailing `Branch` pcode op is processed.
+        // **Empty-insns Branch regions** (produced by the bounded-lift
+        // CondBranch-OOB collapse: a single CondBranch where both
+        // successors are out-of-range collapses to an empty `Branch`
+        // region edge) have no pcode to process, so no per-insn wiring
+        // fires.  Walk the Branch edges here too and only link when the
+        // source region is empty — otherwise we'd double-link the
+        // non-empty case and break Layer C predecessor counts.
+        for edge_idx in cfg.graph().edge_indices() {
+            let Some(weight) = cfg.graph().edge_weight(edge_idx) else {
                 continue;
             };
-            if *weight != cfg::RegionEdgeKind::Fallthrough {
+            let Some((src, tgt)) = cfg.graph().edge_endpoints(edge_idx) else {
                 continue;
+            };
+            match weight {
+                cfg::RegionEdgeKind::Fallthrough => {
+                    ir_strider
+                        .builder
+                        .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
+                }
+                cfg::RegionEdgeKind::Branch => {
+                    let src_region = cfg
+                        .graph()
+                        .node_weight(src)
+                        .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?;
+                    if src_region.insns.is_empty() {
+                        ir_strider
+                            .builder
+                            .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
+                    }
+                }
+                _ => {}
             }
-            let Some((src, tgt)) = cfg.graph.edge_endpoints(edge_idx) else {
-                continue;
-            };
-            ir_strider
-                .builder
-                .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
         }
 
         // Capture per-region IR handles BEFORE `build()` consumes the
@@ -428,7 +455,7 @@ impl Strider {
         for &cfg_rid in &cfg_region_ids {
             let ir_region_id = ir_region_of(cfg_rid)?;
             let region = cfg
-                .graph
+                .graph()
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
 
@@ -488,10 +515,18 @@ impl Strider {
 /// to skip the terminator p-code insn so the post-loop dispatch can
 /// lift it via a dedicated handler.
 enum SpecialTerm {
-    /// Tier-2 placeholder: lifts to `Return(target_value)` and pushes
-    /// the (addr, target_value) pair onto `unresolved_branches`.  Skip
-    /// the trailing `BranchIndirect`.
-    Unresolved(rsleigh::Vn, cfg::PcodeInsnAddr),
+    /// IR-level indirect-branch resolver placeholder: emits an
+    /// `IndirectBranch(target_value)` node (via
+    /// `FunctionBuilder::build_indirect_branch`) and pushes the
+    /// `(addr, target_value)` pair onto `unresolved_branches`.  The
+    /// orchestrator's classifier later rewrites this in place to a
+    /// `Call`/`Return` (link-register / tail-call shapes) or replaces
+    /// the region terminator on CFG rebuild (jump-table shape).  Skip
+    /// the trailing `BranchIndirect` p-code insn.
+    PendingIndirect {
+        target_vn: rsleigh::Vn,
+        addr: cfg::PcodeInsnAddr,
+    },
     /// Resolved jump table: lifts to an If-ladder dispatching `idx`
     /// against `targets`.  Skip the trailing `BranchIndirect`.
     Switch(rsleigh::Vn, Vec<u64>, Option<ir::Value>),
@@ -507,7 +542,10 @@ impl SpecialTerm {
     fn from_terminator(t: &cfg::RegionTerminator) -> Option<Self> {
         match t {
             cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
-                Some(SpecialTerm::Unresolved(*target_vn, *addr))
+                Some(SpecialTerm::PendingIndirect {
+                    target_vn: *target_vn,
+                    addr: *addr,
+                })
             }
             cfg::RegionTerminator::Switch {
                 target_vn,
@@ -525,10 +563,11 @@ impl SpecialTerm {
 
     /// Returns true when the per-region per-insn loop should skip
     /// `opcode` because the post-loop dispatcher will lift it via a
-    /// dedicated handler.  `Unresolved`/`Switch` skip `BranchIndirect`;
-    /// `TailCall` skips both `Branch` (the standard direct-tail-call
-    /// case) AND `CondBranch` (the `cfg::RegionBuilder` collapse path
-    /// for a conditional jump whose successors all leave the function).
+    /// dedicated handler.  `PendingIndirect`/`Switch` skip
+    /// `BranchIndirect`; `TailCall` skips both `Branch` (the standard
+    /// direct-tail-call case) AND `CondBranch` (the
+    /// `cfg::RegionBuilder` collapse path for a conditional jump whose
+    /// successors all leave the function).
     ///
     /// Safe by region-closure invariant: `RegionBuilder::process_new_insn`
     /// finishes a region the moment ANY control-flow opcode (`Branch`,
@@ -539,7 +578,7 @@ impl SpecialTerm {
     /// terminator, never an inner pcode op.
     fn skips_opcode(&self, opcode: rsleigh::Opcode) -> bool {
         match self {
-            SpecialTerm::Unresolved(..) | SpecialTerm::Switch(..) => {
+            SpecialTerm::PendingIndirect { .. } | SpecialTerm::Switch(..) => {
                 opcode == rsleigh::Opcode::BranchIndirect
             }
             SpecialTerm::TailCall(..) => matches!(
@@ -563,13 +602,13 @@ mod tests {
         let strider = crate::Strider::new(
             arch,
             regs,
-            crate::CallingConvention::x86_64_systemv_abi(),
+            crate::CallingConvention::x86_64_systemv(),
         )
         .expect("strider");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
             .expect("sleigh");
-        let cfg = cfg::Builder::new(sleigh, 0x1000, cfg::OptionsBuilder::new().build())
+        let cfg = cfg::Builder::for_arch(&arch, sleigh, 0x1000, cfg::OptionsBuilder::new().build())
             .build()
             .expect("cfg");
         let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");

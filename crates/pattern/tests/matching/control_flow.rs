@@ -63,6 +63,22 @@ fn int_const_any_of_matches_set_membership() {
     a::none(&g, call().target(int_const_any_of([0x1000u64, 0xDEADBEEF])));
 }
 
+///  an empty `int_const_any_of(_)` set
+/// vacuously fails — every IntConst lookup runs `.iter().any(_)`
+/// against an empty iterator, which returns false.  Mirrors the
+/// existing `call_at_any_empty_set_never_matches` contract for
+/// `CallPat::at_any` and the `StackStorePat::offset_any` contract.
+/// Pinning the empty-set behaviour at the standalone primitive
+/// level (not just through the typed builders) so a future
+/// change to the matcher loop can't silently flip empty-set to
+/// "match-anything".
+#[test]
+fn int_const_any_of_empty_set_never_matches() {
+    let g = shapes::call_at(0x1234);
+    a::none(&g, call().target(int_const_any_of(std::iter::empty::<u64>())));
+    a::none(&g, call().target(int_const_any_of([] as [u64; 0])));
+}
+
 #[test]
 fn call_captures_node() {
     let g = shapes::call_at(0x1234);
@@ -178,6 +194,26 @@ fn ret_captures_node() {
     let m = a::unique(&g, ret().capture(n));
     let node = m.node(n).expect("ret node capture");
     assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::Return));
+}
+
+/// A control-flow `Capture` (bound to a Return node, which has
+/// no value output) must yield `None` from value-typed accessors.
+/// `node(c)` must succeed, but `output(c)` is `None`, so
+/// `get_uint(c, &g)`, `get_int(c, &g)`, and `get_bool(c, &g)` all
+/// return `None` — never panic, never read garbage.
+#[test]
+fn match_value_accessors_on_control_flow_capture_return_none() {
+    let g = shapes::add_consts(5, 3);
+    let c = Capture::new();
+    let m = a::unique(&g, ret().capture(c));
+    // node binding is present (the matched Return).
+    assert!(m.node(c).is_some(), "Return capture must bind node");
+    // No value output — Return is a control-flow sink.
+    assert!(m.output(c).is_none(), "Return has no value output");
+    // Value extractors must surface this as None, not panic.
+    assert_eq!(m.get_uint(c, &g.graph), None);
+    assert_eq!(m.get_int(c, &g.graph), None);
+    assert_eq!(m.get_bool(c, &g.graph), None);
 }
 
 // ── If ────────────────────────────────────────────────────────────────────────
@@ -301,4 +337,142 @@ fn call_other_captures_node() {
         g.graph.node_kind(node),
         ir::node::NodeKind::CallOther { .. }
     ));
+}
+
+// ── Phi-kind discrimination (O7) ─────────────────────────────────────────────
+//
+// The three phi ctors `phi()` / `mem_phi()` / `value_phi()` each match one
+// (and only one) `NodeKind` variant: `VarPhi(_)`, `MemPhi`, `ValuePhi`
+// respectively.  These tests build a synthetic graph that contains all three
+// phi kinds simultaneously and pin the pattern-to-kind mapping so a
+// future ctor refactor cannot silently widen any of them.
+
+/// Builds a synthetic graph containing one `VarPhi`, one `MemPhi`, and one
+/// `ValuePhi` — all reachable from the entry via a `Return` that consumes
+/// each phi's output.  Constructed via direct `graph.create_node` because
+/// the `Tb` test-builder doesn't expose `MemPhi` / `ValuePhi` synthesis
+/// (those phi kinds are produced by the lifter / `StackLoadForward`, not
+/// by the user-facing builder API).
+fn graph_with_all_three_phi_kinds() -> ir::BuiltFunctionGraph {
+    use ir::Graph;
+    use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+
+    let mut g = Graph::new();
+
+    let entry = g.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = g.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = g.node_outputs(entry).into_iter().next().unwrap();
+    let init_mem_out = g.node_outputs(init_mem).into_iter().next().unwrap();
+
+    // Single-predecessor ControlState → owning region for the phis.  The
+    // Layer-C arity check requires per-phi per-predecessor inputs to match
+    // the ControlState's predecessor count, so a 1-predecessor CS keeps
+    // each phi at exactly one value input.
+    let cs = g.create_node(
+        NodeKind::ControlState,
+        [entry_ctrl],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+    let cs_ctrl = g.node_outputs(cs).into_iter().next().unwrap();
+    let cs_phi_tok = g.node_outputs(cs).into_iter().nth(1).unwrap();
+
+    // Tracked-variable VarPhi.
+    let some_vn = ir::test_utils::reg_vn(0x40, 8);
+    let init_var = g.create_node(
+        NodeKind::InitialVar(some_vn),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let iv_out = g.node_outputs(init_var).into_iter().next().unwrap();
+    let var_phi = g.create_node(
+        NodeKind::VarPhi(some_vn),
+        [cs_phi_tok, iv_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let _var_phi_out = g.node_outputs(var_phi).into_iter().next().unwrap();
+
+    // Memory-token MemPhi.
+    let mem_phi = g.create_node(
+        NodeKind::MemPhi,
+        [cs_phi_tok, init_mem_out],
+        [NodeOutputKind::Memory],
+    );
+    let mem_phi_out = g.node_outputs(mem_phi).into_iter().next().unwrap();
+
+    // Synthesised ValuePhi.
+    let one = g.create_node(
+        NodeKind::IntConst(1),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let one_out = g.node_outputs(one).into_iter().next().unwrap();
+    let value_phi = g.create_node(
+        NodeKind::ValuePhi,
+        [cs_phi_tok, one_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let value_phi_out = g.node_outputs(value_phi).into_iter().next().unwrap();
+
+    // Return consumes mem from MemPhi and value from ValuePhi so both are
+    // reachable; the VarPhi is reachable through its data-dep (the matcher
+    // walks data inputs as well as control inputs, but we keep it kept-alive
+    // via a Truncate consumer to be safe).
+    let _used = g.create_node(
+        NodeKind::Truncate,
+        [g.node_outputs(var_phi).into_iter().next().unwrap()],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let used_out = g.node_outputs(_used).into_iter().next().unwrap();
+
+    // Wire Return: ctrl, mem, value.  Use `value_phi_out` as the value
+    // and add `used_out` as a tail value so VarPhi is also reachable.
+    g.create_node(
+        NodeKind::Return,
+        [cs_ctrl, mem_phi_out, value_phi_out, used_out],
+        [],
+    );
+
+    ir::BuiltFunctionGraph::from_graph_and_entry_for_rewrite(g, entry)
+}
+
+#[test]
+fn phi_ctor_matches_only_var_phi() {
+    let g = graph_with_all_three_phi_kinds();
+    a::matches(&g, phi(), 1);
+    let n = Capture::new();
+    let m = a::unique(&g, phi().capture(n));
+    let node = m.node(n).expect("phi node capture");
+    assert!(
+        matches!(g.graph.node_kind(node), ir::node::NodeKind::VarPhi(_)),
+        "phi() must match VarPhi, got {:?}",
+        g.graph.node_kind(node)
+    );
+}
+
+#[test]
+fn mem_phi_ctor_matches_only_mem_phi() {
+    let g = graph_with_all_three_phi_kinds();
+    a::matches(&g, mem_phi(), 1);
+    let n = Capture::new();
+    let m = a::unique(&g, mem_phi().capture(n));
+    let node = m.node(n).expect("mem_phi node capture");
+    assert!(
+        matches!(g.graph.node_kind(node), ir::node::NodeKind::MemPhi),
+        "mem_phi() must match MemPhi, got {:?}",
+        g.graph.node_kind(node)
+    );
+}
+
+#[test]
+fn value_phi_ctor_matches_only_value_phi() {
+    let g = graph_with_all_three_phi_kinds();
+    a::matches(&g, value_phi(), 1);
+    let n = Capture::new();
+    let m = a::unique(&g, value_phi().capture(n));
+    let node = m.node(n).expect("value_phi node capture");
+    assert!(
+        matches!(g.graph.node_kind(node), ir::node::NodeKind::ValuePhi),
+        "value_phi() must match ValuePhi, got {:?}",
+        g.graph.node_kind(node)
+    );
 }

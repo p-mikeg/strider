@@ -42,7 +42,7 @@ macro_rules! impl_variant_any {
         #[doc = $doc]
         pub fn $fn_name(c: Capture, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-                match ctx.graph.graph.node_kind(node) {
+                match ctx.graph.node_kind(node) {
                     NodeKind::$op_enum(op) => $commutative(*op),
                     _ => false,
                 }
@@ -57,7 +57,7 @@ macro_rules! impl_variant_any {
                         .bindings
                         .get_node(c)
                         .ok_or_else(|| crate::error::missing_binding($missing))?;
-                    match ctx.graph.graph.node_kind(node) {
+                    match ctx.graph.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
                         _ => Err(crate::error::missing_binding($missing)),
                     }
@@ -65,8 +65,14 @@ macro_rules! impl_variant_any {
                 $build_ty,
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
-                if matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_)) {
-                    b.bind_capture(c, Binding::new(node, None))
+                if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
+                    // Populate the value output too so callers can use
+                    // both `Match::get_*_op(c, &graph)` (op-variant) AND
+                    // typed extractors / `Match::output(c)` (value).
+                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                        ctx.graph.output_kind(o).is_value()
+                    });
+                    b.bind_capture(c, Binding::new(node, value_out))
                 } else {
                     false
                 }
@@ -80,7 +86,7 @@ macro_rules! impl_variant_any {
         #[doc = $doc]
         pub fn $fn_name(c: Capture, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-                match ctx.graph.graph.node_kind(node) {
+                match ctx.graph.node_kind(node) {
                     NodeKind::$op_enum(op) => $commutative(*op),
                     _ => false,
                 }
@@ -95,7 +101,7 @@ macro_rules! impl_variant_any {
                         .bindings
                         .get_node(c)
                         .ok_or_else(|| crate::error::missing_binding($missing))?;
-                    match ctx.graph.graph.node_kind(node) {
+                    match ctx.graph.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
                         _ => Err(crate::error::missing_binding($missing)),
                     }
@@ -103,8 +109,14 @@ macro_rules! impl_variant_any {
                 $build_ty,
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
-                if matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_)) {
-                    b.bind_capture(c, Binding::new(node, None))
+                if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
+                    // Populate the value output too so callers can use
+                    // both `Match::get_*_op(c, &graph)` (op-variant) AND
+                    // typed extractors / `Match::output(c)` (value).
+                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                        ctx.graph.output_kind(o).is_value()
+                    });
+                    b.bind_capture(c, Binding::new(node, value_out))
                 } else {
                     false
                 }
@@ -127,7 +139,7 @@ macro_rules! impl_variant_any {
                         .bindings
                         .get_node(c)
                         .ok_or_else(|| crate::error::missing_binding($missing))?;
-                    match ctx.graph.graph.node_kind(node) {
+                    match ctx.graph.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
                         _ => Err(crate::error::missing_binding($missing)),
                     }
@@ -135,8 +147,14 @@ macro_rules! impl_variant_any {
                 $build_ty,
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
-                if matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_)) {
-                    b.bind_capture(c, Binding::new(node, None))
+                if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
+                    // Populate the value output too so callers can use
+                    // both `Match::get_*_op(c, &graph)` (op-variant) AND
+                    // typed extractors / `Match::output(c)` (value).
+                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                        ctx.graph.output_kind(o).is_value()
+                    });
+                    b.bind_capture(c, Binding::new(node, value_out))
                 } else {
                     false
                 }
@@ -194,5 +212,5 @@ impl_variant_any!(
 impl_variant_any!(
     cmp, float_cmp_any, FloatCmpOp, ir::FloatCmpOp::Equal,
     is_commutative_float_cmp_op, bool_ty(), "float_cmp_any",
-    "Matches **any** float comparison and binds the matched node to `c`.\n\nCommutative comparisons (`Equal`, `NotEqual`) try both operand orderings automatically.  Recover the op via `Match::get_float_cmp_op(c, &graph)`."
+    "Matches **any** float comparison and binds the matched node to `c`.\n\n`Equal` is commutative and tries both operand orderings automatically.  `NotEqual` and `LessEqual` are not IR primitives — they are lowered at lift time; use the `float_ne` / `float_le` aliases to match those shapes.  Recover the op via `Match::get_float_cmp_op(c, &graph)`."
 );

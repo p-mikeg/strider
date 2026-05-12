@@ -55,7 +55,7 @@ def test_function_max_size_threads_into_strider_run():
     assert size is not None
     result = strider.run(
         arch=strider.SleighArch.x86_64(),
-        cc=strider.CallingConvention.x86_64_systemv_abi(),
+        cc=strider.CallingConvention.x86_64_systemv(),
         mem=mem,
         rom=mem,
         entry=addr,

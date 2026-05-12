@@ -2,11 +2,10 @@
 //! into each `Call` node, collects positional `StackStore` data outputs, and
 //! appends them as additional Call inputs.
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::sp_expr::{SpExprMemo, decompose_sp};
 
 /// Walks memory backward from `mem`, collecting `StackStore` data outputs as
@@ -93,7 +92,7 @@ use crate::sp_expr::{SpExprMemo, decompose_sp};
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
 fn collect_stack_args_in_chain_order(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
@@ -110,10 +109,10 @@ fn collect_stack_args_in_chain_order(
     // Largest k such that slots[0..=k] are all `Some`; -1 if slot 0 is empty.
     let mut prefix_top: i32 = -1;
     loop {
-        let node = fg.graph.get_node_from_output(cur);
-        let (offset, space, base, data, prev_mem) = match *fg.graph.node_kind(node) {
+        let node = ctx.get_node_from_output(cur);
+        let (offset, space, base, data, prev_mem) = match *ctx.node_kind(node) {
             NodeKind::StackStore { offset, space } => {
-                let inputs = fg.graph.node_inputs(node);
+                let inputs = ctx.node_inputs(node);
                 (offset, space, inputs[1], inputs[2], inputs[0])
             }
             // A plain `Store` survived `StackStoreDetect` either because
@@ -126,7 +125,7 @@ fn collect_stack_args_in_chain_order(
             //     would mean a different SP version or a non-canonical
             //     form) — terminate conservatively.
             NodeKind::Store(_) => {
-                let inputs = fg.graph.node_inputs(node);
+                let inputs = ctx.node_inputs(node);
                 // Store inputs: [memory, addr, data].  Skip if shape is
                 // unexpected (defensive).
                 if inputs.len() != 3 {
@@ -134,8 +133,8 @@ fn collect_stack_args_in_chain_order(
                 }
                 let addr = inputs[1];
                 let prev = inputs[0];
-                let mut visiting = rustc_hash::FxHashSet::default();
-                match decompose_sp(&fg.graph, addr, stack_ptr_vn, sp_memo, &mut visiting) {
+                let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
+                match decompose_sp(ctx.graph_ref(), addr, stack_ptr_vn, sp_memo, &mut visiting) {
                     None => {
                         // Non-aliasing — pass through.
                         cur = prev;
@@ -228,31 +227,31 @@ fn dense_prefix(slots: Vec<Option<NodeOutputId>>) -> Vec<NodeOutputId> {
 /// and appends the discovered data values as additional Call inputs (in
 /// positional order, stopping on the first missing slot).
 fn try_collect_stack_args(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
-    if !matches!(fg.graph.node_kind(call_id), NodeKind::Call) {
+    if !matches!(ctx.node_kind(call_id), NodeKind::Call) {
         return Ok(OptimizationResult::NoChange);
     }
     if stack_arg_offsets.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
-    let inputs = fg.graph.node_inputs(call_id);
+    let inputs = ctx.node_inputs(call_id);
     if inputs.len() < 2 {
         return Ok(OptimizationResult::NoChange);
     }
     let mem_in = inputs[1];
 
     let args =
-        collect_stack_args_in_chain_order(fg, mem_in, stack_arg_offsets, stack_ptr_vn, sp_memo);
+        collect_stack_args_in_chain_order(ctx.as_view(), mem_in, stack_arg_offsets, stack_ptr_vn, sp_memo);
     if args.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
     for data in &args {
-        fg.graph.add_node_input(call_id, *data)?;
+        ctx.add_node_input(call_id, *data)?;
     }
     Ok(OptimizationResult::Changed)
 }
@@ -294,15 +293,15 @@ impl CallStackArgCollect {
     /// stack-pointer varnode are taken from the supplied calling convention.
     #[must_use]
     pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
-        Self::new(cc.stack_arg_offsets.clone(), cc.stack_ptr_vn)
+        Self::new(cc.stack_arg_offsets().to_vec(), cc.stack_ptr_vn())
     }
 }
 
-impl OptimizerOnBuilt for CallStackArgCollect {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
-        let calls: Vec<NodeId> = function
+impl Optimizer for CallStackArgCollect {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+        let calls: Vec<NodeId> = ctx
             .preorder()
-            .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::Call))
+            .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
             .collect();
         // Share the SP-decomposition memo across all Call sites in the
         // function — many stack pushes near each other share the same
@@ -312,7 +311,7 @@ impl OptimizerOnBuilt for CallStackArgCollect {
         let mut result = OptimizationResult::NoChange;
         for call_id in calls {
             result |= try_collect_stack_args(
-                function,
+                ctx,
                 call_id,
                 &self.stack_arg_offsets,
                 self.stack_ptr_vn,

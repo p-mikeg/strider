@@ -95,7 +95,7 @@ def test_thread_group_empty_pattern_matches_under_custom_pipeline_with_fcc():
         pytest.skip("vmlinux missing required symbols (exit_signals/__fentry__)")
 
     sleigh = strider.SleighArch.x86_64()
-    cc = strider.CallingConvention.x86_64_systemv_abi()
+    cc = strider.CallingConvention.x86_64_systemv()
     sl = strider.Sleigh(sleigh, mem)
 
     per_addr = {syms["__fentry__"]: strider.CallingConvention.x86_64_all_preserving()}

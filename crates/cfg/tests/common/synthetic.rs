@@ -14,10 +14,7 @@ pub type TestReader = BufMemReader<Vec<u8>>;
 /// Short constructor for a `PcodeInsnAddr`.
 #[must_use]
 pub fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
-    PcodeInsnAddr {
-        machine_addr: MachineInsnAddr { addr: machine },
-        insn_index: insn,
-    }
+    PcodeInsnAddr::new(MachineInsnAddr::new(machine), insn)
 }
 
 /// Sleigh backed by an empty buffer — decodes nothing but is enough to
@@ -47,17 +44,28 @@ pub fn make_sleigh_with_bytes(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<Test
 
 #[must_use]
 pub fn make_builder(start_addr: u64) -> Builder<TestReader> {
-    Builder::new(make_sleigh(), start_addr, OptionsBuilder::new().build())
+    Builder::for_arch(
+        &target::SleighArch::x86(),
+        make_sleigh(),
+        start_addr,
+        OptionsBuilder::new().build(),
+    )
 }
 
 #[must_use]
 pub fn make_builder_opts(start_addr: u64, options: Options) -> Builder<TestReader> {
-    Builder::new(make_sleigh(), start_addr, options)
+    Builder::for_arch(
+        &target::SleighArch::x86(),
+        make_sleigh(),
+        start_addr,
+        options,
+    )
 }
 
 #[must_use]
 pub fn make_builder_with_bytes(bytes: Vec<u8>, start_addr: u64) -> Builder<TestReader> {
-    Builder::new(
+    Builder::for_arch(
+        &target::SleighArch::x86_64(),
         make_sleigh_with_bytes(bytes, start_addr),
         start_addr,
         OptionsBuilder::new().build(),

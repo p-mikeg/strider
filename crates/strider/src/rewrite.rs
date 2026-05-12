@@ -60,9 +60,9 @@ pub struct GraphRewriter<'a> {
     /// The graph to rewrite.  Held as `&mut Graph` rather than
     /// `&mut BuiltFunctionGraph` to align with the optimizer pass
     /// contract `(&mut Graph, NodeId)`.  `pattern::rewrite_rule`'s
-    /// closure expects `&mut BuiltFunctionGraph`, so [`Self::apply_rule`]
-    /// swaps the graph into a short-lived `BuiltFunctionGraph` per
-    /// call (via `mem::take` — same trick as `opt::with_built`).
+    /// closure expects `&mut RewriteCtx<'_>`, so [`Self::apply_rule`]
+    /// builds a fresh `RewriteCtx::new(&mut *self.graph, self.entry)`
+    /// per call — same shape as `opt::with_rewrite_ctx`.
     graph: &'a mut Graph,
     /// The function's entry [`NodeId`] — needed by the validator's
     /// reachable-set walk and by [`opt::OptimizerPipeline::run`].
@@ -86,7 +86,7 @@ impl<'a> GraphRewriter<'a> {
     /// The closure shape matches what [`pattern::rewrite_rule`] hands
     /// back — `Fn(&mut BuiltFunctionGraph, NodeId) -> pattern::Result<bool>`.
     /// Wraps the wrapped graph into a short-lived `BuiltFunctionGraph`
-    /// per call (via [`mem::take`]) so the closure has the input shape
+    /// per call (via [`std::mem::take`]) so the closure has the input shape
     /// the `pattern` crate's rewrite engine was designed for.  The
     /// dummy `BuiltFunctionGraph` carries empty `variables` /
     /// `call_clobbered` / `ret_val_regs` — `pattern::rewrite_rule`
@@ -107,6 +107,16 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// Propagates the rule closure's first non-skip error via `anyhow`.
     ///
+    /// # Rule-closure context
+    ///
+    /// The closure receives `&mut pattern::RewriteCtx`, NOT the wrapped
+    /// `BuiltFunctionGraph`.  `RewriteCtx` exposes only `graph` and
+    /// `entry`; the calling convention's `variables`, `call_clobbered`,
+    /// `ret_val_regs`, `call_other_clobbered` fields on the BFG are
+    /// **not** visible from inside the closure.  Rules that need CC
+    /// information must close over it from the surrounding scope at
+    /// call site.
+    ///
     /// # Validation
     ///
     /// `apply_rule` does **NOT** call [`ir::validate::validate`] after
@@ -116,28 +126,21 @@ impl<'a> GraphRewriter<'a> {
     /// relying on the graph being well-formed.
     pub fn apply_rule<F>(&mut self, rule: F) -> Result<usize>
     where
-        F: Fn(&mut BuiltFunctionGraph, NodeId) -> pattern::Result<bool>,
+        F: for<'g> Fn(&mut pattern::RewriteCtx<'g>, NodeId) -> pattern::Result<bool>,
     {
         let mut applied: usize = 0;
         // Pre-collect candidate roots before mutating; the walk's
         // iterator borrows the graph immutably.
         let candidates: Vec<NodeId> = self.graph.preorder(self.entry).collect();
-        // Take the graph out of `&mut self.graph` so we can package it
-        // into a `BuiltFunctionGraph` the rule expects.  Restored at
-        // the end of every iteration by writing back through the
-        // `*self.graph = ...` slot.
         for node in candidates {
-            let stolen = std::mem::take(&mut *self.graph);
-            let mut tmp = BuiltFunctionGraph::from_graph_and_entry(stolen, self.entry);
+            let mut ctx = pattern::RewriteCtx::new(&mut *self.graph, self.entry);
             // `cranelift_entity::PrimaryMap` doesn't reuse keys, so
             // every id from the pre-collected preorder is still a
             // valid arena slot — even if the node was detached by an
             // earlier rule firing on this same walk.  The rule's
             // structural matcher returns `Ok(false)` on a detached /
             // rewired node, so this is safe.
-            let fired_result = rule(&mut tmp, node);
-            *self.graph = tmp.graph;
-            if fired_result? {
+            if rule(&mut ctx, node)? {
                 applied += 1;
             }
         }
@@ -176,6 +179,17 @@ impl<'a> GraphRewriter<'a> {
     /// row produces the same final graph because [`opt::OptimizerPipeline::run`]
     /// itself runs to a fixed point internally.  Pinned by the
     /// `re_optimize_is_idempotent` test below.
+    ///
+    /// # Destructive passes
+    ///
+    /// `re_optimize` runs whatever pipeline the caller passes — it does
+    /// not gate on stable-vs-destructive.  Destructive passes
+    /// (`RedundantPhis`, `DeadBranchElimination`) detach nodes and may
+    /// invalidate `NodeId`s the caller is still holding outside the
+    /// `GraphRewriter`.  Use `opt::stable_default_pipeline()` (or
+    /// `Strider::build_stable_optimizer_pipeline()`) when you need to
+    /// preserve external `NodeId` references; pass the destructive
+    /// pipeline explicitly when you want the cleanup.
     ///
     /// # Errors
     ///

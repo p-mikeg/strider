@@ -26,7 +26,7 @@
 //!    - anything else → `Ok(None)`.  Unclassifiable targets are not
 //!      errors at this layer: callers (region_builder) defer the
 //!      branch via [`crate::RegionTerminator::UnresolvedIndirectBranch`]
-//!      and the strider-level fixed-point loop runs tier-2 resolution
+//!      and the strider-level fixed-point loop runs IR-level indirect-branch resolution
 //!      against the optimised IR.  Genuine errors (builder/opt
 //!      failures, malformed graph) still propagate.
 //!
@@ -39,9 +39,13 @@
 //!
 //! ## Multi-target / jump tables
 //!
-//! [`ResolvedTargets::Multiple`] is reserved for the future jump-table
-//! resolver and is not constructed by this round; the variant exists so
-//! adding jump-table support later is purely additive.
+//! This cfg-time mini-graph resolver only ever returns `Single` /
+//! `LinkRegister` / `None` — never `Multiple`.  The IR-level
+//! resolver in `opt::indirect_branch_resolve` (jump-table arm,
+//! stack-array arm) is the path that constructs
+//! [`ResolvedTargets::Multiple`], routed through the strider
+//! orchestrator's indirect-branch fixed-point loop after the stable
+//! optimiser pipeline runs.
 
 use opt::ReadOnlyMemory;
 
@@ -89,7 +93,7 @@ pub use opt::ResolvedTargets;
 /// an error and returns `Ok(None)` — the caller stamps the offending
 /// pcode address onto a
 /// [`crate::RegionTerminator::UnresolvedIndirectBranch`] so the
-/// strider-level fixed-point loop can attempt tier-2 resolution
+/// strider-level fixed-point loop can attempt IR-level indirect-branch resolution
 /// against the optimised IR.
 pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     region_insns: &[RegionInstruction],
@@ -170,8 +174,8 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     // of small allocs) is dominated by the actual fold work.
     //
     // `LoadReadOnly` is NOT added to the pipeline: its
-    // `OptimizerOnBuilt` impl requires `M: 'static` (the pipeline
-    // stores passes as `Box<dyn Optimizer + 'static>`), and `rom`
+    // `Optimizer` impl requires `M: 'static` (the pipeline
+    // stores passes as `Box<dyn OptimizerRaw + 'static>`), and `rom`
     // here is borrowed for an arbitrary lifetime.  The with-rom
     // branch below drives an inlined load-folder by hand — see
     // `resolve_const_loads`.
@@ -183,12 +187,18 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     // constants propagate.  Skip the second pipeline run when the
     // load-folding step didn't actually fold anything — there's
     // nothing new for ConstantFold + KnownBits + RedundantPhis to
-    // chew on, so the second sweep would converge in zero rewrites
-    // (Task 15).
-    if let Some(rom) = rom
-        && resolve_const_loads(&mut fg, rom)?
-    {
-        make_resolver_pipeline().run_on_built(&mut fg)?;
+    // chew on, so the second sweep would converge in zero rewrites.
+    // Iterate to fixed point: each `resolve_const_loads` sweep folds
+    // every Load whose address is currently constant.  ConstantFold +
+    // KnownBits then propagate the new `IntConst` outputs through any
+    // address-arithmetic chain (e.g. `Add(loaded_const, K)`) so that
+    // chained `Load(Load(const_addr))` shapes resolve in subsequent
+    // sweeps.  closed the prior single-pass
+    // gap that left multi-hop ROM pointer chains unresolved.
+    if let Some(rom) = rom {
+        while resolve_const_loads(&mut fg, rom)? {
+            make_resolver_pipeline().run_on_built(&mut fg)?;
+        }
     }
 
     // Classify by inspecting the `Return` node's value-input (slot
@@ -228,7 +238,7 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
             Ok(Some(ResolvedTargets::LinkRegister))
         }
         // Unclassifiable producer is not an error: defer to the
-        // strider-level outer loop's tier-2 resolver.
+        // strider-level outer loop's indirect-branch resolver.
         _ => Ok(None),
     }
 }
@@ -238,6 +248,14 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
 /// after the with-rom load-folding pass to propagate any constants
 /// that loads exposed.  Hoisted into a helper so both call sites pin
 /// the same pass set.
+///
+/// `RedundantPhis` IS needed: the mini-graph's lone region has a
+/// single predecessor (the function entry), so the lifter creates
+/// trivial `VarPhi(vn)` nodes for every variable read.  The
+/// classifier's `LinkRegister` arm matches `InitialVar(lr_vn)` rather
+/// than `VarPhi(lr_vn)` — without `RedundantPhis` collapsing the
+/// trivial single-predecessor phi back to its `InitialVar` input, the
+/// `bx lr` shape never resolves.
 fn make_resolver_pipeline() -> opt::OptimizerPipeline {
     let mut pipeline = opt::OptimizerPipeline::new();
     pipeline.add(opt::ConstantFold);
@@ -246,7 +264,7 @@ fn make_resolver_pipeline() -> opt::OptimizerPipeline {
     pipeline
 }
 
-/// Inlined equivalent of [`opt::LoadReadOnly::optimize_built`] that
+/// Inlined equivalent of [`opt::LoadReadOnly::optimize`] that
 /// takes a borrowed `&dyn ReadOnlyMemory` instead of an owned
 /// `M: 'static`.
 ///
@@ -255,7 +273,7 @@ fn make_resolver_pipeline() -> opt::OptimizerPipeline {
 /// rewrites the load's value output to the resulting `IntConst`.
 ///
 /// Why a copy: `OptimizerPipeline::add` requires `O: 'static` because
-/// the pipeline stores passes as `Box<dyn Optimizer + 'static>`.  The
+/// the pipeline stores passes as `Box<dyn OptimizerRaw + 'static>`.  The
 /// resolver's `rom` is borrowed for an arbitrary (non-'static)
 /// lifetime so it can't be wrapped in `LoadReadOnly` and registered
 /// directly.  Must stay in lockstep with `opt::LoadReadOnly`'s impl
@@ -285,6 +303,12 @@ fn resolve_const_loads(
             continue;
         };
         let size = ty.byte_size();
+        // `ReadOnlyMemory::read` returns `Option<u64>` — bail on
+        // wider loads (U80 / U128 / U256 / U512) rather than asking
+        // the impl to truncate silently into a u64.
+        if size > 8 {
+            continue;
+        }
         let Some(loaded) = rom.read(space, addr, size) else {
             continue;
         };
@@ -335,7 +359,7 @@ pub mod test_api {
 
     pub use super::ResolvedTargets;
 
-    /// Test-only forwarder for [`super::resolve_indirect_target`].
+    /// Test-only forwarder for `super::resolve_indirect_target`.
     ///
     /// Returns `Ok(None)` when the resolver cannot classify the
     /// target; genuine builder / opt errors still propagate via the

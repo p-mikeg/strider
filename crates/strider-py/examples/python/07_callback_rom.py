@@ -40,7 +40,7 @@ class CallbackRom(strider.ReadOnlyMemory):
         self.blob = blob
         self.calls = 0
 
-    def read(self, space: int, addr: int, size: int) -> int | None:
+    def read(self, addr: int, size: int) -> int | None:
         self.calls += 1
         if addr < self.base or addr + size > self.base + len(self.blob):
             return None

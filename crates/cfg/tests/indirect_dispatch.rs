@@ -80,28 +80,32 @@ fn branch_indirect_to_in_range_const_produces_branch_terminator() {
     // Function is 0x40 bytes, mov+jmp at offsets 0..12, target lands at 0x20.
     let (bytes, target) = mov_rax_jmp_rax_with_landing(base, 0x20, 0x40);
     let opts = OptionsBuilder::new().set_function_max_size(0x40).build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("Builder::build");
 
     // The entry region must end as `Branch` and have one outgoing
     // `Branch` edge pointing at a region that starts at `target`.
-    let entry_region = &cfg.graph[cfg.entry];
+    let entry_region = &cfg.graph()[cfg.entry()];
     assert_eq!(
         entry_region.terminator,
         RegionTerminator::Branch,
         "entry region must end as Branch when resolver returns Single in-range",
     );
 
-    let outgoing: Vec<_> = cfg
-        .graph
-        .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+    let outgoing: Vec<_> = cfg.graph()
+                .edges_directed(cfg.entry(), petgraph::Direction::Outgoing)
         .collect();
     assert_eq!(outgoing.len(), 1, "exactly one outgoing edge expected");
     let edge = &outgoing[0];
     assert_eq!(*edge.weight(), RegionEdgeKind::Branch);
-    let target_region = &cfg.graph[edge.target()];
-    assert_eq!(target_region.start_addr.machine_addr.addr, target);
+    let target_region = &cfg.graph()[edge.target()];
+    assert_eq!(target_region.start_addr.machine_addr_u64(), target);
 }
 
 /// `mov rax, K; jmp rax` with K outside fn range → resolver returns
@@ -114,21 +118,26 @@ fn branch_indirect_to_out_of_range_const_produces_tail_call_terminator() {
     let target = 0x9000u64;
     let bytes = mov_rax_jmp_rax_bytes(target);
     let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("Builder::build");
 
     // Single region whose terminator is TailCall { target }.
-    assert_eq!(cfg.graph.node_count(), 1);
-    let entry = &cfg.graph[cfg.entry];
+    assert_eq!(cfg.graph().node_count(), 1);
+    let entry = &cfg.graph()[cfg.entry()];
     assert_eq!(
         entry.terminator,
         RegionTerminator::TailCall { target },
         "out-of-range Single must lower to TailCall",
     );
     assert_eq!(
-        cfg.graph
-            .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+        cfg.graph()
+            .edges_directed(cfg.entry(), petgraph::Direction::Outgoing)
             .count(),
         0,
         "TailCall must have no outgoing edges",
@@ -156,20 +165,21 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
         .expect("lr varnode");
 
     let opts = OptionsBuilder::new().set_link_register(lr).build();
-    let cfg = Builder::new(sleigh, base, opts)
+    let arm = target::SleighArch::arm();
+    let cfg = Builder::for_arch(&arm, sleigh, base, opts)
         .build()
         .expect("Builder::build");
 
-    assert_eq!(cfg.graph.node_count(), 1);
-    let entry = &cfg.graph[cfg.entry];
+    assert_eq!(cfg.graph().node_count(), 1);
+    let entry = &cfg.graph()[cfg.entry()];
     assert_eq!(
         entry.terminator,
         RegionTerminator::Return,
         "bx lr with cc_link_register_vn = Some(lr) must be Return",
     );
     assert_eq!(
-        cfg.graph
-            .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+        cfg.graph()
+            .edges_directed(cfg.entry(), petgraph::Direction::Outgoing)
             .count(),
         0,
     );
@@ -179,7 +189,7 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
 /// write, no link-register plugin).  Under the fixed-point design
 /// the cfg builder defers the branch via
 /// `RegionTerminator::UnresolvedIndirectBranch{target_vn, addr}` so
-/// the strider-level outer loop can attempt tier-2 resolution
+/// the strider-level outer loop can attempt IR-level resolution
 /// against the optimised IR.  The test asserts the deferred
 /// terminator AND that no edge was added (the target is unknown).
 #[test]
@@ -189,14 +199,19 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
     let base = 0x1000u64;
     let bytes = jmp_rax_bytes();
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("cfg build defers unresolved branches instead of erroring");
 
     // Single region; terminator is UnresolvedIndirectBranch with
     // target_vn naming the offending dispatch register.
-    assert_eq!(cfg.graph.node_count(), 1);
-    let entry = &cfg.graph[cfg.entry];
+    assert_eq!(cfg.graph().node_count(), 1);
+    let entry = &cfg.graph()[cfg.entry()];
     match &entry.terminator {
         RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
             // The lifted `jmp rax` names the RAX register as inputs[0].
@@ -204,14 +219,14 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
             // that the terminator records *some* register-space VN
             // and a pcode address inside the function range.
             assert_eq!(target_vn.addr_space, rsleigh::VnSpace::REGISTER);
-            assert_eq!(addr.machine_addr.addr, base);
+            assert_eq!(addr.machine_addr_u64(), base);
         }
         other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
     }
-    // No outgoing edge — the target is unknown until tier 2 resolves.
+    // No outgoing edge — the target is unknown until IR-level indirect-branch resolver resolves.
     assert_eq!(
-        cfg.graph
-            .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+        cfg.graph()
+            .edges_directed(cfg.entry(), petgraph::Direction::Outgoing)
             .count(),
         0,
         "UnresolvedIndirectBranch must have no outgoing edge",
@@ -308,30 +323,35 @@ fn options_read_only_memory_round_trips() {
     assert!(test_api::options_read_only_memory(&default).is_none());
 }
 
-/// A tier-1-resolvable BranchIndirect must NOT produce
+/// A cfg-time-resolvable BranchIndirect must NOT produce
 /// `UnresolvedIndirectBranch`.  This is the negative companion to
 /// `unresolvable_branch_indirect_produces_unresolved_terminator`
 /// and guards against an over-zealous deferral that would defeat the
-/// "tier 1 closes trivial cases inline" speed argument.
+/// "cfg-time resolver closes trivial cases inline" speed argument.
 #[test]
 fn resolvable_branch_indirect_does_not_produce_unresolved_terminator() {
-    // `mov rax, K; jmp rax` with K outside fn range — tier 1 returns
+    // `mov rax, K; jmp rax` with K outside fn range — cfg-time resolver returns
     // `Single(K)`, which is a tail call.  Terminator must be
     // `TailCall`, not `UnresolvedIndirectBranch`.
     let base = 0x1000u64;
     let target = 0x9000u64;
     let bytes = mov_rax_jmp_rax_bytes(target);
     let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("Builder::build");
-    let entry = &cfg.graph[cfg.entry];
+    let entry = &cfg.graph()[cfg.entry()];
     assert!(
         !matches!(
             entry.terminator,
             RegionTerminator::UnresolvedIndirectBranch { .. },
         ),
-        "tier-1-resolvable target must not produce UnresolvedIndirectBranch, got {:?}",
+        "cfg-time-resolvable target must not produce UnresolvedIndirectBranch, got {:?}",
         entry.terminator,
     );
     assert_eq!(entry.terminator, RegionTerminator::TailCall { target });
@@ -356,7 +376,12 @@ fn branch_indirect_inside_split_region_resolves_correctly() {
     let mut bytes = mov_rax_imm64(base);
     bytes.extend_from_slice(&jmp_rax_bytes());
     let opts = OptionsBuilder::new().set_function_max_size(0x40).build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("Builder::build for split");
 
@@ -364,9 +389,8 @@ fn branch_indirect_inside_split_region_resolves_correctly() {
     // start of own region.  Since the target equals the entry
     // address, no split actually happens (target lands at start of
     // existing region) and we get a self-loop `Branch` edge.
-    let branch_edges: Vec<_> = cfg
-        .graph
-        .edge_references()
+    let branch_edges: Vec<_> = cfg.graph()
+                .edge_references()
         .filter(|e| *e.weight() == RegionEdgeKind::Branch)
         .collect();
     assert!(
@@ -376,7 +400,7 @@ fn branch_indirect_inside_split_region_resolves_correctly() {
     // The targeted region's start_addr must be exactly `base`.
     let target_node = branch_edges[0].target();
     assert_eq!(
-        cfg.graph[target_node].start_addr.machine_addr.addr,
+        cfg.graph()[target_node].start_addr.machine_addr_u64(),
         base,
         "Branch edge must point at the resolved const target",
     );

@@ -336,7 +336,8 @@ fn try_from_u32_size_to_node_output_type() {
     assert_eq!(NodeOutputType::try_from(8u32).unwrap(), NodeOutputType::U64);
     assert_eq!(NodeOutputType::try_from(16u32).unwrap(), NodeOutputType::U128);
     assert_eq!(NodeOutputType::try_from(32u32).unwrap(), NodeOutputType::U256);
-    for bad in [0u32, 3, 5, 7, 9, 15, 17, 33, 64] {
+    assert_eq!(NodeOutputType::try_from(64u32).unwrap(), NodeOutputType::U512);
+    for bad in [0u32, 3, 5, 7, 9, 15, 17, 33, 65] {
         let err = NodeOutputType::try_from(bad).expect_err("invalid size");
         let msg = err.to_string();
         assert!(

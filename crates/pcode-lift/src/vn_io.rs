@@ -28,6 +28,13 @@ use crate::ValueLifter;
 ///   80-bit extended-precision width via `(1u128 << 80) - 1`.
 /// * 16 bytes — wider sub-register writes through 16-byte SIMD container
 ///   registers (XMM0 on x86_64, q0 on aarch64).
+/// * 32 / 64 bytes — AVX-2 `ymm` / AVX-512 `zmm` registers.  Returns
+///   `u128::MAX` (a degraded mask).  This is sound for the direct
+///   container read/write path which doesn't actually consult the
+///   mask — `read_reg_vn`/`write_reg_vn` early-out when `reg` equals
+///   its own container.  Sub-register aliasing *within* a wide
+///   container (e.g. `xmm0` slice of `ymm0`) is not yet supported and
+///   surfaces as a typed error from `read_reg_vn` / `write_reg_vn`.
 pub(crate) fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
     match reg.size {
         1 => Ok(u128::from(u8::MAX)),
@@ -35,7 +42,7 @@ pub(crate) fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
         4 => Ok(u128::from(u32::MAX)),
         8 => Ok(u128::from(u64::MAX)),
         10 => Ok((1u128 << 80) - 1),
-        16 => Ok(u128::MAX),
+        16 | 32 | 64 => Ok(u128::MAX),
         _ => Err(anyhow!("unsupported register size {} bytes", reg.size)),
     }
 }
@@ -207,6 +214,21 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         if container_reg == *reg {
             return Ok(curr_reg_val);
         }
+        // Sub-register reads within a wide (>16-byte) container
+        // would need a wide mask + shift, which the current u128-mask
+        // path cannot represent.  Bail with a clear error rather than
+        // silently producing the wrong value.  Direct full-container
+        // reads (above) and narrow sub-slice within a ≤16-byte
+        // container (below) work normally.
+        if container_reg.size > 16 {
+            return Err(anyhow!(
+                "sub-register aliasing within a wide ({}-byte) container is not supported \
+                 (reading {:?} from {:?})",
+                container_reg.size,
+                reg,
+                container_reg,
+            ));
+        }
         // Sub-register read: shift the container's bits down to the LSB
         // position, then truncate to the sub-register's width.  Even when
         // the shift is zero (sub at offset 0 of the container), the
@@ -216,6 +238,26 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // IntBitsToFloat and the optimizer ends up dropping the chain).
         let reg_ty: ir::ValueType = reg.size.try_into()?;
         let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
+        // Defensive bound: any shift ≥ container_bits is undefined per the
+        // IR's `ShiftRight` semantics (the lifted shift would silently wrap
+        // via `shift % bit_width` on x86 hardware in release builds).  By
+        // construction the largest legitimate sub-register offset is
+        // `(container.size - 1) * 8`, well below the bit width, and
+        // `find_largest_fitting_register` upstream enforces containment.
+        // A malformed Sleigh spec that ever emits an out-of-container
+        // sub-register surfaces as a clean lift failure rather than
+        // silently corrupting the IR.
+        if shift_value >= (container_reg.size as u64) * 8 {
+            return Err(anyhow!(
+                "read_reg_vn: shift {shift_value} >= container bit width {} \
+                 (container size {} bytes); sub-register {:?} is structurally \
+                 outside container {:?}",
+                (container_reg.size as u64) * 8,
+                container_reg.size,
+                reg,
+                container_reg,
+            ));
+        }
         let shifted = if shift_value == 0 {
             curr_reg_val
         } else {
@@ -253,6 +295,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
             // Coerce `val` to reg's declared integer type before storing.
+            // (Direct full-container write — including writes to wide
+            // ymm/zmm registers — falls through this path unchanged.)
             // Register variables always hold integer-typed values; the read
             // side (handle_float_*, builder's auto-cast in build_float_*)
             // re-introduces a Bool/Float view via CastToFloat /
@@ -264,9 +308,30 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
             return self.builder.write_variable(reg, coerced);
         }
+        // Wide-container guard — same shape as `read_reg_vn`.
+        if container_reg.size > 16 {
+            return Err(anyhow!(
+                "sub-register aliasing within a wide ({}-byte) container is not supported \
+                 (writing {:?} into {:?})",
+                container_reg.size,
+                reg,
+                container_reg,
+            ));
+        }
         let container_ty: ir::ValueType = container_reg.size.try_into()?;
         let container_reg_val = self.builder.read_variable(&container_reg)?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
+        // Defensive bound — see read_reg_vn for the rationale.
+        if shift_bits >= (container_reg.size as u64) * 8 {
+            return Err(anyhow!(
+                "write_reg_vn: shift_bits {shift_bits} >= container bit width {} \
+                 (container size {} bytes); sub-register {:?} outside container {:?}",
+                (container_reg.size as u64) * 8,
+                container_reg.size,
+                reg,
+                container_reg,
+            ));
+        }
 
         // Extend `val` to container width first, then shift it into position.
         // Shifting at container width is the only way the mask AND afterwards
@@ -555,7 +620,7 @@ mod vn_mask_tests {
     /// Every unsupported size produces `UnsupportedRegSize`.
     #[test]
     fn unsupported_sizes_return_unsupported_reg_size_error() {
-        for &bad in &[0u32, 3, 5, 6, 7, 9, 32, 64, u32::MAX] {
+        for &bad in &[0u32, 3, 5, 6, 7, 9, 17, 33, 65, u32::MAX] {
             let r = vn_mask(&reg(bad));
             match r {
                 Err(e) => assert!(
@@ -565,5 +630,36 @@ mod vn_mask_tests {
                 Ok(_) => panic!("size {bad}: expected error, got Ok"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod wide_register_tests {
+    use super::vn_mask;
+    use rsleigh::{Vn, VnSpace};
+
+    fn reg(off: u64, size: u32) -> Vn {
+        Vn { addr_space: VnSpace::REGISTER, addr_off: off, size }
+    }
+
+    #[test]
+    fn vn_mask_accepts_32_bytes_for_avx2_ymm() {
+        let ymm = reg(0x1000, 32);
+        let mask = vn_mask(&ymm).expect("AVX-2 ymm width must be supported");
+        assert_eq!(mask, u128::MAX, "wide containers return the degraded u128::MAX mask");
+    }
+
+    #[test]
+    fn vn_mask_accepts_64_bytes_for_avx512_zmm() {
+        let zmm = reg(0x1000, 64);
+        let mask = vn_mask(&zmm).expect("AVX-512 zmm width must be supported");
+        assert_eq!(mask, u128::MAX);
+    }
+
+    #[test]
+    fn vn_mask_still_rejects_unsupported_widths() {
+        assert!(vn_mask(&reg(0, 3)).is_err());
+        assert!(vn_mask(&reg(0, 7)).is_err());
+        assert!(vn_mask(&reg(0, 128)).is_err());
     }
 }

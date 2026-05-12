@@ -35,12 +35,12 @@ pub enum NodeKind {
     InitialVar(rsleigh::Vn),
     /// Canonical marker for a function argument at position `index` in the
     /// calling convention.  Introduced by
-    /// [`opt::FunctionArgDetect`](../../../opt/src/function_args.rs) which
+    /// [`opt::FunctionArgDetect`](../../../opt/src/function_args/mod.rs) which
     /// replaces register-passed arg reads (`InitialVar(arg_reg)`) and
     /// stack-passed arg reads (`Load[InitialVar(sp) + K]`) with this node.
     ///
     /// The per-graph invariant is that at most one `FunctionArg` node exists
-    /// per `index` (enforced by [`crate::validate::layer_c`]).  Source nodes
+    /// per `index` (enforced by `validate::layer_c`).  Source nodes
     /// may become unreferenced after rewiring; `FunctionArg` itself is not
     /// cacheable, since identity matters for the uniqueness invariant.
     ///
@@ -65,7 +65,7 @@ pub enum NodeKind {
     /// `ControlState`'s `Control` inputs.  Output: `[value]`.
     VarPhi(rsleigh::Vn),
     /// Value phi not tied to any source varnode.  Synthesized by
-    /// [`opt::StackLoadForward`](../../../opt/src/stack_load_forward.rs) when
+    /// [`opt::StackLoadForward`](../../../opt/src/stack_load_forward/mod.rs) when
     /// forwarding a `Load[sp+K]` across a `MemPhi`: each predecessor
     /// resolves to a stored value, and those values are merged here.  Shape
     /// matches `VarPhi` — inputs `[phi_token, val_0, val_1, …]`, output
@@ -128,8 +128,20 @@ pub enum NodeKind {
     StackStorePhi { space: rsleigh::VnSpace },
 
     // ── Integer constants and operations ──────────────────────────────────────
-    /// A compile-time integer constant of value `u128`.
+    /// A compile-time integer constant of value `u128`.  Covers
+    /// `Bool`/`U8`/`U16`/`U32`/`U64`/`U80`/`U128`.  Wider integer types
+    /// (`U256`/`U512`) use [`Self::IntConstWide`] which references
+    /// `Graph::wide_consts` off-side.
     IntConst(u128),
+    /// A compile-time integer constant whose value doesn't fit in
+    /// `u128` — `U256` or `U512`.  The actual byte payload lives in
+    /// `Graph::wide_consts` and this node carries a
+    /// [`crate::wide_const::WideConstId`] index.
+    ///
+    /// Interning makes structural equality work: two `IntConstWide(id)`
+    /// nodes with the same `id` reference the same value (the
+    /// [`crate::Graph::intern_wide_const`] contract).
+    IntConstWide(crate::wide_const::WideConstId),
     /// Integer unary operation (e.g. bitwise NOT, two's-complement negate).
     IntUnaryOp(crate::ops::IntUnaryOp),
     /// Integer binary operation (e.g. add, shift, bitwise AND).
@@ -238,7 +250,10 @@ impl NodeKind {
     pub fn is_const(self) -> bool {
         matches!(
             self,
-            Self::BoolConst(..) | Self::IntConst(..) | Self::FloatConst(..)
+            Self::BoolConst(..)
+                | Self::IntConst(..)
+                | Self::IntConstWide(..)
+                | Self::FloatConst(..)
         )
     }
 

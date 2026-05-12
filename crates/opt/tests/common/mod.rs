@@ -57,13 +57,13 @@ pub fn count_reachable<F: Fn(&NodeKind) -> bool>(
 /// Runs `pass.optimize` until it reports `NoChange` or `MAX_ITERS` is hit.
 /// Returns `AssertionFailed` if `MAX_ITERS` is exceeded (a non-converging
 /// pass).
-pub fn run_to_fixed_point<P: opt::Optimizer>(
+pub fn run_to_fixed_point<P: opt::OptimizerRaw>(
     pass: &P,
     fg: &mut BuiltFunctionGraph,
 ) -> Result<()> {
     const MAX_ITERS: usize = 100;
     for _ in 0..MAX_ITERS {
-        if !pass.optimize(&mut fg.graph, fg.entry)?.changed() {
+        if !pass.optimize_raw(&mut fg.graph, fg.entry)?.changed() {
             return Ok(());
         }
     }

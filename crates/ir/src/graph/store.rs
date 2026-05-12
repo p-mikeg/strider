@@ -6,6 +6,9 @@
 //! invoke it before mutating, so the cache key always matches the node's
 //! current inputs.
 
+use std::hash::{BuildHasher, Hash, Hasher};
+
+use hashbrown::hash_map::RawEntryMut;
 use smallvec::SmallVec;
 
 use crate::node::{
@@ -14,6 +17,27 @@ use crate::node::{
 };
 
 use super::Graph;
+
+/// Hashes a borrowed dedup-cache key.  Must produce the same hash as the
+/// derived `Hash` impl on the owned `(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>)`
+/// tuple so that lookups using the borrowed shape land in the same bucket
+/// as inserts using the owned shape.  `Vec<T>: Hash` and `[T]: Hash` agree
+/// (both hash the length followed by each element), and the tuple's
+/// derived `Hash` hashes its fields in declaration order — so the borrowed
+/// hash below matches the owned-key derived hash field-for-field.
+#[inline]
+fn hash_borrowed_key<S: BuildHasher>(
+    hasher: &S,
+    node: &Node,
+    inputs: &[NodeOutputId],
+    output_kinds: &[NodeOutputKind],
+) -> u64 {
+    let mut h = hasher.build_hasher();
+    node.hash(&mut h);
+    inputs.hash(&mut h);
+    output_kinds.hash(&mut h);
+    h.finish()
+}
 
 impl Graph {
     /// Returns a reference to the kind of `node_id`.
@@ -24,26 +48,51 @@ impl Graph {
     }
 
     /// Replaces the [`NodeKind`] of `node_id`.  Only valid when the
-    /// pre-edit and post-edit kinds share the SAME input and output
-    /// signatures (so the existing edges remain well-typed) and BOTH
-    /// kinds are non-cacheable (so the dedup cache stays consistent —
-    /// cacheable kinds key on `(kind, inputs, outputs)` so a kind
-    /// mutation could orphan or collide cache entries).
+    /// post-edit kind's input/output signature matches the node's
+    /// CURRENT slot shape (so the existing edges remain well-typed
+    /// post-mutation) and BOTH kinds are non-cacheable (so the dedup
+    /// cache stays consistent — cacheable kinds key on `(kind, inputs,
+    /// outputs)` so a kind mutation could orphan or collide cache
+    /// entries).
     ///
     /// Used by the indirect-branch resolver to rewrite an
     /// `IndirectBranch` placeholder into a real `Return` in place,
     /// keeping the same `NodeId` so cached `exit_control` handles stay
-    /// valid.
+    /// valid.  Callers that change slot arity (e.g. `IndirectBranch
+    /// [ctrl, mem, target] → Return [ctrl, mem, ret*]`) must call
+    /// [`Self::add_node_input`] / [`Self::remove_node_input`] first so
+    /// the inputs match the new kind's signature **before** invoking
+    /// `set_node_kind`.
     ///
     /// # Errors
     ///
     /// Returns an error when either the old or the new kind is
-    /// cacheable.
+    /// cacheable, or when the node's current slot shape does not match
+    /// the new kind's expected
+    /// [`crate::node_signature::expected_signature`] (a mismatch
+    /// indicates the caller forgot to reshape the inputs before
+    /// mutating the kind).  Previously a `debug_assert!`; promoted to a
+    /// runtime error so Python users see a clean typed exception
+    /// instead of a release-mode misshape or a debug-mode crash
+    ///.
     pub fn set_node_kind(&mut self, node_id: NodeId, kind: NodeKind) -> crate::Result<()> {
         let old_kind = self.nodes[node_id].kind;
         if old_kind.is_cacheable() || kind.is_cacheable() {
             return Err(anyhow::anyhow!(
                 "set_node_kind requires both kinds non-cacheable: old={old_kind:?}, new={kind:?}"
+            ));
+        }
+        // The node's current slot count must match the new kind's
+        // expected signature so the edges remain well-typed
+        // post-mutation.  Producers (e.g. `apply_link_register`)
+        // reshape inputs via `add_node_input` / `remove_node_input`
+        // before calling here, so a mismatch is a caller bug — surface
+        // it as a typed error.
+        if !crate::node_signature::slot_counts_match_kind(self, node_id, &kind) {
+            return Err(anyhow::anyhow!(
+                "set_node_kind: node {node_id:?} (old={old_kind:?}) slot shape does \
+                 not match new kind {kind:?}'s expected signature — call \
+                 add_node_input/remove_node_input first to reshape inputs"
             ));
         }
         self.nodes[node_id].kind = kind;
@@ -174,7 +223,7 @@ impl Graph {
     /// node that already exists in the graph is returned instead of creating a
     /// duplicate.  Non-cacheable nodes always produce a fresh [`NodeId`].
     ///
-    /// The inputs are recorded as [`NodeInput`] entries and added to the
+    /// The inputs are recorded as `NodeInput` entries and added to the
     /// use-list of each referenced output so that consumers can be iterated.
     pub fn create_node(
         &mut self,
@@ -186,21 +235,43 @@ impl Graph {
         let output_kinds: SmallVec<[NodeOutputKind; 4]> = output_kinds.into_iter().collect();
         let node = Node::new(kind);
 
-        // Build the cache key only for cacheable kinds; otherwise the two
-        // `Vec`s would be allocated and discarded on every call.
-        let cache_key = if kind.is_cacheable() {
-            let key = (node, inputs.to_vec(), output_kinds.to_vec());
-            if let Some(node_id) = self.node_to_id.get(&key) {
-                return *node_id;
+        // For cacheable kinds, look up via a borrowed `(&Node, &[…], &[…])`
+        // shape so a cache *hit* never allocates the two `Vec`s.  Only the
+        // miss path allocates the owned key for insertion below.
+        //
+        // We hash the borrowed triple manually (`hash_borrowed_key`) and
+        // probe via `raw_entry_mut().from_hash(…)`; the comparator then
+        // dereferences the owned key tuple's fields and compares them as
+        // slices against our borrowed view.  See `hash_borrowed_key`'s
+        // doc-comment for why the borrowed and owned hashes coincide.
+        //
+        // The `BuildHasher` is cloned out of the map up-front so we can
+        // re-use it inside `insert_with_hasher`'s rehash closure (which
+        // can't reborrow `self.node_to_id` while the `RawEntryMut`
+        // already holds it mutably).
+        let cache_slot = if kind.is_cacheable() {
+            let hasher = self.node_to_id.hasher().clone();
+            let hash = hash_borrowed_key(&hasher, &node, &inputs, &output_kinds);
+            match self.node_to_id.raw_entry_mut().from_hash(hash, |k| {
+                k.0 == node
+                    && k.1.as_slice() == inputs.as_slice()
+                    && k.2.as_slice() == output_kinds.as_slice()
+            }) {
+                RawEntryMut::Occupied(entry) => return *entry.get(),
+                RawEntryMut::Vacant(entry) => Some((hasher, hash, entry)),
             }
-            Some(key)
         } else {
             None
         };
 
         let node_id = self.nodes.push(node);
-        if let Some(key) = cache_key {
-            self.node_to_id.insert(key, node_id);
+        if let Some((hasher, hash, entry)) = cache_slot {
+            entry.insert_with_hasher(
+                hash,
+                (node, inputs.to_vec(), output_kinds.to_vec()),
+                node_id,
+                |k| hash_borrowed_key(&hasher, &k.0, k.1.as_slice(), k.2.as_slice()),
+            );
         }
 
         // Add all inputs to the graph
@@ -228,6 +299,34 @@ impl Graph {
         self.nodes[node_id].inputs = NodeInputIdList::from_iter(inputs, &mut self.input_pool);
         self.nodes[node_id].outputs = NodeOutputIdList::from_iter(outputs, &mut self.output_pool);
 
+        node_id
+    }
+
+    /// Same as [`Self::create_node`] plus unions the asm-fingerprint of
+    /// every node in `contributors` into the resulting node.  Use this
+    /// in opt-pass rewrites that synthesise a fresh node from existing
+    /// ones — the contract is that the new node's fingerprint must be
+    /// a superset of every contributor's, so passes that emit nodes
+    /// without this absorption silently drop attribution.
+    ///
+    /// Cache-hit semantics match `create_node`: when the new node
+    /// dedups to an existing `NodeId`, contributors are still unioned
+    /// into the cached node's fingerprint (the
+    /// [`Self::extend_asm_fingerprint_from`] call below is unconditional).
+    ///
+    /// Idempotent on `contributors == []` (equivalent to plain
+    /// `create_node`).
+    pub fn create_node_attributed(
+        &mut self,
+        kind: NodeKind,
+        inputs: impl IntoIterator<Item = NodeOutputId>,
+        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+        contributors: &[NodeId],
+    ) -> NodeId {
+        let node_id = self.create_node(kind, inputs, output_kinds);
+        for &src in contributors {
+            self.extend_asm_fingerprint_from(node_id, src);
+        }
         node_id
     }
 

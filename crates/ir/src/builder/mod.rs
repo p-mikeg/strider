@@ -76,7 +76,11 @@ fn upgrade_to_tracked_for(
 
     // Sub-register fallback: largest tracked variable CONTAINED IN vn's
     // byte range - the function only reads that sub-register, so the
-    // bytes outside its range are unused.
+    // bytes outside its range are unused.  Tie-break by `(size, addr_off)`
+    // so the choice is deterministic across hash seeds when two equal-
+    // size sub-registers exist (rare in practice — most sleigh specs
+    // de-overlap during `new_raw`'s filter — but defensive against
+    // FxHashMap's non-deterministic iteration order).
     variable_to_id
         .keys()
         .filter(|t| {
@@ -84,7 +88,7 @@ fn upgrade_to_tracked_for(
                 && t.addr_off >= vn.addr_off
                 && t.addr_off + t.size as u64 <= vn_end
         })
-        .max_by_key(|t| t.size)
+        .max_by_key(|t| (t.size, t.addr_off))
         .copied()
 }
 
@@ -121,11 +125,16 @@ pub struct FunctionBuilder {
     /// pointer.  0 on link-register ISAs, pointer size on stack-push ISAs.
     /// Ignored when `stack_ptr_vn` is `None`.
     pub(crate) ret_stack_pop: i64,
+    /// Function-default value of [`target::CallingConvention::no_memory_clobber`].
+    /// When `true`, [`Self::build_call_with_cc`] suppresses the `Memory`
+    /// output on the resulting `Call` node and does not advance the region's
+    /// memory chain.  Per-call `override_cc` may override this.
+    pub(crate) no_memory_clobber: bool,
     /// Lazy `tracked_vn → its largest containing tracked-vn` map.
     /// Populated on first call to [`Self::largest_container_for`];
     /// the variable set is fixed at construction so caching is safe.
     /// Lookup turns the per-call O(V) linear scan in
-    /// `pcode_lift::find_largest_fitting_register` into O(1).
+    /// `pcode_lift::ValueLifter::find_largest_fitting_register` into O(1).
     pub(crate) largest_container: std::cell::OnceCell<HashMap<rsleigh::Vn, rsleigh::Vn>>,
     /// Asm-instruction address attributed to every node `create_node`
     /// produces while this is `Some`.  The lifter / strider region driver
@@ -138,13 +147,13 @@ pub struct FunctionBuilder {
 }
 
 impl FunctionBuilder {
-    /// Returns a reference to the underlying [`FunctionGraph`].
+    /// Returns a reference to the underlying `FunctionGraph`.
     #[must_use] 
     pub fn body(&self) -> &FunctionGraph {
         &self.function
     }
 
-    /// Returns a mutable reference to the underlying [`FunctionGraph`].
+    /// Returns a mutable reference to the underlying `FunctionGraph`.
     pub fn body_mut(&mut self) -> &mut FunctionGraph {
         &mut self.function
     }
@@ -212,9 +221,9 @@ impl FunctionBuilder {
         // This keeps the data-flow chain from a float operation's output
         // (e.g. an aarch64 FloatAdd writes to s0, the 4-byte sub-register of q0)
         // connected to the Return node — without this step `q0` would not be
-        // in the variable set, and the analyzer's register-aliasing logic
+        // in the variable set, and the pcode-lift register-aliasing logic
         // would never widen the s0 write into a q0 store visible to Return.
-        for v in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
+        for v in cc.ret_val_regs().iter().chain(cc.ret_val_regs_float().iter()) {
             if !all_used_variables.contains(v) {
                 all_used_variables.push(*v);
             }
@@ -224,18 +233,22 @@ impl FunctionBuilder {
         // ret slot; new queries can use `ret_val(N)` where N >= int-count to
         // reach float ret slots.
         let mut combined_ret_vars: Vec<rsleigh::Vn> = Vec::with_capacity(
-            cc.ret_val_regs.len() + cc.ret_val_regs_float.len(),
+            cc.ret_val_regs().len() + cc.ret_val_regs_float().len(),
         );
-        combined_ret_vars.extend(cc.ret_val_regs.iter().copied());
-        combined_ret_vars.extend(cc.ret_val_regs_float.iter().copied());
-        Self::new_raw(
+        combined_ret_vars.extend(cc.ret_val_regs().iter().copied());
+        combined_ret_vars.extend(cc.ret_val_regs_float().iter().copied());
+        let mut builder = Self::new_raw(
             all_used_variables,
-            &cc.arg_passing_regs,
-            &cc.callee_saved_regs,
+            cc.arg_passing_regs(),
+            cc.callee_saved_regs(),
             &combined_ret_vars,
-            Some(cc.stack_ptr_vn),
-            cc.ret_stack_pop,
-        )
+            Some(cc.stack_ptr_vn()),
+            cc.ret_stack_pop(),
+        )?;
+        // Carry the function-default no_memory_clobber from the CC; per-call
+        // override_cc can still override on individual Call sites.
+        builder.no_memory_clobber = cc.no_memory_clobber();
+        Ok(builder)
     }
 
     /// Builds an "empty" function: no tracked variables, no calling-convention
@@ -361,6 +374,10 @@ impl FunctionBuilder {
             call_clobbered_variables,
             stack_ptr_vn,
             ret_stack_pop,
+            // Default: synthetic builders don't preserve memory.  Production
+            // code path goes through `new()` which copies the field from the
+            // user-supplied CC after `new_raw` returns.
+            no_memory_clobber: false,
             largest_container: std::cell::OnceCell::new(),
             lift_addr: None,
         };
@@ -383,6 +400,38 @@ impl FunctionBuilder {
     #[must_use]
     pub fn lift_addr(&self) -> Option<u64> {
         self.lift_addr
+    }
+
+    /// Run `body` with the lift-addr set to `Some(addr)` for its
+    /// duration, then restore the previous value (typically `None` or
+    /// the address of an enclosing insn).
+    ///
+    /// Panic-safe: an unwinding panic inside `body` still triggers the
+    /// restore via the inner guard's `Drop` impl.
+    pub fn lift_at<R, F>(&mut self, addr: u64, body: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        struct Guard<'a> {
+            inner: &'a mut FunctionBuilder,
+            prev: Option<u64>,
+        }
+        impl<'a> Drop for Guard<'a> {
+            fn drop(&mut self) {
+                self.inner.lift_addr = self.prev;
+            }
+        }
+        impl<'a> std::ops::Deref for Guard<'a> {
+            type Target = FunctionBuilder;
+            fn deref(&self) -> &FunctionBuilder { self.inner }
+        }
+        impl<'a> std::ops::DerefMut for Guard<'a> {
+            fn deref_mut(&mut self) -> &mut FunctionBuilder { self.inner }
+        }
+        let prev = self.lift_addr;
+        self.lift_addr = Some(addr);
+        let mut guard = Guard { inner: self, prev };
+        body(&mut guard)
     }
 
     /// Creates a node in the graph with the given kind, inputs, and
@@ -499,20 +548,22 @@ impl FunctionBuilder {
         &self.ret_val_vars
     }
 
-    /// Finalises and returns the completed [`BuiltFunctionGraph`], after running
+    /// Finalises and returns the completed [`crate::BuiltFunctionGraph`], after running
     /// structural validation on the built graph.
     ///
     /// # Errors
     ///
-    /// Returns `ValidationFailed` wrapping a
+    /// Returns an [`anyhow::Error`] wrapping a
     /// [`crate::validate::ValidationErrors`] bundle if the built graph fails
     /// any of validate's three layers (local typing, use-list consistency,
-    /// graph-level invariants).
+    /// graph-level invariants).  Recover the bundle via
+    /// `err.downcast_ref::<crate::validate::ValidationErrors>()`.
     pub fn build(self) -> crate::Result<crate::function::BuiltFunctionGraph> {
         // Conservative CallOther clobber default: every tracked variable
         // except the stack pointer.  The order here matches the iteration
-        // order used by `build_call_other` so the i-th clobber output of a
-        // CallOther node corresponds to `call_other_clobbered[i]`.
+        // order used by `build_call_other_modeled` / `build_call_other_terminal`
+        // so the i-th clobber output of a CallOther node corresponds to
+        // `call_other_clobbered[i]`.
         let stack_ptr_vn = self.stack_ptr_vn;
         let call_other_clobbered: Box<[rsleigh::Vn]> = self
             .variables
@@ -527,6 +578,7 @@ impl FunctionBuilder {
             call_clobbered: self.call_clobbered_variables.into_boxed_slice(),
             ret_val_regs: self.ret_val_vars.into_boxed_slice(),
             call_other_clobbered,
+            no_memory_clobber: self.no_memory_clobber,
         };
         crate::validate::validate(&built.graph, built.entry)?;
         Ok(built)

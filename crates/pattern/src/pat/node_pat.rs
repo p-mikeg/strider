@@ -273,7 +273,7 @@ pub(crate) enum ConsumersSpec {
 
 impl Pattern for NodePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        let node = ctx.graph.graph.get_node_from_output(target);
+        let node = ctx.graph.get_node_from_output(target);
         self.try_match_common(ctx, node, b)
     }
 
@@ -282,7 +282,7 @@ impl Pattern for NodePat {
     }
 
     fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
-        let outputs = ctx.graph.graph.node_outputs(node);
+        let outputs = ctx.graph.node_outputs(node);
         if outputs.is_empty() {
             // Zero-output nodes (e.g. `Return`) can't be reached via the
             // default "iterate outputs" loop; match directly against the
@@ -333,7 +333,7 @@ impl Pattern for NodePat {
             BuildTy::InheritRoot => ctx.root_ty,
             BuildTy::Fixed(t) => t,
         };
-        let out = ctx.graph.graph.make_value_node(kind, input_outs, ty)?;
+        let out = ctx.graph.make_value_node(kind, input_outs, ty)?;
         Ok(BuildOutcome::Out(out))
     }
 }
@@ -402,7 +402,7 @@ impl NodePat {
         // callers (rewrite rules) and direct `Matcher::match_node_id`
         // recursion.  Because the kind check can never mutate `b`, we don't
         // need a snapshot before it.
-        if !self.kind.matches(ctx.graph.graph.node_kind(node)) {
+        if !self.kind.matches(ctx.graph.node_kind(node)) {
             return false;
         }
 
@@ -441,7 +441,7 @@ fn try_once(
     match &pat.inputs {
         InputsSpec::None => {}
         InputsSpec::Fixed { pats, commutative: _ } => {
-            let inputs = ctx.graph.graph.node_inputs(node);
+            let inputs = ctx.graph.node_inputs(node);
             if inputs.len() != pats.len() {
                 return false;
             }
@@ -459,7 +459,7 @@ fn try_once(
             }
         }
         InputsSpec::Indexed(items) => {
-            let inputs = ctx.graph.graph.node_inputs(node);
+            let inputs = ctx.graph.node_inputs(node);
             for (i, p) in items {
                 let Some(&inp) = inputs.get(*i) else {
                     return false;
@@ -473,7 +473,7 @@ fn try_once(
 
     // (b) outputs — sparse positional constraints, lazily fetched.
     if let OutputsSpec::Indexed(items) = &pat.outputs {
-        let outputs = ctx.graph.graph.node_outputs(node);
+        let outputs = ctx.graph.node_outputs(node);
         for (i, p) in items {
             let Some(&out) = outputs.get(*i) else {
                 return false;
@@ -532,13 +532,13 @@ pub(crate) fn match_consumer_node(
     }
     // ControlState's outputs are [Control, PhiToken]; the Control
     // output is the one consumed by the next region's body.
-    if !matches!(ctx.graph.graph.node_kind(node), NodeKind::ControlState) {
+    if !matches!(ctx.graph.node_kind(node), NodeKind::ControlState) {
         return false;
     }
-    let outputs = ctx.graph.graph.node_outputs(node);
+    let outputs = ctx.graph.node_outputs(node);
     let Some(ctrl_out) = outputs.into_iter().find(|out| {
         matches!(
-            ctx.graph.graph.output_kind(*out),
+            ctx.graph.output_kind(*out),
             ir::node::NodeOutputKind::Control
         )
     }) else {

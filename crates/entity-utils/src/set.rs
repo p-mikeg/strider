@@ -53,9 +53,17 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.contains(entity.index())
     }
 
-    /// Inserts `entity` into the set.
-    pub fn insert(&mut self, entity: E) {
-        self.bitset.insert(entity.index());
+    /// Inserts `entity` into the set.  Returns `true` if `entity` was
+    /// newly inserted, `false` if it was already present — matching
+    /// `std::collections::HashSet::insert`'s contract so callers can
+    /// switch implementations without changing the call shape.
+    ///
+    /// Single-pass: delegates directly to
+    /// `cranelift_bitset::CompoundBitSet::insert`, which itself
+    /// returns `bool` with the same "was newly inserted" semantics.
+    /// Hot graph-traversal paths get one bitset access per insert.
+    pub fn insert(&mut self, entity: E) -> bool {
+        self.bitset.insert(entity.index())
     }
 
     /// Removes `entity` from the set.
@@ -253,5 +261,13 @@ mod tests {
         let s: DenseEntitySet<Id> = core::iter::once(Id(1)).collect();
         let it = s.iter();
         assert_fused(&it);
+    }
+
+    #[test]
+    fn insert_returns_true_on_first_insert_false_on_repeat() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        assert!(s.insert(Id(42)), "first insert must report 'newly inserted'");
+        assert!(!s.insert(Id(42)), "repeat insert must report 'already present'");
+        assert!(s.insert(Id(43)), "different entity is newly inserted");
     }
 }

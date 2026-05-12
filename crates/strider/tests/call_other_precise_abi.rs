@@ -9,14 +9,14 @@ use rsleigh::mem_readers::BufMemReader;
 fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let arch = strider::SleighArch::x86_64();
     let probe = BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe)
+    let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe)
         .expect("probe sleigh new")
         .regs()
         .expect("probe regs");
     let strider_h = strider::Strider::new(
         arch,
         regs,
-        strider::CallingConvention::x86_64_systemv_abi(),
+        strider::CallingConvention::x86_64_systemv(),
     )
     .expect("strider");
 
@@ -24,9 +24,9 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let bytes = vec![0x0fu8, 0xa2, 0xc3];
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("sleigh");
-    let cfg = cfg::Builder::new(sleigh, entry, cfg::OptionsBuilder::new().build())
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .expect("cfg");
     let outcome = strider_h.analyze_cfg(&cfg).expect("analyze_cfg");
@@ -82,7 +82,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
 fn unmodelled_sysreg_read_clobbers_only_destination() {
     let arch = strider::SleighArch::aarch64();
     let probe = BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe)
+    let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe)
         .expect("probe sleigh new")
         .regs()
         .expect("probe regs");
@@ -98,9 +98,9 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let bytes = vec![0xe0u8, 0xf0, 0x3d, 0xd5, 0xc0, 0x03, 0x5f, 0xd6];
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("sleigh");
-    let cfg = cfg::Builder::new(sleigh, entry, cfg::OptionsBuilder::new().build())
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .expect("cfg");
     let outcome = strider_h.analyze_cfg(&cfg).expect("analyze_cfg");

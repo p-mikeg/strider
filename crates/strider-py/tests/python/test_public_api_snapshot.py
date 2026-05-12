@@ -33,11 +33,14 @@ EXPECTED_TOP = {
     "MemReader",
     "OptimizerPipeline",
     "ReadOnlyMemory",
+    "RelocationStats",
     "RunResult",
     "Sleigh",
     "SleighArch",
     "Strider",
     "StriderError",
+    "Vn",
+    "VnSpace",
     "build_cfg",
     "errors",
     "opt",
@@ -73,23 +76,37 @@ EXPECTED_OPT = {
 EXPECTED_PATTERN = {
     # Core types.
     "Capture",
+    "CastMask",
     "Pat",
     "PartialMatch",
     "IntBinaryPat",
     "BoolBinaryPat",
     "FloatBinaryPat",
+    # Builder types (one per matchable kind).
+    "CallPat", "CallOtherPat",
+    "FunctionArgPat",
+    "IfPat",
+    "LoadPat", "StorePat",
+    "MemPhiPat", "PhiPat", "ValuePhiPat",
+    "RetPat",
+    "StackStorePat", "StackStorePhiPat",
     # Wildcards / consts / phi / initial.
     "any_", "var", "predicate",
     "int_const", "signed_int_const", "bool_const", "float_const",
     "any_int_const", "any_bool_const", "any_float_const",
     "int_const_any_of",
-    "initial_var", "function_arg", "function_arg_any", "phi",
+    "initial_var", "initial_var_for",
+    "function_arg", "function_arg_any",
+    "function_arg_reg", "function_arg_stack",
+    "phi", "phi_for", "mem_phi", "value_phi",
     # Integer binary / unary / cmp.
     "add", "sub", "mul", "div", "sdiv", "rem", "srem",
     "shl", "shr", "sshr",
+    "and_", "or_", "xor",
+    "int_cmp",
     "int_eq", "int_lt", "int_le", "int_slt", "int_sle",
     "int_carry", "int_scarry", "int_sborrow",
-    "neg", "not_",
+    "neg", "not_", "bit_not",
     # Bool binary / unary.
     "bool_and", "bool_or", "bool_xor", "bool_not",
     # Float binary / unary / cmp.
@@ -114,8 +131,6 @@ EXPECTED_PATTERN = {
     "float_bin_any", "float_un_any", "float_cmp_any",
 }
 
-EXPECTED_PATTERN.add("or_")
-EXPECTED_PATTERN.add("and_")
 
 
 def test_top_level_surface():

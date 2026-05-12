@@ -1,8 +1,7 @@
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::worklist::WorkSet;
 
 mod eval_float;
@@ -21,32 +20,32 @@ use rules::*;
 /// - Input is an integer `IntConst(v)` → immediately constant-folded to `FloatConst(v)`.
 /// - Input is any other integer type → lowered to `IntBitsToFloat`.
 fn try_lower_cast_to_float(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
-    if !matches!(*fg.graph.node_kind(node_id), NodeKind::CastToFloat) {
+    if !matches!(*ctx.node_kind(node_id), NodeKind::CastToFloat) {
         return Ok(OptimizationResult::NoChange);
     }
 
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let [out] = ctx.node_outputs_exact::<1>(node_id)?;
+    let [input] = ctx.node_inputs_exact::<1>(node_id)?;
 
-    let out_ty = fg.graph.output_kind(out).as_value_or_err()?;
-    let in_ty = fg.graph.output_kind(input).as_value_or_err()?;
+    let out_ty = ctx.output_kind(out).as_value_or_err()?;
+    let in_ty = ctx.output_kind(input).as_value_or_err()?;
 
     let new_out = if in_ty == out_ty {
         input
     } else if in_ty.is_float() {
-        fg.graph.make_float_to_float_node(input, out_ty)?
-    } else if let Some(bits) = fg.graph.int_const_val(input) {
-        fg.graph.make_float_const(bits, out_ty)?
+        ctx.make_float_to_float_node(input, out_ty)?
+    } else if let Some(bits) = ctx.int_const_val(input) {
+        ctx.make_float_const(bits, out_ty)?
     } else {
-        fg.graph.make_int_bits_to_float_node(input, out_ty)?
+        ctx.make_int_bits_to_float_node(input, out_ty)?
     };
     // Absorb the rewritten cast node's asm-fingerprint into the new producer.
-    let new_node = fg.graph.get_node_from_output(new_out);
-    fg.graph.extend_asm_fingerprint_from(new_node, node_id);
-    Ok(OptimizationResult::from_changed(fg.graph.replace_all_uses(out, new_out)?))
+    let new_node = ctx.get_node_from_output(new_out);
+    ctx.extend_asm_fingerprint_from(new_node, node_id);
+    Ok(OptimizationResult::from_changed(ctx.replace_all_uses(out, new_out)?))
 }
 
 // ── Public optimizer ──────────────────────────────────────────────────────────
@@ -59,9 +58,9 @@ fn try_lower_cast_to_float(
 /// a & (C1 & C2)`.
 pub struct ConstantFold;
 
-impl OptimizerOnBuilt for ConstantFold {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        let mut work = WorkSet::seeded(function.preorder());
+impl Optimizer for ConstantFold {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+        let mut work = WorkSet::seeded(ctx.preorder());
         let mut result = OptimizationResult::NoChange;
         // Reused per iteration to snapshot consumer NodeIds BEFORE running
         // rules. After a rule rewrites the node, `output_uses(old_out)` is
@@ -74,16 +73,16 @@ impl OptimizerOnBuilt for ConstantFold {
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         while let Some(node_id) = work.pop() {
             consumers.clear();
-            for out in function.graph.node_outputs(node_id) {
-                for (consumer, _) in function.graph.output_uses(out) {
+            for out in ctx.node_outputs(node_id) {
+                for (consumer, _) in ctx.output_uses(out) {
                     consumers.push(consumer);
                 }
             }
-            let r = apply_identity_rules(function, node_id)?
-                | apply_const_eval_rules(function, node_id)?
-                | apply_bool_float_rules(function, node_id)?
-                | apply_reassoc_and_mask_rules(function, node_id)?
-                | apply_bitcast_extend_rules(function, node_id)?;
+            let r = apply_identity_rules(ctx, node_id)?
+                | apply_const_eval_rules(ctx, node_id)?
+                | apply_bool_float_rules(ctx, node_id)?
+                | apply_reassoc_and_mask_rules(ctx, node_id)?
+                | apply_bitcast_extend_rules(ctx, node_id)?;
             if r.changed() {
                 result |= r;
                 for &consumer in &consumers {

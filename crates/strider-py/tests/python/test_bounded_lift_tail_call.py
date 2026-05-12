@@ -58,7 +58,7 @@ def test_bounded_lift_vmspace_exitfree_amd64_13():
     addr, size = mem.function_max_size("vmspace_exitfree")
     assert size is not None, "vmspace_exitfree must have a recorded st_size"
     arch = strider.SleighArch.x86_64()
-    cc = strider.CallingConvention.x86_64_systemv_abi()
+    cc = strider.CallingConvention.x86_64_systemv()
     result = strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         function_max_size=size,

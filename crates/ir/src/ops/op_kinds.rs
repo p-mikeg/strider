@@ -93,8 +93,9 @@ pub enum IntBinaryOp {
 /// opcode is *bitwise* complement (`~x`); Sleigh's `Int2Comp` is
 /// two's-complement negation (`-x`).  The IR variant names follow the
 /// conventional meaning, not Sleigh's: `BitNot` is `~x` and `Neg` is
-/// `-x`.  See [`crate::pcode_lift`] dispatch site for the rsleigh →
-/// IR mapping.
+/// `-x`.  See the `pcode_lift` crate's dispatch site for the rsleigh →
+/// IR mapping.  (`pcode_lift` is a separate crate, not under
+/// `crate::*` — the older `[`crate::pcode_lift`]` doc-link was broken.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntUnaryOp {
     /// Bitwise complement: `~x` (every bit flipped).  Lifted from

@@ -2,7 +2,7 @@ use petgraph::stable_graph::StableDiGraph;
 
 /// Classifies the control-flow relationship between two CFG regions.
 ///
-/// Every edge in the [`RegionGraph`] carries one of these four labels.
+/// Every edge in the `RegionGraph` carries one of these four labels.
 /// The label determines which outgoing path is taken when execution leaves the
 /// source region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,12 +28,35 @@ pub enum RegionEdgeKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MachineInsnAddr {
     /// The raw virtual address of the machine instruction.
-    pub addr: u64,
+    ///
+    /// Tightened to `pub(crate)` — external callers go through
+    /// [`Self::as_u64`] for reads and [`Self::new`] / [`From<u64>`]
+    /// for construction.
+    pub(crate) addr: u64,
 }
 
 impl From<u64> for MachineInsnAddr {
     fn from(value: u64) -> Self {
         MachineInsnAddr { addr: value }
+    }
+}
+
+impl MachineInsnAddr {
+    /// Construct from a raw u64 address.  Equivalent to
+    /// [`From<u64>`]; provided as an inherent ctor for ergonomic
+    /// `MachineInsnAddr::new(addr)` call-sites.
+    #[must_use]
+    pub fn new(addr: u64) -> Self {
+        MachineInsnAddr { addr }
+    }
+
+    /// Read the raw u64 address.  canonical
+    /// accessor for the migration path that will eventually tighten
+    /// the `addr` field to `pub(crate)`.  New code should prefer this
+    /// over `.addr`.
+    #[must_use]
+    pub fn as_u64(self) -> u64 {
+        self.addr
     }
 }
 
@@ -49,12 +72,29 @@ impl From<u64> for MachineInsnAddr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PcodeInsnAddr {
     /// Virtual address of the enclosing machine instruction.
-    pub machine_addr: MachineInsnAddr,
+    ///
+    /// Tightened to `pub(crate)` — external callers go through
+    /// [`Self::machine_addr`] / [`Self::machine_addr_u64`].
+    pub(crate) machine_addr: MachineInsnAddr,
     /// Zero-based index of this pcode instruction within the machine instruction.
-    pub insn_index: u64,
+    ///
+    /// Tightened to `pub(crate)` — external callers go through
+    /// [`Self::insn_index`].
+    pub(crate) insn_index: u64,
 }
 
 impl PcodeInsnAddr {
+    /// Construct from `(machine_addr, insn_index)`.  Field ordering is
+    /// load-bearing for the derived `Ord` (machine first, index second);
+    /// the ctor preserves it.
+    #[must_use]
+    pub fn new(machine_addr: MachineInsnAddr, insn_index: u64) -> Self {
+        PcodeInsnAddr {
+            machine_addr,
+            insn_index,
+        }
+    }
+
     /// Returns the pcode address pointing at the *first* pcode op of
     /// the machine instruction at `addr` (`insn_index == 0`).
     #[must_use]
@@ -63,6 +103,28 @@ impl PcodeInsnAddr {
             machine_addr: MachineInsnAddr { addr },
             insn_index: 0,
         }
+    }
+
+    /// Read the parent machine instruction's address.
+    ///
+    /// Canonical accessor for the migration path that will eventually
+    /// tighten the field to `pub(crate)`.
+    #[must_use]
+    pub fn machine_addr(self) -> MachineInsnAddr {
+        self.machine_addr
+    }
+
+    /// Read the pcode-op index within the machine instruction.
+    #[must_use]
+    pub fn insn_index(self) -> u64 {
+        self.insn_index
+    }
+
+    /// Read the parent machine instruction's u64 address — convenience
+    /// wrapper for the common `.machine_addr.addr` triple-dot pattern.
+    #[must_use]
+    pub fn machine_addr_u64(self) -> u64 {
+        self.machine_addr.addr
     }
 }
 
@@ -79,12 +141,13 @@ pub struct RegionInstruction {
 ///
 /// One terminator per region; the value is set when the region is
 /// finalised by [`crate::Builder`].  The variants line up with the
-/// outgoing edges in the [`RegionGraph`] but also record cases that have
+/// outgoing edges in the `RegionGraph` but also record cases that have
 /// no outgoing edge (e.g. `Return`, `TailCall`).
 ///
-/// `Switch` is **reserved** for the future jump-table resolver and is
-/// not constructed by the cfg builder today — it is part of the API so
-/// that adding jump-table support is a purely additive change.
+/// `Switch` is constructed by `cfg::builder::region_builder` when the
+/// indirect-branch resolver classifies a `BranchIndirect` as a
+/// jump-table dispatch with a known multi-target set.  See the per-arm
+/// doc on [`RegionTerminator::Switch`] for the construction contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionTerminator {
     /// No terminator opcode; control falls into the next region.  This
@@ -100,9 +163,7 @@ pub enum RegionTerminator {
     /// [`RegionEdgeKind::IfCaseTrue`] / [`RegionEdgeKind::IfCaseFalse`]
     /// edges.
     CondBranch,
-    /// `Return` opcode (or, in the legacy mapping retained until the
-    /// indirect-branch resolver lands, a `BranchIndirect`).  No
-    /// outgoing edge.
+    /// `Return` opcode.  No outgoing edge.
     Return,
     /// Region terminates with no successor.  Emitted by
     /// `cfg::region_builder::process_new_insn` when a CallOther's
@@ -120,8 +181,9 @@ pub enum RegionTerminator {
     },
     /// Jump table with N statically-known targets.  Constructed by
     /// the cfg builder from a `ResolvedTargets::Multiple` resolution
-    /// (which only the strider tier-2 fixed-point loop produces; tier
-    /// 1 never returns Multiple).  Strider's `handle_switch` reads
+    /// (which only the strider indirect-resolution fixed-point loop
+    /// produces; the cfg-time mini-graph resolver never returns
+    /// Multiple).  Strider's `handle_switch` reads
     /// `target_vn` at the region exit and emits an If-ladder of
     /// `IntCmpOp::Equal + If` against each `targets[i]`, chained
     /// through the false-branch.
@@ -130,7 +192,7 @@ pub enum RegionTerminator {
     /// dispatch value.  When `Some`, strider's `handle_switch` uses
     /// it directly instead of re-reading `target_vn`, pinning the
     /// soundness contract that the comparison value is the SAME
-    /// value tier 2 classified.  The cfg builder always sets this to
+    /// value the IR-level indirect-branch resolver classified.  The cfg builder always sets this to
     /// `None`; it is plumbing for an incremental-rebuild round that
     /// preserves the previous iteration's IR.
     Switch {
@@ -147,12 +209,12 @@ pub enum RegionTerminator {
         /// instead of re-reading `target_vn`.
         target_value: Option<ir::Value>,
     },
-    /// `BranchIndirect` whose target the cfg-time tier-1 resolver
+    /// `BranchIndirect` whose target the cfg-time mini-graph resolver
     /// (`indirect_resolve::resolve_indirect_target`) could not prove.
     ///
     /// The region was finalised with this terminator instead of an
     /// error; the strider-level fixed-point loop runs the full
-    /// optimizer pipeline over the lifted IR and tier-2 resolution
+    /// optimizer pipeline over the lifted IR and IR-level indirect-branch resolution
     /// inspects the producer of `target_vn` in the optimised graph.
     /// At fixed point any remaining `UnresolvedIndirectBranch` regions
     /// surface as an "unresolved indirect branch" error.
@@ -177,14 +239,17 @@ pub enum RegionTerminator {
 /// A basic block: a maximal straight-line sequence of pcode instructions
 /// with a single entry point and (at most) one exit point.
 ///
-/// Regions are the nodes of the [`RegionGraph`].  A region ends when the
+/// Regions are the nodes of the `RegionGraph`.  A region ends when the
 /// builder encounters a `Branch`, `CondBranch`, or `Return` pcode opcode, or
 /// when sequential execution reaches the start of an already-discovered region.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
     /// Address of the first pcode instruction in this region.
     pub start_addr: PcodeInsnAddr,
-    /// All pcode instructions, in program order.  Never empty.
+    /// All pcode instructions, in program order.  Empty only when the
+    /// terminator is `Branch` and arose from the single-instruction
+    /// CondBranch-with-OOB-successor fold (see `add_region` in the cfg
+    /// builder).  Otherwise non-empty.
     pub insns: Vec<RegionInstruction>,
     /// How this region ends — see [`RegionTerminator`].
     pub terminator: RegionTerminator,
@@ -194,13 +259,16 @@ impl Region {
     /// Returns `true` when `addr` lies within the instruction range of this
     /// region, i.e. `start_addr <= addr <= last_insn.addr`.
     ///
-    /// Returns `false` for regions with no instructions (an invariant violation
-    /// that `add_region` prevents, but handled gracefully here).
+    /// Empty regions (only valid for `Branch`-terminated post-fold cases —
+    /// see [`Region::insns`]) own exactly their `start_addr`.  Returning
+    /// `false` for empty regions previously made `find_region_containing_addr`
+    /// miss the start-address query, letting the work queue build a duplicate
+    /// region for the same edge target.
     #[must_use]
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
         match self.insns.last() {
             Some(last) => self.start_addr <= addr && addr <= last.addr,
-            None => false,
+            None => self.start_addr == addr,
         }
     }
 }

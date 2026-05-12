@@ -27,8 +27,8 @@
 use object::{Object, ObjectSymbol};
 use std::path::PathBuf;
 
-// Sub-module containing fixture builders for the tier-2 classifier
-// integration tests in `tests/tier2_classify.rs`.  Kept as a sub-module
+// Sub-module containing fixture builders for the indirect-branch classifier
+// integration tests in `tests/indirect_resolve_classify.rs`.  Kept as a sub-module
 // so the rest of the per-arch fixture infrastructure above remains
 // unchanged.
 pub mod indirect_resolve_helpers;
@@ -105,7 +105,7 @@ impl Arch {
         match self {
             Arch::X86 => strider::CallingConvention::x86_cdecl(),
             Arch::X86Kernel => strider::CallingConvention::x86_linux_kernel(),
-            Arch::X64 => strider::CallingConvention::x86_64_systemv_abi(),
+            Arch::X64 => strider::CallingConvention::x86_64_systemv(),
             // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
             Arch::Aarch64 | Arch::Aarch64Be => strider::CallingConvention::aarch64_aapcs64(),
             // AAPCS32 is byte-order- and mode-independent — same CC for
@@ -174,14 +174,14 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let sleigh_arch = arch.sleigh();
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
+    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
     let ana = strider::Strider::new(sleigh_arch, regs, arch.cc())
         .expect("Strider::new");
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, mem)
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
     let raw_addr = obj
         .symbol_by_name(fn_name)
@@ -195,7 +195,7 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    // Phase 5: thread the calling-convention link-register varnode and an
+    // Thread the calling-convention link-register varnode and an
     // `Arc<dyn ReadOnlyMemory>` view of the ELF into the cfg builder so
     // the indirect-branch resolver can classify `bx lr` as Return and
     // fold rodata-stored jump targets.  The optimiser's `LoadReadOnly`
@@ -208,11 +208,15 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
     let mut cfg_opts_b = cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
         .set_read_only_memory(rom_for_cfg);
-    if let Some(lr) = ana.calling_convention().link_register_vn {
+    if let Some(lr) = ana.calling_convention().link_register_vn() {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
-    let cfg = cfg::Builder::with_endianness(sleigh, addr, cfg_opts, sleigh_arch.endianness)
+    // Use `for_arch` so both endianness AND `ArchPreset` are derived
+    // from `sleigh_arch` atomically.  (The earlier `Builder::new` /
+    // `Builder::with_endianness` ctors silently defaulted the preset
+    // to `X86_64` and were deleted in round 12 W5c.)
+    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let mut graph = ana.analyze_cfg(&cfg)

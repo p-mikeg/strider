@@ -18,7 +18,7 @@ use crate::pat::node_pat::{InputsSpec, KindSpec, NodeKindCheck, NodePat};
 
 /// Builder for `Load` node patterns.  Created by [`crate::pat::load`].
 ///
-/// Note: `Load` is a single-output node (the loaded value at outputs[0]).
+/// Note: `Load` is a single-output node (the loaded value at `outputs[0]`).
 /// It does not produce a memory edge, so there is no `.next_mem(p)` method
 /// on `LoadPat` — only `.mem_in(p)` for the backward-walk constraint and
 /// `.bit_width(n)` for the value-width filter.
@@ -39,19 +39,19 @@ impl LoadPat {
         self.space = Some(s);
         self
     }
-    /// Constrain the load's address operand (inputs[1]).
+    /// Constrain the load's address operand (`inputs[1]`).
     pub fn addr(mut self, p: impl Into<Pat>) -> Self {
         self.addr = Some(p.into());
         self
     }
-    /// Constrain the load's memory predecessor (inputs[0]).  The
+    /// Constrain the load's memory predecessor (`inputs[0]`).  The
     /// pattern walks back from the input edge to its producer in the
     /// standard data-flow direction.
     pub fn mem_in(mut self, p: impl Into<Pat>) -> Self {
         self.mem_in = Some(p.into());
         self
     }
-    /// Restrict the match to loads whose value output (outputs[0]) is
+    /// Restrict the match to loads whose value output (`outputs[0]`) is
     /// `n` bits wide.  Matches both integer and float types of the
     /// same width (e.g. `bit_width(32)` matches U32 and F32).
     #[must_use]
@@ -81,15 +81,15 @@ impl From<LoadPat> for Pat {
         };
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
-        // Bit-width post-match: outputs[0] is the value (Load is a
+        // Bit-width post-match: `outputs[0]` is the value (Load is a
         // single-output node — see node_signature::expected_signature).
         if let Some(want) = bit_width {
             pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
-                let outs = ctx.graph.graph.node_outputs(node);
+                let outs = ctx.graph.node_outputs(node);
                 let Some(&value_out) = outs.get(0) else {
                     return false;
                 };
-                let Some(ty) = ctx.graph.graph.output_kind(value_out).as_value() else {
+                let Some(ty) = ctx.graph.output_kind(value_out).as_value() else {
                     return false;
                 };
                 ty.bit_width() == want as usize
@@ -129,30 +129,30 @@ impl StorePat {
         self.space = Some(s);
         self
     }
-    /// Constrain the store's address operand (inputs[1]).
+    /// Constrain the store's address operand (`inputs[1]`).
     pub fn addr(mut self, p: impl Into<Pat>) -> Self {
         self.addr = Some(p.into());
         self
     }
-    /// Constrain the value being stored (inputs[2]).
+    /// Constrain the value being stored (`inputs[2]`).
     pub fn data(mut self, p: impl Into<Pat>) -> Self {
         self.data = Some(p.into());
         self
     }
-    /// Constrain the store's memory predecessor (inputs[0]).  The
+    /// Constrain the store's memory predecessor (`inputs[0]`).  The
     /// pattern walks back from the input edge to its producer.
     pub fn mem_in(mut self, p: impl Into<Pat>) -> Self {
         self.mem_in = Some(p.into());
         self
     }
     /// Match `p` against the unique consumer of the store's memory
-    /// output (outputs[0]).  Returns no match if the output has zero
+    /// output (`outputs[0]`).  Returns no match if the output has zero
     /// or multiple consumers (deterministic; no arbitrary pick).
     pub fn next_mem(mut self, p: impl Into<Pat>) -> Self {
         self.next_mem = Some(p.into());
         self
     }
-    /// Restrict the match to stores whose data input (inputs[2]) is
+    /// Restrict the match to stores whose data input (`inputs[2]`) is
     /// `n` bits wide.  Matches both integer and float types of the
     /// same width (e.g. `bit_width(32)` matches U32 and F32).
     #[must_use]
@@ -200,13 +200,13 @@ impl From<StorePat> for Pat {
             let next_mem_pat = next_mem;
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(w) = want_width {
-                    // Store's data input is at inputs[2]; its producer's
+                    // Store's data input is at `inputs[2]`; its producer's
                     // output type tells us the width.
-                    let inputs = ctx.graph.graph.node_inputs(node);
+                    let inputs = ctx.graph.node_inputs(node);
                     let Some(&data_in) = inputs.get(2) else {
                         return false;
                     };
-                    let Some(ty) = ctx.graph.graph.output_kind(data_in).as_value() else {
+                    let Some(ty) = ctx.graph.output_kind(data_in).as_value() else {
                         return false;
                     };
                     if ty.bit_width() != w as usize {
@@ -374,7 +374,7 @@ impl From<StackStorePhiPat> for Pat {
             // `expected_offsets` is already sorted (see
             // `StackStorePhiPat::offsets`).
             let check: NodeKindCheck = Arc::new(move |ctx, node, _b| {
-                let actual_slice = ctx.graph.graph.stack_phi_offsets(node);
+                let actual_slice = ctx.graph.stack_phi_offsets(node);
                 if actual_slice.len() != expected_offsets.len() {
                     return false;
                 }

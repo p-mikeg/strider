@@ -53,20 +53,20 @@
 use std::sync::LazyLock;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use ir::{BuiltFunctionGraph, Graph, IntCmpOp};
+use ir::{Graph, IntCmpOp};
 use pattern::{
     Capture, Pat, add, bool_and, bool_not, bool_or, cast_to_int, int_const, int_eq, int_lt,
     int_sborrow, int_slt, neg, var, Matcher,
 };
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
 pub struct FlagCmpCanonicalize;
 
-impl OptimizerOnBuilt for FlagCmpCanonicalize {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+impl Optimizer for FlagCmpCanonicalize {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Pre-collect candidate roots: rules mutate the graph (rewire
         // uses), so we can't walk the live iterator.  Forward preorder
         // visits parents before children — for the larger flag-tree
@@ -74,11 +74,11 @@ impl OptimizerOnBuilt for FlagCmpCanonicalize {
         // rule fire before rule 1 (the ZR identity) shrinks the inner
         // `Equal(diff, 0)` and breaks the outer match.  Same pattern as
         // `strider::GraphRewriter::apply_rule`.
-        let candidates: Vec<NodeId> = function.graph.preorder(function.entry).collect();
+        let candidates: Vec<NodeId> = ctx.preorder().collect();
         let mut any = false;
         for node in candidates {
             for rule in RULES.iter() {
-                if try_apply_rule(function, node, rule)? {
+                if try_apply_rule(ctx, node, rule)? {
                     any = true;
                     break; // node was rewritten; stop trying rules at this root
                 }
@@ -100,40 +100,71 @@ struct Rule {
     /// Builds the RHS subtree.  Receives the matched `(a, b)` outputs
     /// and the original root's `NodeId` (for fingerprint absorption),
     /// returns the new value-output to redirect the root's uses to.
-    build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> NodeOutputId,
-    /// Captures used by `lhs` for `a` and `b`.
-    cap_a: Capture,
-    cap_b: Capture,
+    /// `Err` propagates an unexpected IR invariant break (e.g. a
+    /// freshly-constructed binop somehow lacking its single output) as
+    /// a typed error rather than a panic.
+    build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> Result<NodeOutputId>,
+    /// Capture used by `lhs` for `a`.
+    lhs_capture: Capture,
+    /// Capture used by `lhs` for `b` — `None` for unary rules whose LHS
+    /// uses only `a` (the Thumb "test bool against 0" pattern).  When
+    /// `Some(c)`, the matched binding MUST resolve via `Match::output(c)`;
+    /// a missing binding here is an invariant break, not a fallback.
+    /// `None` means the corresponding `build_rhs` ignores its `_b`
+    /// parameter — the caller passes `a` as a placeholder.
+    rhs_capture: Option<Capture>,
 }
 
-fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) -> Result<bool> {
+fn try_apply_rule(ctx: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) -> Result<bool> {
     // Snapshot the matched bindings inside a tight scope so the borrow
     // ends before we mutate the graph.  Some rules (Thumb's "test bool
-    // against 0") use only `cap_a`; `cap_b` defaults to the same output
-    // in that case so the RHS builder, which ignores it, still gets a
-    // valid argument.
+    // against 0") use only `lhs_capture`; `rhs_capture` defaults to the
+    // same output in that case so the RHS builder, which ignores it,
+    // still gets a valid argument.
     let (a_out, b_out) = {
-        let matcher = Matcher::new(function);
+        let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
         let m = match matcher.match_at(node, &rule.lhs) {
             Some(m) => m,
             None => return Ok(false),
         };
         // `match_at` succeeded above, and the rule's `lhs` always
-        // captures `cap_a` at a value-producing position; the matcher
-        // contract guarantees `output(cap_a)` returns `Some` whenever
-        // the capture appears in a successful match.
-        #[allow(clippy::expect_used)]
-        let a = m
-            .output(rule.cap_a)
-            .expect("Capture a must bind to a value output");
-        let b = m.output(rule.cap_b).unwrap_or(a);
+        // captures `lhs_capture` at a value-producing position.  When
+        // `rhs_capture` is `Some(_)`, the matcher contract guarantees
+        // `output(_)` returns `Some` for it as well; an empty binding
+        // would be a structurally wrong rewrite — surface it as a
+        // typed error rather than a panic.
+        // When `rhs_capture` is `None`, the rule is unary (Thumb
+        // "test bool against 0") — the build_rhs ignores `_b`, so we
+        // pass `a`.
+        let a = m.output(rule.lhs_capture).ok_or_else(|| {
+            anyhow::anyhow!(
+                "flag_cmp_canonicalize: rule LHS matched but lhs_capture failed to bind a value output \
+                 (invariant violation in pattern crate)"
+            )
+        })?;
+        let b = match rule.rhs_capture {
+            Some(c) => m.output(c).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "flag_cmp_canonicalize: rule LHS matched but rhs_capture failed to bind a value output \
+                     (invariant violation in pattern crate)"
+                )
+            })?,
+            None => a,
+        };
         (a, b)
     };
 
-    let [root_out] = function.graph.node_outputs_exact::<1>(node)?;
-    let new_out = (rule.build_rhs)(&mut function.graph, a_out, b_out, node);
-    function.graph.replace_all_uses(root_out, new_out)?;
-    Ok(true)
+    let [root_out] = ctx.node_outputs_exact::<1>(node)?;
+    // Bail before constructing fresh RHS nodes when the root has no
+    // live consumers — building first and discovering zero uses
+    // afterwards would leak orphan IntCmp / BoolNeg / IntAdd zombies
+    // into the arena until the next `retain_reachable`.
+    if ctx.output_uses(root_out).next().is_none() {
+        return Ok(false);
+    }
+    let new_out = (rule.build_rhs)(ctx.graph_mut(), a_out, b_out, node)?;
+    let changed = ctx.replace_all_uses(root_out, new_out)?;
+    Ok(changed)
 }
 
 // ── RHS builders ──────────────────────────────────────────────────────────
@@ -146,7 +177,7 @@ fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) 
 // rules must touch every intermediate node — `pattern::rewrite_rule`
 // only absorbs into the outermost.
 
-fn build_int_cmp(graph: &mut Graph, op: IntCmpOp, lhs: NodeOutputId, rhs: NodeOutputId, root: NodeId) -> NodeOutputId {
+fn build_int_cmp(graph: &mut Graph, op: IntCmpOp, lhs: NodeOutputId, rhs: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
     let n = graph.create_node(
         NodeKind::IntCmpOp(op),
         [lhs, rhs],
@@ -154,15 +185,14 @@ fn build_int_cmp(graph: &mut Graph, op: IntCmpOp, lhs: NodeOutputId, rhs: NodeOu
     );
     graph.extend_asm_fingerprint_from(n, root);
     // `IntCmpOp` is constructed above with exactly one
-    // `NodeOutputKind::OutputType(Bool)`; `node_outputs_exact::<1>`
-    // enforces and returns that single output.  The expect cannot
-    // fire short of an internal `create_node` invariant violation.
-    #[allow(clippy::expect_used)]
-    let [out] = graph.node_outputs_exact::<1>(n).expect("IntCmpOp produces 1 output");
-    out
+    // `NodeOutputKind::OutputType(Bool)`; if `node_outputs_exact::<1>`
+    // disagrees, it's an internal `create_node` invariant violation —
+    // propagate it as a typed error.
+    let [out] = graph.node_outputs_exact::<1>(n)?;
+    Ok(out)
 }
 
-fn build_bool_neg(graph: &mut Graph, inner: NodeOutputId, root: NodeId) -> NodeOutputId {
+fn build_bool_neg(graph: &mut Graph, inner: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
     let n = graph.create_node(
         NodeKind::BoolUnaryOp(ir::BoolUnaryOp::Neg),
         [inner],
@@ -170,47 +200,47 @@ fn build_bool_neg(graph: &mut Graph, inner: NodeOutputId, root: NodeId) -> NodeO
     );
     graph.extend_asm_fingerprint_from(n, root);
     // Same invariant as `build_int_cmp` — single Bool output by
-    // construction.
-    #[allow(clippy::expect_used)]
-    let [out] = graph.node_outputs_exact::<1>(n).expect("BoolNeg produces 1 output");
-    out
+    // construction; surface any disagreement as a typed error
+    //.
+    let [out] = graph.node_outputs_exact::<1>(n)?;
+    Ok(out)
 }
 
 // EQ:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
-fn rhs_eq(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> NodeOutputId {
+fn rhs_eq(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
     build_int_cmp(graph, IntCmpOp::Equal, a, b, root)
 }
 
 // HI:  → IntLess(b, a)
-fn rhs_hi(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> NodeOutputId {
+fn rhs_hi(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
     build_int_cmp(graph, IntCmpOp::Less, b, a, root)
 }
 
 // LS:  → BoolNeg(IntLess(b, a))
-fn rhs_ls(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> NodeOutputId {
-    let inner = build_int_cmp(graph, IntCmpOp::Less, b, a, root);
+fn rhs_ls(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
+    let inner = build_int_cmp(graph, IntCmpOp::Less, b, a, root)?;
     build_bool_neg(graph, inner, root)
 }
 
 // LT:  → IntSless(a, b)
-fn rhs_lt(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> NodeOutputId {
+fn rhs_lt(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
     build_int_cmp(graph, IntCmpOp::Sless, a, b, root)
 }
 
 // GE:  → BoolNeg(IntSless(a, b))
-fn rhs_ge(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> NodeOutputId {
-    let inner = build_int_cmp(graph, IntCmpOp::Sless, a, b, root);
+fn rhs_ge(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
+    let inner = build_int_cmp(graph, IntCmpOp::Sless, a, b, root)?;
     build_bool_neg(graph, inner, root)
 }
 
 // GT:  → IntSless(b, a)
-fn rhs_gt(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> NodeOutputId {
+fn rhs_gt(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
     build_int_cmp(graph, IntCmpOp::Sless, b, a, root)
 }
 
 // LE:  → BoolNeg(IntSless(b, a))
-fn rhs_le(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> NodeOutputId {
-    let inner = build_int_cmp(graph, IntCmpOp::Sless, b, a, root);
+fn rhs_le(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
+    let inner = build_int_cmp(graph, IntCmpOp::Sless, b, a, root)?;
     build_bool_neg(graph, inner, root)
 }
 
@@ -232,36 +262,61 @@ fn rhs_le(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> 
 // flag varnode directly — same as AArch64 — and the AArch64 rules
 // (1, 2, 3, …) take over.
 
-// `var(b)` here is captured as `cap_a` in the `Rule` shape; I reuse the
-// `cap_a` slot for the bool input and leave `cap_b` unused.  This is a
-// special-case unary rewrite using the shared two-cap rule struct.
+// `var(b)` here is captured as `lhs_capture` in the `Rule` shape; I
+// reuse the `lhs_capture` slot for the bool input and leave
+// `rhs_capture` unused.  This is a special-case unary rewrite using
+// the shared two-cap rule struct.
 
-fn rhs_thumb_neg_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: NodeId) -> NodeOutputId {
+fn rhs_thumb_neg_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
     build_bool_neg(graph, a, root)
 }
 
-fn rhs_thumb_b(_graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, _root: NodeId) -> NodeOutputId {
+fn rhs_thumb_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
     // Returning `a` directly redirects the root's uses straight to the
-    // captured `b` output — no new node, no fingerprint absorption
-    // needed because the captured node already has its own fingerprint.
-    a
+    // captured `a` output.  Per the asm-fingerprint superset contract
+    // (see crate-level doc), every node downstream of root must
+    // include all of root's contributing-asm-instruction addresses —
+    // so we union root's fingerprint into `a`'s before redirecting.
+    // Without this absorption, root's contributing addresses would be
+    // dropped from the fingerprint side-table and a pattern matching
+    // through `a` would miss root's address attribution.
+    let a_node = graph.get_node_from_output(a);
+    graph.extend_asm_fingerprint_from(a_node, root);
+    Ok(a)
 }
 
 // ── Rule table ────────────────────────────────────────────────────────────
 
 static RULES: LazyLock<Vec<Rule>> = LazyLock::new(build_rules);
 
-/// Helper: one rule entry — fresh captures + LHS + RHS builder.
+/// Helper: one binary rule entry — fresh captures + LHS + RHS builder.
+/// LHS pattern must bind both `a` and `b`; if it only uses `a`, use
+/// [`rule_unary`] instead so the matcher's binding contract stays strict.
 fn rule(lhs_builder: impl FnOnce(Capture, Capture) -> Pat,
-        build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> NodeOutputId)
+        build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> Result<NodeOutputId>)
         -> Rule {
-    let cap_a = Capture::new();
-    let cap_b = Capture::new();
+    let lhs_capture = Capture::new();
+    let rhs_capture = Capture::new();
     Rule {
-        lhs: lhs_builder(cap_a, cap_b),
+        lhs: lhs_builder(lhs_capture, rhs_capture),
         build_rhs,
-        cap_a,
-        cap_b,
+        lhs_capture,
+        rhs_capture: Some(rhs_capture),
+    }
+}
+
+/// Helper: one unary rule entry — only `lhs_capture` is bound by the
+/// LHS.  The `build_rhs` MUST ignore its `_b` parameter (the caller
+/// passes `a` in its place).
+fn rule_unary(lhs_builder: impl FnOnce(Capture) -> Pat,
+              build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> Result<NodeOutputId>)
+              -> Rule {
+    let lhs_capture = Capture::new();
+    Rule {
+        lhs: lhs_builder(lhs_capture),
+        build_rhs,
+        lhs_capture,
+        rhs_capture: None,
     }
 }
 
@@ -335,16 +390,16 @@ fn build_rules() -> Vec<Rule> {
         // 8. Thumb "false" flag test:  IntEqual(CastToInt(b), 0)  →  BoolNeg(b)
         //    Lifted by Thumb BNE / BCC / BPL / BVC, where the cond is
         //    `IntEqual(flag, 0)` rather than `BoolNeg(flag)` directly.
-        rule(
-            |a, _b| int_eq(cast_to_int(var(a)), int_const(0)),
+        rule_unary(
+            |a| int_eq(cast_to_int(var(a)), int_const(0)),
             rhs_thumb_neg_b,
         ),
         // 9. Thumb "true" flag test:  BoolNeg(IntEqual(CastToInt(b), 0))  →  b
         //    Lifted by Thumb BEQ / BCS / BMI / BVS — the lift-time
         //    canonicalisation `IntNotEqual(b, 0) → BoolNeg(IntEqual(b, 0))`
         //    plus our cast-to-int coercion gives this shape.
-        rule(
-            |a, _b| bool_not(int_eq(cast_to_int(var(a)), int_const(0))),
+        rule_unary(
+            |a| bool_not(int_eq(cast_to_int(var(a)), int_const(0))),
             rhs_thumb_b,
         ),
     ]

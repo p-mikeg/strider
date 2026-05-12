@@ -12,6 +12,7 @@ use dot::{DotStyle, GraphDot};
 fn cfg_for(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader> {
     let p = binary("x64", fn_name);
     build_cfg(
+        &target::SleighArch::x86_64(),
         p.to_str().unwrap(),
         fn_name,
         rsleigh::sla_spec::SLA_SPEC_X86_64,
@@ -68,7 +69,7 @@ fn dot_output_mentions_every_region() {
     // occurrences against the region count — they should match.
     let cfg = cfg_for("clamp");
     let s = dot_source(&cfg);
-    let expected = cfg.graph.node_count();
+    let expected = cfg.graph().node_count();
     let actual = s.matches("Instruction(addr=").count();
     assert_eq!(
         actual, expected,

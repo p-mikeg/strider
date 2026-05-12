@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerRaw;
 use crate::{ConstantFold, OptimizerPipeline};
 use ir::node::{NodeKind, NodeOutputType};
 use ir::test_utils::sp_vn_x86 as sp_vn;
@@ -58,12 +58,9 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let surviving_sp_phis = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(vn) if *vn == sp))
-        .count();
+    let surviving_sp_phis = crate::test_support::count_reachable((&fg).into(), |k| {
+        matches!(k, NodeKind::VarPhi(vn) if *vn == sp)
+    });
     assert_eq!(
         surviving_sp_phis, 0,
         "VarPhi(sp) with identical data inputs must be removed"
@@ -92,16 +89,16 @@ fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
     b.build_return(None, &[])?;
 
     let mut fg = b.build()?;
-    RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+    RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
 
     // Surviving (reachable) MemPhis with at most 1+1 inputs (token + 1 value)
-    // must be 0.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    // must be 0.  `count_reachable` only filters by `NodeKind`, so the
+    // arity-additional check is inline below — `preorder()` is the
+    // reachable iterator the helper itself uses internally.
     let surviving = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::MemPhi))
-        .filter(|&n| fg.graph.node_inputs(n).len() <= 2)
+        .preorder()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::MemPhi))
+        .filter(|&n| fg.node_inputs(n).len() <= 2)
         .count();
     assert_eq!(surviving, 0);
     Ok(())
@@ -123,7 +120,7 @@ fn control_state_single_pred_collapses() -> crate::Result<()> {
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
     assert!(
-        RedundantPhis.optimize(&mut fg.graph, fg.entry)?.changed(),
+        RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?.changed(),
         "single-pred CS must be simplified"
     );
     Ok(())
@@ -187,8 +184,8 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     // Settle the graph by running RedundantPhis to fixed point first.  After
     // this, any further RedundantPhis invocation on the unmodified graph
     // returns NoChange; that's our baseline.
-    while RedundantPhis.optimize(&mut fg.graph, fg.entry)?.changed() {}
-    let baseline = RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+    while RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?.changed() {}
+    let baseline = RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
     assert_eq!(
         baseline,
         OptimizationResult::NoChange,
@@ -199,15 +196,15 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     // reachable nodes. The Add itself is not consumed by anything reachable,
     // so `preorder()` will not include it; `detach_unreachable_nodes` is the
     // only thing in RedundantPhis that can touch it.
-    let one = fg.graph.make_int_const(1, NodeOutputType::U64)?;
-    let two = fg.graph.make_int_const(2, NodeOutputType::U64)?;
-    let _orphan = fg.graph.create_node(
+    let one = fg.make_int_const(1u64, NodeOutputType::U64)?;
+    let two = fg.make_int_const(2u64, NodeOutputType::U64)?;
+    let _orphan = fg.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [one, two],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
 
-    let res = RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+    let res = RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
     assert_eq!(
         res,
         OptimizationResult::NoChange,
@@ -251,12 +248,12 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
     // Locate the VarPhi(var) at `join` and its owning CS.
     let phi_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(v) if *v == var))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::VarPhi(v) if *v == var))
         .expect("VarPhi(var) at join");
-    let phi_inputs_pre = fg.graph.node_inputs(phi_node);
+    let phi_inputs_pre = fg.node_inputs(phi_node);
     let phi_token = phi_inputs_pre[0];
     let initial_value = phi_inputs_pre[1];
-    let cs_node = fg.graph.output_definition(phi_token).0;
+    let cs_node = fg.output_definition(phi_token).0;
 
     // Surgery: append a second, *distinct* control predecessor to the
     // join CS — the join's own ctrl_out, modelling a direct self-loop
@@ -268,10 +265,10 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
     // loop-back self-ref the test exercises), and any MemPhi gets
     // *its* own output (so the graph keeps the per-predecessor arity
     // invariant `remove_phis` relies on).
-    let cs_outputs = fg.graph.node_outputs(cs_node);
+    let cs_outputs = fg.node_outputs(cs_node);
     let cs_ctrl_out = cs_outputs[0];
     let cs_phi_out = cs_outputs[1];
-    fg.graph.add_node_input(cs_node, cs_ctrl_out)?;
+    fg.add_node_input(cs_node, cs_ctrl_out)?;
 
     let phi_consumers: Vec<ir::node::NodeId> = fg
         .graph
@@ -279,17 +276,17 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
         .map(|(n, _)| n)
         .collect();
     for phi in phi_consumers {
-        let self_out = fg.graph.node_outputs_exact::<1>(phi)?[0];
-        fg.graph.add_node_input(phi, self_out)?;
+        let self_out = fg.node_outputs_exact::<1>(phi)?[0];
+        fg.add_node_input(phi, self_out)?;
     }
     assert_eq!(
-        fg.graph.node_inputs(phi_node).len(),
+        fg.node_inputs(phi_node).len(),
         3,
         "VarPhi must have [token, initial, self-ref] = 3 inputs after surgery"
     );
 
     // Run the pass under test.
-    RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+    RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
 
     // After collapse, the Return's value input must reference the
     // initial entry value, *not* the phi's output.  `replace_all_uses`
@@ -297,9 +294,9 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
     // directly.
     let return_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return");
-    let ret_val = fg.graph.node_inputs(return_node)[2];
+    let ret_val = fg.node_inputs(return_node)[2];
     assert_eq!(
         ret_val, initial_value,
         "Return's value must be rewired to the phi's only non-self-referential operand"

@@ -13,7 +13,7 @@
 //! pipeline twice.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
@@ -103,6 +103,13 @@ pub struct PyMemoryMap {
     /// `object::File<'static>` borrows from a leaked byte slice (see
     /// `reader::load_elf`), so storing it here is sound.
     elfs: Arc<RwLock<Vec<object::File<'static>>>>,
+    /// Byte order used by `ReadOnlyMemory::read` when assembling
+    /// multi-byte words from the underlying buffer.  Defaults to
+    /// [`target::Endianness::Little`]; auto-set from the ELF header in
+    /// `add_region_from_elf`, or set explicitly via
+    /// [`Self::set_endianness`].  Stored behind an Arc/RwLock so a
+    /// `PyMemoryMap` clone shares the same setting.
+    endianness: Arc<RwLock<target::Endianness>>,
 }
 
 impl PyMemoryMap {
@@ -124,11 +131,16 @@ impl PyMemoryMap {
     /// Returns a snapshot of the current lookup table, building it on
     /// demand if invalidated.  Used internally by both `read` and the
     /// `MemReader` view supplied to `Sleigh::new`.
+    ///
+    /// Recovers from RwLock poisoning via `into_inner()` — the table's
+    /// inner state is `Option<Arc<...>>` (an atomic-pointer slot), so
+    /// the only way it could be inconsistent after a panicking writer
+    /// is to be partially overwritten, which `*slot = Some(...)` cannot
+    /// do.  Recovery is therefore safe and matches the read-side
+    /// semantic: a partial-write panic leaves the prior value intact
+    /// or replaces it atomically.
     pub(crate) fn lookup_table(&self) -> anyhow::Result<Arc<MemRegionsLookupTable>> {
-        let slot = self
-            .table
-            .read()
-            .map_err(|_| anyhow::anyhow!("MemoryMap table lock poisoned"))?;
+        let slot = self.table.read().unwrap_or_else(|p| p.into_inner());
         if let Some(t) = slot.as_ref() {
             return Ok(Arc::clone(t));
         }
@@ -145,7 +157,37 @@ impl PyMemoryMap {
             inner: Arc::new(RwLock::new(Vec::new())),
             table: Arc::new(RwLock::new(None)),
             elfs: Arc::new(RwLock::new(Vec::new())),
+            // Default to LE; overridden by add_region_from_elf or
+            // set_endianness once the user supplies a real arch.
+            endianness: Arc::new(RwLock::new(target::Endianness::Little)),
         }
+    }
+
+    /// Set the byte order used by `ReadOnlyMemory::read` when reading
+    /// multi-byte words.  Use `"little"` or `"big"` (case-insensitive).
+    ///
+    /// Auto-set by `add_region_from_elf` from the ELF header; explicit
+    /// calls are useful only when constructing a MemoryMap from raw
+    /// bytes for a big-endian target.
+    ///
+    /// # Errors
+    /// Raises `ReaderError` for unrecognised endianness strings.
+    fn set_endianness(&self, endianness: &str) -> PyResult<()> {
+        let parsed = match endianness.to_ascii_lowercase().as_str() {
+            "little" | "le" => target::Endianness::Little,
+            "big" | "be" => target::Endianness::Big,
+            other => {
+                return Err(into_reader_err(anyhow::anyhow!(
+                    "unknown endianness {other:?}; use \"little\" or \"big\""
+                )));
+            }
+        };
+        let mut slot = self
+            .endianness
+            .write()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap endianness lock poisoned")))?;
+        *slot = parsed;
+        Ok(())
     }
 
     fn add_region(&self, start_addr: u64, data: Vec<u8>) -> PyResult<()> {
@@ -204,6 +246,20 @@ impl PyMemoryMap {
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_region_from_elf(&self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = reader::load_elf(path).map_err(into_reader_err)?;
+        // Auto-set the byte order from the ELF header so subsequent
+        // ReadOnlyMemory::read calls assemble multi-byte words in the
+        // right order (big-endian targets like MIPS-BE / PowerPC-BE
+        // would otherwise byte-swap their LoadReadOnly constants).
+        let elf_endian = match object::Object::endianness(&obj) {
+            object::Endianness::Little => target::Endianness::Little,
+            object::Endianness::Big => target::Endianness::Big,
+        };
+        {
+            let mut slot = self.endianness.write().map_err(|_| {
+                into_reader_err(anyhow::anyhow!("MemoryMap endianness lock poisoned"))
+            })?;
+            *slot = elf_endian;
+        }
         // When apply_relocations=True we widen the section coverage
         // to include `.data.rel.ro`, `.got`, …  Without the widening
         // a `R_*_RELATIVE` relocation against a writable-but-
@@ -438,10 +494,26 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         Python::with_gil(|py| -> anyhow::Result<usize> {
-            let result = self
+            // Re-raise control-flow exceptions (`KeyboardInterrupt`,
+            // `SystemExit`) so Ctrl-C / sys.exit during a long lift
+            // can interrupt rather than being silently absorbed into
+            // a `ReaderError`.  Mirrors the same guard in
+            // `PyReadOnlyMemoryAdapter::read`.
+            let result = match self
                 .py_obj
                 .call_method1(py, "read", (addr.off, out_buf.len()))
-                .map_err(|e| anyhow::anyhow!("PyMemReader.read raised: {e}"))?;
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
+                    {
+                        e.restore(py);
+                        anyhow::bail!("MemReader.read interrupted by Python control-flow exception");
+                    }
+                    anyhow::bail!("PyMemReader.read raised: {e}");
+                }
+            };
             // None → not mapped (return Err so the matcher falls through).
             if result.is_none(py) {
                 anyhow::bail!("address {:#x} is not mapped (Python read returned None)", addr.off);
@@ -508,11 +580,55 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             return None;
         }
         Python::with_gil(|py| -> Option<u64> {
-            let result = self.py_obj.call_method1(py, "read", (addr, size)).ok()?;
+            // Short-circuit if a previous `read` already deferred an
+            // exit-style exception via `e.restore(py)`.  Calling Python
+            // again with the error indicator set would trip CPython's
+            // "result returned with an exception set" guard and clobber
+            // the original error with a generic `SystemError`.
+            // `strider-py::run` drains the pending error with
+            // `PyErr::take` after `strider::run` returns and propagates
+            // it to the caller.
+            if PyErr::occurred(py) {
+                return None;
+            }
+            // Surface Python exceptions on stderr instead of silently
+            // converting them to None — otherwise a buggy user override
+            // (raises ValueError, returns wrong type, …) shows up as
+            // "no fold" in LoadReadOnly with no diagnostic.  The
+            // contract is still `Option<u64>` (we can't propagate
+            // through this trait) but the user gets a visible warning.
+            //
+            // Control-flow exceptions (`KeyboardInterrupt`, `SystemExit`)
+            // are re-raised so Ctrl-C in an interactive Python session
+            // can interrupt a long `LoadReadOnly` pass instead of being
+            // silently absorbed.
+            let result = match self.py_obj.call_method1(py, "read", (addr, size)) {
+                Ok(r) => r,
+                Err(e) => {
+                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
+                    {
+                        e.restore(py);
+                        return None;
+                    }
+                    eprintln!(
+                        "strider: ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}"
+                    );
+                    return None;
+                }
+            };
             if result.is_none(py) {
                 return None;
             }
-            result.extract::<u64>(py).ok()
+            match result.extract::<u64>(py) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    eprintln!(
+                        "strider: ReadOnlyMemory.read({addr:#x}, {size}) did not return int: {e}"
+                    );
+                    None
+                }
+            }
         })
     }
 }
@@ -555,17 +671,28 @@ impl rsleigh::MemReader for PyMemoryMapReader {
         self.table
             .read(addr.off, out_buf)
             .ok_or_else(|| {
-                reader::MemReadError(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
+                reader::MemReadError::from(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
             })
     }
 }
 
-/// `ReadOnlyMemory` impl reading 1/2/4/8-byte little-endian words from
-/// any space — same pattern as `reader::ElfFileMemReader`, less the
-/// endianness flip (for the data-only path the user supplies bytes
-/// directly so the host endian convention dominates).
+/// `ReadOnlyMemory` impl reading 1/2/4/8-byte words from any space.
+/// Mirrors `reader::ElfFileMemReader`'s endianness-aware decoding so
+/// big-endian targets (MIPS-BE / PowerPC-BE / AArch64-BE) get correct
+/// `LoadReadOnly` constants.  Endianness is auto-set by
+/// `add_region_from_elf` (or explicitly via `set_endianness`); defaults
+/// to little for raw-bytes-only construction.
 impl ReadOnlyMemory for PyMemoryMap {
-    fn read(&self, _space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
+    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
+        // PyMemoryMap models RAM only — it has no backing for REGISTER /
+        // CONST / UNIQUE / OTHER spaces.  Reject non-RAM reads up front
+        // so a misrouted read (e.g. a Load whose space is REGISTER but
+        // whose address happens to fall inside a loaded RAM region)
+        // doesn't return RAM bytes.  Mirrors `PyReadOnlyMemoryAdapter::read`
+        // which gates on space at the FFI boundary.
+        if space != rsleigh::VnSpace::RAM {
+            return None;
+        }
         if size == 0 || size > 8 {
             return None;
         }
@@ -575,7 +702,25 @@ impl ReadOnlyMemory for PyMemoryMap {
         if n != size {
             return None;
         }
-        Some(u64::from_le_bytes(buf))
+        // Layout `buf` so that `Endianness::read_u64` decodes the
+        // size-byte payload correctly.  LE: bytes already in low slots.
+        // BE: shift bytes to the high end so from_be_bytes treats the
+        // payload as a widened N-byte BE word.
+        //
+        // Recover from poisoning rather than silently failing — the inner
+        // is `target::Endianness` (Copy), and `*guard = new_endianness`
+        // is atomic, so a partial-write panic cannot leave the slot
+        // half-initialised.
+        let endianness = *self.endianness.read().unwrap_or_else(|p| p.into_inner());
+        let layout = match endianness {
+            target::Endianness::Little => buf,
+            target::Endianness::Big => {
+                let mut be_buf = [0u8; 8];
+                be_buf[8 - size..].copy_from_slice(&buf[..size]);
+                be_buf
+            }
+        };
+        Some(endianness.read_u64(layout))
     }
 }
 
@@ -682,11 +827,6 @@ impl ReaderInputClone {
         }
     }
 }
-
-// Suppress an unused-warning for a Mutex import that's only used by
-// downstream wrappers.
-#[allow(dead_code)]
-fn _unused_marker(_: Mutex<()>) {}
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemoryMap>()?;

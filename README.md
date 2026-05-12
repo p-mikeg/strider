@@ -1,7 +1,7 @@
 # Strider
 
 > *"He's one of them Rangers. Dangerous folk they are — wandering the Wilds."*
-> — Barliman Butterbur, The Fellowship of the Ring
+> — Barliman Butterbur, *The Fellowship of the Ring*
 
 **Strider** is named after Aragorn's ranger alias in Tolkien's Middle-earth — a tracker who moves quietly through dark places, finding what others miss. Here, Strider hunts through binary code, letting you ask any question about how a function behaves — without source code or debug symbols.
 
@@ -14,7 +14,7 @@ Strider lifts native binaries to a sea-of-nodes IR and exposes it for arbitrary 
 **Pipeline:**
 
 ```
-Binary → CFG → IR → Optimizations → Pattern Queries
+Binary → CFG → IR → Optimizations → Pattern Queries (Python)
 ```
 
 1. **Read** — loads an ELF binary and exposes its memory to the lifter
@@ -26,408 +26,274 @@ Binary → CFG → IR → Optimizations → Pattern Queries
 
 ---
 
-## Architecture
-
-```
-reader ──→ cfg ──→ strider ──→ ir
-                               └──→ opt
-                               └──→ pattern
-dot   (visualization)
-```
+## Architecture (high level)
 
 | Crate | Role |
 |-------|------|
 | `reader` | ELF loader, memory reader for rsleigh |
 | `cfg` | Control flow graph construction from p-code |
+| `pcode-lift` | Pure pcode → IR value lifter (register aliasing) |
 | `ir` | Sea-of-nodes IR graph (`Graph`, `FunctionBuilder`) |
-| `strider` | CFG → IR translation, register aliasing (x86 `rax`/`eax`/`ax`/`al` etc.) |
-| `opt` | IR optimization passes (see below) |
+| `strider` | CFG → IR translation, indirect-branch fixed-point loop |
+| `target` | SleighArch + CallingConvention presets, CallOther ABI table |
+| `opt` | IR optimization passes |
 | `pattern` | IR graph pattern matching with named captures |
 | `dot` | Renders CFG and IR graphs to `.dot` / `.html` for visualization |
-| `strider-py` | Python bindings — the primary user-facing query interface (PyO3 + maturin, abi3-py39) |
+| `strider-py` | **Python bindings — the primary user-facing query interface** |
+
+Each crate carries its own `README.md` with details. The full architecture (including invariants and gotchas) lives in the per-crate READMEs and in [`CLAUDE.md`](CLAUDE.md).
 
 ---
 
-## Optimizations
-
-The `opt` crate runs all passes in a shared fixed-point loop via `default_pipeline()`. A simplification made by one pass (e.g. folding a branch condition to `false`) is immediately visible to later passes in the same iteration.
-
-| Pass | What it does |
-|------|-------------|
-| `ConstantFold` | Evaluates constant arithmetic, comparisons, booleans, truncation, and extension. Also applies algebraic identities: `x+0→x`, `x^x→0`, nested AND-mask merging `(a&C1)&C2 → a&(C1&C2)`, etc. |
-| `KnownBits` | Propagates statically known zero/one bits through the graph to fold partially-known expressions. |
-| `RedundantPhis` | Eliminates `ControlPhi` and `MemPhi` nodes and `ControlState` nodes that have only one reachable predecessor. Detaches inputs of CFG-unreachable nodes. |
-| `DeadBranchElimination` | Removes `If` nodes whose condition is a compile-time boolean. Strips the dead control edge from successor nodes. Works together with `RedundantPhis`. |
-| `LoadReadOnly` | Resolves `Load` nodes with a constant address into constants by reading from a caller-supplied read-only memory region (e.g. `.rodata`, `.text`). |
-| `StackStoreDetect` | Converts `Store(InitialVar(SP) + K, …)` into a dedicated `StackStore { offset: K }` (or `StackStorePhi` at join points), with per-predecessor offsets in a side table. |
-| `StackLoadForward` | Forwards values from `StackStore`s to subsequent same-offset `Load`s, eliminating the round-trip through memory. |
-| `IndirectBranchResolve` | Producer-shape classifier for `BranchIndirect` placeholders — recognises link-register returns, tail calls, jump tables, and stack-array dispatch. |
-| `CallStackArgCollect` *(post-pass)* | Collects positional stack arguments at `Call` sites using the calling convention's stack-arg offsets. |
-| `FunctionArgDetect` *(post-pass)* | Canonicalises register- and stack-passed argument reads at the function boundary into `FunctionArg` nodes, so patterns can match on argument position. |
-
----
-
-## Usage
-
-### Prerequisites
-
-Some test fixtures (currently the FreeBSD arm64 11.1 kernel under `fixtures/kernels/`) are stored via [Git LFS](https://git-lfs.com/). Install it once before cloning, or run it after the fact to fetch the real blobs:
-
-```bash
-sudo apt install git-lfs   # or: brew install git-lfs
-git lfs install
-git lfs pull               # if the repo was already cloned without LFS
-```
-
-Without LFS, those paths resolve to ~130-byte pointer files and any test that loads them will fail to parse the ELF rather than skip.
-
-### Build & test
-
-```bash
-# Build
-cargo build --workspace
-
-# Run the example (reads fixtures/binary_test, writes cfg.html + graph.html)
-cargo run --example strider
-
-# Tests
-cargo test --workspace
-
-# Lint
-cargo clippy --workspace
-```
-
----
-
-## Python API
-
-`strider-py` is the primary interface. You write patterns in Python with named captures; strider evaluates them over the lifted IR and hands back the matched values.
-
-### Install (uv)
+## Install (Python)
 
 ```bash
 cd crates/strider-py
-uv sync --group dev          # creates .venv + installs dev deps
+uv sync --group dev          # .venv + dev deps
 uv run maturin develop       # builds the Rust extension
 uv run pytest                # runs the test suite
 ```
 
-A pip-based legacy path is documented in [`crates/strider-py/README.md`](crates/strider-py/README.md). The wheel is `abi3` (Python 3.9+).
+The wheel is `abi3` (Python 3.9+). A pip-based legacy install path is documented in [`crates/strider-py/README.md`](crates/strider-py/README.md).
 
-### Quickstart
+---
+
+## Quickstart
 
 ```python
 import strider
 from strider.pattern import Capture, var, add, load, call, int_const
 
-# 1. Load a binary into a MemoryMap.
+# 1. Load a binary into a MemoryMap.  apply_elf_relocations is
+#    autoload-by-default — it lazily extends with .got.plt etc.
 mem = strider.MemoryMap()
 mem.add_region_from_elf("fixtures/out/x86/memory.elf")
-mem.apply_elf_relocations("fixtures/out/x86/memory.elf")  # autoloads .got.plt etc.
+mem.apply_elf_relocations("fixtures/out/x86/memory.elf")
 
-# 2. Run the full pipeline (CFG → IR → optimize, including the
-#    indirect-branch fixed-point loop) in one call.
+# 2. Run the full pipeline in one call.
+#    `function_max_size` bounds the lifter to [entry, entry+N) — set
+#    it on stripped binaries where the function boundary is unknown.
 result = strider.run(
     arch=strider.SleighArch.x86(),
     cc=strider.CallingConvention.x86_cdecl(),
     mem=mem, rom=mem,
     entry=mem.symbol("array_sum"),
+    function_max_size=None,        # or e.g. 0x200
     allow_code_before_start_addr=True,
 )
 
 # 3. Query the optimized graph.
 ptr, off = Capture(), Capture()
-for hit in result.graph.find_all(load(addr=add(var(ptr), var(off))), ignore_casts=True):
+for hit in result.graph.find_all(
+    load(addr=add(var(ptr), var(off))),
+    ignore_casts=True,
+):
     print(f"load at {hit.uint(ptr)} + {hit.uint(off):#x}")
 
-# 4. Visualize.
+# 4. Visualise.
 result.cfg.to_html("cfg.html")
 result.graph.to_html("graph.html")
 ```
 
-### Pattern features beyond plain `find_all`
+---
 
-**Set-membership target queries** — match a call against any of N known callees in one pass:
+## Pattern features
+
+The pattern crate covers every IR node kind the lifter emits.  Below are the highest-leverage features when querying a real graph.
+
+### Set-membership target queries
+
+Match a call against any of N known callees in one pass:
 
 ```python
 from strider.pattern import call, int_const_any_of
 
-# Either form below works:
 hits = g.find_all(call().at_any([0x1000, 0x2000, 0x3000]))
-hits = g.find_all(call().target(int_const_any_of([0x1000, 0x2000])))
+# Equivalent:
+hits = g.find_all(call().target(int_const_any_of([0x1000, 0x2000, 0x3000])))
 ```
 
-**Multi-pattern joins on shared captures** — find the K such that two patterns simultaneously match with the same binding for a shared capture:
+### Multi-pattern joins on shared captures
+
+Find the `K` such that two patterns simultaneously match with the same binding for a shared capture:
 
 ```python
-from strider.pattern import Capture, add, any_int_const, call, load, initial_var_for, var
+from strider.pattern import (
+    Capture, add, any_int_const, call, load, initial_var_for, int_const,
+)
 
-# ni_vp-style field-offset recovery:
-#   vn_open(&nd, ...);
-#   script_vp = nd.ni_vp;     // load nd.ni_vp = Add(rbp, K1+K_field)
-rbp = sleigh.reg("RBP")  # or RSP for -fomit-frame-pointer builds
+# Field-offset recovery: vn_open(&nd, ...); script_vp = nd.ni_vp;
+rbp = sleigh.reg("RBP")
 k_call, k_load = Capture(), Capture()
 for tup in g.find_all_requirements([
-    call().target(int_const(VN_OPEN)).arg(0,
-        add(initial_var_for(rbp), any_int_const(k_call)).ordered()),
-    load().addr(add(initial_var_for(rbp), any_int_const(k_load)).ordered()),
+    call().target(int_const(VN_OPEN))
+        .arg(0, add(initial_var_for(rbp), any_int_const(k_call))),
+    load().addr(add(initial_var_for(rbp), any_int_const(k_load))),
 ]):
     field_offset = (tup[1].uint(k_load) - tup[0].uint(k_call)) & 0xFFFFFFFFFFFFFFFF
-    print(f"recovered field offset = {field_offset:#x}")
+    print(f"field offset = {field_offset:#x}")
 ```
 
-**Stack-offset recovery** — capture a `StackStore` and read its compile-time SP-relative offset:
+### Stack-offset recovery
+
+Capture a `StackStore` and read its compile-time SP-relative offset:
 
 ```python
 from strider.pattern import Capture, stack_store
 
 c = Capture()
 for hit in g.find_all(stack_store().offset_any([-8, -16, -24]).capture(c)):
-    print(f"matched stack store at offset {hit.stack_offset(c)}")
+    print(f"stack store at offset {hit.stack_offset(c)}")
 ```
 
-See [`crates/strider-py/README.md`](crates/strider-py/README.md) for the full Python surface and [`crates/strider-py/examples/python/`](crates/strider-py/examples/python/) for runnable end-to-end walkthroughs.
+### Asm-fingerprint attribution
+
+Every IR node carries the sorted, deduped list of machine-instruction addresses whose lift contributed to its value.  Use it to map a matched value back to source assembly:
+
+```python
+c = Capture()
+for hit in g.find_all(call().capture(c)):
+    addrs = hit.asm_fingerprint(c)
+    print(f"call {hit.uint(c):#x} contributed by asm at: "
+          + ", ".join(f"{a:#x}" for a in addrs))
+```
+
+`Match.asm_fingerprint` returns `[]` for "structural" node kinds (Entry, InitialMemory, phis, ControlState, FunctionArg) whose existence is synthesised by the IR builder rather than tied to a specific asm instruction.
+
+### Predicate guards
+
+```python
+from strider.pattern import any_, var
+
+# Match any int that is divisible by 16.
+def is_aligned(m):
+    return m.uint(c) % 16 == 0
+
+c = Capture()
+hits = g.find_all(var(c).when(is_aligned))
+```
+
+The predicate proxy is short-lived: it's only valid during the predicate call.  Storing it for later use silently returns `None` from accessors.
+
+### Per-node introspection (no pattern needed)
+
+```python
+g.node_kind(node_id)          # "IntConst", "Call", "VarPhi", ...
+g.node_ids()                  # [0, 1, 2, ...] every reachable node
+g.asm_fingerprint(node_id)    # [0x1000, 0x1004, ...]
+g.call_other_name(node_id)    # "cpuid" or None
+g.validate(check_asm_fingerprints=True)  # None on success, str on failure
+g.compact()                   # drop unreachable nodes
+```
+
+---
+
+## Bounded vs unbounded lifts
+
+Set `function_max_size=N` to constrain the lifter to `[entry, entry+N)`.  Branches and `bl`/`call` targets that fall outside this window are classified as tail calls.  Useful when:
+
+- The function boundary isn't known a priori (stripped binary).
+- The next function's first instruction is reachable via fall-through and you want to stop there.
+- You want a tail-call to be modelled as a tail call rather than as in-function code.
+
+Without `function_max_size`, set `allow_code_before_start_addr=True` to accept backward branches as in-function (e.g. for jump tables that target a switch prologue *before* the function entry per the compiler's layout).
+
+---
+
+## Optimizer pipelines
+
+`opt::default_pipeline()` runs every rewriting pass in a shared fixed-point loop.  `opt::stable_default_pipeline()` runs only those whose rewrites survive subsequent phi-input growth (used while the indirect-branch resolver is still iterating).  `opt::destructive_default_pipeline()` runs node-removal passes safely only at the fixed point.
+
+| Pass | What it does |
+|------|-------------|
+| `ConstantFold` | Constant arithmetic, comparisons, booleans, truncation, extension; algebraic identities. |
+| `KnownBits` | Bit-level zero/one propagation. Folds outputs whose every bit is determined to a constant. |
+| `FlagCmpCanonicalize` | Recognises CPU-flag-tree comparisons (AArch64 NZCV / x86 EFLAGS / Thumb) and rewrites them to high-level `IntCmpOp`. |
+| `IfCondInversion` | Canonicalises `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` so every `If` has a non-`BoolNeg` cond. |
+| `RedundantPhis` | Eliminates `VarPhi`/`MemPhi`/`ControlState` with a single reachable predecessor. |
+| `DeadBranchElimination` | Removes `If` whose condition is constant; strips dead control edges. |
+| `LoadReadOnly` | Folds `Load`s of constant addresses against a caller-supplied ROM. |
+| `StackStoreDetect` | Converts `Store(InitialVar(SP) + K, …)` into `StackStore { offset: K }`. |
+| `StackLoadForward` | Forwards `StackStore` values to subsequent same-offset `Load`s. |
+| `CallStackArgCollect` (post-pass) | Collects positional stack args at `Call` sites. |
+| `FunctionArgDetect` (post-pass) | Canonicalises register- and stack-passed arg reads at the function boundary into `FunctionArg`. |
+
+`opt::indirect_branch_resolve` is a module of free-function classifiers (link-register-return, tail call, jump table, stack-array dispatch, plus the `Truncate(IntConst)` / `Extend(IntConst)` arms) and in-place IR editors (`apply_link_register`, `apply_tail_call`).  There is no `Optimizer`-implementing struct — the strider orchestrator calls them directly, outside any pipeline.
+
+---
+
+## Troubleshooting: why didn't my pattern match?
+
+A few common surprises when a pattern that "should obviously match" returns no hits:
+
+1. **`If(BoolNeg(C))` doesn't exist in optimised IR.**  `IfCondInversion` rewrites it to `If(C){B}{A}`.  Write your `if_node()` pattern against the canonical (non-negated) form.
+
+2. **Lift-time canonicalisation aliases.**  `IntSub`/`IntLessEqual`/`IntSlessEqual`/`IntNotEqual`/`FloatSub`/`FloatNotEqual`/`FloatLessEqual`/`FloatNan` are NOT IR primitives — the lifter lowers them at lift time.  Use the alias constructors (`pattern::sub`, `pattern::int_le`, `pattern::int_sle`, `pattern::float_sub`, `pattern::float_ne`, `pattern::float_le`) rather than the raw cmp ops.  The `FLOAT_NAN(x)` shape lowers to `BoolNeg(FloatEqual(x, x))` — match it in Rust by composing `bool_neg(float_eq(x, x))`.  The Python binding exposes a `pattern.float_is_nan(x)` convenience constructor that builds the same shape.
+
+3. **Commutativity.**  `add` / `mul` / `and` / `or` / `xor` (and the boolean equivalents) and `IntCmpOp::{Equal,Carry,Scarry}` plus `FloatCmpOp::Equal` automatically try both operand orderings.  Non-commutative ops (`sub`, `div`, `shl`, `int_lt`, …) keep stated order.  Use `int_binary("Add", l, r).ordered()` to force left-to-right matching on a typed binary builder.  `.ordered()` on a finalised `Pat` (returned by free constructors like `add(x, y)`) raises `PatternError` because commutativity is baked in at construction.
+
+4. **`phi()` matches `VarPhi` only.**  Use `mem_phi()` for the memory-token phi at join points; `value_phi()` for the value phi `StackLoadForward` synthesises.
+
+5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `ControlState`, `Or(BoolConst(false), x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
+
+6. **Width mismatch.**  `int_const(42)` defaults to a "any-width" constant; on a 32-bit comparison your `42` may be lifted as `IntConst(42 : U32)` while your pattern expects `IntConst(42 : U64)`.  Use `int_const(42).with_type(NodeOutputType::U32)` or `signed_int_const(42)` for the typed variant.
+
+When stuck, dump the IR (`result.graph.to_html("graph.html")` and open in a browser) and walk forward from `entry` looking for the shape you expected.
 
 ---
 
 ## Rust API
 
-The `pattern` crate is the underlying engine.
-
-### Capture variables
-
-`Capture` is the single capture type — bindings store both the matched `NodeId` and (for value-producing patterns) the matched `NodeOutputId`. Create one with `Capture::new()` and embed it in a pattern. The same capture may appear multiple times in a pattern — the matcher enforces that every occurrence binds to the **same** value.
+The Rust crates are usable directly when scripting in Rust is a better fit than Python.  Each crate has a top-level `README.md` documenting its public surface; below is an end-to-end skeleton.
 
 ```rust
-use pattern::{Capture, var};
+use strider::{run, RunConfig};
+use target::{SleighArch, CallingConvention};
 
-let x = Capture::new();
-// var(x) matches any output and captures it.
-// If x appears twice in one pattern, both occurrences must agree.
+let arch = SleighArch::x86_64();
+let mem  = reader::ElfFileMemReader::open("path/to/binary.elf")?;
+let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem)?;
+let cc = CallingConvention::x86_64_systemv().build(sleigh.regs()?)?;
+let strider = strider::Strider::new(arch, sleigh.regs()?, cc)?;
+
+let graph = run(RunConfig {
+    strider: &strider,
+    start_addr: 0x1000,
+    sleigh,
+    rom: None,
+    fn_max_size: None,
+    allow_code_before_start_addr: false,
+    compact: true,
+    per_address_ccs: Default::default(),
+})?;
 ```
 
-For cross-pattern equality on a shared capture (e.g. "find the K such that pattern A(K) AND pattern B(K) match with the same `<base>` binding"), use [`Matcher::find_all_requirements`](crates/pattern/src/matcher/mod.rs) — it runs N patterns and returns only the joined tuples whose shared captures agree on `Binding` (node + value output).
-
-### Pattern constructors
-
-Every free function (`add`, `load`, `call`, …) returns a builder value that converts to `Pat` via `.into()`. Builders compose freely: any function that accepts `impl Into<Pat>` accepts another builder directly.
-
-```rust
-use pattern::{add, load, int_const, any, var, Capture};
-
-let offset = Capture::new();
-
-// load whose address is (anything + a constant)
-let pat: Pat = load().addr(add(any(), var(offset))).into();
-```
-
-### Commutative matching
-
-Binary operations that are mathematically commutative (`add`, `mul`, `and`, `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`) automatically try both operand orderings. Non-commutative operations (`sub`, `div`, `shl`, …) are always ordered.
-
-```rust
-use pattern::{Matcher, add, int_const};
-
-// Matches add(5, x) AND add(x, 5) — commutative by default.
-let pat = add(int_const(5), any()).into();
-
-// Force operand order with .ordered():
-let pat_ordered = add(int_const(5), any()).ordered().into();
-// Only matches if 5 is literally the left operand in the IR.
-```
-
-### Capturing any output with `.capture(c)`
-
-Any pattern builder or `Pat` can have `.capture(c)` chained to it. After the structural match succeeds, the matched value is bound to `c`. This lets you capture the result of any subexpression — not just leaves.
-
-```rust
-use pattern::{Matcher, Capture, var, add, any, load};
-
-let add_out = Capture::new();  // the output of the add node itself
-let addr_c  = Capture::new();  // the load's address operand
-
-// Capture the entire add node's output:
-let pat = add(any(), any()).capture(add_out).into();
-
-// Capture a nested field (the load's address):
-let pat2 = load().addr(any().capture(addr_c)).into();
-
-// Equivalent shorthand for field capture — var(c) is any().capture(c):
-let pat3 = load().addr(var(addr_c)).into();
-```
-
-### Predicate guards with `.when(f)`
-
-Any pattern builder or `Pat` can have `.when(f)` chained. After the structural match succeeds, `f` is called with `(&BuiltFunctionGraph, NodeOutputType, NodeOutputId)`. The match fails if `f` returns `false`. This lets you add arbitrary constraints without writing a new `PatKind` variant.
-
-```rust
-use pattern::{add, any, predicate};
-use ir::node::{NodeKind, NodeOutputType};
-
-// Match any add whose result is U64:
-let pat = add(any(), any()).when(|_fg, ty, _out| ty == NodeOutputType::U64).into();
-
-// Match any IntConst node with value ≥ 0x1000:
-let pat2 = predicate(|fg, _ty, out| {
-    let node = fg.graph.get_node_from_output(out);
-    matches!(fg.graph.node_kind(node), NodeKind::IntConst(v) if *v >= 0x1000)
-}).into();
-```
-
-`predicate(f)` is shorthand for `any().when(f)` and can appear anywhere a `Pat` is accepted.
-
-### Set-membership constructors
-
-For "any of these N constants / addresses" queries, use the dedicated set-membership helpers:
-
-```rust
-use pattern::{call, int_const_any_of, stack_store};
-
-// Match a call to any of three known callees:
-let pat = call().at_any([0x1000u64, 0x2000, 0x3000]);
-
-// Match a stack-store at any of these field offsets:
-let pat = stack_store().offset_any([-8i64, -16, -24]);
-
-// Lower-level: an IntConst whose value is in a set:
-let pat = int_const_any_of([0x1000u64, 0xDEADBEEF]);
-```
-
-Empty sets vacuously fail (match nothing).
+For pattern-construction details see [`crates/pattern/README.md`](crates/pattern/README.md).  For per-pass details see [`crates/opt/README.md`](crates/opt/README.md).
 
 ---
 
-### Example: load from a computed address
+## Build & test
 
-```rust
-use pattern::{Matcher, Capture, var, load, add};
+```bash
+# Build the workspace
+cargo build --workspace
 
-let ptr    = Capture::new();
-let offset = Capture::new();
+# Run all Rust tests
+cargo test --workspace
 
-let pat = load().addr(add(var(ptr), var(offset))).into();
+# Lint (treats warnings as errors)
+cargo clippy --workspace -- -D warnings
 
-let matcher = Matcher::new(&graph);
-for m in matcher.find_all(&pat) {
-    if let Some(off) = m.get_uint(offset, &graph) {
-        println!("load at ptr + {off:#x}");
-    }
-}
+# Python tests (rebuild the wheel first if Rust changed)
+cd crates/strider-py
+uv run maturin develop --release
+uv run pytest tests/python/
 ```
 
-### Example: call argument — what size does this function pass to `malloc`?
-
-```rust
-use pattern::{Matcher, Capture, var, call};
-
-const MALLOC: u64 = 0x401080;
-
-let size = Capture::new();
-let pat  = call().at(MALLOC).arg(0, var(size)).into();
-
-let matcher = Matcher::new(&graph);
-for m in matcher.find_all(&pat) {
-    if let Some(n) = m.get_uint(size, &graph) {
-        println!("malloc({n})");
-    }
-}
-```
-
-### Example: return value after a specific call
-
-```rust
-use pattern::{Matcher, Capture, var, call, ret};
-
-const PARSE_FN: u64 = 0x402000;
-
-let retval = Capture::new();
-let pat    = ret()
-    .preceded_by(call().at(PARSE_FN))
-    .ret_val(0, var(retval))
-    .into();
-
-let matcher = Matcher::new(&graph);
-for m in matcher.find_all(&pat) {
-    println!("return value after parse_fn: {:?}", m.output(retval));
-}
-```
-
-### Example: branch condition — find compares against a constant threshold
-
-```rust
-use pattern::{Matcher, Capture, var, if_node, int_lt, any};
-
-let threshold = Capture::new();
-let pat = if_node()
-    .cond(int_lt(any(), var(threshold)))
-    .into();
-
-let matcher = Matcher::new(&graph);
-for m in matcher.find_all(&pat) {
-    if let Some(t) = m.get_uint(threshold, &graph) {
-        println!("branch: x < {t}");
-    }
-}
-```
-
-### Example: complex — call in the true branch of `(x & 4) == 0`, arg 2 is a load from a table
-
-This shows how patterns compose: a branch condition, a call inside one branch, and a specific memory access inside that call's argument — all in a single query.
-
-```rust
-use pattern::{Matcher, Capture, var, if_node, call, load, add, and, int_eq, int_const};
-
-let x      = Capture::new();
-let offset = Capture::new();
-
-let cond = int_eq(and(var(x), int_const(4u64)), int_const(0u64));
-let arg2 = load().addr(add(int_const(0x1000u64), var(offset)));
-
-let pat = if_node()
-    .cond(cond)
-    .true_branch(call().arg(2, arg2))
-    .into();
-
-let matcher = Matcher::new(&graph);
-for m in matcher.find_all(&pat) {
-    if let Some(off) = m.get_uint(offset, &graph) {
-        println!("load offset {off:#x} → address {:#x}", 0x1000u64 + off as u64);
-    }
-}
-```
-
-### Example: stack-offset recovery from a captured `StackStore`
-
-```rust
-use pattern::{Matcher, Capture, stack_store};
-
-let s = Capture::new();
-let pat = stack_store().offset_any([-8i64, -16, -24]).capture(s);
-let matcher = Matcher::new(&graph);
-for m in matcher.find_all(&pat.into()) {
-    if let Some(k) = m.stack_offset(s, &graph) {
-        println!("stack store at SP + {k}");
-    }
-}
-```
-
-A single `find_all` call returns every site in the function where all constraints hold simultaneously.
+`fixtures/` contains test binaries (some via Git LFS — install with `git lfs install && git lfs pull`).
 
 ---
 
-## Dependencies
+## Project status
 
-- [rsleigh](https://github.com/p-mikeg/rsleigh) — Rust bindings to GHIDRA's Sleigh p-code lifter (local path dep at `../rsleigh`)
-- [petgraph](https://github.com/petgraph/petgraph) — graph data structures for the CFG
-- [cranelift-entity](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/entity) — typed entity indices for IR nodes
-
----
-
-## Status
-
-The IR lifter, optimizer, pattern matcher, and Python bindings (`strider-py`) are all functional. The Python interface is the recommended way to use Strider; the Rust API stays available for embedding and for the `pattern` crate's authoring side. Recent additions:
-
-- **Pattern queries**: `find_all_requirements` (multi-pattern join on shared captures), `int_const_any_of` / `CallPat::at_any` / `StackStorePat::offset_any` (set-membership queries), `Match::stack_offset` / `stack_phi_offsets` (read offsets off captured stack-store nodes).
-- **Bounded lift**: `function_max_size` is now strictly enforced — `is_addr_tail_call` ignores `allow_code_before_start_addr` when a max-size is set, fall-through past the bound terminates as `TailCall`, and conditional branches whose successors leave the function collapse cleanly.
-- **ELF relocations**: `MemoryMap.apply_elf_relocations` autoloads any missing site sections (e.g. `.got.plt`) so dynamic-relocation application works without staging the section by hand first.
-- **uv install**: `uv sync --group dev` + `uv run maturin develop` + `uv run pytest` (PEP 735).
+The 12-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  The `feature/ai` branch carries day-to-day work; `review/ai*` branches carry pre-deployment cleanup passes with detailed audit findings under `reviews/round10-*.md` (latest).  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface; the design specs that drove major refactors live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.

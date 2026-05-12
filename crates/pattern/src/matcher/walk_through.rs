@@ -1,15 +1,20 @@
-//! Walk-through helpers for [`MatcherOptions::ignore_cast_mask`] and
+//! `ControlState` walk-through helper for
 //! [`MatcherOptions::ignore_control_states`].
 //!
-//! When a flag / mask bit is set, the matcher's input-walking layer falls
-//! through these helpers if a direct match fails: instead of giving up,
-//! it recurses past a "transparent" producer node (a value-passthrough
-//! cast selected by the mask, or a region-join `ControlState`) and
-//! retries the inner pattern.
+//! When the flag is set, the matcher's input-walking layer falls
+//! through this helper if a direct match fails: instead of giving up,
+//! it tries the inner pattern against each predecessor of the
+//! region-join `ControlState`.
 //!
 //! Direct match is always tried first — the fallback runs only after a
-//! direct attempt and bindings rollback, so strict patterns (like
-//! `truncate(x)` looking for a literal Truncate) keep matching unchanged.
+//! direct attempt and bindings rollback, so strict patterns keep
+//! matching unchanged.
+//!
+//! The sibling cast walk-through (selected by
+//! [`MatcherOptions::ignore_cast_mask`]) lives inline in
+//! [`crate::matcher::Matcher::match_output_with_walk_through`] — it
+//! unwraps a value-passthrough cast and loops, which is cheaper as a
+//! tail-loop than a recursive call.
 
 use ir::node::{NodeKind, NodeOutputId};
 
@@ -17,16 +22,6 @@ use crate::matcher::Bindings;
 use crate::pat::Pat;
 use crate::pat::traits::MatchCtx;
 
-/// If `target`'s producer is a cast node selected by
-/// `ctx.matcher.options.ignore_cast_mask`, recurse into the cast's first
-/// (value) input and try matching `pat` there.  Returns whether the
-/// recursive match succeeded.
-///
-/// Caller is responsible for snapshotting bindings (`b.mark()`) before
-/// the call and rolling back on failure — this helper does NOT manage
-/// rollback because the snapshot is shared with the direct-match attempt
-/// in `match_one`.
-///
 /// Backward walk-through of a `ControlState` (region-join) node.  If
 /// `target`'s producer is a `ControlState`, try matching `pat` against
 /// each of the ControlState's control-typed inputs (one per
@@ -48,15 +43,15 @@ pub(crate) fn try_walk_through_control_state(
     pat: &Pat,
     b: &mut Bindings,
 ) -> bool {
-    let producer = ctx.graph.graph.get_node_from_output(target);
-    if !matches!(ctx.graph.graph.node_kind(producer), NodeKind::ControlState) {
+    let producer = ctx.graph.get_node_from_output(target);
+    if !matches!(ctx.graph.node_kind(producer), NodeKind::ControlState) {
         return false;
     }
     // Try each control input; rollback bindings between failed attempts.
     // Recurse via the walk-through entry point so chained ControlStates
     // (region joins of region joins) also resolve.
     let mark = b.mark();
-    for input in ctx.graph.graph.node_inputs(producer) {
+    for input in ctx.graph.node_inputs(producer) {
         if ctx.matcher.match_output_with_walk_through(input, pat, b) {
             return true;
         }

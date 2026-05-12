@@ -46,13 +46,19 @@ fn contains_addr_after_end_returns_false() {
 }
 
 #[test]
-fn contains_addr_returns_false_for_empty_region() {
-    // An empty insns list must never claim to contain any address,
-    // even if start_addr happens to match — the region has no extent.
+fn contains_addr_owns_start_addr_for_empty_region() {
+    // Empty regions arise from the single-instruction
+    // CondBranch-with-OOB-successor fold; they own exactly their
+    // start_addr.  Returning `false` for the start-address query
+    // would let the work queue build a duplicate region for the same
+    // edge target.
     let r = Region {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),
-        terminator: RegionTerminator::Fallthrough,
+        terminator: RegionTerminator::Branch,
     };
-    assert!(!r.contains_addr(addr(0x1000, 0)));
+    assert!(r.contains_addr(addr(0x1000, 0)));
+    // Any other address is still not owned by this region.
+    assert!(!r.contains_addr(addr(0x1001, 0)));
+    assert!(!r.contains_addr(addr(0x0fff, 0)));
 }

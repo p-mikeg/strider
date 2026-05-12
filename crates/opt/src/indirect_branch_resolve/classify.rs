@@ -10,7 +10,6 @@
 //! results from the classifier directly into
 //! `cfg::Builder::with_known_targets`.
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId};
 
 use super::ResolvedTargets;
@@ -18,10 +17,19 @@ use super::jump_table::classify_jump_table;
 use crate::ReadOnlyMemory;
 
 /// Classify a placeholder anchor's producer node into a
-/// [`ResolvedTargets`].  Returns `None` when the producer doesn't
-/// match any of the known sound shapes — the orchestrator interprets
-/// `None` as "still unresolved at this iteration; try again or
-/// surface as `UnresolvedIndirectBranch` at fixed point."
+/// [`ResolvedTargets`].
+///
+/// Returns:
+/// - `Ok(Some(_))` — successful classification.
+/// - `Ok(None)` — producer doesn't match any of the known sound
+///   shapes; the orchestrator interprets this as "still unresolved at
+///   this iteration; try again or surface as
+///   `UnresolvedIndirectBranch` at fixed point."
+/// - `Err(_)` — `analyze_known_bits` returned a `Kb::merge`
+///   contradiction (incompatible constants reaching the same
+///   output).  Surfaces the diagnostic instead of masking it as
+///   `None`; KB contradiction is a real IR-level bug the caller
+///   should see explicitly.
 ///
 /// Equivalent to [`classify_anchor_with_rom`] with `rom == None`.
 /// The jump-table arm becomes a no-op in that case because
@@ -45,14 +53,30 @@ use crate::ReadOnlyMemory;
 /// We rely on `StackLoadForward` having already simplified
 /// properly-popped return addresses to `InitialVar(lr_vn)` directly
 /// — that's the shape the LinkRegister arm matches.
-#[must_use]
+///
+/// **Single-anchor convenience.**  This helper recomputes the
+/// known-bits analysis on every call.  Callers iterating multiple
+/// anchors over the same graph should compute the analysis once via
+/// [`crate::analyze_known_bits`] and call
+/// [`classify_anchor_with_rom_and_sp`] directly with the cached map.
+///
+/// # Errors
+///
+/// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
 pub fn classify_anchor(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
-) -> Option<ResolvedTargets> {
-    let known = crate::analyze_known_bits(fg).ok()?;
-    classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, None, None, &known)
+) -> anyhow::Result<Option<ResolvedTargets>> {
+    let known = crate::analyze_known_bits(ctx)?;
+    Ok(classify_anchor_with_rom_and_sp(
+        ctx,
+        anchor_output,
+        link_register_vn,
+        None,
+        None,
+        &known,
+    ))
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
@@ -68,15 +92,26 @@ pub fn classify_anchor(
 /// always the ELF's `.rodata` + `.text` view), so the entries the
 /// classifier reads agree with the entries downstream consumers
 /// see.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
+/// See [`classify_anchor`] for full Result-shape semantics.
 pub fn classify_anchor_with_rom(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-) -> Option<ResolvedTargets> {
-    let known = crate::analyze_known_bits(fg).ok()?;
-    classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, rom, None, &known)
+) -> anyhow::Result<Option<ResolvedTargets>> {
+    let known = crate::analyze_known_bits(ctx)?;
+    Ok(classify_anchor_with_rom_and_sp(
+        ctx,
+        anchor_output,
+        link_register_vn,
+        rom,
+        None,
+        &known,
+    ))
 }
 
 /// Classify a placeholder anchor with both an optional
@@ -102,14 +137,14 @@ pub fn classify_anchor_with_rom(
 /// approximating.
 #[must_use]
 pub fn classify_anchor_with_rom_and_sp(
-    fg: &BuiltFunctionGraph,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
-    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
+    known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = &fg.graph;
+    let graph = ctx.graph_ref();
     let producer_id = graph.get_node_from_output(anchor_output);
     let kind = *graph.node_kind(producer_id);
     match kind {
@@ -172,13 +207,11 @@ pub fn classify_anchor_with_rom_and_sp(
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
-            if let Some(r) =
-                classify_jump_table(fg, anchor_output, rom, link_register_vn, known)
-            {
+            if let Some(r) = classify_jump_table(ctx, anchor_output, rom, known) {
                 return Some(r);
             }
             if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(fg, anchor_output, sp, known);
+                return super::stack_array::classify_stack_array(ctx, anchor_output, sp, known);
             }
             None
         }
@@ -190,10 +223,15 @@ pub fn classify_anchor_with_rom_and_sp(
         // SP varnode is supplied.
         NodeKind::IntBinaryOp(ir::IntBinaryOp::And) => {
             if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(fg, anchor_output, sp, known);
+                return super::stack_array::classify_stack_array(ctx, anchor_output, sp, known);
             }
             None
         }
+        // No dedicated `Truncate(IntConst)` / `Extend(IntConst)` arm:
+        // ConstantFold rules 4-6 fold those shapes to `IntConst` before
+        // the classifier runs, and `truncate_if_needed` /
+        // `extend_if_needed` fold them at build time.  The folded
+        // `IntConst` flows through the `NodeKind::IntConst` arm above.
         _ => None,
     }
 }

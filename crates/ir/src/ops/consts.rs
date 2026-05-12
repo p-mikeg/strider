@@ -11,9 +11,6 @@ impl Graph {
     /// Returns the integer constant value of `out` (masked to its declared
     /// type) narrowed to `u64`, or `None` if the output is not an integer
     /// constant or its value does not fit in `u64`.
-    ///
-    /// Use [`Self::int_const_val_u128`] when callers need the full payload of
-    /// `U128` / `U256` constants.
     #[must_use]
     pub fn int_const_val(&self, out: NodeOutputId) -> Option<u64> {
         let ty = self.output_kind(out).as_value()?;
@@ -22,22 +19,6 @@ impl Graph {
         }
         match *self.kind_of_output(out) {
             NodeKind::IntConst(v) => ty.get_unsigned_int(v).and_then(|w| u64::try_from(w).ok()),
-            _ => None,
-        }
-    }
-
-    /// Returns the integer constant value of `out` masked to its declared
-    /// type at full `u128` precision, or `None` if the output is not an
-    /// integer constant.  The unmasked-narrowing companion to
-    /// [`Self::int_const_val`].
-    #[must_use]
-    pub fn int_const_val_u128(&self, out: NodeOutputId) -> Option<u128> {
-        let ty = self.output_kind(out).as_value()?;
-        if !ty.is_integer() {
-            return None;
-        }
-        match *self.kind_of_output(out) {
-            NodeKind::IntConst(v) => ty.get_unsigned_int(v),
             _ => None,
         }
     }
@@ -72,25 +53,40 @@ impl Graph {
     /// Creates (or retrieves from the dedup cache) an `IntConst(val)` node of
     /// type `ty` and returns its single output.
     ///
+    /// Single source of truth for constructing primitive integer constants:
+    /// [`crate::FunctionBuilder::build_int_const`] delegates here and adds
+    /// asm-fingerprint plumbing on top.
+    ///
     /// # Errors
     ///
-    /// Returns an error when `ty` is not an integer type, or is `U256`
-    /// (which is not yet representable in the `u128` storage that `IntConst`
-    /// uses), or when the freshly-created node does not have exactly one
-    /// output.
-    pub fn make_int_const(&mut self, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+    /// Returns an error when `ty` is not an integer type, or is `U256` /
+    /// `U512` (neither is representable in the `u128` storage that
+    /// `IntConst` uses — wide constants must go through
+    /// [`crate::FunctionBuilder::build_int_const_wide`]), or when the
+    /// freshly-created node does not have exactly one output.
+    pub fn make_int_const(
+        &mut self,
+        val: impl Into<u128>,
+        ty: NodeOutputType,
+    ) -> Result<NodeOutputId> {
         if !ty.is_integer() {
             return Err(anyhow!(
                 "make_int_const called with non-integer type {ty:?}"
             ));
         }
-        if matches!(ty, NodeOutputType::U256) {
+        if matches!(ty, NodeOutputType::U256 | NodeOutputType::U512) {
             return Err(anyhow!(
-                "make_int_const(U256) not yet supported - IntConst storage is u128"
+                "make_int_const({ty:?}) not supported - IntConst storage is u128; \
+                 use build_int_const_wide for U256/U512"
             ));
         }
+        // Mask `val` to the declared output type's bit width so the
+        // dedup-cache key sees the same `IntConst(u128)` payload for
+        // semantically-equal constants — `make_int_const(0x1FF, U8)`
+        // and `make_int_const(0xFF, U8)` must dedup to the same node.
+        let masked = val.into() & ty.bit_mask_u128();
         let node = self.create_node(
-            NodeKind::IntConst(u128::from(val)),
+            NodeKind::IntConst(masked),
             [],
             [NodeOutputKind::OutputType(ty)],
         );
@@ -116,9 +112,14 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns an error when the freshly-created node does not have exactly
-    /// one output.
+    /// Returns an error when `ty` is not a float type, or when the
+    /// freshly-created node does not have exactly one output.
     pub fn make_float_const(&mut self, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+        if !ty.is_float() {
+            return Err(anyhow!(
+                "make_float_const called with non-float type {ty:?}"
+            ));
+        }
         let node = self.create_node(
             NodeKind::FloatConst(bits),
             [],

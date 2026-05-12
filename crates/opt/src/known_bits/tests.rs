@@ -1,18 +1,8 @@
-use crate::pipeline::Optimizer;
-use crate::test_support::make_fn;
+use crate::pipeline::OptimizerRaw;
+use crate::test_support::{make_fn, return_kind};
 use super::*;
-use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};
-use ir::{FunctionBuilder, IntBinaryOp};
-
-fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
-    let ret = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or_else(|| anyhow!("no return node found in function"))?;
-    let val = fg.graph.node_inputs(ret)[2];
-    Ok(*fg.graph.kind_of_output(val))
-}
+use ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 
 // ── Original tests ────────────────────────────────────────────────────────────
 
@@ -29,9 +19,9 @@ fn known_bits_or_then_and() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg2.graph, fg2.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg2.graph, fg2.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg2)?, NodeKind::IntConst(4));
+    assert_eq!(return_kind((&fg2).into())?, NodeKind::IntConst(4));
     Ok(())
 }
 
@@ -47,9 +37,9 @@ fn known_bits_and_mask_then_and() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -58,7 +48,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
 #[test]
 fn known_bits_const_no_change() -> Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(42u64, NodeOutputType::U64).unwrap()))?;
-    assert!(!KnownBits.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(!KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     Ok(())
 }
 
@@ -74,9 +64,9 @@ fn known_bits_popcount_range() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -96,9 +86,9 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -115,9 +105,9 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -136,9 +126,9 @@ fn known_bits_long_or_and_chain() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
 
@@ -155,9 +145,9 @@ fn known_bits_lzcount_range() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -176,9 +166,9 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -201,9 +191,9 @@ fn known_bits_neg_round_trip() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
 
@@ -220,21 +210,15 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     // the final state matches.
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
-    let semantic = fg.graph.int_const_val(val);
+    let val = return_value((&fg).into())?;
+    let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0xCD), "truncate must preserve low byte");
     Ok(())
 }
 
-fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
-    let ret = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(fg.graph.node_inputs(ret)[2])
-}
+use crate::test_support::return_value;
 
 #[test]
 fn merge_returns_err_on_contradiction() {
@@ -295,10 +279,10 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
-    assert_eq!(fg.graph.int_const_val(val), Some(1));
+    let val = return_value((&fg).into())?;
+    assert_eq!(fg.int_const_val(val), Some(1));
     Ok(())
 }
 
@@ -320,10 +304,10 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
-    assert_eq!(fg.graph.int_const_val(val), Some(0x80));
+    let val = return_value((&fg).into())?;
+    assert_eq!(fg.int_const_val(val), Some(0x80));
     Ok(())
 }
 
@@ -353,11 +337,11 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     assert_eq!(
-        fg.graph.int_const_val(val),
+        fg.int_const_val(val),
         Some(0),
         "Sleigh: 1u8 << 8 = 0 (shift >= bit_width returns 0).  Pre-fix \
          KnownBits computed `1u8 << (8 & 7) = 1` and left the value \
@@ -377,11 +361,11 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     assert_eq!(
-        fg.graph.int_const_val(val),
+        fg.int_const_val(val),
         Some(0),
         "Sleigh: 0xFFu32 >> 32 = 0.  Pre-fix KnownBits computed \
          `0xFF >> (32 & 31) = 0xFF` and the chain fell through to non-zero."
@@ -410,10 +394,10 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
-    let semantic = fg.graph.int_const_val(val);
+    let val = return_value((&fg).into())?;
+    let semantic = fg.int_const_val(val);
     assert_eq!(
         semantic,
         Some(1),
@@ -423,3 +407,90 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
     Ok(())
 }
 
+
+// ── SignExtend propagation ────────────────────────────────────────────────────
+//
+// `extend_if_needed` folds an `IntConst` input at builder level (coerce.rs:185),
+// so to exercise the KnownBits SignExtend path we feed it a non-IntConst Or-of-
+// constants whose result is fully known but whose node kind isn't IntConst.
+// KnownBits Phase 2 first folds the Or to IntConst; the surrounding `while
+// changed` loop then re-runs `analyze`, and only then does the SignExtend node's
+// arm fire (or fail to fire, before the fix).
+
+/// `SignExtend((0u8 | 0x7Fu8) : U8 → U64)` — MSB of the inner Or is known 0,
+/// so the upper 56 bits of the SignExtend result must be zero.  Without the
+/// SignExtend arm in `node_known_bits`, the SignExtend stays as a node;
+/// with it, the entire chain folds to `IntConst(0x7F)`.
+#[test]
+fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let zero = b.build_int_const(0u64, NodeOutputType::U8).unwrap();
+        let c = b.build_int_const(0x7Fu64, NodeOutputType::U8).unwrap();
+        let or_ = b.build_int_binary_operation(zero, c, IntBinaryOp::Or, NodeOutputType::U8)?;
+        b.extend_if_needed(or_, NodeOutputType::U64, ExtendOp::SignExtend)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
+    }
+    assert_eq!(
+        return_kind((&fg).into())?,
+        NodeKind::IntConst(0x7Fu128),
+        "SignExtend of (0|0x7F) (MSB=0) must fold to IntConst(0x7F) once \
+         the SignExtend arm propagates known bits"
+    );
+    Ok(())
+}
+
+/// `SignExtend((0u8 | 0x80u8) : U8 → U64)` — MSB of the inner Or is known 1,
+/// so the upper 56 bits of the SignExtend result must be one.  Result must
+/// fold to `IntConst(0xFFFF_FFFF_FFFF_FF80)`.
+#[test]
+fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let zero = b.build_int_const(0u64, NodeOutputType::U8).unwrap();
+        let c = b.build_int_const(0x80u64, NodeOutputType::U8).unwrap();
+        let or_ = b.build_int_binary_operation(zero, c, IntBinaryOp::Or, NodeOutputType::U8)?;
+        b.extend_if_needed(or_, NodeOutputType::U64, ExtendOp::SignExtend)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize_raw(&mut fg.graph, fg.entry)?.changed();
+    }
+    assert_eq!(
+        return_kind((&fg).into())?,
+        NodeKind::IntConst(0xFFFF_FFFF_FFFF_FF80u128),
+        "SignExtend of (0|0x80) (MSB=1) must fold to all-ones upper bits \
+         once the SignExtend arm propagates known bits"
+    );
+    Ok(())
+}
+
+// ── Kb constructor invariant ────────────────────────────────────────────────
+
+#[test]
+fn kb_try_new_rejects_overlapping_ones_zeros() {
+    let res = super::Kb::try_new(0b1, 0b1);
+    assert!(res.is_err(), "Kb::try_new must reject ones&zeros overlap");
+}
+
+#[test]
+fn kb_try_new_accepts_disjoint_ones_zeros() {
+    let kb = super::Kb::try_new(0b01, 0b10).expect("disjoint must succeed");
+    assert_eq!(kb.ones(), 0b01);
+    assert_eq!(kb.zeros(), 0b10);
+}
+
+#[test]
+fn kb_default_is_all_unknown() {
+    let kb = super::Kb::default();
+    assert_eq!(kb.ones(), 0);
+    assert_eq!(kb.zeros(), 0);
+}
+
+#[test]
+fn kb_try_new_accepts_all_unknown() {
+    let kb = super::Kb::try_new(0, 0).expect("(0,0) is valid");
+    assert_eq!(kb.ones(), 0);
+    assert_eq!(kb.zeros(), 0);
+}

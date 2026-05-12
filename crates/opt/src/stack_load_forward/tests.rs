@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::Result;
+use crate::pipeline::OptimizerRaw;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
 use target::Endianness;
@@ -22,12 +23,9 @@ fn sp64_vn() -> rsleigh::Vn {
     }
 }
 
-fn reachable_count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    fg.all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| pred(fg.graph.node_kind(n)))
-        .count()
+fn reachable_count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
+    // Delegate to the shared helper promoted in `test_support`.
+    crate::test_support::count_reachable(ctx, pred)
 }
 
 /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes
@@ -42,7 +40,12 @@ fn reachable_count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -
 fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
-    const CHAIN_LEN: usize = 500;
+    // 10k-store chain pins the iterative form of
+    // `find_stack_stored_value_at_offset` (scale.md A1).  The prior
+    // recursive form would stack-overflow on the default 8 MB Rust
+    // stack at this depth.  See the deep-chain regression test below
+    // for a smaller, deterministic check.
+    const CHAIN_LEN: usize = 10_000;
 
     let sp = sp32_vn();
     let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -83,7 +86,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load at sp+0 must forward past all {CHAIN_LEN} disjoint stack stores"
@@ -92,7 +95,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
 }
 
 #[test]
-fn forward_basic() -> Result<()> {
+fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
@@ -114,7 +117,7 @@ fn forward_basic() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
     Ok(())
 }
@@ -152,7 +155,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load[sp+4] should forward past the non-aliasing StackStore{{+12}}"
@@ -187,7 +190,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 1,
         "overlapping store must prevent forwarding"
@@ -218,7 +221,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
     Ok(())
 }
@@ -261,7 +264,7 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "non-SP-relative intervening Store must not block forwarding \
@@ -307,7 +310,7 @@ fn bail_on_call_between() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 1,
         "Call on memory chain must prevent forwarding"
@@ -377,12 +380,12 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load at merge must be forwarded via synthesized ValuePhi"
     );
-    let reachable_value_phis = reachable_count(&fg, |k| matches!(k, NodeKind::ValuePhi));
+    let reachable_value_phis = reachable_count((&fg).into(), |k| matches!(k, NodeKind::ValuePhi));
     assert_eq!(
         reachable_value_phis, 1,
         "exactly one ValuePhi must be synthesized"
@@ -393,14 +396,14 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     let value_phi = fg
         .all_node_ids()
-        .find(|n| reachable.contains(n) && matches!(fg.graph.node_kind(*n), NodeKind::ValuePhi))
+        .find(|n| reachable.contains(n) && matches!(fg.node_kind(*n), NodeKind::ValuePhi))
         .expect("ValuePhi found above");
     let mem_phi = fg
         .all_node_ids()
-        .find(|n| reachable.contains(n) && matches!(fg.graph.node_kind(*n), NodeKind::MemPhi))
+        .find(|n| reachable.contains(n) && matches!(fg.node_kind(*n), NodeKind::MemPhi))
         .expect("MemPhi survived to the merge");
-    let vp_token = fg.graph.node_inputs(value_phi)[0];
-    let mp_token = fg.graph.node_inputs(mem_phi)[0];
+    let vp_token = fg.node_inputs(value_phi)[0];
+    let mp_token = fg.node_inputs(mem_phi)[0];
     assert_eq!(
         vp_token, mp_token,
         "ValuePhi's phi-token must match the MemPhi's phi-token"
@@ -458,12 +461,12 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 1,
         "missing-store branch must prevent forwarding"
     );
-    let reachable_value_phis = reachable_count(&fg, |k| matches!(k, NodeKind::ValuePhi));
+    let reachable_value_phis = reachable_count((&fg).into(), |k| matches!(k, NodeKind::ValuePhi));
     assert_eq!(
         reachable_value_phis, 0,
         "no ValuePhi should be synthesized when a branch bails"
@@ -538,9 +541,9 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load must be forwarded");
-    let reachable_value_phis = reachable_count(&fg, |k| matches!(k, NodeKind::ValuePhi));
+    let reachable_value_phis = reachable_count((&fg).into(), |k| matches!(k, NodeKind::ValuePhi));
     assert_eq!(
         reachable_value_phis, 0,
         "identical branch values must skip the ValuePhi synthesis"
@@ -580,18 +583,18 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load[Add(sp, 0xFFFFFFFC)] must be forwarded from Store[Sub(sp, 4)]",
     );
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.graph.node_inputs(ret);
+    let ret_inputs = fg.node_inputs(ret);
     // Return inputs: [ctrl, mem, val_0, ...].
-    let val_kind = fg.graph.kind_of_output(ret_inputs[2]);
+    let val_kind = fg.kind_of_output(ret_inputs[2]);
     assert!(
         matches!(val_kind, NodeKind::IntConst(0x4242)),
         "forwarded value must be the stored constant 0x4242 — got {val_kind:?}",
@@ -630,23 +633,23 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load u8 at matching offset must be forwarded as the low byte of the u32 store",
     );
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.graph.node_inputs(ret);
+    let ret_inputs = fg.node_inputs(ret);
     // `int_const_val` applies the output type's mask, so for a U8 output it
     // returns the low byte even when the backing `IntConst` node still
     // carries the full u32 bit-pattern internally.
-    let val_ty = fg.graph.output_kind(ret_inputs[2]).as_value();
+    let val_ty = fg.output_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(NodeOutputType::U8));
     assert_eq!(
-        fg.graph.int_const_val(ret_inputs[2]),
+        fg.int_const_val(ret_inputs[2]),
         Some(0xEF),
         "forwarded narrow load must fold to the low byte 0xEF",
     );
@@ -680,17 +683,17 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.graph.node_inputs(ret);
-    let val_ty = fg.graph.output_kind(ret_inputs[2]).as_value();
+    let ret_inputs = fg.node_inputs(ret);
+    let val_ty = fg.output_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(NodeOutputType::U16));
     assert_eq!(
-        fg.graph.int_const_val(ret_inputs[2]),
+        fg.int_const_val(ret_inputs[2]),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
     );
@@ -731,7 +734,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     pipeline.add(StackLoadForward::new(sp, Endianness::Big));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load u8 at matching offset must be forwarded as the high byte of the u32 store on BE",
@@ -739,39 +742,39 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.graph.node_inputs(ret);
+    let ret_inputs = fg.node_inputs(ret);
     // Return inputs: [ctrl, mem, val_0, ...].
     let val_out = ret_inputs[2];
-    let val_ty = fg.graph.output_kind(val_out).as_value();
+    let val_ty = fg.output_kind(val_out).as_value();
     assert_eq!(val_ty, Some(NodeOutputType::U8));
 
     // Outer node: Truncate.
-    let outer = fg.graph.get_node_from_output(val_out);
+    let outer = fg.get_node_from_output(val_out);
     assert!(
-        matches!(fg.graph.node_kind(outer), NodeKind::Truncate),
+        matches!(fg.node_kind(outer), NodeKind::Truncate),
         "BE narrow forward must wrap data in a Truncate — got {:?}",
-        fg.graph.node_kind(outer),
+        fg.node_kind(outer),
     );
 
     // Inner node: ShiftRight.
-    let outer_inputs = fg.graph.node_inputs(outer);
+    let outer_inputs = fg.node_inputs(outer);
     assert_eq!(outer_inputs.len(), 1, "Truncate has a single input");
-    let inner = fg.graph.get_node_from_output(outer_inputs[0]);
+    let inner = fg.get_node_from_output(outer_inputs[0]);
     assert!(
         matches!(
-            fg.graph.node_kind(inner),
+            fg.node_kind(inner),
             NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
         ),
         "BE narrow forward must shift before truncation — got {:?}",
-        fg.graph.node_kind(inner),
+        fg.node_kind(inner),
     );
 
     // ShiftRight inputs: [data, shift_const]; shift_const = (4 - 1) * 8 = 24.
-    let shr_inputs = fg.graph.node_inputs(inner);
+    let shr_inputs = fg.node_inputs(inner);
     assert_eq!(shr_inputs.len(), 2, "ShiftRight has two inputs");
-    let shift_kind = fg.graph.kind_of_output(shr_inputs[1]);
+    let shift_kind = fg.kind_of_output(shr_inputs[1]);
     assert!(
         matches!(shift_kind, NodeKind::IntConst(24)),
         "BE shift amount must be (store_size - load_size) * 8 = 24 — got {shift_kind:?}",
@@ -787,7 +790,6 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 #[test]
 fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
-    use crate::Optimizer;
 
     let sp = sp64_vn();
     let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
@@ -832,30 +834,30 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
 
     let total_truncate_before = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Truncate))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .count();
     let total_value_phi_before = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ValuePhi))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::ValuePhi))
         .count();
 
     // Run StackLoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    StackLoadForward::new(sp, Endianness::Little).optimize(&mut fg.graph, fg.entry)?;
+    StackLoadForward::new(sp, Endianness::Little).optimize_raw(&mut fg.graph, fg.entry)?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
-    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "load must remain — bail expected");
 
     let total_truncate_after = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Truncate))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .count();
     let total_value_phi_after = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ValuePhi))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::ValuePhi))
         .count();
     assert_eq!(
         total_truncate_after, total_truncate_before,
@@ -872,7 +874,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
 //
 // `find_stack_stored_value_at_offset` walks the memory chain backward from
 // a given `mem` looking for a `StackStore { offset == requested }` whose
-// value type matches the caller's expectation.  Used by the tier-2
+// value type matches the caller's expectation.  Used by the
 // indirect-branch classifier to look up entries of a stack-array of label
 // addresses one offset at a time (computed-goto via local stack
 // array).  These tests pin the helper's contract in isolation, before the
@@ -911,9 +913,9 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
     // Reach the surviving Load and use its memory-input as the chain root.
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives without StackLoadForward");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -928,7 +930,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
     );
     let value = result.expect("helper should find StackStore at offset -24");
     // The found value must be the stored constant 0xCAFE.
-    assert_eq!(fg.graph.int_const_val(value), Some(0xCAFE));
+    assert_eq!(fg.int_const_val(value), Some(0xCAFE));
     Ok(())
 }
 
@@ -965,9 +967,9 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -982,7 +984,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    assert_eq!(fg.graph.int_const_val(v16.expect("find -16")), Some(0xBBBB));
+    assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
     // Look up offset -24: must walk through the -16 store (non-aliasing) and
     // find -24's value.
@@ -995,7 +997,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    assert_eq!(fg.graph.int_const_val(v24.expect("find -24")), Some(0xAAAA));
+    assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
     Ok(())
 }
 
@@ -1025,9 +1027,9 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::Result<()> {
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -1074,9 +1076,9 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -1091,7 +1093,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<
     );
     // The helper must return the *live* (latest) value: the second store.
     let v = result.expect("must find live store");
-    assert_eq!(fg.graph.int_const_val(v), Some(0xBBBB));
+    assert_eq!(fg.int_const_val(v), Some(0xBBBB));
     Ok(())
 }
 
@@ -1123,9 +1125,9 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::Result<()> {
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -1167,7 +1169,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
         // The actual load uses a symbolic address, but for THIS helper test we
         // only exercise the "look up by concrete offset" API — the symbolic
         // shape match lives in the classifier (tested separately in
-        // `tier2_classify`).
+        // `indirect_resolve_classify`).
         let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
@@ -1181,9 +1183,9 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -1203,7 +1205,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
             &mut walk_memo,
         )
         .unwrap_or_else(|| panic!("must find store at offset {off}"));
-        let c = fg.graph.int_const_val(v).expect("stored value is IntConst");
+        let c = fg.int_const_val(v).expect("stored value is IntConst");
         targets.push(c as u64);
     }
     assert_eq!(targets, vec![0x401190u64, 0x401180u64]);

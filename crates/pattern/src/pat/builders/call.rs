@@ -168,30 +168,30 @@ impl CallOtherPat {
         self
     }
 
-    /// Convenience: match the control input (`inputs[0]`).
+    /// Convenience: match the control input (``inputs[0]``).
     pub fn ctrl(self, p: impl Into<Pat>) -> Self {
         self.arg(0, p)
     }
 
-    /// Convenience: match the memory input (`inputs[1]`).
+    /// Convenience: match the memory input (``inputs[1]``).
     pub fn mem(self, p: impl Into<Pat>) -> Self {
         self.arg(1, p)
     }
 
-    /// Convenience: match the control output (`outputs[0]`).
+    /// Convenience: match the control output (``outputs[0]``).
     pub fn ctrl_out(self, p: impl Into<Pat>) -> Self {
         self.ret(0, p)
     }
 
-    /// Convenience: match the memory output (`outputs[1]`).  Dangles
+    /// Convenience: match the memory output (``outputs[1]``).  Dangles
     /// (no consumers) when the ABI's `memory_edge` is `false`.
     pub fn mem_out(self, p: impl Into<Pat>) -> Self {
         self.ret(1, p)
     }
 
     /// Match `p` against the unique consumer of the CallOther's control
-    /// output (outputs[0]) — forward walk via
-    /// [`super::walk_helpers::match_unique_output_consumer`].  Returns
+    /// output (`outputs[0]`) — forward walk via
+    /// `super::walk_helpers::match_unique_output_consumer`.  Returns
     /// no match if the output has zero or multiple consumers.
     pub fn next_ctrl(mut self, p: impl Into<Pat>) -> Self {
         self.next_ctrl = Some(p.into());
@@ -199,7 +199,7 @@ impl CallOtherPat {
     }
 
     /// Match `p` against the unique consumer of the CallOther's memory
-    /// output (outputs[1]).  Returns no match if the output has zero or
+    /// output (`outputs[1]`).  Returns no match if the output has zero or
     /// multiple consumers.  Dangles (and so always fails to match) when
     /// the matched op's ABI has `memory_edge: false`.
     pub fn next_mem(mut self, p: impl Into<Pat>) -> Self {
@@ -239,7 +239,6 @@ impl From<CallOtherPat> for Pat {
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(ref want) = want_name {
                     let ok = ctx
-                        .graph
                         .graph
                         .call_other_name(node)
                         .is_some_and(|s| s == want.as_str());

@@ -20,6 +20,12 @@
 use crate::node::NodeKind;
 
 /// The expected kind of an input or output slot of a [`NodeKind`].
+///
+/// Stays `pub` because it is reachable from the public
+/// [`crate::validate::ValidationError`] enum via
+/// `NodeInputKindMismatch::expected` and `NodeOutputKindMismatch::expected`.
+/// The remaining types in this module ([`SlotRole`], [`Slot`], [`SlotList`],
+/// [`Signature`]) are `pub(crate)` because they have no external consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedOutputKind {
     /// A `Control` token.
@@ -42,7 +48,7 @@ pub enum ExpectedOutputKind {
 /// Semantic role of a slot, independent of its kind.  Drives label colors
 /// in dot rendering and could be used by future IR-aware consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SlotRole {
+pub(crate) enum SlotRole {
     Control,
     Memory,
     Phi,
@@ -64,10 +70,10 @@ pub enum SlotRole {
 
 /// A single input or output slot.
 #[derive(Debug, Clone, Copy)]
-pub struct Slot {
-    pub kind: ExpectedOutputKind,
-    pub name: &'static str,
-    pub role: SlotRole,
+pub(crate) struct Slot {
+    pub(crate) kind: ExpectedOutputKind,
+    pub(crate) name: &'static str,
+    pub(crate) role: SlotRole,
 }
 
 /// A list of slots, possibly with a variadic repeating tail.
@@ -76,46 +82,46 @@ pub struct Slot {
 /// `>= head.len()` repeats `tail`; otherwise the list is exactly
 /// `head.len()` slots long.
 #[derive(Debug, Clone, Copy)]
-pub struct SlotList {
-    pub head: &'static [Slot],
-    pub tail: Option<Slot>,
+pub(crate) struct SlotList {
+    pub(crate) head: &'static [Slot],
+    pub(crate) tail: Option<Slot>,
 }
 
 impl SlotList {
-    pub const fn fixed(head: &'static [Slot]) -> Self {
+    pub(crate) const fn fixed(head: &'static [Slot]) -> Self {
         Self { head, tail: None }
     }
 
-    pub const fn variadic(head: &'static [Slot], tail: Slot) -> Self {
+    pub(crate) const fn variadic(head: &'static [Slot], tail: Slot) -> Self {
         Self {
             head,
             tail: Some(tail),
         }
     }
 
-    pub fn is_variadic(&self) -> bool {
+    pub(crate) fn is_variadic(&self) -> bool {
         self.tail.is_some()
     }
 
     /// Fixed-prefix length.  Callers validating a variadic tail must read
     /// indices `>= head_len()` via [`SlotList::at`] (or against
     /// [`SlotList::tail`] directly).
-    pub fn head_len(&self) -> usize {
+    pub(crate) fn head_len(&self) -> usize {
         self.head.len()
     }
 
     /// Slot at index `idx`.  For fixed-arity lists returns `None` past the
     /// head; for variadic lists returns the tail slot for any past-head index.
-    pub fn at(&self, idx: usize) -> Option<Slot> {
+    pub(crate) fn at(&self, idx: usize) -> Option<Slot> {
         self.head.get(idx).copied().or(self.tail)
     }
 }
 
 /// Full input/output signature of a [`NodeKind`].
 #[derive(Debug, Clone, Copy)]
-pub struct Signature {
-    pub inputs: SlotList,
-    pub outputs: SlotList,
+pub(crate) struct Signature {
+    pub(crate) inputs: SlotList,
+    pub(crate) outputs: SlotList,
 }
 
 // ── Slot constants ────────────────────────────────────────────────────────────
@@ -274,12 +280,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
                 outputs: SlotList::fixed(&[$($o),*]),
             }
         };
-        (inputs: [$($i:expr),* $(,)?], outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
-            Signature {
-                inputs: SlotList::fixed(&[$($i),*]),
-                outputs: SlotList::variadic(&[$($o),*], $ot),
-            }
-        };
         (inputs: [$($i:expr),* $(,)?]; in_tail: $it:expr, outputs: [$($o:expr),* $(,)?] $(,)?) => {
             Signature {
                 inputs: SlotList::variadic(&[$($i),*], $it),
@@ -298,9 +298,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // ── Initial state ───────────────────────────────────────────────────
         NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
         NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
-        NodeKind::InitialVar(_) | NodeKind::FunctionArg { .. } => {
-            sig!(inputs: [], outputs: [INT_VAL])
-        }
+        NodeKind::InitialVar(_)
+        | NodeKind::FunctionArg { .. }
+        | NodeKind::IntConst(_)
+        | NodeKind::IntConstWide(_) => sig!(inputs: [], outputs: [INT_VAL]),
 
         // ── Region / join nodes (variadic inputs) ───────────────────────────
         // ControlState: one Control input per predecessor (variadic).
@@ -326,7 +327,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
             outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
         // Return: [control, memory, ...return values]. Return values are the
-        // calling convention's ret_val_regs when built by the analyzer; synthetic
+        // calling convention's ret_val_regs when built by the strider lifter; synthetic
         // test builds may supply a single explicit value via `build_return`.
         NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
         // IndirectBranch: [control, memory, target_value].  Placeholder for
@@ -345,7 +346,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::StackStorePhi { .. } => sig!(inputs: [PHI, MEM, DATA], outputs: [MEM]),
 
         // ── Integer constants and operations ────────────────────────────────
-        NodeKind::IntConst(_) => sig!(inputs: [], outputs: [INT_VAL]),
+        // (`IntConst` / `IntConstWide` shape is folded into the Initial-state
+        // arm above — they share the `inputs: [], outputs: [INT_VAL]` shape.)
         // Unary integer ops: same single-input single-output shape.
         NodeKind::IntUnaryOp(_)
         | NodeKind::Truncate
@@ -393,6 +395,43 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // New: [...args] (variadic, typically a size).
         NodeKind::New => sig!(inputs: []; in_tail: ARG, outputs: [INT_VAL]),
     }
+}
+
+/// Returns `true` if the input and output slot counts on `node_id`'s
+/// current state are consistent with the expected signature of `kind`.
+///
+/// Used by [`crate::graph::Graph::set_node_kind`] as a debug-mode
+/// signature check: a node-kind mutation must leave the existing edges
+/// well-typed, which (at minimum) requires that the slot counts match
+/// the new kind's signature.  Counts are compared as follows:
+///
+/// - Fixed-arity slot list (no `tail`): exact equality with `head_len()`.
+/// - Variadic slot list (`tail` present): at least `head_len()` slots
+///   present; the extra slots are assumed to repeat the tail.
+///
+/// Kind-level typing of each slot's [`ExpectedOutputKind`] is checked
+/// by the full [`crate::validate::validate`] pass — this helper only
+/// covers the count/arity invariant that's cheap to verify in the
+/// hot path of an in-place node mutation.
+pub(crate) fn slot_counts_match_kind(
+    graph: &crate::graph::Graph,
+    node_id: crate::node::NodeId,
+    kind: &NodeKind,
+) -> bool {
+    let sig = expected_signature(kind);
+    let input_count = graph.node_inputs(node_id).len();
+    let output_count = graph.node_outputs(node_id).len();
+    let inputs_ok = if sig.inputs.is_variadic() {
+        input_count >= sig.inputs.head_len()
+    } else {
+        input_count == sig.inputs.head_len()
+    };
+    let outputs_ok = if sig.outputs.is_variadic() {
+        output_count >= sig.outputs.head_len()
+    } else {
+        output_count == sig.outputs.head_len()
+    };
+    inputs_ok && outputs_ok
 }
 
 #[cfg(test)]

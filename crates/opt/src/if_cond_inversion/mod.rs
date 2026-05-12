@@ -43,11 +43,10 @@
 //! Both are use-list mutations the pattern-rewrite engine doesn't do, so
 //! we hand-write the surgery.
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 /// Pass that rewrites `If(BoolNeg(C))` into `If(C)` with branches swapped.
 ///
@@ -55,20 +54,20 @@ use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 /// `BoolNeg(BoolNeg) → x` rule simplifies double-negations first.
 pub struct IfCondInversion;
 
-impl OptimizerOnBuilt for IfCondInversion {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+impl Optimizer for IfCondInversion {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Collect candidate `If` nodes whose cond input is BoolUnaryOp::Neg.
         // We filter here (not in `preorder_kind`) because we need to read
         // the input chain too.
-        let graph = &function.graph;
-        let candidates: Vec<NodeId> = function
+        let graph = ctx.graph_ref();
+        let candidates: Vec<NodeId> = ctx
             .preorder_kind(|k| matches!(k, NodeKind::If))
             .filter(|&node| is_inverted_cond(graph, node))
             .collect();
 
         let mut result = OptimizationResult::NoChange;
         for if_node in candidates {
-            invert(&mut function.graph, if_node)?;
+            invert(ctx.graph_mut(), if_node)?;
             result = OptimizationResult::Changed;
         }
         Ok(result)
@@ -102,6 +101,14 @@ fn invert(graph: &mut ir::Graph, if_node: NodeId) -> Result<()> {
     let cond_out = graph.input_output_id(cond_input_id);
     let bool_neg_node = graph.get_node_from_output(cond_out);
     let [inner] = graph.node_inputs_exact::<1>(bool_neg_node)?;
+    // Absorb the BoolNeg's asm-fingerprint into the surviving inner-cond
+    // node BEFORE redirecting the input, so the contributing-asm history
+    // survives even when the BoolNeg becomes dead (no other consumers).
+    // This upholds the asm-fingerprint superset contract: a rewrite that
+    // makes a node dead must transfer its fingerprint to whatever node
+    // takes over its semantic role.
+    let inner_node = graph.get_node_from_output(inner);
+    graph.extend_asm_fingerprint_from(inner_node, bool_neg_node);
     graph.update_input(cond_input_id, inner);
 
     // Step 2: swap consumers between output[0] (true) and output[1] (false).

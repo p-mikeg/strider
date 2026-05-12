@@ -1,4 +1,4 @@
-//! In-place IR edits for tier-2 resolution.
+//! In-place IR edits for indirect-branch resolution.
 //!
 //! Both `apply_link_register` and `apply_tail_call` are pure
 //! re-exports from [`opt`]; this module exists only as a stable strider

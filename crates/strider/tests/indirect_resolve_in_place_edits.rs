@@ -6,10 +6,8 @@
 //! consistent, and `ir::validate::validate` keeps passing post-edit.
 //!
 //! The fixtures use the existing helper at
-//! `tests/common/indirect_resolve_helpers.rs` (which lifts an x86_64 byte
-//! sequence + runs the strider optimiser pipeline).  `apply_tail_call`
-//! is round-2 work; tests here only pin its current "returns
-//! Unimplemented" contract.
+//! `tests/common/indirect_resolve_helpers/orchestrator.rs` (which lifts an
+//! x86_64 byte sequence + runs the strider optimiser pipeline).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -45,7 +43,7 @@ fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
-    apply_link_register(&mut graph, return_id, &[]).expect("apply");
+    apply_link_register(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, &[]).expect("apply");
     let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
     assert_eq!(inputs_after.len(), 2, "target_value dropped, no ret_vals appended");
     assert_eq!(inputs_after[0], inputs_before[0], "ctrl preserved");
@@ -64,7 +62,7 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
     let (mut graph, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
-    apply_link_register(&mut graph, return_id, &[anchor]).expect("apply");
+    apply_link_register(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, &[anchor]).expect("apply");
     let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
     assert_eq!(inputs_after.len(), inputs_before.len(), "[ctrl, mem, ret_val_0]");
     assert_eq!(*inputs_after.last().expect("non-empty"), anchor);
@@ -73,7 +71,7 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
 
 #[test]
 fn apply_tail_call_replaces_placeholder_with_call_then_return() {
-    // R3-FIXUP G2: apply_tail_call now does a real in-place edit.
+    // apply_tail_call now does a real in-place edit.
     // After the edit, the IR contains a Call with the IntConst
     // target as its address, feeding a fresh Return.  The original
     // placeholder Return is detached (unreachable from entry) but
@@ -81,7 +79,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0x1234_5678_u64;
-    let new_return = apply_tail_call(&mut graph, return_id, target, &[], &[], &[])
+    let new_return = apply_tail_call(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, target, &[], &[], &[])
         .expect("apply_tail_call");
     assert_ne!(
         new_return, return_id,
@@ -115,7 +113,7 @@ fn apply_tail_call_returns_node_id_of_new_return() {
     // `exit_control` after the in-place edit.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = apply_tail_call(&mut graph, return_id, 0xc0de_u64, &[], &[], &[])
+    let new_return = apply_tail_call(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, 0xc0de_u64, &[], &[], &[])
         .expect("apply_tail_call");
     assert_ne!(new_return, return_id);
     assert!(matches!(graph.graph.node_kind(new_return), NodeKind::Return));
@@ -129,7 +127,7 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     // `exit_control`, so test it directly.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = apply_tail_call(&mut graph, return_id, 0xface_u64, &[], &[], &[])
+    let new_return = apply_tail_call(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, 0xface_u64, &[], &[], &[])
         .expect("apply_tail_call");
     let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
     let new_ctrl_in = inputs[0];
@@ -150,7 +148,7 @@ fn apply_link_register_does_not_change_return_node_id() {
     // LinkRegister arm of `apply_in_place_edit`.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    apply_link_register(&mut graph, return_id, &[]).expect("apply");
+    apply_link_register(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, &[]).expect("apply");
     // Same NodeId, same NodeKind.
     assert!(matches!(graph.graph.node_kind(return_id), NodeKind::Return));
     // The control input chain is unchanged: input #0 still flows
@@ -184,10 +182,10 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
     let arch_ref = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes.clone(), 0x1000);
-    let sleigh = Sleigh::new(arch_ref.sla_spec, arch_ref.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch_ref.sla_spec(), arch_ref.pspec(), reader).expect("sleigh");
     let config = RunConfig {
         strider: &strider,
-        start_addr: 0x1000,
+        start_addr: cfg::MachineInsnAddr::new(0x1000),
         sleigh,
         rom: None,
         fn_max_size: None,
@@ -211,7 +209,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0xdead_beef_u64;
-    let new_return = apply_tail_call(&mut graph, return_id, target, &[], &[], &[])
+    let new_return = apply_tail_call(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, target, &[], &[], &[])
         .expect("apply_tail_call");
     let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
@@ -226,7 +224,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     }
 }
 
-// ── H0: ABI threading for in-place tail-call resolution ─────────────────
+// ── ABI threading for in-place tail-call resolution ─────────────────────────
 
 /// Drive a real strider lift to produce a placeholder Return, run
 /// `apply_tail_call` with non-empty `arg_passing_outputs` /
@@ -235,15 +233,14 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 /// `pattern::call().arg(0, …)` query to confirm the Call exposes a
 /// real arg slot 0.
 ///
-/// **Pre-H0:** `apply_tail_call`'s 4-arg signature ignored the
+/// **Without ABI threading:** `apply_tail_call`'s 4-arg signature ignored the
 /// calling convention.  `pattern::call().arg(0, predicate(|_| true))`
 /// returned zero matches because the resulting Call had only
 /// `[ctrl, mem, target]` inputs — no arg slots.
 ///
-/// **Post-H0:** with the convention threaded, the Call has arg slot 0
-/// and the pattern query matches.  This is the load-bearing claim of
-/// H0: pattern queries against resolved indirect Calls now
-/// work.
+/// **With ABI threading:** with the convention threaded, the Call has arg slot 0
+/// and the pattern query matches.  This is the load-bearing claim:
+/// pattern queries against resolved indirect Calls now work.
 #[test]
 fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
@@ -282,7 +279,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     ];
 
     let _new_return = apply_tail_call(
-        &mut graph,
+        &mut pattern::RewriteCtx::for_built(&mut graph),
         return_id,
         0xdead_beef,
         &[arg0, arg1, arg2],
@@ -296,8 +293,8 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     ir::validate::validate(&graph.graph, graph.entry).expect("validate");
 
     // The headline assertion: a `pattern::call().arg(0, …)` query
-    // matches at least once.  Pre-H0 this would have returned zero
-    // matches because the Call had no arg slot 0.
+    // matches at least once.  Before the ABI-threading fix this would
+    // have returned zero matches because the Call had no arg slot 0.
     let v0 = Capture::new();
     let pat: pattern::Pat = call().arg(0, any().capture(v0)).into();
     let matcher = Matcher::new(&graph);

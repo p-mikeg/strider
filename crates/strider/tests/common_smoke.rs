@@ -15,7 +15,7 @@ fn analyze_arithmetic_add_x64_returns_nontrivial_graph() {
 #[test]
 fn analyze_arithmetic_add_mips32be_returns_nontrivial_graph() {
     // Smoke-test the BE MIPS path — exercises both the new mips_o32 calling
-    // convention (Task 16) and the BE shift formula fix (Task 4).
+    // convention and the BE shift formula fix.
     let g = common::analyze(common::Arch::Mips32be, "arithmetic", "add");
     assert!(g.preorder().count() > 5,
             "graph too small: {}", g.preorder().count());

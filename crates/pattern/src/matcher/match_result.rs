@@ -61,7 +61,7 @@ impl Match {
     /// `None` for unbound captures, control-flow bindings, or
     /// non-`IntConst` producers.
     #[must_use]
-    pub fn get_uint(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<u128> {
+    pub fn get_uint(&self, c: Capture, graph: &ir::Graph) -> Option<u128> {
         self.bindings.get_uint(c, graph)
     }
 
@@ -69,21 +69,21 @@ impl Match {
     /// constant sign-extended from the output type's bit width to
     /// `i128`.  Returns `None` otherwise.
     #[must_use]
-    pub fn get_int(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<i128> {
+    pub fn get_int(&self, c: Capture, graph: &ir::Graph) -> Option<i128> {
         self.bindings.get_int(c, graph)
     }
 
     /// If the node bound to `c` is a `BoolConst`, returns the stored
     /// boolean value.  Returns `None` otherwise.
     #[must_use]
-    pub fn get_bool(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<bool> {
+    pub fn get_bool(&self, c: Capture, graph: &ir::Graph) -> Option<bool> {
         self.bindings.get_bool(c, graph)
     }
 
     /// If the node bound to `c` is a `FloatConst`, returns the raw
     /// IEEE 754 bit pattern as `u64`.  Returns `None` otherwise.
     #[must_use]
-    pub fn get_float_bits(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<u64> {
+    pub fn get_float_bits(&self, c: Capture, graph: &ir::Graph) -> Option<u64> {
         self.bindings.get_float_bits(c, graph)
     }
 
@@ -92,7 +92,7 @@ impl Match {
     pub fn get_int_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<IntBinaryOp> {
         self.bindings.get_int_binary_op(c, graph)
     }
@@ -102,14 +102,14 @@ impl Match {
     pub fn get_int_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<IntUnaryOp> {
         self.bindings.get_int_unary_op(c, graph)
     }
 
     /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
     #[must_use]
-    pub fn get_int_cmp_op(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<IntCmpOp> {
+    pub fn get_int_cmp_op(&self, c: Capture, graph: &ir::Graph) -> Option<IntCmpOp> {
         self.bindings.get_int_cmp_op(c, graph)
     }
 
@@ -118,7 +118,7 @@ impl Match {
     pub fn get_bool_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<BoolBinaryOp> {
         self.bindings.get_bool_binary_op(c, graph)
     }
@@ -128,7 +128,7 @@ impl Match {
     pub fn get_bool_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<BoolUnaryOp> {
         self.bindings.get_bool_unary_op(c, graph)
     }
@@ -138,7 +138,7 @@ impl Match {
     pub fn get_float_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<FloatBinaryOp> {
         self.bindings.get_float_binary_op(c, graph)
     }
@@ -148,7 +148,7 @@ impl Match {
     pub fn get_float_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<FloatUnaryOp> {
         self.bindings.get_float_unary_op(c, graph)
     }
@@ -158,7 +158,7 @@ impl Match {
     pub fn get_float_cmp_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<FloatCmpOp> {
         self.bindings.get_float_cmp_op(c, graph)
     }
@@ -195,15 +195,29 @@ impl Match {
                 if let Some(override_list) = graph.graph.call_clobbered_override(node) {
                     return override_list.get(idx).copied();
                 }
-                return graph.call_clobbered.get(idx).copied();
+                return graph.call_clobbered_regs().get(idx).copied();
             }
             // CallOther: clobber slots start at index 2 (no value
             // output) or 3 (with value output).  Detect by total
             // output count: `2 + clobber_len` for value-less,
             // `3 + clobber_len` for value-bearing.
+            //
+            // The clobber length here is per-CallOther: a precise-ABI
+            // CallOther carries its own `call_clobbered_override` list,
+            // and that list's length may differ from the function-default
+            // `call_other_clobbered` (e.g. `syscall` writes RAX/RCX/R11
+            // = 3 slots, while a SWI emits only `[r0]` = 1 slot, while
+            // the function-default may be empty).  Use the override
+            // length when present so `clobber_start` matches the actual
+            // node shape — a function-default-based check would produce
+            // a "shape we don't recognise" miss for every per-CallOther
+            // override whose length differs from the default.
             if matches!(kind, NodeKind::CallOther { .. }) {
                 let total_outputs = graph.graph.node_outputs(node).len();
-                let clobber_len = graph.call_other_clobbered.len();
+                let clobber_len = graph
+                    .graph
+                    .call_clobbered_override(node)
+                    .map_or(graph.call_other_clobbered_regs().len(), |ov| ov.len());
                 let clobber_start: u32 = if total_outputs == 2 + clobber_len {
                     2
                 } else if total_outputs == 3 + clobber_len {
@@ -222,7 +236,7 @@ impl Match {
                 if let Some(override_list) = graph.graph.call_clobbered_override(node) {
                     return override_list.get(idx).copied();
                 }
-                return graph.call_other_clobbered.get(idx).copied();
+                return graph.call_other_clobbered_regs().get(idx).copied();
             }
         }
         match graph.graph.node_kind(binding.node) {
@@ -241,9 +255,9 @@ impl Match {
     /// `any_int_const(other)` on the call-arg side, compute the
     /// difference).
     #[must_use]
-    pub fn stack_offset(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<i64> {
+    pub fn stack_offset(&self, c: Capture, graph: &ir::Graph) -> Option<i64> {
         let node = self.bindings.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::StackStore { offset, .. } => Some(*offset),
             _ => None,
         }
@@ -267,12 +281,12 @@ impl Match {
     pub fn stack_phi_offsets<'g>(
         &self,
         c: Capture,
-        graph: &'g BuiltFunctionGraph,
+        graph: &'g ir::Graph,
     ) -> Option<&'g [i64]> {
         let node = self.bindings.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::StackStorePhi { .. } => {
-                let slice = graph.graph.stack_phi_offsets(node);
+                let slice = graph.stack_phi_offsets(node);
                 if slice.is_empty() { None } else { Some(slice) }
             }
             _ => None,
@@ -296,11 +310,25 @@ impl Match {
     pub fn asm_fingerprint<'g>(
         &self,
         c: Capture,
-        graph: &'g BuiltFunctionGraph,
+        graph: &'g ir::Graph,
     ) -> &'g [u64] {
         match self.bindings.get_node(c) {
-            Some(node) => graph.graph.asm_fingerprint(node),
+            Some(node) => graph.asm_fingerprint(node),
             None => &[],
+        }
+    }
+
+    /// If the node bound to `c` is an [`ir::node::NodeKind::IntConstWide`],
+    /// returns the raw little-endian bytes of its stored value (32 bytes
+    /// for `U256`, 64 for `U512`).  Returns `None` for unbound captures
+    /// or non-`IntConstWide` producers — narrow constants go through
+    /// [`Self::get_uint`] / [`Self::get_int`] instead.
+    #[must_use]
+    pub fn get_wide_bytes(&self, c: Capture, graph: &ir::Graph) -> Option<Vec<u8>> {
+        let node = self.bindings.get_node(c)?;
+        match graph.node_kind(node) {
+            ir::node::NodeKind::IntConstWide(id) => Some(graph.wide_const(*id).to_le_bytes()),
+            _ => None,
         }
     }
 

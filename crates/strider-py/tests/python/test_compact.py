@@ -6,7 +6,7 @@ from strider import CallingConvention, MemoryMap, SleighArch
 
 def _x86_64_strider():
     arch = SleighArch.x86_64()
-    cc = CallingConvention.x86_64_systemv_abi()
+    cc = CallingConvention.x86_64_systemv()
     return arch, cc
 
 

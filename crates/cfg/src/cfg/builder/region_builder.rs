@@ -162,7 +162,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or_else(
                     || anyhow!("invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"),
                 )?;
-                let pcode_count = u64::try_from(lift_res.insns.len()).unwrap_or(u64::MAX);
+                // `usize → u64` is infallible on every supported target (32/64-bit).
+                let pcode_count = lift_res.insns.len() as u64;
                 // Sleigh idiom: a branch to `target == pcode_count` (one past the
                 // last pcode insn) means "exit the current pcode block, fall
                 // through to the next machine instruction". MIPS DIV / SLT
@@ -212,6 +213,12 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// method is the cfg-builder convenience wrapper that pulls
     /// `start_addr` / `fn_max_size` / `allow_code_before_start_addr` from
     /// the builder's options.
+    ///
+    /// Callers that need to enforce the well-formedness rule "a tail call
+    /// may only target the first pcode instruction of a machine
+    /// instruction" should inline that `insn_index == 0` validation
+    /// themselves at the use site (see the `Branch` and `CondBranch` arms
+    /// of [`Self::process_new_insn`]).
     pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
@@ -219,27 +226,6 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             self.builder.options.fn_max_size,
             self.builder.options.allow_code_before_start_addr,
         )
-    }
-
-    /// Determines whether `branch_target_addr` is a tail call, validating the
-    /// pcode insn index.
-    ///
-    /// A well-formed tail call must target the *first* pcode instruction of a
-    /// machine instruction (`insn_index == 0`).  A branch whose address bounds
-    /// indicate a tail call but whose `insn_index != 0` is malformed and
-    /// returns an error.
-    pub(super) fn is_branch_tail_call(&self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
-        let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
-
-        if is_tail_call {
-            // Tail calls may only jump to the start of a machine insn. They
-            // cannot target a specific pcode op inside a machine insn.
-            if branch_target_addr.insn_index != 0 {
-                bail!("invalid tail call at opcode {branch_target_addr:?}");
-            }
-        }
-
-        Ok(is_tail_call)
     }
 
     /// Processes `insn` as a fresh instruction (not already in any region).
@@ -267,7 +253,10 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     .first()
                     .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
                 let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
-                let is_tail_call = self.is_branch_tail_call(branch_target_addr)?;
+                let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
+                if is_tail_call && branch_target_addr.insn_index != 0 {
+                    bail!("invalid tail call at opcode {branch_target_addr:?}");
+                }
                 // clang at -O0 (used for the aarch64be / ppc32le
                 // fixtures, where no Debian gcc cross exists) emits
                 // explicit unconditional `b <next-instr>` between
@@ -325,7 +314,10 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // bytes happen to be zero-pcode-op insns (e.g. NOP padding)
                 // the inner lift loop never appends to `self.insns`, so the
                 // upper-bound truncation in `build()` never fires.
-                let true_oob = self.is_branch_tail_call(target_addr)?;
+                let true_oob = self.is_branch_tail_call_nocheck(target_addr);
+                if true_oob && target_addr.insn_index != 0 {
+                    bail!("invalid tail call at opcode {target_addr:?}");
+                }
                 let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
 
                 match (true_oob, false_oob) {
@@ -361,28 +353,31 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         // looking up the missing OOB edge), and emit
                         // `RegionTerminator::Branch` to the in-range
                         // successor.  The conditional is lost, but the
-                        // lift completes.
-                        //
-                        // If popping leaves the region empty (the function
-                        // body is exactly the conditional jump and nothing
-                        // else), fall back to `TailCall` to the in-range
-                        // target so `add_region`'s non-empty invariant
-                        // holds.  This degenerate case loses the in-range
-                        // edge entirely, but it is essentially unobserved
-                        // in real binaries.
+                        // lift completes.  The in-range successor is
+                        // preserved as a regular intra-function branch
+                        // via `add_region`'s relaxed empty-Branch
+                        // invariant — `add_region` accepts empty regions
+                        // terminated with Branch (the degenerate
+                        // single-instruction case is sound by the same
+                        // path).
                         let in_range = if true_oob { next_insn_addr } else { target_addr };
-                        if self.insns.len() > 1 {
-                            self.insns.pop();
-                            let region =
-                                self.finish_current_region(RegionTerminator::Branch)?;
-                            self.builder
-                                .work_queue
-                                .push((Some((region, RegionEdgeKind::Branch)), in_range));
-                        } else {
-                            self.finish_current_region(RegionTerminator::TailCall {
-                                target: in_range.machine_addr.addr,
-                            })?;
-                        }
+                        // Pop the trailing CondBranch from `self.insns`
+                        // so the IR's per-region loop does not re-route
+                        // it through `handle_cond_branch` (which would
+                        // fail looking up the missing OOB edge).  Even
+                        // when this leaves the region empty
+                        // (single-instruction case), `add_region` now
+                        // accepts empty regions terminated with Branch.
+                        // The IR-layer per-region driver iterates
+                        // `region.insns` (a no-op for empty insns) and
+                        // handles the Branch terminator + outgoing edge
+                        // separately, so the in-range successor is
+                        // preserved as a regular intra-function branch.
+                        self.insns.pop();
+                        let region = self.finish_current_region(RegionTerminator::Branch)?;
+                        self.builder
+                            .work_queue
+                            .push((Some((region, RegionEdgeKind::Branch)), in_range));
                     }
                 }
                 Ok(ProcessInsnRes::FinishedProcessing)
@@ -427,7 +422,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
 
     /// Handles a `BranchIndirect` opcode by classifying its target via
     /// the mini-graph resolver (or a cached `known_targets` entry from
-    /// the strider orchestrator's tier-2 feedback path) and finalising
+    /// the strider orchestrator's IR-level indirect-branch resolver feedback path) and finalising
     /// the region with the matching terminator:
     /// - `Single(K)` inside the function range → `Branch` to K
     ///   (enqueue successor for exploration).
@@ -469,10 +464,11 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         };
         // None means "I can't classify this from the current region's
         // pcode alone" — defer to the strider outer loop, which runs
-        // tier 2 on the optimised IR.  Stamp `target_vn` and `addr`
-        // onto the deferred terminator so the strider lifter can
-        // emit a placeholder `Return(target_value)` anchoring the
-        // value for tier-2 inspection.  No outgoing edge.
+        // the IR-level indirect-branch resolver on the optimised IR.
+        // Stamp `target_vn` and `addr` onto the deferred terminator so
+        // the strider lifter can emit a placeholder
+        // `Return(target_value)` anchoring the value for IR-level
+        // indirect-branch resolver inspection.  No outgoing edge.
         let Some(resolved) = resolved else {
             self.finish_current_region(
                 RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
@@ -488,19 +484,16 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // `_nocheck` is sufficient: `at_machine_start` pins
                 // `insn_index == 0`, so the validating variant has
                 // nothing to validate.
-                if self.is_branch_tail_call_nocheck(target_addr) {
-                    self.finish_current_region(RegionTerminator::TailCall { target })?;
-                } else {
-                    let region = self.finish_current_region(RegionTerminator::Branch)?;
-                    self.builder
-                        .work_queue
-                        .push((Some((region, RegionEdgeKind::Branch)), target_addr));
-                }
+                self.finish_branch_or_tail_call(
+                    target_addr,
+                    RegionEdgeKind::Branch,
+                    self.is_branch_tail_call_nocheck(target_addr),
+                )?;
             }
             super::indirect_resolve::ResolvedTargets::Multiple(targets) => {
-                // `Multiple` is exclusively a tier-2 feedback shape;
-                // tier 1's mini-graph resolver only ever returns
-                // Single / LinkRegister / None.
+                // `Multiple` is exclusively an IR-level indirect-branch
+                // resolver feedback shape; the cfg-time mini-graph
+                // resolver only ever returns Single / LinkRegister / None.
                 let any_out_of_range = targets.iter().any(|t| {
                     self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
                 });
@@ -541,6 +534,31 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             self.builder.graph.add_edge(parent_id, region, edge_kind);
         }
         Ok(region)
+    }
+
+    /// Either finishes the current region with `RegionTerminator::TailCall`
+    /// (when `is_tail_call`) or with `RegionTerminator::Branch` plus an
+    /// outgoing `edge_kind` edge to `target_addr` enqueued for further
+    /// exploration.  Shared between the `Branch` opcode arm and
+    /// `process_branch_indirect`'s `Single` path — both classify a single
+    /// jump target the same way (intra-function vs OOB).
+    fn finish_branch_or_tail_call(
+        &mut self,
+        target_addr: PcodeInsnAddr,
+        edge_kind: RegionEdgeKind,
+        is_tail_call: bool,
+    ) -> Result<()> {
+        if is_tail_call {
+            self.finish_current_region(RegionTerminator::TailCall {
+                target: target_addr.machine_addr.addr,
+            })?;
+        } else {
+            let region = self.finish_current_region(RegionTerminator::Branch)?;
+            self.builder
+                .work_queue
+                .push((Some((region, edge_kind)), target_addr));
+        }
+        Ok(())
     }
 
     /// Processes `insn` at `addr`, first checking whether `addr` is already
@@ -728,12 +746,6 @@ pub mod test_api {
         #[must_use]
         pub fn is_branch_tail_call_nocheck(&self, target: PcodeInsnAddr) -> bool {
             self.inner.is_branch_tail_call_nocheck(target)
-        }
-
-        /// # Errors
-        /// Propagates errors from the underlying tail-call check.
-        pub fn is_branch_tail_call(&self, target: PcodeInsnAddr) -> Result<bool> {
-            self.inner.is_branch_tail_call(target)
         }
 
         /// # Errors

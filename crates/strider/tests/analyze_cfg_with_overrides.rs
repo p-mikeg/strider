@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{AnalyzeOptions, CallingConvention, SleighArch, Strider};
+use strider::{AnalyzeOptions, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
 /// Same fixture as `tests/per_address_cc.rs::x86_64_call_then_ret`:
@@ -22,9 +22,7 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 }
 
 fn make_strider() -> Strider {
-    let arch = SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
-    Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi()).unwrap()
+    strider::test_utils::strider_x86_64()
 }
 
 #[test]
@@ -33,8 +31,8 @@ fn analyze_cfg_with_applies_per_address_override() {
     let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
-    let cfg = cfg::Builder::new(sleigh, entry, cfg::OptionsBuilder::new().build())
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .unwrap();
 
@@ -59,9 +57,8 @@ fn analyze_cfg_with_applies_per_address_override() {
         .all_node_ids()
         .find(|n| matches!(bfg.graph.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
-    let override_list = bfg
-        .graph
-        .call_clobbered_override(call_id)
+    let override_list = bfg.graph
+                .call_clobbered_override(call_id)
         .expect("override CC must populate the side-table");
     let outs = bfg.graph.node_outputs(call_id);
     assert_eq!(
@@ -77,8 +74,8 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
     let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
-    let cfg = cfg::Builder::new(sleigh, entry, cfg::OptionsBuilder::new().build())
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .unwrap();
 

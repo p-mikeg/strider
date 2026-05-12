@@ -1,6 +1,6 @@
-//! Fixture builders feeding the tier-2 *classifier* unit / integration tests.
+//! Fixture builders feeding the IR-level *classifier* unit / integration tests.
 //!
-//! Split out from the previous monolithic `indirect_resolve_helpers.rs` (W7).  Every
+//! Split out from the previous monolithic `indirect_resolve_helpers.rs`.  Every
 //! helper here builds a `BuiltFunctionGraph` whose unique placeholder
 //! Return's value-input is shaped to exercise one specific classifier arm
 //! (IntConst, InitialVar(lr), ValuePhi-of-IntConsts, Load jump-table, etc.).
@@ -36,17 +36,17 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// folds to `IntConst(K)`.
 ///
 /// **K must be < the function start address (0x1000)** so the cfg
-/// builder's tier-1 resolver classifies the branch as a tail call —
+/// builder's cfg-time resolver classifies the branch as a tail call —
 /// otherwise it enqueues exploration of `K`, the buffered memory
 /// reader's range doesn't cover that, and Sleigh's `lift_one(K)`
 /// trips DataUnavailErr.  When `K` is a tail call we get
 /// `RegionTerminator::TailCall { target: K }`, NOT
-/// `UnresolvedIndirectBranch` — i.e. tier 1 resolves it before
-/// tier 2 ever sees it.  That defeats this fixture's purpose.
+/// `UnresolvedIndirectBranch` — i.e. cfg-time resolver resolves it before
+/// IR-level indirect-branch resolver ever sees it.  That defeats this fixture's purpose.
 ///
-/// To force the branch into the tier-2 path we therefore use a
+/// To force the branch into the IR-level path we therefore use a
 /// **runtime-computed** target: `mov rax, [rsp+8]; jmp rax`.  The
-/// rsp-relative read prevents tier 1's mini-graph from folding the
+/// rsp-relative read prevents cfg-time resolver's mini-graph from folding the
 /// target to a constant (no constant write to rax in the region),
 /// so the branch defers to `UnresolvedIndirectBranch`.  Then
 /// classify_anchor only sees an InitialVar / Load shape — NOT
@@ -56,24 +56,24 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 #[allow(dead_code)]
 pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, ir::Value) {
     unimplemented!(
-        "tier-1 always classifies a constant target — use \
+        "cfg-time always classifies a constant target — use \
          build_int_const_target_scenario_phi_merge for the IntConst arm"
     )
 }
 
 /// Build a function whose only indirect branch resolves to a
 /// constant `k` *only after* the optimiser has run on the lifted IR
-/// — i.e. one where tier 1's mini-graph couldn't classify it.
+/// — i.e. one where cfg-time resolver's mini-graph couldn't classify it.
 ///
 /// Approach: write `k` to a stack slot via a function-entry push,
 /// then load that slot through a register-indirect load and jump
-/// through the loaded value.  Tier 1's mini-graph isn't given
+/// through the loaded value.  the cfg-time mini-graph resolver's mini-graph isn't given
 /// `LoadReadOnly` for synthetic regions and doesn't track stack
 /// stores / loads, so the BranchIndirect defers via
 /// `UnresolvedIndirectBranch`.  After strider runs the full
 /// optimiser pipeline (including `StackStoreDetect` +
 /// `StackLoadForward`), the loaded value folds to `IntConst(k)` —
-/// exactly the shape tier 2's IntConst arm classifies.
+/// exactly the shape IR-level indirect-branch resolver's IntConst arm classifies.
 pub fn build_int_const_target_scenario_via_stack(
     k: u64,
 ) -> (BuiltFunctionGraph, ir::Value) {
@@ -83,7 +83,7 @@ pub fn build_int_const_target_scenario_via_stack(
     //   ff e0                jmp rax
     // The `pop rax` step gives the optimiser an SP-rooted load that
     // `StackLoadForward` can simplify back to the pushed constant
-    // K, while keeping tier 1's single-region mini-graph (which
+    // K, while keeping cfg-time resolver's single-region mini-graph (which
     // lacks StackLoadForward) unable to classify the target.
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![
@@ -125,7 +125,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, ir::Va
 /// merge's `Load` is replaced by a synthesised `ValuePhi` whose
 /// per-pred value inputs are the per-pred IntConsts.  We anchor
 /// the load via a single-input `Return(target_value)` — exactly
-/// the shape strider's R1.4 placeholder lift produces.
+/// the shape strider's the strider deferred-anchor lift placeholder lift produces.
 ///
 /// Bypasses the cfg builder + `Strider::analyze_cfg`
 /// because the only x86_64 byte sequence that compresses to this
@@ -309,7 +309,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 
     // Include `RedundantPhis` so the trivial single-input
     // VarPhi(lr) at the entry region collapses back to
-    // `InitialVar(lr)` — that's the shape tier 2's LinkRegister
+    // `InitialVar(lr)` — that's the shape IR-level indirect-branch resolver's LinkRegister
     // arm classifies, and it's what the production strider
     // pipeline (`default_pipeline()` includes RedundantPhis)
     // produces in real-binary integration tests.
@@ -346,7 +346,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 /// gate that killed the prior in-place heuristic: a naïve
 /// "Load(InitialVar(sp)+K) means return" classifier would mark
 /// this as LinkRegister, sending the analyser down the
-/// wrong-edge-set path.  Tier 2 dodges that trap because
+/// wrong-edge-set path.  the IR-level orchestrator resolver dodges that trap because
 /// StackLoadForward folds the load to the **stored constant** K,
 /// not to InitialVar(lr); the IntConst arm then classifies as
 /// Single(K).
@@ -417,12 +417,12 @@ pub fn build_push_target_pop_pc_scenario(
     (fg, anchor, lr)
 }
 
-// ── R4 jump-table fixtures ──────────────────────────────────────────────────
+// ── jump-table fixtures ──────────────────────────────────────────────────
 //
 // Each helper builds a `BuiltFunctionGraph` whose placeholder Return's
 // value-input is shaped like a jump-table dispatch — `Load(IntAdd(
 // IntConst(base), IntMul(idx, IntConst(stride))))` — and runs the
-// stable optimiser subset so the structure is exactly what tier 2's
+// stable optimiser subset so the structure is exactly what IR-level indirect-branch resolver's
 // classifier sees in production.  Helpers parameterise over how `idx`
 // is bounded:
 //
@@ -433,7 +433,7 @@ pub fn build_push_target_pop_pc_scenario(
 //
 // All helpers go through `FunctionBuilder::new_raw` rather than the
 // cfg-builder + analyze_cfg path because (a) we don't
-// need the cfg builder's tier-1 resolver here, (b) constructing real
+// need the cfg builder's cfg-time resolver here, (b) constructing real
 // arch bytes that lift to a jump-table-shaped IR is fixture overkill,
 // and (c) the FunctionBuilder API is the same code path the cfg
 // builder ultimately goes through, so we exercise the same lift
@@ -652,6 +652,148 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
     (fg, anchor)
 }
 
+/// Build a placeholder `IndirectBranch(load)` whose load is a
+/// **stack-array dispatch**: at function entry, `N` constants are
+/// stored at contiguous SP-relative offsets (`sp + base_offset +
+/// i*stride` for `i in 0..N`), and the dispatch loads from
+/// `sp + base_offset + (idx & MASK) * stride` where `MASK` is the
+/// power-of-two-minus-one bound that lets `KnownBits` derive the
+/// per-arm `bound = MASK + 1`.
+///
+/// `N` must be `> 0` and `< MAX_TABLE_ENTRIES` (currently 256), and
+/// must be a power of 2 so the `idx & (N - 1)` mask matches the
+/// stack-array classifier's `bound_via_known_bits` path.  Returns
+/// the graph, the anchor (load output), and the SP varnode the
+/// caller passes to `classify_anchor_with_rom_and_sp`.
+///
+/// The fixture mirrors the existing `build_two_target_array`
+/// fixture in `crates/opt/src/indirect_branch_resolve/stack_array.rs`,
+/// generalised to N targets.  The stack pointer is a fake 8-byte
+/// register at offset `0x40`; the index argument is a fake 8-byte
+/// register at offset `0x38` (matches sysv argument register
+/// width); the dispatch is `Load[(sp + base_offset) + ((arg & N-1)
+/// * stride)]`.
+///
+/// Pipeline run: `ConstantFold + KnownBits + RedundantPhis +
+/// StackStoreDetect`.  `StackLoadForward` is **deliberately
+/// omitted** — including it would forward the Load to the matching
+/// IntConst directly, eliminating the Load entirely and turning the
+/// anchor into an IntConst (the Single-target arm), defeating the
+/// stack-array classifier exercise.
+pub fn build_stack_array_dispatch_scenario(
+    targets: &[u64],
+    base_offset: i64,
+    stride: u64,
+) -> (BuiltFunctionGraph, ir::node::NodeOutputId, rsleigh::Vn) {
+    use ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
+    use ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
+    use opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let n = u64::try_from(targets.len()).expect("targets.len fits in u64");
+    assert!(n > 0, "stack-array fixture needs at least one target");
+    assert!(
+        n.is_power_of_two(),
+        "stack-array fixture requires N = power of 2 so KnownBits derives bound = N \
+         (idx & (N-1) leaves N candidate values)",
+    );
+    let mask = n - 1;
+
+    let sp = rsleigh::Vn {
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let arg_vn = rsleigh::Vn {
+        addr_off: 0x38,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0)
+        .expect("FunctionBuilder::new_raw");
+    let region = b.create_region().expect("create_region");
+    b.set_entry_region(region).expect("set_entry_region");
+    b.set_region(region);
+    let sp_val = b.read_variable(&sp).expect("read sp");
+
+    // N entry stores: target[i] → *(sp + base_offset + i*stride).
+    for (i, &target_addr) in targets.iter().enumerate() {
+        let off =
+            base_offset + i64::try_from(i).expect("i fits") * i64::try_from(stride).expect("stride fits");
+        let off_const = b.build_int_const(off as u64, NodeOutputType::U64).unwrap();
+        let addr = b
+            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
+            .expect("addr");
+        let target_v = b
+            .build_int_const(target_addr, NodeOutputType::U64)
+            .unwrap();
+        b.build_store(addr, target_v, rsleigh::VnSpace::RAM)
+            .expect("store target");
+    }
+
+    // Index = (arg as u32) & MASK, zero-extended to u64.
+    let arg_val = b.read_variable(&arg_vn).expect("read arg");
+    let arg_u32_node = b.graph_mut().create_node(
+        ir::node::NodeKind::Truncate,
+        [arg_val],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
+    let mask_c = b
+        .build_int_const(mask, NodeOutputType::U32)
+        .unwrap();
+    let masked = b
+        .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::U32)
+        .expect("idx & mask");
+    let idx_u64_node = b.graph_mut().create_node(
+        ir::node::NodeKind::Extend(ExtendOp::ZeroExtend),
+        [masked],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
+    let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
+    let idx_scaled = b
+        .build_int_binary_operation(
+            idx_u64_out,
+            stride_const,
+            IntBinaryOp::Mul,
+            NodeOutputType::U64,
+        )
+        .expect("idx*stride");
+
+    // Address = (sp + base_offset) + idx*stride.  Two-Add shape so the
+    // classifier's flatten_add_tree exercises both terms.
+    let base_const = b
+        .build_int_const(base_offset as u64, NodeOutputType::U64)
+        .unwrap();
+    let sp_plus_base = b
+        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::U64)
+        .expect("sp + base");
+    let load_addr = b
+        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
+        .expect("addr");
+    let loaded = b
+        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+        .expect("load");
+    b.build_indirect_branch(loaded)
+        .expect("placeholder IndirectBranch");
+    let mut fg = b.build().expect("build");
+
+    let mut p = OptimizerPipeline::new();
+    p.add(ConstantFold);
+    p.add(KnownBits);
+    p.add(RedundantPhis);
+    p.add(StackStoreDetect::new(sp));
+    // NOTE: StackLoadForward is intentionally NOT in this pipeline;
+    // see the doc-comment above.
+    p.run(&mut fg.graph, fg.entry).expect("opt pipeline");
+
+    // Locate the surviving Load from the IndirectBranch's value-input.
+    // After the partial pipeline, the placeholder's anchor IS the Load
+    // — `anchor_value_input` returns inputs[2], which is the Load output.
+    let anchor: NodeOutputId = anchor_value_input(&fg).expect("placeholder anchor");
+    (fg, anchor, sp)
+}
+
 /// Build a function whose only indirect branch resolves to
 /// `InitialVar(lr_vn)` after the optimiser runs.  Returns the
 /// link-register VN as the third tuple element so the caller can
@@ -666,10 +808,10 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
 /// `mov x0, x30; br x0` lifts cleanly to `Copy + BranchIndirect`
 /// and the optimiser folds `r0 = x30 = InitialVar(lr_vn)` directly.
 ///
-/// Tier 1 cannot classify this (its mini-graph isn't given a
+/// the cfg-time mini-graph resolver cannot classify this (its mini-graph isn't given a
 /// link-register VN since we don't pass `set_link_register` on
 /// `OptionsBuilder`), so the cfg builder defers via
-/// `UnresolvedIndirectBranch` and tier 2 sees the cleaned-up
+/// `UnresolvedIndirectBranch` and IR-level indirect-branch resolver sees the cleaned-up
 /// shape.
 pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
@@ -683,7 +825,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
     let arch = SleighArch::aarch64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create aarch64 sleigh");
 
     let regs = arch.probe_regs().expect("probe regs");
@@ -691,17 +833,17 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
         .expect("Strider::new");
     let lr_vn = strider
         .calling_convention()
-        .link_register_vn
+        .link_register_vn()
         .expect("AArch64 AAPCS has a link register");
 
     // Note: we deliberately omit `set_link_register` on the cfg
-    // builder's options.  With it set, tier 1's mini-graph would
+    // builder's options.  With it set, cfg-time resolver's mini-graph would
     // already classify the branch as LinkRegister and short-circuit
-    // before tier 2 ever sees it — i.e. no
+    // before IR-level indirect-branch resolver ever sees it — i.e. no
     // `UnresolvedIndirectBranch` placeholder would be emitted, and
     // the integration test would have nothing to assert against.
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build");
     let outcome = strider
@@ -714,7 +856,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     assert_eq!(
         outcome.unresolved_branches.len(),
         1,
-        "bx lr fixture must have exactly one tier-2 placeholder",
+        "bx lr fixture must have exactly one IR-level placeholder",
     );
     let anchor = anchor_value_input(&graph)
         .expect("bx lr fixture must have one IndirectBranch placeholder after optimisation");

@@ -10,11 +10,14 @@ impl FunctionBuilder {
     /// Returns the current `NodeOutputId` for `var` in the active region, or
     /// `None` if the variable is not known.
     ///
+    /// only consumer is sibling `builder/call.rs`; no
+    /// external crate uses it.  Demoted to `pub(super)`.
+    ///
     /// # Errors
     ///
     /// Returns `NoCurrentRegion` when no region is active. (Does
     /// not error when the variable is not tracked — that returns `Ok(None)`.)
-    pub fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
+    pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
         if let Some(variable_id) = self.variable_to_id.get(var) {
             Ok(Some(self.read_variable_from_id(*variable_id)?))
         } else {
@@ -62,8 +65,8 @@ impl FunctionBuilder {
     ///
     /// Returns `UnsupportedOutputSize` when any tracked variable
     /// has a byte size with no matching [`crate::node::NodeOutputType`].
-    /// Other variants from [`Self::link_control_regions`] /
-    /// [`Self::link_memory_regions`] / [`Self::link_region_variables`] also
+    /// Other variants from `link_control_regions` /
+    /// `link_memory_regions` / `link_region_variables` also
     /// propagate.
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
         let entry_control = self.body().entry_control;
@@ -91,7 +94,7 @@ impl FunctionBuilder {
     /// Returns `WrongOutputCount` if the freshly created
     /// `ControlState` or `MemPhi` does not have its expected output shape
     /// (this would indicate a graph-construction bug, not a user error).
-    /// Other variants from [`Self::build_control_phi`] propagate.
+    /// Other variants from `build_control_phi` propagate.
     pub fn create_region(&mut self) -> Result<RegionId> {
         let memory_node = self.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
         let [memory] = self.graph().node_outputs_exact(memory_node)?;

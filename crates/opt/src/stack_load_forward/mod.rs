@@ -8,15 +8,16 @@
 //! Must be wired into the pipeline with the calling convention's stack-pointer
 //! varnode and the target's endianness (see [`StackLoadForward::new`]).
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use target::Endianness;
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::sp_expr::{
-    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_store,
+    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_stack_store_phi,
+    step_through_store,
 };
+use crate::worklist::WorkSet;
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -52,19 +53,17 @@ impl StackLoadForward {
         cc: &target::BuiltCallingConvention,
         arch: &target::SleighArch,
     ) -> Self {
-        Self::new(cc.stack_ptr_vn, arch.endianness)
+        Self::new(cc.stack_ptr_vn(), arch.endianness())
     }
 }
 
-impl OptimizerOnBuilt for StackLoadForward {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
-        let loads: Vec<NodeId> = function
-            .preorder_kind(|k| matches!(k, NodeKind::Load(_)))
-            .collect();
+impl Optimizer for StackLoadForward {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+        let mut work = WorkSet::seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        for load in loads {
-            result |= try_forward_load(function, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
+        while let Some(load) = work.pop() {
+            result |= try_forward_load(ctx, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
         }
         Ok(result)
     }
@@ -74,22 +73,22 @@ impl OptimizerOnBuilt for StackLoadForward {
 /// upstream `StackStore{offset: K}`.  Returns `Changed` iff the load's uses
 /// were rewired.
 fn try_forward_load(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     load: NodeId,
     sp_vn: rsleigh::Vn,
     endianness: Endianness,
     memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
-    let [mem, addr] = fg.graph.node_inputs_exact::<2>(load)?;
-    let [load_out] = fg.graph.node_outputs_exact::<1>(load)?;
-    let Some(load_ty) = fg.graph.output_kind(load_out).as_value() else {
+    let [mem, addr] = ctx.node_inputs_exact::<2>(load)?;
+    let [load_out] = ctx.node_outputs_exact::<1>(load)?;
+    let Some(load_ty) = ctx.output_kind(load_out).as_value() else {
         return Ok(OptimizationResult::NoChange);
     };
 
-    let mut visiting = rustc_hash::FxHashSet::default();
+    let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
     let Some(SpExpr::Terminal { base: _, offset }) =
-        decompose_sp(&fg.graph, addr, sp_vn, memo, &mut visiting)
+        decompose_sp(ctx.graph_ref(), addr, sp_vn, memo, &mut visiting)
     else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -100,9 +99,9 @@ fn try_forward_load(
     // (Truncate / ShiftRight / ValuePhi) to the graph. This prevents
     // partial walks that fail downstream from leaving orphan nodes in
     // the arena.
-    let mut visited = rustc_hash::FxHashSet::default();
+    let mut visited: entity_utils::DenseEntitySet<NodeOutputId> = entity_utils::DenseEntitySet::new();
     let Some(shape) = probe(
-        fg,
+        ctx,
         mem,
         offset,
         load_size,
@@ -113,19 +112,22 @@ fn try_forward_load(
     ) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let forwarded = realize(fg, shape, load_ty, endianness)?;
+    let forwarded = realize(ctx, shape, load_ty, endianness, load)?;
 
     // Absorb the rewritten Load's asm-fingerprint into the forwarded
     // producer.  `realize` may have returned an existing-attributed node
     // (when the value comes straight from a StackStore's data slot) or
-    // freshly synthesised one (Truncate / ShiftRight / ValuePhi); either
-    // way the union semantics of `extend_asm_fingerprint_from` keep us
-    // superset-correct.
-    let forwarded_node = fg.graph.get_node_from_output(forwarded);
-    fg.graph.extend_asm_fingerprint_from(forwarded_node, load);
-    let changed = fg.graph.replace_all_uses(load_out, forwarded)?;
+    // freshly synthesised one (Truncate / ShiftRight / ValuePhi).  When
+    // `realize` synthesises multi-node chains (BE narrow path emits
+    // `Truncate(ShiftRight(...))`), each intermediate node carries the
+    // attribution via `create_node_attributed(..., &[load])` inside
+    // `realize`; the call below covers the outermost-only LE narrow
+    // and Existing cases.
+    let forwarded_node = ctx.get_node_from_output(forwarded);
+    ctx.extend_asm_fingerprint_from(forwarded_node, load);
+    let changed = ctx.replace_all_uses(load_out, forwarded)?;
     if changed {
-        fg.graph.detach_node_inputs(load);
+        ctx.detach_node_inputs(load);
     }
     Ok(OptimizationResult::from_changed(changed))
 }
@@ -180,14 +182,14 @@ enum ResolveShape {
 // clarifying the call sites.
 #[allow(clippy::too_many_arguments)]
 fn probe(
-    fg: &BuiltFunctionGraph,
+    ctx: &pattern::RewriteCtx<'_>,
     initial_mem: NodeOutputId,
     offset: i64,
     load_size: i64,
     load_ty: ir::node::NodeOutputType,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visited: &mut rustc_hash::FxHashSet<NodeOutputId>,
+    visited: &mut entity_utils::DenseEntitySet<NodeOutputId>,
 ) -> Option<ResolveShape> {
     struct PhiFrame {
         phi_node: NodeId,
@@ -209,18 +211,18 @@ fn probe(
         // Linear walk inside one path — no heap allocation on any
         // chain of disjoint StackStores or non-aliasing Stores.
         let inner_result: Option<ResolveShape> = loop {
-            let node = fg.graph.get_node_from_output(mem);
-            match *fg.graph.node_kind(node) {
+            let node = ctx.get_node_from_output(mem);
+            match *ctx.node_kind(node) {
                 NodeKind::StackStore {
                     offset: k,
                     space: _,
                 } => {
-                    let inputs = fg.graph.node_inputs(node);
+                    let inputs = ctx.node_inputs(node);
                     if inputs.len() < 3 {
                         break None;
                     }
                     let data = inputs[2];
-                    let Some(data_ty) = fg.graph.output_kind(data).as_value() else {
+                    let Some(data_ty) = ctx.output_kind(data).as_value() else {
                         break None;
                     };
                     let store_size = data_ty.byte_size() as i64;
@@ -243,7 +245,24 @@ fn probe(
                     }
                 }
                 NodeKind::Store(_) => {
-                    match step_through_store(&fg.graph, node, sp_vn, memo, offset, load_size) {
+                    match step_through_store(ctx.graph_ref(), node, sp_vn, memo, offset, load_size) {
+                        AliasStep::MayAlias => break None,
+                        AliasStep::PassThrough { prev_mem } => {
+                            mem = prev_mem;
+                            continue;
+                        }
+                    }
+                }
+                NodeKind::StackStorePhi { .. } => {
+                    // A `StackStorePhi` records every per-predecessor stack
+                    // offset on `Graph::stack_phi_offsets`; if every offset
+                    // is provably disjoint from `(offset, load_size)`, the
+                    // phi is a transparent step.  Mirrors the equivalent
+                    // arm in `function_args::mem_chain_is_dirty`.  Without
+                    // this, `Load[sp+K]` whose memory chain passes through
+                    // a stack-store phi could never be forwarded — round
+                    // fix.
+                    match step_through_stack_store_phi(ctx.graph_ref(), node, offset, load_size) {
                         AliasStep::MayAlias => break None,
                         AliasStep::PassThrough { prev_mem } => {
                             mem = prev_mem;
@@ -261,7 +280,7 @@ fn probe(
                         break None;
                     }
                     // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                    let inputs = fg.graph.node_inputs(node);
+                    let inputs = ctx.node_inputs(node);
                     if inputs.len() < 2 {
                         break None;
                     }
@@ -319,7 +338,7 @@ fn probe(
             // pred list on the frame — saves a Vec allocation per
             // MemPhi.
             let next_slot = top.done_count + 1;
-            let phi_inputs = fg.graph.node_inputs(top.phi_node);
+            let phi_inputs = ctx.node_inputs(top.phi_node);
             let next_mem = phi_inputs[next_slot];
             mem = next_mem;
             continue 'outer;
@@ -337,10 +356,11 @@ fn probe(
 /// the IR rejects the requested constant; structurally the realization
 /// is a deterministic walk over the shape tree.
 fn realize(
-    fg: &mut BuiltFunctionGraph,
+    ctx: &mut pattern::RewriteCtx<'_>,
     shape: ResolveShape,
     load_ty: ir::node::NodeOutputType,
     endianness: Endianness,
+    load: ir::node::NodeId,
 ) -> crate::Result<NodeOutputId> {
     match shape {
         ResolveShape::Existing(out) => Ok(out),
@@ -352,33 +372,43 @@ fn realize(
             //   `ShiftRight` is the *logical* right-shift (zero-fill), the
             //   correct synthesis since we want the high bytes positioned
             //   in the low end before truncating.
+            //
+            // Use `create_node_attributed(..., &[load])` for every
+            // freshly-synthesised node so the asm-fingerprint contract
+            // holds at every intermediate node — not just the outermost.
+            // The caller in `try_forward_load` only absorbs into the
+            // returned outermost node, so a plain `create_node` would
+            // leave the BE-path `ShiftRight` node reachable with an
+            // empty fingerprint.
             let shifted = match endianness {
                 Endianness::Little => data,
                 Endianness::Big => {
                     let shift_bits =
                         ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-                    let shift_const = fg.graph.make_int_const(shift_bits, data_ty)?;
-                    let shr = fg.graph.create_node(
+                    let shift_const = ctx.make_int_const(shift_bits, data_ty)?;
+                    let shr = ctx.create_node_attributed(
                         NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
                         [data, shift_const],
                         [NodeOutputKind::OutputType(data_ty)],
+                        &[load],
                     );
-                    let [out] = fg.graph.node_outputs_exact::<1>(shr)?;
+                    let [out] = ctx.node_outputs_exact::<1>(shr)?;
                     out
                 }
             };
-            let trunc = fg.graph.create_node(
+            let trunc = ctx.create_node_attributed(
                 NodeKind::Truncate,
                 [shifted],
                 [NodeOutputKind::OutputType(load_ty)],
+                &[load],
             );
-            let [out] = fg.graph.node_outputs_exact::<1>(trunc)?;
+            let [out] = ctx.node_outputs_exact::<1>(trunc)?;
             Ok(out)
         }
         ResolveShape::Phi { phi_token, preds } => {
             let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(preds.len());
             for p in preds {
-                resolved.push(realize(fg, p, load_ty, endianness)?);
+                resolved.push(realize(ctx, p, load_ty, endianness, load)?);
             }
             // Dedup: if all per-predecessor results coincide, skip the
             // ValuePhi — returning the common value keeps the graph
@@ -391,19 +421,20 @@ fn realize(
             {
                 return Ok(first);
             }
-            let value_phi = fg.graph.create_node(
+            let value_phi = ctx.create_node_attributed(
                 NodeKind::ValuePhi,
                 std::iter::once(phi_token).chain(resolved),
                 [NodeOutputKind::OutputType(load_ty)],
+                &[load],
             );
-            let [out] = fg.graph.node_outputs_exact::<1>(value_phi)?;
+            let [out] = ctx.node_outputs_exact::<1>(value_phi)?;
             Ok(out)
         }
     }
 }
 
 
-// ── Public helper for the tier-2 indirect-branch classifier ──────
+// ── Public helper for the indirect-branch classifier ──────
 //
 // `try_forward_load` rewrites the load by bottoming-out the memory chain at
 // a `StackStore` and re-using its data slot.  When the load address has a
@@ -412,7 +443,7 @@ fn realize(
 // (`sp + base + idx*stride`) — the per-i target lives at offset
 // `base + i*stride` for i in [0, N), bounded by KnownBits.
 //
-// The tier-2 classifier needs to enumerate per-i values without rewriting
+// The indirect-branch classifier needs to enumerate per-i values without rewriting
 // the load (no IR primitive expresses "value depends on idx" without a
 // `ControlState` for ValuePhi to bind to).  This helper exposes the
 // `StackStore`-chain walk as a pub function: given a memory chain root
@@ -454,10 +485,10 @@ fn realize(
 // narrow case shows up as a wide-typed IntConst-valued store that the
 // classifier can read directly.
 
-/// Per-call memo for [`find_stack_stored_value_at_offset`], keyed on
-/// `(memory_token, offset, value_type)`.  Threaded through tier-2
-/// classifier loops so repeated lookups across enumerated jump-table
-/// indices share their walks.
+/// Per-call memo for `find_stack_stored_value_at_offset`, keyed on
+/// `(memory_token, offset, value_type)`.  Threaded through the
+/// indirect-branch classifier loops so repeated lookups across
+/// enumerated jump-table indices share their walks.
 pub type StackStoredValueMemo =
     rustc_hash::FxHashMap<(NodeOutputId, i64, NodeOutputType), Option<NodeOutputId>>;
 
@@ -466,7 +497,7 @@ pub type StackStoredValueMemo =
 /// value has type `value_type`.  Returns the stored value's output id
 /// on success, or `None` when no matching store dominates the chain.
 ///
-/// See the module-level "Public helper for the tier-2 indirect-branch
+/// See the module-level "Public helper for the indirect-branch
 /// classifier" notes for the soundness rules.
 ///
 /// # Parameters
@@ -484,7 +515,7 @@ pub type StackStoredValueMemo =
 ///   of decomposing repeated SP expressions.
 /// - `walk_memo` — a per-call result memo keyed on `(mem, offset,
 ///   value_type)`.  Reuse it across multiple per-index lookups in the
-///   tier-2 classifier so shared chain prefixes pay O(1) per node.
+///   indirect-branch classifier so shared chain prefixes pay O(1) per node.
 #[must_use]
 pub(crate) fn find_stack_stored_value_at_offset(
     graph: &ir::Graph,
@@ -495,57 +526,70 @@ pub(crate) fn find_stack_stored_value_at_offset(
     sp_memo: &mut SpExprMemo,
     walk_memo: &mut StackStoredValueMemo,
 ) -> Option<NodeOutputId> {
-    let key = (mem, offset, value_type);
-    if let Some(&cached) = walk_memo.get(&key) {
-        return cached;
-    }
+    // Iterative form (was recursive — see scale.md A1).  Walks the
+    // memory-chain backward via StackStore.inputs[0] or
+    // Store-passthrough's prev_mem.  Stack-safe at any chain depth.
+    //
+    // Visited stack records every `mem` node we passed through so we
+    // can populate `walk_memo` for ALL of them once the terminal
+    // result is known — preserves the prior memoisation behaviour
+    // where every revisited prefix saved its result.
     let load_size = value_type.byte_size() as i64;
-    let node = graph.get_node_from_output(mem);
-    let result = match *graph.node_kind(node) {
-        NodeKind::StackStore { offset: k, space: _ } => {
-            // StackStore inputs: [MEM, SP, DATA].  The signature pins
-            // input arity; the < 3 guard is a defensive belt-and-braces
-            // against malformed IR slipping past the validator.
-            let inputs = graph.node_inputs(node);
-            if inputs.len() < 3 {
-                None
-            } else {
+    let mut visited: Vec<(NodeOutputId, i64, NodeOutputType)> = Vec::new();
+    let mut cur_mem = mem;
+
+    let result: Option<NodeOutputId> = loop {
+        let key = (cur_mem, offset, value_type);
+        if let Some(&cached) = walk_memo.get(&key) {
+            break cached;
+        }
+        visited.push(key);
+        let node = graph.get_node_from_output(cur_mem);
+        match *graph.node_kind(node) {
+            NodeKind::StackStore { offset: k, space: _ } => {
+                let inputs = graph.node_inputs(node);
+                if inputs.len() < 3 {
+                    break None;
+                }
                 let data = inputs[2];
                 let data_ty = graph.output_kind(data).as_value();
                 match data_ty {
-                    None => None,
+                    None => break None,
                     Some(data_ty) if k == offset => {
-                        // Exact-type match → return the stored value.
-                        // Mismatched types are a deliberate non-match here
-                        // (see module notes).
-                        if data_ty == value_type { Some(data) } else { None }
+                        if data_ty == value_type {
+                            break Some(data);
+                        }
+                        break None;
                     }
                     Some(data_ty) => {
                         let store_size = data_ty.byte_size() as i64;
                         if ranges_disjoint(k, store_size, offset, load_size) {
-                            find_stack_stored_value_at_offset(
-                                graph, inputs[0], offset, value_type, sp_vn, sp_memo, walk_memo,
-                            )
-                        } else {
-                            None
+                            cur_mem = inputs[0];
+                            continue;
                         }
+                        break None;
                     }
                 }
             }
-        }
-        NodeKind::Store(_) => {
-            match step_through_store(graph, node, sp_vn, sp_memo, offset, load_size) {
-                AliasStep::MayAlias => None,
-                AliasStep::PassThrough { prev_mem } => find_stack_stored_value_at_offset(
-                    graph, prev_mem, offset, value_type, sp_vn, sp_memo, walk_memo,
-                ),
+            NodeKind::Store(_) => {
+                match step_through_store(graph, node, sp_vn, sp_memo, offset, load_size) {
+                    AliasStep::MayAlias => break None,
+                    AliasStep::PassThrough { prev_mem } => {
+                        cur_mem = prev_mem;
+                        continue;
+                    }
+                }
             }
+            // MemPhi / InitialMemory / anything else: bail.  See module
+            // notes for why MemPhi handling is intentionally future work.
+            _ => break None,
         }
-        // MemPhi / InitialMemory / anything else: bail.  See module notes
-        // for why MemPhi handling is intentionally future work.
-        _ => None,
     };
-    walk_memo.insert(key, result);
+
+    // Memoise every prefix on the way back so future queries reuse work.
+    for key in visited {
+        walk_memo.insert(key, result);
+    }
     result
 }
 

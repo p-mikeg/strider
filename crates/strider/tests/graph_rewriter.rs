@@ -9,7 +9,7 @@
 //!    If-ladder) with `IntConst(K_0)`, then re-optimises; the optimizer
 //!    collapses the dispatch to a single branch.
 //! 2. `replace_jump_table_index_with_const_collapses_to_one_target` —
-//!    tier-2-resolved jump table lifted via the If-ladder; user
+//!    IR-level-resolved jump table lifted via the If-ladder; user
 //!    replaces the index input with a constant; only one target's
 //!    branch survives.
 //! 3. `replace_input_then_reoptimize_then_replace_again_works` —
@@ -33,7 +33,7 @@ use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{CallingConvention, GraphRewriter, SleighArch, Strider};
+use strider::{GraphRewriter, SleighArch, Strider};
 
 // ── Common fixture builders (private to this test crate) ────────────────────
 
@@ -63,27 +63,20 @@ fn analyze_with_known_targets(
 ) -> (BuiltFunctionGraph, Strider) {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create x86_64 sleigh");
     let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
     known_targets.insert(
-        PcodeInsnAddr {
-            machine_addr: MachineInsnAddr {
-                addr: branch_indirect_addr,
-            },
-            insn_index: 0,
-        },
+        PcodeInsnAddr::new(MachineInsnAddr::new(branch_indirect_addr), 0),
         ResolvedTargets::Multiple(targets),
     );
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known_targets)
         .build()
         .expect("cfg build");
 
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
-        .expect("Strider::new");
+    let strider = strider::test_utils::strider_x86_64();
     let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").graph;
     (graph, strider)
 }
@@ -135,12 +128,12 @@ fn count_adds(g: &BuiltFunctionGraph) -> usize {
 
 // ── Test 1 — replace switch selector with const, collapse to one branch ─────
 
-/// 3-target Switch lifted via F7 produces an If-ladder of 2 If nodes
+/// 3-target Switch lifted via `build_switch_if_ladder` produces an If-ladder of 2 If nodes
 /// comparing the index against `K_0` and `K_1`.  Rewriting **all** of
 /// the equality-cmp's right-hand-input (the `K_0` constant) to a
 /// matching value and then re-optimising won't actually collapse the
 /// ladder — the cmp is `Eq(idx, K_0)`, and replacing K_0 with K_0
-/// changes nothing.  Instead, the user-facing flow F6 enables is to
+/// changes nothing.  Instead, the user-facing flow switch lifting enables is to
 /// rewrite the cmp's INDEX side (the `idx` operand) to `IntConst(K_0)`.
 /// Then `Eq(K_0, K_0)` folds to `BoolConst(true)`, the first If's
 /// false-branch becomes dead, and DeadBranchElim collapses the
@@ -188,7 +181,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
 
 // ── Test 2 — replace jump-table index with const, collapse to one target ────
 
-/// **Headline F6+F7 flow.**  Tier-2-resolved jump table lifted via F7's
+/// **Headline switch lifting + post-resolution rewrite flow.**  IR-level-resolved jump table lifted via `build_switch_if_ladder`'s
 /// If-ladder; rewrite the cmp output to BoolConst(true) at one
 /// equality cmp; re-optimize; the dispatch collapses to a single
 /// branch (zero Ifs reachable post-fold).

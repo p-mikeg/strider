@@ -31,13 +31,23 @@
 //! - [`CallingConvention`] — describes which registers are caller-saved
 //! - [`run`] — top-level orchestrator: builds the CFG, lifts to IR, runs
 //!   the optimiser pipeline, and resolves indirect branches via the
-//!   tier-2 fixed-point loop
+//!   indirect-resolution fixed-point loop
 
 mod errors;
 mod orchestrator;
 mod strider;
 pub mod indirect_resolve;
 pub mod rewrite;
+
+// `test_utils` is unconditionally `pub` rather than gated on
+// `feature = "test-utils"`: integration tests under
+// `crates/strider/tests/` can't activate features on their own crate,
+// so a feature gate would force every integration-test file to add a
+// circular `strider = { features = ["test-utils"] }` dev-dep.  The
+// helpers carry no runtime weight (a thin wrapper around
+// `Strider::new`) so an always-public module is the simplest sound
+// choice.
+pub mod test_utils;
 
 pub use errors::UnresolvedIndirectBranch;
 pub use orchestrator::{run, RunConfig};

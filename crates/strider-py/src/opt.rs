@@ -2,11 +2,11 @@
 //!
 //! The Rust `opt::OptimizerPipeline::add` is generic over the concrete
 //! pass type (`O: Optimizer + 'static`) and stores it as
-//! `Box<dyn Optimizer>` internally.  We can't directly stuff a
-//! type-erased `Box<dyn Optimizer>` back into `add`, so the Python
+//! `Box<dyn OptimizerRaw>` internally.  We can't directly stuff a
+//! type-erased `Box<dyn OptimizerRaw>` back into `add`, so the Python
 //! wrapper accumulates erased boxes and, at run time, transfers them
 //! into a fresh real pipeline via a small adapter that re-implements
-//! `Optimizer` as a forwarder.
+//! `OptimizerRaw` as a forwarder.
 
 use pyo3::prelude::*;
 use pyo3::types::PyType;
@@ -14,25 +14,31 @@ use std::sync::Mutex;
 
 use crate::errors::into_strider_err;
 
-/// Trait-object holder owning a heap-allocated `opt::Optimizer`.
+/// Trait-object holder owning a heap-allocated `opt::OptimizerRaw`.
 /// The wrapper itself is `Send + Sync` so it can move across the
 /// PyO3 boundary safely (Python objects are reachable from any
 /// thread that holds the GIL).
-pub(crate) type ErasedPass = Box<dyn opt::Optimizer + Send + Sync>;
+///
+/// We use the low-level [`opt::OptimizerRaw`] trait (which takes
+/// `(&mut Graph, NodeId)`) rather than [`opt::Optimizer`] (which
+/// takes `&mut RewriteCtx`) because every passes' concrete type is
+/// already erased here — no per-call `RewriteCtx` construction is
+/// needed and the Rust signature stays purely in `Graph` terms.
+pub(crate) type ErasedPass = Box<dyn opt::OptimizerRaw + Send + Sync>;
 
 /// Adapter that turns an owned `ErasedPass` into something
 /// `opt::OptimizerPipeline::add` can accept.  `add` requires
-/// `O: Optimizer + 'static`; this newtype satisfies both bounds and
-/// forwards `optimize` straight through.
+/// `O: OptimizerRaw + 'static`; this newtype satisfies both bounds and
+/// forwards `optimize_raw` straight through.
 struct ForwardPass(ErasedPass);
 
-impl opt::Optimizer for ForwardPass {
-    fn optimize(
+impl opt::OptimizerRaw for ForwardPass {
+    fn optimize_raw(
         &self,
         graph: &mut ir::Graph,
         entry: ir::node::NodeId,
     ) -> opt::Result<opt::OptimizationResult> {
-        self.0.optimize(graph, entry)
+        self.0.optimize_raw(graph, entry)
     }
 }
 
@@ -55,7 +61,7 @@ impl PipelineState {
     fn from_default() -> Self {
         // Re-create the default pipeline by reconstructing each pass
         // individually rather than calling opt::default_pipeline()
-        // (which returns an OptimizerPipeline whose Box<dyn Optimizer>
+        // (which returns an OptimizerPipeline whose Box<dyn OptimizerRaw>
         // entries are not externally re-extractable).  Pass list and
         // order MUST mirror `opt::default_pipeline()` — drift here
         // silently produces graphs that look different from the
@@ -162,11 +168,26 @@ impl PyOptimizerPipeline {
     /// state.  Drains the internal pass lists — call once per
     /// "transfer" cycle and rebuild the wrapper afterwards if you
     /// need to keep it.
+    ///
+    /// returns `Err(StriderError)` if
+    /// the wrapper has already been drained (both pass lists empty).
+    /// Without this guard a second `Graph.optimize(pipe)` would
+    /// silently run an empty pipeline and report success — masking
+    /// caller bugs where the same wrapper is reused after a previous
+    /// `optimize` / `strider.run` consumed it.
     pub(crate) fn drain_into_pipeline(&self) -> PyResult<opt::OptimizerPipeline> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        if state.passes.is_empty() && state.post_passes.is_empty() {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "OptimizerPipeline is empty — already drained by a prior \
+                 Graph.optimize() / strider.run().  Build a fresh pipeline \
+                 (e.g. OptimizerPipeline.default()) or re-add passes before \
+                 calling again."
+            )));
+        }
         let mut pipe = opt::OptimizerPipeline::new();
         for p in state.passes.drain(..) {
             pipe.add(ForwardPass(p));
@@ -175,6 +196,23 @@ impl PyOptimizerPipeline {
             pipe.add_post_pass(ForwardPass(p));
         }
         Ok(pipe)
+    }
+
+    /// Prepend a `LoadReadOnly` pass to the front of the pipeline's
+    /// pass list.  Used by `run_with_custom_pipeline` to wire a
+    /// user-supplied `rom` into the pipeline before draining it
+    /// (otherwise the rom is silently discarded).
+    pub(crate) fn prepend_load_read_only(
+        &self,
+        rom: std::sync::Arc<dyn opt::ReadOnlyMemory>,
+    ) -> PyResult<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        let pass: ErasedPass = Box::new(opt::LoadReadOnly(rom));
+        state.passes.insert(0, pass);
+        Ok(())
     }
 }
 
@@ -239,54 +277,30 @@ impl PyOptimizerPipeline {
 //
 // One zero-sized class per pure (no-arg) Rust pass.  CC/arch-aware
 // passes that need configuration land in a follow-up task.
+//
+// `pure_pass_class!` collapses the 5-line zero-sized-struct + #[new]
+// boilerplate that each pass would otherwise repeat verbatim.  The
+// macro emits a `pub struct Py<Name>` plus a `#[pymethods]` block with
+// a single `#[new] fn new() -> Self { Self }`.
 
-#[pyclass(name = "ConstantFold", module = "strider.opt")]
-pub struct PyConstantFold;
-#[pymethods]
-impl PyConstantFold {
-    #[new]
-    fn new() -> Self { Self }
+macro_rules! pure_pass_class {
+    ($pyname:literal => $rust:ident) => {
+        #[pyclass(name = $pyname, module = "strider.opt")]
+        pub struct $rust;
+        #[pymethods]
+        impl $rust {
+            #[new]
+            fn new() -> Self { Self }
+        }
+    };
 }
 
-#[pyclass(name = "KnownBits", module = "strider.opt")]
-pub struct PyKnownBits;
-#[pymethods]
-impl PyKnownBits {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-#[pyclass(name = "RedundantPhis", module = "strider.opt")]
-pub struct PyRedundantPhis;
-#[pymethods]
-impl PyRedundantPhis {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-#[pyclass(name = "DeadBranchElim", module = "strider.opt")]
-pub struct PyDeadBranchElim;
-#[pymethods]
-impl PyDeadBranchElim {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-#[pyclass(name = "FlagCmpCanonicalize", module = "strider.opt")]
-pub struct PyFlagCmpCanonicalize;
-#[pymethods]
-impl PyFlagCmpCanonicalize {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-#[pyclass(name = "IfCondInversion", module = "strider.opt")]
-pub struct PyIfCondInversion;
-#[pymethods]
-impl PyIfCondInversion {
-    #[new]
-    fn new() -> Self { Self }
-}
+pure_pass_class!("ConstantFold" => PyConstantFold);
+pure_pass_class!("KnownBits" => PyKnownBits);
+pure_pass_class!("RedundantPhis" => PyRedundantPhis);
+pure_pass_class!("DeadBranchElim" => PyDeadBranchElim);
+pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize);
+pure_pass_class!("IfCondInversion" => PyIfCondInversion);
 
 // ── CC/arch-aware passes ──────────────────────────────────────────────────
 //
@@ -307,13 +321,7 @@ impl PyStackStoreDetect {
         sleigh: Py<crate::sleigh::PySleigh>,
         cc: crate::cc::PyCallingConvention,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let built_cc = cc
-            .inner
-            .build(&regs)
-            .map_err(crate::errors::into_lift_err)?;
+        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
             inner: opt::StackStoreDetect::from_convention(&built_cc),
         })
@@ -334,13 +342,7 @@ impl PyStackLoadForward {
         cc: crate::cc::PyCallingConvention,
         arch: crate::arch::PySleighArch,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let built_cc = cc
-            .inner
-            .build(&regs)
-            .map_err(crate::errors::into_lift_err)?;
+        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
             inner: opt::StackLoadForward::from_convention(&built_cc, &arch.inner),
         })
@@ -360,13 +362,7 @@ impl PyFunctionArgDetect {
         sleigh: Py<crate::sleigh::PySleigh>,
         cc: crate::cc::PyCallingConvention,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let built_cc = cc
-            .inner
-            .build(&regs)
-            .map_err(crate::errors::into_lift_err)?;
+        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
             inner: opt::FunctionArgDetect::from_convention(&built_cc),
         })
@@ -386,13 +382,7 @@ impl PyCallStackArgCollect {
         sleigh: Py<crate::sleigh::PySleigh>,
         cc: crate::cc::PyCallingConvention,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let built_cc = cc
-            .inner
-            .build(&regs)
-            .map_err(crate::errors::into_lift_err)?;
+        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
             inner: opt::CallStackArgCollect::from_convention(&built_cc),
         })

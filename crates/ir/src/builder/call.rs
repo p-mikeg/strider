@@ -24,13 +24,13 @@ impl FunctionBuilder {
     /// function-default arg-passing / clobber / ret-stack-pop set
     /// from `FunctionBuilder::new`.  When `override_cc` is `Some(cc)`,
     /// `cc` fully replaces the function-default for this single Call:
-    /// `cc.arg_passing_regs` (filtered through the function's tracked-
-    /// variable set) become the args; `cc.callee_saved_regs` define a
+    /// `cc.arg_passing_regs()` (filtered through the function's tracked-
+    /// variable set) become the args; `cc.callee_saved_regs()` define a
     /// fresh `is_clobbered = !callee_saved.contains(v) && Some(*v) !=
     /// stack_ptr` filter that produces this Call's clobber list;
-    /// `cc.ret_stack_pop` drives the post-call SP-add.  The per-Call
+    /// `cc.ret_stack_pop()` drives the post-call SP-add.  The per-Call
     /// clobber list is recorded on
-    /// [`crate::Graph::call_clobbered_overrides`] so pattern queries
+    /// `Graph::call_clobbered_overrides` so pattern queries
     /// can recover the right varnode for each clobber slot.
     ///
     /// Returns the freshly-created Call's [`NodeId`].
@@ -70,14 +70,14 @@ impl FunctionBuilder {
                 // reads are silently dropped — they would otherwise
                 // produce a `VariableNotFound` error from `read_variable`.
                 let arg_vars: SmallVec<[rsleigh::Vn; 4]> = cc
-                    .arg_passing_regs
+                    .arg_passing_regs()
                     .iter()
                     .copied()
                     .filter(|v| self.variable_to_id.contains_key(v))
                     .collect();
                 // Per-call clobber list: every tracked variable that
                 // is NOT in `callee_saved_regs` and NOT the SP.
-                let callee_saved = &cc.callee_saved_regs;
+                let callee_saved = cc.callee_saved_regs();
                 let stack_ptr_vn = self.stack_ptr_vn;
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
                     .variables
@@ -85,7 +85,7 @@ impl FunctionBuilder {
                     .copied()
                     .filter(|v| !callee_saved.contains(v) && Some(*v) != stack_ptr_vn)
                     .collect();
-                (arg_vars, clobber_vars, cc.ret_stack_pop)
+                (arg_vars, clobber_vars, cc.ret_stack_pop())
             }
         };
 
@@ -120,7 +120,18 @@ impl FunctionBuilder {
             _ => None,
         };
 
+        // Per-call effective `no_memory_clobber`: the override CC, if any,
+        // takes precedence; otherwise fall back to the function-default.
+        let no_memory_clobber =
+            override_cc.map_or(self.no_memory_clobber, |cc| cc.no_memory_clobber());
+
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
+        // The Call node's signature always includes a Memory output (validator
+        // Layer A enforces `[Control, Memory, *clobbers]`).  When the CC
+        // declares no_memory_clobber, we keep the Memory output but leave it
+        // dangling — the region's memory chain is NOT advanced, so subsequent
+        // loads see the pre-call memory edge.  LoadReadOnly / StackLoadForward
+        // can therefore forward through the call.
         let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
             .into_iter()
             .chain(clobbered_kinds);
@@ -128,7 +139,9 @@ impl FunctionBuilder {
         let call_outputs: Vec<_> = self.graph().node_outputs(call).into_iter().collect();
 
         self.advance_cur_region_ctrl(call_outputs[0])?;
-        self.advance_cur_region_memory(call_outputs[1])?;
+        if !no_memory_clobber {
+            self.advance_cur_region_memory(call_outputs[1])?;
+        }
         for (variable, new_val) in core::iter::zip(&clobber_vars, call_outputs.iter().skip(2)) {
             self.write_variable(variable, *new_val)?;
         }
@@ -160,6 +173,19 @@ impl FunctionBuilder {
     /// the region with `RegionTerminator::NoReturn`, so no successor
     /// will read them.  Stamps `name` on `Graph::call_other_names`.
     ///
+    /// # Dispatch via `target::CallOtherClass`
+    ///
+    /// This is the IR builder for the `NoReturn` arm of
+    /// [`target::call_other_abi::classify`] — the strider lift driver
+    /// chooses between this and [`Self::build_call_other_modeled`]
+    /// based on the `CallOtherClass` returned for the user-op name.
+    ///
+    /// There is intentionally **no** `build_call_other_noop` sibling:
+    /// the `NoOp` arm of `CallOtherClass` skips IR emission entirely
+    /// (the lifter discards the pcode op without producing any node).
+    /// Only `NoReturn` (this function) and `Call(abi)`
+    /// ([`Self::build_call_other_modeled`]) emit a `CallOther` node.
+    ///
     /// # Errors
     ///
     /// Returns `NoCurrentRegion` when no region is active.
@@ -168,12 +194,17 @@ impl FunctionBuilder {
         user_op_id: u64,
         name: &str,
     ) -> Result<NodeId> {
-        let ctrl = self.cur_region_control()?;
-        let memory = self.cur_region_memory()?;
+        // Snapshot the region's ctrl/mem edges and mark the region
+        // terminated, mirroring `build_return` / `build_branch` /
+        // `build_indirect_branch`.  Subsequent `build_*` calls into this
+        // region will now correctly fail with `RegionTerminated` instead
+        // of silently producing IR after a NoReturn terminator.
+        let res = self.terminate_cur_region()?;
+        self.require_terminator_kinds(&res)?;
         let mut output_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
         output_kinds.push(NodeOutputKind::Control);
         output_kinds.push(NodeOutputKind::Memory);
-        let inputs = [ctrl, memory];
+        let inputs = [res.control, res.memory];
         let node = self.create_node(
             NodeKind::CallOther { user_op_id },
             inputs,
@@ -182,12 +213,25 @@ impl FunctionBuilder {
         self.body_mut()
             .graph
             .set_call_other_name(node, name.to_string());
-        // Intentionally DO NOT call advance_cur_region_ctrl /
-        // advance_cur_region_memory — outputs dangle.
+        // Outputs intentionally dangle — no link_region.  The cfg layer
+        // already terminates the region with `RegionTerminator::NoReturn`.
         Ok(node)
     }
 
     /// Emit a CallOther with the precise per-op ABI shape.
+    ///
+    /// # Dispatch via `target::CallOtherClass`
+    ///
+    /// This is the IR builder for the `Call(abi)` arm of
+    /// [`target::call_other_abi::classify`] — the strider lift driver
+    /// chooses between this and [`Self::build_call_other_terminal`]
+    /// based on the `CallOtherClass` returned for the user-op name.
+    /// `NoOp` skips IR emission entirely (no sibling builder), so this
+    /// pair (`_terminal` for `NoReturn`, `_modeled` for `Call(abi)`)
+    /// covers every IR-emitting case.  See `target::CallOtherAbi` for
+    /// the implicit-channel description that drives this builder's
+    /// `implicit_reads` / `implicit_writes_vns` / `implicit_write_kinds`
+    /// inputs.
     ///
     /// Inputs of the resulting node:
     ///   `[ctrl_in, mem_in, *args, *implicit_reads]`

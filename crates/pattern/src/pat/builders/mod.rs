@@ -37,6 +37,6 @@ pub use call::{CallOtherPat, CallPat};
 pub(crate) use cmp_op::cmp_pat;
 pub use function_arg::FunctionArgPat;
 pub use memory::{LoadPat, StackStorePat, StackStorePhiPat, StorePat};
-pub use phi::PhiPat;
+pub use phi::{MemPhiPat, PhiPat, ValuePhiPat};
 pub use ret::RetPat;
 pub(crate) use unary_op::unary_pat;

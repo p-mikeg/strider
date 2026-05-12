@@ -206,14 +206,14 @@ pub fn single_initial_var() -> (BuiltFunctionGraph, rsleigh::Vn) {
 /// Graph that, after `opt::FunctionArgDetect`, contains a single
 /// `FunctionArg { Register(reg), 0 }` node.
 pub fn function_arg_reg() -> (BuiltFunctionGraph, rsleigh::Vn) {
-    use opt::{FunctionArgDetect, Optimizer};
+    use opt::{FunctionArgDetect, OptimizerRaw};
     let reg = reg_vn(0x38, 8);
     let sp = sp_vn();
     let mut t = Tb::raw(vec![reg, sp], &[], &[reg], &[reg], None, 0);
     let v = t.read_var(&reg);
     let mut g = t.ret_val(v);
     FunctionArgDetect::new(vec![reg], sp, vec![])
-        .optimize(&mut g.graph, g.entry)
+        .optimize_raw(&mut g.graph, g.entry)
         .expect("FunctionArgDetect");
     (g, reg)
 }

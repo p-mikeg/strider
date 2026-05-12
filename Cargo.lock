@@ -18,6 +18,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "anes"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -437,21 +443,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
-name = "graphmock"
-version = "0.1.0"
-dependencies = [
- "cranelift-entity",
- "graphwalk",
-]
-
-[[package]]
 name = "graphwalk"
 version = "0.1.0"
 dependencies = [
  "cranelift-entity",
  "entity-utils",
  "expect-test",
- "graphmock",
  "itertools 0.13.0",
 ]
 
@@ -481,6 +478,8 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
 ]
 
@@ -518,6 +517,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ir"
 version = "0.1.0"
 dependencies = [
@@ -529,9 +537,11 @@ dependencies = [
  "entity-utils",
  "ethnum",
  "graphwalk",
+ "hashbrown 0.16.1",
  "itertools 0.13.0",
  "proptest",
  "rsleigh",
+ "rustc-hash",
  "smallvec",
  "target",
  "thiserror",
@@ -672,7 +682,9 @@ name = "opt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cranelift-entity",
  "criterion",
+ "entity-utils",
  "ethnum",
  "ir",
  "pattern",
@@ -705,6 +717,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags",
+ "cranelift-entity",
  "ethnum",
  "ir",
  "opt",
@@ -826,6 +839,7 @@ dependencies = [
  "anyhow",
  "cfg-if",
  "indoc",
+ "inventory",
  "libc",
  "memoffset",
  "once_cell",

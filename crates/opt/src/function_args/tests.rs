@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerRaw;
 use ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
 use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn};
 use ir::{FunctionBuilder, IntBinaryOp};
@@ -10,13 +10,13 @@ fn rdi_like_vn() -> rsleigh::Vn {
     reg_vn(0x38, 8)
 }
 
-fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
-    fg.all_node_ids()
-        .filter(|&n| pred(fg.graph.node_kind(n)))
+fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
+    ctx.all_node_ids()
+        .filter(|&n| pred(ctx.node_kind(n)))
         .count()
 }
 
-/// Slice 1: x86_64-like convention passes arg 0 in a register.  A function
+/// x86_64-like convention passes arg 0 in a register.  A function
 /// that reads that register once should, after `FunctionArgDetect` runs,
 /// contain exactly one `FunctionArg { Register(rdi), 0 }` node, and the
 /// original `InitialVar(rdi)` use should have been rewired to it.
@@ -36,9 +36,9 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
-    pass.optimize(&mut fg.graph, fg.entry)?;
+    pass.optimize_raw(&mut fg.graph, fg.entry)?;
 
-    let n_fa = count(&fg, |k| {
+    let n_fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -54,12 +54,9 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
 
     // The original InitialVar(rdi) should have no remaining live uses
     // (the Return should now source from the FunctionArg output).
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let reachable_initial_rdi = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::InitialVar(v) if *v == rdi))
-        .count();
+    let reachable_initial_rdi = crate::test_support::count_reachable((&fg).into(), |k| {
+        matches!(k, NodeKind::InitialVar(v) if *v == rdi)
+    });
     assert_eq!(
         reachable_initial_rdi, 0,
         "InitialVar(rdi) should be detached after rewiring"
@@ -76,7 +73,7 @@ fn sp32_vn() -> rsleigh::Vn {
     }
 }
 
-/// Slice 2: x86 cdecl reads its first stack arg at `[sp + 4]`.  With no
+/// x86 cdecl reads its first stack arg at `[sp + 4]`.  With no
 /// register args in the convention, the `Load[sp+4]` should be rewritten
 /// to a single `FunctionArg { Stack{offset:4}, 0 }` node and all consumers
 /// of the load rewired to it.
@@ -101,7 +98,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let n_fa = count(&fg, |k| {
+    let n_fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -117,12 +114,9 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
 
     // The original Load should no longer be reachable (its single consumer,
     // the Return, now sources from the FunctionArg).
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let reachable_loads = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
-        .count();
+    let reachable_loads = crate::test_support::count_reachable((&fg).into(), |k| {
+        matches!(k, NodeKind::Load(_))
+    });
     assert_eq!(
         reachable_loads, 0,
         "Load[sp+4] should be detached after rewiring"
@@ -144,7 +138,7 @@ fn build_sp_load(
     Ok(loaded)
 }
 
-/// Slice 3: loads at sp+4 and sp+12, but **not** sp+8 — only the contiguous
+/// Loads at sp+4 and sp+12, but **not** sp+8 — only the contiguous
 /// prefix (sp+4 → arg 0) is labelled.  The sp+12 load remains unchanged
 /// (i.e. it does **not** get FunctionArg index 2), and no gap-index node
 /// is emitted.
@@ -168,7 +162,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     // Only arg 0 emitted; arg 1 absent (gap) and arg 2 MUST NOT be emitted.
-    let arg0 = count(&fg, |k| {
+    let arg0 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -177,7 +171,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
             }
         )
     });
-    let arg1 = count(&fg, |k| {
+    let arg1 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -186,7 +180,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
             }
         )
     });
-    let arg2 = count(&fg, |k| {
+    let arg2 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -200,12 +194,9 @@ fn stack_arg_gap_truncates() -> Result<()> {
     assert_eq!(arg2, 0, "arg 2 (sp+12) must be truncated by the gap");
 
     // The sp+12 load must still exist and be reachable.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let reachable_loads = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
-        .count();
+    let reachable_loads = crate::test_support::count_reachable((&fg).into(), |k| {
+        matches!(k, NodeKind::Load(_))
+    });
     assert_eq!(
         reachable_loads, 1,
         "sp+12 Load should remain (sp+4 Load replaced)"
@@ -213,7 +204,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     Ok(())
 }
 
-/// Slice 4: a prior `StackStore{+4}` shadows the `Load[sp+4]` — the load
+/// A prior `StackStore{+4}` shadows the `Load[sp+4]` — the load
 /// reads the stored value, not the caller's arg.  No FunctionArg emitted.
 #[test]
 fn prior_stackstore_shadows() -> Result<()> {
@@ -239,7 +230,7 @@ fn prior_stackstore_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "Load[sp+4] is shadowed by StackStore{{+4}}, not a function arg"
@@ -247,7 +238,7 @@ fn prior_stackstore_shadows() -> Result<()> {
     Ok(())
 }
 
-/// Slice 4 (audit B2 blocker): if-branch where the true side does
+/// If-branch where the true side does
 /// `StackStore{+4}`, false side does nothing — their join is a `MemPhi`,
 /// and a later `Load[sp+4]` from the phi must be disqualified.  The DFS
 /// treats `MemPhi` as a fork where **every** predecessor must be clean.
@@ -310,7 +301,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "Load[sp+4] reaches a MemPhi with a shadowing branch — disqualified"
@@ -327,7 +318,7 @@ fn sp64_vn() -> rsleigh::Vn {
     }
 }
 
-/// Slice 5 (audit I2): if the same stack-arg slot is read at multiple
+/// If the same stack-arg slot is read at multiple
 /// widths — e.g. aarch64 reading both `x0` (8 bytes) and `w0` (4 bytes)
 /// from `sp+0` — emit **one** `FunctionArg` at the widest observed width
 /// and route narrower reads through `Truncate(FunctionArg)`.
@@ -358,7 +349,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     // Exactly one FunctionArg at offset 0.
-    let fa_count = count(&fg, |k| {
+    let fa_count = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -372,11 +363,11 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     // That one FunctionArg must be at U64 (the widest observed load).
     let fa_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::FunctionArg { .. }))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::FunctionArg { .. }))
         .expect("FunctionArg exists");
-    let [fa_out] = fg.graph.node_outputs_exact::<1>(fa_node)?;
+    let [fa_out] = fg.node_outputs_exact::<1>(fa_node)?;
     assert_eq!(
-        fg.graph.output_kind(fa_out).as_value(),
+        fg.output_kind(fa_out).as_value(),
         Some(NodeOutputType::U64),
         "FunctionArg output width should match widest load (U64)"
     );
@@ -387,9 +378,9 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     let trunc_from_fa = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Truncate))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .filter(|&n| {
-            let inputs = fg.graph.node_inputs(n);
+            let inputs = fg.node_inputs(n);
             inputs.len() == 1 && inputs[0] == fa_out
         })
         .count();
@@ -400,7 +391,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     Ok(())
 }
 
-/// Audit I4: an `InitialVar(arg_reg)` with no live uses must not produce a
+/// An `InitialVar(arg_reg)` with no live uses must not produce a
 /// `FunctionArg` node.  The pass is not pinning unreferenced registers.
 /// `FunctionArgDetect` runs after the fixed-point loop, so the setup here
 /// includes `RedundantPhis` to strip phantom phi consumers the builder
@@ -426,7 +417,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi], sp, vec![]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let n_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let n_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         n_fa, 0,
         "unused InitialVar(rdi) must not be labelled as FunctionArg"
@@ -477,7 +468,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi, rsi], sp, vec![8]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa_reg0 = count(&fg, |k| {
+    let fa_reg0 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -486,7 +477,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
             } if *r == rdi
         )
     });
-    let fa_reg1 = count(&fg, |k| {
+    let fa_reg1 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -495,7 +486,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
             } if *r == rsi
         )
     });
-    let fa_stack2 = count(&fg, |k| {
+    let fa_stack2 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -544,7 +535,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "Load[sp+4] overlaps with StackStore{{+0, size=8}} — must be shadowed"
@@ -584,7 +575,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa_at_4 = count(&fg, |k| {
+    let fa_at_4 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -662,7 +653,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "MemPhi with an overlapping-range StackStore predecessor must disqualify Load[sp+4]"
@@ -670,7 +661,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     Ok(())
 }
 
-/// Slice 3: an isolated high-offset load (sp+12) with no sp+4 or sp+8
+/// An isolated high-offset load (sp+12) with no sp+4 or sp+8
 /// produces no FunctionArg at all — nothing starts the contiguous prefix.
 #[test]
 fn isolated_high_offset_load_dropped() -> Result<()> {
@@ -688,7 +679,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "isolated sp+12 load must not be labelled without arg 0/1"
@@ -724,7 +715,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa = count(&fg, |k| {
+    let fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -786,7 +777,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "plain Store(sp+4, U32) overlaps Load[sp+4]: chain must be dirty"
@@ -832,7 +823,7 @@ fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa = count(&fg, |k| {
+    let fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -880,7 +871,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa = count(&fg, |k| {
+    let fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -964,10 +955,62 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "Store with SpExpr::Phi address must conservatively mark chain dirty: no FunctionArg"
+    );
+    Ok(())
+}
+
+#[test]
+fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline};
+
+    // 10k-store chain pins the iterative form of `mem_chain_is_dirty`
+    // (scale.md A3).  The prior recursive form would stack-overflow
+    // on the default 8 MB Rust stack at this depth.
+    const CHAIN_LEN: usize = 10_000;
+
+    let sp = sp32_vn();
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        // CHAIN_LEN disjoint stack stores at offsets [16, 20, 24, ...].
+        for i in 0..CHAIN_LEN {
+            let off = b.build_int_const(((i * 4) as u64) + 16, NodeOutputType::U32)?;
+            let addr = b.build_int_binary_operation(
+                sp_val, off, IntBinaryOp::Add, NodeOutputType::U32,
+            )?;
+            let val = b.build_int_const(i as u64, NodeOutputType::U32)?;
+            b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
+        }
+        // Load from sp+4 — disjoint from every store above.
+        // The walker must pass through all 10k stores backwards.
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr4 = b.build_int_binary_operation(
+            sp_val, four, IntBinaryOp::Add, NodeOutputType::U32,
+        )?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let fa = count((&fg).into(), |k| {
+        matches!(
+            k,
+            NodeKind::FunctionArg {
+                source: FunctionArgSource::Stack { offset: 4, .. },
+                index: 0,
+            }
+        )
+    });
+    assert_eq!(
+        fa, 1,
+        "10k disjoint stores must not mark the chain dirty: load at sp+4 forwards to FunctionArg"
     );
     Ok(())
 }

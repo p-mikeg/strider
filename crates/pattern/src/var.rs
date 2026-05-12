@@ -40,6 +40,17 @@ impl Capture {
     pub fn new() -> Self {
         Self(next_id())
     }
+
+    /// Returns the globally-unique numeric id of this capture.
+    ///
+    /// Exposed for downstream consumers (e.g. PyO3 bindings) that need a
+    /// stable hash key.  The raw id is meant only as an *opaque identifier*;
+    /// callers must not rely on the value space being dense or sequential.
+    #[must_use]
+    pub fn id(self) -> u32 {
+        self.0
+    }
+
 }
 
 impl Default for Capture {

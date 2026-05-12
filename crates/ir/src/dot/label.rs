@@ -5,7 +5,7 @@ use super::{GraphDotDumper, node_fillcolor, node_shape};
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
 /// Render a varnode to its display name by delegating to rsleigh's
-/// [`rsleigh::Vn::ctx_fmt`] (`crates/rsleigh/src/ctx_fmt.rs`).  REGISTER
+/// [`rsleigh::Vn::ctx_fmt`].  REGISTER
 /// varnodes whose byte range matches a named register resolve to the
 /// register name (e.g. `"RAX"`); every other varnode renders as
 /// `<space-name>[0x<off>]:<size>` for non-CONST spaces, or `0x<off>:<size>`

@@ -161,6 +161,30 @@ fn int_sle_matches_lowered_shape() {
     a::matches(&g, int_sle(int_const(5), int_const(3)), 1);
 }
 
+/// `pattern::float_le(a, b)` is an ergonomic alias for the lowered shape
+/// `Or(FloatLess(a, b), FloatEqual(a, b))` (NaN-aware — the operand-swap-
+/// and-negate trick used for `int_le` does not preserve `<=` on NaN).
+/// Build the lowered shape directly and verify the alias matches it.
+#[test]
+fn float_le_matches_lowered_shape() {
+    use ir::node::NodeOutputType;
+    use ir::{BoolBinaryOp, FloatCmpOp};
+
+    let mut t = Tb::empty();
+    let l = t.f64(1.0);
+    let r = t.f64(2.0);
+    let lt = t.fcmp(l, r, FloatCmpOp::Less);
+    let eq = t.fcmp(l, r, FloatCmpOp::Equal);
+    let ored = t.bool_bin(lt, eq, BoolBinaryOp::Or);
+    let cast = t.as_int(ored, NodeOutputType::U64);
+    let g = t.ret_val(cast);
+    a::matches(
+        &g,
+        float_le(float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())),
+        1,
+    );
+}
+
 #[test]
 fn cmp_wrong_op_rejects() {
     let g = shapes::int_cmp_5_3(IntCmpOp::Equal);

@@ -8,7 +8,7 @@ use ir::FunctionBuilder;
 use ir::Graph;
 use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 use pattern::{Binding, Bindings, Capture};
-use target::{BuiltCallingConvention, CallingConvention, SleighArch};
+use target::{BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention, SleighArch};
 
 #[test]
 fn build_call_with_cc_override_records_empty_clobber_list() {
@@ -17,7 +17,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let rax = regs.name_to_vn("RAX").unwrap();
     let rsp = regs.name_to_vn("RSP").unwrap();
 
-    let cc = CallingConvention::x86_64_systemv_abi().build(&regs).unwrap();
+    let cc = CallingConvention::x86_64_systemv().build(&regs).unwrap();
     let mut b = FunctionBuilder::new(vec![rax, rsp], &cc).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
@@ -28,7 +28,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let rdx = regs.name_to_vn("RDX").unwrap();
     let xmm0 = regs.name_to_vn("XMM0").unwrap();
     let xmm1 = regs.name_to_vn("XMM1").unwrap();
-    let override_cc = BuiltCallingConvention {
+    let override_cc = BuiltCallingConvention::try_from_parts(BuiltCallingConventionParts {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![rax, rdx, xmm0, xmm1],
         ret_val_regs: vec![],
@@ -38,7 +38,9 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         ret_stack_pop: 0,
         link_register_vn: None,
         syscall_number_vn: None,
-    };
+        no_memory_clobber: false,
+    })
+    .unwrap();
     let addr = b.build_int_const(0xdead_u64, NodeOutputType::U64).unwrap();
     let _call_node = b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
     let ret_regs: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();
@@ -86,12 +88,12 @@ fn get_vn_indexes_override_list_for_overridden_call() {
         ],
     );
     graph.set_call_clobbered_override(call, vec![rax]);
-    let bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
+    let bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
 
     let c = Capture::new();
     let slot2 = bfg.graph.node_outputs(call).into_iter().nth(2).unwrap();
     let mut bindings = Bindings::default();
-    bindings.bind_capture(c, Binding::new(call, Some(slot2)));
+    bindings.bind_capture_for_test(c, Binding::new(call, Some(slot2)));
     let m = pattern::Match::new_for_test(call, bindings);
     assert_eq!(m.get_vn(c, &bfg), Some(rax));
 }

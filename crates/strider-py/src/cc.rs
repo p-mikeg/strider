@@ -14,10 +14,10 @@ pub struct PyCallingConvention {
 #[pymethods]
 impl PyCallingConvention {
     #[classmethod]
-    fn x86_64_systemv_abi(_cls: &Bound<'_, PyType>) -> Self {
+    fn x86_64_systemv(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::x86_64_systemv_abi(),
-            preset_name: "x86_64_systemv_abi",
+            inner: target::CallingConvention::x86_64_systemv(),
+            preset_name: "x86_64_systemv",
         }
     }
     #[classmethod]
@@ -192,4 +192,23 @@ impl PyCallingConvention {
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallingConvention>()
+}
+
+/// Resolve the calling-convention preset's static-string register names
+/// against `sleigh`'s register table to produce a [`target::BuiltCallingConvention`].
+///
+/// Centralises the pattern that the strider-py FFI layer used to repeat
+/// at every constructor that needs a built CC (StackStoreDetect,
+/// StackLoadForward, FunctionArgDetect, CallStackArgCollect, Strider).
+/// The pattern was: borrow Sleigh, clone regs, drop borrow, call
+/// `cc.inner.build(&regs)`, map LiftError.
+pub(crate) fn build_cc_for_sleigh(
+    py: Python<'_>,
+    sleigh: &Py<crate::sleigh::PySleigh>,
+    cc: &PyCallingConvention,
+) -> PyResult<target::BuiltCallingConvention> {
+    let sleigh_borrow = sleigh.borrow(py);
+    let regs = sleigh_borrow.regs.clone();
+    drop(sleigh_borrow);
+    cc.inner.build(&regs).map_err(crate::errors::into_lift_err)
 }

@@ -5,8 +5,10 @@
     clippy::unreachable
 )]
 
+mod common;
+
+use common::Graph;
 use expect_test::expect;
-use graphmock::Graph;
 use graphwalk::entity_preorder;
 use itertools::Itertools;
 
@@ -14,7 +16,7 @@ macro_rules! test_preorder {
     ($name:ident, $graph:literal, $expected:expr) => {
         #[test]
         fn $name() {
-            let g = graphmock::graph($graph);
+            let g = common::graph($graph);
             $expected.assert_eq(&collect_preorder(&g));
         }
     };
@@ -68,13 +70,13 @@ test_preorder! {
 
 #[test]
 fn empty_roots_yields_nothing() {
-    let g = graphmock::graph("a -> b");
+    let g = common::graph("a -> b");
     assert!(entity_preorder(&g, core::iter::empty()).next().is_none());
 }
 
 #[test]
 fn self_loop_visits_node_once() {
-    let g = graphmock::graph("a -> a");
+    let g = common::graph("a -> a");
     let order = entity_preorder(&g, [g.entry()])
         .map(|n| g.name(n).to_owned())
         .collect::<Vec<_>>();
@@ -84,7 +86,7 @@ fn self_loop_visits_node_once() {
 #[test]
 fn multi_root_disjoint_subgraphs_visits_both() {
     // Two disjoint chains: a -> b and x -> y. We pass both roots in.
-    let g = graphmock::graph(
+    let g = common::graph(
         "a -> b
          x -> y",
     );
@@ -106,7 +108,7 @@ fn repeated_successor_is_visited_once() {
     // a -> b appears twice as a successor of a (because we say so).  The pre-order
     // walk must still visit b exactly once.  This exercises the "skip if already
     // visited" loop in PreOrderContext::next.
-    let g = graphmock::graph(
+    let g = common::graph(
         "a -> b, b
          b -> c",
     );
@@ -124,7 +126,7 @@ fn multi_root_visited_in_reverse_iteration_order() {
     // `roots` and there's no path from v to u, then `v` is visited before `u`
     // in pre-order (LIFO stack semantics — the OPPOSITE of post-order).
     // Build two disjoint chains (a -> b, x -> y) and pass roots in [a, x] order.
-    let g = graphmock::graph(
+    let g = common::graph(
         "a -> b
          x -> y",
     );

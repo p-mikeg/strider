@@ -6,12 +6,13 @@
 //! so the Sleigh stays alive for the graph's lifetime and is
 //! reachable through `cfg::Cfg::sleigh`.
 
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use pyo3::prelude::*;
 
 use crate::cfg::PyCfg;
-use crate::dot::{dot_style_for, dump_dot, dump_html, html_str};
+use crate::dot::dot_style_for;
 
 /// Opaque wrapper over `ir::BuiltFunctionGraph`.
 ///
@@ -27,6 +28,20 @@ pub struct PyGraph {
     pub(crate) cfg: Py<PyCfg>,
 }
 
+/// Convert a Python-supplied `u32` node id into a validated `ir::NodeId`,
+/// returning `StriderError` on lookup failure.
+fn node_id_from_u32(graph: &ir::BuiltFunctionGraph, node_id: u32) -> PyResult<ir::node::NodeId> {
+    let nid = graph
+        .all_node_ids()
+        .find(|n| n.as_u32() == node_id)
+        .ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "no node with id {node_id} in graph"
+            ))
+        })?;
+    Ok(nid)
+}
+
 impl PyGraph {
     pub(crate) fn new(graph: ir::BuiltFunctionGraph, cfg: Py<PyCfg>) -> Self {
         Self {
@@ -37,7 +52,6 @@ impl PyGraph {
 
     /// Borrow the inner graph for read.  Returns an `anyhow::Error`
     /// when the lock is poisoned.
-    #[allow(dead_code)]
     pub(crate) fn read_inner(&self) -> anyhow::Result<std::sync::RwLockReadGuard<'_, ir::BuiltFunctionGraph>> {
         self.inner
             .read()
@@ -52,6 +66,25 @@ impl PyGraph {
             .write()
             .map_err(|_| anyhow::anyhow!("Graph lock poisoned"))
     }
+
+    /// Try to acquire the write lock without blocking.  Used by mutating
+    /// methods (`optimize`, `compact`, `rewrite`, `reoptimize`) so that a
+    /// re-entrant call from inside a `.when()` predicate (which holds the
+    /// read lock for the duration of `find_all`) surfaces a typed error
+    /// rather than deadlocking the thread.
+    pub(crate) fn try_write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, ir::BuiltFunctionGraph>> {
+        use std::sync::TryLockError;
+        self.inner.try_write().map_err(|e| match e {
+            TryLockError::Poisoned(_) => anyhow::anyhow!("Graph lock poisoned"),
+            TryLockError::WouldBlock => anyhow::anyhow!(
+                "Graph mutation rejected: the graph is currently borrowed for read \
+                 (typically because this call is from inside a `.when()` predicate \
+                 invoked by `find_all`/`find_all_requirements`).  Mutating the graph \
+                 from within a pattern predicate is not supported — collect matches \
+                 first and mutate after `find_all` returns."
+            ),
+        })
+    }
 }
 
 #[pymethods]
@@ -60,45 +93,35 @@ impl PyGraph {
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark");
         let cfg_borrow = self.cfg.borrow(py);
-        let graph = self
-            .inner
-            .read()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
-        let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
         let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
-        dump_html(&d, path)
+        d.dump_as_html(Path::new(path))
+            .map_err(crate::errors::into_strider_err)
     }
 
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
         let cfg_borrow = self.cfg.borrow(py);
-        let graph = self
-            .inner
-            .read()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
-        let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
         let d = dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
-        dump_dot(&d, path)
+        d.dump_as_dot(Path::new(path))
+            .map_err(crate::errors::into_strider_err)
     }
 
     #[pyo3(signature = (style=None))]
     fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
         let style = style.unwrap_or("dark");
         let cfg_borrow = self.cfg.borrow(py);
-        let graph = self
-            .inner
-            .read()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
-        let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
         let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
-        html_str(&d)
+        d.as_html_from_dot().map_err(crate::errors::into_strider_err)
     }
 
     fn node_count(&self) -> PyResult<usize> {
-        let graph = self
-            .inner
-            .read()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         Ok(graph.all_node_ids().count())
     }
 
@@ -116,10 +139,7 @@ impl PyGraph {
     fn count_loop_headers(&self) -> PyResult<usize> {
         use std::collections::HashSet;
         use ir::node::{NodeId, NodeKind};
-        let graph = self
-            .inner
-            .read()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let reachable: HashSet<NodeId> = graph.preorder().collect();
         let mut count = 0usize;
         for n in graph.all_node_ids() {
@@ -159,16 +179,98 @@ impl PyGraph {
         Ok(count)
     }
 
+    /// Returns a list of all reachable node ids in the graph as raw
+    /// integers.  Useful for iterating from Python without going
+    /// through pattern matching.
+    fn node_ids(&self) -> PyResult<Vec<u32>> {
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        Ok(graph.all_node_ids().map(|n| n.as_u32()).collect())
+    }
+
+    /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
+    /// a string (e.g. "IntConst", "Call", "VarPhi", "Add", …).  Useful
+    /// for direct graph introspection from Python tests / debug
+    /// scripts.
+    ///
+    /// Raises `StriderError` for an invalid `node_id`.
+    fn node_kind(&self, node_id: u32) -> PyResult<String> {
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let nid = node_id_from_u32(&graph, node_id)?;
+        Ok(format!("{:?}", graph.graph.node_kind(nid)))
+    }
+
+    /// Returns the asm-fingerprint addresses recorded on the node at
+    /// `node_id` — a sorted, deduped list of machine-instruction
+    /// addresses whose lift contributed to the node's value.
+    ///
+    /// Empty for "structural" node kinds (Entry, InitialMemory, phis,
+    /// ControlState, FunctionArg) whose existence is synthesised by
+    /// the IR builder rather than tied to a specific asm instruction.
+    fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let nid = node_id_from_u32(&graph, node_id)?;
+        Ok(graph.graph.asm_fingerprint(nid).to_vec())
+    }
+
+    /// Returns the raw little-endian bytes of an `IntConstWide` node's
+    /// value (32 bytes for U256, 64 for U512), or `None` for narrow
+    /// `IntConst` and any non-const node kind.
+    ///
+    /// Use this for AVX-2 / AVX-512 register constants whose value
+    /// doesn't fit in `u128`; narrow constants (≤ U128) are accessible
+    /// via `Match.get_uint(c)` instead.
+    fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let nid = node_id_from_u32(&graph, node_id)?;
+        match graph.graph.node_kind(nid) {
+            ir::node::NodeKind::IntConstWide(id) => {
+                Ok(Some(graph.graph.wide_const(*id).to_le_bytes()))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Returns the Sleigh user-op name attached to a `CallOther` node,
+    /// or `None` for any other node kind.
+    fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let nid = node_id_from_u32(&graph, node_id)?;
+        Ok(graph.graph.call_other_name(nid).map(str::to_owned))
+    }
+
+    /// Re-validates the graph and returns `None` on success or a
+    /// human-readable error message on failure.
+    ///
+    /// `check_asm_fingerprints=True` enables the opt-in Layer-C check
+    /// that flags every reachable non-exempt node with an empty
+    /// asm-fingerprint — useful when verifying a fresh opt pass
+    /// preserves the superset contract.
+    #[pyo3(signature = (check_asm_fingerprints = false))]
+    fn validate(&self, check_asm_fingerprints: bool) -> PyResult<Option<String>> {
+        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let opts = ir::validate::ValidateOptions { check_asm_fingerprints };
+        match ir::validate::validate_with_options(&graph.graph, graph.entry, opts) {
+            Ok(()) => Ok(None),
+            Err(e) => Ok(Some(format!("{e}"))),
+        }
+    }
+
+    /// Compact the graph arena: drop every node not reachable from
+    /// `entry` via [`ir::walk::walk_graph`].  Mutates in place.
+    /// Pre-compaction node ids become invalid across this call.
+    fn compact(&self) -> PyResult<()> {
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let _remap = graph.compact().map_err(crate::errors::into_strider_err)?;
+        Ok(())
+    }
+
     /// Apply a `PyOptimizerPipeline` to this graph in place.  Drains
     /// the pipeline (subsequent calls to the same pipeline see an
     /// empty pass list); rebuild it from `OptimizerPipeline.default()`
     /// or the equivalent classmethods if you need to apply it again.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
-        let mut graph = self
-            .inner
-            .write()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         real_pipeline
             .run_on_built(&mut graph)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
@@ -185,10 +287,7 @@ impl PyGraph {
             pipe.add(opt::RedundantPhis);
             pipe.add(opt::DeadBranchElimination);
         }
-        let mut graph = self
-            .inner
-            .write()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         pipe.run_on_built(&mut graph).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
@@ -240,6 +339,14 @@ impl PyGraph {
         let raw = matcher.find_all(&pat);
         drop(graph_guard);
         drop(g_borrow);
+        // if a `.when()` predicate restored a control-flow
+        // exception (KeyboardInterrupt / SystemExit) via PyErr::restore,
+        // the exception state is set on this thread.  Surface it as
+        // Err so PyO3 raises rather than panicking with
+        // "returned a result with an exception set".
+        if let Some(err) = PyErr::take(py) {
+            return Err(err);
+        }
         let mut out = Vec::with_capacity(raw.len());
         for m in raw {
             out.push(crate::matcher::PyMatch {
@@ -307,6 +414,11 @@ impl PyGraph {
         let raw = matcher.find_all_requirements(&pat_refs);
         drop(graph_guard);
         drop(g_borrow);
+        // same propagation as `find_all` — restored
+        // exceptions from `.when()` predicates surface here.
+        if let Some(err) = PyErr::take(py) {
+            return Err(err);
+        }
         let mut out: Vec<Vec<crate::matcher::PyMatch>> = Vec::with_capacity(raw.len());
         for tuple in raw {
             let mut py_tuple: Vec<crate::matcher::PyMatch> = Vec::with_capacity(tuple.len());
@@ -334,10 +446,7 @@ impl PyGraph {
         let lhs = find.into_pat()?;
         let rhs = replace.into_pat()?;
         let rule = pattern::rewrite_rule(lhs, rhs);
-        let mut graph = self
-            .inner
-            .write()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
         rewriter.apply_rule(rule).map_err(|e| {
             crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite failed: {e:?}"))
@@ -346,21 +455,23 @@ impl PyGraph {
 
     /// Apply a list of `(find, replace)` pairs across the graph round-
     /// robin at every reachable node.  Returns the total fire count.
-    fn rewrite_all(&self, pairs: Vec<(Py<crate::pattern::PyPat>, Py<crate::pattern::PyPat>)>) -> PyResult<usize> {
-        Python::with_gil(|py| {
-            let mut rules: Vec<pattern::BoxedRule> = Vec::with_capacity(pairs.len());
-            for (lhs, rhs) in pairs {
-                let lhs_pat = (*lhs.borrow(py).as_inner()).clone();
-                let rhs_pat = (*rhs.borrow(py).as_inner()).clone();
-                rules.push(pattern::boxed_rule(pattern::rewrite_rule(lhs_pat, rhs_pat)));
-            }
-            let mut graph = self.inner.write().map_err(|_| {
-                crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned"))
-            })?;
-            let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
-            rewriter.apply_rules(&rules).map_err(|e| {
-                crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))
-            })
+    fn rewrite_all(
+        &self,
+        py: Python<'_>,
+        pairs: Vec<(Py<crate::pattern::PyPat>, Py<crate::pattern::PyPat>)>,
+    ) -> PyResult<usize> {
+        // GIL is already held by the #[pymethods] dispatch; take it via
+        // the parameter rather than re-acquiring with `Python::with_gil`.
+        let mut rules: Vec<pattern::BoxedRule> = Vec::with_capacity(pairs.len());
+        for (lhs, rhs) in pairs {
+            let lhs_pat = (*lhs.borrow(py).as_inner()).clone();
+            let rhs_pat = (*rhs.borrow(py).as_inner()).clone();
+            rules.push(pattern::boxed_rule(pattern::rewrite_rule(lhs_pat, rhs_pat)));
+        }
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
+        rewriter.apply_rules(&rules).map_err(|e| {
+            crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))
         })
     }
 }

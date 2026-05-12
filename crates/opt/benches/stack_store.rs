@@ -6,7 +6,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ir::node::NodeOutputType;
 use ir::test_utils::sp_vn_x86 as sp_vn;
 use ir::FunctionBuilder;
-use opt::{Optimizer, StackStoreDetect};
+use opt::{OptimizerRaw, StackStoreDetect};
 
 /// Builds a straight-line `cdecl`-style function: N consecutive `push reg`
 /// sequences (each is `sub esp, 4; store esp`) followed by `return`.
@@ -38,7 +38,7 @@ fn bench_pushes(c: &mut Criterion) {
             b.iter_batched(
                 || build_pushes(n),
                 |mut fg| {
-                    StackStoreDetect::new(sp).optimize(&mut fg.graph, fg.entry).unwrap();
+                    StackStoreDetect::new(sp).optimize_raw(&mut fg.graph, fg.entry).unwrap();
                     black_box(fg);
                 },
                 criterion::BatchSize::SmallInput,

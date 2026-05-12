@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{CallingConvention, RunConfig, SleighArch, Strider};
+use strider::{RunConfig, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
 /// x86_64: `mov eax, 5; jmp $TAIL_TARGET`.  With `fn_max_size = 10`
@@ -25,9 +25,7 @@ fn x86_64_tail_call_bytes() -> (Vec<u8>, u64, u64) {
 }
 
 fn make_strider() -> Strider {
-    let arch = SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
-    Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi()).unwrap()
+    strider::test_utils::strider_x86_64()
 }
 
 #[test]
@@ -36,14 +34,14 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: HashMap<u64, TargetCC> = HashMap::new();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving());
 
     let config = RunConfig {
         strider: &strider,
-        start_addr: entry,
+        start_addr: entry.into(),
         sleigh,
         rom: None,
         fn_max_size: Some(10),
@@ -53,24 +51,22 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     };
     let bfg = strider::run(config).unwrap();
 
-    let call_id = bfg
-        .graph
-        .all_node_ids()
+    let call_id = bfg.graph
+                .all_node_ids()
         .find(|n| matches!(bfg.graph.node_kind(*n), NodeKind::Call))
         .expect("in-place tail call splices in a Call node");
     // Per-Call override is recorded; its length matches the Call's
     // clobber output count and is strictly smaller than the function-
     // default clobber set.
-    let override_list = bfg
-        .graph
-        .call_clobbered_override(call_id)
+    let override_list = bfg.graph
+                .call_clobbered_override(call_id)
         .expect("in-place tail-call edit must record per-Call override");
     let outs = bfg.graph.node_outputs(call_id);
     assert_eq!(outs.len(), 2 + override_list.len());
     assert!(
-        override_list.len() < bfg.call_clobbered.len(),
+        override_list.len() < bfg.call_clobbered_regs().len(),
         "override list ({}) must be strictly smaller than function-default ({})",
         override_list.len(),
-        bfg.call_clobbered.len(),
+        bfg.call_clobbered_regs().len(),
     );
 }

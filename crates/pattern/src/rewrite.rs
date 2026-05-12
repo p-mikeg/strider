@@ -1,7 +1,8 @@
 //! Rule composition: [`rewrite_rule`], [`apply_rules_in_order`], [`BoxedRule`],
 //! [`boxed_rule`].
 
-use ir::BuiltFunctionGraph;
+use cranelift_entity::EntityRef;
+use ir::Graph;
 use ir::node::NodeId;
 
 use crate::error::Result;
@@ -11,11 +12,11 @@ use crate::pat::traits::{BuildCtx, BuildOutcome};
 
 /// Build a rewrite-rule closure from an LHS and RHS [`Pat`].
 ///
-/// The returned closure takes `&mut BuiltFunctionGraph` and a candidate root
+/// The returned closure takes `&mut RewriteCtx<'g>` and a candidate root
 /// [`NodeId`], attempts the match, and on success materializes the RHS
-/// template via [`crate::pat::traits::Pattern::try_build`] and redirects
+/// template via `crate::pat::traits::Pattern::try_build` and redirects
 /// the root's value output to the built output via
-/// [`BuiltFunctionGraph::replace_all_uses`].
+/// [`ir::Graph::replace_all_uses`].
 ///
 /// Returns `Ok(true)` if the rule fired and at least one use was redirected,
 /// `Ok(false)` if the match failed, the RHS produced a skip, or
@@ -29,7 +30,7 @@ use crate::pat::traits::{BuildCtx, BuildOutcome};
 /// recover the original.  Use [`crate::error::skip`] inside a closure
 /// to opt out of the rewrite without a hard error; the interpreter
 /// detects the [`crate::error::RewriteSkip`] sentinel via
-/// [`crate::error::is_skip`] and returns `Ok(false)`.
+/// `crate::error::is_skip` and returns `Ok(false)`.
 ///
 /// # Single-value-output constraint
 ///
@@ -42,14 +43,14 @@ use crate::pat::traits::{BuildCtx, BuildOutcome};
 pub fn rewrite_rule(
     lhs: impl Into<Pat>,
     rhs: impl Into<Pat>,
-) -> impl Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'static {
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync + 'static {
     let lhs: Pat = lhs.into();
     let rhs: Pat = rhs.into();
-    move |fg: &mut BuiltFunctionGraph, node: NodeId| -> Result<bool> {
+    move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<bool> {
         // 1. Match LHS.  Keep the matcher borrow in a tight scope so we can
-        //    mutate `fg` afterwards.
+        //    mutate `ctx.graph` afterwards.
         let bindings = {
-            let matcher = Matcher::new(fg);
+            let matcher = Matcher::for_graph(ctx.graph, ctx.entry);
             match matcher.match_at(node, &lhs) {
                 Some(m) => m.bindings_clone(),
                 None => return Ok(false),
@@ -57,21 +58,25 @@ pub fn rewrite_rule(
         };
 
         // 2. Fetch root's single value output and its type.
-        let [root_out] = fg.graph.node_outputs_exact::<1>(node)?;
-        let root_ty = fg.graph.output_kind(root_out).as_value_or_err()?;
+        let [root_out] = ctx.graph.node_outputs_exact::<1>(node)?;
+        let root_ty = ctx.graph.output_kind(root_out).as_value_or_err()?;
 
         // 3. Materialize RHS.  A closure inside the tree may opt out of the
         //    rewrite by returning `Err(pattern::Error::skip())`; catch that
         //    sentinel here and convert it to "no change" instead of a hard
-        //    error.  All other errors propagate.
+        //    error.  All other errors propagate.  Snapshot the next-NodeId
+        //    BEFORE the build so we can identify which interior nodes are
+        //    freshly allocated (vs returned as cache hits on pre-existing
+        //    nodes) — see the asm-fingerprint walk after `BuildOutcome::Out`.
+        let pre_build_node_id = ctx.graph.next_node_id();
         let outcome = {
-            let mut ctx = BuildCtx {
-                graph: fg,
+            let mut bctx = BuildCtx {
+                graph: ctx.graph,
                 bindings: &bindings,
                 root: node,
                 root_ty,
             };
-            match rhs.as_dyn().try_build(&mut ctx) {
+            match rhs.as_dyn().try_build(&mut bctx) {
                 Ok(o) => o,
                 Err(e) if crate::error::is_skip(&e) => return Ok(false),
                 Err(e) => return Err(e),
@@ -81,19 +86,224 @@ pub fn rewrite_rule(
         match outcome {
             BuildOutcome::Skip => Ok(false),
             BuildOutcome::Out(new_out) => {
-                // Absorb the rewritten root's asm-fingerprint into the new
-                // node BEFORE redirecting uses.  This is the single funnel
-                // where every pattern-driven rewrite preserves the
-                // contributing-asm-instruction history; whether the RHS
-                // built a fresh node or hit the dedup cache, the union
-                // semantics of `extend_asm_fingerprint_from` keep us
-                // superset-correct.
-                let new_node = fg.graph.get_node_from_output(new_out);
-                fg.graph.extend_asm_fingerprint_from(new_node, node);
-                let changed = fg.graph.replace_all_uses(root_out, new_out)?;
+                // Absorb the rewritten root's asm-fingerprint into EVERY
+                // freshly-created interior node of the RHS subtree, not
+                // just the outermost root.  Multi-node rules (e.g.
+                // ConstantFold's `rule_and_dist`:
+                // `((a&C1)|(b&C2))&C3 → (a&(C1&C3)) | (b&(C2&C3))`)
+                // build fresh interior `And` / `IntConst` nodes that
+                // would otherwise pass `validate` but fail
+                // `validate_with_options(check_asm_fingerprints: true)`.
+                //
+                // The walk is bounded by `pre_build_node_id`: any
+                // NodeId allocated before the build is pre-existing
+                // (a captured LHS value, a pre-existing constant the
+                // dedup cache returned, etc.) and stays untouched.
+                // Fresh nodes (id ≥ snapshot) all inherit the
+                // contributor's history via the union semantics of
+                // `extend_asm_fingerprint_from`.
+                let new_node = ctx.graph.get_node_from_output(new_out);
+                // Always attribute the rewrite root: even when the dedup
+                // cache returns a pre-existing node, it now ALSO carries
+                // the rewritten root's history (union semantics).
+                ctx.graph.extend_asm_fingerprint_from(new_node, node);
+                // Walk freshly-allocated interior nodes (id >= snapshot)
+                // and absorb the contributor's history into each one.
+                // Pre-existing input nodes (id < snapshot) bound the
+                // walk: they're outside the rewrite and stay untouched.
+                let mut visited: std::collections::HashSet<NodeId> =
+                    std::collections::HashSet::new();
+                visited.insert(new_node);
+                let mut stack: Vec<NodeId> = ctx
+                    .graph
+                    .node_inputs(new_node)
+                    .into_iter()
+                    .map(|inp| ctx.graph.get_node_from_output(inp))
+                    .collect();
+                while let Some(cur) = stack.pop() {
+                    if !visited.insert(cur) {
+                        continue;
+                    }
+                    if cur.index() < pre_build_node_id.index() {
+                        // Pre-existing node — outside the rewrite.
+                        continue;
+                    }
+                    ctx.graph.extend_asm_fingerprint_from(cur, node);
+                    let inputs: Vec<_> = ctx.graph.node_inputs(cur).into_iter().collect();
+                    for inp in inputs {
+                        stack.push(ctx.graph.get_node_from_output(inp));
+                    }
+                }
+
+                let changed = ctx.graph.replace_all_uses(root_out, new_out)?;
                 Ok(changed)
             }
         }
+    }
+}
+
+/// Mutable rewrite context: a `&mut Graph` together with the function's
+/// `entry: NodeId`.  Replaces the prior "wrap into a dummy
+/// `BuiltFunctionGraph`" trick — pure-rewrite paths (constant fold,
+/// known-bits, flag-cmp canonicalisation, etc.) only ever consult graph
+/// + entry, never the CC-bearing fields of `BuiltFunctionGraph`.
+///
+/// Construct via `RewriteCtx::new(graph, entry)` or
+/// `RewriteCtx::for_built(&mut bfg)`.  The matcher inside `rewrite_rule`
+/// reads `ctx.graph` + `ctx.entry`; the build path mutates `ctx.graph`.
+///
+/// **Field visibility note.**  Both fields are `pub(crate)`; external
+/// opt-pass code reaches `Graph` via the
+/// [`Deref<Target=Graph>`] / [`DerefMut<Target=Graph>`] impls for
+/// method calls, and uses [`Self::graph_ref`] / [`Self::graph_mut`]
+/// when an explicit `&Graph` / `&mut Graph` is needed for a free
+/// function or trait method.  This prevents struct-literal rebinding
+/// (`ctx.graph = &mut other`) at distance — the field could
+/// previously be aimed at a different graph than `entry` belongs to,
+/// silently corrupting subsequent walks.
+pub struct RewriteCtx<'g> {
+    pub(crate) graph: &'g mut Graph,
+    pub(crate) entry: NodeId,
+}
+
+impl<'g> RewriteCtx<'g> {
+    /// Constructs a `RewriteCtx` from a raw `(graph, entry)` pair —
+    /// the rewrite-only path used by `opt::with_rewrite_ctx`,
+    /// `strider::rewrite::GraphRewriter::apply_rule`, and similar.
+    pub fn new(graph: &'g mut Graph, entry: NodeId) -> Self {
+        Self { graph, entry }
+    }
+
+    /// Constructs a `RewriteCtx` borrowing from a `BuiltFunctionGraph`'s
+    /// inner `graph` + `entry`.  Used by callers that already hold a
+    /// fully-built form and want to drive the rewrite engine without
+    /// surrendering the wrapper.
+    pub fn for_built(bfg: &'g mut ir::BuiltFunctionGraph) -> Self {
+        Self {
+            graph: &mut bfg.graph,
+            entry: bfg.entry,
+        }
+    }
+
+    /// pre-order graph walk
+    /// starting at [`Self::entry`].  Mirrors
+    /// `BuiltFunctionGraph::preorder` so optimizer pass bodies that
+    /// call `ctx.preorder()` look the same as if they held a
+    /// `BuiltFunctionGraph` directly.
+    #[must_use] 
+    pub fn preorder(&self) -> ir::walk::GraphWalk<'_> {
+        ir::walk::walk_graph(self.graph, self.entry)
+    }
+
+    /// kind-filtered pre-order
+    /// walk.  Mirrors `BuiltFunctionGraph::preorder_kind`.
+    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
+    where
+        P: FnMut(&ir::node::NodeKind) -> bool + 'a,
+    {
+        self.preorder()
+            .filter(move |&n| pred(self.graph.node_kind(n)))
+    }
+
+    /// Lightweight read-only `(graph, entry)` view.  Used by the
+    /// public read-only opt API (`analyze_known_bits`,
+    /// `classify_anchor*`) so callers that hold either `&mut RewriteCtx`,
+    /// `&BuiltFunctionGraph`, or a raw `(&Graph, NodeId)` pair can all
+    /// pass the same `RewriteCtxView<'_>`.
+    #[must_use]
+    pub fn as_view(&self) -> RewriteCtxView<'_> {
+        RewriteCtxView { graph: self.graph, entry: self.entry }
+    }
+
+    /// Read-only access to the wrapped `Graph`.
+    #[must_use]
+    pub fn graph_ref(&self) -> &Graph {
+        self.graph
+    }
+
+    /// Mutable access to the wrapped `Graph`.
+    pub fn graph_mut(&mut self) -> &mut Graph {
+        self.graph
+    }
+
+    /// Function-entry `NodeId` anchor.
+    #[must_use]
+    pub fn entry(&self) -> NodeId {
+        self.entry
+    }
+}
+
+/// Read-only `(&Graph, NodeId)` view used by opt's read-only public
+/// API.  `Copy` and cheap to pass.  Constructible from `&RewriteCtx`
+/// (via `as_view`) or `&BuiltFunctionGraph` (via
+/// `From<&BuiltFunctionGraph>`).
+#[derive(Clone, Copy)]
+pub struct RewriteCtxView<'g> {
+    pub(crate) graph: &'g Graph,
+    pub(crate) entry: NodeId,
+}
+
+impl<'g> RewriteCtxView<'g> {
+    #[must_use]
+    pub fn preorder(&self) -> ir::walk::GraphWalk<'_> {
+        ir::walk::walk_graph(self.graph, self.entry)
+    }
+
+    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
+    where
+        P: FnMut(&ir::node::NodeKind) -> bool + 'a,
+    {
+        self.preorder()
+            .filter(move |&n| pred(self.graph.node_kind(n)))
+    }
+
+    /// Read-only access to the wrapped `Graph`.
+    #[must_use]
+    pub fn graph_ref(&self) -> &'g Graph {
+        self.graph
+    }
+
+    /// Function-entry `NodeId` anchor.
+    #[must_use]
+    pub fn entry(&self) -> NodeId {
+        self.entry
+    }
+}
+
+impl<'g> From<&'g ir::BuiltFunctionGraph> for RewriteCtxView<'g> {
+    fn from(bfg: &'g ir::BuiltFunctionGraph) -> Self {
+        Self { graph: &bfg.graph, entry: bfg.entry }
+    }
+}
+
+impl<'a, 'g> From<&'a RewriteCtx<'g>> for RewriteCtxView<'a> {
+    fn from(ctx: &'a RewriteCtx<'g>) -> Self {
+        ctx.as_view()
+    }
+}
+
+impl<'g> std::ops::Deref for RewriteCtxView<'g> {
+    type Target = Graph;
+    fn deref(&self) -> &Graph {
+        self.graph
+    }
+}
+
+// allow Graph methods to be
+// called on `RewriteCtx` directly via Deref.  Mirrors
+// `BuiltFunctionGraph::Deref<Target=Graph>` so optimizer pass bodies
+// using `ctx.node_kind(_)` / `ctx.create_node(_)` look the same as
+// if they held a `BuiltFunctionGraph` directly.
+impl<'g> std::ops::Deref for RewriteCtx<'g> {
+    type Target = Graph;
+    fn deref(&self) -> &Graph {
+        self.graph
+    }
+}
+
+impl<'g> std::ops::DerefMut for RewriteCtx<'g> {
+    fn deref_mut(&mut self) -> &mut Graph {
+        self.graph
     }
 }
 
@@ -110,14 +320,14 @@ pub fn rewrite_rule(
 /// other long-lived storage) and compose the per-call closure cheaply.
 pub fn apply_rules_in_order<R>(
     rules: &[R],
-) -> impl Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + '_
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync + '_
 where
-    R: Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync,
+    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync,
 {
-    move |fg, node| {
+    move |ctx, node| {
         let mut any = false;
         for r in rules {
-            if r(fg, node)? {
+            if r(ctx, node)? {
                 any = true;
             }
         }
@@ -133,7 +343,7 @@ where
 /// to box each one to a common trait-object type; this alias plus
 /// [`boxed_rule`] factor that boilerplate out of every call site.
 pub type BoxedRule =
-    Box<dyn Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync>;
+    Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync>;
 
 /// Wraps a rewrite-rule closure in a [`BoxedRule`] for storage in a
 /// `Vec<BoxedRule>` alongside rules built from other LHS/RHS shapes.
@@ -156,7 +366,7 @@ pub type BoxedRule =
 /// ```
 pub fn boxed_rule<R>(r: R) -> BoxedRule
 where
-    R: Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'static,
+    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync + 'static,
 {
     Box::new(r)
 }

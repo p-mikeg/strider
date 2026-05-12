@@ -11,15 +11,14 @@
 //!     make -C fixtures
 //!
 //! Tests panic with a clear message if the binary is absent — matching
-//! the convention used by `cfg::cfg_integration` and
-//! `strider::analyze_binary`.
+//! the convention used by `cfg::cfg_integration` and `strider::run`.
 
 use object::Object;
 use reader::{ElfFileMemReader, ReadOnlyMemory};
 
 fn binary_path(arch: &str) -> std::path::PathBuf {
     // The legacy single-fixture `test.elf` was split into per-category
-    // fixtures by the analyzer-crate review.  `arithmetic.elf` stands in
+    // fixtures by the strider-crate review.  `arithmetic.elf` stands in
     // for the smoke check — every supported arch builds it cleanly.
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out")

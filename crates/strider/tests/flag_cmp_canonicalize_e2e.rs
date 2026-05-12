@@ -25,9 +25,9 @@ use strider::{CallingConvention, SleighArch, Strider};
 fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> BuiltFunctionGraph {
     let base = 0x1000u64;
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("create sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build");
 
@@ -72,9 +72,8 @@ fn aarch64_cmp_eq_branch_bytes() -> Vec<u8> {
 
 /// Returns the producer-`NodeKind` of `if_node`'s cond input.
 fn if_cond_kind(fg: &BuiltFunctionGraph, if_node: NodeId) -> NodeKind {
-    let [_ctrl, cond_out] = fg
-        .graph
-        .node_inputs_exact::<2>(if_node)
+    let [_ctrl, cond_out] = fg.graph
+                .node_inputs_exact::<2>(if_node)
         .expect("If has 2 inputs");
     *fg.graph.node_kind(fg.graph.get_node_from_output(cond_out))
 }
@@ -110,7 +109,7 @@ fn x86_64_cmp_je_branch_bytes() -> Vec<u8> {
 fn x86_64_je_after_pipeline_has_direct_int_cmp_cond() {
     let graph = lift(
         SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv_abi(),
+        CallingConvention::x86_64_systemv(),
         x86_64_cmp_je_branch_bytes(),
     );
     let if_node = find_unique_if(&graph);

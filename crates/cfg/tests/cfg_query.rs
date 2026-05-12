@@ -12,6 +12,7 @@ use petgraph::stable_graph::StableDiGraph;
 fn real_cfg(fn_name: &str) -> Cfg<reader::ElfFileMemReader> {
     let p = binary("x64", fn_name);
     build_cfg(
+        &target::SleighArch::x86_64(),
         p.to_str().unwrap(),
         fn_name,
         rsleigh::sla_spec::SLA_SPEC_X86_64,
@@ -24,13 +25,13 @@ fn real_cfg(fn_name: &str) -> Cfg<reader::ElfFileMemReader> {
 #[test]
 fn regions_iterator_count_matches_node_count() {
     let cfg = real_cfg("sum_to_n");
-    assert_eq!(cfg.regions().count(), cfg.graph.node_count());
+    assert_eq!(cfg.regions().count(), cfg.graph().node_count());
 }
 
 #[test]
 fn region_ids_iterator_count_matches_node_count() {
     let cfg = real_cfg("sum_to_n");
-    assert_eq!(cfg.region_ids().count(), cfg.graph.node_count());
+    assert_eq!(cfg.region_ids().count(), cfg.graph().node_count());
 }
 
 // ── region_branch ────────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ fn region_ids_iterator_count_matches_node_count() {
 #[test]
 fn region_branch_returns_none_for_linear_entry() {
     let cfg = real_cfg("add");
-    assert!(cfg.region_branch(cfg.entry).unwrap().is_none());
+    assert!(cfg.region_branch(cfg.entry()).unwrap().is_none());
 }
 
 // ── region_if ────────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ fn region_if_both_successors_present_on_abs_val() {
 #[test]
 fn region_if_absent_on_linear_entry() {
     let cfg = real_cfg("add");
-    let s = cfg.region_if(cfg.entry).unwrap();
+    let s = cfg.region_if(cfg.entry()).unwrap();
     assert!(s.if_true_region.is_none());
     assert!(s.if_false_region.is_none());
 }
@@ -75,11 +76,12 @@ fn duplicate_edge_kind_is_detected_by_region_branch() {
     graph.add_edge(src, dst1, RegionEdgeKind::Branch);
     graph.add_edge(src, dst2, RegionEdgeKind::Branch);
 
-    let cfg = cfg::Cfg {
-        sleigh: make_sleigh(),
+    let cfg = cfg::Cfg::from_parts_for_tests(
+        make_sleigh(),
         graph,
-        entry: src,
-    };
+        src,
+        std::collections::BTreeMap::new(),
+    );
 
     let err = cfg.region_branch(src).unwrap_err();
     assert!(
@@ -88,28 +90,26 @@ fn duplicate_edge_kind_is_detected_by_region_branch() {
     );
 }
 
-// ── W3: region_id_at_start public-API contract ────────────────────────────
+// ── region_id_at_start public-API contract ────────────────────────────────
 
 #[test]
 fn region_id_at_start_returns_some_for_real_function_entry() {
-    // W3 — `region_id_at_start` is `pub` (cross-crate-callable),
-    // not `pub(crate)` / `test_api`-only.  This test pins the public
+    // `region_id_at_start` is `pub` (cross-crate-callable), not
+    // `pub(crate)` / `test_api`-only.  This test pins the public
     // contract from the cfg crate's own test suite so an accidental
-    // visibility narrowing (which would break F5's
-    // `IndirectBranchResolve` in the opt crate) fails at the cfg
-    // boundary.
+    // visibility narrowing (which would break the indirect-branch
+    // resolver's orchestrator path) fails at the cfg boundary.
     let cfg = real_cfg("add");
     // The CFG entry's region must start at the function's entry
     // machine address; `region_id_at_start` therefore finds it.
-    let entry_region = cfg
-        .graph
-        .node_weight(cfg.entry)
+    let entry_region = cfg.graph()
+                .node_weight(cfg.entry())
         .expect("entry region exists");
-    let entry_addr = entry_region.start_addr.machine_addr;
+    let entry_addr = entry_region.start_addr.machine_addr();
     let rid = cfg.region_id_at_start(entry_addr);
     assert_eq!(
         rid,
-        Some(cfg.entry),
+        Some(cfg.entry()),
         "region_id_at_start must locate the entry region by its start addr",
     );
 }
@@ -120,7 +120,7 @@ fn region_id_at_start_returns_none_for_unknown_machine_addr() {
     // None; the helper only matches `start_addr.machine_addr`, never
     // mid-region addresses.
     let cfg = real_cfg("add");
-    let rid = cfg.region_id_at_start(cfg::MachineInsnAddr { addr: 0xdead_beef });
+    let rid = cfg.region_id_at_start(cfg::MachineInsnAddr::new(0xdead_beef));
     assert!(rid.is_none(), "unknown addr must return None, got {rid:?}");
 }
 
@@ -135,11 +135,12 @@ fn duplicate_if_case_true_is_detected_by_region_if() {
     graph.add_edge(src, dst1, RegionEdgeKind::IfCaseTrue);
     graph.add_edge(src, dst2, RegionEdgeKind::IfCaseTrue);
 
-    let cfg = cfg::Cfg {
-        sleigh: make_sleigh(),
+    let cfg = cfg::Cfg::from_parts_for_tests(
+        make_sleigh(),
         graph,
-        entry: src,
-    };
+        src,
+        std::collections::BTreeMap::new(),
+    );
 
     let err = cfg
         .region_if(src)

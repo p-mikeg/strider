@@ -26,7 +26,7 @@ use crate::Result;
 ///
 /// The builder uses a work-queue that is seeded with the entry address.
 /// Items are popped one at a time; each item triggers decoding of a new
-/// region (via [`RegionBuilder`]) or routing of an edge to an existing
+/// region (via `RegionBuilder`) or routing of an edge to an existing
 /// region.  When a branch target lands in the middle of an already-decoded
 /// region, that region is split in two.
 ///
@@ -43,7 +43,8 @@ use crate::Result;
 ///     reader,
 /// ).expect("create Sleigh");
 /// let opts = OptionsBuilder::new().build();
-/// let cfg = Builder::new(sleigh, fn_addr, opts).build()?;
+/// let arch = target::SleighArch::x86_64();
+/// let cfg = Builder::for_arch(&arch, sleigh, fn_addr, opts).build()?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
@@ -55,18 +56,15 @@ pub struct Builder<R: rsleigh::MemReader> {
     pub(super) options: Options,
     /// Byte order of the target architecture.  Threaded into
     /// [`super::indirect_resolve::resolve_indirect_target`] which
-    /// builds a mini IR via `pcode_lift::ValueLifter::new`.  Defaults
-    /// to [`target::Endianness::Little`] when constructed via
-    /// [`Self::new`]; callers that analyse big-endian binaries should
-    /// use [`Self::with_endianness`] instead.
+    /// builds a mini IR via `pcode_lift::ValueLifter::new`.  Set
+    /// atomically with `preset` via [`Self::for_arch`].
     pub(super) endianness: target::Endianness,
     /// Coarse architecture family.  Consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right `arch` to
-    /// [`target::call_other_abi::classify`].  Defaults to
-    /// [`target::Arch::X86_64`] when constructed via [`Self::new`] /
-    /// [`Self::with_endianness`]; callers that analyse non-x86_64
-    /// binaries should set it via [`Self::with_arch`].
+    /// [`target::call_other_abi::classify`].  Set atomically with
+    /// `endianness` via [`Self::for_arch`], or override individually
+    /// with [`Self::with_preset`].
     pub(super) preset: target::ArchPreset,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
@@ -84,33 +82,25 @@ pub struct Builder<R: rsleigh::MemReader> {
 }
 
 impl<R: rsleigh::MemReader> Builder<R> {
-    /// Creates a new `Builder` that will construct a CFG starting at
-    /// `start_addr` using `sleigh` to disassemble instructions.
-    ///
-    /// The endianness defaults to [`target::Endianness::Little`].
-    /// Callers that analyse big-endian binaries should use
-    /// [`Self::with_endianness`].
+    /// Creates a new `Builder` whose endianness AND `ArchPreset` are
+    /// derived atomically from `arch`.  The canonical constructor for
+    /// CFG building — setting both fields from one `SleighArch` source
+    /// prevents the silent misclassification that a split
+    /// endianness/preset ctor would invite (e.g. a big-endian binary
+    /// decoded as LE, or AArch64 `brk` classified as the x86 stub).
     #[must_use]
-    pub fn new(sleigh: rsleigh::Sleigh<R>, start_addr: u64, options: Options) -> Self {
-        Self::with_endianness(sleigh, start_addr, options, target::Endianness::Little)
-    }
-
-    /// Creates a new `Builder` with an explicit endianness — required
-    /// for big-endian targets so the indirect-branch resolver's mini IR
-    /// loads/stores see the right byte order.
-    #[must_use]
-    pub fn with_endianness(
+    pub fn for_arch(
+        arch: &target::SleighArch,
         sleigh: rsleigh::Sleigh<R>,
         start_addr: u64,
         options: Options,
-        endianness: target::Endianness,
     ) -> Self {
         Self {
             sleigh,
             start_addr: start_addr.into(),
             options,
-            endianness,
-            preset: target::ArchPreset::X86_64,
+            endianness: arch.endianness(),
+            preset: arch.preset(),
             graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
@@ -118,10 +108,12 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
     }
 
-    /// Sets the [`target::Arch`] used by the `Opcode::CallOther` arm
-    /// in [`super::region_builder`] when consulting
+    /// Sets the [`target::ArchPreset`] used by the `Opcode::CallOther`
+    /// arm in `super::region_builder` when consulting
     /// [`target::call_other_abi::classify`].  Defaults to
-    /// [`target::Arch::X86_64`]; override for non-x86_64 targets.
+    /// [`target::ArchPreset::X86_64`]; override for non-x86_64 targets.
+    /// Prefer [`Self::for_arch`] when an arch object is in scope —
+    /// it sets endianness AND preset atomically.
     #[must_use]
     pub fn with_preset(mut self, preset: target::ArchPreset) -> Self {
         self.preset = preset;
@@ -143,10 +135,22 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// lookup map.  Returns the assigned [`NodeIndex`].
     ///
     /// # Errors
-    /// Returns an error when `region.insns` is empty.
+    /// Returns an error when `region.insns` is empty AND `region.terminator`
+    /// is not [`super::types::RegionTerminator::Branch`].  Empty regions
+    /// terminating with `Branch` are explicitly allowed: they arise from
+    /// the single-instruction CondBranch-with-OOB-successor case, where
+    /// popping the trailing CondBranch leaves no body but the in-range
+    /// edge must still be preserved.  The IR-layer per-region driver
+    /// iterates `region.insns` (a no-op for empty insns) and handles the
+    /// terminator separately.
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
-        if region.insns.is_empty() {
-            bail!("region at {:?} has no instructions", region.start_addr);
+        if region.insns.is_empty()
+            && !matches!(region.terminator, super::types::RegionTerminator::Branch)
+        {
+            bail!(
+                "region at {:?} has no instructions and terminator is {:?} (only Branch is permitted for empty regions)",
+                region.start_addr, region.terminator,
+            );
         }
 
         let start_addr = region.start_addr;
@@ -213,13 +217,14 @@ impl<R: rsleigh::MemReader> Builder<R> {
         Ok(())
     }
 
-    /// Threads tier-2 results back into the CFG build.
+    /// Threads IR-level indirect-branch resolver results back into the CFG build.
     ///
     /// When the builder encounters a `BranchIndirect` whose pcode
     /// address is in `known_targets`, it uses the cached classification
-    /// directly instead of invoking tier 1's mini-graph resolver.
+    /// directly instead of invoking the cfg-time mini-graph resolver.
     /// This is the strider fixed-point orchestrator's feedback path:
-    /// after tier 2 resolves an indirect branch, the next iteration's
+    /// after the IR-level indirect-branch resolver resolves an indirect
+    /// branch, the next iteration's
     /// CFG build reads the resolution from `known_targets` and emits
     /// the appropriate `RegionTerminator` (`Branch` / `TailCall` /
     /// `Switch` / `Return`) directly — no re-resolution overhead.
@@ -241,7 +246,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// queue is empty, then locates the entry region.
     ///
     /// # Errors
-    /// Returns a [`crate::Error`] if disassembly fails, if the start region
+    /// Returns an `anyhow::Error` if disassembly fails, if the start region
     /// cannot be located after processing, or if any region split or edge
     /// routing fails.
     pub fn build(mut self) -> Result<Cfg<R>> {
@@ -263,6 +268,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
             graph: self.graph,
             sleigh: self.sleigh,
             entry: starting_region,
+            start_addr_to_region_id: self.start_addr_to_region_id,
         })
     }
 }

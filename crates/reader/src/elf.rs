@@ -371,11 +371,20 @@ pub struct RelocationStats {
     pub seen: usize,
     /// Relocations the applier patched into the loaded regions.
     pub applied: usize,
-    /// Relocations skipped because the target symbol could not be
-    /// resolved (typically: undefined externs, weak symbols
-    /// referencing absent libraries).  Patching with an arbitrary
-    /// value would produce wrong control flow.
+    /// Relocations skipped because the target symbol resolved cleanly
+    /// but is *legitimately* unresolvable at static-analysis time —
+    /// typically: undefined externs, weak symbols referencing absent
+    /// libraries.  Patching with an arbitrary value would produce
+    /// wrong control flow.
     pub skipped_unresolved_target: usize,
+    /// Relocations skipped because the target symbol/section index
+    /// failed to resolve at all — i.e. the ELF is malformed (the
+    /// relocation references an index `symbol_by_index` rejects, or
+    /// the relocation target is neither Symbol nor Section).  Distinct
+    /// from `skipped_unresolved_target` (which is the legitimate
+    /// weak-extern case): a non-zero count here means the input ELF
+    /// is structurally suspect.
+    pub skipped_malformed_target: usize,
     /// Relocations skipped because their kind / size / encoding
     /// isn't one the applier knows how to write — e.g. ARM Thumb-
     /// branch encodings or platform-specific TLS variants.
@@ -392,6 +401,13 @@ pub struct RelocationStats {
     /// relocation tables to identify each.  Empty when
     /// `skipped_unsupported_kind == 0`.
     pub unsupported_r_types: Vec<u32>,
+    /// Number of times the autoload region-extender encountered a
+    /// section whose `data()` parse failed.  These appeared in the
+    /// pre-fix path only on stderr; surfacing the count programmatically
+    /// lets callers detect malformed-ELF cases that would otherwise
+    /// look like clean `skipped_no_region` entries.  Zero in healthy
+    /// ELFs.
+    pub autoload_section_parse_failures: usize,
 }
 
 /// Patches relocations in `regions` in-place using the ELF's
@@ -483,16 +499,7 @@ pub fn apply_elf_relocations(
         // 32-bit on 32-bit).  Without this branch every PIE binary's
         // `dispatch_table[]` slot reads zero post-load.
         if let Some((value, size_bytes)) = image_relative_reloc(&reloc, obj.architecture()) {
-            if let Some(region) = regions
-                .iter_mut()
-                .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
-            {
-                let off = (site_addr - region.start_addr()) as usize;
-                write_at(region.data_mut(), off, value, size_bytes, endian_le);
-                stats.applied += 1;
-            } else {
-                stats.skipped_no_region += 1;
-            }
+            locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
             continue;
         }
 
@@ -517,31 +524,30 @@ pub fn apply_elf_relocations(
                             .ok()
                     };
                     let Some((addr, undef)) = resolved else {
-                        stats.skipped_unresolved_target += 1;
+                        // symbol_by_index returned Err — the index is
+                        // invalid (malformed ELF), distinct from the
+                        // legitimate weak-extern case below.
+                        stats.skipped_malformed_target += 1;
                         continue;
                     };
                     if addr == 0 && undef {
+                        // Legitimate undefined / weak extern.
                         stats.skipped_unresolved_target += 1;
                         continue;
                     }
                     addr
                 }
                 _ => {
-                    stats.skipped_unresolved_target += 1;
+                    // Non-Symbol relocation target (e.g. SectionIndex
+                    // we don't model) — bucket as malformed-from-our-
+                    // perspective rather than as a legitimate
+                    // weak-extern.
+                    stats.skipped_malformed_target += 1;
                     continue;
                 }
             };
             let value = target_addr.wrapping_add(reloc.addend() as u64);
-            if let Some(region) = regions
-                .iter_mut()
-                .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
-            {
-                let off = (site_addr - region.start_addr()) as usize;
-                write_at(region.data_mut(), off, value, size_bytes, endian_le);
-                stats.applied += 1;
-            } else {
-                stats.skipped_no_region += 1;
-            }
+            locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
             continue;
         }
 
@@ -565,7 +571,12 @@ pub fn apply_elf_relocations(
                         .ok()
                 };
                 let Some((addr, undef)) = resolved else {
-                    stats.skipped_unresolved_target += 1;
+                    // symbol_by_index returned Err — the index is invalid
+                    // (malformed ELF), distinct from the legitimate
+                    // weak-extern case below.  Match the GOT/PLT path's
+                    // bucket so callers diagnosing relocation outcomes
+                    // see a consistent error class.
+                    stats.skipped_malformed_target += 1;
                     continue;
                 };
                 if addr == 0 && undef {
@@ -577,7 +588,12 @@ pub fn apply_elf_relocations(
             RelocationTarget::Section(idx) => match obj.section_by_index(idx) {
                 Ok(sec) => sec.address(),
                 Err(_) => {
-                    stats.skipped_unresolved_target += 1;
+                    // Bad section index — structurally malformed, NOT a
+                    // legitimate weak-extern.                      // matches the GOT-PLT path's classification at line 538
+                    // and the bad-symbol-index path at line 572, so callers
+                    // inspecting RelocationStats see a consistent
+                    // "malformed" bucket regardless of which arm fires.
+                    stats.skipped_malformed_target += 1;
                     continue;
                 }
             },
@@ -621,22 +637,96 @@ pub fn apply_elf_relocations(
         let size_bytes = (size_bits / 8) as usize;
 
         // Find the region that contains the [site_addr, site_addr +
-        // size_bytes) range.  Linear scan is fine here — relocation
-        // counts are small relative to the per-relocation work.
-        let Some(region) = regions
-            .iter_mut()
-            .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
-        else {
-            stats.skipped_no_region += 1;
-            continue;
-        };
-
-        let off = (site_addr - region.start_addr()) as usize;
-        write_at(region.data_mut(), off, value, size_bytes, endian_le);
-        stats.applied += 1;
+        // size_bytes) range.  Linear scan inside `locate_and_write`
+        // is fine — relocation counts are small relative to the
+        // per-relocation work.
+        locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
     }
 
     Ok(stats)
+}
+
+/// Shared body of [`apply_elf_relocations`] and
+/// [`apply_elf_relocations_autoload`]: walks the dynamic relocation
+/// table once to find sites not yet covered by any region, queries
+/// `extender` for each missing site, appends every returned
+/// [`MemRegion`] to `regions`, then delegates to the patch loop.
+///
+/// The non-autoload variant passes an extender that always returns
+/// `Ok(None)` (so `regions` is never grown and uncovered sites
+/// increment `skipped_no_region` inside the patch loop); the autoload
+/// variant passes an extender that returns the `SHF_ALLOC`
+/// file-backed section containing the site, if any.
+///
+/// Sections are appended in iteration order of `obj.dynamic_relocations()`,
+/// and the per-site dedup check covers both the pre-existing `regions`
+/// and the in-progress staged set, so a single staged `MemRegion`
+/// satisfies every later site that falls inside it.
+///
+/// # Errors
+///
+/// Returns any error the extender produces, plus the same set of
+/// errors as the underlying [`apply_elf_relocations`] patch loop.
+///
+/// # Rollback semantics on `Err`
+///
+/// **Partial rollback only.**  If the patch loop fails partway through,
+/// the staged region extensions are truncated off the tail of `regions`
+/// (restoring the pre-call *length*), but byte mutations the patch loop
+/// already performed on pre-existing regions before the failure are NOT
+/// reverted.  Snapshotting every mutated byte range would double the
+/// memory cost of relocation application for a corner case that only
+/// matters when an extender materialises a region we then fail to
+/// patch.  Callers needing strict atomicity should re-load the binary
+/// from disk on `Err`.
+pub fn apply_elf_relocations_with_extender<F>(
+    regions: &mut Vec<MemRegion>,
+    obj: &object::File<'_>,
+    mut extender: F,
+) -> Result<RelocationStats>
+where
+    F: FnMut(u64, &object::File<'_>) -> Result<Option<MemRegion>>,
+{
+    let Some(dyn_relocs) = obj.dynamic_relocations() else {
+        return Ok(RelocationStats::default());
+    };
+
+    // Pass 1 — collect site addresses not yet covered, ask `extender`
+    // to materialise the owning region for each, and stage them.  We
+    // never mutate `regions` here so an extender error mid-pass leaves
+    // it untouched.
+    let mut staged: Vec<MemRegion> = Vec::new();
+    for (site_addr, _reloc) in dyn_relocs {
+        let already_covered = regions
+            .iter()
+            .chain(staged.iter())
+            .any(|r| r.contains(site_addr));
+        if already_covered {
+            continue;
+        }
+        if let Some(region) = extender(site_addr, obj)? {
+            staged.push(region);
+        }
+    }
+    let base_len = regions.len();
+    regions.extend(staged);
+
+    // Pass 2 — the patch loop.  On `Err` we truncate the staged
+    // extension off the tail of `regions`, restoring the pre-call
+    // *length*.  This is a **partial rollback only**: any byte
+    // mutations the patch loop performed on pre-existing regions
+    // before the error fired are *not* reverted (snapshotting every
+    // mutated byte range would double the memory cost of relocation
+    // application for a corner case that only matters when an extender
+    // produces a region we then fail to patch).  Callers that need
+    // strict atomicity should re-load the binary from disk on `Err`.
+    match apply_elf_relocations(regions, obj) {
+        Ok(stats) => Ok(stats),
+        Err(e) => {
+            regions.truncate(base_len);
+            Err(e)
+        }
+    }
 }
 
 /// Like [`apply_elf_relocations`], but pre-walks the dynamic
@@ -679,35 +769,23 @@ pub fn apply_elf_relocations_autoload(
     regions: &mut Vec<MemRegion>,
     obj: &object::File<'_>,
 ) -> Result<RelocationStats> {
-    let Some(dyn_relocs) = obj.dynamic_relocations() else {
-        return Ok(RelocationStats::default());
-    };
-
-    // Pass 1 — collect site addresses not yet covered, look up
-    // their owning section, and stage one MemRegion per unique
-    // missing section.  We never mutate `regions` here so an
-    // error mid-pass leaves it untouched.
-    let mut staged: Vec<MemRegion> = Vec::new();
-    for (site_addr, _reloc) in dyn_relocs {
-        let already_covered = regions
-            .iter()
-            .chain(staged.iter())
-            .any(|r| r.contains(site_addr));
-        if already_covered {
-            continue;
-        }
-        let Some(sec) = find_loadable_section_containing(obj, site_addr) else {
-            continue;
+    let mut parse_failures: usize = 0;
+    let mut stats = apply_elf_relocations_with_extender(regions, obj, |site_addr, obj| {
+        let Some(sec) = find_loadable_section_containing(obj, site_addr, &mut parse_failures)
+        else {
+            return Ok(None);
         };
         let data = sec.data().context("failed to parse ELF")?;
         if data.is_empty() {
-            continue;
+            return Ok(None);
         }
-        staged.push(MemRegion::new(sec.address(), data.to_vec())?);
-    }
-
-    regions.extend(staged);
-    apply_elf_relocations(regions, obj)
+        Ok(Some(MemRegion::new(sec.address(), data.to_vec())?))
+    })?;
+    // Surface autoload section-parse failures on `stats` so
+    // programmatic callers can detect malformed-ELF without inspecting
+    // log output.
+    stats.autoload_section_parse_failures = parse_failures;
+    Ok(stats)
 }
 
 /// Returns the first section in `obj` that contains `addr` and is
@@ -718,6 +796,7 @@ pub fn apply_elf_relocations_autoload(
 fn find_loadable_section_containing<'data, 'a>(
     obj: &'a object::File<'data>,
     addr: u64,
+    parse_failure_count: &mut usize,
 ) -> Option<object::read::Section<'data, 'a>> {
     obj.sections().find(|sec| {
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
@@ -726,8 +805,25 @@ fn find_loadable_section_containing<'data, 'a>(
         if sh_flags & u64::from(object::elf::SHF_ALLOC) == 0 {
             return false;
         }
-        if sec.data().map(|d| d.is_empty()).unwrap_or(true) {
-            return false;
+        // SHT_NOBITS sections (BSS) and sections whose data fails to
+        // parse both yield no usable bytes — treat them identically as
+        // "skip this section for site-coverage", but distinguish the
+        // parse-failure case via the
+        // `RelocationStats::autoload_section_parse_failures` counter
+        // the caller surfaces, so programmatic callers can detect
+        // malformed-ELF without scraping stderr.  No `eprintln!`: this
+        // is library code, and stderr writes from a deep helper are
+        // un-suppressable noise for embedders.
+        match sec.data() {
+            Ok(d) => {
+                if d.is_empty() {
+                    return false;
+                }
+            }
+            Err(_) => {
+                *parse_failure_count += 1;
+                return false;
+            }
         }
         let lo = sec.address();
         let hi = lo.saturating_add(sec.size());
@@ -803,6 +899,40 @@ fn image_relative_reloc(
         {
             4
         }
+        // PPC64 RELATIVE / IRELATIVE — type codes shared with PPC32 in
+        // the ELF spec (`R_PPC64_RELATIVE = R_PPC_RELATIVE = 22`).
+        // PPC64 ET_DYN binaries (Linux distributions) commonly use this
+        // for function-pointer tables; without this arm those relocs
+        // fall through to `skipped_unsupported_kind` and the resulting
+        // pointer reads as zero.
+        A::PowerPc64
+            if r_type == object::elf::R_PPC64_RELATIVE
+                || r_type == object::elf::R_PPC64_IRELATIVE =>
+        {
+            8
+        }
+        A::PowerPc
+            if r_type == object::elf::R_PPC_RELATIVE
+                || r_type == object::elf::R_PPC_IRELATIVE =>
+        {
+            4
+        }
+        // MIPS REL32 — closest analogue to RELATIVE on MIPS.
+        // `R_MIPS_REL32` (type 3) writes `S + A` (symbol value plus
+        // addend); for an undefined symbol with index 0 it reduces to
+        // image-relative.  MIPS does not define a separate IRELATIVE.
+        //
+        // **Field width is 4 bytes on both MIPS32 and MIPS64.**  The
+        // "REL32" suffix is the relocation field size, not the address
+        // width — the MIPS64 ELF supplement defines REL32 as a 32-bit
+        // relocation field that writes the low 32 bits of (S + A).
+        // Writing 8 bytes here on MIPS64 corrupts the four bytes
+        // immediately following the relocation site.
+        A::Mips | A::Mips64
+            if r_type == object::elf::R_MIPS_REL32 =>
+        {
+            4
+        }
         _ => return None,
     };
     // For image-relative, the addend is the resolved value (image
@@ -859,7 +989,64 @@ fn got_or_plt_slot_reloc_size(
         {
             Some(4)
         }
+        A::PowerPc64
+            if r_type == object::elf::R_PPC64_GLOB_DAT
+                || r_type == object::elf::R_PPC64_JMP_SLOT =>
+        {
+            Some(8)
+        }
+        A::PowerPc
+            if r_type == object::elf::R_PPC_GLOB_DAT
+                || r_type == object::elf::R_PPC_JMP_SLOT =>
+        {
+            Some(4)
+        }
+        A::Mips
+            if r_type == object::elf::R_MIPS_GLOB_DAT
+                || r_type == object::elf::R_MIPS_JUMP_SLOT =>
+        {
+            Some(4)
+        }
+        A::Mips64
+            if r_type == object::elf::R_MIPS_GLOB_DAT
+                || r_type == object::elf::R_MIPS_JUMP_SLOT =>
+        {
+            Some(8)
+        }
         _ => None,
+    }
+}
+
+/// Locates the region in `regions` whose `[start, end)` covers
+/// `[site_addr, site_addr + size_bytes)`, computes the in-region
+/// offset, and writes the low `size_bytes` of `value` there using
+/// `endian_le`.  Increments `stats.applied` on success, or
+/// `stats.skipped_no_region` when no region covers the full
+/// patch range.
+///
+/// Consolidates the three identical "find region / compute offset /
+/// write_at / increment counter" blocks in [`apply_elf_relocations`]
+/// (image-relative, GOT/PLT-slot, generic Absolute/Relative paths)
+/// into a single helper.
+fn locate_and_write(
+    regions: &mut [MemRegion],
+    site_addr: u64,
+    value: u64,
+    size_bytes: usize,
+    endian_le: bool,
+    stats: &mut RelocationStats,
+) {
+    if let Some(region) = regions.iter_mut().find(|r| {
+        r.contains(site_addr)
+            && site_addr
+                .checked_add(size_bytes as u64)
+                .is_some_and(|end| end <= r.end_addr())
+    }) {
+        let off = (site_addr - region.start_addr()) as usize;
+        write_at(region.data_mut(), off, value, size_bytes, endian_le);
+        stats.applied += 1;
+    } else {
+        stats.skipped_no_region += 1;
     }
 }
 
@@ -897,7 +1084,15 @@ pub fn elf_load_with_relocations(
     obj: &object::File<'_>,
 ) -> Result<(Vec<MemRegion>, RelocationStats)> {
     let mut regions = elf_get_allocatable_file_backed_sections_as_mem_regions(obj)?;
-    let stats = apply_elf_relocations(&mut regions, obj)?;
+    // Use the autoload variant so this bundled path is consistent with
+    // the standalone `add_region_from_elf(path)` + `apply_elf_relocations(path)`
+    // sequence used from Python.  In practice the upfront
+    // `elf_get_allocatable_file_backed_sections_as_mem_regions` already
+    // covers every relocation-targeted section, so the autoload step
+    // is a no-op; the symmetry just guards against future ELF shapes
+    // that emit relocation sites against sections the upfront loader
+    // misses.
+    let stats = apply_elf_relocations_autoload(&mut regions, obj)?;
     Ok((regions, stats))
 }
 

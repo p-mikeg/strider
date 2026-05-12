@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerRaw;
 use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{
@@ -7,24 +7,8 @@ use ir::{
     IntBinaryOp, IntCmpOp,
 };
 
-use crate::test_support::{make_fn, make_fn_with_var};
+use crate::test_support::{make_fn, make_fn_with_var, return_kind, return_value};
 use ir::test_utils::reg_vn;
-
-/// Returns the output id that the Return node receives as its value
-/// argument (input[2]: input[0] is the control edge, input[1] is memory).
-fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
-    let ret = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(fg.graph.node_inputs(ret)[2])
-}
-
-/// Returns the `NodeKind` of the node that produces the return value.
-fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
-    let val = return_value(fg)?;
-    Ok(*fg.graph.kind_of_output(val))
-}
 
 // ── integer binary folding ────────────────────────────────────────────────
 
@@ -35,8 +19,8 @@ fn fold_int_add_consts() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64).unwrap();
         b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(7));
     Ok(())
 }
 
@@ -47,8 +31,8 @@ fn fold_int_and_zero() -> Result<()> {
         let zero = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
         b.build_int_binary_operation(x, zero, IntBinaryOp::And, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -58,8 +42,8 @@ fn fold_int_xor_self() -> Result<()> {
         let x = b.build_int_const(0xABu64, NodeOutputType::U64).unwrap();
         b.build_int_binary_operation(x, x, IntBinaryOp::Xor, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -69,8 +53,8 @@ fn fold_int_sub_self() -> Result<()> {
         let x = b.build_int_const(0xABu64, NodeOutputType::U64).unwrap();
         b.build_int_sub(x, x, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -87,9 +71,9 @@ fn fold_add_zero_identity() -> Result<()> {
     // After at least one fold pass x+0 should collapse to x, then x folds too.
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(3));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(3));
     Ok(())
 }
 
@@ -100,8 +84,8 @@ fn fold_mul_by_one() -> Result<()> {
         let one = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
         b.build_int_binary_operation(c5, one, IntBinaryOp::Mul, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(5));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(5));
     Ok(())
 }
 
@@ -120,10 +104,10 @@ fn fold_and_and_masks() -> Result<()> {
     // Run to convergence (both-const fold + mask-merge may each fire once).
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     // 0xFF & 4 = 4, 4 & 7 = 4.
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(4));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(4));
     Ok(())
 }
 
@@ -137,17 +121,17 @@ fn assert_add_with_const(
     expected_const: u64,
     ty: NodeOutputType,
 ) -> Result<()> {
-    let val = return_value(fg)?;
-    let node = fg.graph.get_node_from_output(val);
+    let val = return_value(fg.into())?;
+    let node = fg.get_node_from_output(val);
     assert!(
         matches!(
-            fg.graph.node_kind(node),
+            fg.node_kind(node),
             NodeKind::IntBinaryOp(IntBinaryOp::Add)
         ),
         "expected outer Add, got {:?}",
-        fg.graph.node_kind(node)
+        fg.node_kind(node)
     );
-    let inputs = fg.graph.node_inputs(node);
+    let inputs = fg.node_inputs(node);
     assert_eq!(inputs.len(), 2);
     let l = inputs[0];
     let r = inputs[1];
@@ -156,7 +140,7 @@ fn assert_add_with_const(
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_on = |o: ir::Value| -> bool {
         matches!(
-            *fg.graph.kind_of_output(o),
+            *fg.kind_of_output(o),
             // IntConst stores u128; masked is u64, widen for comparison.
             NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
         )
@@ -166,8 +150,8 @@ fn assert_add_with_const(
         ok,
         "expected `base + {:#x}`; got lhs kind={:?}, rhs kind={:?}",
         masked,
-        fg.graph.kind_of_output(l),
-        fg.graph.kind_of_output(r),
+        fg.kind_of_output(l),
+        fg.kind_of_output(r),
     );
     Ok(())
 }
@@ -185,17 +169,17 @@ fn assert_sub_with_const(
     expected_const: u64,
     ty: NodeOutputType,
 ) -> Result<()> {
-    let val = return_value(fg)?;
-    let node = fg.graph.get_node_from_output(val);
+    let val = return_value(fg.into())?;
+    let node = fg.get_node_from_output(val);
     assert!(
         matches!(
-            fg.graph.node_kind(node),
+            fg.node_kind(node),
             NodeKind::IntBinaryOp(IntBinaryOp::Add)
         ),
         "expected outer Add (lowered Sub), got {:?}",
-        fg.graph.node_kind(node)
+        fg.node_kind(node)
     );
-    let inputs = fg.graph.node_inputs(node);
+    let inputs = fg.node_inputs(node);
     assert_eq!(inputs.len(), 2);
     // The lowered `a - K` shape after `ConstantFold` is `Add(a, IntConst(-K))`.
     // `Add` is commutative, so accept the const on either side; check that
@@ -207,7 +191,7 @@ fn assert_sub_with_const(
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_match = |out: ir::Value| {
         matches!(
-            *fg.graph.kind_of_output(out),
+            *fg.kind_of_output(out),
             NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(neg_masked)
         )
     };
@@ -218,8 +202,8 @@ fn assert_sub_with_const(
         "expected `base + {:#x}` (= base - {:#x} canonicalised); got lhs kind={:?}, rhs kind={:?}",
         neg_masked,
         expected_const,
-        fg.graph.kind_of_output(l),
-        fg.graph.kind_of_output(r),
+        fg.kind_of_output(l),
+        fg.kind_of_output(r),
     );
     Ok(())
 }
@@ -237,7 +221,7 @@ fn reassoc_add_add_consts() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_add_with_const(&fg, x, 7, NodeOutputType::U64)?;
     Ok(())
@@ -256,7 +240,7 @@ fn reassoc_add_sub_consts() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_add_with_const(&fg, x, 1, NodeOutputType::U64)?;
     Ok(())
@@ -275,7 +259,7 @@ fn reassoc_sub_add_consts_wrapping() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_add_with_const(&fg, x, 0xFFFF_FFFF_FFFF_FFFF, NodeOutputType::U64)?;
     Ok(())
@@ -294,7 +278,7 @@ fn reassoc_sub_sub_consts() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_sub_with_const(&fg, x, 7, NodeOutputType::U64)?;
     Ok(())
@@ -313,7 +297,7 @@ fn reassoc_add_commuted_inner() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_add_with_const(&fg, x, 7, NodeOutputType::U64)?;
     Ok(())
@@ -332,7 +316,7 @@ fn reassoc_add_commuted_outer() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_add_with_const(&fg, x, 7, NodeOutputType::U64)?;
     Ok(())
@@ -351,7 +335,7 @@ fn reassoc_chain_three_subs() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_sub_with_const(&fg, x, 12, NodeOutputType::U64)?;
     Ok(())
@@ -369,7 +353,7 @@ fn reassoc_chain_three_subs_u32() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_sub_with_const(&fg, x, 12, NodeOutputType::U32)?;
     Ok(())
@@ -393,11 +377,11 @@ fn reassoc_no_fold_without_const() -> Result<()> {
         b.build_int_binary_operation(inner, z, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(outer), &[])?;
     let mut fg = b.build()?;
-    let before = return_value(&fg)?;
+    let before = return_value((&fg).into())?;
     // Should not change: no constants anywhere.
-    let res = ConstantFold.optimize(&mut fg.graph, fg.entry)?;
+    let res = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(!res.changed(), "no-const chain should not reassociate");
-    assert_eq!(return_value(&fg)?, before);
+    assert_eq!(return_value((&fg).into())?, before);
     Ok(())
 }
 
@@ -427,7 +411,7 @@ fn distribution_rewrite() -> Result<()> {
         b.build_int_binary_operation(or_node, ff, IntBinaryOp::And, NodeOutputType::U64)?;
     b.build_return(Some(outer), &[])?;
     let mut fg = b.build()?;
-    let changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+    let changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     assert!(changed, "distribution rule should fire");
     Ok(())
 }
@@ -444,14 +428,14 @@ fn fold_truncate_const() -> Result<()> {
         let wide = b.build_int_const(0xFF00u64, NodeOutputType::U16).unwrap();
         b.truncate_if_needed(wide, NodeOutputType::U8)
     })?;
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     // Use int_const_val which masks to the declared type.
-    let semantic = fg.graph.int_const_val(val);
+    let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0), "0xFF00 truncated to U8 should be 0");
     // No Truncate nodes should exist.
     assert!(
         !fg.all_node_ids()
-            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Truncate)),
+            .any(|n| matches!(fg.node_kind(n), NodeKind::Truncate)),
         "builder should have folded the truncate"
     );
     Ok(())
@@ -481,17 +465,17 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     // Sanity: builder did emit a Truncate node.
     assert!(
         fg.all_node_ids()
-            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Truncate)),
+            .any(|n| matches!(fg.node_kind(n), NodeKind::Truncate)),
         "test setup expects a Truncate node before optimization",
     );
 
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
 
     // After optimization the Return's value must be an `IntConst(0xFF)`,
     // i.e. the low byte of 0xFFFF — *masked* to U8. A pre-fix run would
     // store `0xFFFF` (the wider raw value) here.
-    let val = return_value(&fg)?;
-    let kind = *fg.graph.kind_of_output(val);
+    let val = return_value((&fg).into())?;
+    let kind = *fg.kind_of_output(val);
     let raw = match kind {
         NodeKind::IntConst(v) => v,
         other => panic!("expected IntConst producer for Return value, got {other:?}"),
@@ -534,21 +518,21 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     // After optimization the Or's two const inputs fold to IntConst(0xFF),
     // and the Truncate(Extend(IntConst(0xFF))) collapses to IntConst(0xFF).
     // Most importantly: no Truncate or Extend node remains in the chain.
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     assert!(
-        matches!(fg.graph.kind_of_output(val), NodeKind::IntConst(_)),
+        matches!(fg.kind_of_output(val), NodeKind::IntConst(_)),
         "round-trip + const-fold must leave an IntConst at the root, got {:?}",
-        fg.graph.kind_of_output(val)
+        fg.kind_of_output(val)
     );
     // Belt-and-suspenders: walk all reachable nodes and verify no
     // Truncate/Extend survives the chain to the Return.
     for nid in fg.preorder() {
-        let kind = fg.graph.node_kind(nid);
+        let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Truncate | NodeKind::Extend(_)),
             "Truncate/Extend round-trip must be folded away; found {kind:?}"
@@ -572,10 +556,10 @@ fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     for nid in fg.preorder() {
-        let kind = fg.graph.node_kind(nid);
+        let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Truncate | NodeKind::Extend(_)),
             "SignExtend round-trip must be folded away; found {kind:?}"
@@ -606,13 +590,13 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     // After narrowing-through-Mul + constant fold: 3 * 7 = 21 at U32.
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(21));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(21));
     // Nothing wider than U32 should survive (no SignExtend/Mul@U64/Truncate).
     for nid in fg.preorder() {
-        let kind = fg.graph.node_kind(nid);
+        let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Extend(ExtendOp::SignExtend) | NodeKind::Truncate),
             "narrowing rule must collapse the SignExt-Mul-Truncate chain; \
@@ -657,19 +641,19 @@ fn fold_cast_to_bool_of_cast_to_int_round_trip() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     // No reachable `CastToBool` may have a `CastToInt` immediately
     // upstream — if any survives, the round-trip rule didn't fire.
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     for n in fg.all_node_ids().filter(|n| reachable.contains(n)) {
-        if !matches!(fg.graph.node_kind(n), NodeKind::CastToBool) {
+        if !matches!(fg.node_kind(n), NodeKind::CastToBool) {
             continue;
         }
-        let inputs = fg.graph.node_inputs(n);
-        let producer = fg.graph.output_definition(inputs[0]).0;
+        let inputs = fg.node_inputs(n);
+        let producer = fg.output_definition(inputs[0]).0;
         assert!(
-            !matches!(fg.graph.node_kind(producer), NodeKind::CastToInt),
+            !matches!(fg.node_kind(producer), NodeKind::CastToInt),
             "CastToBool(CastToInt(...)) round-trip must be folded; \
              survived at {n:?}"
         );
@@ -700,13 +684,13 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     // After dropping the high half + folding 0xAA | 0xAA = 0xAA at U32:
     // the result is IntConst(0xAA).  No Or remains.
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xAA));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xAA));
     for nid in fg.preorder() {
-        let kind = fg.graph.node_kind(nid);
+        let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Or)),
             "high-mask half drop must collapse the Or; found {kind:?}"
@@ -731,11 +715,11 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     // After dropping the redundant And + folding the OR-of-itself:
     // result is IntConst(0xDEADBEEF) at U32.
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xDEADBEEF));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xDEADBEEF));
     Ok(())
 }
 
@@ -758,12 +742,12 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     // The result must be U16-typed.
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     assert_eq!(
-        fg.graph.output_kind(val),
+        fg.output_kind(val),
         ir::node::NodeOutputKind::OutputType(NodeOutputType::U16),
         "Truncate_U16(Extend_U64(U32)) must keep U16 typing — round-trip \
          rule must not fire when inner width != outer truncate width"
@@ -779,8 +763,8 @@ fn fold_bool_neg_const() -> Result<()> {
         let t = b.build_boolean_const(true);
         b.build_boolean_unary_operation(t, BoolUnaryOp::Neg)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolConst(false));
     Ok(())
 }
 
@@ -791,8 +775,8 @@ fn fold_bool_and_consts() -> Result<()> {
         let f = b.build_boolean_const(false);
         b.build_boolean_operation(t, f, BoolBinaryOp::And)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolConst(false));
     Ok(())
 }
 
@@ -810,8 +794,8 @@ fn fold_bool_xor_true_to_not() -> Result<()> {
         let t = b.build_boolean_const(true);
         b.build_boolean_operation(cmp, t, BoolBinaryOp::Xor)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg));
     Ok(())
 }
 
@@ -826,8 +810,8 @@ fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
         // Operands flipped relative to the previous test.
         b.build_boolean_operation(t, cmp, BoolBinaryOp::Xor)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg));
     Ok(())
 }
 
@@ -844,9 +828,9 @@ fn no_fold_bool_xor_false() -> Result<()> {
     // No rule fires: cmp is non-const so the both-const fold won't fire,
     // and the new `x ^ true → !x` rule won't fire because the const is
     // `false`, not `true`.  Return value is still the BXor node.
-    assert!(!ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(!ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::BoolBinaryOp(BoolBinaryOp::Xor)
     );
     Ok(())
@@ -862,9 +846,9 @@ fn fold_bool_double_not_to_x() -> Result<()> {
         let n1 = b.build_boolean_unary_operation(cmp, BoolUnaryOp::Neg)?;
         b.build_boolean_unary_operation(n1, BoolUnaryOp::Neg)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // After fold the function returns the cmp directly.
-    assert_eq!(return_kind(&fg)?, NodeKind::IntCmpOp(IntCmpOp::Equal));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
@@ -883,9 +867,9 @@ fn fold_bool_xor_true_xor_true_collapses_to_x() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntCmpOp(IntCmpOp::Equal));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
@@ -899,9 +883,9 @@ fn no_fold_div_by_zero() -> Result<()> {
         b.build_int_binary_operation(x, zero, IntBinaryOp::Div, NodeOutputType::U64)
     })?;
     // Should not fold (division by zero is undefined).
-    assert!(!ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(!ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert!(matches!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::IntBinaryOp(IntBinaryOp::Div)
     ));
     Ok(())
@@ -914,8 +898,8 @@ fn fold_int_cmp_equal_consts() -> Result<()> {
         let c5b = b.build_int_const(5u64, NodeOutputType::U64).unwrap();
         b.build_int_cmp_operation(c5, c5b, IntCmpOp::Equal, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolConst(true));
     Ok(())
 }
 
@@ -926,8 +910,8 @@ fn fold_int_cmp_less_consts() -> Result<()> {
         let c5 = b.build_int_const(5u64, NodeOutputType::U64).unwrap();
         b.build_int_cmp_operation(c3, c5, IntCmpOp::Less, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolConst(true));
     Ok(())
 }
 
@@ -940,8 +924,8 @@ fn fold_popcount_const() -> Result<()> {
         let v = b.build_int_const(0b10110101u64, NodeOutputType::U8).unwrap();
         b.build_popcount(v, NodeOutputType::U8)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(5));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(5));
     Ok(())
 }
 
@@ -951,8 +935,8 @@ fn fold_popcount_zero() -> Result<()> {
         let v = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
         b.build_popcount(v, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -963,8 +947,8 @@ fn fold_lzcount_msb_set() -> Result<()> {
         let v = b.build_int_const(0x80u64, NodeOutputType::U8).unwrap();
         b.build_lzcount(v, NodeOutputType::U8)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -975,8 +959,8 @@ fn fold_lzcount_one() -> Result<()> {
         let v = b.build_int_const(1u64, NodeOutputType::U8).unwrap();
         b.build_lzcount(v, NodeOutputType::U8)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(7));
     Ok(())
 }
 
@@ -989,8 +973,8 @@ fn fold_lzcount_zero_u32() -> Result<()> {
         let v = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
         b.build_lzcount(v, NodeOutputType::U32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(32));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(32));
     Ok(())
 }
 
@@ -1000,8 +984,8 @@ fn fold_lzcount_zero_u8() -> Result<()> {
         let v = b.build_int_const(0u64, NodeOutputType::U8).unwrap();
         b.build_lzcount(v, NodeOutputType::U8)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(8));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(8));
     Ok(())
 }
 
@@ -1013,8 +997,8 @@ fn fold_lzcount_zero_u64() -> Result<()> {
         let v = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
         b.build_lzcount(v, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(64));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(64));
     Ok(())
 }
 
@@ -1035,20 +1019,20 @@ fn build_unary_with_wide_const_input(
 ) -> Result<ir::BuiltFunctionGraph> {
     use ir::node::NodeOutputKind;
     let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, NodeOutputType::U64).unwrap()))?;
-    let placeholder = return_value(&fg)?;
-    let wide_node = fg.graph.create_node(
+    let placeholder = return_value((&fg).into())?;
+    let wide_node = fg.create_node(
         NodeKind::IntConst(0xFF),
         [],
         [NodeOutputKind::OutputType(wide_ty)],
     );
-    let wide_const = fg.graph.node_outputs_exact::<1>(wide_node)?[0];
-    let unary_node = fg.graph.create_node(
+    let wide_const = fg.node_outputs_exact::<1>(wide_node)?[0];
+    let unary_node = fg.create_node(
         kind,
         [wide_const],
         [NodeOutputKind::OutputType(out_ty)],
     );
-    let unary_out = fg.graph.node_outputs_exact::<1>(unary_node)?[0];
-    fg.graph.replace_all_uses(placeholder, unary_out)?;
+    let unary_out = fg.node_outputs_exact::<1>(unary_node)?[0];
+    fg.replace_all_uses(placeholder, unary_out)?;
     Ok(fg)
 }
 
@@ -1063,7 +1047,7 @@ fn fold_lzcount_u128_input_skips_cleanly() -> Result<()> {
         NodeOutputType::U128,
         NodeOutputType::U64,
     )?;
-    let result = ConstantFold.optimize(&mut fg.graph, fg.entry);
+    let result = ConstantFold.optimize_raw(&mut fg.graph, fg.entry);
     assert!(
         result.is_ok(),
         "ConstantFold must not error on Lzcount(U128 const), got {:?}",
@@ -1079,7 +1063,7 @@ fn fold_lzcount_u256_input_skips_cleanly() -> Result<()> {
         NodeOutputType::U256,
         NodeOutputType::U64,
     )?;
-    let result = ConstantFold.optimize(&mut fg.graph, fg.entry);
+    let result = ConstantFold.optimize_raw(&mut fg.graph, fg.entry);
     assert!(
         result.is_ok(),
         "ConstantFold must not error on Lzcount(U256 const), got {:?}",
@@ -1098,7 +1082,7 @@ fn fold_popcount_u128_input_skips_cleanly() -> Result<()> {
         NodeOutputType::U128,
         NodeOutputType::U64,
     )?;
-    let result = ConstantFold.optimize(&mut fg.graph, fg.entry);
+    let result = ConstantFold.optimize_raw(&mut fg.graph, fg.entry);
     assert!(
         result.is_ok(),
         "ConstantFold must not error on Popcount(U128 const), got {:?}",
@@ -1114,7 +1098,7 @@ fn fold_popcount_u256_input_skips_cleanly() -> Result<()> {
         NodeOutputType::U256,
         NodeOutputType::U64,
     )?;
-    let result = ConstantFold.optimize(&mut fg.graph, fg.entry);
+    let result = ConstantFold.optimize_raw(&mut fg.graph, fg.entry);
     assert!(
         result.is_ok(),
         "ConstantFold must not error on Popcount(U256 const), got {:?}",
@@ -1132,9 +1116,9 @@ fn fold_f32_add_consts() -> Result<()> {
         let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
         b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::FloatConst(7.0f32.to_bits() as u64)
     );
     Ok(())
@@ -1147,9 +1131,9 @@ fn fold_f32_mul_consts() -> Result<()> {
         let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
         b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::FloatConst(12.0f32.to_bits() as u64)
     );
     Ok(())
@@ -1162,9 +1146,9 @@ fn fold_f32_div_consts() -> Result<()> {
         let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
         b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::FloatConst(2.5f32.to_bits() as u64)
     );
     Ok(())
@@ -1177,8 +1161,8 @@ fn fold_f64_add_consts() -> Result<()> {
         let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
         b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(7.0f64.to_bits()));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(7.0f64.to_bits()));
     Ok(())
 }
 
@@ -1189,8 +1173,8 @@ fn fold_f64_mul_consts() -> Result<()> {
         let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
         b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(12.0f64.to_bits()));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(12.0f64.to_bits()));
     Ok(())
 }
 
@@ -1201,8 +1185,8 @@ fn fold_f64_div_consts() -> Result<()> {
         let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
         b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(2.5f64.to_bits()));
     Ok(())
 }
 
@@ -1213,8 +1197,8 @@ fn fold_f32_less_true() -> Result<()> {
         let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
         b.build_float_cmp_op(a, c, FloatCmpOp::Less)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolConst(true));
     Ok(())
 }
 
@@ -1225,8 +1209,8 @@ fn fold_f64_equal_true() -> Result<()> {
         let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
         b.build_float_cmp_op(a, c, FloatCmpOp::Equal)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolConst(true));
     Ok(())
 }
 
@@ -1239,8 +1223,8 @@ fn fold_f64_equal_nan_false() -> Result<()> {
         let c = b.build_float_const(nan, NodeOutputType::F64);
         b.build_float_cmp_op(a, c, FloatCmpOp::Equal)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::BoolConst(false));
     Ok(())
 }
 
@@ -1250,9 +1234,9 @@ fn fold_f32_neg_const() -> Result<()> {
         let v = b.build_float_const(2.0f32.to_bits() as u64, NodeOutputType::F32);
         b.build_float_unary_op(v, FloatUnaryOp::Neg, NodeOutputType::F32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::FloatConst((-2.0f32).to_bits() as u64)
     );
     Ok(())
@@ -1264,8 +1248,8 @@ fn fold_f64_abs_const() -> Result<()> {
         let v = b.build_float_const((-3.0f64).to_bits(), NodeOutputType::F64);
         b.build_float_unary_op(v, FloatUnaryOp::Abs, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(3.0f64.to_bits()));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(3.0f64.to_bits()));
     Ok(())
 }
 
@@ -1275,8 +1259,8 @@ fn fold_f64_sqrt_const() -> Result<()> {
         let v = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
         b.build_float_unary_op(v, FloatUnaryOp::Sqrt, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.0f64.to_bits()));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(2.0f64.to_bits()));
     Ok(())
 }
 
@@ -1287,8 +1271,8 @@ fn fold_float_mul_by_one_identity() -> Result<()> {
         let x = b.build_float_const(2.5f64.to_bits(), NodeOutputType::F64);
         b.build_float_binary_op(x, one, FloatBinaryOp::Mul, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(2.5f64.to_bits()));
     Ok(())
 }
 
@@ -1299,8 +1283,8 @@ fn fold_float_div_by_one_identity() -> Result<()> {
         let x = b.build_float_const(2.5f64.to_bits(), NodeOutputType::F64);
         b.build_float_binary_op(x, one, FloatBinaryOp::Div, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(2.5f64.to_bits()));
     Ok(())
 }
 
@@ -1324,10 +1308,10 @@ fn fold_f64_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
             let v = b.build_float_const(input.to_bits(), NodeOutputType::F64);
             b.build_float_unary_op(v, FloatUnaryOp::Round, NodeOutputType::F64)
         })?;
-        assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed(),
+        assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed(),
             "Round({input}) did not fold");
         assert_eq!(
-            return_kind(&fg)?,
+            return_kind((&fg).into())?,
             NodeKind::FloatConst(expected.to_bits()),
             "Round({input}) folded to wrong value (expected {expected})",
         );
@@ -1349,10 +1333,10 @@ fn fold_f32_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
             let v = b.build_float_const(input.to_bits() as u64, NodeOutputType::F32);
             b.build_float_unary_op(v, FloatUnaryOp::Round, NodeOutputType::F32)
         })?;
-        assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed(),
+        assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed(),
             "Round({input}) did not fold");
         assert_eq!(
-            return_kind(&fg)?,
+            return_kind((&fg).into())?,
             NodeKind::FloatConst(expected.to_bits() as u64),
             "Round({input}) folded to wrong value (expected {expected})",
         );
@@ -1374,10 +1358,10 @@ fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> 
         let back_to_float = b.build_int_bits_to_float(as_int, NodeOutputType::F64)?;
         Ok(back_to_float)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // Float binary fold: sum → FloatConst(3.0).
     // Bitcast identity fold: IntBitsToFloat(FloatBitsToInt(FloatConst(3.0))) → FloatConst(3.0).
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(3.0f64.to_bits()));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(3.0f64.to_bits()));
     Ok(())
 }
 
@@ -1391,9 +1375,9 @@ fn cast_to_float_int_const_folds_to_float_const() -> Result<()> {
         let cast = b.build_cast_to_float(int_val, NodeOutputType::F64);
         Ok(cast)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // CastToFloat(IntConst(bits)) → FloatConst(bits)
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(bits));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(bits));
     Ok(())
 }
 
@@ -1405,9 +1389,9 @@ fn cast_to_float_same_float_type_eliminates() -> Result<()> {
         let cast = b.build_cast_to_float(float_val, NodeOutputType::F32);
         Ok(cast)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // CastToFloat(F32 → F32) → identity (FloatConst)
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(bits));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatConst(bits));
     Ok(())
 }
 
@@ -1422,9 +1406,9 @@ fn cast_to_float_int_non_const_lowers_to_int_bits_to_float() -> Result<()> {
         let cast = b.build_cast_to_float(sum, NodeOutputType::F32);
         Ok(cast)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // Should lower to IntBitsToFloat.
-    assert_eq!(return_kind(&fg)?, NodeKind::IntBitsToFloat);
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntBitsToFloat);
     Ok(())
 }
 
@@ -1435,13 +1419,13 @@ fn cast_to_float_cross_precision_lowers_to_float_to_float() -> Result<()> {
         let cast = b.build_cast_to_float(f32_val, NodeOutputType::F64);
         Ok(cast)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // F32 → F64 should lower to FloatToFloat.
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatToFloat);
+    assert_eq!(return_kind((&fg).into())?, NodeKind::FloatToFloat);
     Ok(())
 }
 
-// ── Comprehensive tests added in Task 2.E ─────────────────────────────────────
+// ── Comprehensive tests ──────────────────────────────────────────────────────
 
 /// Shift constant evaluation: `1 << 4` for U32 → 0x10.
 #[test]
@@ -1451,8 +1435,8 @@ fn fold_shl_const_u32() -> Result<()> {
         let n = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
         b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, NodeOutputType::U32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0x10));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0x10));
     Ok(())
 }
 
@@ -1464,8 +1448,8 @@ fn fold_shl_at_width_boundary_u32() -> Result<()> {
         let n = b.build_int_const(31u64, NodeOutputType::U32).unwrap();
         b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, NodeOutputType::U32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0x8000_0000));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0x8000_0000));
     Ok(())
 }
 
@@ -1477,8 +1461,8 @@ fn fold_shr_const_u8() -> Result<()> {
         let n = b.build_int_const(7u64, NodeOutputType::U8).unwrap();
         b.build_int_binary_operation(x, n, IntBinaryOp::ShiftRight, NodeOutputType::U8)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(1));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(1));
     Ok(())
 }
 
@@ -1491,9 +1475,9 @@ fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
         let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
         b.build_float_binary_op(a, one, FloatBinaryOp::Add, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    let val = return_value(&fg)?;
-    if let NodeKind::FloatConst(bits) = *fg.graph.kind_of_output(val) {
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    let val = return_value((&fg).into())?;
+    if let NodeKind::FloatConst(bits) = *fg.kind_of_output(val) {
         assert!(f64::from_bits(bits).is_nan(), "NaN must propagate through Add");
     } else {
         return Err(anyhow!("assertion failed: expected FloatConst result"));
@@ -1514,9 +1498,9 @@ fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
         let neg_b = b.build_float_unary_op(bb, FloatUnaryOp::Neg, NodeOutputType::F64)?;
         b.build_float_binary_op(a, neg_b, FloatBinaryOp::Add, NodeOutputType::F64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    let val = return_value(&fg)?;
-    if let NodeKind::FloatConst(bits) = *fg.graph.kind_of_output(val) {
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    let val = return_value((&fg).into())?;
+    if let NodeKind::FloatConst(bits) = *fg.kind_of_output(val) {
         assert!(f64::from_bits(bits).is_nan());
     } else {
         return Err(anyhow!("assertion failed: expected FloatConst result"));
@@ -1536,11 +1520,11 @@ fn fold_bitcast_roundtrip_f32() -> Result<()> {
         let as_int = b.build_float_bits_to_int(sum, NodeOutputType::U32)?;
         b.build_int_bits_to_float(as_int, NodeOutputType::F32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     // After folding: float Add → FloatConst(2.5), then bitcast roundtrip
     // collapses to that constant.
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::FloatConst(2.5f32.to_bits() as u64)
     );
     Ok(())
@@ -1563,10 +1547,10 @@ fn single_pass_propagates_through_chain() -> Result<()> {
     })?;
 
     // Single optimize() call — must converge without the outer pipeline loop.
-    ConstantFold.optimize(&mut fg.graph, fg.entry)?;
+    ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?;
 
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::IntConst(10),
         "expected single-pass convergence to IntConst(10)"
     );
@@ -1588,7 +1572,7 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     assert_sub_with_const(&fg, x, 10, NodeOutputType::U64)?;
     Ok(())
@@ -1745,9 +1729,9 @@ fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
         let c = b.build_int_const(49u64, NodeOutputType::U32).unwrap();
         b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::U32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::IntConst(0xFFFF_FFCE),
         "IntUnaryOp::BitNot(49) must fold to bitwise NOT (=~49=0xFFFFFFCE), \
          not two's complement (=0xFFFFFFCF=-49)"
@@ -1763,9 +1747,9 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
         let c = b.build_int_const(50u64, NodeOutputType::U32).unwrap();
         b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::IntConst(0xFFFF_FFCE),
         "IntUnaryOp::Neg(50) must fold to two's complement (=-50=0xFFFFFFCE), \
          not bitwise NOT (=~50=0xFFFFFFCD)"
@@ -1784,9 +1768,9 @@ fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
         let c = b.build_int_const(0xAAu64, NodeOutputType::U8).unwrap();
         b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::U8)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::IntConst(0x55),
         "Neg(0xAA) at U8 must be ~0xAA = 0x55 (bitwise NOT)"
     );
@@ -1801,8 +1785,8 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
         let c = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
         b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U64)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -1815,9 +1799,9 @@ fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
         let c = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
         b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::U32)
     })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::IntConst(0xFFFF_FFFF),
         "Neg(0) at U32 must be ~0 = 0xFFFFFFFF (bitwise NOT); pre-fix \
          swapped fold would have produced wrapping_neg(0) = 0"

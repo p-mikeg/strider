@@ -2,7 +2,7 @@
 //!
 //! [`run`] is the canonical entry point: build the CFG, lift to IR,
 //! run the optimiser pipeline, resolve indirect branches via the
-//! tier-2 fixed-point loop, and return the final IR graph.
+//! indirect-resolution fixed-point loop, and return the final IR graph.
 //!
 //! ## Iteration shape
 //!
@@ -29,8 +29,8 @@
 //! number of legal classification transitions: every transition
 //! strictly grows the induced edge set.  Plus a separate stall budget
 //! tracks consecutive in-place-only iterations (which don't grow the
-//! edge set) so the loop cannot spin indefinitely on a tier-2
-//! soundness bug.
+//! edge set) so the loop cannot spin indefinitely on an
+//! IR-level indirect-branch resolver soundness bug.
 //!
 //! ## Tail-call detection
 //!
@@ -39,7 +39,7 @@
 //! edit.  Inside-the-function `Single(K)` requires a CFG rebuild
 //! because new code becomes reachable.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{anyhow, bail, Result};
 
@@ -63,8 +63,10 @@ where
 {
     /// The strider — stable across iterations.
     pub strider: &'a Strider,
-    /// Function entry address.
-    pub start_addr: u64,
+    /// Function entry address.  Newtype prevents accidental swap with
+    /// `fn_max_size` at struct-literal construction sites.  Construct
+    /// via `cfg::MachineInsnAddr::new(addr)` or `addr.into()`.
+    pub start_addr: cfg::MachineInsnAddr,
     /// The Sleigh context, owned and threaded through every iteration
     /// of the fixed-point loop.  Re-using one Sleigh across iterations
     /// avoids re-loading the SLA spec on every CFG rebuild.
@@ -110,7 +112,7 @@ where
 /// separately.
 struct RunOpts<'a> {
     strider: &'a Strider,
-    start_addr: u64,
+    start_addr: cfg::MachineInsnAddr,
     rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
@@ -127,28 +129,21 @@ struct RunOpts<'a> {
 /// region's exit `vn_to_value` table — what
 /// [`build_anchor_calling_context`] needs to thread ABI varnodes
 /// through an in-place edit.
-struct RegionIndex {
-    by_exit_control: HashMap<NodeOutputId, RegionExitInfo>,
-}
+/// Maps a region's exit-control `NodeOutputId` to the region's exit
+/// `vn_to_value` table.  The map is `Arc`-shared with each
+/// [`RegionLiftHandles::exit_vn_to_value`] entry — never mutated
+/// post-build, so shared ownership is safe.
+type ExitVnToValue = std::sync::Arc<HashMap<rsleigh::Vn, NodeOutputId>>;
 
-struct RegionExitInfo {
-    /// Shared with the source `RegionLiftHandles::exit_vn_to_value`
-    /// — `Arc::clone` here saves a deep `HashMap` clone per region
-    /// per iteration.  The map is never mutated post-build, so
-    /// shared ownership is safe.
-    exit_vn_to_value: std::sync::Arc<HashMap<rsleigh::Vn, NodeOutputId>>,
+struct RegionIndex {
+    by_exit_control: HashMap<NodeOutputId, ExitVnToValue>,
 }
 
 impl RegionIndex {
     fn from_handles(handles: &[RegionLiftHandles]) -> Self {
         let mut by_exit_control = HashMap::with_capacity(handles.len());
         for h in handles {
-            by_exit_control.insert(
-                h.exit_control,
-                RegionExitInfo {
-                    exit_vn_to_value: std::sync::Arc::clone(&h.exit_vn_to_value),
-                },
-            );
+            by_exit_control.insert(h.exit_control, std::sync::Arc::clone(&h.exit_vn_to_value));
         }
         Self { by_exit_control }
     }
@@ -157,7 +152,7 @@ impl RegionIndex {
         &self,
         graph: &ir::BuiltFunctionGraph,
         placeholder: NodeId,
-    ) -> Option<&RegionExitInfo> {
+    ) -> Option<&ExitVnToValue> {
         let inputs: Vec<_> = graph.graph.node_inputs(placeholder).into_iter().collect();
         let ctrl_in = *inputs.first()?;
         self.by_exit_control.get(&ctrl_in)
@@ -176,7 +171,7 @@ where
     R: rsleigh::MemReader,
 {
     let mut state = LoopState::new(config)?;
-    state.build_iter_0()?;
+    state.build_initial_iteration()?;
     if state.no_unresolved() {
         return state.finalize();
     }
@@ -204,13 +199,56 @@ enum Decision {
     Rebuild,
 }
 
+/// Stall-guard helper for the fixed-point loop's `step` method.
+/// extracted to a free function so the
+/// invariant can be unit-tested directly without constructing a
+/// real `LoopState` (which requires a `Sleigh<R>`, `BuiltFunctionGraph`,
+/// and full CFG state).
+///
+/// Fires `Err` when an in-place-only iteration's unresolved count
+/// **strictly grew** AND the budget is exhausted.  Count-stable
+/// iterations (`unresolved_after == prev_unresolved`) do NOT
+/// consume budget: they may represent real progress through an
+/// anchor-replacement chain (one anchor resolved, one new
+/// placeholder materialised).  The outer
+/// `cap = 2 * pending_at_iter_0 + 4` bound still terminates
+/// count-stable infinite loops.
+///
+/// Pre-fix the comparison was `>=`, which
+/// incorrectly consumed budget on every count-stable iteration.
+///
+/// # Errors
+///
+/// Returns `Err` when `!edge_set_changed && unresolved_after >
+/// unresolved_before && *stall_budget == 0`.  Otherwise decrements
+/// `stall_budget` (when both growth and no-edge-change conditions
+/// hold) and returns `Ok(())`.
+fn apply_stall_guard(
+    stall_budget: &mut usize,
+    edge_set_changed: bool,
+    unresolved_after: usize,
+    unresolved_before: usize,
+) -> Result<()> {
+    if !edge_set_changed && unresolved_after > unresolved_before {
+        if *stall_budget == 0 {
+            bail!(
+                "in-place edits stalled: {} unresolved branches after edit (grew from {}), no edge-set growth",
+                unresolved_after,
+                unresolved_before,
+            );
+        }
+        *stall_budget -= 1;
+    }
+    Ok(())
+}
+
 /// The fixed-point loop's spanning state.
 struct LoopState<'a, R>
 where
     R: rsleigh::MemReader,
 {
     opts: RunOpts<'a>,
-    /// Accumulator of tier-2 resolutions across iterations.
+    /// Accumulator of IR-level indirect-branch resolver resolutions across iterations.
     /// Monotonically grows: once an anchor's targets land here, the
     /// CFG-rebuild path keeps using them.  Per-iteration classifications
     /// overlay this map (so an upgrade like
@@ -222,8 +260,8 @@ where
     known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
     /// The Sleigh handle we thread through every iteration.  Initialised
     /// from `RunConfig::sleigh` at construction; consumed by
-    /// `Builder::with_endianness` per iteration and harvested back from
-    /// the resulting `Cfg::sleigh`.  `None` only momentarily inside
+    /// `Builder::for_arch` per iteration and harvested back from the
+    /// resulting `Cfg::into_sleigh()`.  `None` only momentarily inside
     /// `build_lift_stable`.
     sleigh: Option<rsleigh::Sleigh<R>>,
     /// The current optimised IR graph.
@@ -236,7 +274,7 @@ where
     /// in-place-only iteration that didn't reduce `unresolved`; reaching
     /// zero is a misclassifying-resolver bug, surfaced as a typed error.
     stall_budget: usize,
-    /// Per-iteration region index, rebuilt by `build_iter_0` /
+    /// Per-iteration region index, rebuilt by `build_initial_iteration` /
     /// `rebuild` from the latest `RegionLiftHandles` snapshot.
     region_index: RegionIndex,
     /// Cached link-register / stack-pointer varnodes (stable across
@@ -248,7 +286,7 @@ where
     /// every iteration; threaded into each fresh `cfg::Builder` so
     /// machine-instruction decodes are paid once per address per run.
     decode_cache: DecodeCache,
-    // TODO(Task17): remove after incremental indirect-resolve lands —
+    // TODO: remove after incremental indirect-resolve lands —
     // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     /// Cached set of varnodes seen so far across all CFG iterations.
     /// `find_all_unique_vns` would otherwise re-scan every region's
@@ -275,8 +313,8 @@ where
     R: rsleigh::MemReader,
 {
     fn new(config: RunConfig<'a, R>) -> Result<Self> {
-        let lr_vn = config.strider.calling_convention().link_register_vn;
-        let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
+        let lr_vn = config.strider.calling_convention().link_register_vn();
+        let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn());
         // Pre-resolve per-address CC overrides against the same Sleigh
         // register table the function-default CC was built against.
         let per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention> =
@@ -329,11 +367,28 @@ where
 
     /// Iteration 0: build the CFG, lift, run stable opt, snapshot the
     /// region index.
-    fn build_iter_0(&mut self) -> Result<()> {
+    fn build_initial_iteration(&mut self) -> Result<()> {
+        self.lift_and_seat("build_initial_iteration")?;
+        self.pending_at_iter_0 = self.unresolved.len();
+        // Allow an in-place-only stall for at most `pending_at_iter_0`
+        // iterations: each in-place edit must remove at least one
+        // placeholder, so we can't legitimately stall that many times
+        // in a row without making progress.
+        self.stall_budget = self.pending_at_iter_0;
+        Ok(())
+    }
+
+    /// Drive `build_lift_stable` once and seat the resulting graph,
+    /// region index, and unresolved-branch list onto `self`.  Shared
+    /// helper between [`Self::build_initial_iteration`] (initial lift) and
+    /// [`Self::rebuild`] (post-Rebuild re-lift).  `phase` names the
+    /// caller for the error message when the Sleigh handle is
+    /// missing.
+    fn lift_and_seat(&mut self, phase: &'static str) -> Result<()> {
         let sleigh = self
             .sleigh
             .take()
-            .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at build_iter_0"))?;
+            .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at {phase}"))?;
         let (graph, unresolved, region_index, sleigh) = build_lift_stable(
             sleigh,
             &self.opts,
@@ -345,12 +400,6 @@ where
         self.sleigh = Some(sleigh);
         self.region_index = region_index;
         self.graph = Some(graph);
-        self.pending_at_iter_0 = unresolved.len();
-        // Allow an in-place-only stall for at most `pending_at_iter_0`
-        // iterations: each in-place edit must remove at least one
-        // placeholder, so we can't legitimately stall that many times
-        // in a row without making progress.
-        self.stall_budget = self.pending_at_iter_0;
         self.unresolved = unresolved;
         Ok(())
     }
@@ -367,10 +416,17 @@ where
 
     /// Run one iteration of the loop.
     fn step(&mut self) -> Result<Decision> {
+        // Snapshot `prev_unresolved_len` BEFORE `apply_in_place_edits` so the
+        // stall-guard's "before" count is the count entering this `step`.
+        // Today `apply_in_place_edits` doesn't mutate `self.unresolved` (it
+        // only mutates the graph), so reading after would be accidentally
+        // correct — but a future change that prunes the list during edits
+        // would silently break the stall-guard baseline.  Capture early so
+        // the data dependency is explicit.
+        let prev_unresolved_len = self.unresolved.len();
         let (next_known, in_place_edits) = self.classify_and_partition()?;
         self.apply_in_place_edits(&in_place_edits)?;
-        let prev_unresolved_len = self.unresolved.len();
-        let unresolved_after_edits = self.recompute_unresolved(&in_place_edits);
+        let unresolved_after_edits = self.recompute_unresolved(&in_place_edits)?;
 
         let edge_set_changed = edge_set_of(&next_known) != edge_set_of(&self.known_targets);
         if !edge_set_changed && in_place_edits.is_empty() {
@@ -389,19 +445,13 @@ where
             return Ok(Decision::FixedPoint);
         }
 
-        // Track stall: an in-place-only iteration must strictly
-        // reduce the unresolved count, or we've found a fixed point
-        // in disguise.  Surface as a typed error so a misclassifying
-        // resolver shows up before exhausting the cap.
-        if !edge_set_changed && unresolved_after_edits.len() >= prev_unresolved_len {
-            if self.stall_budget == 0 {
-                bail!(
-                    "in-place edits stalled: {} unresolved branches after edit, no edge-set growth",
-                    unresolved_after_edits.len()
-                );
-            }
-            self.stall_budget -= 1;
-        }
+        // Track stall guard via the apply_stall_guard helper.
+        apply_stall_guard(
+            &mut self.stall_budget,
+            edge_set_changed,
+            unresolved_after_edits.len(),
+            prev_unresolved_len,
+        )?;
 
         self.unresolved = unresolved_after_edits;
         if !edge_set_changed {
@@ -414,7 +464,7 @@ where
     /// Re-run the stable subset on the current graph (after in-place
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
-        let pipeline = self.opts.strider.build_stable_optimizer_pipeline();
+        let pipeline = build_stable_pipeline_with_rom(self.opts.strider, &self.opts.rom);
         let graph = self.graph_mut()?;
         pipeline.run_on_built(graph)?;
         Ok(())
@@ -422,23 +472,19 @@ where
 
     /// Rebuild the CFG with the updated `known_targets` map and
     /// re-lift.  Used when the loop chose [`Decision::Rebuild`].
+    ///
+    /// Also resets `stall_budget` based on the *post-rebuild*
+    /// unresolved count.  The budget tracks consecutive in-place-only
+    /// iterations that fail to make progress; a Rebuild is by
+    /// definition forward progress (the edge set just grew), so the
+    /// stall counter should restart from a budget proportional to
+    /// what's still pending.  Without the reset, a function with a
+    /// long sequence Rebuild → many in-place edits could trip the
+    /// stall guard prematurely even though every iteration up to that
+    /// point was making progress.
     fn rebuild(&mut self) -> Result<()> {
-        let sleigh = self
-            .sleigh
-            .take()
-            .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at rebuild"))?;
-        let (graph, unresolved, region_index, sleigh) = build_lift_stable(
-            sleigh,
-            &self.opts,
-            &self.known_targets,
-            &self.decode_cache,
-            &mut self.vn_cache,
-            &mut self.vn_cache_region_count,
-        )?;
-        self.sleigh = Some(sleigh);
-        self.region_index = region_index;
-        self.graph = Some(graph);
-        self.unresolved = unresolved;
+        self.lift_and_seat("rebuild")?;
+        self.stall_budget = self.unresolved.len();
         Ok(())
     }
 
@@ -450,7 +496,7 @@ where
         let graph = self.graph_mut()?;
         pipeline.run_on_built(graph)?;
         if compact {
-            graph.compact();
+            graph.compact()?;
         }
         self.graph
             .take()
@@ -485,7 +531,7 @@ where
                 self.lr_vn,
                 rom_ref,
                 self.sp_vn,
-            );
+            )?;
             let Some(resolved) = resolved_opt else {
                 continue;
             };
@@ -520,6 +566,37 @@ where
             .graph
             .as_mut()
             .ok_or_else(|| anyhow!("orchestrator: graph not initialised"))?;
+        // Build the InitialVar lookup ONCE per iteration and pass it
+        // through to every apply_in_place_edit so per-edit cost drops
+        // from O(N) (a full all_node_ids scan inside
+        // build_anchor_calling_context) to O(1) per varnode read.
+        // read_or_init_var inserts new entries as it creates fresh
+        // InitialVar nodes, so the index stays consistent across edits.
+        //
+        // Use `preorder` (reachable-only) rather than `all_node_ids` so
+        // zombie `InitialVar` nodes left detached by a previous
+        // `FunctionArgDetect` don't get re-indexed and resurrected:
+        // `read_or_init_var` would return a zombie's output and wire it
+        // straight into a fresh Call's input list, breaking
+        // `FunctionArgDetect`'s post-detection invariant that all
+        // argument-register reads flow through `FunctionArg` nodes.
+        let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
+        for nid in graph.graph.preorder(graph.entry) {
+            if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid) {
+                // InitialVar's signature is `[]; outputs: [Value]` —
+                // exactly one output.  A non-1 count is a graph-shape
+                // bug (zombie or malformed); surfacing it as Err
+                // prevents `read_or_init_var` from later resurrecting
+                // the malformed node and silently producing wrong IR.
+                let [out] = graph.graph.node_outputs_exact::<1>(nid).map_err(|e| {
+                    anyhow!(
+                        "apply_in_place_edits: InitialVar({existing:?}) has wrong output \
+                         arity (expected 1): {e}"
+                    )
+                })?;
+                initial_var_index.insert(*existing, out);
+            }
+        }
         for (placeholder, resolved) in in_place_edits {
             apply_in_place_edit(
                 graph,
@@ -528,6 +605,7 @@ where
                 *placeholder,
                 resolved,
                 per_address_built_ccs,
+                &mut initial_var_index,
             )?;
         }
         Ok(())
@@ -536,23 +614,31 @@ where
     /// Filter `self.unresolved` against the post-edit graph: drop
     /// entries whose placeholder Return was detached by an in-place
     /// edit.  No-op when no edits fired (returns the unmodified vec).
+    ///
+    /// Returns `Err` when the loop's graph has somehow been cleared while
+    /// in-place edits are pending — that's a state-machine bug in the
+    /// orchestrator (the graph must be populated before edits can fire),
+    /// and silently returning an empty vec would mask it.
     fn recompute_unresolved(
         &mut self,
         in_place_edits: &[(NodeId, ResolvedTargets)],
-    ) -> Vec<(PcodeInsnAddr, ir::Value)> {
+    ) -> Result<Vec<(PcodeInsnAddr, ir::Value)>> {
         let unresolved = std::mem::take(&mut self.unresolved);
         if in_place_edits.is_empty() {
-            return unresolved;
+            return Ok(unresolved);
         }
-        let Some(graph) = self.graph.as_ref() else {
-            return Vec::new();
-        };
-        unresolved
+        let graph = self.graph.as_ref().ok_or_else(|| {
+            anyhow!(
+                "LoopState::recompute_unresolved: in_place_edits is non-empty but \
+                 self.graph is None — orchestrator state machine invariant broken"
+            )
+        })?;
+        Ok(unresolved
             .into_iter()
             .filter(|(_, anchor)| {
                 opt::find_placeholder_return_for_anchor(&graph.graph, *anchor).is_some()
             })
-            .collect()
+            .collect())
     }
 
     fn graph_mut(&mut self) -> Result<&mut ir::BuiltFunctionGraph> {
@@ -569,7 +655,7 @@ where
 fn is_tail_call(target: u64, opts: &RunOpts<'_>) -> bool {
     cfg::is_addr_tail_call(
         target,
-        opts.start_addr,
+        opts.start_addr.as_u64(),
         opts.fn_max_size,
         opts.allow_code_before_start_addr,
     )
@@ -582,6 +668,7 @@ fn apply_in_place_edit(
     placeholder: NodeId,
     resolved: &ResolvedTargets,
     per_address_built_ccs: &HashMap<u64, target::BuiltCallingConvention>,
+    initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
 ) -> Result<()> {
     match resolved {
         ResolvedTargets::LinkRegister => {
@@ -591,8 +678,13 @@ fn apply_in_place_edit(
                 strider,
                 region_index,
                 None,
-            );
-            apply_link_register(graph, placeholder, &ctx.ret_val_outputs)?;
+                initial_var_index,
+            )?;
+            apply_link_register(
+                &mut pattern::RewriteCtx::for_built(graph),
+                placeholder,
+                &ctx.ret_val_outputs,
+            )?;
             Ok(())
         }
         ResolvedTargets::Single(target) => {
@@ -603,9 +695,10 @@ fn apply_in_place_edit(
                 strider,
                 region_index,
                 override_cc,
-            );
+                initial_var_index,
+            )?;
             let new_return = apply_tail_call(
-                graph,
+                &mut pattern::RewriteCtx::for_built(graph),
                 placeholder,
                 *target,
                 &ctx.arg_passing_outputs,
@@ -616,17 +709,15 @@ fn apply_in_place_edit(
             // varnodes on the spliced Call so pattern queries can
             // recover the right varnode for each clobber slot.  The
             // spliced node is the freshly-created Call adjacent to
-            // `new_return`'s ctrl predecessor.
+            // `new_return`'s ctrl predecessor.  Reuses
+            // [`override_clobber_vars`] (also called from
+            // [`build_anchor_calling_context`]) so the projection over
+            // `graph.variables` is defined once.
             if let Some(cc) = override_cc
                 && let Some(call_id) = locate_spliced_call(graph, new_return)
             {
-                let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
-                let clobber_vars: Vec<rsleigh::Vn> = graph
-                    .variables
-                    .values()
-                    .copied()
-                    .filter(|v| !cc.callee_saved_regs.contains(v) && Some(*v) != stack_ptr_vn)
-                    .collect();
+                let clobber_vars: Vec<rsleigh::Vn> =
+                    override_clobber_vars(graph, cc, strider).collect();
                 graph.graph.set_call_clobbered_override(call_id, clobber_vars);
             }
             Ok(())
@@ -644,12 +735,29 @@ fn apply_in_place_edit(
 /// since per-address-CC override recording is best-effort and a
 /// missed shape is correctness-neutral (the Call still works, just
 /// without an override side-table entry).
+///
+/// Walks two levels to handle both shapes the splicer can produce:
+///   * `Call -> Return` (direct): one walk hop.
+///   * `Call -> ControlState -> Return` (region-join): two walk hops.
 fn locate_spliced_call(graph: &ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
     let inputs: Vec<_> = graph.graph.node_inputs(ret).into_iter().collect();
     let ctrl_in = *inputs.first()?;
     let (producer, _slot) = graph.graph.output_definition(ctrl_in);
     if matches!(graph.graph.node_kind(producer), ir::node::NodeKind::Call) {
         return Some(producer);
+    }
+    // ControlState bridge: walk the ControlState's first control input
+    // and check if THAT producer is a Call.  Mirrors the splice shape
+    // when `apply_tail_call`'s freshly-spliced Call feeds an existing
+    // ControlState that the new Return then consumes.
+    if matches!(graph.graph.node_kind(producer), ir::node::NodeKind::ControlState) {
+        let cs_inputs: Vec<_> = graph.graph.node_inputs(producer).into_iter().collect();
+        for cs_in in cs_inputs {
+            let (cs_producer, _) = graph.graph.output_definition(cs_in);
+            if matches!(graph.graph.node_kind(cs_producer), ir::node::NodeKind::Call) {
+                return Some(cs_producer);
+            }
+        }
     }
     None
 }
@@ -670,7 +778,8 @@ fn build_anchor_calling_context(
     strider: &Strider,
     region_index: &RegionIndex,
     override_cc: Option<&target::BuiltCallingConvention>,
-) -> opt::AnchorCallingContext {
+    initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
+) -> Result<opt::AnchorCallingContext> {
     // When an override is supplied, route arg-passing / ret-val /
     // clobber computation through the override CC instead of the
     // function-default.
@@ -679,89 +788,130 @@ fn build_anchor_calling_context(
     let region = region_index.region_for_placeholder(graph, placeholder);
     let mut ctx = opt::AnchorCallingContext::default();
 
-    // Build a per-call `vn → InitialVar.output` lookup so each
-    // `read_or_init_var` is O(1) instead of an arena scan.
-    let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
-    for nid in graph.graph.all_node_ids() {
-        if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid)
-            && let Ok([out]) = graph.graph.node_outputs_exact::<1>(nid)
-        {
-            initial_var_index.insert(*existing, out);
-        }
-    }
+    // `initial_var_index` is built once per orchestrator iteration (in
+    // `apply_in_place_edits`) and threaded through.  Per-edit cost is
+    // O(arg_count) instead of the previous O(N) arena scan.
 
-    for vn in &cc.arg_passing_regs {
-        if let Some(out) = read_or_init_var(graph, region, &mut initial_var_index, *vn) {
-            ctx.arg_passing_outputs.push(out);
-        }
+    for vn in cc.arg_passing_regs() {
+        // surface unsupported reg sizes as Err instead
+        // of silently dropping the slot (which under-models the Call
+        // and can cause downstream pattern queries to miss args).
+        let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
+        ctx.arg_passing_outputs.push(out);
     }
-    // Clobber list: when an override is supplied, recompute from the
-    // override's callee_saved set against the function's tracked
-    // variables.  Without an override, fall back to the function-
-    // default `BuiltFunctionGraph::call_clobbered` (existing
-    // behaviour).
-    if override_cc.is_some() {
-        let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
-        for vn in graph.variables.values() {
-            if cc.callee_saved_regs.contains(vn) || Some(*vn) == stack_ptr_vn {
-                continue;
-            }
-            let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
-                continue;
-            };
-            ctx.clobbered_kinds
-                .push(ir::node::NodeOutputKind::OutputType(ty));
-        }
+    // Clobber list: with an override, recompute from the override's
+    // callee_saved set against the function's tracked variables (via
+    // the shared [`override_clobber_vars`] helper, which is also reused
+    // by `apply_in_place_edit` after splicing); without, use the
+    // precomputed `BuiltFunctionGraph::call_clobbered` shape.
+    let override_clobbers: Vec<rsleigh::Vn>;
+    let clobber_iter: Box<dyn Iterator<Item = &rsleigh::Vn>> = if let Some(cc) = override_cc {
+        override_clobbers = override_clobber_vars(graph, cc, strider).collect();
+        Box::new(override_clobbers.iter())
     } else {
-        // Emit one clobbered slot per `BuiltFunctionGraph::call_clobbered`
-        // entry — the canonical shape `FunctionBuilder::build_call`
-        // produces.  Pattern queries index directly into `call_clobbered`
-        // to recover varnodes; iterating `cc.callee_saved_regs` here would
-        // emit the OPPOSITE set (preserved-across-call regs) with the
-        // wrong count.
-        for vn in graph.call_clobbered.iter() {
-            let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
-                continue;
-            };
-            ctx.clobbered_kinds
-                .push(ir::node::NodeOutputKind::OutputType(ty));
-        }
+        Box::new(graph.call_clobbered_regs().iter())
+    };
+    for vn in clobber_iter {
+        // surface unsupported clobber-reg sizes as Err rather than
+        // silently defaulting — a size we don't know how to lower
+        // would otherwise produce a malformed Call output kind.
+        let ty = vn_size_to_node_output_type(vn)?;
+        ctx.clobbered_kinds
+            .push(ir::node::NodeOutputKind::OutputType(ty));
     }
-    for vn in &cc.ret_val_regs {
-        if let Some(out) = read_or_init_var(graph, region, &mut initial_var_index, *vn) {
-            ctx.ret_val_outputs.push(out);
-        }
+    for vn in cc.ret_val_regs() {
+        let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
+        ctx.ret_val_outputs.push(out);
     }
-    ctx
+    Ok(ctx)
+}
+
+/// Map a varnode's byte width to the matching [`ir::node::NodeOutputType`].
+///
+/// Used by the orchestrator's anchor-calling-context plumbing
+/// (`build_anchor_calling_context` for clobber outputs,
+/// `read_or_init_var` for freshly-created `InitialVar` nodes) to surface
+/// unsupported sizes as a typed error rather than silently dropping the
+/// slot.  Every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10, 16,
+/// 32, 64} which all map cleanly; the Err arm exists so a future CC
+/// addition with an exotic size surfaces the gap immediately.
+fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<ir::node::NodeOutputType> {
+    ir::node::NodeOutputType::try_from(vn.size).map_err(|_| {
+        anyhow::anyhow!(
+            "varnode size {} has no NodeOutputType — calling-convention \
+             register {:?} cannot be modelled (supported sizes are 1, 2, 4, \
+             8, 10, 16, 32, 64 bytes)",
+            vn.size,
+            vn,
+        )
+    })
+}
+
+/// Iterate the function-tracked varnodes that are *clobbered* under the
+/// per-address override calling convention `cc`.
+///
+/// Mirrors the body of the `override_cc.is_some()` arm of
+/// [`build_anchor_calling_context`]'s clobber computation and the
+/// post-splice clobber rebuild in [`apply_in_place_edit`] — extracted so
+/// the same projection (`!callee_saved && != stack_ptr`) is defined in
+/// exactly one place.
+///
+/// Returns owned `Vn`s for caller flexibility (collect into a `Vec` for
+/// `set_call_clobbered_override`, or iterate directly to feed
+/// `clobbered_kinds`).
+fn override_clobber_vars<'a>(
+    graph: &'a ir::BuiltFunctionGraph,
+    cc: &'a target::BuiltCallingConvention,
+    strider: &'a Strider,
+) -> impl Iterator<Item = rsleigh::Vn> + 'a {
+    let stack_ptr_vn = strider.calling_convention().stack_ptr_vn();
+    graph
+        .variables_map()
+        .values()
+        .copied()
+        .filter(move |v| !cc.callee_saved_regs().contains(v) && *v != stack_ptr_vn)
 }
 
 /// Resolve a varnode to its IR value at the placeholder site.
 /// Order: (1) region exit `vn_to_value`, (2) existing `InitialVar(vn)`
-/// in the graph, (3) freshly-created `InitialVar(vn)`.  Returns
-/// `None` when the varnode's byte size has no matching `NodeOutputType`.
+/// in the graph, (3) freshly-created `InitialVar(vn)`.
+///
+/// returns an error (instead of silently dropping the
+/// varnode) when its byte size has no matching `NodeOutputType`.  In
+/// practice every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10,
+/// 16, 32, 64} which all map cleanly; the Err arm exists so a future
+/// CC addition with an exotic size surfaces the gap immediately
+/// instead of producing a Call node with under-modelled inputs.
+///
+/// # Errors
+///
+/// Returns `Err` if `vn.size` doesn't map to a `NodeOutputType` or
+/// if the freshly-created `InitialVar` doesn't have exactly one
+/// output (the `node_signature` invariant guarantees this; the error
+/// path exists only for defensive completeness).
 fn read_or_init_var(
     graph: &mut ir::BuiltFunctionGraph,
-    region: Option<&RegionExitInfo>,
+    region: Option<&ExitVnToValue>,
     initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
     vn: rsleigh::Vn,
-) -> Option<NodeOutputId> {
+) -> Result<NodeOutputId> {
     if let Some(r) = region
-        && let Some(&out) = r.exit_vn_to_value.get(&vn)
+        && let Some(&out) = r.get(&vn)
     {
-        return Some(out);
+        return Ok(out);
     }
     if let Some(&out) = initial_var_index.get(&vn) {
-        return Some(out);
+        return Ok(out);
     }
-    let ty: ir::node::NodeOutputType = vn.size.try_into().ok()?;
+    let ty = vn_size_to_node_output_type(&vn)?;
     let nid = graph.graph.create_node(
         ir::node::NodeKind::InitialVar(vn),
         [],
         [ir::node::NodeOutputKind::OutputType(ty)],
     );
-    let [out] = graph.graph.node_outputs_exact::<1>(nid).ok()?;
+    let [out] = graph.graph.node_outputs_exact::<1>(nid)?;
     initial_var_index.insert(vn, out);
-    Some(out)
+    Ok(out)
 }
 
 /// Build the CFG, lift to IR, run the stable optimiser subset.
@@ -788,7 +938,7 @@ where
     if let Some(rom) = opts.rom.clone() {
         opts_builder = opts_builder.set_read_only_memory(rom);
     }
-    if let Some(lr) = opts.strider.calling_convention().link_register_vn {
+    if let Some(lr) = opts.strider.calling_convention().link_register_vn() {
         opts_builder = opts_builder.set_link_register(lr);
     }
     if let Some(max) = opts.fn_max_size {
@@ -799,12 +949,16 @@ where
     }
     let cfg_opts = opts_builder.build();
 
-    let arch_endianness = opts.strider.arch().endianness;
-    let cfg: Cfg<R> =
-        Builder::with_endianness(sleigh, opts.start_addr, cfg_opts, arch_endianness)
-            .with_known_targets(known_targets.clone())
-            .with_decode_cache(decode_cache.clone())
-            .build()?;
+    // Use `for_arch` so both endianness AND `ArchPreset` are derived from the
+    // arch atomically.  Earlier `Builder::new` / `Builder::with_endianness`
+    // ctors silently defaulted `preset = X86_64`, which caused arch-specific
+    // CallOther dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the
+    // wrong preset and silently misclassified or rejected; those ctors were
+    // deleted in round 12 W5c — `for_arch` is now the only public path.
+    let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.as_u64(), cfg_opts)
+        .with_known_targets(known_targets.clone())
+        .with_decode_cache(decode_cache.clone())
+        .build()?;
 
     // Vn cache: scan only the regions added since the previous
     // iteration (petgraph's StableDiGraph allocates monotonic
@@ -835,51 +989,61 @@ where
     let mut graph = outcome.graph;
     let unresolved = outcome.unresolved_branches;
 
-    let pipeline = opts.strider.build_stable_optimizer_pipeline();
+    let pipeline = build_stable_pipeline_with_rom(opts.strider, &opts.rom);
     pipeline.run_on_built(&mut graph)?;
 
     // Harvest the Sleigh handle out of the consumed Cfg so the next
     // iteration can re-use it without re-loading the SLA spec.
-    let Cfg {
-        sleigh: harvested, ..
-    } = cfg;
+    let harvested = cfg.into_sleigh();
     Ok((graph, unresolved, region_index, harvested))
+}
+
+/// Build the stable optimizer pipeline and layer [`opt::LoadReadOnly`]
+/// on top when the caller supplied a ROM.  Mirrors the canonical example
+/// (`crates/strider/examples/strider.rs`) and honours the
+/// [`RunConfig::rom`] docstring, which advertises the field as feeding
+/// the `LoadReadOnly` pass.
+fn build_stable_pipeline_with_rom(
+    strider: &Strider,
+    rom: &Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+) -> opt::OptimizerPipeline {
+    let mut pipeline = strider.build_stable_optimizer_pipeline();
+    if let Some(rom) = rom {
+        pipeline.add(opt::LoadReadOnly(std::sync::Arc::clone(rom)));
+    }
+    pipeline
 }
 
 /// The induced edge set of a `known_targets` map.  Used to test
 /// convergence between iterations.
+///
+/// Each edge is `(anchor_addr, target)` where `target = None` denotes a
+/// `LinkRegister` resolution (no successor address — two such anchors at
+/// the same `addr` are equivalent regardless of payload) and
+/// `target = Some(addr)` denotes a `Single`/`Multiple` resolution to that
+/// address.  The `BTreeSet` gives us deterministic sort+dedup in one type
+/// (replaces the `EdgeKind { LinkRegister, Target(u64) }` enum + Vec
+/// sort+dedup pair).
 fn edge_set_of(
     map: &HashMap<PcodeInsnAddr, ResolvedTargets>,
-) -> Vec<(PcodeInsnAddr, EdgeKind)> {
-    let mut edges: Vec<(PcodeInsnAddr, EdgeKind)> = Vec::new();
+) -> BTreeSet<(PcodeInsnAddr, Option<u64>)> {
+    let mut edges: BTreeSet<(PcodeInsnAddr, Option<u64>)> = BTreeSet::new();
     for (addr, resolved) in map {
         match resolved {
             ResolvedTargets::LinkRegister => {
-                edges.push((*addr, EdgeKind::LinkRegister));
+                edges.insert((*addr, None));
             }
             ResolvedTargets::Single(k) => {
-                edges.push((*addr, EdgeKind::Target(*k)));
+                edges.insert((*addr, Some(*k)));
             }
             ResolvedTargets::Multiple(targets) => {
                 for k in targets {
-                    edges.push((*addr, EdgeKind::Target(*k)));
+                    edges.insert((*addr, Some(*k)));
                 }
             }
         }
     }
-    edges.sort();
-    edges.dedup();
     edges
-}
-
-/// Edge kind discriminator for the induced edge set.  `LinkRegister`
-/// is its own kind because two BranchIndirects classified as
-/// `LinkRegister` produce equivalent edges (no successor) regardless
-/// of any address payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum EdgeKind {
-    LinkRegister,
-    Target(u64),
 }
 
 #[cfg(test)]
@@ -890,16 +1054,13 @@ mod tests {
     use cfg::MachineInsnAddr;
 
     fn pcode_addr(machine: u64) -> PcodeInsnAddr {
-        PcodeInsnAddr {
-            machine_addr: MachineInsnAddr { addr: machine },
-            insn_index: 0,
-        }
+        PcodeInsnAddr::new(MachineInsnAddr::new(machine), 0)
     }
 
     fn make_strider_x86_64() -> Strider {
         let arch = crate::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
-        Strider::new(arch, regs, crate::CallingConvention::x86_64_systemv_abi())
+        Strider::new(arch, regs, crate::CallingConvention::x86_64_systemv())
             .expect("strider")
     }
 
@@ -911,7 +1072,7 @@ mod tests {
     ) -> RunOpts<'a> {
         RunOpts {
             strider,
-            start_addr,
+            start_addr: start_addr.into(),
             rom: None,
             fn_max_size,
             allow_code_before_start_addr,
@@ -919,6 +1080,81 @@ mod tests {
             per_address_built_ccs: HashMap::new(),
         }
     }
+
+    // ── apply_stall_guard tests ──────────────────────────────────
+    //
+    // These tests pin the fix (`>=` → `>`) by exercising the
+    // stall-guard behavior directly via the extracted helper.  Each
+    // case names the relevant scenario from the orchestrator's
+    // fixed-point loop.
+
+    #[test]
+    fn apply_stall_guard_no_change_in_count_does_not_consume_budget() {
+        // regression: a count-stable in-place-only
+        // iteration (one anchor resolved, one new placeholder
+        // materialised) is legitimate progress and must NOT consume
+        // budget.  Pre-fix (`>=`) this ate one budget per stable
+        // iteration; post-fix (`>`) the budget stays full.
+        let mut budget = 3usize;
+        for _ in 0..5 {
+            apply_stall_guard(&mut budget, /* edge_set_changed */ false, 4, 4)
+                .expect("count-stable iteration must not error");
+        }
+        assert_eq!(budget, 3, "budget must stay full across 5 count-stable iterations");
+    }
+
+    #[test]
+    fn apply_stall_guard_count_decrease_does_not_consume_budget() {
+        // The natural progress shape: count strictly decreases.  Budget
+        // stays full.
+        let mut budget = 3usize;
+        apply_stall_guard(&mut budget, false, 3, 4)
+            .expect("count-decrease must not error");
+        assert_eq!(budget, 3);
+    }
+
+    #[test]
+    fn apply_stall_guard_count_growth_consumes_budget() {
+        // Strictly-growing count (resolver producing more anchors than
+        // it resolves) is the real stall pathology.  Each growth step
+        // decrements budget; reaching zero raises Err.
+        let mut budget = 2usize;
+        // Iter 1: 4 → 5 (grew by 1). Budget: 2 → 1.
+        apply_stall_guard(&mut budget, false, 5, 4).expect("first growth ok");
+        assert_eq!(budget, 1);
+        // Iter 2: 5 → 6. Budget: 1 → 0.
+        apply_stall_guard(&mut budget, false, 6, 5).expect("second growth ok");
+        assert_eq!(budget, 0);
+        // Iter 3: 6 → 7. Budget: 0 — bail.
+        let err = apply_stall_guard(&mut budget, false, 7, 6)
+            .expect_err("third growth must surface the stall");
+        assert!(
+            err.to_string().contains("in-place edits stalled"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn apply_stall_guard_edge_set_change_skips_check() {
+        // When edge_set_changed (Rebuild path), the stall guard is
+        // entirely skipped.  Budget stays untouched even on growth.
+        let mut budget = 1usize;
+        apply_stall_guard(&mut budget, /* edge_set_changed */ true, 100, 1)
+            .expect("rebuild path skips stall check");
+        assert_eq!(budget, 1, "edge-set change must not consume budget");
+    }
+
+    #[test]
+    fn apply_stall_guard_zero_budget_with_no_growth_is_ok() {
+        // Budget 0 + no growth = no stall fires.  Documents that
+        // exhausted budget plus benign progress remains progress.
+        let mut budget = 0usize;
+        apply_stall_guard(&mut budget, false, 4, 4).expect("count-stable + 0-budget ok");
+        apply_stall_guard(&mut budget, false, 3, 4).expect("count-decrease + 0-budget ok");
+        apply_stall_guard(&mut budget, true, 100, 4).expect("edge-change + 0-budget ok");
+    }
+
+    // ── existing edge-set tests ───────────────────────────────────────────
 
     #[test]
     fn edge_set_of_empty_map_is_empty() {
@@ -932,7 +1168,7 @@ mod tests {
         map.insert(pcode_addr(0x1000), ResolvedTargets::LinkRegister);
         let edges = edge_set_of(&map);
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0], (pcode_addr(0x1000), EdgeKind::LinkRegister));
+        assert!(edges.contains(&(pcode_addr(0x1000), None)));
     }
 
     #[test]
@@ -940,7 +1176,9 @@ mod tests {
         let mut map: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
         map.insert(pcode_addr(0x1000), ResolvedTargets::Single(0x2000));
         let edges = edge_set_of(&map);
-        assert_eq!(edges, vec![(pcode_addr(0x1000), EdgeKind::Target(0x2000))]);
+        let expected: BTreeSet<(PcodeInsnAddr, Option<u64>)> =
+            std::iter::once((pcode_addr(0x1000), Some(0x2000))).collect();
+        assert_eq!(edges, expected);
     }
 
     #[test]

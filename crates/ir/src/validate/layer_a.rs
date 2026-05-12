@@ -13,8 +13,12 @@ pub(super) fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<Validati
     let kind = *graph.node_kind(node);
     let sig = expected_signature(&kind);
 
-    let actual_inputs: Vec<NodeOutputId> = graph.node_inputs(node).into_iter().collect();
-    let actual_outputs: Vec<NodeOutputKind> = graph
+    // Most IR nodes have ≤4 inputs/outputs.  Inline up to 4 to skip the heap
+    // allocation on the hot validation path; spills transparently for variadic
+    // shapes (Call clobber lists, Return arg lists).
+    let actual_inputs: smallvec::SmallVec<[NodeOutputId; 4]> =
+        graph.node_inputs(node).into_iter().collect();
+    let actual_outputs: smallvec::SmallVec<[NodeOutputKind; 4]> = graph
         .node_outputs(node)
         .into_iter()
         .map(|oid| graph.output_kind(oid))

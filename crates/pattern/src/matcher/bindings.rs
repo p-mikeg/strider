@@ -1,4 +1,4 @@
-use ir::BuiltFunctionGraph;
+use ir::Graph;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 use ir::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
@@ -15,14 +15,32 @@ use crate::var::Capture;
 /// `CallOther`) bind only the `NodeId` and leave `output = None`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
-    pub node: NodeId,
-    pub output: Option<NodeOutputId>,
+    pub(crate) node: NodeId,
+    pub(crate) output: Option<NodeOutputId>,
 }
 
 impl Binding {
+    /// Constructs a `Binding` from a `(node, output)` pair.  The only
+    /// public construction path — the fields are `pub(crate)` so
+    /// external callers cannot bypass the cross-field invariant
+    /// ("when `output` is `Some(o)`, `graph.output_definition(o).0 ==
+    /// node`").
     #[must_use]
     pub fn new(node: NodeId, output: Option<NodeOutputId>) -> Self {
         Self { node, output }
+    }
+
+    /// Read-only access to the bound `NodeId`.
+    #[must_use]
+    pub fn node(&self) -> NodeId {
+        self.node
+    }
+
+    /// Read-only access to the optional value-output binding.  `None`
+    /// for control-flow captures (`If`, `Call`, `Return`, `CallOther`).
+    #[must_use]
+    pub fn output(&self) -> Option<NodeOutputId> {
+        self.output
     }
 }
 
@@ -35,8 +53,8 @@ impl Binding {
 /// match fail.
 ///
 /// Backtracking uses a journal-based scheme: every match site that
-/// wants to speculatively attempt sub-matches calls [`Self::mark`]
-/// before the attempt and [`Self::restore`] on failure — the marker is
+/// wants to speculatively attempt sub-matches calls `Self::mark`
+/// before the attempt and `Self::restore` on failure — the marker is
 /// a `usize` cursor into the append-only entry `Vec`, and restoring is
 /// an O(1) `Vec::truncate`.  No allocations, no per-kind HashMap
 /// clones, no deep copy of the full state.
@@ -48,10 +66,11 @@ impl Binding {
 /// of the journaled `Vec` without changing the public API.
 ///
 /// External callers see `Bindings` as read-only: construction is via
-/// `Default::default()`, mutation goes through [`Self::bind_capture`],
-/// and the `mark` / `restore` journal API is `pub(crate)` because only
-/// the matcher's commutative-retry / speculative-attempt paths
-/// legitimately need it.
+/// `Default::default()`, the production mutation path
+/// ([`Self::bind_capture`]) is `pub(crate)`, and test scaffolds reach
+/// for [`Self::bind_capture_for_test`].  The `mark` / `restore`
+/// journal API is `pub(crate)` because only the matcher's
+/// commutative-retry / speculative-attempt paths legitimately need it.
 #[derive(Clone, Default)]
 pub struct Bindings {
     entries: Vec<(Capture, Binding)>,
@@ -78,7 +97,13 @@ impl Bindings {
 
     /// Bind `c` to `binding`.  Returns `true` on new or idempotent
     /// (full-binding-equal) bind, `false` on conflict (no mutation).
-    pub fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
+    ///
+    /// Tightened to `pub(crate)`: callers outside `pattern` (test
+    /// scaffolds in particular) construct bindings via
+    /// [`Self::bind_capture_for_test`] which has the same shape but
+    /// a name signal that the caller is bypassing the matcher's
+    /// normal accumulation path.
+    pub(crate) fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
         for (k, existing) in &self.entries {
             if *k == c {
                 return *existing == binding;
@@ -86,6 +111,17 @@ impl Bindings {
         }
         self.entries.push((c, binding));
         true
+    }
+
+    /// Test-only setter: directly install a `(Capture, Binding)`
+    /// pair on this `Bindings` value, bypassing the matcher.  Same
+    /// semantics as [`Self::bind_capture`] (returns `true` on new or
+    /// idempotent bind, `false` on conflict).  The `_for_test` suffix
+    /// signals that the caller is hand-building a `Bindings` for use
+    /// with [`crate::Match::new_for_test`] rather than going through
+    /// [`crate::Matcher::find_all`].
+    pub fn bind_capture_for_test(&mut self, c: Capture, binding: Binding) -> bool {
+        self.bind_capture(c, binding)
     }
 
     /// Returns the [`Binding`] (node + optional value output) bound to
@@ -139,12 +175,12 @@ impl Bindings {
     /// If the node bound to `c` is an `IntConst`, returns the stored
     /// constant value masked to the output type's bit width.
     #[must_use]
-    pub fn get_uint(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<u128> {
+    pub fn get_uint(&self, c: Capture, graph: &Graph) -> Option<u128> {
         let out = self.get_output(c)?;
-        let NodeKind::IntConst(val) = graph.graph.kind_of_output(out) else {
+        let NodeKind::IntConst(val) = graph.kind_of_output(out) else {
             return None;
         };
-        let ty = graph.graph.output_kind(out).as_value()?;
+        let ty = graph.output_kind(out).as_value()?;
         ty.get_unsigned_int(*val)
     }
 
@@ -152,21 +188,21 @@ impl Bindings {
     /// constant sign-extended from the output type's bit width to
     /// `i128`.
     #[must_use]
-    pub fn get_int(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<i128> {
+    pub fn get_int(&self, c: Capture, graph: &Graph) -> Option<i128> {
         let out = self.get_output(c)?;
-        let NodeKind::IntConst(val) = graph.graph.kind_of_output(out) else {
+        let NodeKind::IntConst(val) = graph.kind_of_output(out) else {
             return None;
         };
-        let ty = graph.graph.output_kind(out).as_value()?;
+        let ty = graph.output_kind(out).as_value()?;
         ty.get_signed_int(*val)
     }
 
     /// If the node bound to `c` is a `BoolConst`, returns the stored
     /// boolean value.
     #[must_use]
-    pub fn get_bool(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<bool> {
+    pub fn get_bool(&self, c: Capture, graph: &Graph) -> Option<bool> {
         let out = self.get_output(c)?;
-        match graph.graph.kind_of_output(out) {
+        match graph.kind_of_output(out) {
             NodeKind::BoolConst(val) => Some(*val),
             _ => None,
         }
@@ -175,9 +211,9 @@ impl Bindings {
     /// If the node bound to `c` is a `FloatConst`, returns the raw
     /// IEEE 754 bit pattern as `u64`.
     #[must_use]
-    pub fn get_float_bits(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<u64> {
+    pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
         let out = self.get_output(c)?;
-        match graph.graph.kind_of_output(out) {
+        match graph.kind_of_output(out) {
             NodeKind::FloatConst(bits) => Some(*bits),
             _ => None,
         }
@@ -188,10 +224,10 @@ impl Bindings {
     pub fn get_int_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &Graph,
     ) -> Option<IntBinaryOp> {
         let node = self.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::IntBinaryOp(op) => Some(*op),
             _ => None,
         }
@@ -202,10 +238,10 @@ impl Bindings {
     pub fn get_int_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &Graph,
     ) -> Option<IntUnaryOp> {
         let node = self.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::IntUnaryOp(op) => Some(*op),
             _ => None,
         }
@@ -213,9 +249,9 @@ impl Bindings {
 
     /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
     #[must_use]
-    pub fn get_int_cmp_op(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<IntCmpOp> {
+    pub fn get_int_cmp_op(&self, c: Capture, graph: &Graph) -> Option<IntCmpOp> {
         let node = self.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::IntCmpOp(op) => Some(*op),
             _ => None,
         }
@@ -226,10 +262,10 @@ impl Bindings {
     pub fn get_bool_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &Graph,
     ) -> Option<BoolBinaryOp> {
         let node = self.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::BoolBinaryOp(op) => Some(*op),
             _ => None,
         }
@@ -240,10 +276,10 @@ impl Bindings {
     pub fn get_bool_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &Graph,
     ) -> Option<BoolUnaryOp> {
         let node = self.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::BoolUnaryOp(op) => Some(*op),
             _ => None,
         }
@@ -254,10 +290,10 @@ impl Bindings {
     pub fn get_float_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &Graph,
     ) -> Option<FloatBinaryOp> {
         let node = self.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::FloatBinaryOp(op) => Some(*op),
             _ => None,
         }
@@ -268,10 +304,10 @@ impl Bindings {
     pub fn get_float_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &Graph,
     ) -> Option<FloatUnaryOp> {
         let node = self.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::FloatUnaryOp(op) => Some(*op),
             _ => None,
         }
@@ -282,10 +318,10 @@ impl Bindings {
     pub fn get_float_cmp_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &Graph,
     ) -> Option<FloatCmpOp> {
         let node = self.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::FloatCmpOp(op) => Some(*op),
             _ => None,
         }

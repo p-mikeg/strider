@@ -10,7 +10,6 @@ edition = "2024"
 [workspace.dependencies]
 pattern = { path = "crates/pattern" }
 strider = { path = "crates/strider" }
-graphmock = { path = "crates/graphmock" }
 dot = { path = "crates/dot" }
 cfg = { path = "crates/cfg" }
 reader = { path = "crates/reader" }

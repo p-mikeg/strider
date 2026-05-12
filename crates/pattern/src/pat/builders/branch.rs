@@ -8,7 +8,7 @@
 //!
 //! The compiler-inverted layout (`If(BoolNeg(C)){B}{A}` for source-level
 //! `if (c) A else B`) is handled upstream of pattern matching by the
-//! [`opt::IfCondInversion`] canonicalisation pass: it eagerly rewrites
+//! `opt::IfCondInversion` canonicalisation pass: it eagerly rewrites
 //! every `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` (and collapses double
 //! negations via the existing `BoolNeg(BoolNeg(x)) → x` ConstantFold rule
 //! that runs first).  By the time `Matcher` walks the graph, every `If`
@@ -37,7 +37,7 @@ impl IfPat {
         Self { cond: None, true_branch: None, false_branch: None }
     }
     /// Constrain the branch condition.  Matched directly against the
-    /// `If`'s cond input; the [`opt::IfCondInversion`] pass guarantees
+    /// `If`'s cond input; the `opt::IfCondInversion` pass guarantees
     /// every `If` is in canonical direct layout before patterns run.
     pub fn cond(mut self, p: impl Into<Pat>) -> Self {
         self.cond = Some(p.into());
@@ -66,7 +66,7 @@ struct IfPattern {
 
 impl Pattern for IfPattern {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        let node = ctx.graph.graph.get_node_from_output(target);
+        let node = ctx.graph.get_node_from_output(target);
         self.try_match_at(ctx, node, b)
     }
 
@@ -87,7 +87,7 @@ impl IfPattern {
     /// Verifies `node` is an `If` and applies the cond / true_branch /
     /// false_branch constraints in canonical direct layout.
     fn try_match_at(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
-        if !matches!(ctx.graph.graph.node_kind(node), NodeKind::If) {
+        if !matches!(ctx.graph.node_kind(node), NodeKind::If) {
             return false;
         }
         let mark = b.mark();
@@ -101,7 +101,7 @@ impl IfPattern {
     fn try_layout(&self, ctx: &MatchCtx, if_node: NodeId, b: &mut Bindings) -> bool {
         // 1. Cond.  Input 1 of the If (input 0 is the Control predecessor).
         if let Some(cond_pat) = &self.cond {
-            let inputs = ctx.graph.graph.node_inputs(if_node);
+            let inputs = ctx.graph.node_inputs(if_node);
             let Some(cond_in) = inputs.into_iter().nth(1) else {
                 return false;
             };
@@ -136,7 +136,7 @@ fn match_branch_consumer(
     pat: &Pat,
     b: &mut Bindings,
 ) -> bool {
-    let outputs = ctx.graph.graph.node_outputs(if_node);
+    let outputs = ctx.graph.node_outputs(if_node);
     let Some(out) = outputs.into_iter().nth(output_index) else {
         return false;
     };

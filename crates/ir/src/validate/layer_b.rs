@@ -2,6 +2,7 @@ use entity_utils::set::DenseEntitySet;
 
 use crate::graph::Graph;
 use crate::node::NodeInputId;
+use crate::walk::NodeIdSet;
 
 use super::ValidationError;
 
@@ -10,17 +11,36 @@ use super::ValidationError;
 /// (forward check).  For every output's use-list, verify that each listed
 /// input still points back to that output (backward check).
 ///
-/// Implementation: a single sweep over every output's use-list builds a
-/// `listed_inputs` set of every `NodeInputId` that currently appears in
-/// some use-list, and simultaneously runs the backward consistency check.
-/// The forward check is then a per-input O(1) membership test against
-/// that set — total cost O(E) where E is the edge count, vs. the
-/// previous O(E·U) "for each edge, scan the target's use-list".
-pub(super) fn check_layer_b(graph: &Graph, errs: &mut Vec<ValidationError>) {
-    // Single sweep over use-lists: collect every listed input id and
-    // catch backward inconsistency in one pass.
+/// Scoped to nodes reachable from the entry — opt passes
+/// (`RedundantPhis`, `DeadBranchElimination`) detach unreachable
+/// subgraphs but leave the zombie nodes in the arena, and re-checking
+/// their use-list integrity would surface noise rather than real bugs.
+/// Layer A and `check_layer_c_phis` are scoped the same way; this
+/// makes the three layers' coverage consistent.
+///
+/// Implementation: a single sweep over every reachable node's outputs
+/// builds a `listed_inputs` set of every `NodeInputId` that currently
+/// appears in some use-list, and simultaneously runs the backward
+/// consistency check.  The forward check is then a per-input O(1)
+/// membership test against that set — total cost O(E) where E is the
+/// edge count, vs. the previous O(E·U) "for each edge, scan the
+/// target's use-list".
+pub(super) fn check_layer_b(
+    graph: &Graph,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    // Single sweep over use-lists, restricted to outputs whose source
+    // node is reachable.  Sweeping all outputs would also visit zombie
+    // nodes' outputs — those legitimately have empty use-lists, but
+    // any consumer in their use-list would itself be a zombie consumer,
+    // which we don't want to flag here.
     let mut listed_inputs: DenseEntitySet<NodeInputId> = DenseEntitySet::new();
     for output in graph.outputs.keys() {
+        let (source, _) = graph.output_definition(output);
+        if !reachable.contains(source) {
+            continue;
+        }
         let mut cur = graph.output_first_use_id(output);
         while let Some(iid) = cur {
             listed_inputs.insert(iid);
@@ -35,19 +55,15 @@ pub(super) fn check_layer_b(graph: &Graph, errs: &mut Vec<ValidationError>) {
         }
     }
 
-    // Forward check: every node input must appear in some use-list.
-    // Catches the "input was created but never threaded into the
-    // producer's use-list" failure mode (covered by the
+    // Forward check: every reachable node's input must appear in some
+    // use-list.  Catches the "input was created but never threaded into
+    // the producer's use-list" failure mode (covered by the
     // `layer_b_input_missing_from_use_list` test, which simulates a
     // corrupted graph via `test_only_clear_first_use`).
-    //
-    // NOTE: `InputPointsToMissingOutput` is defined in the spec for
-    // completeness but is not checked here — the public `Graph` API only
-    // hands out live `NodeOutputId`s from its `PrimaryMap`, so fabricating
-    // a dangling id via safe code is not possible.  Leaving the variant on
-    // the enum keeps the shape documented for any future API that can
-    // produce such ids (e.g. a raw-FFI or serialization path).
     for node in graph.nodes.keys() {
+        if !reachable.contains(node) {
+            continue;
+        }
         let input_count = graph.node_inputs(node).len();
         for idx in 0..input_count {
             // The index range is by construction valid (we just measured the

@@ -235,10 +235,9 @@ fn get_vn_on_unbound_var_returns_none() {
 
 // ── MatcherOptions: ignore_casts / ignore_control_states flags ──────────────
 //
-// The flags default to off (strict exact-walk semantics).  Phases 2/3/4
-// implement the actual walk-through; Phase 1 only adds the API surface
-// and verifies the existing matcher behavior is unchanged when both flags
-// stay at their defaults.  These tests pin those contracts so a future
+// The flags default to off (strict exact-walk semantics).  These tests
+// pin the API surface and verify the existing matcher behavior is
+// unchanged when both flags stay at their defaults — so a future
 // refactor of the option type doesn't silently change defaults.
 
 #[test]

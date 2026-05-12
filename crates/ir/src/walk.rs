@@ -75,7 +75,7 @@ impl<'a> GraphWalkSuccs<'a> {
 /// predecessor was eliminated) are still visited if they remain attached as
 /// data inputs to live nodes; callers that need to distinguish live from dead
 /// nodes should consult [`cfg_reachable`].
-pub fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+pub(crate) fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     graph
         .node_inputs(node)
         .into_iter()
@@ -84,7 +84,7 @@ pub fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
 }
 
 /// Returns an iterator over all `Control`-kind outputs of `node`.
-pub fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeOutputId> + '_ {
+pub(crate) fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeOutputId> + '_ {
     graph
         .node_outputs(node)
         .into_iter()
@@ -92,7 +92,7 @@ pub fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeOutp
 }
 
 /// Returns an iterator over all nodes that consume a `Control` output of `node`.
-pub fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     cfg_outputs(graph, node)
         .flat_map(|output| graph.output_uses(output))
         .map(|(succ_node, _succ_input_idx)| succ_node)
