@@ -464,7 +464,7 @@ where
     /// Re-run the stable subset on the current graph (after in-place
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
-        let pipeline = self.opts.strider.build_stable_optimizer_pipeline();
+        let pipeline = build_stable_pipeline_with_rom(self.opts.strider, &self.opts.rom);
         let graph = self.graph_mut()?;
         pipeline.run_on_built(graph)?;
         Ok(())
@@ -989,13 +989,29 @@ where
     let mut graph = outcome.graph;
     let unresolved = outcome.unresolved_branches;
 
-    let pipeline = opts.strider.build_stable_optimizer_pipeline();
+    let pipeline = build_stable_pipeline_with_rom(opts.strider, &opts.rom);
     pipeline.run_on_built(&mut graph)?;
 
     // Harvest the Sleigh handle out of the consumed Cfg so the next
     // iteration can re-use it without re-loading the SLA spec.
     let harvested = cfg.into_sleigh();
     Ok((graph, unresolved, region_index, harvested))
+}
+
+/// Build the stable optimizer pipeline and layer [`opt::LoadReadOnly`]
+/// on top when the caller supplied a ROM.  Mirrors the canonical example
+/// (`crates/strider/examples/strider.rs`) and honours the
+/// [`RunConfig::rom`] docstring, which advertises the field as feeding
+/// the `LoadReadOnly` pass.
+fn build_stable_pipeline_with_rom(
+    strider: &Strider,
+    rom: &Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+) -> opt::OptimizerPipeline {
+    let mut pipeline = strider.build_stable_optimizer_pipeline();
+    if let Some(rom) = rom {
+        pipeline.add(opt::LoadReadOnly(std::sync::Arc::clone(rom)));
+    }
+    pipeline
 }
 
 /// The induced edge set of a `known_targets` map.  Used to test

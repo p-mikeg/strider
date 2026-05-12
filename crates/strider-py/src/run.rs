@@ -189,6 +189,18 @@ fn run_via_orchestrator(
     })
     .map_err(into_strider_err)?;
 
+    // Drain any exit-style exception (KeyboardInterrupt / SystemExit)
+    // that a Python ReadOnlyMemory / MemReader callback deferred via
+    // `e.restore(py)` while the GIL was released.  The callbacks can't
+    // return errors through their `Option`-typed traits, so they park
+    // the error in CPython's thread-local indicator; we surface it here
+    // so the caller sees the original exception type instead of either
+    // a generic `SystemError` (from the next Python call observing the
+    // pending error) or a successful return.
+    if let Some(err) = PyErr::take(py) {
+        return Err(err);
+    }
+
     let py_graph = Py::new(py, PyGraph::new(graph, cfg_obj.clone_ref(py)))?;
 
     Ok(PyRunResult {
@@ -292,6 +304,16 @@ fn run_with_custom_pipeline(
         if compact {
             graph.compact().map_err(into_strider_err)?;
         }
+    }
+
+    // Mirror `run_via_orchestrator`: drain any exit-style exception
+    // (KeyboardInterrupt / SystemExit) that a Python ReadOnlyMemory
+    // callback deferred via `e.restore(py)` while the prepended
+    // `LoadReadOnly` pass folded constant-address loads.  Without this
+    // drain the original exception is left dangling in CPython's TLS
+    // and the caller sees a successful return.
+    if let Some(err) = PyErr::take(py) {
+        return Err(err);
     }
 
     Ok(PyRunResult {

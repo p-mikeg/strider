@@ -580,6 +580,17 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             return None;
         }
         Python::with_gil(|py| -> Option<u64> {
+            // Short-circuit if a previous `read` already deferred an
+            // exit-style exception via `e.restore(py)`.  Calling Python
+            // again with the error indicator set would trip CPython's
+            // "result returned with an exception set" guard and clobber
+            // the original error with a generic `SystemError`.
+            // `strider-py::run` drains the pending error with
+            // `PyErr::take` after `strider::run` returns and propagates
+            // it to the caller.
+            if PyErr::occurred(py) {
+                return None;
+            }
             // Surface Python exceptions on stderr instead of silently
             // converting them to None — otherwise a buggy user override
             // (raises ValueError, returns wrong type, …) shows up as
