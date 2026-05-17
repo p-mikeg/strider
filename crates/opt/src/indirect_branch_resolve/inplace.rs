@@ -214,8 +214,10 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
+        builder.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
         let target = builder.build_int_const(0xdeadu64, NodeOutputType::U64).unwrap();
         builder.build_indirect_branch(target).expect("build_indirect_branch");
+        builder.set_lift_addr(None);
         let built = builder.build().expect("build");
         // Locate the unique IndirectBranch placeholder.
         let mut found: Option<NodeId> = None;
@@ -279,7 +281,9 @@ mod tests {
         let region = builder.create_region().expect("region");
         builder.set_entry_region(region).expect("entry");
         builder.set_region(region);
+        builder.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
         builder.build_return(None, &[]).expect("return");
+        builder.set_lift_addr(None);
         let mut ctx = builder.build().expect("build");
         let ret_id = ctx.graph
             .all_node_ids()
@@ -303,6 +307,10 @@ mod tests {
             [],
             [NodeOutputKind::OutputType(ty)],
         );
+        // Stamp sentinel asm-fingerprint so the Layer-C check passes
+        // for this synthesised node (it bypasses FunctionBuilder's
+        // lift_addr plumbing).
+        graph.set_asm_fingerprint(nid, vec![ir::test_utils::SENTINEL_LIFT_ADDR]);
         graph
             .node_outputs_exact::<1>(nid)
             .expect("IntConst has one output")[0]
@@ -433,6 +441,8 @@ mod tests {
             [],
             [NodeOutputKind::OutputType(NodeOutputType::Bool)],
         );
+        ctx.graph
+            .set_asm_fingerprint(bool_const, vec![ir::test_utils::SENTINEL_LIFT_ADDR]);
         let bool_out = ctx.node_outputs(bool_const).into_iter().next().unwrap();
         // Replace the IndirectBranch's input[2] (target_value) with the Bool output.
         let target_input_id = ctx
