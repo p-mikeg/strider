@@ -68,12 +68,36 @@ Five crates, dropping from twelve. Mapping:
 - **Memory chain stays pinned.** Identical to control. Egg sees `Load` *values*, not the memory token threading them through `Store` / `Load` / `Call`.
 - **One saturation per slice.** Results merged back into the unified `Graph` post-extraction. The "stable vs destructive" split disappears — saturation is non-destructive; extraction picks the canonical form.
 
+**Destructive cleanup interleaves with saturation — does NOT run only at the end.** You pointed out that destructive passes unlock new nondestructive rewrites. Concrete cycle:
+
+```
+DeadBranchElimination removes If(BoolConst(true))
+  → RedundantPhis collapses a now-single-pred VarPhi to its surviving input
+  → if the surviving input is IntConst, ConstantFold propagates into the consumer
+  → consumer becomes a new IntConst
+  → may enable another DeadBranch on a downstream If
+```
+
+v1 runs destructive only at the final fixed-point exit because its per-iteration `RegionIndex` pins phi `NodeId`s and can't tolerate mid-iteration deletions. That constraint disappears with the Salsa orchestrator. v2 uses one outer loop:
+
+```
+loop {
+    saturate_egraph(value_slice)        // non-destructive: adds e-class equivalences
+    extract_canonical(value_slice)      // pick lowest-cost form per e-class
+    cleanup = run_control_simplification()
+    //   DeadBranchElimination + RedundantPhis + dead-store removal
+    if !saturation_added_anything && !cleanup.changed { break }
+}
+```
+
+The egraph crate (egg or cranelift-egraph) handles the saturation half; the destructive half is plain imperative graph edits. After destructive cleanup invalidates some e-classes, the next saturation iteration rebuilds them from the now-smaller graph. The v1 "stable vs destructive pipeline" split (audit finding G4) collapses to a single loop.
+
 **What this means for v1 passes:**
-- `ConstantFold`, `KnownBits`, `FlagCmpCanonicalize`, `IfCondInversion`, algebraic identities (`x+0→x`, `x^x→0`) — all live in the value slice. Trivially port to `egg::Rewrite<NodeKind, NodeAnalysis>`.
-- `RedundantPhis`, `DeadBranchElimination` — these touch the *control* subgraph; they stay imperative, run once after egraph saturation + extraction (i.e. they replace today's destructive pipeline).
-- `StackStoreDetect`, `StackLoadForward` — contextual (need the calling convention). Implement as `egg::Analysis::Data` (per-eclass metadata maintained on union).
-- `CallStackArgCollect`, `FunctionArgDetect` — still post-passes; consume the analysis data but don't rewrite the slice.
-- `LoadReadOnly` — analysis with access to `ReadOnlyMemory`; rewrites a `Load` whose address eclass is a constant.
+- `ConstantFold`, `KnownBits`, `FlagCmpCanonicalize`, `IfCondInversion`, algebraic identities (`x+0→x`, `x^x→0`) — all live in the value slice. Trivially port to `egg::Rewrite<NodeKind, NodeAnalysis>`. Run as the *saturate* step.
+- `RedundantPhis`, `DeadBranchElimination` — touch the *control* subgraph; they stay imperative, run as the *cleanup* step inside the outer loop, NOT once at the end.
+- `StackStoreDetect`, `StackLoadForward` — contextual (need the calling convention). Implement as `egg::Analysis::Data` (per-eclass metadata maintained on union). Re-evaluated every saturation iteration since cleanup may have changed which stores are live.
+- `CallStackArgCollect`, `FunctionArgDetect` — true post-passes (run once after the loop converges); they collect/canonicalize but don't rewrite, so they don't need to be in the loop.
+- `LoadReadOnly` — analysis with access to `ReadOnlyMemory`; rewrites a `Load` whose address eclass is a constant. Inside the saturate step.
 
 **Fallback paths if Task 3.1 spike reveals problems** (decision gate, not "we might do all four"):
 1. **Switch to `cranelift-egraph`.** Same model as our slice approach but with phi-handling built in. Smaller ecosystem; tighter API fit.
