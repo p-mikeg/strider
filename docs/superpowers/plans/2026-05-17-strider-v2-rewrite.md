@@ -337,27 +337,46 @@ This means at every checkpoint the test suite (including all `crates/strider-py/
 - [ ] **Step 1: Write a failing snapshot test that loads every binary in `fixtures/out/` and dumps the post-optimization IR for every exported function via `Graph::to_dot`**
 
 ```rust
+mod common;
+use common::Arch;
+use object::{Object, ObjectSymbol, SymbolKind};
+
 #[test]
 fn v1_baseline_snapshots() {
-    for binary in walk_fixtures("fixtures/out") {
-        let arch = arch_of(&binary);
-        for func_name in exported_functions(&binary) {
-            let cfg = build_cfg(&binary, &func_name).unwrap();
-            let g = strider::run(RunConfig {
-                cfg,
-                arch,
-                cc: cc_for(arch),
-                rom: rom_from(&binary),
-            }).unwrap();
-            let dot = g.to_dot_string();
-            insta::assert_snapshot!(
-                format!("{}__{}", arch.preset_name(), func_name),
-                dot,
-            );
+    let cases = discover_cases();  // reads fixtures/cases/*.c
+    for &arch in ALL_ARCHES {       // const slice mirroring common::Arch variants
+        for case in &cases {
+            let path = common::binary_path(arch, case);
+            if !path.exists() { continue; }
+            let sleigh = sleigh_for(arch, &path);
+            for func_name in exported_function_names(&path) {
+                let result = std::panic::catch_unwind(|| {
+                    common::analyze(arch, case, &func_name)
+                });
+                let body = match result {
+                    Ok(g) => {
+                        let dot = dot::GraphDot::new(
+                            g.dot_dumper(&sleigh),
+                            dot::DotStyle::dark(),
+                        );
+                        dot.as_dot().unwrap()
+                    }
+                    Err(payload) => format!("LIFT_FAILED:{}", panic_msg(&payload)),
+                };
+                insta::assert_snapshot!(
+                    format!("{}__{}__{}", arch.name(), case, func_name),
+                    body,
+                );
+            }
         }
     }
 }
 ```
+
+**Implementation notes (v0 draft had wrong API names — corrected from actual shipped code at commit 6361384):**
+- `common::analyze(arch, case, fn_name) -> ir::BuiltFunctionGraph` is the real lift+optimize entry in `crates/strider/tests/common/mod.rs`. The orchestrator's `strider::run(RunConfig { … })` is NOT called directly from this test — `common::analyze` wraps it with the right `RunConfig` fields (`strider`, `start_addr`, `sleigh`, `rom`, `fn_max_size`, `allow_code_before_start_addr`, `compact`, `per_address_ccs`).
+- DOT output: `dot::GraphDot::new(g.dot_dumper(&sleigh), DotStyle::dark()).as_dot()`. There is no `Graph::to_dot_string()` shortcut — use this two-step API.
+- Lift failures: `std::panic::catch_unwind` captures panics from `analyze`; the payload is downcast to `&str` / `String` for the snapshot body.
 
 - [ ] **Step 2: Run it to verify it fails (snapshots don't exist yet)**
 
@@ -577,13 +596,13 @@ fn egraph_roundtrip_preserves_v1_snapshots() {
             let g_before = strider::run_v1(/*…*/).unwrap();
             let eg = EGraphAdapter::from_graph(&g_before);
             let g_after = EGraphAdapter::extract_lowest_cost(&eg);
-            assert_eq!(g_before.canonical_form(), g_after.canonical_form());
+            assert_eq!(canonical_dot(&g_before, &sleigh), canonical_dot(&g_after, &sleigh));
         }
     }
 }
 ```
 
-- [ ] **Step 4: Implement until passing.** This is the longest task in Phase 1 — budget 2–3 days.
+- [ ] **Step 4: Implement until passing.** Define `canonical_dot(g, sleigh) -> String` as `dot::GraphDot::new(g.dot_dumper(sleigh), DotStyle::dark()).as_dot()?` — there is no `Graph::canonical_form()`; canonicalization happens via the dot renderer's stable output. This is the longest task in Phase 1 — budget 2–3 days.
 - [ ] **Step 5: Commit.**
 
 ### Phase 1 Checkpoint
@@ -647,10 +666,12 @@ fn lifter_caches_regions_and_decodes_once() {
 ### Task 2.5: Collapse the per-region driver from `strider`
 
 **Files:**
-- Move: `crates/strider/src/strider/per_region.rs` (the `process_insn` + `set_lift_addr` funnel) → `crates/strider-lift/src/region_driver.rs`
+- Move: `crates/strider/src/strider/insn/mod.rs` (the `process_insn` + `set_lift_addr` funnel, lines 17-47) → `crates/strider-lift/src/region_driver.rs`
 - Modify: `crates/strider-lift/src/lib.rs` to expose `RegionDriver`
 
-- [ ] **Step 1: Identify the driver code in v1** — the `set_lift_addr(Some(addr)) … set_lift_addr(None)` wrapper around `process_insn`.
+**Path correction:** v0 draft cited `crates/strider/src/strider/per_region.rs` which doesn't exist. The actual driver lives in `crates/strider/src/strider/insn/mod.rs`.
+
+- [ ] **Step 1: Identify the driver code in v1** — the `set_lift_addr(Some(addr)) … set_lift_addr(None)` wrapper around `process_insn` at `crates/strider/src/strider/insn/mod.rs:17-47`.
 - [ ] **Step 2: Move, with tests.**
 - [ ] **Step 3: Old `strider` crate now imports the driver from `strider-lift`.**
 - [ ] **Step 4: Run v1 snapshot baseline.** All snapshots match.
@@ -689,7 +710,10 @@ fn constant_fold_egraph_matches_v1() {
         let before = load_ir(&fixture);
         let after_v1 = run_v1_constant_fold(&before);
         let after_v2 = run_egraph_constant_fold(&before);
-        assert_eq!(after_v1.canonical_form(), after_v2.canonical_form());
+        assert_eq!(
+            canonical_dot(&after_v1, &sleigh),
+            canonical_dot(&after_v2, &sleigh),
+        );
     }
 }
 ```
