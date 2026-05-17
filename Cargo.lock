@@ -563,22 +563,12 @@ dependencies = [
 name = "ir"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "cranelift-bitset",
- "cranelift-entity",
  "criterion",
  "dot",
- "entity-utils",
- "ethnum",
- "graphwalk",
- "hashbrown 0.16.1",
- "itertools 0.13.0",
  "proptest",
  "rsleigh",
- "rustc-hash",
- "smallvec",
+ "strider-ir",
  "target",
- "thiserror",
 ]
 
 [[package]]
@@ -1293,6 +1283,15 @@ dependencies = [
  "anyhow",
  "cranelift-bitset",
  "cranelift-entity",
+ "ethnum",
+ "hashbrown 0.16.1",
+ "itertools 0.13.0",
+ "proptest",
+ "rsleigh",
+ "rustc-hash",
+ "smallvec",
+ "target",
+ "thiserror",
 ]
 
 [[package]]

@@ -295,7 +295,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         Ok(label)
     }
 
-    pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut dot::DotEmitter) {
+    pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut crate::dot::DotEmitter) {
         let kind = self.graph.node_kind(node);
         let fc = node_fillcolor(kind);
         // Use pretty_label so const nodes get their type annotation too.
@@ -312,7 +312,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         &self,
         node: NodeId,
         dot_id: &str,
-        out: &mut dot::DotEmitter,
+        out: &mut crate::dot::DotEmitter,
     ) {
         let kind = self.graph.node_kind(node);
         let shape = node_shape(kind);

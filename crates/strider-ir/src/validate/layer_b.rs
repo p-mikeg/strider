@@ -1,4 +1,4 @@
-use entity_utils::set::DenseEntitySet;
+use crate::entity_utils::set::DenseEntitySet;
 
 use crate::graph::Graph;
 use crate::node::NodeInputId;

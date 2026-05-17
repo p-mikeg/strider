@@ -4,22 +4,13 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-rsleigh.workspace = true
-target.workspace = true
-cranelift-bitset.workspace = true
-cranelift-entity.workspace = true
-smallvec.workspace = true
-graphwalk.workspace = true
-entity-utils.workspace = true
-itertools.workspace = true
-dot.workspace = true
-anyhow.workspace = true
-thiserror.workspace = true
-ethnum.workspace = true
-hashbrown = { version = "0.16", features = ["raw-entry"] }
-rustc-hash = "2"
+strider-ir = { workspace = true }
 
 [dev-dependencies]
+strider-ir = { workspace = true, features = ["test-utils"] }
+target.workspace = true
+rsleigh.workspace = true
+dot.workspace = true
 proptest = "1"
 criterion = { version = "0.7", features = ["html_reports"] }
 
@@ -28,9 +19,8 @@ name = "validate"
 harness = false
 
 [features]
-# Exposes shared mock-IR test helpers (`make_empty_fn`, `reg_vn`, `sp_vn_x86`,
-# `sp_vn_x86_64`, ...).  Test-only — not callable from production code.
-test-utils = []
+# Forward to strider-ir's test-utils feature for backwards compatibility.
+test-utils = ["strider-ir/test-utils"]
 
 [lints]
 workspace = true

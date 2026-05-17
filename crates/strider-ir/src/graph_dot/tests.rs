@@ -5,7 +5,7 @@ use crate::{
     graph::Graph,
     node::{NodeKind, NodeOutputKind, NodeOutputType},
 };
-use dot::GraphDotDumper as _;
+use crate::dot::GraphDotDumper as _;
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -31,8 +31,8 @@ fn render(graph: &Graph, entry: NodeId) -> String {
         call_clobbered: &[],
         ret_val_regs: &[],
     };
-    use dot::GraphDot;
-    GraphDot::new(dumper, dot::DotStyle::empty())
+    use crate::dot::GraphDot;
+    GraphDot::new(dumper, crate::dot::DotStyle::empty())
         .as_dot()
         .expect("render must succeed")
 }
@@ -333,8 +333,8 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         ret_val_regs: &[],
     };
 
-    let style = dot::DotStyle::empty();
-    let mut emitter = dot::DotEmitter::new("test", &style);
+    let style = crate::dot::DotStyle::empty();
+    let mut emitter = crate::dot::DotEmitter::new("test", &style);
     let mut state = dumper.create_initial_state();
 
     // Render cs_true *before* if_node to trigger the historical bug.

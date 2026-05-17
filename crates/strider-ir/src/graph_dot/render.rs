@@ -25,7 +25,7 @@ fn all_uses_go_through_inline(graph: &Graph, node: NodeId) -> bool {
     })
 }
 
-impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
+impl<'a, R: MemReader> crate::dot::GraphDotDumper for GraphDotDumper<'a, R> {
     type Node = crate::node::NodeId;
     type Error = std::io::Error;
     type State = GraphDotDumperState;
@@ -45,7 +45,7 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
     fn dump_as_dot(
         &self,
         node: Self::Node,
-        out: &mut dot::DotEmitter,
+        out: &mut crate::dot::DotEmitter,
         state: &mut Self::State,
     ) -> core::result::Result<(), Self::Error> {
         if self.graph.node_kind(node).is_const() {

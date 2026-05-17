@@ -1,5 +1,5 @@
 use crate::builder::VarId;
-use crate::dot::GraphDotDumper;
+use crate::graph_dot::GraphDotDumper;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeOutputId};
 use cranelift_entity::PrimaryMap;
@@ -266,13 +266,13 @@ impl BuiltFunctionGraph {
         Ok(remap)
     }
 
-    /// Returns a [`GraphDotDumper`](crate::dot::GraphDotDumper) that can render
-    /// this function graph to a `.dot` / `.html` file.
+    /// Returns a [`GraphDotDumper`](crate::graph_dot::GraphDotDumper) that can
+    /// render this function graph to a `.dot` / `.html` file.
     #[must_use]
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
-    ) -> crate::dot::GraphDotDumper<'a, R> {
+    ) -> crate::graph_dot::GraphDotDumper<'a, R> {
         GraphDotDumper {
             entry: self.entry,
             graph: &self.graph,
