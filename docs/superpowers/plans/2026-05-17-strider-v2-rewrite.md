@@ -57,18 +57,30 @@ Five crates, dropping from twelve. Mapping:
 
 ## Key Implementation Choices With Rationale
 
-### A. Egraph backend (`egg` crate) for optimization
+### A. Acyclic-slice egraph optimizer (egg without back-edges)
 
-**Why:** Today the optimizer has two distinct pipelines (`stable` survives phi-input growth, `destructive` only runs at fixed point) plus a separate post-pass list (`CallStackArgCollect`, `FunctionArgDetect`). The split exists because passes are imperative graph rewriters and don't compose cleanly under iteration. An egraph eliminates this — every rewrite is a non-destructive `Rewrite { lhs, rhs }`, saturation runs once after the indirect-branch fixed point settles, and extraction picks the lowest-cost form.
+**Correction from the v0 draft.** Standard egg saturation assumes acyclic terms, but sea-of-nodes carries cycles via `VarPhi` / `MemPhi` at loop joins. You raised this. The fix is to e-graph only the *acyclic value-subgraph slices* between phi nodes, treating phi outputs as opaque variables. This is exactly the design of `cranelift-egraph` (aegraph) — used in Wasmtime production for the same shape of IR.
 
-**What changes:**
-- Each existing `Optimizer` becomes one or more `egg::Rewrite<NodeKind, NodeAnalysis>`.
-- `ConstantFold`, `KnownBits`, algebraic identities (`x+0→x`, `x^x→0`), `FlagCmpCanonicalize`, `IfCondInversion` — all already declarative, trivially port.
-- `RedundantPhis`, `DeadBranchElimination` — these are "delete-once" passes; they become extraction-time filters (skip phis with one reachable predecessor) rather than rewrites.
-- `StackStoreDetect`, `StackLoadForward`, `CallStackArgCollect`, `FunctionArgDetect` — these are *contextual* (need the calling convention) and produce side-table data. They run as analyses (`egg::Analysis`) that compute per-eclass metadata, not as rewrites.
-- `LoadReadOnly` — analysis with access to `ReadOnlyMemory`.
+**Approach:**
+- **Slice definition.** A region's value subgraph from `{ phi outputs, InitialVar, InitialMemory, FunctionArg, Load output }` (opaque leaves) to `{ branch cond, store inputs, call args, return values, phi inputs of successor regions }` (roots) is acyclic. This slice is what egg sees.
+- **Phis are leaves.** Egg never matches LHS patterns that cross a phi boundary. Phi nodes are opaque variables in the egraph and merge points outside it.
+- **Control flow stays pinned.** `Control` ports on `If`, `ControlState`, `Return`, `Call`, `CallOther` are not in the egraph at all. Optimization rewrites only the value-port subgraph.
+- **Memory chain stays pinned.** Identical to control. Egg sees `Load` *values*, not the memory token threading them through `Store` / `Load` / `Call`.
+- **One saturation per slice.** Results merged back into the unified `Graph` post-extraction. The "stable vs destructive" split disappears — saturation is non-destructive; extraction picks the canonical form.
 
-**Risk:** egg is not designed for control flow. We embed the sea-of-nodes structure (Control / Memory / Value edges) as ordinary children of e-nodes and rely on e-class equivalence over value subgraphs only. Control nodes (`If`, `ControlState`, `Return`, `Call`) participate in the egraph but their `Control`/`Memory` inputs are pinned (no rewrites cross those edges). Validated by Phase 3 Task 3.1 spike.
+**What this means for v1 passes:**
+- `ConstantFold`, `KnownBits`, `FlagCmpCanonicalize`, `IfCondInversion`, algebraic identities (`x+0→x`, `x^x→0`) — all live in the value slice. Trivially port to `egg::Rewrite<NodeKind, NodeAnalysis>`.
+- `RedundantPhis`, `DeadBranchElimination` — these touch the *control* subgraph; they stay imperative, run once after egraph saturation + extraction (i.e. they replace today's destructive pipeline).
+- `StackStoreDetect`, `StackLoadForward` — contextual (need the calling convention). Implement as `egg::Analysis::Data` (per-eclass metadata maintained on union).
+- `CallStackArgCollect`, `FunctionArgDetect` — still post-passes; consume the analysis data but don't rewrite the slice.
+- `LoadReadOnly` — analysis with access to `ReadOnlyMemory`; rewrites a `Load` whose address eclass is a constant.
+
+**Fallback paths if Task 3.1 spike reveals problems** (decision gate, not "we might do all four"):
+1. **Switch to `cranelift-egraph`.** Same model as our slice approach but with phi-handling built in. Smaller ecosystem; tighter API fit.
+2. **Hand-rolled saturation.** Apply rewrites + node-id union-find directly on the existing `Graph`. No external dep. Loses egg's confluence machinery but keeps the data model intact.
+3. **Drop egraph entirely.** Keep v1's imperative optimizer; collapse the stable/destructive split via a `PassEffect` enum (Finding 4 from the generalization audit). Lose saturation benefit; keep every other v2 win (Salsa, lazy CFG, proc-macro patterns, Python-first API).
+
+Phase 3 is decoupled from the rest of v2: phases 1, 2, 4, 5 land regardless of which optimizer path wins.
 
 ### B. Salsa-based orchestrator
 
@@ -117,6 +129,142 @@ The macro covers ~80% of the boilerplate. Custom matchers (commutative variants,
 ### F. Always-tested binary fixtures
 
 **Why:** v1's `fixtures/` directory has per-arch Makefiles producing ELFs. Cross-arch tests use them but cross-binary regressions (e.g. "the same C function lifts to the same canonical IR on x86 vs arm64") are weak. v2 adds **shape-equality fixtures**: a `.c` source + per-arch ELFs + an expected canonical-IR snapshot (`insta` snapshot of the post-optimization IR). A pass break shows as a snapshot diff *per architecture*.
+
+## Generalization Audit Findings
+
+These 15 findings (from a read-only audit of v1 by the `feature-dev:code-explorer` subagent on 2026-05-17) name concrete repetition/correctness wins that v2 should absorb. Ordered by impact. Each finding lists the v1 location, the duplication pattern, the v2 generalization, the correctness benefit, and the cost.
+
+### G1. Unify three `Graph` side-tables behind a single `SideTable<K, V>` type
+- **v1:** `crates/ir/src/graph/mod.rs:60-101` — `stack_phi_offsets`, `call_other_names`, `asm_fingerprints`, plus the four-field `call_clobbered_overrides`. Each adds a `get_*` / `set_*` / `extend_*` accessor trio, a compaction hook in `compact.rs`, a validator skip in `validate/layer_c.rs`, and a Clone shim.
+- **v2:** A sealed `SideTable<K, V>` newtype that owns compaction (node-id remap), Clone, and accessor ergonomics in one place. In the egraph model the natural replacement is per-eclass `egg::Analysis::Data` — all side-data lives in `NodeAnalysis` and is maintained automatically on merge.
+- **Correctness:** Forgetting to hook a new side-table into `compact.rs` today produces dangling references without any compile-time signal. A unified type makes the forget impossible.
+- **Cost:** Low. The four existing tables are structurally homogeneous; extraction is mechanical.
+
+### G2. Proc-macro pattern DSL absorbs the 16-type Rust×Python duplication
+- **v1:** `crates/strider-py/src/pattern.rs` (16 `Py*Pat` types) mirrors `crates/pattern/src/pat/builders/` (16 Rust builders) by hand. `pat_builder_finalise!` macro halves the Python side; nothing halves the Rust side.
+- **v2:** `#[strider_pattern]` proc-macro emits both surfaces from one annotated struct (Phase 4). `capture` / `when` / `into_pat` / `cap` handled universally.
+- **Correctness:** A new field added on the Rust side is silently absent from Python today. The macro makes the gap a compile error.
+- **Cost:** Medium. Macro dev cost is real; commutative variants and lift-time aliases (`sub`, `int_le`) stay hand-written. Reduces ~3000 LOC to ~500 LOC.
+
+### G3. Make asm-fingerprint Layer-C check unconditional (biggest correctness win)
+- **v1:** `crates/ir/src/validate/mod.rs:115-117` — Layer-C fingerprint check is `if options.check_asm_fingerprints`. Default `validate()` skips it. `opt::OptimizerPipeline::run` calls `validate(graph, entry)` *without* options → fingerprint violations survive undetected in production.
+- **v2:** Remove `ValidateOptions` entirely; check is unconditional. `GraphBuilder` test helper auto-stamps sentinel fingerprints so existing mock-graph tests stay green.
+- **Correctness:** Every optimization pass that forgets `extend_asm_fingerprint_from` currently produces silently invalid output. Always-on check catches it at the next `pipeline.run()`.
+- **Cost:** Low once the helper exists. The only risk is discovering a currently-shipping pass with latent empty-fingerprint output — which is exactly what should be caught.
+
+### G4. Collapse three pipeline builders behind a `PassEffect` enum
+- **v1:** `crates/strider/src/strider/pipeline.rs:186-246` — `build_optimizer_pipeline` / `build_stable_optimizer_pipeline` / `build_destructive_optimizer_pipeline` each thread CC and arch into CC-aware passes. Adding a CC-aware pass means touching every applicable builder.
+- **v2:** Single `Strider::build_pipeline(effect: PassEffect)` with `enum PassEffect { Stable, Destructive, Full }` — 60 LOC → 20 LOC and CC threaded once. (The egraph path makes the split moot entirely; this is the interim/fallback shape.)
+- **Correctness:** A missed CC threading silently makes intermediate and final fixed-point iterations behave differently.
+- **Cost:** Low for the enum; zero for the egraph path.
+
+### G5. `CallingConventionBuilder` collapses 12 preset constructors
+- **v1:** `crates/target/src/calling_convention/mod.rs:369-898` — 12 full 9-field `CallingConvention` literals. Kernel/syscall variants mutate fields from the base via `let mut cc = …; cc.arg_passing_regs = …; cc`.
+- **v2:** Fluent `CallingConventionBuilder` with `with_*` methods. Derived presets become one-liner diffs: `Self::x86_64_systemv().with_syscall_number_reg("RAX")`.
+- **Correctness:** Today, adding a 10th `CallingConvention` field requires touching every preset literal. With a builder, defaults handle it.
+- **Cost:** Low. Builder is ~30 LOC; preset bodies become ~3 LOC each.
+
+### G6. `NodeKind::is_commutative()` as single-source-of-truth for commutative matching
+- **v1:** `crates/pattern/src/matcher/commutativity.rs:1-36` + `crates/pattern/src/pat/builders/binary_op.rs:31-53` — four separate `is_commutative_*` functions plus per-builder `BinaryOpKind::is_commutative` methods, all dispatching on different op enums. `IntCmpOp::Carry`/`Scarry` semantics live in a fourth function.
+- **v2:** Single `NodeKind::is_commutative(&self) -> bool` method; proc-macro annotates `#[commutative]` on enum variants.
+- **Correctness:** Adding a commutative op today requires updating four sites; missing one makes the matcher silently non-commutative.
+- **Cost:** Low.
+
+### G7. CC metadata leaves the IR crate — `BuiltFunctionGraph` doesn't carry it
+- **v1:** `crates/ir/src/function.rs:57-104` — five `pub(crate)` fields record CC state on the final graph (clobber lists, ret-val regs, no-memory-clobber flag). `from_graph_and_entry_for_rewrite` is an escape hatch for rewrite paths that don't need CC. The `ir` crate depends on `rsleigh::Vn` purely for these fields.
+- **v2:** CC metadata lives in `strider-analyze::FunctionAnalysis` (wrapping IR graph + CC). The `ir` crate stays CC-free and drops the `rsleigh` dep on this path.
+- **Correctness:** Today, CC data has no validator; bad CC is silently shipped. Moving it out makes the IR validator's scope explicit and complete.
+- **Cost:** Medium. Every caller reading `bfg.call_clobbered` directly must migrate.
+
+### G8. `RegionLiftHandles` / `RegionIndex` deleted by Salsa
+- **v1:** `crates/strider/src/strider/pipeline.rs:21-47` — 8-field `RegionLiftHandles` struct; orchestrator rebuilds `RegionIndex` per iteration to map placeholder anchors back to source regions. O(iter × full) cost.
+- **v2:** Salsa's `region_ir(addr)` query is the cache; no manual index. The struct disappears.
+- **Correctness:** Today the 8-field handle can desync from IR state if any pass rewrites a `ControlState` or `MemPhi` `NodeId` mid-iteration. Salsa makes desync structurally impossible.
+- **Cost:** High for Salsa; low for an interim read-only `FunctionBuilder::regions() -> &HashMap<…>` accessor.
+
+### G9. `cfg → opt` dependency inversion: cfg's mini-IR resolver moves into strider-analyze
+- **v1:** `crates/cfg/src/cfg/builder/indirect_resolve.rs:1-48` — builds a standalone IR graph at CFG-build time, runs `ConstantFold + KnownBits + RedundantPhis` to resolve a `BranchIndirect`. This is why `cfg` depends on `opt` (a surprise edge in the dependency diagram).
+- **v2:** In Salsa, "what does `target_vn` evaluate to in this region?" is just a query on the egraph value slice — no standalone graph. As an interim, expose a `resolve_indirect_target_value(region_insns, target_vn, cc) -> Option<ResolvedTargets>` free function in `strider-analyze` that takes the opt pipeline as a parameter.
+- **Correctness:** Mini-resolver and main resolver can silently diverge on which passes they run.
+- **Cost:** Medium for the function-extraction; the Salsa path eliminates it entirely.
+
+### G10. `FunctionBounds` value type — shared between `cfg` builder and orchestrator
+- **v1:** `crates/cfg/src/cfg/query.rs:25-48` — `is_addr_tail_call(target, start_addr, fn_max_size, allow_code_before_start_addr) -> bool`. Both `cfg` and the orchestrator reconstruct these args independently.
+- **v2:** `FunctionBounds { start_addr, fn_max_size, allow_code_before_start_addr }` with a `classify_branch_target(addr) -> BranchTargetClass` method. Both callers share one type.
+- **Correctness:** Today, the cfg builder pulls these fields from `self`; the orchestrator reconstructs them manually. A field rename can silently desync them.
+- **Cost:** Low.
+
+### G11. `ArchContext` fully replaces `SleighArch`'s two separate `preset` + `endianness` fields
+- **v1:** `crates/target/src/arch.rs:109-118` introduced `ArchContext { preset, endianness }` to bundle what used to be two pass-through params. But `SleighArch` still stores them as separate fields and exposes `SleighArch::context()` that constructs a fresh value.
+- **v2:** `SleighArch` embeds `ArchContext` directly; `SleighArch::context()` returns `&self.context`.
+- **Correctness:** Eliminates the residual way to pull `preset` from one `SleighArch` and `endianness` from another.
+- **Cost:** Trivial mechanical refactor.
+
+### G12. `NodeKind::CallOther { user_op_id, name: InternedStr }` deletes a side-table
+- **v1:** `crates/ir/src/graph/mod.rs:63-76` — `call_other_names: SecondaryMap<NodeId, Option<String>>` populated at construction. `CallOther` is explicitly non-cacheable, so identical ops produce different `NodeId`s.
+- **v2:** Embed the op name as an interned 32-bit ID directly in `NodeKind::CallOther`. `NodeKind` stays `Copy`. One side-table deleted.
+- **Correctness:** A pass that creates a `CallOther` without populating the side-table today silently loses the name.
+- **Cost:** Low.
+
+### G13. `Graph::reachable_set(entry) -> NodeIdSet` replaces four `walk_graph` "drive to completion" call-sites
+- **v1:** `validate/mod.rs:91-93`, `redundant_phis/mod.rs`, `dead_branch/mod.rs`, `function_args/mod.rs` — all four independently drive `walk_graph` to completion to harvest `walk.visited` as a reachability filter.
+- **v2:** One helper. 3-line impl.
+- **Correctness:** Eliminates the footgun where a caller partially drains the walk and reads `visited` as if complete.
+- **Cost:** Trivial.
+
+### G14. Lift-time canonical aliases enforce a doc-test contract
+- **v1:** `crates/pcode-lift/src/value/integer.rs` lowers `IntSub → Add(_, Neg(_))`; `crates/pattern/src/pat/ctor/int.rs` re-implements `sub(l, r) → add(l, neg(r))`. Two layers, no contract.
+- **v2:** Doc-test: `assert_eq!(lift_insn(IntSub_insn).shape(), pattern::sub(_, _).expected_shape())`. The proc-macro can auto-generate the alias from `#[lowered_to = "add(_, neg(_))"]` on the pattern struct.
+- **Correctness:** A future lift-time canonicalization change silently breaks patterns today.
+- **Cost:** Low for the doc-test; Medium for the macro.
+
+### G15. `PyPatBuilder` trait collapses the 16-arm `PatLike::into_pat` dispatch
+- **v1:** `crates/strider-py/src/pattern.rs:239-292` — 16-variant `PatLike` enum + 16-arm `into_pat` match. Every new builder type means a two-site edit.
+- **v2:** `PyPatBuilder` trait with `finalise() -> Pat`; `PatLike` becomes a small enum + `Builder(Box<dyn PyPatBuilder>)`. Or eliminated entirely by the macro (G2).
+- **Correctness:** Missing a variant falls through silently to a Python type-extraction error today.
+- **Cost:** Subsumed by G2 (the proc-macro).
+
+## Pre-Code Verification Plan
+
+You said "verify all your plan before coding it." The verifications below run as read-only research subagents in parallel before Phase 0 begins. Each gates a specific architectural commitment; if a verification fails, the plan is updated (or the fallback path documented in section A is taken) *before* any rewrite code is written.
+
+### V1. Egg + sea-of-nodes (acyclic slice) is feasible
+- **Hypothesis:** Egg with phi-as-opaque + control-pinned + memory-pinned is a workable model. `cranelift-egraph` is a viable swap-in if not.
+- **Verification:** Build a 30-line spike: take one v1 region, extract its value-slice, run `egg::Runner` with ConstantFold rewrites, extract back. Compare to v1 ConstantFold output. Document the per-region overhead.
+- **Pass condition:** Output matches v1 + per-region cost < 5ms on typical regions.
+- **Fail action:** Switch to `cranelift-egraph` in section A, or fall back to imperative+`PassEffect` per the documented fallbacks.
+
+### V2. Salsa fits our query shape and is API-stable
+- **Hypothesis:** salsa-3.0 (or whichever is current) supports our queries: `binary(path)` → `cfg(entry)` → `region_ir(addr)` → `optimized_eclass(entry)`.
+- **Verification:** Read the salsa docs + Wasmtime / rust-analyzer use as production references. Sketch the query graph in `docs/superpowers/specs/2026-05-17-salsa-query-shape.md` (single page).
+- **Pass condition:** Every v1 orchestrator state transition maps to a Salsa input change or query invalidation; no required feature is missing.
+- **Fail action:** Drop incremental rebuilds (still keep lazy CFG); implement a hand-rolled invalidation map (cost: Finding G8's interim accessor + ~150 LOC).
+
+### V3. rsleigh supports per-BB lazy decoding
+- **Hypothesis:** Lazy `Lifter::region(addr)` can decode one basic block on demand without rsleigh refusing or requiring a whole-function context.
+- **Verification:** Read `rsleigh`'s public API (it's a path dep at `../rsleigh`). Look for "lift one instruction" / "lift to next branch" entry points. If only "lift function" exists, lazy-by-region degrades to lazy-by-function — still a win for large binaries but worth knowing now.
+- **Pass condition:** rsleigh exposes a per-instruction or per-BB lift entry point.
+- **Fail action:** Lazy-by-function (still big win on multi-function binaries); update Phase 2 Task 2.4 accordingly.
+
+### V4. PyO3 proc-macro generation of `#[pyclass]` works
+- **Hypothesis:** A custom proc-macro can emit `#[pyclass]` impls + their methods such that pyo3-stub-gen picks them up.
+- **Verification:** Build a 20-line spike: `#[strider_pattern] struct Foo { #[field] x: i64 }` emits `PyFoo` with `__init__` + getters + setters. Run pyo3-stub-gen against it; verify the stub matches a hand-written equivalent.
+- **Pass condition:** Stubs match; importable from Python; `mypy --strict` passes on a small consumer file.
+- **Fail action:** Keep hand-written Python mirror but introduce a `declarative_pattern!` macro_rules (less powerful but no proc-macro infrastructure). Phase 4 still wins by ~40% LOC.
+
+### V5. Property-based IR generation strategy
+- **Hypothesis:** `proptest` strategies can generate valid sea-of-nodes graphs (well-typed, walk-reachable, fingerprint-stamped) for property tests.
+- **Verification:** Sketch a `prop_compose!` strategy that builds a graph from a random sequence of `FunctionBuilder` operations. Run 1000 iterations under v1 `validate()` (with always-on fingerprints from G3) and confirm zero violations.
+- **Pass condition:** 1000/1000 generated graphs pass v1 validation.
+- **Fail action:** Shrink to hand-authored fixture suite (still better than v1's mock graphs); defer property testing to a v2.1 milestone.
+
+### V6. Crate dependency direction has no back-edges
+- **Hypothesis:** `strider-binary → strider-ir → strider-lift → strider-analyze → strider` has no cycles.
+- **Verification:** Map every v1 cross-crate call site (already covered in `feature-dev:code-explorer` audit Finding G9 — `cfg → opt` is the one known back-edge). Confirm v2 dependency direction holds for every other call site.
+- **Pass condition:** Zero back-edges identified.
+- **Fail action:** Document the back-edge; either invert dependency in v2 or carry the edge as a documented exception in CLAUDE.md.
+
+**V1–V6 run as parallel subagent dispatches** before Phase 0 begins. Results recorded in a new `docs/superpowers/specs/2026-05-17-verification-results.md`. The plan is updated based on results before Phase 0 Task 0.1 starts.
 
 ## Migration Strategy
 
@@ -719,7 +867,8 @@ Record decision points here as the rewrite progresses. Each entry: `Date | Phase
 
 | Risk | Mitigation |
 |---|---|
-| Egraph spike (Task 3.1) reveals incompatibility with sea-of-nodes. | Fall back plan documented in Task 3.1; Phase 3 still delivers the orchestrator/Salsa work. |
+| Egraph slice (V1 verification) is impractical despite the phi-opaque framing. | Three documented fallback paths in section A: `cranelift-egraph`, hand-rolled saturation, or drop egraph entirely (collapse stable/destructive via `PassEffect` enum per G4). Phase 3 still delivers orchestrator/Salsa work. |
+| Verification V1–V6 cumulative failure invalidates the architectural premise. | Phase 0 has no architectural commitment beyond pinning v1 snapshots — it's safe regardless of V1–V6 outcomes. Re-plan from V1–V6 results before Phase 1. |
 | Salsa invalidation correctness bugs cause IR drift. | Phase 0 snapshot baseline catches drift on every CI run. |
 | Proc-macro generates Python stubs that don't pass pyo3-stub-gen lint. | Migrate one pattern per task — stop and fix early. |
 | Performance regression from egg's e-class union cost on huge graphs. | Bench in Task 6.5; if regressed, keep imperative optimizer and only adopt the Salsa orchestrator. |
