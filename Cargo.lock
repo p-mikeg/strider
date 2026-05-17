@@ -323,6 +323,7 @@ name = "dot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "strider-ir",
 ]
 
 [[package]]
@@ -1289,6 +1290,7 @@ dependencies = [
 name = "strider-ir"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cranelift-bitset",
  "cranelift-entity",
 ]

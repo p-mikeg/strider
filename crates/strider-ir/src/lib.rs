@@ -6,5 +6,6 @@
 
 extern crate alloc;
 
+pub mod dot;
 pub mod entity_utils;
 pub mod graphwalk;
