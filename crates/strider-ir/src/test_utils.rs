@@ -3,11 +3,30 @@
 //! Gated by `feature = "test-utils"` so production code can't reach it.
 //! Consumers add `ir = { workspace = true, features = ["test-utils"] }`
 //! to their `[dev-dependencies]`.
+//!
+//! Every helper here sets a **sentinel lift address** on the
+//! `FunctionBuilder` for the duration of the closure so every node
+//! created through `build_*` API inherits a non-empty asm-fingerprint.
+//! This makes mock-graph tests satisfy the always-on Layer-C
+//! asm-fingerprint check (Phase 1 Task 1.4b / G3) without needing to
+//! stamp each node by hand.  The sentinel value is the magic constant
+//! [`SENTINEL_LIFT_ADDR`] (`0xDEAD_BEEF_0000_0001`) so debugging is
+//! unambiguous when a sentinel leaks into production output.
 
 use crate::error::Result;
 use crate::{BuiltFunctionGraph, FunctionBuilder, Value};
 
+/// Sentinel asm-fingerprint address used by every helper in this
+/// module.  Distinct from any real machine address so debug output
+/// (graph dumps, IR snapshots) is obvious when a sentinel-stamped
+/// node leaks into a production code path.
+pub const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
+
 /// Builds a single-region function whose return value is what `f` produces.
+///
+/// Sets [`SENTINEL_LIFT_ADDR`] as the active lift address for the
+/// duration of `f` and the trailing `build_return` so every emitted
+/// node carries a non-empty asm-fingerprint (Layer-C contract).
 ///
 /// # Errors
 ///
@@ -20,8 +39,10 @@ where
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let val = f(&mut b)?;
     b.build_return(Some(val), &[])?;
+    b.set_lift_addr(None);
     b.build()
 }
 
@@ -29,6 +50,10 @@ where
 /// receives the read-back value (a `VarPhi` over `InitialVar(vn)`) and
 /// returns the value to wire into the function's `Return`.  Returns the built
 /// graph and the read-back `Value` so the caller can refer to it later.
+///
+/// Sets [`SENTINEL_LIFT_ADDR`] for the duration of `f` and the trailing
+/// `build_return` so every emitted node carries a non-empty
+/// asm-fingerprint (Layer-C contract).
 ///
 /// # Errors
 ///
@@ -44,9 +69,11 @@ where
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let x = b.read_variable(&vn)?;
     let val = f(&mut b, x)?;
     b.build_return(Some(val), &[])?;
+    b.set_lift_addr(None);
     Ok((b.build()?, x))
 }
 
@@ -90,8 +117,10 @@ where
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_val = b.read_variable(&sp_vn)?;
     f(&mut b, sp_val)?;
+    b.set_lift_addr(None);
     b.build()
 }
 

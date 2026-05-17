@@ -70,6 +70,8 @@ mod node_signature;
 mod ops;
 mod region;
 #[cfg(any(feature = "test-utils", test))]
+pub mod test_helpers;
+#[cfg(any(feature = "test-utils", test))]
 pub mod test_utils;
 pub mod validate;
 pub mod walk;
