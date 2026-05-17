@@ -63,6 +63,7 @@ where
     fb.set_entry_region(entry)?;
 
     fb.set_region(entry);
+    fb.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
     let a = fb.read_variable(&a_vn)?;
     let b = fb.read_variable(&b_vn)?;
     let (zr, ng, cy, ov) = build_cmp_flags(&mut fb, a, b)?;
@@ -76,6 +77,7 @@ where
     fb.set_region(f);
     let two = fb.build_int_const(2u64, NodeOutputType::U64)?;
     fb.build_return(Some(two), &[])?;
+    fb.set_lift_addr(None);
 
     let fg = fb.build()?;
     let if_node = find_unique_if((&fg).into());
