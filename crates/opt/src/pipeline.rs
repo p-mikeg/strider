@@ -325,6 +325,7 @@ mod tests {
 
     use ir::FunctionBuilder;
     use ir::node::NodeOutputType;
+    use ir::test_utils::SENTINEL_LIFT_ADDR;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
     fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
@@ -332,8 +333,10 @@ mod tests {
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let v = b.build_int_const(k, NodeOutputType::U64).unwrap();
         b.build_return(Some(v), &[]).unwrap();
+        b.set_lift_addr(None);
         b.build().unwrap()
     }
 

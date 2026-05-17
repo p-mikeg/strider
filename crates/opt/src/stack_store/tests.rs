@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::pipeline::OptimizerRaw;
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use ir::test_utils::sp_vn_x86 as sp_vn;
+use ir::test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
 use ir::{FunctionBuilder, IntBinaryOp};
 
 /// Counts how many nodes in `ctx` match the predicate.
@@ -104,6 +104,7 @@ fn phi_sp_collapses_to_stack_store() -> Result<()> {
     let body = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
     let sp_val = b.read_variable(&sp)?;
@@ -111,6 +112,7 @@ fn phi_sp_collapses_to_stack_store() -> Result<()> {
     b.build_store(sp_val, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -143,6 +145,7 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
 
     // entry: if (true) goto a else goto b
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, a, bb)?;
 
@@ -171,6 +174,7 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
     b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -211,6 +215,7 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, a, bb)?;
 
@@ -239,6 +244,7 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -635,6 +641,7 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let other_v = b.read_variable(&other)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
     let addr =
@@ -642,6 +649,7 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     StackStoreDetect::new(sp).optimize_raw(&mut fg.graph, fg.entry)?;

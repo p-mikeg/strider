@@ -2,6 +2,7 @@ use crate::pipeline::OptimizerRaw;
 use crate::test_support::{make_fn, return_kind};
 use super::*;
 use ir::node::{NodeKind, NodeOutputType};
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 
 // ── Original tests ────────────────────────────────────────────────────────────
@@ -256,8 +257,10 @@ where
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let val = f(&mut b, v)?;
     b.build_return(Some(val), &[])?;
+    b.set_lift_addr(None);
     b.build()
 }
 
