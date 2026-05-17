@@ -144,6 +144,7 @@ Phase 3 is decoupled from the rest of v2: phases 1, 2, 4, 5 land regardless of w
 **What does NOT change relative to v1:**
 - v1's BFS-from-entry-with-decode-cache pattern is preserved. We don't add "true per-BB laziness driven by pattern queries" — that was a misframing in the v0 draft. Reachable-from-entry is already the right scope.
 - `function_max_size` bound continues to work as in v1.
+- **Within-region sequential decoding** is preserved. `rsleigh::Sleigh::lift_one(&mut self, addr)` is NOT context-free — it forwards to a C++ Sleigh handle (`self.ll_ctx`) that carries context-register state (ARM Thumb mode, x86 segment selectors, MIPS16 mode). Decoded instructions CAN modify context (ARM `bx lr` switches mode). The V3 verification overclaimed "stateless"; the correct framing is: **decode buffers reset per call (yes, stateless), but the Sleigh's context-register state persists and is order-dependent for arches that use it.** v1's `RegionBuilder::build` decodes sequentially within a region for exactly this reason; v2's `Lifter::region(addr)` MUST do the same. Across regions, assume context state is fixed per function entry (v1's implicit invariant).
 
 ### D. Macro-generated pattern DSL
 

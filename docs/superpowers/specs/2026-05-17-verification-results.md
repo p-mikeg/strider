@@ -55,11 +55,20 @@
 
 **Pass condition:** rsleigh exposes a per-instruction or per-BB entry safe to call out-of-order.
 
-**Result:** **PASS.** `Sleigh::lift_one(addr) -> Result<LiftRes, ...>` at `../rsleigh/src/lib.rs:159` is the only lifting entry point. It mutates only internal decode buffers (reset on every call); no per-CFG state. Two independent confirmations in the strider tree:
-- Comment block at `crates/cfg/src/cfg/mod.rs:47-50`: "Reusing one Sleigh across many `lift_one` calls is sound."
-- `cfg::DecodeCache` (`crates/cfg/src/cfg/decode_cache.rs:38`) keys `Arc<LiftRes>` purely by `(machine_addr) -> Arc<LiftRes>` with no predecessor address — already treats `lift_one(addr)` as pure-by-address.
+**Result:** **PASS with caveat — the V3 subagent's "stateless" claim was overstated.** User pointed out that `lift_one(&mut self, addr)` takes `&mut self`, which IS a context (Sleigh's C++ handle carries context-register state — ARM Thumb mode, x86 segment selectors, MIPS16 mode). The corrected picture:
 
-**Implication for Phase 2 Task 2.4:** `Lifter::region(addr) -> &Region` decodes one BB on demand by calling `sleigh.lift_one(cur)` per machine insn, advancing `cur += lift_res.machine_insn_len` until a terminator. The existing `DecodeCache` is reused verbatim as the lazy-decode memo. No whole-function context required.
+- **Decode buffers reset per `lift_one` call** — yes, stateless in this sense.
+- **Context-register state persists across calls** — and CAN be modified by decoded instructions (ARM `bx lr` switches Thumb/ARM mode). Decoding at the same address with different context state can produce different `LiftRes`.
+- **DecodeCache keyed only by `(machine_addr)`** works for current strider because supported arches don't have decode operations that write to context within a single function. It would break for ARM functions that mix Thumb and ARM mid-function. This is a known v1 hazard, NOT something v2 introduces.
+
+**Sources:**
+- `Sleigh::lift_one` impl: `../rsleigh/src/lib.rs:159-170` — forwards to `sleigh_bindings_ctx_lift_one(self.ll_ctx.ctx_ptr(), addr, …)`.
+- `DecodeCache`: `crates/cfg/src/cfg/decode_cache.rs:38` — keys `(machine_addr) -> Arc<LiftRes>` (implicit context-constancy assumption).
+- v1's sequential-within-region invariant: `crates/cfg/src/cfg/builder/region_builder.rs:623-626` — `RegionBuilder::build` advances `cur_addr` linearly per insn, preserving context naturally.
+
+**Corrected implication for Phase 2 Task 2.4:** `Lifter::region(addr) -> &Region` MUST decode sequentially within a region (`for cur in start..terminator { sleigh.lift_one(cur); cur += machine_insn_len; }`), exactly as v1's `RegionBuilder::build` does. Across regions, assume context state is fixed per function entry (v1's invariant). The lazy-per-region API surface is fine; arbitrary out-of-order per-insn lifting across regions is NOT safe and must not be introduced.
+
+**Lesson for future verifications:** A "library is stateless" claim from a research subagent should be sanity-checked against `&mut self`-bearing method signatures. The V3 subagent saw "no per-CFG state" (true) and overstated it as "stateless" (false). User domain knowledge caught this.
 
 ## V4 — PyO3 proc-macro + pyo3-stub-gen
 
