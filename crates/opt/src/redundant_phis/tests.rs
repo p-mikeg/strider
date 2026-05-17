@@ -2,7 +2,7 @@ use super::*;
 use crate::pipeline::OptimizerRaw;
 use crate::{ConstantFold, OptimizerPipeline};
 use ir::node::{NodeKind, NodeOutputType};
-use ir::test_utils::sp_vn_x86 as sp_vn;
+use ir::test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
 use ir::{FunctionBuilder, IntBinaryOp};
 
 // ── Original test ─────────────────────────────────────────────────────────────
@@ -26,6 +26,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
 
     // entry: shared = sp - 4; if cond goto a else goto b
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_entry = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
     let shared_sp =
@@ -49,6 +50,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
     let sp_c = b.read_variable(&sp)?;
     let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -81,12 +83,14 @@ fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
     let body = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
     let addr = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
     let data = b.build_int_const(0x42u64, NodeOutputType::U64)?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
+    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
     RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
@@ -115,9 +119,11 @@ fn control_state_single_pred_collapses() -> crate::Result<()> {
     let body = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
     b.build_return(None, &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
     assert!(
         RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?.changed(),
@@ -137,6 +143,7 @@ fn unreachable_store_inputs_detached() -> crate::Result<()> {
     let live = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(false);
     b.build_if(cond, dead, live)?;
     b.set_region(dead);
@@ -146,6 +153,7 @@ fn unreachable_store_inputs_detached() -> crate::Result<()> {
     b.build_return(None, &[])?;
     b.set_region(live);
     b.build_return(None, &[])?;
+    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
     let mut pipeline = OptimizerPipeline::new();
@@ -177,8 +185,10 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let c = b.build_int_const(0u64, NodeOutputType::U64)?;
     b.build_return(Some(c), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // Settle the graph by running RedundantPhis to fixed point first.  After
@@ -236,6 +246,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
 
     // entry: branch to join.
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(join)?;
 
     // join: read `var` (creates a single-input VarPhi at this region's
@@ -243,6 +254,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
     b.set_region(join);
     let read_back = b.read_variable(&var)?;
     b.build_return(Some(read_back), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // Locate the VarPhi(var) at `join` and its owning CS.

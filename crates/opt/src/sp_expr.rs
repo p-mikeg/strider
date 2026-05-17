@@ -446,6 +446,7 @@ fn decompose_sp_phi(
 mod tests {
     use super::*;
     use ir::node::NodeOutputType;
+    use ir::test_utils::SENTINEL_LIFT_ADDR;
     use ir::{FunctionBuilder, IntBinaryOp};
 
     fn sp() -> rsleigh::Vn {
@@ -506,8 +507,10 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let v = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
         b.build_return(Some(v), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         assert_eq!(int_const_signed(&fg.graph, v), Some(-4));
         Ok(())
@@ -526,9 +529,11 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let inner = b.build_int_const(0x8000_0000u64, NodeOutputType::U32)?;
         let neg = b.build_int_unary_operation(inner, ir::IntUnaryOp::Neg, NodeOutputType::U32)?;
         b.build_return(Some(neg), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         // Modular: wrapping_neg(0x8000_0000) = 0x8000_0000 → sign-extended to i32 = -2^31.
         assert_eq!(int_const_signed(&fg.graph, neg), Some(i32::MIN.into()));
@@ -542,9 +547,11 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let inner = b.build_int_const(7u64, NodeOutputType::U32)?;
         let neg = b.build_int_unary_operation(inner, ir::IntUnaryOp::Neg, NodeOutputType::U32)?;
         b.build_return(Some(neg), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         assert_eq!(int_const_signed(&fg.graph, neg), Some(-7));
         Ok(())
@@ -557,8 +564,10 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp)?;
         b.build_return(Some(sp_val), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         // sp_val is a VarPhi-of-InitialVar; the phi has 1 predecessor →
         // collapses to Terminal{base: InitialVar(sp), offset: 0}.
@@ -576,10 +585,12 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -596,10 +607,12 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp)?;
         let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
         let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -617,10 +630,12 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let r1 = {
@@ -647,8 +662,10 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let c = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
         b.build_return(Some(c), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -669,6 +686,7 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
@@ -678,6 +696,7 @@ mod tests {
         let s3 =
             b.build_int_sub(s2, twelve, NodeOutputType::U32)?;
         b.build_return(Some(s3), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
 
         let mut memo = SpExprMemo::default();
@@ -706,8 +725,10 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let c = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
         b.build_return(Some(c), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -739,6 +760,7 @@ mod tests {
 
         // entry: if cond goto a else goto bb
         b.set_region(entry);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let cond = b.build_boolean_const(true);
         b.build_if(cond, a, bb)?;
 
@@ -764,6 +786,7 @@ mod tests {
         b.set_region(c);
         let sp_at_c = b.read_variable(&sp)?;
         b.build_return(Some(sp_at_c), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
 
         let mut memo = SpExprMemo::default();
@@ -791,12 +814,14 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp)?;
         // Simulate `and $0xfffffff8, %esp`.
         let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
         let aligned = b.build_int_binary_operation(
             sp_val, mask, IntBinaryOp::And, NodeOutputType::U32)?;
         b.build_return(Some(aligned), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -833,6 +858,7 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
         let aligned = b.build_int_binary_operation(
@@ -840,6 +866,7 @@ mod tests {
         let frame = b.build_int_const(0x1D0u64, NodeOutputType::U32)?;
         let post_sub = b.build_int_sub(aligned, frame, NodeOutputType::U32)?;
         b.build_return(Some(post_sub), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -874,6 +901,7 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let mut current = b.read_variable(&sp)?;
         const N: usize = 5000;
         for _ in 0..N {
@@ -881,6 +909,7 @@ mod tests {
             current = b.build_int_binary_operation(current, one, IntBinaryOp::Add, NodeOutputType::U32)?;
         }
         b.build_return(Some(current), &[])?;
+        b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -909,12 +938,14 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // We'll synthesise a StackStorePhi node directly in the graph
         // by making three placeholder inputs.  Use the builder's region
         // ControlState's PhiToken slot, the builder's InitialMemory,
         // and a fresh IntConst as DATA.
         let data = b.build_int_const(0xCAFE_u64, NodeOutputType::U64)?;
         b.build_return(None, &[])?;
+        b.set_lift_addr(None);
         let mut fg = b.build()?;
         // Locate the ControlState (it owns the PhiToken).
         let cs = fg

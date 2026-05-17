@@ -2,6 +2,7 @@ use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerRaw;
 use ir::node::{NodeKind, NodeOutputType};
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::{FunctionBuilder, IntBinaryOp};
 use target::Endianness;
 
@@ -286,6 +287,7 @@ fn bail_on_call_between() -> Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     let sp_val = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U64)?;
@@ -301,6 +303,7 @@ fn bail_on_call_between() -> Result<()> {
         b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, NodeOutputType::U64)?;
     let loaded = b.build_load(addr4b, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -337,6 +340,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
 
     // entry: if const(true) { then } else { else }
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
@@ -368,6 +372,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
         b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
     let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // Skip DeadBranchElimination so the `If(const true)` diamond survives
@@ -428,6 +433,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
@@ -452,6 +458,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
         b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
     let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -495,6 +502,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
 
     // entry: *(sp+4) = 0xAA; then if(true) goto then else goto else
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_e = b.read_variable(&sp)?;
     let four_e = b.build_int_const(4u64, NodeOutputType::U32)?;
     let addr_e =
@@ -532,6 +540,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
         b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
     let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -800,6 +809,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
@@ -821,6 +831,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     let sp_m = b.read_variable(&sp)?;
     let loaded = b.build_load(sp_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // Normalize the graph (Store → StackStore, single-pred phi collapse)
