@@ -2,7 +2,7 @@ use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerRaw;
 use ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
-use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn};
+use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
 use ir::{FunctionBuilder, IntBinaryOp};
 
 fn rdi_like_vn() -> rsleigh::Vn {
@@ -29,10 +29,12 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     // Build a trivial function that reads rdi and returns it.
     let v = b.read_variable(&rdi)?;
     b.build_return(Some(v), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
@@ -259,6 +261,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     //    graph even though DeadBranchElimination could collapse it — we
     //    skip that pass here to preserve the phi.)
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, true_br, false_br)?;
 
@@ -292,6 +295,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     )?;
     let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -406,10 +410,12 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     // Return a constant — rdi is never read.
     let c = b.build_int_const(0u64, NodeOutputType::U64)?;
     b.build_return(Some(c), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -450,6 +456,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     let a = b.read_variable(&rdi)?;
     let bb = b.read_variable(&rsi)?;
@@ -461,6 +468,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let ab = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)?;
     let abc = b.build_int_binary_operation(ab, c, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(abc), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -613,6 +621,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
@@ -644,6 +653,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
         b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
     let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
@@ -913,6 +923,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
     // entry: snapshot the original SP, then if(true) goto then else else.
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_orig = b.read_variable(&sp)?;
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
@@ -947,6 +958,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
         b.build_int_binary_operation(sp_orig, four_j, IntBinaryOp::Add, NodeOutputType::U32)?;
     let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
