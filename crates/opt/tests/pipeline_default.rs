@@ -11,6 +11,7 @@
 mod common;
 
 use ir::node::{NodeKind, NodeOutputType};
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::IntBinaryOp;
 use opt::{ConstantFold, DeadBranchElimination, KnownBits, RedundantPhis, default_pipeline};
 
@@ -44,6 +45,7 @@ fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
     let f = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, t, f)?;
     b.set_region(t);
@@ -52,6 +54,7 @@ fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
     b.set_region(f);
     let v2 = b.build_int_const(2u64, ir::ValueType::U64).unwrap();
     b.build_return(Some(v2), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     default_pipeline().run(&mut fg.graph, fg.entry)?;

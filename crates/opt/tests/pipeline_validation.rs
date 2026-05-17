@@ -11,6 +11,7 @@
 mod common;
 
 use ir::node::NodeOutputType;
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use opt::*;
 
 use common::{make_fn, sp_vn};
@@ -31,7 +32,9 @@ fn run_with_post_passes_validates() -> opt::Result<()> {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(None, &[])?;
+        b.set_lift_addr(None);
         b.build()?
     };
     let mut p = OptimizerPipeline::new();

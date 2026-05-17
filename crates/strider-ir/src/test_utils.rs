@@ -41,6 +41,11 @@ where
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let val = f(&mut b)?;
+    // Re-stamp the sentinel after the closure so that the trailing
+    // `build_return` is attributed even if `f` cleared the lift_addr
+    // (e.g. asm-fingerprint-propagation tests that set their own
+    // per-insn addresses and reset to `None` before returning).
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     b.build()
@@ -72,6 +77,8 @@ where
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let x = b.read_variable(&vn)?;
     let val = f(&mut b, x)?;
+    // Re-stamp the sentinel after the closure (see `make_empty_fn`).
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     Ok((b.build()?, x))

@@ -10,6 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
 use ir::node::{NodeKind, NodeOutputType};
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::wide_const::WideConstStorage;
 use ir::FunctionBuilder;
 
@@ -19,10 +20,12 @@ fn default_pipeline_preserves_wide_consts() {
     let entry = fb.create_region().unwrap();
     fb.set_entry_region(entry).unwrap();
     fb.set_region(entry);
+    fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     let v = WideConstStorage::U256([0xdead, 0xbeef, 0xcafe, 0xbabe]);
     let wide = fb.build_int_const_wide(v.clone(), NodeOutputType::U256).unwrap();
     fb.build_return(Some(wide), &[]).unwrap();
+    fb.set_lift_addr(None);
 
     let mut bfg = fb.build().unwrap();
 
@@ -73,12 +76,14 @@ fn known_bits_skips_wide_outputs_without_taint() {
     let entry = fb.create_region().unwrap();
     fb.set_entry_region(entry).unwrap();
     fb.set_region(entry);
+    fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     let narrow = fb.build_int_const(0xff_u64, NodeOutputType::U64).unwrap();
     let _wide = fb
         .build_int_const_wide(WideConstStorage::U256([0x1; 4]), NodeOutputType::U256)
         .unwrap();
     fb.build_return(Some(narrow), &[]).unwrap();
+    fb.set_lift_addr(None);
 
     let mut bfg = fb.build().unwrap();
 

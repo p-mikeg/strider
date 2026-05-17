@@ -14,6 +14,7 @@
 mod common;
 
 use ir::node::{NodeKind, NodeOutputType};
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::IntBinaryOp;
 use opt::*;
 
@@ -32,6 +33,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> opt::Result<()> {
     let live = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let t = b.build_boolean_const(true);
     let f = b.build_boolean_const(false);
     let cond = b.build_boolean_operation(t, f, ir::BoolBinaryOp::And)?;
@@ -40,6 +42,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> opt::Result<()> {
     b.build_return(None, &[])?;
     b.set_region(live);
     b.build_return(None, &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     default_pipeline().run(&mut fg.graph, fg.entry)?;
@@ -91,6 +94,7 @@ fn dbe_strips_phi_then_redundant_phis_collapses() -> opt::Result<()> {
     let join = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, true_r, false_r)?;
     b.set_region(true_r);
@@ -104,6 +108,7 @@ fn dbe_strips_phi_then_redundant_phis_collapses() -> opt::Result<()> {
     b.set_region(join);
     let merged = b.read_variable(&var)?;
     b.build_return(Some(merged), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     default_pipeline().run(&mut fg.graph, fg.entry)?;
@@ -151,6 +156,7 @@ fn stack_pipeline_full_cooperation() -> opt::Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_v = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
@@ -158,6 +164,7 @@ fn stack_pipeline_full_cooperation() -> opt::Result<()> {
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let mut p = OptimizerPipeline::new();
@@ -237,6 +244,7 @@ fn nested_const_branches_fully_eliminated() -> opt::Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let outer_cond = b.build_boolean_const(true);
     b.build_if(outer_cond, outer_t, outer_f)?;
 
@@ -252,6 +260,7 @@ fn nested_const_branches_fully_eliminated() -> opt::Result<()> {
     b.set_region(inner_f);
     let live_v = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
     b.build_return(Some(live_v), &[])?;
+    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;
@@ -281,6 +290,7 @@ fn default_pipeline_exercises_all_passes() -> opt::Result<()> {
     let dead = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     // ConstantFold: c1 + c2.
     let c1 = b.build_int_const(3u64, NodeOutputType::U8).unwrap();
@@ -302,6 +312,7 @@ fn default_pipeline_exercises_all_passes() -> opt::Result<()> {
     b.build_return(Some(v), &[])?;
     b.set_region(dead);
     b.build_return(None, &[])?;
+    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;

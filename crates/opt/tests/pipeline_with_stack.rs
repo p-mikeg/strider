@@ -11,6 +11,7 @@
 mod common;
 
 use ir::node::{NodeKind, NodeOutputType};
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use opt::*;
 
 use common::sp_vn;
@@ -35,6 +36,7 @@ fn store_then_load_at_same_offset_forwarded() -> opt::Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_v = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
     let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
@@ -42,6 +44,7 @@ fn store_then_load_at_same_offset_forwarded() -> opt::Result<()> {
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     pipeline_with_sp(sp, vec![4, 8, 12]).run(&mut fg.graph, fg.entry)?;
@@ -71,6 +74,7 @@ fn stack_store_detect_and_load_forward_converge_in_two_iters() -> opt::Result<()
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_v = b.read_variable(&sp)?;
     let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
     let addr = b.build_int_sub(sp_v, eight, NodeOutputType::U32)?;
@@ -78,6 +82,7 @@ fn stack_store_detect_and_load_forward_converge_in_two_iters() -> opt::Result<()
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let detect = StackStoreDetect::new(sp);
@@ -116,6 +121,7 @@ fn full_call_pipeline_collects_args() -> opt::Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_v0 = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
     let sp_v1 = b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
@@ -129,6 +135,7 @@ fn full_call_pipeline_collects_args() -> opt::Result<()> {
     let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
     b.build_call(target)?;
     b.build_return(None, &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     pipeline_with_sp(sp, vec![0, 4]).run(&mut fg.graph, fg.entry)?;
