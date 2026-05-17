@@ -314,14 +314,16 @@ fn rhs_closure_error_propagates_through_anyhow() {
 /// a silent rewire-of-the-wrong-slot.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
-    use ir::{FunctionBuilder, node::NodeOutputType};
+    use ir::{FunctionBuilder, node::NodeOutputType, test_utils::SENTINEL_LIFT_ADDR};
     let mut fb = FunctionBuilder::empty().unwrap();
     let region = fb.create_region().unwrap();
     fb.set_entry_region(region).unwrap();
     fb.set_region(region);
+    fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let tgt = fb.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
     fb.build_call(tgt).unwrap();
     fb.build_return(None, &[]).unwrap();
+    fb.set_lift_addr(None);
     let mut g = fb.build().unwrap();
 
     let rule = rewrite_rule(call(), int_const(0));

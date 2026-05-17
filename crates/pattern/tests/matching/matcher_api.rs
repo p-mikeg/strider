@@ -459,10 +459,12 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
 /// The Return's ctrl input is the tail region's `ControlState`, whose
 /// own control inputs trace back to the Call.
 fn graph_ret_via_controlstate_after_call() -> ir::BuiltFunctionGraph {
+    use super::support::graph::SENTINEL_LIFT_ADDR;
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let head = t.fb_mut().create_region().expect("head");
     t.fb_mut().set_entry_region(head).expect("entry head");
     t.fb_mut().set_region(head);
+    t.fb_mut().set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     let target = t
         .fb_mut()
@@ -474,6 +476,7 @@ fn graph_ret_via_controlstate_after_call() -> ir::BuiltFunctionGraph {
 
     t.fb_mut().set_region(tail);
     t.fb_mut().build_return(None, &[]).expect("ret");
+    t.fb_mut().set_lift_addr(None);
 
     t.finish()
 }

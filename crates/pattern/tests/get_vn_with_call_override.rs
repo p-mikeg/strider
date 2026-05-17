@@ -7,6 +7,7 @@ use ir::BuiltFunctionGraph;
 use ir::FunctionBuilder;
 use ir::Graph;
 use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use pattern::{Binding, Bindings, Capture};
 use target::{BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention, SleighArch};
 
@@ -22,6 +23,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     // Override: every tracked variable is callee-saved → 0 clobbers.
     // (Builder auto-adds rdx, xmm0, xmm1 to tracked through ret_val_regs.)
@@ -45,6 +47,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let _call_node = b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
     let ret_regs: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();
     b.build_return(None, &ret_regs).unwrap();
+    b.set_lift_addr(None);
     let bfg = b.build().unwrap();
 
     // The single Call has 0 clobber outputs; side-table records empty list.

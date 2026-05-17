@@ -2,6 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::FunctionBuilder;
 use ir::node::NodeOutputType;
 use pattern::{Matcher, int_const, load, store};
@@ -15,6 +16,7 @@ fn load_mem_in_matches_preceding_store() {
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("entry");
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr1 = b
         .build_int_const(0x100u64, NodeOutputType::U64)
         .expect("addr1");
@@ -30,6 +32,7 @@ fn load_mem_in_matches_preceding_store() {
         .build_load(addr2, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
     b.build_return(Some(load_val), &[]).expect("ret");
+    b.set_lift_addr(None);
     let fg = b.build().expect("build");
 
     let pat = load()

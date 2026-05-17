@@ -5,6 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::FunctionBuilder;
 use pattern::{any, Matcher, call_other, Capture, IntoPat};
 
@@ -16,12 +17,14 @@ fn build_cpuid_graph() -> ir::FunctionBuilder {
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("entry");
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     // CPUID per the v2 ABI table is empty-channel + memory_edge=true.
     // Pass no pcode-explicit args, no implicit reads, no implicit writes.
     let _ = b
         .build_call_other_modeled(7, "cpuid", &[], None, &[], &[], &[])
         .expect("cpuid");
     b.build_return(None, &[]).expect("return");
+    b.set_lift_addr(None);
     b
 }
 

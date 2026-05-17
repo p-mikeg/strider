@@ -22,6 +22,7 @@
 //!
 //! ```rust
 //! use ir::{FunctionBuilder, IntBinaryOp, node::NodeOutputType};
+//! use ir::test_utils::SENTINEL_LIFT_ADDR;
 //! use pattern::{Capture, Matcher, add, load, var};
 //!
 //! // *(0x1000 + 8); return the loaded value.
@@ -29,6 +30,7 @@
 //! let region = fb.create_region().unwrap();
 //! fb.set_entry_region(region).unwrap();
 //! fb.set_region(region);
+//! fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 //! let base = fb.build_int_const(0x1000u64, NodeOutputType::U64).unwrap();
 //! let offset = fb.build_int_const(8u64, NodeOutputType::U64).unwrap();
 //! let addr = fb
@@ -36,6 +38,7 @@
 //!     .unwrap();
 //! let val = fb.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64).unwrap();
 //! fb.build_return(Some(val), &[]).unwrap();
+//! fb.set_lift_addr(None);
 //! let graph = fb.build().unwrap();
 //!
 //! // Match every load whose address is (something + anything).
@@ -119,13 +122,16 @@
 //!
 //! ```rust
 //! use ir::FunctionBuilder;
+//! use ir::test_utils::SENTINEL_LIFT_ADDR;
 //! use pattern::Matcher;
 //!
 //! let mut fb = FunctionBuilder::empty().unwrap();
 //! let region = fb.create_region().unwrap();
 //! fb.set_entry_region(region).unwrap();
 //! fb.set_region(region);
+//! fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 //! fb.build_return(None, &[]).unwrap();
+//! fb.set_lift_addr(None);
 //! let graph = fb.build().unwrap();
 //!
 //! let m = Matcher::new(&graph)

@@ -2,6 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::FunctionBuilder;
 use ir::node::NodeOutputType;
 use pattern::{Matcher, int_const, load};
@@ -16,6 +17,7 @@ fn bit_width_filters_load_by_value_width() {
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("entry");
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr = b
         .build_int_const(0x100u64, NodeOutputType::U64)
         .expect("addr");
@@ -33,6 +35,7 @@ fn bit_width_filters_load_by_value_width() {
     b.build_store(other_addr, l64, rsleigh::VnSpace::RAM)
         .expect("store l64");
     b.build_return(Some(l32), &[]).expect("ret");
+    b.set_lift_addr(None);
     let fg = b.build().expect("build");
 
     let m = Matcher::new(&fg);

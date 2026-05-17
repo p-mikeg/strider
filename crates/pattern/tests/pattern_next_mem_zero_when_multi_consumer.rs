@@ -3,6 +3,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::FunctionBuilder;
 use ir::node::NodeOutputType;
 use pattern::{Matcher, any, int_const, store};
@@ -20,6 +21,7 @@ fn next_mem_returns_no_match_when_multi_consumer() {
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("entry");
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr1 = b
         .build_int_const(0x100u64, NodeOutputType::U64)
         .expect("addr1");
@@ -47,6 +49,7 @@ fn next_mem_returns_no_match_when_multi_consumer() {
     b.build_store(addr2, v2, rsleigh::VnSpace::RAM)
         .expect("store_b");
     b.build_return(Some(load_val), &[]).expect("ret");
+    b.set_lift_addr(None);
     let fg = b.build().expect("build");
 
     let m = Matcher::new(&fg);
@@ -86,6 +89,7 @@ fn next_mem_returns_no_match_when_no_consumer() {
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("entry");
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr1 = b
         .build_int_const(0x100u64, NodeOutputType::U64)
         .expect("addr1");
@@ -103,6 +107,7 @@ fn next_mem_returns_no_match_when_no_consumer() {
     b.build_store(addr2, v2, rsleigh::VnSpace::RAM)
         .expect("store_b");
     b.build_return(None, &[]).expect("ret");
+    b.set_lift_addr(None);
     let fg = b.build().expect("build");
 
     let m = Matcher::new(&fg);

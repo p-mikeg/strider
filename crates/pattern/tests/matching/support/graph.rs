@@ -15,7 +15,7 @@ use ir::{BoolBinaryOp, BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 // ── Varnode helpers ───────────────────────────────────────────────────────────
 
-pub use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn};
+pub use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
 
 // ── Tb ────────────────────────────────────────────────────────────────────────
 
@@ -397,6 +397,10 @@ impl Tb {
     }
     pub fn enter(&mut self, r: ir::RegionId) {
         self.fb.set_region(r);
+        // Re-stamp the sentinel — tests that switch regions explicitly
+        // (`enter` after entering a fresh region) must keep nodes
+        // attributable for the Layer-C asm-fingerprint check.
+        self.fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     }
     pub fn branch(&mut self, dst: ir::RegionId) {
         self.fb.build_branch(dst).expect("build_branch");
@@ -414,6 +418,9 @@ impl Tb {
 
     /// Emits `Return(v)` in the current region and finalises the graph.
     pub fn ret_val(mut self, v: NodeOutputId) -> ir::BuiltFunctionGraph {
+        // Re-stamp the sentinel so the Return is attributed even if a
+        // test cleared `lift_addr` to set its own per-insn addresses.
+        self.fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         self.fb.build_return(Some(v), &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
@@ -426,6 +433,7 @@ impl Tb {
 
     /// Emits `Return()` with no data value and finalises the graph.
     pub fn ret_nothing(mut self) -> ir::BuiltFunctionGraph {
+        self.fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         self.fb.build_return(None, &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
@@ -433,6 +441,7 @@ impl Tb {
     /// Emits `Return()` in the current region, plus return registers, and
     /// finalises the graph.
     pub fn ret_regs(mut self, regs: &[rsleigh::Vn]) -> ir::BuiltFunctionGraph {
+        self.fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         self.fb.build_return(None, regs).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }

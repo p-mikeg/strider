@@ -166,12 +166,15 @@ impl<'g> Matcher<'g> {
     ///
     /// ```rust
     /// # use ir::FunctionBuilder;
+    /// # use ir::test_utils::SENTINEL_LIFT_ADDR;
     /// # use pattern::{CastMask, Matcher};
     /// # let mut fb = FunctionBuilder::empty().unwrap();
     /// # let r = fb.create_region().unwrap();
     /// # fb.set_entry_region(r).unwrap();
     /// # fb.set_region(r);
+    /// # fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     /// # fb.build_return(None, &[]).unwrap();
+    /// # fb.set_lift_addr(None);
     /// # let g = fb.build().unwrap();
     /// let m = Matcher::new(&g)
     ///     .ignore_casts_mask(CastMask::TRUNCATE)

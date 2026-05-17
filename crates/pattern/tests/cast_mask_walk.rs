@@ -13,6 +13,7 @@
 )]
 
 use ir::node::{NodeOutputId, NodeOutputType};
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::{BuiltFunctionGraph, ExtendOp, FunctionBuilder};
 use opt::{OptimizerRaw, RedundantPhis};
 use pattern::{CastMask, Matcher, Pat, Capture, add, any_int_const, initial_var_for};
@@ -57,6 +58,7 @@ where
     let region = fb.create_region().unwrap();
     fb.set_entry_region(region).unwrap();
     fb.set_region(region);
+    fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     let x = fb.read_variable(&vn).unwrap();
     let wrapped = wrap(&mut fb, x);
@@ -65,6 +67,7 @@ where
         .build_int_binary_operation(wrapped, c, ir::IntBinaryOp::Add, ty)
         .unwrap();
     fb.build_return(Some(total), &[]).unwrap();
+    fb.set_lift_addr(None);
     let mut g = fb.build().unwrap();
     collapse_phis(&mut g);
     g

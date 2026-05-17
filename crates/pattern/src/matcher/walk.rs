@@ -31,6 +31,7 @@ mod tests {
 
     use ir::FunctionBuilder;
     use ir::node::{NodeKind, NodeOutputType};
+    use ir::test_utils::SENTINEL_LIFT_ADDR;
 
     use crate::matcher::Matcher;
 
@@ -41,9 +42,11 @@ mod tests {
         let r = b.create_region()?;
         b.set_entry_region(r)?;
         b.set_region(r);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let tgt = b.build_int_const(0x1234u64, NodeOutputType::U64)?;
         b.build_call(tgt)?;
         b.build_return(None, &[])?;
+        b.set_lift_addr(None);
         b.build()
     }
 
