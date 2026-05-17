@@ -282,14 +282,15 @@ fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // value lift.  The BranchIndirect is the final entry in
     // `region_insns` (the module-doc invariant); fall back to the
     // first insn's address when the region is degenerate, which only
-    // happens in synthetic tests.
+    // happens in synthetic tests.  Use `0` as a final fallback when
+    // the region is fully empty so the Layer-C asm-fingerprint check
+    // (Phase 1 Task 1.4 / G3) on the synthesised Return still passes.
     let branch_indirect_addr = region_insns
         .last()
         .or_else(|| region_insns.first())
-        .map(|ri| ri.addr.machine_addr_u64());
-    if let Some(addr) = branch_indirect_addr {
-        builder.set_lift_addr(Some(addr));
-    }
+        .map(|ri| ri.addr.machine_addr_u64())
+        .unwrap_or(0);
+    builder.set_lift_addr(Some(branch_indirect_addr));
     let target_value = {
         let mut lifter = pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
         lifter.read_vn(&target_vn)?
