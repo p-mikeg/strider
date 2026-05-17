@@ -46,6 +46,9 @@ fn diamond_join_via_phi_visits_all_arms() {
     let entry_region = b.create_region().unwrap();
     b.set_entry_region(entry_region).unwrap();
     b.set_region(entry_region);
+    // Sentinel asm-fingerprint address so every emitted node carries
+    // a non-empty Layer-C fingerprint (Phase 1 Task 1.4b / G3).
+    b.set_lift_addr(Some(0xDEAD_BEEF_0000_0001));
 
     let cond = b.build_boolean_const(true);
     let true_region = b.create_region().unwrap();
@@ -61,6 +64,7 @@ fn diamond_join_via_phi_visits_all_arms() {
     b.set_region(join);
     let v = b.build_int_const(99u64, NodeOutputType::U32).unwrap();
     b.build_return(Some(v), &[]).unwrap();
+    b.set_lift_addr(None);
     let fg = b.build().unwrap();
 
     let visited: HashSet<NodeId> = walk_graph(&fg.graph, fg.entry).collect();

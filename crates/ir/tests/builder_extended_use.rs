@@ -66,8 +66,15 @@ fn final_build_after_extended_use_yields_valid_built() {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
+    // Sentinel lift addr so the reachable nodes (`IntConst(7)`, `Return`)
+    // carry non-empty asm-fingerprints for the Layer-C check.  The detached
+    // `IntConst(k)` zombies created via `graph_mut().create_node()` below
+    // are deliberately left without fingerprints — they're unreachable from
+    // entry and the validator's reachability-scoped Layer-C check ignores them.
+    b.set_lift_addr(Some(0xDEAD_BEEF_0000_0001));
     let v = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
     b.build_return(Some(v), &[]).unwrap();
+    b.set_lift_addr(None);
 
     // N rounds of in-place mutation via graph_mut() - the same
     // shape an opt pass would use: synthesize a fresh node, leave it

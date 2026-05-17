@@ -35,6 +35,11 @@ fn every_int_binary_op_validates() {
     }
 }
 
+/// Sentinel asm-fingerprint address — distinct from any real machine
+/// address so debugging is unambiguous when a sentinel leaks into
+/// production output (Phase 1 Task 1.4b / G3).
+const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
+
 #[test]
 fn every_int_unary_op_validates() {
     for op in [IntUnaryOp::BitNot, IntUnaryOp::Neg] {
@@ -42,11 +47,13 @@ fn every_int_unary_op_validates() {
         let r = b.create_region().unwrap();
         b.set_entry_region(r).unwrap();
         b.set_region(r);
+        b.set_lift_addr(Some(SENTINEL));
         let v = b.build_int_const(0xFFu64, NodeOutputType::U32).unwrap();
         let res = b
             .build_int_unary_operation(v, op, NodeOutputType::U32)
             .unwrap();
         b.build_return(Some(res), &[]).unwrap();
+        b.set_lift_addr(None);
         b.build().unwrap();
     }
 }
@@ -71,6 +78,7 @@ fn bool_ops_validate() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
+    b.set_lift_addr(Some(SENTINEL));
     let t = b.build_boolean_const(true);
     let f = b.build_boolean_const(false);
     let and = b.build_boolean_operation(t, f, BoolBinaryOp::And).unwrap();
@@ -86,6 +94,7 @@ fn bool_ops_validate() {
         .build_boolean_operation(combined1, xor, BoolBinaryOp::Xor)
         .unwrap();
     b.build_return(Some(combined), &[]).unwrap();
+    b.set_lift_addr(None);
     b.build().unwrap();
 }
 
@@ -95,6 +104,7 @@ fn extend_and_truncate_validate() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
+    b.set_lift_addr(Some(SENTINEL));
     let v8 = b.build_int_const(0xFFu64, NodeOutputType::U8).unwrap();
     let v32_zero = b
         .extend_if_needed(v8, NodeOutputType::U32, ExtendOp::ZeroExtend)
@@ -108,6 +118,7 @@ fn extend_and_truncate_validate() {
         .unwrap();
     let _ = back_to_u8;
     b.build_return(Some(combined), &[]).unwrap();
+    b.set_lift_addr(None);
     b.build().unwrap();
 }
 
@@ -117,6 +128,7 @@ fn float_ops_validate() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
+    b.set_lift_addr(Some(SENTINEL));
     // 1.0 in F64 bit pattern.
     let one = b.build_float_const(0x3FF0_0000_0000_0000, NodeOutputType::F64);
     let two = b.build_float_const(0x4000_0000_0000_0000, NodeOutputType::F64);
@@ -149,6 +161,7 @@ fn float_ops_validate() {
         .build_float_unary_op(one, FloatUnaryOp::Neg, NodeOutputType::F64)
         .unwrap();
     b.build_return(Some(neg), &[]).unwrap();
+    b.set_lift_addr(None);
     b.build().unwrap();
 }
 
@@ -158,6 +171,7 @@ fn float_int_conversions_validate() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
+    b.set_lift_addr(Some(SENTINEL));
     let i = b.build_int_const(42u64, NodeOutputType::U32).unwrap();
     let f = b.build_int_to_float(i, NodeOutputType::F32).unwrap();
     let back = b.build_float_to_int(f, NodeOutputType::U32).unwrap();
@@ -170,6 +184,7 @@ fn float_int_conversions_validate() {
     let f64v = b.build_float_to_float(f, NodeOutputType::F64).unwrap();
     let _ = (back, f64v, bits_back);
     b.build_return(Some(back), &[]).unwrap();
+    b.set_lift_addr(None);
     b.build().unwrap();
 }
 
@@ -180,6 +195,7 @@ fn region_join_with_phi_validates() {
     let entry_region = b.create_region().unwrap();
     b.set_entry_region(entry_region).unwrap();
     b.set_region(entry_region);
+    b.set_lift_addr(Some(SENTINEL));
 
     let cond = b.build_boolean_const(true);
     let true_region = b.create_region().unwrap();
@@ -197,6 +213,7 @@ fn region_join_with_phi_validates() {
     b.set_region(join);
     let v = b.build_int_const(7u64, NodeOutputType::U32).unwrap();
     b.build_return(Some(v), &[]).unwrap();
+    b.set_lift_addr(None);
     b.build().unwrap();
 }
 
@@ -206,6 +223,7 @@ fn loads_and_stores_validate() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
+    b.set_lift_addr(Some(SENTINEL));
     let addr = b.build_int_const(0x1000u64, NodeOutputType::U64).unwrap();
     let data = b.build_int_const(0xABCDu64, NodeOutputType::U32).unwrap();
     b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
@@ -213,6 +231,7 @@ fn loads_and_stores_validate() {
         .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
+    b.set_lift_addr(None);
     b.build().unwrap();
 }
 
@@ -226,6 +245,7 @@ fn store_then_load_threads_memory_through_store() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
+    b.set_lift_addr(Some(SENTINEL));
     let addr = b.build_int_const(0x1000u64, NodeOutputType::U64).unwrap();
     let data = b.build_int_const(0xABCDu64, NodeOutputType::U32).unwrap();
     b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
@@ -233,6 +253,7 @@ fn store_then_load_threads_memory_through_store() {
         .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
+    b.set_lift_addr(None);
     let fg = b.build().unwrap();
 
     let mut load = None;
