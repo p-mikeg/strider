@@ -1,7 +1,7 @@
 use super::*;
 use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};
-use ir::test_utils::reg_vn;
+use ir::test_utils::{reg_vn, SENTINEL_LIFT_ADDR};
 
 use crate::pipeline::OptimizerRaw;
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
@@ -25,6 +25,7 @@ fn make_if_fn(cond_val: bool) -> Result<ir::BuiltFunctionGraph> {
 
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(cond_val);
     b.build_if(cond, true_region, false_region)?;
 
@@ -35,6 +36,7 @@ fn make_if_fn(cond_val: bool) -> Result<ir::BuiltFunctionGraph> {
     b.set_region(false_region);
     let false_val = b.build_int_const(2u64, ir::ValueType::U64)?;
     b.build_return(Some(false_val), &[])?;
+    b.set_lift_addr(None);
 
     b.build()
 }
@@ -99,6 +101,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
         let false_r = b.create_region()?;
         b.set_entry_region(entry)?;
         b.set_region(entry);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // Non-constant condition: BoolConst(true) & BoolConst(false)
         // (two nodes combined so it won't be constant at the If level until
         // ConstantFold runs — but we don't run ConstantFold here).
@@ -110,6 +113,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
         b.build_return(None, &[])?;
         b.set_region(false_r);
         b.build_return(None, &[])?;
+        b.set_lift_addr(None);
         b.build()?
     };
 
@@ -134,6 +138,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let outer_cond = b.build_boolean_const(true);
     b.build_if(outer_cond, outer_t, outer_f)?;
 
@@ -148,6 +153,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     b.build_return(Some(v), &[])?;
     b.set_region(inner_f);
     b.build_return(None, &[])?;
+    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
 
@@ -274,6 +280,7 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
         b.set_entry_region(entry)?;
 
         b.set_region(entry);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let cond = b.build_boolean_const(false);
         b.build_if(cond, true_r, false_r)?;
 
@@ -293,6 +300,7 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
 
         b.set_region(join);
         b.build_return(None, &[])?;
+        b.set_lift_addr(None);
         b.build()?
     };
 
@@ -349,6 +357,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, true_r, false_r)?;
 
@@ -365,6 +374,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.set_region(join);
     let merged = b.read_variable(&var)?;
     b.build_return(Some(merged), &[])?;
+    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
     let pre_phi_count = fg
