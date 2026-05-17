@@ -1,7 +1,7 @@
 use alloc::collections::VecDeque;
 use cranelift_entity::EntityRef;
 
-use crate::set::DenseEntitySet;
+use super::set::DenseEntitySet;
 
 /// A queue of unique [`EntityRef`] values for fixed-point iteration.
 ///

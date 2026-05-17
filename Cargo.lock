@@ -355,6 +355,7 @@ version = "0.1.0"
 dependencies = [
  "cranelift-bitset",
  "cranelift-entity",
+ "strider-ir",
 ]
 
 [[package]]
@@ -1286,6 +1287,10 @@ dependencies = [
 [[package]]
 name = "strider-ir"
 version = "0.1.0"
+dependencies = [
+ "cranelift-bitset",
+ "cranelift-entity",
+]
 
 [[package]]
 name = "strider-py"

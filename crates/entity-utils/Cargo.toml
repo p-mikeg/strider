@@ -4,6 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+strider-ir.workspace = true
+
+# Kept so external consumers depending on entity-utils' transitive cranelift
+# re-exports keep working through the shim.
 cranelift-bitset.workspace = true
 cranelift-entity.workspace = true
 
