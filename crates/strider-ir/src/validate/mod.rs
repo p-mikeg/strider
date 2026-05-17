@@ -9,8 +9,8 @@
 //!   - **Layer C** (`layer_c`): graph-level invariants — Entry/InitialMemory
 //!     uniqueness, ControlState predecessor kinds, phi-token ownership, phi
 //!     per-predecessor arity, FunctionArg uniqueness, wide-const consistency,
-//!     and (opt-in via [`ValidateOptions::check_asm_fingerprints`]) non-empty
-//!     asm-fingerprints on every reachable non-exempt node.
+//!     and non-empty asm-fingerprints on every reachable non-exempt node
+//!     (always-on — Phase 1 Task 1.4 / Generalization Audit G3).
 //!
 //! On failure the validator returns a [`ValidationErrors`] bundle that
 //! aggregates every [`ValidationError`] it found during a single pass, so
@@ -35,18 +35,23 @@ use layer_c::{
     check_layer_c_wide_consts,
 };
 
-/// Optional checks the validator can opt into.  The default is
-/// "everything that the original `validate` did before opt-ins existed",
-/// i.e. all opt-in flags `false`.  Add new opt-in flags here as later
-/// passes need them; existing tests using [`validate`] keep passing
-/// without modification.
+/// Optional checks the validator can opt into.
+///
+/// **Phase 1 Task 1.4 / G3:** the previously-opt-in
+/// `check_asm_fingerprints` Layer-C check is now **always-on** in plain
+/// [`validate`]; the field on this struct is kept for backwards source
+/// compatibility (so existing call-sites that write
+/// `ValidateOptions { check_asm_fingerprints: true }` keep compiling)
+/// but it is **ignored** — the check fires unconditionally regardless of
+/// its value.
+///
+/// The struct is retained as a placeholder for future opt-in checks.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ValidateOptions {
-    /// When `true`, every node reachable from `entry` whose kind is not
-    /// in the documented exempt set must have a non-empty
-    /// [`crate::graph::Graph::asm_fingerprint`].  Exempt kinds:
-    /// `Entry`, `InitialMemory`, `InitialVar`, `FunctionArg`,
-    /// `ControlState`, `MemPhi`, `VarPhi`, `ValuePhi`, `StackStorePhi`.
+    /// **Deprecated / no-op.** The asm-fingerprint Layer-C check is now
+    /// always-on in [`validate`]; this field is ignored.  Kept for
+    /// backwards source compatibility with existing struct-literal
+    /// call-sites.
     pub check_asm_fingerprints: bool,
 }
 
@@ -83,8 +88,13 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 pub fn validate_with_options(
     graph: &Graph,
     entry: NodeId,
-    options: ValidateOptions,
+    _options: ValidateOptions,
 ) -> Result<(), ValidationErrors> {
+    // Phase 1 Task 1.4 / G3: `ValidateOptions::check_asm_fingerprints` is no
+    // longer consulted — the Layer-C asm-fingerprint check is always-on.
+    // `validate_with_options` is kept as a no-op alias around `validate` for
+    // backwards source compatibility.
+    //
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.
@@ -112,9 +122,8 @@ pub fn validate_with_options(
 
     check_layer_c_wide_consts(graph, &reachable, &mut errs);
 
-    if options.check_asm_fingerprints {
-        check_layer_c_asm_fingerprints(graph, &reachable, &mut errs);
-    }
+    // Always-on as of Phase 1 Task 1.4.
+    check_layer_c_asm_fingerprints(graph, &reachable, &mut errs);
 
     if errs.is_empty() {
         Ok(())

@@ -198,9 +198,12 @@ fn asm_fingerprint_exempt(kind: &NodeKind) -> bool {
     )
 }
 
-/// Layer C (opt-in): every reachable, non-exempt node must carry at
-/// least one asm-fingerprint contributor.  See
+/// Layer C: every reachable, non-exempt node must carry at least one
+/// asm-fingerprint contributor.  See
 /// [`crate::graph::Graph::asm_fingerprint`] for the full contract.
+///
+/// Phase 1 Task 1.4 / G3: always-on (previously opt-in via
+/// `ValidateOptions::check_asm_fingerprints`).
 pub(super) fn check_layer_c_asm_fingerprints(
     graph: &Graph,
     reachable: &NodeIdSet,
