@@ -369,6 +369,7 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
+    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
     let x = b.read_variable(&xv)?;
     let y = b.read_variable(&yv)?;
     let z = b.read_variable(&zv)?;
@@ -376,6 +377,7 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     let outer =
         b.build_int_binary_operation(inner, z, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(outer), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
     let before = return_value((&fg).into())?;
     // Should not change: no constants anywhere.
@@ -396,6 +398,7 @@ fn distribution_rewrite() -> Result<()> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
+    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
     let a = b.read_variable(&av)?;
     let bval = b.read_variable(&bv)?;
     let f0 = b.build_int_const(0xF0u64, NodeOutputType::U64).unwrap();
@@ -410,6 +413,7 @@ fn distribution_rewrite() -> Result<()> {
     let outer =
         b.build_int_binary_operation(or_node, ff, IntBinaryOp::And, NodeOutputType::U64)?;
     b.build_return(Some(outer), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
     let changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     assert!(changed, "distribution rule should fire");
