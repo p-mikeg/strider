@@ -19,6 +19,7 @@ target = { path = "crates/target" }
 entity-utils = { path = "crates/entity-utils" }
 graphwalk = { path = "crates/graphwalk" }
 pcode-lift = { path = "crates/pcode-lift" }
+strider-ir = { path = "crates/strider-ir" }
 rsleigh = { path = "../rsleigh" }
 
 cranelift-bitset = "0.112.2"

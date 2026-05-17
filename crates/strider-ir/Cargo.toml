@@ -1,0 +1,10 @@
+[package]
+name = "strider-ir"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+# populated as modules absorb in later steps
+
+[lints]
+workspace = true

@@ -1284,6 +1284,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "strider-ir"
+version = "0.1.0"
+
+[[package]]
 name = "strider-py"
 version = "0.1.0"
 dependencies = [
