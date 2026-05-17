@@ -14,7 +14,7 @@ pub use crate::cfg::region_builder_test_api::{
 
 #[doc(hidden)]
 pub use crate::cfg::indirect_resolve_test_api::{
-    ResolvedTargets, resolve_indirect_target_for_test,
+    ResolvedTargets, build_resolver_mini_graph_for_test, resolve_indirect_target_for_test,
 };
 
 #[doc(hidden)]

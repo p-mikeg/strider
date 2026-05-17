@@ -103,83 +103,13 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: target::Endianness,
 ) -> Result<Option<ResolvedTargets>> {
-    // Collect every varnode the region touches plus `target_vn` and
-    // `cc_link_register_vn` so the IR builder can pre-declare them.
-    // Including `target_vn` lets us read its value even on regions
-    // that never write through it (e.g. `bx lr` with no prior writes
-    // to lr); including the link register lets the LR-target
-    // classification's `InitialVar(lr)` show up.
-    let mut seen: std::collections::HashSet<rsleigh::Vn> =
-        std::collections::HashSet::new();
-    let mut all_vns: Vec<rsleigh::Vn> = Vec::new();
-    let push_vn = |vn: rsleigh::Vn,
-                       seen: &mut std::collections::HashSet<rsleigh::Vn>,
-                       all: &mut Vec<rsleigh::Vn>| {
-        if seen.insert(vn) {
-            all.push(vn);
-        }
-    };
-    for ri in region_insns {
-        for vn in ri.insn.all_vns() {
-            push_vn(vn, &mut seen, &mut all_vns);
-        }
-    }
-    push_vn(target_vn, &mut seen, &mut all_vns);
-    if let Some(lr) = cc_link_register_vn {
-        push_vn(lr, &mut seen, &mut all_vns);
-    }
-    // Determinism: sort by (space-shortcut, offset, size) so VarId
-    // numbering inside FunctionBuilder is reproducible across runs
-    // (HashSet iteration order would otherwise depend on the random
-    // hasher seed).
-    all_vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
-
-    // Stand up a minimal FunctionBuilder.  No calling convention
-    // plumbing — `new_raw` with empty arg/callee/ret slices, no stack
-    // pointer, ret_stack_pop=0.  The mini-graph never emits Call or
-    // Store nodes, so the convention is irrelevant.
-    let mut builder = ir::FunctionBuilder::new_raw(
-        all_vns, &[], &[], &[], None, 0,
+    let mut fg = build_resolver_mini_graph(
+        region_insns,
+        target_vn,
+        sleigh,
+        cc_link_register_vn,
+        endianness,
     )?;
-    let region = builder.create_region()?;
-    builder.set_entry_region(region)?;
-    builder.set_region(region);
-
-    // Lift every value-producing insn.  Stop at the first `Ok(false)`
-    // — that is the BranchIndirect (or any other control-flow / call
-    // / store opcode the lifter rejects).
-    {
-        let mut lifter = pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
-        for ri in region_insns {
-            if !lifter.lift(&ri.insn)? {
-                break;
-            }
-        }
-    }
-
-    // Read target_vn's current value into a NodeOutputId and emit a
-    // Return so the value is reachable from the function entry.
-    // `read_vn` uses pcode-lift's register-aliasing logic, so a
-    // sub-register target (`jmp *eax` on x86_64) folds correctly via
-    // KnownBits even though we tracked `rax`.
-    let target_value = {
-        let mut lifter = pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
-        lifter.read_vn(&target_vn)?
-    };
-    builder.build_return(Some(target_value), &[])?;
-
-    // Build the graph and run the resolver pipeline.  The pipeline is
-    // rebuilt per invocation; most binaries have only a handful of
-    // indirect branches, so the per-site construction cost (a handful
-    // of small allocs) is dominated by the actual fold work.
-    //
-    // `LoadReadOnly` is NOT added to the pipeline: its
-    // `Optimizer` impl requires `M: 'static` (the pipeline
-    // stores passes as `Box<dyn OptimizerRaw + 'static>`), and `rom`
-    // here is borrowed for an arbitrary lifetime.  The with-rom
-    // branch below drives an inlined load-folder by hand — see
-    // `resolve_const_loads`.
-    let mut fg = builder.build()?;
     make_resolver_pipeline().run_on_built(&mut fg)?;
 
     // If the caller supplied a ReadOnlyMemory, resolve constant-address
@@ -241,6 +171,144 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
         // strider-level outer loop's indirect-branch resolver.
         _ => Ok(None),
     }
+}
+
+/// Builds the resolver's mini-IR graph and emits `Return(target_value)`
+/// so the dispatch target is reachable from the entry.  Hoisted out of
+/// [`resolve_indirect_target`] so the test API can drive it and inspect
+/// the resulting [`ir::BuiltFunctionGraph`] (e.g. for asm-fingerprint
+/// validation under Phase 1 Task 1.4 / G3).
+///
+/// Each pcode insn is lifted under a
+/// [`ir::FunctionBuilder::set_lift_addr`] context naming the insn's
+/// parent machine address, so every IR node born during the lift
+/// carries the contributor address required by the Layer-C
+/// asm-fingerprint invariant.  The post-loop `read_vn` /
+/// `build_return` pair is attributed to the last region instruction's
+/// machine address — that is the `BranchIndirect` insn whose target
+/// the mini-graph is built to resolve, the natural cause of the
+/// emitted Return / its operand reads.
+///
+/// Returns `Ok` with the built graph immediately after `builder.build()`
+/// — optimizer passes run by the caller (which already absorbs
+/// fingerprints from rewritten nodes via the standard contract).
+///
+/// # Errors
+///
+/// Propagates [`ir::FunctionBuilder::new_raw`], pcode-lift, and
+/// `build_return` / `build` failures.
+fn build_resolver_mini_graph<R: rsleigh::MemReader>(
+    region_insns: &[RegionInstruction],
+    target_vn: rsleigh::Vn,
+    sleigh: &rsleigh::Sleigh<R>,
+    cc_link_register_vn: Option<rsleigh::Vn>,
+    endianness: target::Endianness,
+) -> Result<ir::BuiltFunctionGraph> {
+    // Collect every varnode the region touches plus `target_vn` and
+    // `cc_link_register_vn` so the IR builder can pre-declare them.
+    // Including `target_vn` lets us read its value even on regions
+    // that never write through it (e.g. `bx lr` with no prior writes
+    // to lr); including the link register lets the LR-target
+    // classification's `InitialVar(lr)` show up.
+    let mut seen: std::collections::HashSet<rsleigh::Vn> =
+        std::collections::HashSet::new();
+    let mut all_vns: Vec<rsleigh::Vn> = Vec::new();
+    let push_vn = |vn: rsleigh::Vn,
+                       seen: &mut std::collections::HashSet<rsleigh::Vn>,
+                       all: &mut Vec<rsleigh::Vn>| {
+        if seen.insert(vn) {
+            all.push(vn);
+        }
+    };
+    for ri in region_insns {
+        for vn in ri.insn.all_vns() {
+            push_vn(vn, &mut seen, &mut all_vns);
+        }
+    }
+    push_vn(target_vn, &mut seen, &mut all_vns);
+    if let Some(lr) = cc_link_register_vn {
+        push_vn(lr, &mut seen, &mut all_vns);
+    }
+    // Determinism: sort by (space-shortcut, offset, size) so VarId
+    // numbering inside FunctionBuilder is reproducible across runs
+    // (HashSet iteration order would otherwise depend on the random
+    // hasher seed).
+    all_vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
+
+    // Stand up a minimal FunctionBuilder.  No calling convention
+    // plumbing — `new_raw` with empty arg/callee/ret slices, no stack
+    // pointer, ret_stack_pop=0.  The mini-graph never emits Call or
+    // Store nodes, so the convention is irrelevant.
+    let mut builder = ir::FunctionBuilder::new_raw(
+        all_vns, &[], &[], &[], None, 0,
+    )?;
+    let region = builder.create_region()?;
+    builder.set_entry_region(region)?;
+    builder.set_region(region);
+
+    // Lift every value-producing insn.  Stop at the first `Ok(false)`
+    // — that is the BranchIndirect (or any other control-flow / call
+    // / store opcode the lifter rejects).
+    //
+    // Each pcode insn's lift is wrapped in a `set_lift_addr` pair
+    // mirroring the per-region driver
+    // (`crates/strider/src/strider/insn/mod.rs:43-46`) so every IR
+    // node produced inherits the parent machine instruction's address
+    // as an asm-fingerprint contributor.  Without this, the Layer-C
+    // fingerprint check (Phase 1 Task 1.4 / G3) flags every lifted
+    // node in the mini-graph.
+    {
+        let mut lifter = pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
+        for ri in region_insns {
+            let machine_addr = ri.addr.machine_addr_u64();
+            lifter.builder.set_lift_addr(Some(machine_addr));
+            let lifted_or_err = lifter.lift(&ri.insn);
+            lifter.builder.set_lift_addr(None);
+            if !lifted_or_err? {
+                break;
+            }
+        }
+    }
+
+    // Read target_vn's current value into a NodeOutputId and emit a
+    // Return so the value is reachable from the function entry.
+    // `read_vn` uses pcode-lift's register-aliasing logic, so a
+    // sub-register target (`jmp *eax` on x86_64) folds correctly via
+    // KnownBits even though we tracked `rax`.
+    //
+    // Attribute these nodes (the value reads and the synthesised
+    // Return) to the BranchIndirect's machine address — the dispatch
+    // insn is the natural cause of the resolver's Return-anchored
+    // value lift.  The BranchIndirect is the final entry in
+    // `region_insns` (the module-doc invariant); fall back to the
+    // first insn's address when the region is degenerate, which only
+    // happens in synthetic tests.
+    let branch_indirect_addr = region_insns
+        .last()
+        .or_else(|| region_insns.first())
+        .map(|ri| ri.addr.machine_addr_u64());
+    if let Some(addr) = branch_indirect_addr {
+        builder.set_lift_addr(Some(addr));
+    }
+    let target_value = {
+        let mut lifter = pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
+        lifter.read_vn(&target_vn)?
+    };
+    builder.build_return(Some(target_value), &[])?;
+    builder.set_lift_addr(None);
+
+    // Build the graph and run the resolver pipeline.  The pipeline is
+    // rebuilt per invocation; most binaries have only a handful of
+    // indirect branches, so the per-site construction cost (a handful
+    // of small allocs) is dominated by the actual fold work.
+    //
+    // `LoadReadOnly` is NOT added to the pipeline by the caller: its
+    // `Optimizer` impl requires `M: 'static` (the pipeline
+    // stores passes as `Box<dyn OptimizerRaw + 'static>`), and `rom`
+    // is borrowed for an arbitrary lifetime.  The with-rom branch
+    // upstream drives an inlined load-folder by hand — see
+    // [`resolve_const_loads`].
+    builder.build()
 }
 
 /// Builds a fresh fixed-point pipeline of `ConstantFold + KnownBits +
@@ -352,7 +420,7 @@ pub mod test_api {
     //! `crates/cfg/tests/indirect_resolve.rs` can call into it without
     //! exposing the helper to downstream crates.
 
-    use super::resolve_indirect_target;
+    use super::{build_resolver_mini_graph, resolve_indirect_target};
     use crate::cfg::types::RegionInstruction;
     use crate::Result;
     use opt::ReadOnlyMemory;
@@ -383,6 +451,30 @@ pub mod test_api {
             sleigh,
             cc_link_register_vn,
             rom,
+            endianness,
+        )
+    }
+
+    /// Test-only forwarder that builds the resolver's mini-IR graph
+    /// (without running the optimizer pipeline) and returns it for
+    /// direct inspection — primarily to assert the Layer-C
+    /// asm-fingerprint invariant (Phase 1 Task 1.4 / G3) that every
+    /// reachable non-exempt node carries a non-empty fingerprint.
+    ///
+    /// # Errors
+    /// Propagates builder / pcode-lift / `build` failures.
+    pub fn build_resolver_mini_graph_for_test<R: rsleigh::MemReader>(
+        region_insns: &[RegionInstruction],
+        target_vn: rsleigh::Vn,
+        sleigh: &rsleigh::Sleigh<R>,
+        cc_link_register_vn: Option<rsleigh::Vn>,
+        endianness: target::Endianness,
+    ) -> Result<ir::BuiltFunctionGraph> {
+        build_resolver_mini_graph(
+            region_insns,
+            target_vn,
+            sleigh,
+            cc_link_register_vn,
             endianness,
         )
     }
