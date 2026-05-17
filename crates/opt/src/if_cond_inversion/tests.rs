@@ -21,6 +21,7 @@ fn build_if_with_neg_cond() -> Result<(ir::BuiltFunctionGraph, ir::node::NodeId)
 
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
     let raw = b.read_variable(&cond_vn)?;
     let cond_bool = b.convert_to_bool_if_needed(raw)?;
     let neg_cond = b.build_boolean_unary_operation(cond_bool, ir::BoolUnaryOp::Neg)?;
@@ -33,6 +34,7 @@ fn build_if_with_neg_cond() -> Result<(ir::BuiltFunctionGraph, ir::node::NodeId)
     b.set_region(f);
     let two = b.build_int_const(2u64, NodeOutputType::U64)?;
     b.build_return(Some(two), &[])?;
+    b.set_lift_addr(None);
 
     let fg = b.build()?;
     let if_node = find_unique_if((&fg).into());
@@ -94,6 +96,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     let f = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
+    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
     let raw = b.read_variable(&cond_vn)?;
     let cond_bool = b.convert_to_bool_if_needed(raw)?;
     let n1 = b.build_boolean_unary_operation(cond_bool, ir::BoolUnaryOp::Neg)?;
@@ -105,6 +108,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     b.set_region(f);
     let two = b.build_int_const(2u64, NodeOutputType::U64)?;
     b.build_return(Some(two), &[])?;
+    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // ConstantFold first: collapses `!!x → x`.
@@ -187,7 +191,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let cond_bool = b.convert_to_bool_if_needed(raw)?;
     b.set_lift_addr(Some(0x504));
     let neg_cond = b.build_boolean_unary_operation(cond_bool, ir::BoolUnaryOp::Neg)?;
-    b.set_lift_addr(None);
+    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
     b.build_if(neg_cond, t, f)?;
 
     b.set_region(t);
@@ -196,6 +200,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     b.set_region(f);
     let two = b.build_int_const(2u64, NodeOutputType::U64)?;
     b.build_return(Some(two), &[])?;
+    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
 
