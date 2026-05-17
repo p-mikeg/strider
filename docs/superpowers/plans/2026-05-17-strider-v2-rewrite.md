@@ -6,7 +6,7 @@
 
 **Architecture:** Sea-of-nodes IR + egraph saturation for optimization + Salsa-style incremental queries for re-analysis after indirect-branch discovery + attribute-macro pattern DSL that is the single source of truth for both Rust and Python builders + Python-first ergonomic API (`Strider.load().analyze().find()`) backed by the existing Rust building blocks.
 
-**Tech Stack:** Rust 2024 edition, `egg` (egraph engine), `salsa-2022` (incremental query), `pyo3 + maturin + abi3-py39`, `proptest` (Rust) + `hypothesis` (Python) for property-based testing, `insta` for snapshot tests, existing `rsleigh` (Sleigh/GHIDRA lifter), `object` (binary formats).
+**Tech Stack:** Rust 2024 edition, `egg = "0.10"` (egraph engine — drive `EGraph::rebuild` + `Rewrite::search`/`apply` directly, skip `Runner`'s scheduler), `salsa = "0.26.2"` (incremental query — pin to the same minor as rust-analyzer / Astral's ruff; external fixed-point loop, not `cycle_fn`), `pyo3 + maturin + abi3-py39` with `pyo3-stub-gen` for IDE completion (V4: `#[gen_stub_pyclass]` must precede `#[pyclass]`), `proptest` (Rust value-only DAG strategies, mirroring `cranelift-fuzzgen`) + `hypothesis` (Python) for property-based testing, hand-authored fixtures for control-flow invariants, `insta` for snapshot tests, existing `rsleigh` path-dep (Sleigh/GHIDRA lifter — `Sleigh::lift_one(addr)` is stateless per-address per V3), `object` (binary formats).
 
 **Skills to use throughout:**
 - `superpowers:test-driven-development` — every task is test-first, no exceptions. The existing code is the spec; new code must reproduce it.
@@ -31,17 +31,26 @@ The single number that matters: **lines of source per unit of behavior**. v1 is 
 ## Target Architecture
 
 ```
-   strider-binary         (ELF/PE/Mach-O loaders, relocations, MemReader)
-        ↑
-   strider-ir             (sea-of-nodes graph, validate, walk, dot, egraph adapter)
-        ↑          ↑
-   strider-lift   strider-analyze
-   (target+sleigh (egraph optimization, pattern DSL,
-    +cfg+lifter)  indirect-branch resolution, orchestrator)
+   strider-binary       (concrete ReadOnlyMemory impls: ELF/PE/Mach-O,
+        ↑                relocations; depends on `object` + `rsleigh`)
+   strider-ir           (sea-of-nodes graph, validate, walk, dot, egraph
+        ↑          ↑     adapter; ALSO defines ReadOnlyMemory trait +
+   strider-lift   strider-analyze   FunctionBuilderCC plain-data struct
+   (target+sleigh  (egraph optimization,  — both moved here per V6 back-edge fix)
+    +cfg+lifter;   pattern DSL,
+    impl From<     indirect-branch
+    BuiltCC> for   resolution,
+    FunctionBldrCC) Salsa orchestrator)
                        ↑
                   strider             ← maturin crate, exposes Python API
-                  (PyO3 bindings)
+                  (PyO3 bindings; uses pyo3-stub-gen for .pyi)
 ```
+
+**V6 interface placements:**
+- `ReadOnlyMemory` trait: `strider-ir` (it's just `read_bytes(addr, buf) -> Result<()>`, no binary-format knowledge).
+- `FunctionBuilderCC` plain-data struct: `strider-ir` (only the fields `ir::FunctionBuilder` consumes — `ret_stack_pop: i64`, `no_memory_clobber: bool`, callee-saved/clobber varnode lists).
+- `BuiltCallingConvention` (the rich type with all CC ergonomics): stays in `strider-lift`. `impl From<BuiltCallingConvention> for FunctionBuilderCC` also lives in `strider-lift`.
+- Concrete `ReadOnlyMemory` impls (`ElfFileMemReader`, etc.): stay in `strider-binary`.
 
 Five crates, dropping from twelve. Mapping:
 
@@ -99,10 +108,13 @@ The egraph crate (egg or cranelift-egraph) handles the saturation half; the dest
 - `CallStackArgCollect`, `FunctionArgDetect` — true post-passes (run once after the loop converges); they collect/canonicalize but don't rewrite, so they don't need to be in the loop.
 - `LoadReadOnly` — analysis with access to `ReadOnlyMemory`; rewrites a `Load` whose address eclass is a constant. Inside the saturate step.
 
-**Fallback paths if Task 3.1 spike reveals problems** (decision gate, not "we might do all four"):
-1. **Switch to `cranelift-egraph`.** Same model as our slice approach but with phi-handling built in. Smaller ecosystem; tighter API fit.
-2. **Hand-rolled saturation.** Apply rewrites + node-id union-find directly on the existing `Graph`. No external dep. Loses egg's confluence machinery but keeps the data model intact.
-3. **Drop egraph entirely.** Keep v1's imperative optimizer; collapse the stable/destructive split via a `PassEffect` enum (Finding 4 from the generalization audit). Lose saturation benefit; keep every other v2 win (Salsa, lazy CFG, proc-macro patterns, Python-first API).
+**Fallback paths if Task 3.1 spike reveals problems** (decision gate, not "we might do all three"):
+1. **Hand-rolled saturation.** Apply rewrites + node-id union-find directly on the existing `Graph`. No external dep. Loses egg's confluence machinery but keeps the data model intact.
+2. **Drop egraph entirely.** Keep v1's imperative optimizer; collapse the stable/destructive split via a `PassEffect` enum (Finding 4 from the generalization audit). Lose saturation benefit; keep every other v2 win (Salsa, incremental CFG, proc-macro patterns, Python-first API).
+
+(**`cranelift-egraph` removed from fallback list** — V1 verification confirmed it's abandoned: last published v0.91.1 March 2023, absorbed into `cranelift-codegen` internally. Pinning it would mean tracking a 3-year-stale crate that no longer follows upstream aegraph improvements.)
+
+**Egg usage notes from V1 verification:** Egg's `Runner` defaults (`iter_limit=30`, `node_limit=10_000`, `time_limit=5s`) are 100× oversized for ~100-node value slices. Bypass `Runner`; drive `EGraph::rebuild` + manual `Rewrite::search`/`apply` to avoid scheduler overhead. Egg's `Language` trait places no restrictions on enum variants — modeling `VarPhi(NodeId)`, `MemPhi(NodeId)`, `InitialVar(Vn)`, `InitialMemory`, `FunctionArg(slot)`, `LoadOut(NodeId)` as opaque zero-child variants with unique IDs is idiomatic and matches egg's own `lambda.rs` precedent.
 
 Phase 3 is decoupled from the rest of v2: phases 1, 2, 4, 5 land regardless of which optimizer path wins.
 
@@ -115,14 +127,23 @@ Phase 3 is decoupled from the rest of v2: phases 1, 2, 4, 5 land regardless of w
 - `RegionLiftHandles` and the orchestrator's `RegionIndex` disappear — Salsa tracks dependencies automatically.
 - `Decision { FixedPoint, StableOnly, Rebuild }` collapses into Salsa cache invalidation.
 
-### C. Lazy CFG
+### C. Incremental CFG (correction — v1 already lifts on-demand)
 
-**Why:** v1 lifts every reachable basic block eagerly via `cfg::Builder::build`. For large binaries (libc, kernel) this is wasteful when a user only queries one function. Lazy lifting also composes naturally with Salsa — each `region(addr)` query lifts on demand and caches.
+**Correction from the v0 draft.** I claimed v1 lifts every reachable BB eagerly. That was wrong, and you flagged it. v1 already:
+- Decodes on-demand via BFS from entry (`crates/cfg/src/cfg/builder/region_builder.rs:623` advances `cur_addr` per discovered BB).
+- Decodes each `(machine_addr)` exactly once via `DecodeCache` (`crates/cfg/src/cfg/decode_cache.rs`).
+- Threads the `DecodeCache` across **all** indirect-branch fixed-point iterations so re-builds reuse the byte-level work. The `DecodeCache` source carries an explicit `TODO: remove after incremental indirect-resolve lands` referencing the pending incremental-resolve plan.
 
-**What changes:**
-- `cfg::Builder` becomes `lift::Lifter` with `lifter.region(addr) → &Region`.
-- Reachability is computed on the fly as queries fan out from the entry.
-- The `function_max_size` bound becomes per-`lift_function(entry)` state.
+**The real v1 redundancy is at the *CFG-structure* level, not the decode level.** Every indirect-resolve iteration discards the entire petgraph `StableDiGraph` and rebuilds it from scratch — even though >99% of regions are unchanged. The `DecodeCache` saves the per-instruction decode but does not save the BB-grouping, edge-typing, or terminator-classification work.
+
+**What v2 actually adds (narrower, correctly scoped):**
+- **Salsa-cached CFG structure.** `region(addr) -> &Region` is a `#[salsa::tracked]` query; the petgraph nodes/edges persist across fixed-point iterations. Only regions whose dependency on `indirect_targets(entry)` actually changed are re-computed.
+- **Cross-call caching.** Multiple `strider.run(...)` calls on the same binary share the cache, not just one run.
+- **`DecodeCache` subsumed by Salsa.** The TODO in v1's `DecodeCache` comes to fruition — `salsa::tracked` queries memoize at a finer grain than the current `Arc<LiftRes>` cache, and the `DecodeCache` struct disappears.
+
+**What does NOT change relative to v1:**
+- v1's BFS-from-entry-with-decode-cache pattern is preserved. We don't add "true per-BB laziness driven by pattern queries" — that was a misframing in the v0 draft. Reachable-from-entry is already the right scope.
+- `function_max_size` bound continues to work as in v1.
 
 ### D. Macro-generated pattern DSL
 
@@ -596,30 +617,30 @@ This is the most invasive move. `cfg` has its own indirect-resolver mini-graph t
 - [ ] **Step 2: Run cfg's full test suite, including indirect-branch resolution.** All pass.
 - [ ] **Step 3: Shim + commit.**
 
-### Task 2.4: Introduce `lift::Lifter` (lazy CFG)
+### Task 2.4: Introduce `lift::Lifter` (Salsa-friendly CFG facade)
 
 **Files:**
 - Create: `crates/strider-lift/src/lifter.rs`
-- Create: `crates/strider-lift/tests/lazy_cfg.rs`
+- Create: `crates/strider-lift/tests/lifter_facade.rs`
 
-The lazy `Lifter` wraps the existing eager `Builder` — for now, on `lifter.region(addr)`, it lifts the *function* and caches per-region. Truly on-demand lifting (decode one BB at a time without lifting the rest) is a future optimization; the immediate win is the API surface for Phase 4 Salsa integration.
+The `Lifter` is the API surface Phase 3's Salsa orchestrator queries. **It does not change v1's on-demand-reachable-cached behavior** (V3 + the section C correction confirm v1 already does this correctly). The task is structural: present a clean per-region API so Salsa's `region(addr)` query has a natural call site.
 
-- [ ] **Step 1: Write a failing test asserting `Lifter::new` does no work and `lifter.region(entry)` triggers exactly one CFG build**
+- [ ] **Step 1: Write a failing test asserting `Lifter::region(entry)` returns the same `Arc<Region>` on repeated calls and that decode-byte work is paid once**
 
 ```rust
 #[test]
-fn lifter_defers_until_first_region_query() {
+fn lifter_caches_regions_and_decodes_once() {
     let lifter = Lifter::new(reader, arch, cc, entry_addr);
-    assert_eq!(lifter.regions_built(), 0);
-    let _r = lifter.region(entry_addr);
-    assert_eq!(lifter.regions_built(), 1);
-    // Subsequent queries are cached.
-    let _r2 = lifter.region(entry_addr);
-    assert_eq!(lifter.regions_built(), 1);
+    let r1 = lifter.region(entry_addr).unwrap();
+    let r2 = lifter.region(entry_addr).unwrap();
+    assert!(Arc::ptr_eq(&r1, &r2), "same Arc on cache hit");
+    // The underlying DecodeCache has touched each insn at most once.
+    let stats = lifter.decode_stats();
+    assert_eq!(stats.unique_addresses, stats.total_lift_calls);
 }
 ```
 
-- [ ] **Step 2: Implement.**
+- [ ] **Step 2: Implement as a thin wrapper over the v1 `Builder` + `DecodeCache`.** No new lifting logic — the win is purely the API shape Phase 3 needs.
 - [ ] **Step 3: Run, expect PASS, commit.**
 
 ### Task 2.5: Collapse the per-region driver from `strider`
@@ -747,17 +768,70 @@ fn salsa_invalidates_only_affected_regions() {
 
 **Goal:** Single-source-of-truth pattern definitions emitting both Rust and Python builders.
 
+### Task 4.0: Hand-write one reference pyclass with full pyo3-stub-gen integration (V4 prerequisite)
+
+**Why this task exists:** V4 verification confirmed proc-macro-emitted `#[pyclass]` is feasible, but pyo3-stub-gen's attribute order is rigid (`#[gen_stub_pyclass]` MUST precede `#[pyclass]`; `#[gen_stub_pymethods]` MUST precede `#[pymethods]`), and the auto-translator does not handle every Rust type. Before writing a proc-macro, build one type by hand to fix the exact emission pattern the macro must replicate. The hand-written reference is the test oracle for the macro.
+
+**Files:**
+- Create: `crates/strider/src/pattern/reference_stack_store.rs` (hand-written `#[gen_stub_pyclass] #[pyclass] struct PyStackStorePat`)
+- Create: `crates/strider/tests/python/test_stub_strict.py` (loads `.pyi`, type-checks under `mypy --strict`)
+- Modify: `crates/strider/Cargo.toml` — add `pyo3-stub-gen` dep
+
+- [ ] **Step 1: Add `pyo3-stub-gen` to `crates/strider/Cargo.toml`** and confirm the workspace builds.
+- [ ] **Step 2: Write the failing test:**
+
+```python
+# tests/python/test_stub_strict.py
+import subprocess
+def test_reference_stub_passes_mypy_strict():
+    out = subprocess.run(
+        ["mypy", "--strict", "tests/python/_consumer_reference.py"],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+```
+
+with `_consumer_reference.py` importing `strider.pattern.StackStorePat`, calling its full method surface (`.offset(0)`, `.data(p)`, `.capture(c)`, `.when(f)`), and binding the result with type annotations.
+
+- [ ] **Step 3: Hand-write the reference type:**
+
+```rust
+use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+
+#[gen_stub_pyclass]
+#[pyclass(name = "StackStorePat")]
+pub struct PyStackStorePat { /* fields */ }
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyStackStorePat {
+    #[new]
+    pub fn new() -> Self { /* ... */ }
+    pub fn offset(&mut self, k: i64) -> PyRef<'_, Self> { /* ... */ }
+    pub fn data(&mut self, p: PyObject) -> PyRef<'_, Self> { /* ... */ }
+    pub fn capture(&mut self, c: PyCapture) -> PyRef<'_, Self> { /* ... */ }
+    pub fn when(&mut self, f: PyObject) -> PyRef<'_, Self> { /* ... */ }
+}
+```
+
+- [ ] **Step 4: Run the stub generator + `mypy --strict`.** Iterate on the Rust side until the test passes.
+- [ ] **Step 5: Document the canonical emission shape** in `crates/strider-pattern-macros/EMISSION_SPEC.md` (used as the spec for Task 4.1's macro).
+- [ ] **Step 6: Commit.**
+
 ### Task 4.1: Create `strider-pattern-macros` proc-macro crate
 
 **Files:**
 - Create: `crates/strider-pattern-macros/Cargo.toml` (`proc-macro = true`)
 - Create: `crates/strider-pattern-macros/src/lib.rs`
+- Reference: `crates/strider-pattern-macros/EMISSION_SPEC.md` (from Task 4.0)
 
-The macro processes a `#[strider_pattern] struct Foo { #[field(name, accepts = Pat)] }` and generates:
+The macro processes a `#[strider_pattern] struct Foo { #[field(name, accepts = Pat)] }` and generates code that matches the EMISSION_SPEC shape exactly:
 - A Rust builder type with fluent methods.
 - A `Pat` constructor.
-- A PyO3 `#[pyclass]` mirror.
-- A `pyo3-stub-gen` registration.
+- A PyO3 `#[gen_stub_pyclass] #[pyclass]` mirror.
+- `#[gen_stub_pymethods] #[pymethods]` for the methods.
+- Manual `inventory::submit!` overrides for closure-typed args (`when(f: PyObject)`) and custom `Pat` enums where the auto-translator falls short.
 
 ### Task 4.2: Migrate one pattern (`StackStorePat`)
 
@@ -844,17 +918,27 @@ def test_load_analyze_find():
 
 Use the `claude-md-management:revise-claude-md` skill to rewrite the project memory against the new crate layout. The "Crate Dependency Flow" diagram and the "Key Crates" section need full rewrites; the "IR Node Model" and "Register Aliasing" sections survive mostly intact.
 
-### Task 6.3: Property-based test suite
+### Task 6.3: Property-based test suite (scoped to value-only DAGs per V5)
+
+**V5 verification scope:** Property-based testing covers value-only subgraph invariants. Control-flow invariants (`RedundantPhis`, `DeadBranchElimination`, indirect-resolver) are covered by hand-authored fixtures + the existing `per_arch_test!` macro — NOT by random control-flow generation, which would require the strategy to reimplement most of `FunctionBuilder`'s region/phi machinery.
 
 **Files:**
 - Create: `crates/strider-ir/tests/proptest_invariants.rs`
 - Create: `crates/strider-analyze/tests/proptest_optimizer.rs`
+- Reference: `cranelift-fuzzgen` (canonical model — same imperative-action pattern, type-tag operand pools)
 
-- [ ] **Properties to check:**
-  - Every `Graph` produced by `GraphBuilder` passes validation (including Layer C).
+**Strategy shape (value-only DAG):** A `Session` struct owns a `FunctionBuilder`, a `Vec<NodeOutputId>` of available value outputs grouped by `NodeOutputType` width, and a `Vec<RegionId>`. The strategy is `prop::collection::vec(action_strategy, 1..50)` where each `Action` is an enum variant (`EmitIntConst { width, value }`, `EmitBinaryOp { op, lhs_idx, rhs_idx }`, `EmitUnaryOp`, `EmitLoad { addr_idx, width }`, `EmitStore { addr_idx, data_idx }`, `ReadVar { var_idx }`, `WriteVar { var_idx, value_idx }`). A driver applies actions sequentially, picking compatible operands by type-tag bucket (separate `Vec` per width). Width compatibility for binary ops is enforced at action-selection time. Each action wrapped in `lift_at(addr, |b| ...)` with a per-action random `u64` so fingerprints are non-empty (Layer-C check is always-on per G3).
+
+- [ ] **Value-only properties to check (proptest, 1000 iterations each):**
+  - Every `Graph` produced by the action-driven strategy passes `validate(graph, entry)` (including the always-on Layer-C asm-fingerprint check).
   - Every optimization pass preserves validation.
   - Asm-fingerprints are monotonic: `extend_asm_fingerprint` never shrinks the set.
-  - Egraph saturation is confluent: two random rewrite orders produce extractable graphs with equal canonical form.
+  - Egraph saturation is confluent over value subgraphs: two random rewrite orders produce extractable graphs with equal canonical form on the value slice.
+
+- [ ] **Control-flow properties to check (hand-authored fixtures):**
+  - `RedundantPhis` collapses single-pred phis correctly across the hand-fixture suite.
+  - `DeadBranchElimination` + subsequent `ConstantFold` produces v1-equivalent IR on the hand-fixtures.
+  - The indirect-resolver fixed-point converges on each `fixtures/cases/*.c` for every architecture.
 
 ### Task 6.4: Final cross-arch shape-equality verification
 
