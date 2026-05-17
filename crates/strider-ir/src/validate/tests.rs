@@ -1,6 +1,18 @@
 use super::*;
 use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
+/// Sentinel asm-fingerprint base used by [`stamp`] below — distinct from
+/// any real machine address.  Phase 1 Task 1.4c.
+const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
+
+/// Stamp a sentinel asm-fingerprint on `id` so the always-on Layer-C
+/// asm-fingerprint check is satisfied for raw `Graph::create_node`-built
+/// mock graphs.  Exempt kinds (`Entry`, `InitialMemory`, phis, etc.) can
+/// be stamped harmlessly — the check skips them.
+fn stamp(graph: &mut Graph, id: crate::node::NodeId) {
+    graph.set_asm_fingerprint(id, vec![SENTINEL]);
+}
+
 #[test]
 fn empty_graph_with_entry_only() {
     let mut graph = Graph::new();
@@ -251,7 +263,8 @@ fn layer_b_skips_unreachable_zombie_node() {
     // no values.  Neither `c` nor `_zombie_consumer` is reachable.
     let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
     let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
-    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    let ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    stamp(&mut graph, ret);
 
     validate(&graph, entry).expect("validator must skip unreachable use-list inconsistencies");
 }
@@ -498,7 +511,8 @@ fn layer_c_phis_skips_unreachable_zombie_phi() {
         .find(|n| matches!(graph.node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
     let mem_out = graph.node_outputs(mem_node).into_iter().next().unwrap();
-    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    let ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    stamp(&mut graph, ret);
 
     // Detached zombie VarPhi with NO inputs.
     let vn = test_vn();
@@ -647,7 +661,8 @@ fn layer_c_duplicate_function_arg_skips_unreachable_zombie() {
     );
     let live_out = graph.node_outputs(live).into_iter().next().unwrap();
     // Only `live` is reachable; `_zombie` is detached.
-    graph.create_node(NodeKind::Return, [entry_ctrl, init_mem, live_out], []);
+    let ret = graph.create_node(NodeKind::Return, [entry_ctrl, init_mem, live_out], []);
+    stamp(&mut graph, ret);
 
     validate(&graph, entry).expect("zombie FunctionArg must not trigger DuplicateFunctionArg");
 }
@@ -732,7 +747,9 @@ fn layer_a_accepts_bool_value_phi_inputs() {
     let vp_out = graph.node_outputs(vp).into_iter().next().unwrap();
 
     // Use the phi'd value so the validator's reachability walk hits it.
-    graph.create_node(NodeKind::Return, [cs_ctrl, mem, vp_out], []);
+    let ret = graph.create_node(NodeKind::Return, [cs_ctrl, mem, vp_out], []);
+    stamp(&mut graph, bc);
+    stamp(&mut graph, ret);
 
     validate(&graph, entry).expect("Bool-typed value phi inputs must validate");
 }
@@ -902,7 +919,8 @@ fn layer_c_tolerates_unreachable_zero_predecessor_control_state() {
         [],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
-    graph.create_node(NodeKind::Return, [entry_ctrl, mem], []);
+    let ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem], []);
+    stamp(&mut graph, ret);
 
     validate(&graph, entry).expect("zombie ControlState must not trigger validation error");
 }
@@ -1037,7 +1055,8 @@ fn unreachable_control_state_with_non_control_input_does_not_fire() {
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
     let mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
-    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    let ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    stamp(&mut graph, ret);
 
     // Detached zombie: a ControlState whose input is a non-Control output
     // (an IntConst's value output).  This shape can be left behind by a
@@ -1077,11 +1096,13 @@ fn indirect_branch_with_control_memory_and_value_validates() {
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
     let target_val = graph.node_outputs(target).into_iter().next().unwrap();
-    let _ib = graph.create_node(
+    let ib = graph.create_node(
         NodeKind::IndirectBranch,
         [entry_ctrl, mem, target_val],
         [],
     );
+    stamp(&mut graph, target);
+    stamp(&mut graph, ib);
     validate(&graph, entry).expect("IndirectBranch with [ctrl, mem, target] must validate");
 }
 

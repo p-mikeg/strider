@@ -4,6 +4,7 @@ use anyhow::anyhow;
 use crate::error::Result;
 use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
 use crate::ops::{BoolBinaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+use crate::test_utils::SENTINEL_LIFT_ADDR;
 
 /// Build a minimal builder with no variables so tests that do not need
 /// SSA variables remain simple.
@@ -1474,14 +1475,19 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let val = b.build_int_const(7u64, NodeOutputType::U64)?;
     b.build_return(Some(val), &[])?;
+    b.set_lift_addr(None);
     // Mutate via graph_mut() in the same way an opt pass would.
     let extra = b.graph_mut().create_node(
         NodeKind::IntConst(99u128),
         std::iter::empty(),
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
+    // The extra IntConst is detached / not reachable from the entry —
+    // validation skips unreachable nodes via the reachability gate.  No
+    // fingerprint stamp needed on `extra`.
     // After the mutation, build() must still succeed.
     let built = b.build()?;
     // The extra node is in the arena (graph keeps every node it ever
@@ -1667,8 +1673,10 @@ fn build_int_const_wide_rejects_storage_byte_size_mismatch() -> Result<()> {
 fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     use crate::validate::validate;
     let mut b = builder_with_region()?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let v = crate::wide_const::WideConstStorage::U256([0x1234_5678, 0, 0, 0]);
     let out = b.build_int_const_wide(v, NodeOutputType::U256)?;
+    b.set_lift_addr(None);
     // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
     let entry_ctrl = b.body().graph.node_outputs(b.body().entry).into_iter().next().unwrap();
     // Build a minimal Return — needs Memory input; pull it from InitialMemory.
@@ -1679,10 +1687,11 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
         .find(|n| matches!(b.body().graph.node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
     let mem_out = b.body().graph.node_outputs(mem_node).into_iter().next().unwrap();
-    let _ret = b
+    let ret = b
         .body_mut()
         .graph
         .create_node(NodeKind::Return, [entry_ctrl, mem_out, out], []);
+    b.body_mut().graph.set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
     let entry_id = b.body().entry;
     let g = &b.body().graph;
     validate(g, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
@@ -1693,11 +1702,13 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
 fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     use crate::wide_const::WideConstStorage;
     let mut b = builder_with_region()?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let _live = b.build_int_const_wide(WideConstStorage::U256([1; 4]), NodeOutputType::U256)?;
     // Build an additional wide const that we'll never wire into the
     // reachable graph — `compact()` should drop it.
     let _zombie =
         b.build_int_const_wide(WideConstStorage::U256([2; 4]), NodeOutputType::U256)?;
+    b.set_lift_addr(None);
     // Zombie isn't referenced by `_live` and the only Return walk-spine
     // visits `_live` (we wire it through Return to keep it reachable).
     let mem_node = b
@@ -1720,10 +1731,11 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .into_iter()
         .next()
         .unwrap();
-    let _ret = b
+    let ret = b
         .body_mut()
         .graph
         .create_node(NodeKind::Return, [entry_ctrl, mem_out, _live], []);
+    b.body_mut().graph.set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
 
     let pre = b.body().graph.wide_consts.len();
     assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
