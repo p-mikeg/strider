@@ -6,8 +6,11 @@ edition.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-entity-utils.workspace = true
+strider-ir.workspace = true
 
+# Kept so external consumers depending on graphwalk's transitive re-exports
+# keep working through the shim.
+entity-utils.workspace = true
 cranelift-entity.workspace = true
 
 [lints]

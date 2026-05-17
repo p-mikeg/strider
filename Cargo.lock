@@ -469,6 +469,7 @@ dependencies = [
  "entity-utils",
  "expect-test",
  "itertools 0.13.0",
+ "strider-ir",
 ]
 
 [[package]]
