@@ -25,6 +25,7 @@ expect-test.workspace = true
 paste = "1"
 ir = { workspace = true, features = ["test-utils"] }
 criterion = { version = "0.7", features = ["html_reports"] }
+insta = "1.40"
 
 [[bench]]
 name = "scaling"

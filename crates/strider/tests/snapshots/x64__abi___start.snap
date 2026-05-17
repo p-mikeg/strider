@@ -1,0 +1,83 @@
+---
+source: crates/strider/tests/v1_baseline.rs
+expression: snapshot_body
+---
+digraph "G" {
+  graph [
+    rankdir=TB,
+    bgcolor="#1e1e1e",
+    fontcolor=white,
+  ];
+
+  node [
+    shape=box,
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor=white,
+    fontname=monospace,
+    margin=0.2,
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor=white,
+    penwidth=1.2,
+  ];
+
+  "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "1" [label="Call", shape=rarrow, fillcolor="#3a1010"];
+  "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "2" -> "1" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "3" -> "1" [color="#ffdd44", label=target, fontcolor="#cccccc", fontsize=9];
+  "4" -> "1" [color="#ff8800", label=arg0, fontcolor="#cccccc", fontsize=9];
+  "4" [label="const 0x401020:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "5" -> "1" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
+  "6" -> "1" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
+  "7" -> "1" [color="#ff8800", label=arg3, fontcolor="#cccccc", fontsize=9];
+  "7" [label="const 0x0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "8" -> "1" [color="#ff8800", label=arg4, fontcolor="#cccccc", fontsize=9];
+  "8" [label="const 0x0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "9" -> "1" [color="#ff8800", label=arg5, fontcolor="#cccccc", fontsize=9];
+  "10" -> "1" [color="#ff8800", label=arg6, fontcolor="#cccccc", fontsize=9];
+  "11" -> "1" [color="#ff8800", label=arg7, fontcolor="#cccccc", fontsize=9];
+  "12" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "12" -> "12" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "1" -> "12" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "11" [label="init\nRAX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "10" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
+  "13" -> "10" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "14" -> "10" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "14" [label="const 0xfffffffffffffff8:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "13" [label="And:u64", shape=box, fillcolor="#2d2d2d"];
+  "6" -> "13" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "15" -> "13" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "15" [label="const 0xfffffffffffffff0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "6" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
+  "16" -> "6" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "17" -> "6" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "17" [label="const 0x8:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "16" [label="init\nRSP", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "9" [label="arg[2] ← RDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="Load u64\n← ram", shape=box3d, fillcolor="#102030"];
+  "18" -> "5" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "16" -> "5" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "18" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "3" [label="Load u64\n← ram", shape=box3d, fillcolor="#102030"];
+  "19" -> "3" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "20" -> "3" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "20" [label="const 0x403ff0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "19" [label="StackStore u64\n→ ram[sp - 16]", shape=box3d, fillcolor="#20182a"];
+  "21" -> "19" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "13" -> "19" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "10" -> "19" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "21" [label="StackStore u64\n→ ram[sp - 8]", shape=box3d, fillcolor="#20182a"];
+  "18" -> "21" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "13" -> "21" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "11" -> "21" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "2" [label="StackStore u64\n→ ram[sp - 24]", shape=box3d, fillcolor="#20182a"];
+  "19" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "13" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "22" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "22" [label="const 0x401135:u64", shape=ellipse, fillcolor="#2d2d2d"];
+}
