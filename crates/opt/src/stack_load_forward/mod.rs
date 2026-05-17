@@ -385,7 +385,20 @@ fn realize(
                 Endianness::Big => {
                     let shift_bits =
                         ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-                    let shift_const = ctx.make_int_const(shift_bits, data_ty)?;
+                    // `make_int_const` does NOT stamp asm-fingerprints (it's
+                    // the low-level `Graph` method, not the `FunctionBuilder`
+                    // one).  Build the IntConst via `create_node_attributed`
+                    // so the freshly-introduced constant inherits the
+                    // rewritten load's fingerprint — otherwise the Layer-C
+                    // always-on check trips on the BE narrow-shift constant
+                    // (e.g. `IntConst(32)` for a U64→U32 narrow on aarch64be).
+                    let shift_const_node = ctx.create_node_attributed(
+                        NodeKind::IntConst(u128::from(shift_bits) & data_ty.bit_mask_u128()),
+                        [],
+                        [NodeOutputKind::OutputType(data_ty)],
+                        &[load],
+                    );
+                    let [shift_const] = ctx.node_outputs_exact::<1>(shift_const_node)?;
                     let shr = ctx.create_node_attributed(
                         NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
                         [data, shift_const],

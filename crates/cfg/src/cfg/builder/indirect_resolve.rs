@@ -384,6 +384,14 @@ fn resolve_const_loads(
             continue;
         };
         let new_out = fg.graph.make_int_const(masked, ty)?;
+        // Absorb the rewritten Load's asm-fingerprint into the new
+        // IntConst so the Layer-C always-on check (Phase 1 Task 1.4 / G3)
+        // sees a non-empty fingerprint on the freshly-introduced constant
+        // even after the cache-hit dedup path.  `make_int_const` is the
+        // low-level `Graph` method and does NOT stamp on its own.
+        let new_node = fg.graph.get_node_from_output(new_out);
+        let load_node = fg.graph.get_node_from_output(data_out);
+        fg.graph.extend_asm_fingerprint_from(new_node, load_node);
         if fg.graph.replace_all_uses(data_out, new_out)? {
             any_folded = true;
         }
