@@ -71,6 +71,8 @@ pub mod stack_load_forward;
 mod stack_store;
 // Phase 3 Task 3.5a — egg-based StackStoreDetect parity rewriter.
 pub mod stack_store_detect_egg;
+// Phase 3 Task 3.5b — egg-based StackLoadForward parity rewriter.
+pub mod stack_load_forward_egg;
 #[cfg(test)]
 mod test_support;
 
