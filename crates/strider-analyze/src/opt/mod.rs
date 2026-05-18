@@ -55,6 +55,11 @@ mod flag_cmp_canonicalize;
 pub mod flag_cmp_canonicalize_egg;
 mod function_args;
 mod if_cond_inversion;
+// Phase 3 Task 3.3b — egg-based IfCondInversion (straight port — `If`
+// is a control node and not in the egraph's value slice, so the
+// rewrite stays imperative; the module name preserves naming
+// consistency with the other Phase-3 egg ports).
+pub mod if_cond_inversion_egg;
 pub mod indirect_branch_resolve;
 mod known_bits;
 mod load_readonly;
