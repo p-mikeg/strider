@@ -125,7 +125,8 @@ pub struct FunctionBuilder {
     /// pointer.  0 on link-register ISAs, pointer size on stack-push ISAs.
     /// Ignored when `stack_ptr_vn` is `None`.
     pub(crate) ret_stack_pop: i64,
-    /// Function-default value of [`target::CallingConvention::no_memory_clobber`].
+    /// Function-default value of `CallingConvention::no_memory_clobber`
+    /// (carried over via [`crate::FunctionBuilderCC::no_memory_clobber`]).
     /// When `true`, [`Self::build_call_with_cc`] suppresses the `Memory`
     /// output on the resulting `Call` node and does not advance the region's
     /// memory chain.  Per-call `override_cc` may override this.
@@ -215,7 +216,7 @@ impl FunctionBuilder {
     /// a tracked variable's byte size has no matching `NodeOutputType`.
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
-        cc: &target::BuiltCallingConvention,
+        cc: &crate::FunctionBuilderCC,
     ) -> Result<Self> {
         // Ensure all return registers (int + float) are tracked variables.
         // This keeps the data-flow chain from a float operation's output
@@ -223,7 +224,7 @@ impl FunctionBuilder {
         // connected to the Return node — without this step `q0` would not be
         // in the variable set, and the pcode-lift register-aliasing logic
         // would never widen the s0 write into a q0 store visible to Return.
-        for v in cc.ret_val_regs().iter().chain(cc.ret_val_regs_float().iter()) {
+        for v in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
             if !all_used_variables.contains(v) {
                 all_used_variables.push(*v);
             }
@@ -233,21 +234,21 @@ impl FunctionBuilder {
         // ret slot; new queries can use `ret_val(N)` where N >= int-count to
         // reach float ret slots.
         let mut combined_ret_vars: Vec<rsleigh::Vn> = Vec::with_capacity(
-            cc.ret_val_regs().len() + cc.ret_val_regs_float().len(),
+            cc.ret_val_regs.len() + cc.ret_val_regs_float.len(),
         );
-        combined_ret_vars.extend(cc.ret_val_regs().iter().copied());
-        combined_ret_vars.extend(cc.ret_val_regs_float().iter().copied());
+        combined_ret_vars.extend(cc.ret_val_regs.iter().copied());
+        combined_ret_vars.extend(cc.ret_val_regs_float.iter().copied());
         let mut builder = Self::new_raw(
             all_used_variables,
-            cc.arg_passing_regs(),
-            cc.callee_saved_regs(),
+            &cc.arg_passing_regs,
+            &cc.callee_saved_regs,
             &combined_ret_vars,
-            Some(cc.stack_ptr_vn()),
-            cc.ret_stack_pop(),
+            Some(cc.stack_ptr_vn),
+            cc.ret_stack_pop,
         )?;
         // Carry the function-default no_memory_clobber from the CC; per-call
         // override_cc can still override on individual Call sites.
-        builder.no_memory_clobber = cc.no_memory_clobber();
+        builder.no_memory_clobber = cc.no_memory_clobber;
         Ok(builder)
     }
 
@@ -266,7 +267,7 @@ impl FunctionBuilder {
     /// Low-level constructor that takes the convention-derived data as
     /// unpacked slices.  Used by synthetic tests that don't resolve a real
     /// calling convention against a Sleigh register table — production code
-    /// should use [`FunctionBuilder::new`] with a [`target::BuiltCallingConvention`].
+    /// should use [`FunctionBuilder::new`] with a [`crate::FunctionBuilderCC`].
     ///
     /// # Errors
     ///

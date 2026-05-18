@@ -19,7 +19,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let rsp = regs.name_to_vn("RSP").unwrap();
 
     let cc = CallingConvention::x86_64_systemv().build(&regs).unwrap();
-    let mut b = FunctionBuilder::new(vec![rax, rsp], &cc).unwrap();
+    let mut b = FunctionBuilder::new(vec![rax, rsp], &ir::FunctionBuilderCC::from(&cc)).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -44,7 +44,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     })
     .unwrap();
     let addr = b.build_int_const(0xdead_u64, NodeOutputType::U64).unwrap();
-    let _call_node = b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
+    let _call_node = b.build_call_with_cc(addr, Some(&ir::FunctionBuilderCC::from(&override_cc))).unwrap();
     let ret_regs: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();
     b.build_return(None, &ret_regs).unwrap();
     b.set_lift_addr(None);

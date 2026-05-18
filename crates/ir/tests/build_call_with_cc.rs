@@ -23,7 +23,7 @@ fn build_call_with_cc_none_matches_build_call() {
     let rax = regs.name_to_vn("RAX").unwrap();
     let rdi = regs.name_to_vn("RDI").unwrap();
     let rsp = regs.name_to_vn("RSP").unwrap();
-    let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc).unwrap();
+    let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &ir::FunctionBuilderCC::from(&cc)).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -58,7 +58,7 @@ fn build_call_with_cc_all_preserving_clobbers_nothing() {
     let rdx = regs.name_to_vn("RDX").unwrap();
     let xmm0 = regs.name_to_vn("XMM0").unwrap();
     let xmm1 = regs.name_to_vn("XMM1").unwrap();
-    let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc).unwrap();
+    let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &ir::FunctionBuilderCC::from(&cc)).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -81,7 +81,7 @@ fn build_call_with_cc_all_preserving_clobbers_nothing() {
     let addr = b
         .build_int_const(0xdead_beef_u64, NodeOutputType::U64)
         .unwrap();
-    b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
+    b.build_call_with_cc(addr, Some(&ir::FunctionBuilderCC::from(&override_cc))).unwrap();
     let g = &b.body().graph;
     let call_node = g
         .all_node_ids()
@@ -125,7 +125,7 @@ fn build_call_with_no_memory_clobber_preserves_memory_chain() {
     let cc = x86_64_built_cc();
     let regs = x86_64_regs();
     let rsp = regs.name_to_vn("RSP").unwrap();
-    let mut b = FunctionBuilder::new(vec![rsp], &cc).unwrap();
+    let mut b = FunctionBuilder::new(vec![rsp], &ir::FunctionBuilderCC::from(&cc)).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -148,7 +148,7 @@ fn build_call_with_no_memory_clobber_preserves_memory_chain() {
     let addr = b
         .build_int_const(0xdead_beef_u64, NodeOutputType::U64)
         .unwrap();
-    b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
+    b.build_call_with_cc(addr, Some(&ir::FunctionBuilderCC::from(&override_cc))).unwrap();
     b.build_return(None, &[]).unwrap();
 
     let g = &b.body().graph;
@@ -169,7 +169,7 @@ fn build_call_default_cc_advances_memory_chain() {
     let cc = x86_64_built_cc();
     let regs = x86_64_regs();
     let rsp = regs.name_to_vn("RSP").unwrap();
-    let mut b = FunctionBuilder::new(vec![rsp], &cc).unwrap();
+    let mut b = FunctionBuilder::new(vec![rsp], &ir::FunctionBuilderCC::from(&cc)).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);

@@ -44,7 +44,10 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
     ) -> Result<Self> {
-        let builder = ir::FunctionBuilder::new(all_vns, &strider.calling_convention)?;
+        let builder = ir::FunctionBuilder::new(
+            all_vns,
+            &ir::FunctionBuilderCC::from(&strider.calling_convention),
+        )?;
         Ok(Self {
             strider,
             builder,

@@ -47,7 +47,7 @@ impl FunctionBuilder {
     pub fn build_call_with_cc(
         &mut self,
         call_address: NodeOutputId,
-        override_cc: Option<&target::BuiltCallingConvention>,
+        override_cc: Option<&crate::FunctionBuilderCC>,
     ) -> Result<NodeId> {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
@@ -70,14 +70,14 @@ impl FunctionBuilder {
                 // reads are silently dropped — they would otherwise
                 // produce a `VariableNotFound` error from `read_variable`.
                 let arg_vars: SmallVec<[rsleigh::Vn; 4]> = cc
-                    .arg_passing_regs()
+                    .arg_passing_regs
                     .iter()
                     .copied()
                     .filter(|v| self.variable_to_id.contains_key(v))
                     .collect();
                 // Per-call clobber list: every tracked variable that
                 // is NOT in `callee_saved_regs` and NOT the SP.
-                let callee_saved = cc.callee_saved_regs();
+                let callee_saved = &cc.callee_saved_regs;
                 let stack_ptr_vn = self.stack_ptr_vn;
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
                     .variables
@@ -85,7 +85,7 @@ impl FunctionBuilder {
                     .copied()
                     .filter(|v| !callee_saved.contains(v) && Some(*v) != stack_ptr_vn)
                     .collect();
-                (arg_vars, clobber_vars, cc.ret_stack_pop())
+                (arg_vars, clobber_vars, cc.ret_stack_pop)
             }
         };
 
@@ -123,7 +123,7 @@ impl FunctionBuilder {
         // Per-call effective `no_memory_clobber`: the override CC, if any,
         // takes precedence; otherwise fall back to the function-default.
         let no_memory_clobber =
-            override_cc.map_or(self.no_memory_clobber, |cc| cc.no_memory_clobber());
+            override_cc.map_or(self.no_memory_clobber, |cc| cc.no_memory_clobber);
 
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
         // The Call node's signature always includes a Memory output (validator

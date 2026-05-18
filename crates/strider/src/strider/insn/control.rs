@@ -241,10 +241,13 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             .build_int_const(target_addr, space_info.addr_size().try_into()?)?;
         // Per-address CC override: when the call target matches a
         // user-supplied entry, build the Call with that CC instead of
-        // the function-default.
-        let override_cc = self.per_address_ccs.get(&target_addr);
+        // the function-default.  Convert the rich
+        // `target::BuiltCallingConvention` to the thin
+        // `ir::FunctionBuilderCC` slice the builder consumes (see V6
+        // back-edge fix, Phase 1 Task 1.3c).
+        let override_cc = self.per_address_ccs.get(&target_addr).map(ir::FunctionBuilderCC::from);
         self.builder
-            .build_call_with_cc(call_address, override_cc)
+            .build_call_with_cc(call_address, override_cc.as_ref())
             .map(|_| ())?;
         Ok(())
     }
@@ -275,9 +278,11 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             .builder
             .build_int_const(target, space_info.addr_size().try_into()?)?;
         // Per-address CC override applies to lift-time tail calls too.
-        let override_cc = self.per_address_ccs.get(&target);
+        // Convert from the rich `BuiltCallingConvention` to the thin
+        // `FunctionBuilderCC` slice (V6 fix, see `handle_call`).
+        let override_cc = self.per_address_ccs.get(&target).map(ir::FunctionBuilderCC::from);
         self.builder
-            .build_call_with_cc(call_address, override_cc)
+            .build_call_with_cc(call_address, override_cc.as_ref())
             .map(|_| ())?;
         let ret_regs = self.builder.ret_val_vars().to_vec();
         self.builder.build_return(None, &ret_regs)?;

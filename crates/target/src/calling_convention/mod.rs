@@ -347,6 +347,49 @@ impl BuiltCallingConvention {
     }
 }
 
+/// Downcast a rich [`BuiltCallingConvention`] to the thin
+/// [`strider_ir::FunctionBuilderCC`] slice the IR builder consumes.
+///
+/// Defined here (in `target`) rather than in `strider-ir` so the IR crate
+/// doesn't need to depend on `target` — under v2's layer order `target`
+/// lives in `strider-lift`, which sits above `strider-ir`.  This is V6's
+/// fix for the ir → target back-edge (Phase 1 Task 1.3c).
+///
+/// The conversion is a straight field copy: every field of
+/// `FunctionBuilderCC` has a same-named accessor (or field) on
+/// `BuiltCallingConvention`.
+impl From<BuiltCallingConvention> for strider_ir::FunctionBuilderCC {
+    fn from(cc: BuiltCallingConvention) -> strider_ir::FunctionBuilderCC {
+        strider_ir::FunctionBuilderCC {
+            arg_passing_regs: cc.arg_passing_regs,
+            callee_saved_regs: cc.callee_saved_regs,
+            ret_val_regs: cc.ret_val_regs,
+            ret_val_regs_float: cc.ret_val_regs_float,
+            stack_ptr_vn: cc.stack_ptr_vn,
+            ret_stack_pop: cc.ret_stack_pop,
+            no_memory_clobber: cc.no_memory_clobber,
+        }
+    }
+}
+
+/// Borrow form: same as the owning [`From`] impl but takes a reference,
+/// for call sites that still need the original `BuiltCallingConvention`
+/// after the conversion (e.g. the strider lift driver, which holds onto
+/// the rich CC for arg-passing register access).
+impl From<&BuiltCallingConvention> for strider_ir::FunctionBuilderCC {
+    fn from(cc: &BuiltCallingConvention) -> strider_ir::FunctionBuilderCC {
+        strider_ir::FunctionBuilderCC {
+            arg_passing_regs: cc.arg_passing_regs.clone(),
+            callee_saved_regs: cc.callee_saved_regs.clone(),
+            ret_val_regs: cc.ret_val_regs.clone(),
+            ret_val_regs_float: cc.ret_val_regs_float.clone(),
+            stack_ptr_vn: cc.stack_ptr_vn,
+            ret_stack_pop: cc.ret_stack_pop,
+            no_memory_clobber: cc.no_memory_clobber,
+        }
+    }
+}
+
 impl CallingConvention {
     /// Returns `true` if calls under this convention preserve memory
     /// across the call (i.e. the IR's Call node should NOT advance the

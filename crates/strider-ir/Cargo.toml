@@ -8,7 +8,6 @@ anyhow.workspace = true
 cranelift-bitset.workspace = true
 cranelift-entity.workspace = true
 rsleigh.workspace = true
-target.workspace = true
 smallvec.workspace = true
 itertools.workspace = true
 thiserror.workspace = true

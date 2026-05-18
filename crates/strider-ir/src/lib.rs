@@ -57,6 +57,8 @@ pub mod graphwalk;
 mod builder;
 pub mod error;
 mod function;
+mod function_builder_cc;
+pub use function_builder_cc::FunctionBuilderCC;
 pub mod graph;
 pub use graph::Graph;
 /// IR-specific Graphviz/dot rendering (was `ir::dot` before Task 1.3 —
