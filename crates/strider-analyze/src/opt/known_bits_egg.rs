@@ -49,9 +49,9 @@
 use std::collections::HashMap;
 
 use egg::{Analysis, DidMerge, EGraph, Id};
-use strider_ir::{ExtendOp, IntBinaryOp, IntUnaryOp};
-use strider_ir::egraph_adapter::StriderLang;
+use strider_ir::egraph_adapter::{EGraphAdapter, StriderLang};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use strider_ir::{ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::opt::pipeline::{OptimizationResult, OptimizerRaw};
 
@@ -410,147 +410,49 @@ impl OptimizerRaw for KnownBitsEgg {
         graph: &mut strider_ir::Graph,
         entry: NodeId,
     ) -> crate::opt::Result<OptimizationResult> {
-        // Step 1: build a fresh egraph WITH our analysis attached.
-        // We can't reuse `EGraphAdapter::from_graph` because it's
-        // hard-coded to `EGraph<StriderLang, ()>`; we reimplement the
-        // walk locally so the analysis Data flows into every class as
-        // it's built.
-        let (egraph, output_to_eclass) = build_egraph_with_analysis(graph, entry);
+        // Step 1: build a fresh egraph WITH our analysis attached, using
+        // the generalised [`EGraphAdapter::from_graph_with_analysis_and_visit`]
+        // constructor.  The analysis's `make` transfer function runs
+        // as each e-node is added so [`BitLattice`] data propagates
+        // bottom-up automatically.  The `visit` callback patches the
+        // type-mask of opaque leaves immediately after they're added —
+        // before any parent e-node's `Analysis::make` reads the leaf's
+        // data — because the `StriderLang::Opaque(u64)` payload doesn't
+        // carry the strider-side output type.  Without this patch,
+        // transfer functions on parent nodes (Popcount / Lzcount /
+        // Extend) that depend on the input's width would see
+        // "untracked" instead of "tracked, all-bits-unknown".
+        let graph_ref: &strider_ir::Graph = graph;
+        let adapter: EGraphAdapter<BitAnalysis> =
+            EGraphAdapter::from_graph_with_analysis_and_visit(
+                graph_ref,
+                entry,
+                BitAnalysis,
+                |egraph, oid, kind, id| {
+                    if is_opaque(kind) {
+                        let type_mask = graph_ref
+                            .output_kind(oid)
+                            .as_value()
+                            .and_then(u64_type_mask)
+                            .unwrap_or(0);
+                        if type_mask != 0 {
+                            egraph.set_analysis_data(id, BitLattice::unknown_for(type_mask));
+                        }
+                    }
+                },
+            );
 
         // Step 2: walk the registered value outputs; for each whose
         // e-class is fully-determined, materialise an `IntConst` in
         // the strider graph and `replace_all_uses` to rewire every
         // consumer.
-        reflect_known_constants(graph, &egraph, &output_to_eclass)
+        reflect_known_constants(graph, &adapter.egraph, &adapter.output_to_eclass)
     }
 }
 
-/// Build an `EGraph<StriderLang, BitAnalysis>` from the value-slice
-/// subgraph reachable from `entry`.  Mirrors
-/// `EGraphAdapter::from_graph` but parameterised on `BitAnalysis`
-/// instead of `()`.
-fn build_egraph_with_analysis(
-    g: &strider_ir::Graph,
-    entry: NodeId,
-) -> (EGraph<StriderLang, BitAnalysis>, HashMap<NodeOutputId, Id>) {
-    let mut egraph: EGraph<StriderLang, BitAnalysis> = EGraph::default();
-    let mut output_to_eclass: HashMap<NodeOutputId, Id> = HashMap::new();
-
-    for node_id in strider_ir::walk::walk_graph(g, entry) {
-        for oid in g.node_outputs(node_id) {
-            if g.output_kind(oid).is_value() {
-                add_value_output(g, &mut egraph, &mut output_to_eclass, oid);
-            }
-        }
-    }
-    egraph.rebuild();
-    (egraph, output_to_eclass)
-}
-
-/// Recursive add — memoised on `output_to_eclass`.  Mirrors
-/// `EGraphAdapter::add_value_output` but parameterised on the analysis.
-fn add_value_output(
-    g: &strider_ir::Graph,
-    egraph: &mut EGraph<StriderLang, BitAnalysis>,
-    output_to_eclass: &mut HashMap<NodeOutputId, Id>,
-    oid: NodeOutputId,
-) -> Id {
-    if let Some(&id) = output_to_eclass.get(&oid) {
-        return id;
-    }
-    let (node_id, _) = g.output_definition(oid);
-    let kind = *g.node_kind(node_id);
-    let out_kind = g.output_kind(oid);
-
-    let (enode, opaque_type_mask) = if is_opaque(&kind) {
-        // Opaque leaf: capture the strider-side output type so the
-        // analysis data can carry a `type_mask` for downstream
-        // transfer functions (e.g. Popcount / Lzcount / Extend) that
-        // need to bound the input width without re-querying the
-        // strider graph.
-        let opaque_mask = out_kind.as_value().and_then(u64_type_mask).unwrap_or(0);
-        (StriderLang::Opaque(oid.as_u32() as u64), Some(opaque_mask))
-    } else {
-        let ty = out_kind.as_value().expect("value output must carry type");
-        (
-            build_internal_enode(g, egraph, output_to_eclass, node_id, &kind, ty),
-            None,
-        )
-    };
-    let id = egraph.add(enode);
-    if let Some(type_mask) = opaque_type_mask {
-        // `make` returned `BitLattice::untracked()` for the opaque
-        // (it has no payload to read type info from); patch in the
-        // width-mask so transfer functions that consume this class
-        // see "tracked, all-bits-unknown" rather than "untracked".
-        egraph.set_analysis_data(id, BitLattice::unknown_for(type_mask));
-    }
-    output_to_eclass.insert(oid, id);
-    id
-}
-
-/// Build the `StriderLang` variant for an internal (non-opaque) node.
-fn build_internal_enode(
-    g: &strider_ir::Graph,
-    egraph: &mut EGraph<StriderLang, BitAnalysis>,
-    output_to_eclass: &mut HashMap<NodeOutputId, Id>,
-    node_id: NodeId,
-    kind: &NodeKind,
-    ty: NodeOutputType,
-) -> StriderLang {
-    use NodeKind as K;
-    let inputs: Vec<NodeOutputId> = g.node_inputs(node_id).into_iter().collect();
-    let child_ids: Vec<Id> = inputs
-        .iter()
-        .map(|&inp| add_value_output(g, egraph, output_to_eclass, inp))
-        .collect();
-    match kind {
-        K::IntConst(v) => StriderLang::IntConst(*v, ty),
-        K::BoolConst(b) => StriderLang::BoolConst(*b),
-        K::FloatConst(bits) => StriderLang::FloatConst(*bits, ty),
-        K::IntBinaryOp(op) => StriderLang::IntBin(*op, ty, take2(&child_ids, "IntBinaryOp")),
-        K::IntUnaryOp(op) => StriderLang::IntUn(*op, ty, take1(&child_ids, "IntUnaryOp")),
-        K::IntCmpOp(op) => StriderLang::IntCmp(*op, take2(&child_ids, "IntCmpOp")),
-        K::CastToInt => StriderLang::CastToInt(ty, take1(&child_ids, "CastToInt")),
-        K::Truncate => StriderLang::Truncate(ty, take1(&child_ids, "Truncate")),
-        K::Popcount => StriderLang::Popcount(ty, take1(&child_ids, "Popcount")),
-        K::Lzcount => StriderLang::Lzcount(ty, take1(&child_ids, "Lzcount")),
-        K::Extend(op) => StriderLang::Extend(*op, ty, take1(&child_ids, "Extend")),
-        K::BoolUnaryOp(op) => StriderLang::BoolUn(*op, take1(&child_ids, "BoolUnaryOp")),
-        K::BoolBinaryOp(op) => StriderLang::BoolBin(*op, take2(&child_ids, "BoolBinaryOp")),
-        K::CastToBool => StriderLang::CastToBool(take1(&child_ids, "CastToBool")),
-        K::FloatBinaryOp(op) => {
-            StriderLang::FloatBin(*op, ty, take2(&child_ids, "FloatBinaryOp"))
-        }
-        K::FloatUnaryOp(op) => StriderLang::FloatUn(*op, ty, take1(&child_ids, "FloatUnaryOp")),
-        K::FloatCmpOp(op) => StriderLang::FloatCmp(*op, take2(&child_ids, "FloatCmpOp")),
-        K::IntToFloat => StriderLang::IntToFloat(ty, take1(&child_ids, "IntToFloat")),
-        K::FloatToInt => StriderLang::FloatToInt(ty, take1(&child_ids, "FloatToInt")),
-        K::FloatToFloat => StriderLang::FloatToFloat(ty, take1(&child_ids, "FloatToFloat")),
-        K::IntBitsToFloat => {
-            StriderLang::IntBitsToFloat(ty, take1(&child_ids, "IntBitsToFloat"))
-        }
-        K::FloatBitsToInt => {
-            StriderLang::FloatBitsToInt(ty, take1(&child_ids, "FloatBitsToInt"))
-        }
-        K::CastToFloat => StriderLang::CastToFloat(ty, take1(&child_ids, "CastToFloat")),
-        other => panic!("build_internal_enode: unexpected kind {other:?}"),
-    }
-}
-
-fn take1(v: &[Id], ctx: &str) -> [Id; 1] {
-    assert_eq!(v.len(), 1, "{ctx}: expected 1 child, got {}", v.len());
-    [v[0]]
-}
-
-fn take2(v: &[Id], ctx: &str) -> [Id; 2] {
-    assert_eq!(v.len(), 2, "{ctx}: expected 2 children, got {}", v.len());
-    [v[0], v[1]]
-}
-
-/// Mirror of `EGraphAdapter::is_opaque_value_kind` — duplicate here so
-/// this module is self-contained.  Identical to the adapter's
-/// classification.
+/// Mirrors `EGraphAdapter::is_opaque_value_kind` (which is `pub(crate)`
+/// inside the adapter); duplicate here for the post-walk patch in
+/// `optimize_raw`.  Identical to the adapter's classification.
 fn is_opaque(kind: &NodeKind) -> bool {
     use NodeKind as K;
     matches!(

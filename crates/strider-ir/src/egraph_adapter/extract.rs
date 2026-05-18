@@ -36,7 +36,7 @@
 
 use std::collections::HashMap;
 
-use egg::{AstSize, Extractor};
+use egg::{Analysis, AstSize, Extractor};
 
 use super::from_graph::EGraphAdapter;
 use super::language::StriderLang;
@@ -44,7 +44,7 @@ use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 use crate::walk::walk_graph;
 
-impl EGraphAdapter {
+impl<A: Analysis<StriderLang>> EGraphAdapter<A> {
     /// Extracts the lowest-cost form per e-class (with `AstSize`) and
     /// rebuilds a strider [`Graph`] that is structurally equivalent to
     /// `original` when zero rewrites have been applied to the egraph.
@@ -145,7 +145,7 @@ impl EGraphAdapter {
         original: &Graph,
         old_id: NodeId,
         old_kind: &NodeKind,
-        extractor: &Extractor<'_, AstSize, StriderLang, ()>,
+        extractor: &Extractor<'_, AstSize, StriderLang, A>,
     ) -> NodeKind {
         // Find the single value-output of the node (if any).  Internal
         // e-nodes in our model produce exactly one value output; if

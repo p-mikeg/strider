@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 
-use egg::{EGraph, Id};
+use egg::{Analysis, EGraph, Id};
 
 use super::language::StriderLang;
 use crate::graph::Graph;
@@ -34,10 +34,17 @@ use crate::node::{NodeId, NodeKind, NodeOutputId};
 
 /// Adapter holding the egraph plus the mapping tables needed to round-trip
 /// a strider graph through egg with zero rewrites applied.
-pub struct EGraphAdapter {
+///
+/// Parameterised over the egg [`Analysis`] attached to the e-graph.
+/// Defaults to `()` (no per-eclass metadata).  Passes that need
+/// per-eclass data (e.g. [`crate::egraph_adapter::from_graph::EGraphAdapter`]
+/// users such as `KnownBitsEgg`) parameterise on their own
+/// `Analysis<StriderLang>` impl and construct the adapter via
+/// [`EGraphAdapter::from_graph_with_analysis`].
+pub struct EGraphAdapter<A: Analysis<StriderLang> = ()> {
     /// The egg egraph built from the value-slice subgraph of the source
     /// [`Graph`].
-    pub egraph: EGraph<StriderLang, ()>,
+    pub egraph: EGraph<StriderLang, A>,
     /// Maps every value [`NodeOutputId`] added to the egraph to its
     /// e-class id.  Multi-value nodes (`Call`, modeled `CallOther`) get
     /// one entry per value output — each is a distinct opaque leaf.
@@ -49,15 +56,60 @@ pub struct EGraphAdapter {
     pub leaf_to_output: HashMap<u64, NodeOutputId>,
 }
 
-impl EGraphAdapter {
+impl EGraphAdapter<()> {
     /// Builds an egraph from the value-slice subgraph of `g` reachable
     /// from `entry`.  Zero rewrites are applied — the resulting egraph
     /// has exactly one e-node per value output, so [`Self::extract`]
     /// trivially recovers the original structure.
+    ///
+    /// This is the default constructor producing an adapter with the
+    /// unit (`()`) analysis.  Passes that need per-eclass metadata
+    /// should use [`EGraphAdapter::from_graph_with_analysis`] instead.
     #[must_use]
     pub fn from_graph(g: &Graph, entry: NodeId) -> Self {
+        Self::from_graph_with_analysis(g, entry, ())
+    }
+}
+
+impl<A: Analysis<StriderLang>> EGraphAdapter<A> {
+    /// Builds an egraph (parameterised on the supplied [`Analysis`]) from
+    /// the value-slice subgraph of `g` reachable from `entry`.  Zero
+    /// rewrites are applied; the resulting egraph has exactly one
+    /// e-node per value output.
+    ///
+    /// The analysis's [`Analysis::make`] transfer function runs as each
+    /// e-node is added, so per-eclass `Data` lattices are populated
+    /// bottom-up automatically.  Opaque leaves get `Analysis::make`'d
+    /// with `StriderLang::Opaque(_)` — the analysis should return its
+    /// "no information" `Data` value for that variant.
+    #[must_use]
+    pub fn from_graph_with_analysis(g: &Graph, entry: NodeId, analysis: A) -> Self {
+        Self::from_graph_with_analysis_and_visit(g, entry, analysis, |_, _, _, _| {})
+    }
+
+    /// Like [`Self::from_graph_with_analysis`] but invokes a per-add
+    /// callback `visit(egraph, oid, kind, eclass_id)` after each value
+    /// output is added.  The callback runs *before* any parent e-node
+    /// is built, so consumers can patch an opaque leaf's analysis data
+    /// (e.g. inject the strider-side output type that the
+    /// `StriderLang::Opaque(u64)` payload doesn't carry) and have
+    /// the patched value visible to subsequent `Analysis::make` calls
+    /// on parent enodes.
+    ///
+    /// Use case: `KnownBitsEgg` patches each opaque leaf's
+    /// `BitLattice::type_mask` so Popcount / Lzcount / Extend transfer
+    /// functions on parent enodes see the input's width.
+    pub fn from_graph_with_analysis_and_visit<F>(
+        g: &Graph,
+        entry: NodeId,
+        analysis: A,
+        mut visit: F,
+    ) -> Self
+    where
+        F: FnMut(&mut EGraph<StriderLang, A>, NodeOutputId, &NodeKind, Id),
+    {
         let mut adapter = Self {
-            egraph: EGraph::new(()),
+            egraph: EGraph::new(analysis),
             output_to_eclass: HashMap::new(),
             leaf_to_output: HashMap::new(),
         };
@@ -68,7 +120,7 @@ impl EGraphAdapter {
         for node_id in crate::walk::walk_graph(g, entry) {
             for oid in g.node_outputs(node_id) {
                 if g.output_kind(oid).is_value() {
-                    adapter.add_value_output(g, oid);
+                    adapter.add_value_output(g, oid, &mut visit);
                 }
             }
         }
@@ -78,7 +130,10 @@ impl EGraphAdapter {
 
     /// Adds `oid` (a value output) to the egraph and returns its e-class id.
     /// Memoised; safe to call recursively for child slots.
-    fn add_value_output(&mut self, g: &Graph, oid: NodeOutputId) -> Id {
+    fn add_value_output<F>(&mut self, g: &Graph, oid: NodeOutputId, visit: &mut F) -> Id
+    where
+        F: FnMut(&mut EGraph<StriderLang, A>, NodeOutputId, &NodeKind, Id),
+    {
         if let Some(&id) = self.output_to_eclass.get(&oid) {
             return id;
         }
@@ -102,11 +157,15 @@ impl EGraphAdapter {
                  opaque classification protects against memory / control / \
                  PhiToken outputs reaching this branch",
             );
-            let lang = self.build_internal_enode(g, node_id, &kind, ty);
+            let lang = self.build_internal_enode(g, node_id, &kind, ty, visit);
             self.egraph.add(lang)
         };
 
         self.output_to_eclass.insert(oid, id);
+        // Per-add callback: lets callers patch the analysis data of an
+        // opaque leaf (e.g. inject the strider-side output type) before
+        // any parent e-node's `Analysis::make` reads the leaf's data.
+        visit(&mut self.egraph, oid, &kind, id);
         id
     }
 
@@ -118,18 +177,23 @@ impl EGraphAdapter {
     /// Panics if the node's input shape doesn't match the kind's expected
     /// signature (validator-enforced invariant; the panic is structural,
     /// not a runtime concern for well-formed strider graphs).
-    fn build_internal_enode(
+    #[allow(clippy::too_many_lines)]
+    fn build_internal_enode<F>(
         &mut self,
         g: &Graph,
         node_id: NodeId,
         kind: &NodeKind,
         ty: crate::node::NodeOutputType,
-    ) -> StriderLang {
+        visit: &mut F,
+    ) -> StriderLang
+    where
+        F: FnMut(&mut EGraph<StriderLang, A>, NodeOutputId, &NodeKind, Id),
+    {
         use crate::node::NodeKind as K;
         let inputs: Vec<NodeOutputId> = g.node_inputs(node_id).into_iter().collect();
         let mut child_ids: Vec<Id> = inputs
             .iter()
-            .map(|&inp| self.add_value_output(g, inp))
+            .map(|&inp| self.add_value_output(g, inp, visit))
             .collect();
 
         match kind {
