@@ -52,7 +52,7 @@ use crate::opt::stack_load_forward::{StackStoredValueMemo, find_stack_stored_val
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
-use pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var};
+use crate::pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var};
 
 /// Top-level classifier hook for the stack-array arm.  Called by
 /// [`super::classify::classify_anchor_with_rom_and_sp`] when the
@@ -75,7 +75,7 @@ use pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var
 ///   be non-deterministic, can't enumerate.
 #[must_use]
 pub fn classify_stack_array(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
     known: &crate::opt::KnownBitsMap,
@@ -234,8 +234,8 @@ const MAX_STRIP_LAYERS: usize = 4;
 /// fail closed when the residual isn't a Load.
 //
 // CORRECTNESS — the patterns below are sound-equivalent to the prior
-// hand-rolled commutative-operand checks.  `pattern::and` /
-// `pattern::or` auto-try both orderings, so a single match per layer
+// hand-rolled commutative-operand checks.  `crate::pattern::and` /
+// `crate::pattern::or` auto-try both orderings, so a single match per layer
 // covers the prior `int_const_val(rhs)` / `int_const_val(lhs)`
 // fallback chain.  Each `Capture` binds either the const operand
 // (read back via `Match::get_uint`) or the surviving non-const
@@ -249,7 +249,7 @@ const MAX_STRIP_LAYERS: usize = 4;
 // `int_const_val` returned `u64`, and `get_uint` returns `u128`.
 // Real dispatch masks fit in `u64` on every supported arch.
 fn strip_target_mask(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
     let graph = ctx.graph_ref();
@@ -310,7 +310,7 @@ struct StackArrayShape {
 }
 
 fn match_stack_array_shape(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
@@ -474,17 +474,17 @@ fn flatten_add_tree(
 /// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
 /// lifter output should fail closed rather than wrap silently.
 fn extract_idx_and_stride(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     candidate: NodeOutputId,
 ) -> Option<(NodeOutputId, u64)> {
     // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
-    // dispatch on `NodeKind`.  `pattern::mul` is auto-commutative,
+    // dispatch on `NodeKind`.  `crate::pattern::mul` is auto-commutative,
     // collapsing the prior `(idx, IntConst)` / `(IntConst, idx)` arms
-    // into one pattern.  `pattern::shl` keeps stated order (shifts
+    // into one pattern.  `crate::pattern::shl` keeps stated order (shifts
     // are non-commutative) — the rhs must still be the const stride
     // exponent.  We try the multiplication shape first, then the
     // shift shape, mirroring the prior match's arm order.
-    use pattern::{Capture, Matcher, any_int_const, mul, shl, var};
+    use crate::pattern::{Capture, Matcher, any_int_const, mul, shl, var};
 
     let candidate_node = ctx.get_node_from_output(candidate);
     let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
@@ -719,7 +719,7 @@ mod tests {
     //
     // These tests pin both operand orderings explicitly so a future
     // refactor of `strip_target_mask` cannot accidentally narrow what
-    // we accept.  `pattern::and` / `pattern::or` are auto-commutative,
+    // we accept.  `crate::pattern::and` / `crate::pattern::or` are auto-commutative,
     // so a regression that drops one ordering would still pass the
     // commutative-pair check but fail this characterization.
     //

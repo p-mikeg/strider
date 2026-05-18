@@ -84,7 +84,7 @@ where
     Ok((fg, if_node, a, b))
 }
 
-fn find_unique_if(ctx: pattern::RewriteCtxView<'_>) -> NodeId {
+fn find_unique_if(ctx: crate::pattern::RewriteCtxView<'_>) -> NodeId {
     let ifs: Vec<NodeId> = ctx
         .all_node_ids()
         .filter(|&n| matches!(ctx.node_kind(n), NodeKind::If))
@@ -93,14 +93,14 @@ fn find_unique_if(ctx: pattern::RewriteCtxView<'_>) -> NodeId {
     ifs[0]
 }
 
-fn if_cond_output(ctx: pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeOutputId {
+fn if_cond_output(ctx: crate::pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeOutputId {
     let [_ctrl, cond_out] = ctx
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
     cond_out
 }
 
-fn if_cond_node_kind(ctx: pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeKind {
+fn if_cond_node_kind(ctx: crate::pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeKind {
     let cond_out = if_cond_output(ctx, if_node);
     *ctx.node_kind(ctx.get_node_from_output(cond_out))
 }
@@ -108,7 +108,7 @@ fn if_cond_node_kind(ctx: pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeK
 /// Asserts that the captured If's cond is `IntCmpOp(op)` with inputs
 /// `(expect_lhs, expect_rhs)` in that exact order.
 fn assert_if_cond_is_intcmp(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     if_node: NodeId,
     op: IntCmpOp,
     expect_lhs: NodeOutputId,
@@ -135,7 +135,7 @@ fn assert_if_cond_is_intcmp(
 /// `IfCondInversion` (in the full pipeline, not in this test) is the
 /// pass that finally swaps the If's branches and strips the BoolNeg.
 fn assert_if_cond_is_neg_intcmp(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     if_node: NodeId,
     op: IntCmpOp,
     expect_lhs: NodeOutputId,

@@ -10,7 +10,7 @@ fn rdi_like_vn() -> rsleigh::Vn {
     reg_vn(0x38, 8)
 }
 
-fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
+fn count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView<'_>, pred: F) -> usize {
     ctx.all_node_ids()
         .filter(|&n| pred(ctx.node_kind(n)))
         .count()

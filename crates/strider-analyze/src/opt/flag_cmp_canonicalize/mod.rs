@@ -43,18 +43,18 @@
 //!
 //! ## Asm-fingerprint preservation
 //!
-//! Every rule is built via [`pattern::rewrite_rule`], which absorbs the
+//! Every rule is built via [`crate::pattern::rewrite_rule`], which absorbs the
 //! matched root's fingerprint into **every** freshly-created interior
 //! node of the RHS subtree (not just the outermost root).  This makes
 //! the per-rule fingerprint discipline automatic; previously the pass
 //! carried a bespoke `Rule { build_rhs: fn(...) -> NodeOutputId }`
 //! infrastructure that hand-rolled the per-node fingerprint absorption
-//! — see `pattern::rewrite::rewrite_rule` for the central walk.
+//! — see `crate::pattern::rewrite::rewrite_rule` for the central walk.
 
 use std::sync::LazyLock;
 
 use strider_ir::node::NodeId;
-use pattern::{
+use crate::pattern::{
     BoxedRule, Capture, add, apply_rules_in_order, bool_and, bool_not, bool_or, boxed_rule,
     cast_to_int, int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var,
 };
@@ -66,7 +66,7 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 pub struct FlagCmpCanonicalize;
 
 impl Optimizer for FlagCmpCanonicalize {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Pre-collect candidate roots: rules mutate the graph (rewire
         // uses), so we can't walk the live iterator.  Forward preorder
         // visits parents before children — for the larger flag-tree

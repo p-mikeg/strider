@@ -64,7 +64,7 @@ use crate::opt::ReadOnlyMemory;
 ///
 /// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
 pub fn classify_anchor(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
@@ -98,7 +98,7 @@ pub fn classify_anchor(
 /// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
 /// See [`classify_anchor`] for full Result-shape semantics.
 pub fn classify_anchor_with_rom(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
@@ -137,7 +137,7 @@ pub fn classify_anchor_with_rom(
 /// approximating.
 #[must_use]
 pub fn classify_anchor_with_rom_and_sp(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,

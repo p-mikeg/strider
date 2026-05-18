@@ -20,7 +20,7 @@ pub(crate) use strider_ir::test_utils::{make_empty_fn as make_fn, make_fn_with_v
 
 /// The output id that the (unique) Return node receives as its value
 /// argument (input[2]: input[0]=ctrl, input[1]=mem).
-pub(crate) fn return_value(ctx: pattern::RewriteCtxView<'_>) -> crate::opt::Result<Value> {
+pub(crate) fn return_value(ctx: crate::pattern::RewriteCtxView<'_>) -> crate::opt::Result<Value> {
     let ret = ctx
         .all_node_ids()
         .find(|&n| matches!(ctx.node_kind(n), NodeKind::Return))
@@ -29,13 +29,13 @@ pub(crate) fn return_value(ctx: pattern::RewriteCtxView<'_>) -> crate::opt::Resu
 }
 
 /// `NodeKind` of the return-value producer.
-pub(crate) fn return_kind(ctx: pattern::RewriteCtxView<'_>) -> crate::opt::Result<NodeKind> {
+pub(crate) fn return_kind(ctx: crate::pattern::RewriteCtxView<'_>) -> crate::opt::Result<NodeKind> {
     let val = return_value(ctx)?;
     Ok(*ctx.kind_of_output(val))
 }
 
 /// Counts nodes matching `pred` (full arena, including detached zombies).
-pub(crate) fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
+pub(crate) fn count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView<'_>, pred: F) -> usize {
     ctx.all_node_ids()
         .filter(|&n| pred(ctx.node_kind(n)))
         .count()
@@ -44,7 +44,7 @@ pub(crate) fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, 
 /// Counts CFG-reachable nodes matching `pred` — the form most tests
 /// actually want (zombies left by `RedundantPhis` etc. don't count).
 pub(crate) fn count_reachable<F: Fn(&NodeKind) -> bool>(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     pred: F,
 ) -> usize {
     let reachable: entity_utils::DenseEntitySet<NodeId> = ctx.preorder().collect();
@@ -56,7 +56,7 @@ pub(crate) fn count_reachable<F: Fn(&NodeKind) -> bool>(
 
 /// Locates the unique `If` node in `ctx`.  Panics if zero or more than
 /// one is present — both indicate a fixture-construction bug.
-pub(crate) fn find_unique_if(ctx: pattern::RewriteCtxView<'_>) -> NodeId {
+pub(crate) fn find_unique_if(ctx: crate::pattern::RewriteCtxView<'_>) -> NodeId {
     let mut iter = ctx
         .all_node_ids()
         .filter(|&n| matches!(ctx.node_kind(n), NodeKind::If));

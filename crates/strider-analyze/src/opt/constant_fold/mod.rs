@@ -20,7 +20,7 @@ use rules::*;
 /// - Input is an integer `IntConst(v)` → immediately constant-folded to `FloatConst(v)`.
 /// - Input is any other integer type → lowered to `IntBitsToFloat`.
 fn try_lower_cast_to_float(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
     if !matches!(*ctx.node_kind(node_id), NodeKind::CastToFloat) {
@@ -58,7 +58,7 @@ fn try_lower_cast_to_float(
 pub struct ConstantFold;
 
 impl Optimizer for ConstantFold {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
         let mut work = WorkSet::seeded(ctx.preorder());
         let mut result = OptimizationResult::NoChange;
         // Reused per iteration to snapshot consumer NodeIds BEFORE running

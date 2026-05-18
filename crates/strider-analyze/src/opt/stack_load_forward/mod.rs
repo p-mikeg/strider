@@ -58,7 +58,7 @@ impl StackLoadForward {
 }
 
 impl Optimizer for StackLoadForward {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         let mut work = WorkSet::seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
@@ -73,7 +73,7 @@ impl Optimizer for StackLoadForward {
 /// upstream `StackStore{offset: K}`.  Returns `Changed` iff the load's uses
 /// were rewired.
 fn try_forward_load(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     load: NodeId,
     sp_vn: rsleigh::Vn,
     endianness: Endianness,
@@ -182,7 +182,7 @@ enum ResolveShape {
 // clarifying the call sites.
 #[allow(clippy::too_many_arguments)]
 fn probe(
-    ctx: &pattern::RewriteCtx<'_>,
+    ctx: &crate::pattern::RewriteCtx<'_>,
     initial_mem: NodeOutputId,
     offset: i64,
     load_size: i64,
@@ -356,7 +356,7 @@ fn probe(
 /// the IR rejects the requested constant; structurally the realization
 /// is a deterministic walk over the shape tree.
 fn realize(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     shape: ResolveShape,
     load_ty: strider_ir::node::NodeOutputType,
     endianness: Endianness,

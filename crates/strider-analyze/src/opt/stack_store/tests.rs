@@ -8,7 +8,7 @@ use strider_ir::test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 /// Counts how many nodes in `ctx` match the predicate.
-fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
+fn count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView<'_>, pred: F) -> usize {
     ctx.all_node_ids()
         .filter(|&n| pred(ctx.node_kind(n)))
         .count()
@@ -402,7 +402,7 @@ fn non_stack_store_is_untouched() -> Result<()> {
 // ── CallStackArgCollect tests ────────────────────────────────────────────
 
 /// Finds the unique Call node in `ctx`.
-fn find_call(ctx: pattern::RewriteCtxView<'_>) -> Result<NodeId> {
+fn find_call(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<NodeId> {
     ctx.all_node_ids()
         .find(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
         .ok_or_else(|| anyhow!("expected Call node, got {:?}", NodeKind::Call))

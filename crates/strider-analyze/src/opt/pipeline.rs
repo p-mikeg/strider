@@ -45,7 +45,7 @@ impl OptimizationResult {
     /// exception if the invariant is ever violated.
     pub fn after_replace(
         self,
-        function: &mut pattern::RewriteCtx<'_>,
+        function: &mut crate::pattern::RewriteCtx<'_>,
         old: strider_ir::node::NodeOutputId,
         new: strider_ir::node::NodeOutputId,
     ) -> crate::opt::Result<Self> {
@@ -84,9 +84,9 @@ impl std::ops::BitOrAssign for OptimizationResult {
 pub(crate) fn with_rewrite_ctx<R>(
     graph: &mut strider_ir::Graph,
     entry: strider_ir::node::NodeId,
-    f: impl FnOnce(&mut pattern::RewriteCtx<'_>) -> R,
+    f: impl FnOnce(&mut crate::pattern::RewriteCtx<'_>) -> R,
 ) -> R {
-    let mut ctx = pattern::RewriteCtx::new(graph, entry);
+    let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
     f(&mut ctx)
 }
 
@@ -98,12 +98,12 @@ pub(crate) fn with_rewrite_ctx<R>(
 /// this via [`with_rewrite_ctx`].
 ///
 /// **Most passes should implement [`Optimizer`] instead** — it operates
-/// on a [`pattern::RewriteCtx`] and gets the ergonomic `Deref<Target =
+/// on a [`crate::pattern::RewriteCtx`] and gets the ergonomic `Deref<Target =
 /// Graph>` + `preorder()` accessors for free.
 pub trait OptimizerRaw: Send + Sync {
     /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
     ///
-    /// # Why `(&mut Graph, NodeId)` and not `&mut pattern::RewriteCtx<'_>`
+    /// # Why `(&mut Graph, NodeId)` and not `&mut crate::pattern::RewriteCtx<'_>`
     ///
     /// Callers can run optimizer passes on a graph that has not yet
     /// been packaged into a final [`strider_ir::BuiltFunctionGraph`] (e.g. on
@@ -131,7 +131,7 @@ pub trait OptimizerRaw: Send + Sync {
 /// A single IR optimization pass.
 ///
 /// Implement this trait to add a new pass.  The pass receives a
-/// [`pattern::RewriteCtx`] (a `&mut Graph + entry` pair with
+/// [`crate::pattern::RewriteCtx`] (a `&mut Graph + entry` pair with
 /// ergonomic `Deref<Target = Graph>` + `preorder()` accessors),
 /// applies whatever transformations it can in one sweep, and returns
 /// [`OptimizationResult::Changed`] if anything was modified (causing
@@ -155,7 +155,7 @@ pub trait Optimizer: Send + Sync {
     /// Returns the first error encountered by the pass.
     fn optimize(
         &self,
-        ctx: &mut pattern::RewriteCtx<'_>,
+        ctx: &mut crate::pattern::RewriteCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult>;
 }
 

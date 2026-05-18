@@ -92,7 +92,7 @@ use crate::opt::sp_expr::{SpExprMemo, decompose_sp};
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
 fn collect_stack_args_in_chain_order(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
@@ -227,7 +227,7 @@ fn dense_prefix(slots: Vec<Option<NodeOutputId>>) -> Vec<NodeOutputId> {
 /// and appends the discovered data values as additional Call inputs (in
 /// positional order, stopping on the first missing slot).
 fn try_collect_stack_args(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
@@ -298,7 +298,7 @@ impl CallStackArgCollect {
 }
 
 impl Optimizer for CallStackArgCollect {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         let calls: Vec<NodeId> = ctx
             .preorder()
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))

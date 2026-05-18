@@ -4,20 +4,16 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-ir.workspace = true
-rsleigh.workspace = true
-anyhow.workspace = true
-thiserror.workspace = true
-cranelift-entity.workspace = true
-ethnum.workspace = true
-bitflags = "2"
-rustc-hash = "2"
+strider-analyze = { workspace = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-rsleigh.workspace = true
-opt.workspace = true
 ir = { workspace = true, features = ["test-utils"] }
-target.workspace = true
+strider-ir = { workspace = true }
+rsleigh = { workspace = true }
+target = { workspace = true }
+opt = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }

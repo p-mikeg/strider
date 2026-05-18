@@ -7,7 +7,7 @@
 //! branch direction the architecture's flag-test instruction prefers.
 //! Two shapes for one semantic forces every pattern-matcher caller to
 //! handle both.  This pass eagerly rewrites the `BoolNeg`-cond shape into
-//! the canonical direct shape so [`pattern::IfPat`] only needs to match
+//! the canonical direct shape so [`crate::pattern::IfPat`] only needs to match
 //! one layout.
 //!
 //! The rewrite is sound because:
@@ -31,9 +31,9 @@
 //! applications instead of one — still correct, just one extra
 //! fixed-point iteration.
 //!
-//! ## Why this is a dedicated pass and not a `pattern::rewrite_rule`
+//! ## Why this is a dedicated pass and not a `crate::pattern::rewrite_rule`
 //!
-//! The `pattern::rewrite_rule` engine doesn't currently support rewrites
+//! The `crate::pattern::rewrite_rule` engine doesn't currently support rewrites
 //! that swap consumers across two of a node's outputs — its model is
 //! "find a matching subtree, replace its single output's consumers with
 //! a fresh node's output."  The cond-inversion rewrite needs:
@@ -55,7 +55,7 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 pub struct IfCondInversion;
 
 impl Optimizer for IfCondInversion {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Collect candidate `If` nodes whose cond input is BoolUnaryOp::Neg.
         // We filter here (not in `preorder_kind`) because we need to read
         // the input chain too.

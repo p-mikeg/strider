@@ -9,7 +9,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 /// detaches all inputs (severing dead nodes from the graph) and returns
 /// `Changed`.  Otherwise returns `NoChange`.
 fn try_detach_dead_inputs(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> OptimizationResult {
     let all_unused = ctx
@@ -28,7 +28,7 @@ fn try_detach_dead_inputs(
 /// Attempts to simplify the phi-like node `node_id` given the set of
 /// CFG-reachable nodes.  Returns `Changed` if any transformation was applied.
 fn remove_phis(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     node_id: NodeId,
     reachable: &strider_ir::walk::NodeIdSet,
 ) -> Result<OptimizationResult> {
@@ -168,7 +168,7 @@ fn remove_phis(
 pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
         let reachable = strider_ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `remove_phis`, so don't

@@ -89,7 +89,7 @@ impl FunctionArgDetect {
 }
 
 impl Optimizer for FunctionArgDetect {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         let mut changed = OptimizationResult::NoChange;
         changed |= detect_register_args(ctx, &self.arg_passing_regs)?;
         changed |= detect_stack_args(
@@ -132,7 +132,7 @@ impl Optimizer for FunctionArgDetect {
 /// records the actual sub-register Vn, so downstream consumers see the
 /// width the function actually reads.
 fn detect_register_args(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<OptimizationResult> {
     // Single reachable-graph scan collects every InitialVar's Vn → NodeId.
@@ -220,7 +220,7 @@ fn detect_register_args(
 ///
 /// Memory-shadow disqualification and width merging extend this further.
 fn detect_stack_args(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     sp_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
@@ -415,7 +415,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 // add indirection without clarifying call sites.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,

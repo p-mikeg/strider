@@ -14,7 +14,7 @@ use crate::opt::worklist::WorkSet;
 /// form when its address resolves to a known SP offset (or per-branch phi of
 /// SP offsets).  Leaves the node untouched otherwise.
 fn try_detect_stack_store(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     node_id: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
@@ -107,7 +107,7 @@ impl StackStoreDetect {
 }
 
 impl Optimizer for StackStoreDetect {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Only Store nodes can be promoted to StackStore — kind-filter at
         // the iterator level so we don't allocate a Vec sized to all
         // reachable nodes.  Mirrors the established pattern in

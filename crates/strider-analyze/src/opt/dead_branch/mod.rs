@@ -36,7 +36,7 @@ mod tests;
 /// and `VarPhi` nodes with a single value input; `RedundantPhis` then
 /// cleans those up.
 fn try_eliminate_dead_branch(
-    ctx: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
     // Only handle If nodes.
@@ -201,7 +201,7 @@ fn try_eliminate_dead_branch(
 /// has zero inputs — i.e. a previous DBE iteration already stripped them.
 /// Used by the idempotency check to avoid spinning the outer pipeline loop.
 fn dead_uses_all_zero_input(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     dead_uses: &[(NodeId, u32)],
 ) -> bool {
     dead_uses.iter().all(|(n, _)| {
@@ -215,7 +215,7 @@ fn dead_uses_all_zero_input(
 /// `ControlState`s mark merge points and are *not* recursed through — they
 /// are part of the "boundary" where dead and live control flow can rejoin.
 fn collect_dead_subgraph(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     dead_uses: &[(NodeId, u32)],
 ) -> entity_utils::DenseEntitySet<NodeId> {
     let mut subgraph: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -248,7 +248,7 @@ fn collect_dead_subgraph(
 /// dead subgraph reachable through backward-data from those live consumers
 /// and the still-attached If would fail Layer A's input-count check.
 fn dead_subgraph_has_live_data_consumer(
-    ctx: pattern::RewriteCtxView<'_>,
+    ctx: crate::pattern::RewriteCtxView<'_>,
     subgraph: &entity_utils::DenseEntitySet<NodeId>,
 ) -> bool {
     subgraph.iter().any(|node| {
@@ -272,7 +272,7 @@ fn dead_subgraph_has_live_data_consumer(
 pub struct DeadBranchElimination;
 
 impl Optimizer for DeadBranchElimination {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
         // DBE only fires on `If` nodes whose outputs are control edges. We
         // drain the seeded preorder once: chained constant-branch patterns
         // (where one elimination exposes another) are caught by the outer

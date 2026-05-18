@@ -47,7 +47,7 @@ use crate::opt::worklist::WorkSet;
 pub struct LoadReadOnly<M>(pub M);
 
 impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
-    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
         // Only Load nodes are candidates — kind-filter at the iterator
         // level rather than collecting all N reachable nodes and
         // skipping non-Loads in the body.

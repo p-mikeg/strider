@@ -11,7 +11,6 @@ strider-ir = { workspace = true }
 # out of cfg and lifts strider-analyze cleanly above strider-lift.
 # Absorbed from `opt` (Phase 3 Task 3.0).
 ir.workspace = true
-pattern.workspace = true
 rsleigh.workspace = true
 target.workspace = true
 entity-utils.workspace = true
@@ -20,6 +19,9 @@ cranelift-entity.workspace = true
 ethnum.workspace = true
 rustc-hash = "2"
 smallvec.workspace = true
+# Absorbed from `pattern` (Phase 3 Task 3.0).
+thiserror.workspace = true
+bitflags = "2"
 
 [dev-dependencies]
 ir = { workspace = true, features = ["test-utils"] }

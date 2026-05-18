@@ -785,13 +785,11 @@ name = "pattern"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bitflags",
- "cranelift-entity",
- "ethnum",
  "ir",
  "opt",
  "rsleigh",
- "rustc-hash",
+ "strider-analyze",
+ "strider-ir",
  "target",
  "thiserror 2.0.18",
 ]
@@ -1359,16 +1357,17 @@ name = "strider-analyze"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "cranelift-entity",
  "entity-utils",
  "ethnum",
  "ir",
- "pattern",
  "rsleigh",
  "rustc-hash",
  "smallvec",
  "strider-ir",
  "target",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
