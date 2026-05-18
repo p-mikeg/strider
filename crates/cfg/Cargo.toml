@@ -4,16 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+# Shim crate — see lib.rs.  The implementation lives in
+# `strider-lift::cfg` (absorbed Phase 2 Task 2.3).
+strider-lift = { workspace = true }
 anyhow.workspace = true
-petgraph.workspace = true
-rsleigh.workspace = true
-dot.workspace = true
-graphwalk.workspace = true
-ir.workspace = true
-opt.workspace = true
-pcode-lift.workspace = true
-target.workspace = true
-rustc-hash = "2"
 
 [lints]
 workspace = true
@@ -22,3 +16,8 @@ workspace = true
 reader.workspace = true
 object.workspace = true
 petgraph.workspace = true
+dot.workspace = true
+rsleigh.workspace = true
+opt.workspace = true
+target.workspace = true
+ir.workspace = true

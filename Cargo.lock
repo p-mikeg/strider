@@ -92,15 +92,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dot",
- "graphwalk",
  "ir",
  "object",
  "opt",
- "pcode-lift",
  "petgraph",
  "reader",
  "rsleigh",
- "rustc-hash",
+ "strider-lift",
  "target",
 ]
 
@@ -809,6 +807,7 @@ dependencies = [
  "anyhow",
  "ir",
  "rsleigh",
+ "strider-lift",
  "target",
 ]
 
@@ -1374,6 +1373,23 @@ dependencies = [
  "rustc-hash",
  "smallvec",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "strider-lift"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dot",
+ "graphwalk",
+ "object",
+ "opt",
+ "petgraph",
+ "reader",
+ "rsleigh",
+ "rustc-hash",
+ "strider-ir",
+ "target",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ use crate::cfg::types::{
 };
 use anyhow::{anyhow, bail};
 
-use crate::Result;
+use crate::cfg::Result;
 
 /// Returns the [`PcodeInsnAddr`] that comes immediately after `addr` within
 /// the lifted machine instruction `lift_res`.
@@ -87,7 +87,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     }
 
     /// Lift a single machine instruction at `addr`, consulting the
-    /// optional [`crate::DecodeCache`] when present.  Returns an
+    /// optional [`crate::cfg::DecodeCache`] when present.  Returns an
     /// `Arc<LiftRes>` so successive callers at the same address
     /// (across CFG rebuilds within one `strider::run`) share the
     /// underlying decoded pcode without re-invoking Sleigh.
@@ -209,7 +209,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// Checks whether `branch_target_addr` should be treated as a tail call
     /// using only address-bounds reasoning (no `insn_index` validation).
     ///
-    /// Delegates to [`crate::is_addr_tail_call`] for the predicate; this
+    /// Delegates to [`crate::cfg::is_addr_tail_call`] for the predicate; this
     /// method is the cfg-builder convenience wrapper that pulls
     /// `start_addr` / `fn_max_size` / `allow_code_before_start_addr` from
     /// the builder's options.
@@ -220,7 +220,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// themselves at the use site (see the `Branch` and `CondBranch` arms
     /// of [`Self::process_new_insn`]).
     pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
-        crate::is_addr_tail_call(
+        crate::cfg::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
             self.builder.start_addr.addr,
             self.builder.options.fn_max_size,
@@ -406,8 +406,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 };
                 let name = self.builder.sleigh.user_op_name(id_u32);
                 let preset = self.builder.preset;
-                let class = name.and_then(|n| target::call_other_abi::classify(preset, n));
-                if matches!(class, Some(target::call_other_abi::CallOtherClass::NoReturn)) {
+                let class = name.and_then(|n| crate::target::call_other_abi::classify(preset, n));
+                if matches!(class, Some(crate::target::call_other_abi::CallOtherClass::NoReturn)) {
                     // CallOther is already in self.insns from the
                     // process_new_insn prologue push; finish_current_region
                     // carries it.  Trailing BranchIndirect is never decoded.
@@ -680,7 +680,7 @@ pub mod test_api {
     use super::RegionBuilder;
     use crate::cfg::types::{PcodeInsnAddr, RegionEdgeKind, RegionInstruction, RegionTerminator};
     use crate::cfg::Builder;
-    use crate::Result;
+    use crate::cfg::Result;
     use petgraph::graph::NodeIndex;
 
     pub use super::ProcessInsnRes;

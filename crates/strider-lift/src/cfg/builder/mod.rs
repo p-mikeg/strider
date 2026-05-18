@@ -20,7 +20,7 @@ use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, 
 use crate::cfg::Cfg;
 use anyhow::{anyhow, bail};
 
-use crate::Result;
+use crate::cfg::Result;
 
 /// Incrementally constructs a [`Cfg`] from a binary entry point.
 ///
@@ -32,7 +32,8 @@ use crate::Result;
 ///
 /// # Usage
 /// ```no_run
-/// use cfg::{Builder, OptionsBuilder};
+/// use strider_lift::cfg::{Builder, OptionsBuilder};
+/// use strider_lift::target::SleighArch;
 /// use rsleigh::mem_readers::BufMemReader;
 ///
 /// let fn_addr: u64 = 0x1000;
@@ -43,7 +44,7 @@ use crate::Result;
 ///     reader,
 /// ).expect("create Sleigh");
 /// let opts = OptionsBuilder::new().build();
-/// let arch = target::SleighArch::x86_64();
+/// let arch = SleighArch::x86_64();
 /// let cfg = Builder::for_arch(&arch, sleigh, fn_addr, opts).build()?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
@@ -56,16 +57,16 @@ pub struct Builder<R: rsleigh::MemReader> {
     pub(super) options: Options,
     /// Byte order of the target architecture.  Threaded into
     /// [`super::indirect_resolve::resolve_indirect_target`] which
-    /// builds a mini IR via `pcode_lift::ValueLifter::new`.  Set
+    /// builds a mini IR via `crate::pcode_lift::ValueLifter::new`.  Set
     /// atomically with `preset` via [`Self::for_arch`].
-    pub(super) endianness: target::Endianness,
+    pub(super) endianness: crate::target::Endianness,
     /// Coarse architecture family.  Consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right `arch` to
-    /// [`target::call_other_abi::classify`].  Set atomically with
+    /// [`crate::target::call_other_abi::classify`].  Set atomically with
     /// `endianness` via [`Self::for_arch`], or override individually
     /// with [`Self::with_preset`].
-    pub(super) preset: target::ArchPreset,
+    pub(super) preset: crate::target::ArchPreset,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
     /// Maps each region's `start_addr` to its [`NodeIndex`].
@@ -77,7 +78,7 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// Optional cache of `(machine_addr) → Arc<LiftRes>`.  When
     /// present, [`super::region_builder::RegionBuilder::lift_one_cached`]
     /// consults it before invoking Sleigh's decoder.  The cache must be
-    /// scoped to a single Sleigh context (see [`crate::DecodeCache`]).
+    /// scoped to a single Sleigh context (see [`crate::cfg::DecodeCache`]).
     pub(super) decode_cache: Option<crate::cfg::DecodeCache>,
 }
 
@@ -90,7 +91,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// decoded as LE, or AArch64 `brk` classified as the x86 stub).
     #[must_use]
     pub fn for_arch(
-        arch: &target::SleighArch,
+        arch: &crate::target::SleighArch,
         sleigh: rsleigh::Sleigh<R>,
         start_addr: u64,
         options: Options,
@@ -108,14 +109,14 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
     }
 
-    /// Sets the [`target::ArchPreset`] used by the `Opcode::CallOther`
+    /// Sets the [`crate::target::ArchPreset`] used by the `Opcode::CallOther`
     /// arm in `super::region_builder` when consulting
-    /// [`target::call_other_abi::classify`].  Defaults to
-    /// [`target::ArchPreset::X86_64`]; override for non-x86_64 targets.
+    /// [`crate::target::call_other_abi::classify`].  Defaults to
+    /// [`crate::target::ArchPreset::X86_64`]; override for non-x86_64 targets.
     /// Prefer [`Self::for_arch`] when an arch object is in scope —
     /// it sets endianness AND preset atomically.
     #[must_use]
-    pub fn with_preset(mut self, preset: target::ArchPreset) -> Self {
+    pub fn with_preset(mut self, preset: crate::target::ArchPreset) -> Self {
         self.preset = preset;
         self
     }
@@ -123,7 +124,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Attaches a Sleigh-decode cache to this builder.  When set,
     /// every machine-instruction lift consults the cache before
     /// invoking `Sleigh::lift_one`, and inserts on miss.  See
-    /// [`crate::DecodeCache`] for the cache's invariants (in
+    /// [`crate::cfg::DecodeCache`] for the cache's invariants (in
     /// particular: it must be scoped to one Sleigh context).
     #[must_use]
     pub fn with_decode_cache(mut self, cache: crate::cfg::DecodeCache) -> Self {
@@ -279,7 +280,7 @@ pub mod test_api {
 
     use super::Builder;
     use crate::cfg::types::{RegionEdgeKind, RegionGraph};
-    use crate::Result;
+    use crate::cfg::Result;
     use petgraph::graph::NodeIndex;
     use std::collections::BTreeMap;
 

@@ -6,7 +6,7 @@ use super::types::RegionEdgeKind;
 use super::Cfg;
 use anyhow::anyhow;
 
-use crate::Result;
+use crate::cfg::Result;
 
 impl<R: rsleigh::MemReader> Cfg<R> {
     /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.
@@ -21,7 +21,7 @@ pub mod test_api {
     //! Test-only forwarder for varnode-name rendering.
 
     use super::Cfg;
-    use crate::Result;
+    use crate::cfg::Result;
 
     /// # Errors
     /// Propagates errors from the underlying renderer (invalid reg vn,
@@ -30,7 +30,7 @@ pub mod test_api {
         cfg: &Cfg<R>,
         vn: &rsleigh::Vn,
     ) -> Result<String> {
-        ir::dot::label::vn_to_display_name(&cfg.sleigh, vn)
+        strider_ir::graph_dot::label::vn_to_display_name(&cfg.sleigh, vn)
     }
 }
 

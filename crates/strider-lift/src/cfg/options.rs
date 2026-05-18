@@ -75,7 +75,7 @@ pub struct Options {
     /// `None` on stack-push ISAs (x86, x86_64) where there is no
     /// architectural link register.  Default is `None` — callers
     /// (typically `strider`) compute the value from
-    /// [`target::BuiltCallingConvention::link_register_vn`] and plumb
+    /// [`crate::target::BuiltCallingConvention::link_register_vn`] and plumb
     /// it through with [`OptionsBuilder::set_link_register`].
     pub(super) link_register_vn: Option<rsleigh::Vn>,
     /// Read-only memory image (typically `.rodata` / `.text` from the
@@ -155,7 +155,7 @@ impl PartialEq for Options {
 ///
 /// # Example
 /// ```rust
-/// use cfg::OptionsBuilder;
+/// use strider_lift::cfg::OptionsBuilder;
 ///
 /// let opts = OptionsBuilder::new()
 ///     .set_function_max_size(0x1000)
@@ -254,7 +254,7 @@ impl OptionsBuilder {
     /// `Return` terminator.
     ///
     /// Callers typically pass the value from
-    /// [`target::BuiltCallingConvention::link_register_vn`].  Has no
+    /// [`crate::target::BuiltCallingConvention::link_register_vn`].  Has no
     /// effect on stack-push ISAs (x86, x86_64) — leave unset (the
     /// default) on those.
     #[must_use]

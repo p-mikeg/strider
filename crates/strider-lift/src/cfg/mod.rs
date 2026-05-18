@@ -1,9 +1,31 @@
+//! Control-flow graph construction for the Strider binary analysis framework.
+//!
+//! This module lifts a binary function to a [`Cfg`] of basic blocks using
+//! GHIDRA's Sleigh p-code lifter ([`rsleigh`]).  Each basic block (region) in
+//! the CFG contains a sequence of p-code instructions ([`rsleigh::Insn`]).
+//!
+//! Absorbed from the standalone `cfg` crate (v2 Phase 2 Task 2.3); the
+//! original `cfg` crate is now a one-line shim re-exporting this module.
+//!
+//! # Key types
+//!
+//! - [`Cfg`] — a control-flow graph parameterized over an arbitrary memory
+//!   reader; built via [`Builder`]
+//! - [`Builder`] / [`OptionsBuilder`] — fluent constructors for a [`Cfg`]
+//! - [`RegionId`] — identifies a basic block within the CFG
+//! - [`RegionEdgeKind`] — `Fallthrough`, `Branch`, `IfCaseTrue`, `IfCaseFalse`
+//! - [`IfRegionState`] — tracks the resolved/unresolved state of an if-case
+
 mod builder;
 mod decode_cache;
 mod dot;
 mod options;
 mod query;
 mod types;
+
+/// Module-level `Result` alias. Every fallible function in `cfg` returns
+/// this type.
+pub type Result<T> = anyhow::Result<T>;
 
 pub use builder::Builder;
 pub use builder::ResolvedTargets;
@@ -98,7 +120,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// Test-only constructor: assemble a `Cfg` from raw parts.
     ///
     /// The `start_addr_to_region_id` field is normally maintained by
-    /// [`crate::Builder::build`] and stays in sync with `graph`.
+    /// [`crate::cfg::Builder::build`] and stays in sync with `graph`.
     /// Hand-built fixtures (used by `cfg/tests/cfg_query.rs` to exercise
     /// `region_branch` / `region_if` on synthetic petgraphs) construct
     /// a `Cfg` directly; this ctor lets them keep working after the
@@ -153,7 +175,7 @@ pub type RegionId = NodeIndex;
 
 /// `graphwalk::GraphRef` impl for the region graph.  Lets generic
 /// traversal helpers (preorder/postorder/reachability/dominance)
-/// work on a `Cfg` the same way they work on `ir::Graph`.  Successors
+/// work on a `Cfg` the same way they work on `strider_ir::Graph`.  Successors
 /// are the petgraph out-neighbors of `node` regardless of edge kind
 /// (Fallthrough / Branch / IfCaseTrue / IfCaseFalse); callers that
 /// need edge-kind filtering should walk `cfg.graph().edges(node)`

@@ -14,3 +14,10 @@
 
 pub mod target;
 pub mod pcode_lift;
+pub mod cfg;
+
+/// Test-only re-exports for the absorbed `cfg` module, mirroring the
+/// original `cfg` crate's `test_api` flat surface so integration tests
+/// under `crates/cfg/tests/` continue to compile after Phase 2 Task 2.3.
+#[doc(hidden)]
+pub mod cfg_test_api;

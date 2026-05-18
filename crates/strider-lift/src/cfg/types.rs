@@ -140,7 +140,7 @@ pub struct RegionInstruction {
 /// Classifies how a [`Region`] ends.
 ///
 /// One terminator per region; the value is set when the region is
-/// finalised by [`crate::Builder`].  The variants line up with the
+/// finalised by [`crate::cfg::Builder`].  The variants line up with the
 /// outgoing edges in the `RegionGraph` but also record cases that have
 /// no outgoing edge (e.g. `Return`, `TailCall`).
 ///
@@ -167,7 +167,7 @@ pub enum RegionTerminator {
     Return,
     /// Region terminates with no successor.  Emitted by
     /// `cfg::region_builder::process_new_insn` when a CallOther's
-    /// `target::call_other_abi::classify` result is `NoReturn` (Linux
+    /// `crate::target::call_other_abi::classify` result is `NoReturn` (Linux
     /// `BUG()` / `BUG_ON()`-class traps: x86 `ud2`, aarch64
     /// `brk #imm`).  See
     /// `docs/superpowers/specs/2026-05-05-callother-classification-design.md`.
@@ -207,7 +207,7 @@ pub enum RegionTerminator {
         /// orchestrator's known-targets feedback path when
         /// available.  When `Some`, strider uses it directly
         /// instead of re-reading `target_vn`.
-        target_value: Option<ir::Value>,
+        target_value: Option<strider_ir::Value>,
     },
     /// `BranchIndirect` whose target the cfg-time mini-graph resolver
     /// (`indirect_resolve::resolve_indirect_target`) could not prove.

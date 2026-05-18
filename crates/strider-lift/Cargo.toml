@@ -5,9 +5,23 @@ edition.workspace = true
 
 [dependencies]
 strider-ir = { workspace = true }
-# Absorbed from `target` (Phase 2 Task 2.2).
 rsleigh.workspace = true
 anyhow.workspace = true
+# `target` source lives in the external crate; this module re-exports it
+# (see src/target.rs).  See Phase 2 Task 2.3 cycle-break note.
+target.workspace = true
+# Absorbed from `cfg` (Phase 2 Task 2.3).
+petgraph.workspace = true
+dot.workspace = true
+graphwalk.workspace = true
+rustc-hash = "2"
+# TEMPORARY: cfg's mini-IR resolver uses opt. Phase 3 moves opt into
+# strider-analyze and inverts this edge (V6 + audit finding G9).
+opt = { workspace = true }
+
+[dev-dependencies]
+reader.workspace = true
+object.workspace = true
 
 [lints]
 workspace = true

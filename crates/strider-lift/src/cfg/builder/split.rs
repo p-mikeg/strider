@@ -5,7 +5,7 @@ use super::Builder;
 use crate::cfg::types::{PcodeInsnAddr, Region, RegionEdgeKind, RegionTerminator};
 use anyhow::anyhow;
 
-use crate::Result;
+use crate::cfg::Result;
 
 impl<R: rsleigh::MemReader> Builder<R> {
     /// Splits the region identified by `region_id` at `addr`, creating two

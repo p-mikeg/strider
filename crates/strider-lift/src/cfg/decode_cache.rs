@@ -22,7 +22,7 @@
 //!
 //! The orchestrator constructs one `DecodeCache` at the top of
 //! `strider::run`, threads it into every `cfg::Builder` via
-//! [`crate::Builder::with_decode_cache`], and discards it when the
+//! [`crate::cfg::Builder::with_decode_cache`], and discards it when the
 //! `run` returns.
 
 use std::sync::{Arc, Mutex};
