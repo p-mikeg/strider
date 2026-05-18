@@ -1,0 +1,11 @@
+[package]
+name = "strider-lift"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+strider-ir = { workspace = true }
+# other deps added as modules absorb
+
+[lints]
+workspace = true
