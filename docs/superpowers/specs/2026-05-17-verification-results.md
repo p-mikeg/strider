@@ -140,3 +140,109 @@ Concrete `ReadOnlyMemory` impls live in `strider-binary` (ELF/PE/Mach-O backed).
 5. **Dependency pin** — `salsa = "0.26.2"` (or follow rust-analyzer's current pin).
 
 These updates land in the plan in the next commit on `rewrite/strdier`. Phase 0 starts after that commit.
+
+## V1 Verification Execution Result (Phase 1 Task 1.5 spike)
+
+**Status: PASS.**  Egg with phi-as-opaque-leaves expresses the strider
+value-slice model.  Zero-rewrite Graph ↔ `egg::EGraph` round-trip preserves
+every structural and semantic bit needed to recover the original `NodeKind` +
+output type.
+
+### What landed
+
+Spike crate: `crates/strider-ir/src/egraph_adapter/` (commits `2d870da8` →
+`0ecf8d28` → `6300bf56` → `95560386`).
+
+- `egraph_adapter::language::StriderLang` — hand-rolled `egg::Language` impl
+  (NOT `define_language!`).  Drops the macro because:
+  - It would require `FromStr + Display` impls for every payload type
+    (`rsleigh::Vn`, `NodeOutputType`, every Op enum), with zero benefit
+    in the zero-rewrite case (we don't parse patterns from strings).
+  - Hand-rolled gives us full control over `matches()` semantics — every
+    payload field that affects strider-side identity is compared
+    explicitly, with a documented contract.
+- `egraph_adapter::from_graph::EGraphAdapter::from_graph` — walks reachable
+  value outputs from `entry` and adds each as either an `Opaque(payload)`
+  leaf (phis, `InitialVar`, `FunctionArg`, `Load` value, `Call`/`CallOther`
+  value, plus structurally-defensive opaque cases for memory/control kinds
+  that should never reach a value-output classifier) or a type-tagged
+  internal e-node (`IntConst`/`BoolConst`/`FloatConst` + every value-
+  producing arithmetic / cmp / cast / bool / float / int↔float op).  Memo
+  table: `output_to_eclass: HashMap<NodeOutputId, Id>`.  Reverse opaque map:
+  `leaf_to_output: HashMap<u64, NodeOutputId>`.
+- `egraph_adapter::extract::EGraphAdapter::extract_into_graph` — topo-sorts
+  reachable nodes (cycle-safe DFS, treats phi back-edges as non-edges), then
+  rebuilds a fresh strider `Graph` by deriving each value-producing
+  internal-e-node kind from the egraph extraction (`kind_from_lang`) and
+  copying everything else from the original.  Side-tables propagated:
+  `asm_fingerprints`, `stack_phi_offsets`, `call_other_names`,
+  `call_clobbered_overrides`.
+- 17 unit tests (Language + from_graph + extract) and 3 integration tests
+  (`tests/egraph_roundtrip.rs`) — all pass on the first green run.
+
+### NodeKind coverage by StriderLang
+
+| Category | Variants covered (this spike) | Deferred to Phase 3 |
+|---|---|---|
+| **Constants** | `IntConst(u128)`, `BoolConst`, `FloatConst(u64)` (with type-tag) | `IntConstWide` (U256/U512 — modeled as opaque leaf for the spike since `StriderLang::IntConst` payload is `u128`; would need a new `IntConstWide(WideConstId, TypeKey)` variant in Phase 3) |
+| **Integer ops** | `IntBinaryOp`, `IntUnaryOp`, `IntCmpOp`, `CastToInt`, `Truncate`, `Popcount`, `Lzcount`, `Extend(ExtendOp)` | — |
+| **Bool ops** | `BoolBinaryOp`, `BoolUnaryOp`, `CastToBool` | — |
+| **Float ops** | `FloatBinaryOp`, `FloatUnaryOp`, `FloatCmpOp` | — |
+| **Conversions** | `IntToFloat`, `FloatToInt`, `FloatToFloat`, `IntBitsToFloat`, `FloatBitsToInt`, `CastToFloat` | — |
+| **Opaque leaves** | `VarPhi`, `MemPhi`, `ValuePhi`, `InitialVar`, `InitialMemory`, `FunctionArg`, `Load` value, `Call` value, `CallOther` value, `SegmentOp` value, `CPoolRef` value, `New` value, `IntConstWide` | — |
+| **Control / memory** | Preserved by structural copy from the original `Graph` — never enters egraph | — |
+| **Non-value nodes** | `Entry`, `ControlState`, `If`, `Return`, `IndirectBranch`, `Store`, `StackStore`, `StackStorePhi` — copied from original | — |
+
+The only deferred semantic case is **wide constants (U256/U512)**.  Adding a
+`StriderLang::IntConstWide(WideConstId, TypeKey)` variant in Phase 3 is a
+two-line change (variant + `kind_from_lang` arm); the spike treats them as
+opaque so the matching test fixtures (which don't exercise them) compile.
+
+### Performance
+
+Per-region round-trip time on the spike's three integration tests:
+**<1 ms per round-trip**, including the explicit `EGraph::rebuild()` call.
+The constants/Add chain test has ~7 reachable value outputs; the VarPhi test
+has ~3.  Egg's `Runner` is bypassed entirely (no rewrites means no need to
+schedule), confirming the V1 verification doc's "Runner defaults are 100×
+oversized for tiny problems → bypass it" guidance — adapter cost is
+dominated by HashMap insertion, not egg internals.
+
+### Concerns surfaced
+
+1. **`define_language!` would block rsleigh payloads.**  The macro's
+   `Variant(data)` form requires `FromStr + Display` on `data` for parser
+   integration.  `rsleigh::Vn` derives neither and shouldn't need to.  Phase
+   3 should standardise on hand-rolled `Language` impls for any
+   strider-adjacent egraph languages.
+2. **`Ord` derive ripple effect.**  Egg's `Language` trait requires `Ord +
+   PartialOrd`.  Added the derives to `NodeOutputType` + every op enum in
+   `ops::op_kinds`.  All are unit/payload-only enums; the derives are
+   strictly additive (variant declaration order = lex order).  Workspace
+   build clean.  No public surface change beyond the new trait impls.
+3. **Multi-output nodes (`Call`).**  Modeled per-value-output as separate
+   opaque leaves with distinct payloads (derived from `NodeOutputId.as_u32()`
+   so each clobber slot stays unique).  Verified by the structural test —
+   the Call node itself is preserved structurally (not in the egraph), and
+   its value slots reappear in the extracted graph in slot order.  Phase 3's
+   rewrite rules will need an `Analysis::Data` that ties an e-class back to
+   its originating `(NodeId, output_index)` for any pass that wants to fold
+   across a call's return-value slot.
+4. **Wide constants (U256/U512) deferred** — see coverage table.  Trivial to
+   add in Phase 3; the spike treats them as opaque to keep `StriderLang`'s
+   payload `u128`-sized.
+5. **`extract_into_graph` panics on round-trip mismatch.**  The spike
+   converts an unexpected `StriderLang` shape into a panic so a regression
+   surfaces loudly.  Phase 3 should promote this to a typed `ExtractError`
+   the orchestrator can route into `LiftError` / `OptError`.
+
+### Verdict for V1
+
+**Egg works for our shape.**  No fallback path needed.  Plan section A's
+primary "egg + bypass-Runner" path is confirmed viable end-to-end on
+zero-rewrite round-trip; Phase 3 can proceed with confidence.
+
+The hand-rolled-saturation and drop-egraph fallback paths remain documented
+in the plan but are not needed.  cranelift-egraph stays removed (dead crate
+per V1 verification).
+
