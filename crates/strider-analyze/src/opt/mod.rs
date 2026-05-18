@@ -51,6 +51,8 @@ pub(crate) mod constant_fold;
 pub mod constant_fold_egg;
 mod dead_branch;
 mod flag_cmp_canonicalize;
+// Phase 3 Task 3.3a — egg-based FlagCmpCanonicalize parity rewriter.
+pub mod flag_cmp_canonicalize_egg;
 mod function_args;
 mod if_cond_inversion;
 pub mod indirect_branch_resolve;
