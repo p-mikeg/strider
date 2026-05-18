@@ -8,36 +8,31 @@
     )
 )]
 
-//! CFG-to-IR translator for the Strider binary analysis framework.
+//! Thin shim re-exporting the strider analysis facade from
+//! [`strider_analyze`].
 //!
-//! This crate drives [`ir::FunctionBuilder`] from a Sleigh p-code CFG
-//! ([`cfg::Cfg`]).  The main entry point is [`Strider`], which lifts a
-//! function at a given address into a [`ir::BuiltFunctionGraph`] ready for
-//! optimization and pattern queries.
+//! Phase 3 Task 3.1c moved the orchestrator (`run` / `RunConfig`), the
+//! IR-level indirect-branch resolver, the [`GraphRewriter`], and the
+//! [`Strider`] per-iteration handle into `strider-analyze`.  This crate
+//! keeps the well-known `strider::*` import path (`strider::run`,
+//! `strider::Strider`, …) working for callers — primarily strider-py
+//! and the workspace integration test suite — without changing their
+//! source.
 //!
-//! # Register aliasing
+//! # Key types (re-exports)
 //!
-//! x86 has overlapping sub-registers (`rax`/`eax`/`ax`/`al` etc.).  The
-//! internal `IrStrider` handles these transparently via
-//! [`pcode_lift::ValueLifter::read_vn`] / [`pcode_lift::ValueLifter::write_vn`]:
-//! all reads and writes go through the largest containing register, with
-//! shift/mask operations inserted for sub-register accesses.
-//!
-//! # Key types
-//!
-//! - [`Strider`] — wraps a Sleigh lifter and a [`CallingConvention`]; call
-//!   `analyze_cfg` to obtain a [`ir::BuiltFunctionGraph`]
-//! - [`SleighArch`] — architecture selection for the Sleigh lifter
-//! - [`CallingConvention`] — describes which registers are caller-saved
-//! - [`run`] — top-level orchestrator: builds the CFG, lifts to IR, runs
-//!   the optimiser pipeline, and resolves indirect branches via the
-//!   indirect-resolution fixed-point loop
+//! - [`Strider`] / [`run`] — top-level analysis entry points
+//! - [`SleighArch`] / [`CallingConvention`] — architecture + ABI selection
+//! - [`GraphRewriter`] — pattern-rewrite façade
+//! - [`UnresolvedIndirectBranch`] — typed error returned by [`run`]
 
-mod errors;
-mod orchestrator;
-mod strider;
-pub mod indirect_resolve;
-pub mod rewrite;
+pub use strider_analyze::indirect_resolve;
+pub use strider_analyze::rewrite;
+pub use strider_analyze::{
+    AnalyzeOptions, AnalyzeOutcome, GraphRewriter, RegionLiftHandles, RunConfig, Strider,
+    UnresolvedIndirectBranch, run,
+};
+pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};
 
 // `test_utils` is unconditionally `pub` rather than gated on
 // `feature = "test-utils"`: integration tests under
@@ -48,9 +43,3 @@ pub mod rewrite;
 // `Strider::new`) so an always-public module is the simplest sound
 // choice.
 pub mod test_utils;
-
-pub use errors::UnresolvedIndirectBranch;
-pub use orchestrator::{run, RunConfig};
-pub use rewrite::GraphRewriter;
-pub use strider::{AnalyzeOptions, AnalyzeOutcome, RegionLiftHandles, Strider};
-pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};

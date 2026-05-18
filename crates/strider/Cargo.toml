@@ -15,6 +15,10 @@ opt.workspace = true
 pcode-lift.workspace = true
 pattern.workspace = true
 strider-lift.workspace = true
+# Phase 3 Task 3.1c: orchestrator + Strider + indirect_resolve + rewrite
+# moved into strider-analyze.  This crate re-exports them from
+# strider-analyze so the well-known `strider::*` path keeps working.
+strider-analyze.workspace = true
 reader.workspace = true
 object.workspace = true
 

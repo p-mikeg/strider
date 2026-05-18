@@ -12,8 +12,8 @@
 //!    ([`Strider::build_stable_optimizer_pipeline`]).
 //! 4. For each unresolved anchor, run [`indirect_resolve::classify_anchor_with_rom_and_sp`].
 //! 5. Apply in-place IR edits for terminal classifications:
-//!    [`opt::apply_link_register`] for `LinkRegister`,
-//!    [`opt::apply_tail_call`] for `Single(K)` where `K` is outside
+//!    [`crate::opt::apply_link_register`] for `LinkRegister`,
+//!    [`crate::opt::apply_tail_call`] for `Single(K)` where `K` is outside
 //!    the function range.  These do NOT trigger a CFG rebuild.
 //! 6. If any classification requires a structural rebuild (intra-fn
 //!    `Single`, `Multiple` jump table), update `known_targets` and
@@ -45,7 +45,7 @@ use anyhow::{anyhow, bail, Result};
 
 use cfg::{Builder, Cfg, DecodeCache, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use ir::node::{NodeId, NodeOutputId};
-use opt::ReadOnlyMemory;
+use crate::opt::ReadOnlyMemory;
 
 use crate::errors::UnresolvedIndirectBranch;
 use crate::indirect_resolve::{
@@ -536,7 +536,7 @@ where
                 continue;
             };
             let placeholder_return =
-                opt::find_placeholder_return_for_anchor(&graph.graph, *anchor_output);
+                crate::opt::find_placeholder_return_for_anchor(&graph.graph, *anchor_output);
             let can_inplace = match (&resolved, placeholder_return) {
                 (ResolvedTargets::LinkRegister, Some(_)) => true,
                 (ResolvedTargets::Single(target), Some(_)) => {
@@ -636,7 +636,7 @@ where
         Ok(unresolved
             .into_iter()
             .filter(|(_, anchor)| {
-                opt::find_placeholder_return_for_anchor(&graph.graph, *anchor).is_some()
+                crate::opt::find_placeholder_return_for_anchor(&graph.graph, *anchor).is_some()
             })
             .collect())
     }
@@ -681,7 +681,7 @@ fn apply_in_place_edit(
                 initial_var_index,
             )?;
             apply_link_register(
-                &mut pattern::RewriteCtx::for_built(graph),
+                &mut crate::pattern::RewriteCtx::for_built(graph),
                 placeholder,
                 &ctx.ret_val_outputs,
             )?;
@@ -698,7 +698,7 @@ fn apply_in_place_edit(
                 initial_var_index,
             )?;
             let new_return = apply_tail_call(
-                &mut pattern::RewriteCtx::for_built(graph),
+                &mut crate::pattern::RewriteCtx::for_built(graph),
                 placeholder,
                 *target,
                 &ctx.arg_passing_outputs,
@@ -779,14 +779,14 @@ fn build_anchor_calling_context(
     region_index: &RegionIndex,
     override_cc: Option<&target::BuiltCallingConvention>,
     initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
-) -> Result<opt::AnchorCallingContext> {
+) -> Result<crate::opt::AnchorCallingContext> {
     // When an override is supplied, route arg-passing / ret-val /
     // clobber computation through the override CC instead of the
     // function-default.
     let cc: &target::BuiltCallingConvention = override_cc
         .unwrap_or_else(|| strider.calling_convention());
     let region = region_index.region_for_placeholder(graph, placeholder);
-    let mut ctx = opt::AnchorCallingContext::default();
+    let mut ctx = crate::opt::AnchorCallingContext::default();
 
     // `initial_var_index` is built once per orchestrator iteration (in
     // `apply_in_place_edits`) and threaded through.  Per-edit cost is
@@ -963,7 +963,7 @@ where
     // per-call for clarity since CFG rebuilds are rare.
     let resolver: std::sync::Arc<
         dyn cfg::IndirectTargetResolver<R>,
-    > = std::sync::Arc::new(opt::indirect_resolver::MiniIrIndirectResolver);
+    > = std::sync::Arc::new(crate::opt::indirect_resolver::MiniIrIndirectResolver);
     let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.as_u64(), cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())
@@ -1052,9 +1052,9 @@ mod tests {
     }
 
     fn make_strider_x86_64() -> Strider {
-        let arch = crate::SleighArch::x86_64();
+        let arch = target::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
-        Strider::new(arch, regs, crate::CallingConvention::x86_64_systemv())
+        Strider::new(arch, regs, target::CallingConvention::x86_64_systemv())
             .expect("strider")
     }
 

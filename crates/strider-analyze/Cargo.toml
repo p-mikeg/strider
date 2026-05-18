@@ -7,10 +7,14 @@ edition.workspace = true
 strider-ir = { workspace = true }
 # strider-lift forward dep (Phase 3 Task 3.1): the cfg-time mini-IR
 # indirect-resolver implementation lives here as a concrete
-# `IndirectTargetResolver` impl (see src/indirect_resolver.rs).  The
-# previous TEMPORARY back-edge from strider-lift to strider-analyze was
-# severed by the callback trait extraction in Task 3.1.
+# `IndirectTargetResolver` impl (see src/indirect_resolver.rs).  Also
+# powers the orchestrator (Task 3.1c) via the lifter/region driver
+# crates re-exported through strider-lift.
 strider-lift = { workspace = true }
+# The `cfg` shim re-exports `strider_lift::cfg` — used directly so the
+# orchestrator's `use cfg::*` imports keep their original shape after
+# the Phase 3.1c move from `strider`.
+cfg = { workspace = true }
 # Absorbed from `opt` (Phase 3 Task 3.0).
 ir.workspace = true
 rsleigh.workspace = true
@@ -24,12 +28,13 @@ smallvec.workspace = true
 # Absorbed from `pattern` (Phase 3 Task 3.0).
 thiserror.workspace = true
 bitflags = "2"
+# Orchestrator: per-region driver (`strider_lift::region_driver`) and
+# the pcode-lift shim are pulled in for the moved `Strider` /
+# `IrStrider` types.
+pcode-lift = { workspace = true }
 
 [dev-dependencies]
 ir = { workspace = true, features = ["test-utils"] }
-# Indirect-resolver tests (moved from cfg/tests/ in Phase 3 Task 3.1)
-# need to drive the mini-IR via real Sleigh + types from cfg.
-cfg = { workspace = true }
 
 [lints]
 workspace = true

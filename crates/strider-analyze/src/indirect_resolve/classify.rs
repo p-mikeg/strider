@@ -1,5 +1,5 @@
 //! Producer-shape classifier shim.  Delegates to
-//! [`opt::indirect_branch_resolve`].  Retained as a strider-side entry
+//! [`crate::opt::indirect_branch_resolve`].  Retained as a strider-side entry
 //! point so the orchestrator and integration tests can call into the
 //! classifier under a stable strider path; the underlying logic
 //! lives in `opt`.
@@ -7,27 +7,27 @@
 use cfg::test_api::ResolvedTargets;
 use ir::BuiltFunctionGraph;
 use ir::node::NodeOutputId;
-use opt::ReadOnlyMemory;
+use crate::opt::ReadOnlyMemory;
 
 /// Classify a placeholder anchor's producer node into a
-/// [`ResolvedTargets`].  Delegates to [`opt::classify_anchor`].
+/// [`ResolvedTargets`].  Delegates to [`crate::opt::classify_anchor`].
 ///
 /// # Errors
 ///
 /// Returns `Err` when `analyze_known_bits` fails on a `Kb::merge`
-/// contradiction (real IR-level bug).  See [`opt::classify_anchor`]
+/// contradiction (real IR-level bug).  See [`crate::opt::classify_anchor`]
 /// for the full Result-shape semantics.
 pub fn classify_anchor(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    opt::classify_anchor(graph.into(), anchor_output, link_register_vn)
+    crate::opt::classify_anchor(graph.into(), anchor_output, link_register_vn)
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
 /// for the jump-table arm.  Delegates to
-/// [`opt::classify_anchor_with_rom`].
+/// [`crate::opt::classify_anchor_with_rom`].
 ///
 /// # Errors
 ///
@@ -39,13 +39,13 @@ pub fn classify_anchor_with_rom(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    opt::classify_anchor_with_rom(graph.into(), anchor_output, link_register_vn, rom)
+    crate::opt::classify_anchor_with_rom(graph.into(), anchor_output, link_register_vn, rom)
 }
 
 /// Classify a placeholder anchor with both an optional
 /// [`ReadOnlyMemory`] (for the rodata jump-table arm) and an optional
 /// stack-pointer varnode (for the stack-array-of-labels arm).
-/// Delegates to [`opt::classify_anchor_with_rom_and_sp`].
+/// Delegates to [`crate::opt::classify_anchor_with_rom_and_sp`].
 ///
 /// # Errors
 ///
@@ -59,9 +59,9 @@ pub fn classify_anchor_with_rom_and_sp(
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    let view: pattern::RewriteCtxView<'_> = graph.into();
-    let known = opt::analyze_known_bits(view)?;
-    Ok(opt::classify_anchor_with_rom_and_sp(
+    let view: crate::pattern::RewriteCtxView<'_> = graph.into();
+    let known = crate::opt::analyze_known_bits(view)?;
+    Ok(crate::opt::classify_anchor_with_rom_and_sp(
         view,
         anchor_output,
         link_register_vn,

@@ -130,8 +130,8 @@ impl Default for AnalyzeOptions<'_> {
 /// runs).
 #[derive(Clone)]
 pub struct Strider {
-    pub(super) calling_convention: crate::BuiltCallingConvention,
-    pub(crate) arch: crate::SleighArch,
+    pub(super) calling_convention: target::BuiltCallingConvention,
+    pub(crate) arch: target::SleighArch,
     /// Cached `SleighRegs` table from Strider construction.  Used by the
     /// CallOther per-op-ABI dispatch in `IrStrider::handle_call_other`
     /// to resolve `CallOtherAbi::implicit_reads`/`implicit_writes` register
@@ -153,9 +153,9 @@ impl Strider {
     /// `calling_convention` (including the stack pointer) does not resolve
     /// against `sleigh_regs`.
     pub fn new(
-        arch: crate::SleighArch,
+        arch: target::SleighArch,
         sleigh_regs: rsleigh::SleighRegs,
-        calling_convention: crate::CallingConvention,
+        calling_convention: target::CallingConvention,
     ) -> Result<Self> {
         let built_calling_convention = calling_convention.build(&sleigh_regs)?;
         Ok(Self {
@@ -167,36 +167,36 @@ impl Strider {
 
     /// Returns the resolved calling convention this Strider was built with.
     #[must_use]
-    pub fn calling_convention(&self) -> &crate::BuiltCallingConvention {
+    pub fn calling_convention(&self) -> &target::BuiltCallingConvention {
         &self.calling_convention
     }
 
     /// Builds an optimizer pipeline containing the default passes plus the
     /// convention-aware stack-argument passes:
     ///
-    /// 1. All passes from [`opt::default_pipeline`] (constant folding,
+    /// 1. All passes from [`crate::opt::default_pipeline`] (constant folding,
     ///    known-bits, flag-cmp canonicalisation, if-cond inversion,
     ///    redundant-phi, dead-branch).
-    /// 2. [`opt::StackStoreDetect`] inside the fixed-point loop, using the
+    /// 2. [`crate::opt::StackStoreDetect`] inside the fixed-point loop, using the
     ///    convention's stack-pointer varnode.
-    /// 3. [`opt::CallStackArgCollect`] as a post-pass (runs once after
+    /// 3. [`crate::opt::CallStackArgCollect`] as a post-pass (runs once after
     ///    convergence), using the convention's positional stack-arg offsets.
-    /// 4. [`opt::FunctionArgDetect`] as a post-pass, canonicalising
+    /// 4. [`crate::opt::FunctionArgDetect`] as a post-pass, canonicalising
     ///    register- and stack-passed argument reads into `FunctionArg` nodes.
     #[must_use]
-    pub fn build_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
-        let mut p = opt::default_pipeline();
-        p.add(opt::StackStoreDetect::from_convention(
+    pub fn build_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
+        let mut p = crate::opt::default_pipeline();
+        p.add(crate::opt::StackStoreDetect::from_convention(
             &self.calling_convention,
         ));
-        p.add(opt::StackLoadForward::from_convention(
+        p.add(crate::opt::StackLoadForward::from_convention(
             &self.calling_convention,
             &self.arch,
         ));
-        p.add_post_pass(opt::CallStackArgCollect::from_convention(
+        p.add_post_pass(crate::opt::CallStackArgCollect::from_convention(
             &self.calling_convention,
         ));
-        p.add_post_pass(opt::FunctionArgDetect::from_convention(
+        p.add_post_pass(crate::opt::FunctionArgDetect::from_convention(
             &self.calling_convention,
         ));
         p
@@ -208,22 +208,22 @@ impl Strider {
     /// Composed of passes whose rewrites survive a later iteration that
     /// adds new phi inputs.  Inherits `ConstantFold`, `KnownBits`,
     /// `FlagCmpCanonicalize`, and `IfCondInversion` from
-    /// `opt::stable_default_pipeline()`, then adds `StackStoreDetect`,
+    /// `crate::opt::stable_default_pipeline()`, then adds `StackStoreDetect`,
     /// `StackLoadForward`, and the `FunctionArgDetect` post-pass.  The
     /// destructive passes (`RedundantPhis` / `DeadBranchElimination`)
     /// are deferred to the final iteration because they remove nodes
     /// that the orchestrator's per-iteration index pins.
     #[must_use]
-    pub fn build_stable_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
-        let mut p = opt::stable_default_pipeline();
-        p.add(opt::StackStoreDetect::from_convention(
+    pub fn build_stable_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
+        let mut p = crate::opt::stable_default_pipeline();
+        p.add(crate::opt::StackStoreDetect::from_convention(
             &self.calling_convention,
         ));
-        p.add(opt::StackLoadForward::from_convention(
+        p.add(crate::opt::StackLoadForward::from_convention(
             &self.calling_convention,
             &self.arch,
         ));
-        p.add_post_pass(opt::FunctionArgDetect::from_convention(
+        p.add_post_pass(crate::opt::FunctionArgDetect::from_convention(
             &self.calling_convention,
         ));
         p
@@ -238,9 +238,9 @@ impl Strider {
     /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
     /// is now done at construction time in `target::call_other_abi::classify`.
     #[must_use]
-    pub fn build_destructive_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
-        let mut p = opt::destructive_default_pipeline();
-        p.add_post_pass(opt::CallStackArgCollect::from_convention(
+    pub fn build_destructive_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
+        let mut p = crate::opt::destructive_default_pipeline();
+        p.add_post_pass(crate::opt::CallStackArgCollect::from_convention(
             &self.calling_convention,
         ));
         p
@@ -604,12 +604,12 @@ mod tests {
     fn display_summarises_unresolved_branches_and_region_count() {
         // Standard x86_64 `ret` byte sequence.  No `BranchIndirect`, so
         // `unresolved_branches.len() == 0`.
-        let arch = crate::SleighArch::x86_64();
+        let arch = target::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
         let strider = crate::Strider::new(
             arch,
             regs,
-            crate::CallingConvention::x86_64_systemv(),
+            target::CallingConvention::x86_64_systemv(),
         )
         .expect("strider");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
