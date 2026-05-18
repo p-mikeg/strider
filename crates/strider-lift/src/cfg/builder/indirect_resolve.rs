@@ -17,7 +17,7 @@
 //! 2. Read the current `NodeOutputId` of `target_vn` and emit a
 //!    `Return(target_value)` so the value is reachable from the entry.
 //! 3. Run `ConstantFold + KnownBits + RedundantPhis` (and optionally
-//!    [`opt::LoadReadOnly`] when the caller passes a [`ReadOnlyMemory`])
+//!    [`strider_analyze::opt::LoadReadOnly`] when the caller passes a [`ReadOnlyMemory`])
 //!    over the resulting [`strider_ir::BuiltFunctionGraph`].
 //! 4. Inspect the producer of the post-fold target value:
 //!    - `IntConst(k)` → [`ResolvedTargets::Single(k as u64)`].
@@ -41,24 +41,24 @@
 //!
 //! This cfg-time mini-graph resolver only ever returns `Single` /
 //! `LinkRegister` / `None` — never `Multiple`.  The IR-level
-//! resolver in `opt::indirect_branch_resolve` (jump-table arm,
+//! resolver in `strider_analyze::opt::indirect_branch_resolve` (jump-table arm,
 //! stack-array arm) is the path that constructs
 //! [`ResolvedTargets::Multiple`], routed through the strider
 //! orchestrator's indirect-branch fixed-point loop after the stable
 //! optimiser pipeline runs.
 
-use opt::ReadOnlyMemory;
+use strider_analyze::opt::ReadOnlyMemory;
 
 use crate::cfg::types::RegionInstruction;
 use crate::cfg::Result;
 
-/// Re-export of the canonical [`opt::ResolvedTargets`].  Kept under the
+/// Re-export of the canonical [`strider_analyze::opt::ResolvedTargets`].  Kept under the
 /// `cfg::ResolvedTargets` path so the strider orchestrator can build
 /// `known_targets` maps without importing both crates' types — the
 /// enum is defined in `opt` because cfg → opt is the workspace dep
 /// direction (cfg's mini-graph runs the opt pipeline) and a reverse
 /// dep would form a cycle.
-pub use opt::ResolvedTargets;
+pub use strider_analyze::opt::ResolvedTargets;
 
 /// Resolves the target of a `BranchIndirect` against `region_insns`.
 ///
@@ -82,7 +82,7 @@ pub use opt::ResolvedTargets;
 /// register; in that case the LinkRegister classification is impossible
 /// and the resolver falls through to the unresolved-error path.
 ///
-/// `rom` enables [`opt::LoadReadOnly`] inside the mini-graph's
+/// `rom` enables [`strider_analyze::opt::LoadReadOnly`] inside the mini-graph's
 /// optimizer pipeline so that loads from the binary's `.rodata` /
 /// `.text` resolve to constants.  `None` skips the pass.
 ///
@@ -325,15 +325,15 @@ fn build_resolver_mini_graph<R: rsleigh::MemReader>(
 /// than `VarPhi(lr_vn)` — without `RedundantPhis` collapsing the
 /// trivial single-predecessor phi back to its `InitialVar` input, the
 /// `bx lr` shape never resolves.
-fn make_resolver_pipeline() -> opt::OptimizerPipeline {
-    let mut pipeline = opt::OptimizerPipeline::new();
-    pipeline.add(opt::ConstantFold);
-    pipeline.add(opt::KnownBits);
-    pipeline.add(opt::RedundantPhis);
+fn make_resolver_pipeline() -> strider_analyze::opt::OptimizerPipeline {
+    let mut pipeline = strider_analyze::opt::OptimizerPipeline::new();
+    pipeline.add(strider_analyze::opt::ConstantFold);
+    pipeline.add(strider_analyze::opt::KnownBits);
+    pipeline.add(strider_analyze::opt::RedundantPhis);
     pipeline
 }
 
-/// Inlined equivalent of [`opt::LoadReadOnly::optimize`] that
+/// Inlined equivalent of [`strider_analyze::opt::LoadReadOnly::optimize`] that
 /// takes a borrowed `&dyn ReadOnlyMemory` instead of an owned
 /// `M: 'static`.
 ///
@@ -345,7 +345,7 @@ fn make_resolver_pipeline() -> opt::OptimizerPipeline {
 /// the pipeline stores passes as `Box<dyn OptimizerRaw + 'static>`.  The
 /// resolver's `rom` is borrowed for an arbitrary (non-'static)
 /// lifetime so it can't be wrapped in `LoadReadOnly` and registered
-/// directly.  Must stay in lockstep with `opt::LoadReadOnly`'s impl
+/// directly.  Must stay in lockstep with `strider_analyze::opt::LoadReadOnly`'s impl
 /// — `crates/opt/src/load_readonly/tests.rs` covers the shared
 /// behaviour.
 fn resolve_const_loads(
@@ -432,7 +432,7 @@ pub mod test_api {
     use super::{build_resolver_mini_graph, resolve_indirect_target};
     use crate::cfg::types::RegionInstruction;
     use crate::cfg::Result;
-    use opt::ReadOnlyMemory;
+    use strider_analyze::opt::ReadOnlyMemory;
 
     pub use super::ResolvedTargets;
 

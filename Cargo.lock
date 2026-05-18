@@ -755,15 +755,11 @@ name = "opt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cranelift-entity",
  "criterion",
- "entity-utils",
- "ethnum",
  "ir",
  "pattern",
  "rsleigh",
- "rustc-hash",
- "smallvec",
+ "strider-analyze",
  "strider-ir",
  "target",
 ]
@@ -1362,8 +1358,17 @@ dependencies = [
 name = "strider-analyze"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "cranelift-entity",
+ "entity-utils",
+ "ethnum",
+ "ir",
+ "pattern",
+ "rsleigh",
+ "rustc-hash",
+ "smallvec",
  "strider-ir",
- "strider-lift",
+ "target",
 ]
 
 [[package]]
@@ -1392,11 +1397,11 @@ dependencies = [
  "dot",
  "graphwalk",
  "object",
- "opt",
  "petgraph",
  "reader",
  "rsleigh",
  "rustc-hash",
+ "strider-analyze",
  "strider-ir",
  "target",
 ]

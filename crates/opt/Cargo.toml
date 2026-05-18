@@ -4,21 +4,16 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-ir.workspace = true
-strider-ir.workspace = true
-pattern.workspace = true
-rsleigh.workspace = true
-target.workspace = true
-entity-utils.workspace = true
-anyhow.workspace = true
-cranelift-entity.workspace = true
-ethnum.workspace = true
-rustc-hash = "2"
-smallvec.workspace = true
+strider-analyze = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
 ir = { workspace = true, features = ["test-utils"] }
+strider-ir = { workspace = true }
+rsleigh = { workspace = true }
+target = { workspace = true }
+pattern = { workspace = true }
+anyhow = { workspace = true }
 
 [[bench]]
 name = "constant_fold"

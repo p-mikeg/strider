@@ -5,8 +5,24 @@ edition.workspace = true
 
 [dependencies]
 strider-ir = { workspace = true }
-strider-lift = { workspace = true }
-# other deps added as modules absorb
+# NOTE: no strider-lift dep here.  The TEMPORARY back-edge from strider-lift to
+# strider-analyze (cfg's mini-IR resolver pulls in opt; see strider-lift/Cargo.toml)
+# makes them mutually dependent in cargo terms.  Phase 3.1+ moves the resolver
+# out of cfg and lifts strider-analyze cleanly above strider-lift.
+# Absorbed from `opt` (Phase 3 Task 3.0).
+ir.workspace = true
+pattern.workspace = true
+rsleigh.workspace = true
+target.workspace = true
+entity-utils.workspace = true
+anyhow.workspace = true
+cranelift-entity.workspace = true
+ethnum.workspace = true
+rustc-hash = "2"
+smallvec.workspace = true
+
+[dev-dependencies]
+ir = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

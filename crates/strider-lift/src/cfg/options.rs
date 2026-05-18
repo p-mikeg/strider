@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use opt::ReadOnlyMemory;
+use strider_analyze::opt::ReadOnlyMemory;
 
 use crate::cfg::builder::ResolvedTargets;
 use crate::cfg::types::PcodeInsnAddr;

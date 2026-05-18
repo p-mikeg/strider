@@ -287,7 +287,7 @@ pub mod test_api {
     pub use crate::cfg::options::Options;
     pub use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
 
-    use opt::ReadOnlyMemory;
+    use strider_analyze::opt::ReadOnlyMemory;
     use std::sync::Arc;
 
     /// Reads back `Options::link_register_vn` so tests can pin the
