@@ -9,12 +9,12 @@
 //! always reading and writing through the largest containing register
 //! and inserting bit-shift / mask operations for sub-register slices.
 
-use ir::{ExtendOp, IntBinaryOp};
+use strider_ir::{ExtendOp, IntBinaryOp};
 
 use anyhow::{anyhow, bail};
 
-use crate::Result;
-use crate::ValueLifter;
+use crate::pcode_lift::Result;
+use crate::pcode_lift::ValueLifter;
 
 /// Returns a bitmask that covers all bits for a varnode's width in bytes.
 ///
@@ -65,7 +65,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Returns an error when the varnode lives in an unsupported address
     /// space, has an unsupported size, or the IR builder rejects the
     /// resulting node.
-    pub fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<ir::Value> {
+    pub fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
         let default_code_space = self.sleigh.default_code_space();
         let space = vn.addr_space;
         match space {
@@ -102,7 +102,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Returns an error when the varnode lives in an unsupported or
     /// non-writable address space, has an unsupported size, or the IR
     /// builder rejects the resulting node.
-    pub fn write_vn(&mut self, vn: &rsleigh::Vn, val: ir::Value) -> Result<()> {
+    pub fn write_vn(&mut self, vn: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
         let default_code_space = self.sleigh.default_code_space();
         let space = vn.addr_space;
         match space {
@@ -193,8 +193,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         container_reg: &rsleigh::Vn,
     ) -> u64 {
         match self.endianness {
-            target::Endianness::Little => 8 * (reg.addr_off - container_reg.addr_off),
-            target::Endianness::Big => {
+            crate::target::Endianness::Little => 8 * (reg.addr_off - container_reg.addr_off),
+            crate::target::Endianness::Big => {
                 8 * (container_reg.size as u64
                     - reg.size as u64
                     - (reg.addr_off - container_reg.addr_off))
@@ -208,7 +208,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// the container register and inserts a right-shift to extract the
     /// relevant bits.  If `reg` is already the container (or is its own
     /// largest container) the value is returned directly.
-    pub(crate) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<ir::Value> {
+    pub(crate) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<strider_ir::Value> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         let curr_reg_val = self.builder.read_variable(&container_reg)?;
         if container_reg == *reg {
@@ -236,7 +236,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // container width, which breaks downstream type-aware operations
         // (e.g. CastToFloat(F32) on a U64 input cannot lower to a clean
         // IntBitsToFloat and the optimizer ends up dropping the chain).
-        let reg_ty: ir::ValueType = reg.size.try_into()?;
+        let reg_ty: strider_ir::ValueType = reg.size.try_into()?;
         let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
         // Defensive bound: any shift ≥ container_bits is undefined per the
         // IR's `ShiftRight` semantics (the lifted shift would silently wrap
@@ -291,7 +291,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// container.
     ///
     /// If `reg` is equal to its own container the write is direct.
-    pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) -> Result<()> {
+    pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
             // Coerce `val` to reg's declared integer type before storing.
@@ -304,7 +304,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             // ConstantFold bitcast-extend rules
             // (`IntBitsToFloat(FloatBitsToInt(x)) → x`) clean up the
             // round-trip when both sides match.
-            let reg_ty: ir::ValueType = reg.size.try_into()?;
+            let reg_ty: strider_ir::ValueType = reg.size.try_into()?;
             let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
             return self.builder.write_variable(reg, coerced);
         }
@@ -318,7 +318,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 container_reg,
             ));
         }
-        let container_ty: ir::ValueType = container_reg.size.try_into()?;
+        let container_ty: strider_ir::ValueType = container_reg.size.try_into()?;
         let container_reg_val = self.builder.read_variable(&container_reg)?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
         // Defensive bound — see read_reg_vn for the rationale.

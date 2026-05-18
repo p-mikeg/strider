@@ -4,13 +4,13 @@
 //! pcode opcode (or family of related opcodes) onto IR builder calls.
 //! The top-level dispatch lives in [`lift`].
 
-use ir::{
+use strider_ir::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
 };
 use rsleigh::Opcode;
 
-use crate::{Result, ValueLifter};
+use crate::pcode_lift::{Result, ValueLifter};
 
 mod arithmetic;
 mod boolean;

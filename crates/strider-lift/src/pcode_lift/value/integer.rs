@@ -5,16 +5,16 @@
 //! [`super::arithmetic`].  Slice/extract/insert/popcount/etc. live in
 //! [`super::cast`].
 
-use ir::ExtendOp;
+use strider_ir::ExtendOp;
 
-use crate::Result;
-use crate::ValueLifter;
+use crate::pcode_lift::Result;
+use crate::pcode_lift::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a p-code `Copy` instruction.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         self.write_vn(out_vn, input)
     }
 
@@ -22,7 +22,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// extend node and writes the result to the output varnode.
     pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self
             .builder
             .extend_if_needed(input, out_vn.size.try_into()?, op)?;

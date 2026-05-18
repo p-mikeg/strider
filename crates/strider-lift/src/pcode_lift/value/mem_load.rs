@@ -3,14 +3,14 @@
 //! `Store` lives in strider — it advances the memory chain in a way the
 //! value lifter doesn't model.
 
-use crate::ValueLifter;
-use crate::Result;
+use crate::pcode_lift::ValueLifter;
+use crate::pcode_lift::Result;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let space = crate::decode_space_id(insn)?;
+        let space = crate::pcode_lift::decode_space_id(insn)?;
         let addr = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self
             .builder
             .build_load(addr, space, out_vn.size.try_into()?)?;

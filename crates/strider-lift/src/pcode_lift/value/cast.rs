@@ -2,13 +2,13 @@
 //! `Subpiece`, `Popcount`, `Lzcount`, `Piece`, `Extract`, `Insert`,
 //! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
 
-use ir::node::NodeOutputType;
-use ir::IntBinaryOp;
+use strider_ir::node::NodeOutputType;
+use strider_ir::IntBinaryOp;
 
 use anyhow::bail;
 
-use crate::Result;
-use crate::ValueLifter;
+use crate::pcode_lift::Result;
+use crate::pcode_lift::ValueLifter;
 
 /// Asserts that a varnode `vn` lives in CONST space.  Sleigh encodes the
 /// "this is a literal constant value" varnode by setting `addr_space ==
@@ -42,7 +42,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// GHIDRA docs: "semantically equivalent to a COPY operation".
     pub(super) fn handle_cast(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         self.write_vn(out_vn, input)
     }
 
@@ -64,7 +64,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             );
         }
         let input = self.read_vn(input_vn)?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let shifted = if byte_offset == 0 {
             input
         } else {
@@ -88,7 +88,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self
             .builder
             .build_popcount(input, out_vn.size.try_into()?)?;
@@ -97,7 +97,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self.builder.build_lzcount(input, out_vn.size.try_into()?)?;
         self.write_vn(out_vn, out)
     }
@@ -107,7 +107,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // Lowered to: Or(ShiftLeft(ZeroExtend(hi), lo_bits), ZeroExtend(lo)).
         let hi_vn = &insn.inputs[0];
         let lo_vn = &insn.inputs[1];
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         // Sleigh's Piece contract: `hi.size + lo.size == out.size`.  A
         // malformed spec emitting an unbalanced Piece would silently drop
         // or duplicate bits since the lowering uses `hi.shift_by(lo.bits)`
@@ -159,7 +159,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let input = self.read_vn(&insn.inputs[0])?;
         let lsb = insn.inputs[1].addr_off as u8;
         let len = insn.inputs[2].addr_off as u8;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let narrow_ty: NodeOutputType = out_vn.size.try_into()?;
         let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
         let x_int = self.builder.convert_to_int_if_needed(input, x_nat_ty)?;
@@ -209,7 +209,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let src = self.read_vn(&insn.inputs[1])?;
         let lsb = insn.inputs[2].addr_off as u8;
         let len = insn.inputs[3].addr_off as u8;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty: NodeOutputType = out_vn.size.try_into()?;
 
         let dest_ty = self.builder.get_output_type(dest)?.to_natural_int_type();
@@ -274,8 +274,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let base = self.read_vn(&insn.inputs[0])?;
         let index = self.read_vn(&insn.inputs[1])?;
         let elem_size = insn.inputs[2].addr_off;
-        let out_vn = crate::require_output_vn(insn)?;
-        let out_ty: ir::ValueType = out_vn.size.try_into()?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let out_ty: strider_ir::ValueType = out_vn.size.try_into()?;
         let elem_const = self.builder.build_int_const(elem_size, out_ty)?;
         let scaled = self.builder.build_int_binary_operation(
             index,
@@ -299,11 +299,11 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_ptr_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let base = self.read_vn(&insn.inputs[0])?;
         let index = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty = out_vn.size.try_into()?;
         let neg_index = self.builder.build_int_unary_operation(
             index,
-            ir::IntUnaryOp::Neg,
+            strider_ir::IntUnaryOp::Neg,
             out_ty,
         )?;
         let out = self.builder.build_int_binary_operation(

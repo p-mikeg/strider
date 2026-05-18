@@ -7,11 +7,11 @@
 //! float ↔ integer conversions (`FloatInt2Float`, `FloatFloat2Float`,
 //! `FloatTrunc`).
 
-use ir::node::NodeOutputType;
-use ir::{BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
+use strider_ir::node::NodeOutputType;
+use strider_ir::{BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
-use crate::Result;
-use crate::ValueLifter;
+use crate::pcode_lift::Result;
+use crate::pcode_lift::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Maps a varnode byte size to the corresponding float [`NodeOutputType`].
@@ -25,7 +25,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn write_float_to_vn(
         &mut self,
         vn: &rsleigh::Vn,
-        float_val: ir::Value,
+        float_val: strider_ir::Value,
     ) -> Result<()> {
         let int_ty: NodeOutputType = vn.size.try_into()?;
         let int_val = self.builder.build_float_bits_to_int(float_val, int_ty)?;
@@ -43,7 +43,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
         let result = self.builder.build_float_binary_op(lhs, rhs, op, float_ty)?;
         self.write_float_to_vn(out_vn, result)
@@ -56,7 +56,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         op: FloatUnaryOp,
     ) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
         let result = self.builder.build_float_unary_op(input, op, float_ty)?;
         self.write_float_to_vn(out_vn, result)
@@ -70,14 +70,14 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let result = self.builder.build_float_cmp_op(lhs, rhs, op)?;
         self.write_vn(out_vn, result)
     }
 
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         // `is_nan(x)` ≡ `x != x` (IEEE 754: NaN ≠ NaN).  Since
         // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
         // lift to `BoolNeg(FloatEqual)`), build the lowered shape
@@ -99,7 +99,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_float_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
         let neg_rhs = self.builder.build_float_unary_op(rhs, FloatUnaryOp::Neg, float_ty)?;
         let result = self.builder.build_float_binary_op(lhs, neg_rhs, FloatBinaryOp::Add, float_ty)?;
@@ -115,7 +115,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_float_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
         let result = self.builder.build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
         self.write_vn(out_vn, result)
@@ -132,7 +132,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_float_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let lt = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
         let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
         let result = self.builder.build_boolean_operation(lt, eq, BoolBinaryOp::Or)?;
@@ -141,7 +141,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     pub(super) fn handle_float_int_to_float(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let raw_input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
         // build_int_to_float requires an integer-typed input.  Register reads
         // are always int-typed (write_float_to_vn round-trips through
@@ -159,7 +159,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     pub(super) fn handle_float_float_to_float(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let raw_input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_float_ty = Self::float_type_from_vn(out_vn)?;
         // build_float_to_float requires a float-typed input.  Register reads
         // are int-typed, so cast first via the input's natural float width
@@ -174,7 +174,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     pub(super) fn handle_float_trunc(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let raw_input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let int_ty: NodeOutputType = out_vn.size.try_into()?;
         // build_float_to_int requires float input.  Cast first via the
         // input's natural float width.

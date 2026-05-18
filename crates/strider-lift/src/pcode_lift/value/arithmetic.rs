@@ -18,10 +18,10 @@
 //! handlers live in [`super::cast`] (they manipulate bit positions
 //! rather than computing arithmetic).
 
-use ir::{BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::Result;
-use crate::ValueLifter;
+use crate::pcode_lift::Result;
+use crate::pcode_lift::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a p-code integer unary instruction into an IR unary node and
@@ -32,7 +32,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         op: IntUnaryOp,
     ) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self
             .builder
             .build_int_unary_operation(input, op, out_vn.size.try_into()?)?;
@@ -48,7 +48,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self
             .builder
             .build_int_binary_operation(lhs, rhs, op, out_vn.size.try_into()?)?;
@@ -64,7 +64,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out =
             self.builder
                 .build_int_cmp_operation(lhs, rhs, op, insn.inputs[0].size.try_into()?)?;
@@ -81,7 +81,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let eq = self.builder.build_int_cmp_operation(
             lhs,
             rhs,
@@ -103,7 +103,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_int_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let lt = self.builder.build_int_cmp_operation(
             rhs,
             lhs,
@@ -124,7 +124,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_int_sless_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let lt = self.builder.build_int_cmp_operation(
             rhs,
             lhs,
@@ -151,7 +151,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_int_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::require_output_vn(insn)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty = out_vn.size.try_into()?;
         // Sleigh's `IntSub` requires `inputs[0].size == inputs[1].size ==
         // output.size`.  Surface a mismatch as a lift-time error rather
