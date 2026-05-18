@@ -62,6 +62,9 @@ mod if_cond_inversion;
 pub mod if_cond_inversion_egg;
 pub mod indirect_branch_resolve;
 mod known_bits;
+// Phase 3 Task 3.4 — egg-based KnownBits parity rewriter (alongside
+// the imperative one; not yet wired into the production pipeline).
+pub mod known_bits_egg;
 mod load_readonly;
 mod redundant_phis;
 pub mod stack_load_forward;
