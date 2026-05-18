@@ -13,6 +13,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use ir::node::NodeOutputType;
+use ir::test_utils::SENTINEL_LIFT_ADDR;
 use ir::{FunctionBuilder, IntBinaryOp};
 use pattern::{add, boxed_rule, int_const, rewrite_rule, sub, var, Capture};
 
@@ -29,8 +30,10 @@ fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let v = b.build_int_const(k, NodeOutputType::U64).unwrap();
     b.build_return(Some(v), &[]).unwrap();
+    b.set_lift_addr(None);
     b.build().unwrap()
 }
 
@@ -45,12 +48,14 @@ fn add_x_plus_zero(x: u64) -> ir::BuiltFunctionGraph {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let lhs = b.build_int_const(x, NodeOutputType::U64).unwrap();
     let rhs = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
     let sum = b
         .build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U64)
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
+    b.set_lift_addr(None);
     b.build().unwrap()
 }
 
@@ -70,6 +75,7 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> ir::BuiltFunctionGraph {
     let region = bd.create_region().unwrap();
     bd.set_entry_region(region).unwrap();
     bd.set_region(region);
+    bd.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let ac = bd.build_int_const(a, NodeOutputType::U64).unwrap();
     let bc = bd.build_int_const(b, NodeOutputType::U64).unwrap();
     let z0 = bd.build_int_const(0u64, NodeOutputType::U64).unwrap();
@@ -83,6 +89,7 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> ir::BuiltFunctionGraph {
         .build_int_sub(lhs, rhs, NodeOutputType::U64)
         .unwrap();
     bd.build_return(Some(diff), &[]).unwrap();
+    bd.set_lift_addr(None);
     bd.build().unwrap()
 }
 
