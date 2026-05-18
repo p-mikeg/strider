@@ -1359,6 +1359,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strider-analyze"
+version = "0.1.0"
+dependencies = [
+ "strider-ir",
+ "strider-lift",
+]
+
+[[package]]
 name = "strider-ir"
 version = "0.1.0"
 dependencies = [
