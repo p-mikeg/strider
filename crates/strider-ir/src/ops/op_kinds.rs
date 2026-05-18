@@ -1,5 +1,5 @@
 /// Binary operations on boolean (`Bool`) values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BoolBinaryOp {
     /// Logical exclusive-or: `a ^ b`.
     Xor,
@@ -10,14 +10,14 @@ pub enum BoolBinaryOp {
 }
 
 /// Unary operations on boolean (`Bool`) values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BoolUnaryOp {
     /// Logical negation: `!a`.
     Neg,
 }
 
 /// How to fill the bits produced by a widening integer extension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExtendOp {
     /// Fill new high bits with zero.
     ZeroExtend,
@@ -26,7 +26,7 @@ pub enum ExtendOp {
 }
 
 /// Comparison operations that produce a `Bool` from two integer operands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntCmpOp {
     /// Unsigned equality: `l == r`.
     Equal,
@@ -58,7 +58,7 @@ pub enum IntCmpOp {
 /// `IntSub(a, b)` at lift time to `Add(a, IntUnaryOp::Neg(b))`.  Patterns
 /// and passes see one canonical form for subtraction; the
 /// `pattern::sub(a, b)` ergonomic alias produces the lowered shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntBinaryOp {
     /// Wrapping addition: `l + r`.
     Add,
@@ -96,7 +96,7 @@ pub enum IntBinaryOp {
 /// `-x`.  See the `pcode_lift` crate's dispatch site for the rsleigh →
 /// IR mapping.  (`pcode_lift` is a separate crate, not under
 /// `crate::*` — the older `[`crate::pcode_lift`]` doc-link was broken.)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntUnaryOp {
     /// Bitwise complement: `~x` (every bit flipped).  Lifted from
     /// rsleigh's `IntNeg` opcode despite the name mismatch.
@@ -112,7 +112,7 @@ pub enum IntUnaryOp {
 /// time to `FloatAdd(a, FloatUnaryOp::Neg(b))`.  IEEE 754 guarantees the
 /// bit-pattern result matches `FloatSub` exactly (negation flips the sign
 /// bit on all values, including NaN/inf).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatBinaryOp {
     /// Floating-point addition: `l + r`.
     Add,
@@ -123,7 +123,7 @@ pub enum FloatBinaryOp {
 }
 
 /// Unary operations on floating-point values that produce a float result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatUnaryOp {
     /// Floating-point negation: `-x`.
     Neg,
@@ -149,7 +149,7 @@ pub enum FloatUnaryOp {
 /// - `FloatLessEqual(a, b)` → `Or(FloatLess(a, b), FloatEqual(a, b))`
 ///   (NaN-aware: cannot use `BoolNeg(Less(b, a))` because that would
 ///   return true for NaN, while IEEE `<=` returns false).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatCmpOp {
     /// IEEE 754 equality: `l == r` (false if either is NaN).
     Equal,

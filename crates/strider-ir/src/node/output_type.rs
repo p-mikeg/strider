@@ -5,7 +5,7 @@
 /// Integer variants correspond directly to their C-style unsigned integer
 /// widths.  `Bool` is a 1-bit logical value.  `F32`/`F64` are IEEE 754
 /// floating-point types whose raw bit patterns are stored as `u64`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NodeOutputType {
     Bool,
     U8,
