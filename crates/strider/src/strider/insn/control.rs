@@ -341,6 +341,7 @@ mod tests {
 
     use super::*;
     use ir::node::NodeKind;
+    use ir::test_utils::SENTINEL_LIFT_ADDR;
     use ir::FunctionBuilder;
 
     /// Build a 4-byte register VN to act as the `idx` source.
@@ -364,6 +365,7 @@ mod tests {
             .expect("FunctionBuilder::new_raw");
         let dispatch = b.create_region().expect("dispatch region");
         b.set_entry_region(dispatch).expect("set_entry_region");
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let target_regions: Vec<ir::RegionId> = (0..n)
             .map(|_| b.create_region().expect("create target region"))
             .collect();
