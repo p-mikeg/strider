@@ -89,7 +89,7 @@ mod tests {
     use cfg::test_api::ResolvedTargets;
     use ir::FunctionBuilder;
     use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use ir::test_utils::reg_vn as fake_reg_vn;
+    use ir::test_utils::{reg_vn as fake_reg_vn, SENTINEL_LIFT_ADDR};
 
     /// Build a minimal `BuiltFunctionGraph` with one tracked
     /// variable and an empty body region terminated by a Return
@@ -105,10 +105,14 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
+        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let anchor = anchor_inputs(&mut builder);
+        // Re-stamp in case `anchor_inputs` cleared the lift_addr.
+        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         builder
             .build_return(Some(anchor), &[])
             .expect("build_return");
+        builder.set_lift_addr(None);
         let graph = builder.build().expect("build");
         // Re-locate the anchor in the built graph: the build step
         // is a move, but `NodeOutputId` is a stable cranelift-entity
@@ -162,12 +166,14 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
+        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // `read_variable` in the entry region's only predecessor
         // (the function entry) returns the InitialVar.
         let anchor = builder.read_variable(&lr_vn).expect("read_variable(lr)");
         builder
             .build_return(Some(anchor), &[])
             .expect("build_return");
+        builder.set_lift_addr(None);
         let graph = builder.build().expect("build");
 
         // RedundantPhis hasn't run, so the producer might be a
@@ -211,12 +217,14 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
+        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let anchor = builder
             .read_variable(&other_vn)
             .expect("read_variable(other)");
         builder
             .build_return(Some(anchor), &[])
             .expect("build_return");
+        builder.set_lift_addr(None);
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
@@ -251,10 +259,12 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
+        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let anchor = builder.read_variable(&lr_vn).expect("read_variable(lr)");
         builder
             .build_return(Some(anchor), &[])
             .expect("build_return");
+        builder.set_lift_addr(None);
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
@@ -295,6 +305,7 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
+        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
         // Build all per-predecessor IntConst nodes; remember their
         // output ids so we can wire them into the ValuePhi below.
@@ -309,6 +320,7 @@ mod tests {
         // entry, so it can have any shape we want.
         let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
+        builder.set_lift_addr(None);
         let mut graph = builder.build().expect("build");
 
         // Synthesise a fake phi-token node.  VarPhi nodes
@@ -380,10 +392,12 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
+        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let const_out = builder.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
         let var_out = builder.read_variable(&other_vn).expect("read_variable");
         let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
+        builder.set_lift_addr(None);
         let mut graph = builder.build().expect("build");
         let fake_token_node = graph.graph.create_node(
             NodeKind::VarPhi(rsleigh::Vn {
