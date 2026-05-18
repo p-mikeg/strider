@@ -1,6 +1,7 @@
 use std::sync::LazyLock;
 
 use anyhow::{anyhow, Result};
+use strider_lift::region_driver::RegionDriver;
 
 use super::IrStrider;
 
@@ -381,7 +382,13 @@ impl Strider {
                 .insns
                 .last()
                 .map(|wrapped| wrapped.addr.machine_addr_u64());
-            ir_strider.builder.set_lift_addr(term_addr);
+            // Per-terminator funnel: same asm-fingerprint attribution
+            // pattern as `process_insn`, factored through
+            // `RegionDriver` (Phase 2 Task 2.5).  `term_addr` may be
+            // `None` when the region has zero pcode insns (e.g. empty
+            // Branch regions produced by the bounded-lift
+            // CondBranch-OOB collapse); the funnel accepts `Option<u64>`.
+            RegionDriver::set_lift_addr(&mut ir_strider.builder, term_addr);
             let term_res = (|| -> Result<()> {
                 match special_terminator {
                     Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
@@ -403,7 +410,7 @@ impl Strider {
                 }
                 Ok(())
             })();
-            ir_strider.builder.set_lift_addr(None);
+            RegionDriver::clear_lift_addr(&mut ir_strider.builder);
             term_res?;
         }
 

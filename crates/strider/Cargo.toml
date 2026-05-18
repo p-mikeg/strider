@@ -14,6 +14,7 @@ cfg.workspace = true
 opt.workspace = true
 pcode-lift.workspace = true
 pattern.workspace = true
+strider-lift.workspace = true
 reader.workspace = true
 object.workspace = true
 

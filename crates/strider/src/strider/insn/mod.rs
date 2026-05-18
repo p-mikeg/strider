@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use ir::node::NodeOutputType;
 use rsleigh::Opcode;
+use strider_lift::region_driver::RegionDriver;
 
 use super::IrStrider;
 
@@ -24,26 +25,21 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     where
         F: Fn(cfg::RegionId) -> Result<ir::RegionId>,
     {
-        // Set the asm-fingerprint attribution context for every node the
-        // builder will produce while handling this pcode insn — value-lifter
-        // path, control-flow handlers, store, call, etc.  Cleared on the
-        // way out so region-setup helpers (e.g. fallthrough wiring) stay
-        // unattributed.  This is the single funnel where every IR node
-        // born from a pcode insn picks up its parent machine-instruction
-        // address; later optimisation passes only ever absorb fingerprints,
-        // never set them.
-        //
-        // We can't use `FunctionBuilder::lift_at` here because the inner
-        // method also borrows the rest of `self` (cfg / strider / vn-cache).
-        // The manual `set_lift_addr(Some) … set_lift_addr(None)` pair is
-        // fine in practice because `process_insn_inner` returns a Result
-        // the caller propagates — the only way the post-clear is skipped
-        // is a panic, and Sleigh / IR builder errors all surface as typed
-        // `Result::Err` from this path.
+        // Funnel: every IR node born from this pcode insn picks up the
+        // parent machine-instruction address in its asm-fingerprint
+        // side-table.  The `set_lift_addr` / `clear_lift_addr` pair
+        // lives in `strider_lift::region_driver::RegionDriver` (Phase 2
+        // Task 2.5 of the v2 rewrite) so the funnel can be reused from
+        // the per-terminator handler in `pipeline.rs` and any future
+        // Salsa-side lift driver.  We can't use a closure-passing API
+        // directly because `process_insn_inner` also borrows `self.cfg`
+        // / `self.strider`, which sits next to `self.builder` inside
+        // `IrStrider` — splitting into open-call brackets sidesteps the
+        // borrow.
         let machine_addr = addr.machine_addr_u64();
-        self.builder.set_lift_addr(Some(machine_addr));
+        RegionDriver::set_lift_addr(&mut self.builder, Some(machine_addr));
         let res = self.process_insn_inner(region_id, insn, region_lookup);
-        self.builder.set_lift_addr(None);
+        RegionDriver::clear_lift_addr(&mut self.builder);
         res
     }
 

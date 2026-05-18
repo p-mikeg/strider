@@ -1353,6 +1353,7 @@ dependencies = [
  "reader",
  "rsleigh",
  "serde",
+ "strider-lift",
  "target",
  "thiserror 2.0.18",
 ]

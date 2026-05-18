@@ -16,6 +16,7 @@ pub mod target;
 pub mod pcode_lift;
 pub mod cfg;
 pub mod lifter;
+pub mod region_driver;
 
 /// Test-only re-exports for the absorbed `cfg` module, mirroring the
 /// original `cfg` crate's `test_api` flat surface so integration tests
