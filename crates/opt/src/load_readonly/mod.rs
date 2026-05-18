@@ -1,5 +1,5 @@
 use ir::node::NodeKind;
-use reader::ReadOnlyMemory;
+use strider_ir::ReadOnlyMemory;
 
 use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::worklist::WorkSet;
@@ -12,15 +12,15 @@ use crate::worklist::WorkSet;
 /// # Memory-space contract
 ///
 /// The pass forwards the `Load`'s [`rsleigh::VnSpace`] to
-/// [`ReadOnlyMemory::read`][reader::ReadOnlyMemory::read] verbatim and trusts
-/// the impl to discriminate.  A rom that returns `Some(_)` for an unrelated
-/// space (e.g. a `Load(REGISTER, …)` request answered from rodata bytes)
-/// would produce wrong constants — implementations of `ReadOnlyMemory` MUST
-/// return `None` for any space they do not back.
+/// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] verbatim and
+/// trusts the impl to discriminate.  A rom that returns `Some(_)` for an
+/// unrelated space (e.g. a `Load(REGISTER, …)` request answered from rodata
+/// bytes) would produce wrong constants — implementations of
+/// `ReadOnlyMemory` MUST return `None` for any space they do not back.
 ///
 /// # Endianness
 ///
-/// [`ReadOnlyMemory::read`][reader::ReadOnlyMemory::read] returns a `u64`
+/// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] returns a `u64`
 /// that already represents the target's *numeric* value — the impl is
 /// responsible for byte-swapping according to the target's endianness
 /// (see `reader::ElfFileMemReader`'s `read` for an LE/BE example). This
@@ -32,7 +32,7 @@ use crate::worklist::WorkSet;
 ///
 /// ```rust
 /// use opt::{LoadReadOnly, OptimizerPipeline};
-/// use reader::ReadOnlyMemory;
+/// use strider_ir::ReadOnlyMemory;
 ///
 /// struct MyRom;
 /// impl ReadOnlyMemory for MyRom {

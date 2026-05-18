@@ -69,6 +69,8 @@ mod iterators;
 mod node_signature;
 mod ops;
 mod region;
+pub mod read_only_memory;
+pub use read_only_memory::ReadOnlyMemory;
 #[cfg(any(feature = "test-utils", test))]
 pub mod test_helpers;
 #[cfg(any(feature = "test-utils", test))]

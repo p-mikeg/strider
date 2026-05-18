@@ -3,8 +3,9 @@
 //! The crate provides:
 //!   * Generic region-based memory storage ([`MemRegion`],
 //!     [`MemRegionsLookupTable`]) that any reader backend can compose.
-//!   * The [`ReadOnlyMemory`] trait used by the optimizer's `LoadReadOnly`
-//!     pass to resolve compile-time-constant loads.
+//!   * A re-export of the [`ReadOnlyMemory`] trait (defined in
+//!     `strider-ir`) used by the optimizer's `LoadReadOnly` pass to resolve
+//!     compile-time-constant loads.
 //!   * An ELF backend in the [`elf`] module that implements both
 //!     [`rsleigh::MemReader`] (for Sleigh instruction fetch) and
 //!     [`ReadOnlyMemory`] from the same underlying regions.
@@ -67,36 +68,13 @@ impl From<anyhow::Error> for MemReadError {
 // Send + Sync + 'static`.
 
 // ── ReadOnlyMemory trait ──────────────────────────────────────────────────────
-
-/// Provides read access to a statically-known region of memory (e.g. a
-/// binary's `.rodata` or `.text` section).
-///
-/// The optimizer uses this trait to resolve `Load` nodes whose address is a
-/// compile-time constant into the corresponding constant values, eliminating
-/// the load entirely.
-pub trait ReadOnlyMemory: Send + Sync {
-    /// Returns the value at `addr` in `space` as an unsigned integer of `size`
-    /// bytes, or `None` if the address is not part of read-only memory or the
-    /// read cannot be satisfied.
-    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64>;
-}
-
-// Blanket impls so any `Arc<T>` / `Box<T>` whose inner type implements
-// `ReadOnlyMemory` is itself a `ReadOnlyMemory`.  Lets callers wrap a
-// shared rom in an `Arc` (or own one in a `Box`) and feed it directly
-// to the optimizer's `LoadReadOnly` pass without inlining a custom
-// load-folder for each call site.
-impl<T: ?Sized + ReadOnlyMemory> ReadOnlyMemory for std::sync::Arc<T> {
-    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
-        (**self).read(space, addr, size)
-    }
-}
-
-impl<T: ?Sized + ReadOnlyMemory> ReadOnlyMemory for Box<T> {
-    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
-        (**self).read(space, addr, size)
-    }
-}
+//
+// The trait itself lives in `strider-ir` so the optimizer crates can depend
+// on it without back-edging through `reader` / `strider-binary` (V6 fix —
+// Phase 1 Task 1.3b).  Re-exported here for backwards compatibility; the
+// concrete `ElfFileMemReader` impl in `elf.rs` continues to implement
+// `strider_ir::ReadOnlyMemory` under the alias `crate::ReadOnlyMemory`.
+pub use strider_ir::ReadOnlyMemory;
 
 // ── MemRegion ─────────────────────────────────────────────────────────────────
 

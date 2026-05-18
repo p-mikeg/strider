@@ -712,10 +712,10 @@ dependencies = [
  "ethnum",
  "ir",
  "pattern",
- "reader",
  "rsleigh",
  "rustc-hash",
  "smallvec",
+ "strider-ir",
  "target",
 ]
 
@@ -1021,6 +1021,7 @@ dependencies = [
  "anyhow",
  "object",
  "rsleigh",
+ "strider-ir",
  "tempfile",
 ]
 

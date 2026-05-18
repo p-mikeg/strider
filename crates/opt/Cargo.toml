@@ -5,8 +5,8 @@ edition.workspace = true
 
 [dependencies]
 ir.workspace = true
+strider-ir.workspace = true
 pattern.workspace = true
-reader.workspace = true
 rsleigh.workspace = true
 target.workspace = true
 entity-utils.workspace = true
