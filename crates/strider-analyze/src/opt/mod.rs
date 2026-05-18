@@ -69,6 +69,8 @@ mod load_readonly;
 mod redundant_phis;
 pub mod stack_load_forward;
 mod stack_store;
+// Phase 3 Task 3.5a — egg-based StackStoreDetect parity rewriter.
+pub mod stack_store_detect_egg;
 #[cfg(test)]
 mod test_support;
 
