@@ -5,10 +5,12 @@ edition.workspace = true
 
 [dependencies]
 strider-ir = { workspace = true }
-# NOTE: no strider-lift dep here.  The TEMPORARY back-edge from strider-lift to
-# strider-analyze (cfg's mini-IR resolver pulls in opt; see strider-lift/Cargo.toml)
-# makes them mutually dependent in cargo terms.  Phase 3.1+ moves the resolver
-# out of cfg and lifts strider-analyze cleanly above strider-lift.
+# strider-lift forward dep (Phase 3 Task 3.1): the cfg-time mini-IR
+# indirect-resolver implementation lives here as a concrete
+# `IndirectTargetResolver` impl (see src/indirect_resolver.rs).  The
+# previous TEMPORARY back-edge from strider-lift to strider-analyze was
+# severed by the callback trait extraction in Task 3.1.
+strider-lift = { workspace = true }
 # Absorbed from `opt` (Phase 3 Task 3.0).
 ir.workspace = true
 rsleigh.workspace = true
@@ -25,6 +27,9 @@ bitflags = "2"
 
 [dev-dependencies]
 ir = { workspace = true, features = ["test-utils"] }
+# Indirect-resolver tests (moved from cfg/tests/ in Phase 3 Task 3.1)
+# need to drive the mini-IR via real Sleigh + types from cfg.
+cfg = { workspace = true }
 
 [lints]
 workspace = true

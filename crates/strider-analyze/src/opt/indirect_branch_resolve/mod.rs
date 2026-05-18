@@ -19,10 +19,12 @@
 //!
 //! ## Where [`ResolvedTargets`] lives
 //!
-//! Defined here in `opt` and re-exported as `cfg::ResolvedTargets`.
-//! `cfg` already depends on `opt` (cfg's `indirect_resolve` mini-graph
-//! runs the opt pipeline), so opt is the upstream crate where the type
-//! must live; the reverse direction would form a dep cycle.
+//! Defined in `strider_lift::cfg::builder::indirect_resolver` (the
+//! lowest layer that needs the enum: it's the return type of the
+//! [`strider_lift::cfg::IndirectTargetResolver`] callback the cfg
+//! builder hands to its installed resolver).  Re-exported here so
+//! pre-existing call sites that import `opt::ResolvedTargets` keep
+//! working.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -53,63 +55,11 @@ pub use inplace::{apply_link_register, apply_tail_call};
 pub use jump_table::classify_jump_table;
 pub use stack_array::classify_stack_array;
 
-/// The set of statically-known targets of a single `BranchIndirect`.
-///
-/// The classifier's verdict on a placeholder anchor.  Re-exported from
-/// `cfg` so callers that build `known_targets` maps for
-/// `cfg::Builder::with_known_targets` use the same type the
-/// classifier returns.
-///
-/// ## Variants
-///
-/// - [`Self::LinkRegister`] — the indirect branch is a return-via-LR
-///   (typical on ARM/AArch64 with `bx lr`).  In-place edit: append the
-///   ABI ret-val regs to the placeholder Return and we're done.
-/// - [`Self::Single`] — the indirect branch resolves to exactly one
-///   constant target.  In-place edit possible iff the target is a
-///   tail call (out of function range); otherwise the orchestrator
-///   does a CFG rebuild.
-/// - [`Self::Multiple`] — the indirect branch resolves to a known set
-///   of constant targets (jump table).  Always requires a CFG rebuild;
-///   the orchestrator handles these.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResolvedTargets {
-    /// The indirect branch dispatches to the link register's
-    /// caller-provided value (i.e. a function return via LR).
-    LinkRegister,
-    /// The indirect branch resolves to exactly one constant target.
-    Single(u64),
-    /// The indirect branch resolves to a known set of constant
-    /// targets.  Sorted-deduplicated by the classifier.
-    ///
-    /// **Invariant:** the inner `Vec` must be **non-empty**.  An
-    /// empty `Multiple` would silently advertise zero runtime targets,
-    /// making the dispatch site appear unreachable.  Use
-    /// [`Self::multiple`] for the validating constructor that
-    /// rejects empty input — the existing `Multiple(targets)`
-    /// tuple-construct form is retained for pattern-matching and
-    /// for callers that have already established non-emptiness.
-    Multiple(Vec<u64>),
-}
-
-impl ResolvedTargets {
-    /// Validating constructor for [`Self::Multiple`].  Returns `None`
-    /// for an empty `targets` slice so a future arm cannot silently
-    /// produce an unreachable dispatch site.  The classifier arms
-    /// (jump-table, stack-array, ValuePhi) already check
-    /// `targets.is_empty()` and return `None` instead of constructing
-    /// an empty `Multiple`; this constructor codifies the contract for
-    /// any future arm.  Emptiness is a programmer invariant violation,
-    /// not a recoverable runtime condition, so `Option` is the
-    /// idiomatic carrier.
-    #[must_use]
-    pub fn multiple(targets: Vec<u64>) -> Option<Self> {
-        if targets.is_empty() {
-            return None;
-        }
-        Some(Self::Multiple(targets))
-    }
-}
+/// Re-export of the canonical [`ResolvedTargets`] enum, which now lives
+/// in `strider-lift` so the cfg builder's
+/// [`strider_lift::cfg::IndirectTargetResolver`] callback can return it
+/// without forming a dep cycle.
+pub use strider_lift::cfg::ResolvedTargets;
 
 /// Per-anchor calling-convention snapshot consumed by the in-place
 /// editors ([`apply_link_register`] / [`apply_tail_call`]).  The

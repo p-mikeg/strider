@@ -452,8 +452,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             self.builder.options.known_targets.get(&addr).cloned()
         {
             Some(cached)
-        } else {
-            super::indirect_resolve::resolve_indirect_target(
+        } else if let Some(resolver) = self.builder.indirect_resolver.as_ref() {
+            resolver.resolve(
                 &self.insns,
                 target_vn,
                 &self.builder.sleigh,
@@ -461,6 +461,14 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 self.builder.options.read_only_memory.as_deref(),
                 self.builder.endianness,
             )?
+        } else {
+            // No resolver installed → treat every unresolved
+            // `BranchIndirect` as deferred.  Callers (the strider
+            // orchestrator, the example binary) that need indirect
+            // resolution must install
+            // `strider_analyze::indirect_resolver::MiniIrIndirectResolver`
+            // via [`crate::cfg::Builder::with_indirect_resolver`].
+            None
         };
         // None means "I can't classify this from the current region's
         // pcode alone" — defer to the strider outer loop, which runs
@@ -476,10 +484,10 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             return Ok(ProcessInsnRes::FinishedProcessing);
         };
         match resolved {
-            super::indirect_resolve::ResolvedTargets::LinkRegister => {
+            super::ResolvedTargets::LinkRegister => {
                 self.finish_current_region(RegionTerminator::Return)?;
             }
-            super::indirect_resolve::ResolvedTargets::Single(target) => {
+            super::ResolvedTargets::Single(target) => {
                 let target_addr = PcodeInsnAddr::at_machine_start(target);
                 // `_nocheck` is sufficient: `at_machine_start` pins
                 // `insn_index == 0`, so the validating variant has
@@ -490,7 +498,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     self.is_branch_tail_call_nocheck(target_addr),
                 )?;
             }
-            super::indirect_resolve::ResolvedTargets::Multiple(targets) => {
+            super::ResolvedTargets::Multiple(targets) => {
                 // `Multiple` is exclusively an IR-level indirect-branch
                 // resolver feedback shape; the cfg-time mini-graph
                 // resolver only ever returns Single / LinkRegister / None.

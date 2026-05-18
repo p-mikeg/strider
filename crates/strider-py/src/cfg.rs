@@ -50,7 +50,15 @@ pub fn build_cfg(
     // preset.  (`Builder::new` was deleted in round 12 W5c — it used
     // to default to `X86_64` and silently mis-classified arch-specific
     // user-ops on non-x86 targets.)
+    //
+    // Install the strider-analyze mini-IR resolver so the cfg-time
+    // resolver classifies `BranchIndirect` rather than deferring every
+    // site via `UnresolvedIndirectBranch`.  Phase 3 Task 3.1.
+    let resolver: std::sync::Arc<
+        dyn cfg::IndirectTargetResolver<AnyMemReader>,
+    > = std::sync::Arc::new(opt::indirect_resolver::MiniIrIndirectResolver);
     let built = cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
+        .with_indirect_resolver(resolver)
         .build()
         .map_err(into_lift_err)?;
 

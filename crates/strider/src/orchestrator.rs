@@ -955,9 +955,19 @@ where
     // CallOther dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the
     // wrong preset and silently misclassified or rejected; those ctors were
     // deleted in round 12 W5c — `for_arch` is now the only public path.
+    //
+    // Install the strider-analyze mini-IR resolver (Phase 3 Task 3.1):
+    // without it, the cfg builder treats every `BranchIndirect` as
+    // deferred via `UnresolvedIndirectBranch`.  The resolver is
+    // stateless so a single static `Arc` would suffice; we allocate
+    // per-call for clarity since CFG rebuilds are rare.
+    let resolver: std::sync::Arc<
+        dyn cfg::IndirectTargetResolver<R>,
+    > = std::sync::Arc::new(opt::indirect_resolver::MiniIrIndirectResolver);
     let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.as_u64(), cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())
+        .with_indirect_resolver(resolver)
         .build()?;
 
     // Vn cache: scan only the regions added since the previous

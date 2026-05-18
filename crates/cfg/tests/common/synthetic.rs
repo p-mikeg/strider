@@ -70,6 +70,19 @@ pub fn make_builder_with_bytes(bytes: Vec<u8>, start_addr: u64) -> Builder<TestR
         start_addr,
         OptionsBuilder::new().build(),
     )
+    .with_indirect_resolver(test_indirect_resolver())
+}
+
+/// Returns the canonical mini-IR indirect-branch resolver (a stateless
+/// unit struct) wrapped in an `Arc<dyn IndirectTargetResolver<_>>`.
+/// Use this in any test that builds a `Cfg` and expects cfg-time
+/// indirect-branch resolution to fire — without it, the builder treats
+/// every `BranchIndirect` as deferred via
+/// `UnresolvedIndirectBranch`.  Phase 3 Task 3.1.
+#[must_use]
+pub fn test_indirect_resolver(
+) -> std::sync::Arc<dyn cfg::IndirectTargetResolver<TestReader>> {
+    std::sync::Arc::new(opt::indirect_resolver::MiniIrIndirectResolver)
 }
 
 /// Minimal dummy pcode instruction (no inputs/outputs, opcode = `Copy`).

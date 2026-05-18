@@ -15,6 +15,7 @@
 mod common;
 use common::{
     addr, jmp_rax_bytes, make_builder_with_bytes, make_region_builder, make_sleigh_with_bytes,
+    test_indirect_resolver,
 };
 
 use cfg::test_api::{self, ProcessInsnRes, Region};
@@ -86,6 +87,7 @@ fn branch_indirect_to_in_range_const_produces_branch_terminator() {
         base,
         opts,
     )
+        .with_indirect_resolver(test_indirect_resolver())
         .build()
         .expect("Builder::build");
 
@@ -124,6 +126,7 @@ fn branch_indirect_to_out_of_range_const_produces_tail_call_terminator() {
         base,
         opts,
     )
+        .with_indirect_resolver(test_indirect_resolver())
         .build()
         .expect("Builder::build");
 
@@ -167,6 +170,9 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
     let opts = OptionsBuilder::new().set_link_register(lr).build();
     let arm = target::SleighArch::arm();
     let cfg = Builder::for_arch(&arm, sleigh, base, opts)
+        .with_indirect_resolver(std::sync::Arc::new(
+            opt::indirect_resolver::MiniIrIndirectResolver,
+        ))
         .build()
         .expect("Builder::build");
 
@@ -205,6 +211,7 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
         base,
         opts,
     )
+        .with_indirect_resolver(test_indirect_resolver())
         .build()
         .expect("cfg build defers unresolved branches instead of erroring");
 
@@ -343,6 +350,7 @@ fn resolvable_branch_indirect_does_not_produce_unresolved_terminator() {
         base,
         opts,
     )
+        .with_indirect_resolver(test_indirect_resolver())
         .build()
         .expect("Builder::build");
     let entry = &cfg.graph()[cfg.entry()];
@@ -382,6 +390,7 @@ fn branch_indirect_inside_split_region_resolves_correctly() {
         base,
         opts,
     )
+        .with_indirect_resolver(test_indirect_resolver())
         .build()
         .expect("Builder::build for split");
 

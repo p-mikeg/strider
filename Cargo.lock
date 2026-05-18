@@ -1358,6 +1358,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags",
+ "cfg",
  "cranelift-entity",
  "entity-utils",
  "ethnum",
@@ -1366,6 +1367,7 @@ dependencies = [
  "rustc-hash",
  "smallvec",
  "strider-ir",
+ "strider-lift",
  "target",
  "thiserror 2.0.18",
 ]
@@ -1400,7 +1402,6 @@ dependencies = [
  "reader",
  "rsleigh",
  "rustc-hash",
- "strider-analyze",
  "strider-ir",
  "target",
 ]

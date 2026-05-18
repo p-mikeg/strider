@@ -1,17 +1,16 @@
-mod indirect_resolve;
+mod indirect_resolver;
 mod region_builder;
 mod split;
 
 #[doc(hidden)]
-pub use indirect_resolve::test_api as indirect_resolve_test_api;
-#[doc(hidden)]
 pub use region_builder::test_api as region_builder_test_api;
 
-pub use indirect_resolve::ResolvedTargets;
+pub use indirect_resolver::{IndirectTargetResolver, ResolvedTargets};
 
 use region_builder::RegionBuilder;
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use petgraph::graph::NodeIndex;
 
@@ -80,6 +79,14 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// consults it before invoking Sleigh's decoder.  The cache must be
     /// scoped to a single Sleigh context (see [`crate::cfg::DecodeCache`]).
     pub(super) decode_cache: Option<crate::cfg::DecodeCache>,
+    /// Optional callback that resolves the target of a `BranchIndirect`
+    /// when no pre-classified entry in `options.known_targets` matches.
+    /// When `None`, the builder treats every unresolved `BranchIndirect`
+    /// as deferred via
+    /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
+    /// Install one with [`Self::with_indirect_resolver`] — the canonical
+    /// implementation is `strider_analyze::indirect_resolver::MiniIrIndirectResolver`.
+    pub(super) indirect_resolver: Option<Arc<dyn IndirectTargetResolver<R>>>,
 }
 
 impl<R: rsleigh::MemReader> Builder<R> {
@@ -106,7 +113,41 @@ impl<R: rsleigh::MemReader> Builder<R> {
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
             decode_cache: None,
+            indirect_resolver: None,
         }
+    }
+
+    /// Installs the [`IndirectTargetResolver`] callback used when the
+    /// builder encounters a `BranchIndirect` that's not pre-classified
+    /// in `options.known_targets`.  Without a resolver, every
+    /// unresolved `BranchIndirect` is deferred via
+    /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
+    /// Callers that want indirect-branch resolution (the strider
+    /// orchestrator, the example binary) must call this with the
+    /// canonical implementation:
+    ///
+    /// ```ignore
+    /// use std::sync::Arc;
+    /// use strider_lift::cfg::Builder;
+    /// use strider_analyze::indirect_resolver::MiniIrIndirectResolver;
+    ///
+    /// let resolver = Arc::new(MiniIrIndirectResolver);
+    /// let cfg = Builder::for_arch(&arch, sleigh, addr, opts)
+    ///     .with_indirect_resolver(resolver)
+    ///     .build()?;
+    /// ```
+    ///
+    /// Inverts the dep direction: the resolver implementation lives
+    /// **above** strider-lift in the v2 layer order, so strider-lift no
+    /// longer needs the `strider-analyze` back-edge that the cfg-time
+    /// mini-IR resolver used to require.
+    #[must_use]
+    pub fn with_indirect_resolver(
+        mut self,
+        resolver: Arc<dyn IndirectTargetResolver<R>>,
+    ) -> Self {
+        self.indirect_resolver = Some(resolver);
+        self
     }
 
     /// Sets the [`crate::target::ArchPreset`] used by the `Opcode::CallOther`
@@ -287,7 +328,7 @@ pub mod test_api {
     pub use crate::cfg::options::Options;
     pub use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
 
-    use strider_analyze::opt::ReadOnlyMemory;
+    use strider_ir::ReadOnlyMemory;
     use std::sync::Arc;
 
     /// Reads back `Options::link_register_vn` so tests can pin the

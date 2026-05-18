@@ -1,14 +1,15 @@
-//! Lazy mini-IR resolver for `BranchIndirect` targets.
+//! Concrete [`IndirectTargetResolver`] implementation that builds a
+//! per-site mini IR and runs the strider-analyze opt pipeline to
+//! classify a `BranchIndirect`'s target.
 //!
-//! When [`crate::cfg::Builder`] encounters a `BranchIndirect` opcode it has two
-//! independent jobs: terminate the current region and decide whether the
-//! branch targets the function's link register (`Return`), an in-range
-//! constant (`Branch` to that address), or an out-of-range constant
-//! (`TailCall { target }`).  This module's [`resolve_indirect_target`]
-//! answers the *target* question.
-//!
-//! The resolver runs **only** on `BranchIndirect` encounter — regions
-//! without a `BranchIndirect` never trigger the work below.
+//! Moved out of `strider-lift::cfg::builder::indirect_resolve` in
+//! Phase 3 Task 3.1 to invert the dep direction (cfg → analyze): the
+//! cfg-time mini-IR resolver had to call into `opt::OptimizerPipeline`
+//! and friends, but that direction is the v2 wrong direction.  The cfg
+//! builder now hands every unresolved `BranchIndirect` to the installed
+//! [`IndirectTargetResolver`] callback (see
+//! [`strider_lift::cfg::Builder::with_indirect_resolver`]); the canonical
+//! implementation is [`MiniIrIndirectResolver`] below.
 //!
 //! ## Algorithm
 //!
@@ -17,7 +18,7 @@
 //! 2. Read the current `NodeOutputId` of `target_vn` and emit a
 //!    `Return(target_value)` so the value is reachable from the entry.
 //! 3. Run `ConstantFold + KnownBits + RedundantPhis` (and optionally
-//!    [`strider_analyze::opt::LoadReadOnly`] when the caller passes a [`ReadOnlyMemory`])
+//!    [`crate::opt::LoadReadOnly`] when the caller passes a [`strider_ir::ReadOnlyMemory`])
 //!    over the resulting [`strider_ir::BuiltFunctionGraph`].
 //! 4. Inspect the producer of the post-fold target value:
 //!    - `IntConst(k)` → [`ResolvedTargets::Single(k as u64)`].
@@ -25,47 +26,71 @@
 //!      [`ResolvedTargets::LinkRegister`].
 //!    - anything else → `Ok(None)`.  Unclassifiable targets are not
 //!      errors at this layer: callers (region_builder) defer the
-//!      branch via [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`]
-//!      and the strider-level fixed-point loop runs IR-level indirect-branch resolution
-//!      against the optimised IR.  Genuine errors (builder/opt
-//!      failures, malformed graph) still propagate.
-//!
-//! The mini graph never contains calls, branches, or stores — control-flow
-//! opcodes (which make [`crate::pcode_lift::ValueLifter::lift`] return
-//! `Ok(false)`) terminate lifting at the `BranchIndirect` itself.  The
-//! omitted opt passes (`StackStoreDetect`, `CallStackArgCollect`,
-//! `FunctionArgDetect`, …) all assume call/store nodes that we never emit
-//! here, so leaving them out keeps the pipeline minimal.
+//!      branch via [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`]
+//!      and the strider-level fixed-point loop runs IR-level
+//!      indirect-branch resolution against the optimised IR.
 //!
 //! ## Multi-target / jump tables
 //!
 //! This cfg-time mini-graph resolver only ever returns `Single` /
-//! `LinkRegister` / `None` — never `Multiple`.  The IR-level
-//! resolver in `strider_analyze::opt::indirect_branch_resolve` (jump-table arm,
+//! `LinkRegister` / `None` — never `Multiple`.  The IR-level resolver
+//! in `crate::opt::indirect_branch_resolve` (jump-table arm,
 //! stack-array arm) is the path that constructs
 //! [`ResolvedTargets::Multiple`], routed through the strider
 //! orchestrator's indirect-branch fixed-point loop after the stable
 //! optimiser pipeline runs.
 
-use strider_analyze::opt::ReadOnlyMemory;
+use strider_ir::ReadOnlyMemory;
+use strider_lift::cfg::{
+    IndirectTargetResolver, RegionInstruction, ResolvedTargets, Result,
+};
+use strider_lift::target::Endianness;
 
-use crate::cfg::types::RegionInstruction;
-use crate::cfg::Result;
+use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
 
-/// Re-export of the canonical [`strider_analyze::opt::ResolvedTargets`].  Kept under the
-/// `cfg::ResolvedTargets` path so the strider orchestrator can build
-/// `known_targets` maps without importing both crates' types — the
-/// enum is defined in `opt` because cfg → opt is the workspace dep
-/// direction (cfg's mini-graph runs the opt pipeline) and a reverse
-/// dep would form a cycle.
-pub use strider_analyze::opt::ResolvedTargets;
+/// The canonical [`IndirectTargetResolver`] used by the strider
+/// orchestrator and the example binary.  Zero-state: every call to
+/// [`Self::resolve`] builds a fresh mini-IR per site.  Construct via
+/// `MiniIrIndirectResolver::new()` (or the unit-struct literal — `Self`
+/// has no fields).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MiniIrIndirectResolver;
+
+impl MiniIrIndirectResolver {
+    /// Constructs a fresh resolver.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl<R: rsleigh::MemReader> IndirectTargetResolver<R> for MiniIrIndirectResolver {
+    fn resolve(
+        &self,
+        region_insns: &[RegionInstruction],
+        target_vn: rsleigh::Vn,
+        sleigh: &rsleigh::Sleigh<R>,
+        cc_link_register_vn: Option<rsleigh::Vn>,
+        rom: Option<&dyn ReadOnlyMemory>,
+        endianness: Endianness,
+    ) -> Result<Option<ResolvedTargets>> {
+        resolve_indirect_target(
+            region_insns,
+            target_vn,
+            sleigh,
+            cc_link_register_vn,
+            rom,
+            endianness,
+        )
+    }
+}
 
 /// Resolves the target of a `BranchIndirect` against `region_insns`.
 ///
 /// `region_insns` is the *current* region's pcode instructions in
 /// program order, **including the trailing `BranchIndirect`** — the
 /// resolver naturally stops lifting at the first opcode
-/// [`crate::pcode_lift::ValueLifter::lift`] returns `Ok(false)` for, which
+/// `pcode_lift::ValueLifter::lift` returns `Ok(false)` for, which
 /// covers every control-flow / call / store op the caller is responsible
 /// for.
 ///
@@ -74,17 +99,16 @@ pub use strider_analyze::opt::ResolvedTargets;
 /// register being jumped through on a real ISA).
 ///
 /// `cc_link_register_vn` is the calling convention's link register
-/// varnode, as exposed by
-/// [`crate::target::BuiltCallingConvention::link_register_vn`].  When the
-/// resolver finds the target is the function-entry value of this
-/// varnode, it returns [`ResolvedTargets::LinkRegister`].  `None` on
-/// stack-push ISAs (x86, x86_64) where there is no architectural link
-/// register; in that case the LinkRegister classification is impossible
-/// and the resolver falls through to the unresolved-error path.
+/// varnode.  When the resolver finds the target is the function-entry
+/// value of this varnode, it returns [`ResolvedTargets::LinkRegister`].
+/// `None` on stack-push ISAs (x86, x86_64) where there is no
+/// architectural link register; in that case the LinkRegister
+/// classification is impossible and the resolver falls through to the
+/// unresolved-error path.
 ///
-/// `rom` enables [`strider_analyze::opt::LoadReadOnly`] inside the mini-graph's
-/// optimizer pipeline so that loads from the binary's `.rodata` /
-/// `.text` resolve to constants.  `None` skips the pass.
+/// `rom` enables [`crate::opt::LoadReadOnly`]-equivalent folding inside
+/// the mini-graph's optimizer pipeline so that loads from the binary's
+/// `.rodata` / `.text` resolve to constants.  `None` skips the pass.
 ///
 /// # Errors
 ///
@@ -92,16 +116,16 @@ pub use strider_analyze::opt::ResolvedTargets;
 /// or pcode lifting.  Failure to classify the target itself is *not*
 /// an error and returns `Ok(None)` — the caller stamps the offending
 /// pcode address onto a
-/// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`] so the
+/// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] so the
 /// strider-level fixed-point loop can attempt IR-level indirect-branch resolution
 /// against the optimised IR.
-pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
+pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     region_insns: &[RegionInstruction],
     target_vn: rsleigh::Vn,
     sleigh: &rsleigh::Sleigh<R>,
     cc_link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-    endianness: crate::target::Endianness,
+    endianness: Endianness,
 ) -> Result<Option<ResolvedTargets>> {
     let mut fg = build_resolver_mini_graph(
         region_insns,
@@ -114,17 +138,12 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
 
     // If the caller supplied a ReadOnlyMemory, resolve constant-address
     // loads against it and re-run the core fold pipeline so the loaded
-    // constants propagate.  Skip the second pipeline run when the
-    // load-folding step didn't actually fold anything — there's
-    // nothing new for ConstantFold + KnownBits + RedundantPhis to
-    // chew on, so the second sweep would converge in zero rewrites.
-    // Iterate to fixed point: each `resolve_const_loads` sweep folds
-    // every Load whose address is currently constant.  ConstantFold +
-    // KnownBits then propagate the new `IntConst` outputs through any
-    // address-arithmetic chain (e.g. `Add(loaded_const, K)`) so that
-    // chained `Load(Load(const_addr))` shapes resolve in subsequent
-    // sweeps.  closed the prior single-pass
-    // gap that left multi-hop ROM pointer chains unresolved.
+    // constants propagate.  Iterate to fixed point: each
+    // `resolve_const_loads` sweep folds every Load whose address is
+    // currently constant.  ConstantFold + KnownBits then propagate the
+    // new `IntConst` outputs through any address-arithmetic chain (e.g.
+    // `Add(loaded_const, K)`) so that chained `Load(Load(const_addr))`
+    // shapes resolve in subsequent sweeps.
     if let Some(rom) = rom {
         while resolve_const_loads(&mut fg, rom)? {
             make_resolver_pipeline().run_on_built(&mut fg)?;
@@ -157,8 +176,8 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
             // always machine pointers (≤ 64 bits on every supported
             // arch), but a higher-bit constant could in principle slip
             // through — e.g. a 128-bit SIMD register used as a target
-            // VN.  Mask to 64 bits since virtual-address space is 64-bit
-            // and any extra bits are garbage from the resolver's
+            // VN.  Mask to 64 bits since virtual-address space is
+            // 64-bit and any extra bits are garbage from the resolver's
             // perspective.
             #[allow(clippy::cast_possible_truncation)]
             let truncated = k as u64;
@@ -197,12 +216,12 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
 ///
 /// Propagates [`strider_ir::FunctionBuilder::new_raw`], pcode-lift, and
 /// `build_return` / `build` failures.
-fn build_resolver_mini_graph<R: rsleigh::MemReader>(
+pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     region_insns: &[RegionInstruction],
     target_vn: rsleigh::Vn,
     sleigh: &rsleigh::Sleigh<R>,
     cc_link_register_vn: Option<rsleigh::Vn>,
-    endianness: crate::target::Endianness,
+    endianness: Endianness,
 ) -> Result<strider_ir::BuiltFunctionGraph> {
     // Collect every varnode the region touches plus `target_vn` and
     // `cc_link_register_vn` so the IR builder can pre-declare them.
@@ -233,7 +252,7 @@ fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // numbering inside FunctionBuilder is reproducible across runs
     // (HashSet iteration order would otherwise depend on the random
     // hasher seed).
-    all_vns.sort_unstable_by_key(crate::pcode_lift::vn_sort_key);
+    all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
 
     // Stand up a minimal FunctionBuilder.  No calling convention
     // plumbing — `new_raw` with empty arg/callee/ret slices, no stack
@@ -251,14 +270,12 @@ fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // / store opcode the lifter rejects).
     //
     // Each pcode insn's lift is wrapped in a `set_lift_addr` pair
-    // mirroring the per-region driver
-    // (`crates/strider/src/strider/insn/mod.rs:43-46`) so every IR
-    // node produced inherits the parent machine instruction's address
-    // as an asm-fingerprint contributor.  Without this, the Layer-C
-    // fingerprint check (Phase 1 Task 1.4 / G3) flags every lifted
-    // node in the mini-graph.
+    // mirroring the per-region driver so every IR node produced
+    // inherits the parent machine instruction's address as an
+    // asm-fingerprint contributor.  Without this, the Layer-C
+    // fingerprint check flags every lifted node in the mini-graph.
     {
-        let mut lifter = crate::pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
+        let mut lifter = strider_lift::pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
         for ri in region_insns {
             let machine_addr = ri.addr.machine_addr_u64();
             lifter.builder.set_lift_addr(Some(machine_addr));
@@ -284,7 +301,7 @@ fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // first insn's address when the region is degenerate, which only
     // happens in synthetic tests.  Use `0` as a final fallback when
     // the region is fully empty so the Layer-C asm-fingerprint check
-    // (Phase 1 Task 1.4 / G3) on the synthesised Return still passes.
+    // on the synthesised Return still passes.
     let branch_indirect_addr = region_insns
         .last()
         .or_else(|| region_insns.first())
@@ -292,7 +309,7 @@ fn build_resolver_mini_graph<R: rsleigh::MemReader>(
         .unwrap_or(0);
     builder.set_lift_addr(Some(branch_indirect_addr));
     let target_value = {
-        let mut lifter = crate::pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
+        let mut lifter = strider_lift::pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
         lifter.read_vn(&target_vn)?
     };
     builder.build_return(Some(target_value), &[])?;
@@ -315,8 +332,7 @@ fn build_resolver_mini_graph<R: rsleigh::MemReader>(
 /// Builds a fresh fixed-point pipeline of `ConstantFold + KnownBits +
 /// RedundantPhis` — the resolver runs this once initially and again
 /// after the with-rom load-folding pass to propagate any constants
-/// that loads exposed.  Hoisted into a helper so both call sites pin
-/// the same pass set.
+/// that loads exposed.
 ///
 /// `RedundantPhis` IS needed: the mini-graph's lone region has a
 /// single predecessor (the function entry), so the lifter creates
@@ -325,15 +341,15 @@ fn build_resolver_mini_graph<R: rsleigh::MemReader>(
 /// than `VarPhi(lr_vn)` — without `RedundantPhis` collapsing the
 /// trivial single-predecessor phi back to its `InitialVar` input, the
 /// `bx lr` shape never resolves.
-fn make_resolver_pipeline() -> strider_analyze::opt::OptimizerPipeline {
-    let mut pipeline = strider_analyze::opt::OptimizerPipeline::new();
-    pipeline.add(strider_analyze::opt::ConstantFold);
-    pipeline.add(strider_analyze::opt::KnownBits);
-    pipeline.add(strider_analyze::opt::RedundantPhis);
+fn make_resolver_pipeline() -> OptimizerPipeline {
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(KnownBits);
+    pipeline.add(RedundantPhis);
     pipeline
 }
 
-/// Inlined equivalent of [`strider_analyze::opt::LoadReadOnly::optimize`] that
+/// Inlined equivalent of [`crate::opt::LoadReadOnly::optimize`] that
 /// takes a borrowed `&dyn ReadOnlyMemory` instead of an owned
 /// `M: 'static`.
 ///
@@ -345,9 +361,7 @@ fn make_resolver_pipeline() -> strider_analyze::opt::OptimizerPipeline {
 /// the pipeline stores passes as `Box<dyn OptimizerRaw + 'static>`.  The
 /// resolver's `rom` is borrowed for an arbitrary (non-'static)
 /// lifetime so it can't be wrapped in `LoadReadOnly` and registered
-/// directly.  Must stay in lockstep with `strider_analyze::opt::LoadReadOnly`'s impl
-/// — `crates/opt/src/load_readonly/tests.rs` covers the shared
-/// behaviour.
+/// directly.  Must stay in lockstep with [`crate::opt::LoadReadOnly`]'s impl.
 fn resolve_const_loads(
     fg: &mut strider_ir::BuiltFunctionGraph,
     rom: &dyn ReadOnlyMemory,
@@ -386,9 +400,9 @@ fn resolve_const_loads(
         };
         let new_out = fg.graph.make_int_const(masked, ty)?;
         // Absorb the rewritten Load's asm-fingerprint into the new
-        // IntConst so the Layer-C always-on check (Phase 1 Task 1.4 / G3)
-        // sees a non-empty fingerprint on the freshly-introduced constant
-        // even after the cache-hit dedup path.  `make_int_const` is the
+        // IntConst so the Layer-C always-on check sees a non-empty
+        // fingerprint on the freshly-introduced constant even after
+        // the cache-hit dedup path.  `make_int_const` is the
         // low-level `Graph` method and does NOT stamp on its own.
         let new_node = fg.graph.get_node_from_output(new_out);
         let load_node = fg.graph.get_node_from_output(data_out);
@@ -407,9 +421,6 @@ fn resolve_const_loads(
 /// add or remove `Return` nodes, so this is well-defined post-fold.
 /// Zero or more than one Return signals a graph-construction bug in
 /// this module and propagates as an error.
-///
-/// Iterates the full reachable graph; with one Return the early-exit
-/// is immediate after the second hit (which itself indicates a bug).
 fn find_unique_return(fg: &strider_ir::BuiltFunctionGraph) -> Result<strider_ir::node::NodeId> {
     let mut iter = fg.preorder_kind(|k| matches!(k, strider_ir::node::NodeKind::Return));
     let first = iter
@@ -421,70 +432,4 @@ fn find_unique_return(fg: &strider_ir::BuiltFunctionGraph) -> Result<strider_ir:
         ));
     }
     Ok(first)
-}
-
-#[doc(hidden)]
-pub mod test_api {
-    //! Test-only re-export of the resolver so unit tests in
-    //! `crates/cfg/tests/indirect_resolve.rs` can call into it without
-    //! exposing the helper to downstream crates.
-
-    use super::{build_resolver_mini_graph, resolve_indirect_target};
-    use crate::cfg::types::RegionInstruction;
-    use crate::cfg::Result;
-    use strider_analyze::opt::ReadOnlyMemory;
-
-    pub use super::ResolvedTargets;
-
-    /// Test-only forwarder for `super::resolve_indirect_target`.
-    ///
-    /// Returns `Ok(None)` when the resolver cannot classify the
-    /// target; genuine builder / opt errors still propagate via the
-    /// `Result`.
-    ///
-    /// # Errors
-    /// Propagates whatever the underlying resolver returns: builder
-    /// failures, opt failures, malformed pcode-lift inputs.
-    /// Unclassifiable targets surface as `Ok(None)`.
-    pub fn resolve_indirect_target_for_test<R: rsleigh::MemReader>(
-        region_insns: &[RegionInstruction],
-        target_vn: rsleigh::Vn,
-        sleigh: &rsleigh::Sleigh<R>,
-        cc_link_register_vn: Option<rsleigh::Vn>,
-        rom: Option<&dyn ReadOnlyMemory>,
-        endianness: crate::target::Endianness,
-    ) -> Result<Option<ResolvedTargets>> {
-        resolve_indirect_target(
-            region_insns,
-            target_vn,
-            sleigh,
-            cc_link_register_vn,
-            rom,
-            endianness,
-        )
-    }
-
-    /// Test-only forwarder that builds the resolver's mini-IR graph
-    /// (without running the optimizer pipeline) and returns it for
-    /// direct inspection — primarily to assert the Layer-C
-    /// asm-fingerprint invariant (Phase 1 Task 1.4 / G3) that every
-    /// reachable non-exempt node carries a non-empty fingerprint.
-    ///
-    /// # Errors
-    /// Propagates builder / pcode-lift / `build` failures.
-    pub fn build_resolver_mini_graph_for_test<R: rsleigh::MemReader>(
-        region_insns: &[RegionInstruction],
-        target_vn: rsleigh::Vn,
-        sleigh: &rsleigh::Sleigh<R>,
-        cc_link_register_vn: Option<rsleigh::Vn>,
-        endianness: crate::target::Endianness,
-    ) -> Result<strider_ir::BuiltFunctionGraph> {
-        build_resolver_mini_graph(
-            region_insns,
-            target_vn,
-            sleigh,
-            cc_link_register_vn,
-            endianness,
-        )
-    }
 }

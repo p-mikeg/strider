@@ -15,9 +15,6 @@ petgraph.workspace = true
 dot.workspace = true
 graphwalk.workspace = true
 rustc-hash = "2"
-# TEMPORARY: cfg's mini-IR resolver uses strider-analyze::opt. Phase 3.1+
-# inverts this edge (V6 + audit finding G9).
-strider-analyze = { workspace = true }
 
 [dev-dependencies]
 reader.workspace = true

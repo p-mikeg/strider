@@ -1,14 +1,15 @@
-//! Layer-C asm-fingerprint invariant for the cfg indirect-resolver
+//! Layer-C asm-fingerprint invariant for the indirect-resolver
 //! mini-IR (Phase 1 Task 1.4a / Generalization Audit finding G3).
 //!
-//! The cfg indirect-resolver in
-//! `crates/cfg/src/cfg/builder/indirect_resolve.rs` builds a per-site
-//! mini-IR via `ir::FunctionBuilder::new_raw` and lifts the region's
-//! value-producing pcode insns through `pcode_lift::ValueLifter::lift`.
-//! Every IR node born from a pcode insn MUST carry its parent machine
-//! instruction's address as an asm-fingerprint contributor (CLAUDE.md
-//! "Asm-fingerprint side-table" contract: lifted, non-exempt nodes must
-//! have ≥1 fingerprint).
+//! The indirect-resolver in
+//! `crates/strider-analyze/src/indirect_resolver.rs` builds a per-site
+//! mini-IR via `strider_ir::FunctionBuilder::new_raw` and lifts the
+//! region's value-producing pcode insns through
+//! `strider_lift::pcode_lift::ValueLifter::lift`.  Every IR node born
+//! from a pcode insn MUST carry its parent machine instruction's
+//! address as an asm-fingerprint contributor (CLAUDE.md "Asm-fingerprint
+//! side-table" contract: lifted, non-exempt nodes must have ≥1
+//! fingerprint).
 //!
 //! The contract is checked by the validator's opt-in Layer-C check via
 //! `validate_with_options(graph, entry, ValidateOptions { check_asm_fingerprints: true })`.
@@ -17,12 +18,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use cfg::test_api::{
-    MachineInsnAddr, PcodeInsnAddr, RegionInstruction,
-    build_resolver_mini_graph_for_test,
-};
+use cfg::{MachineInsnAddr, PcodeInsnAddr, RegionInstruction};
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
+use strider_analyze::indirect_resolver::build_resolver_mini_graph;
 
 type TestReader = BufMemReader<Vec<u8>>;
 
@@ -84,7 +83,7 @@ fn resolver_mini_ir_passes_layer_c_asm_fingerprint_check() {
         ),
         ri(0x1004, 0, branch_indirect(target)),
     ];
-    let fg = build_resolver_mini_graph_for_test(
+    let fg = build_resolver_mini_graph(
         &region,
         target,
         &sleigh,

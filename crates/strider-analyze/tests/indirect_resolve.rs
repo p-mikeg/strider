@@ -1,4 +1,4 @@
-//! Tests for [`cfg::indirect_resolve_test_api::resolve_indirect_target_for_test`] —
+//! Tests for [`strider_analyze::indirect_resolver::resolve_indirect_target`] —
 //! the lazy mini-IR resolver.
 //!
 //! Each test:
@@ -9,19 +9,17 @@
 //!      or the error variant.
 //!
 //! The resolver lives at
-//! `crates/cfg/src/cfg/builder/indirect_resolve.rs`; the integration
+//! `crates/strider-analyze/src/indirect_resolver.rs`; the integration
 //! between it and `RegionBuilder::process_new_insn` is covered by
-//! `indirect_dispatch.rs`.
+//! `cfg/tests/indirect_dispatch.rs`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use cfg::test_api::{
-    MachineInsnAddr, PcodeInsnAddr, RegionInstruction, ResolvedTargets,
-    resolve_indirect_target_for_test,
-};
-use opt::ReadOnlyMemory;
+use cfg::{MachineInsnAddr, PcodeInsnAddr, RegionInstruction, ResolvedTargets};
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
+use strider_analyze::indirect_resolver::resolve_indirect_target;
+use strider_ir::ReadOnlyMemory;
 
 type TestReader = BufMemReader<Vec<u8>>;
 
@@ -113,7 +111,7 @@ fn resolves_direct_const_to_single() {
         ),
         ri(0x1004, 0, branch_indirect(target)),
     ];
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
@@ -152,7 +150,7 @@ fn resolves_arithmetic_chain_to_single() {
         ),
         ri(0x1008, 0, branch_indirect(target)),
     ];
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
@@ -213,7 +211,7 @@ fn resolves_sub_register_aliasing_to_single() {
         ),
         ri(0x1008, 0, branch_indirect(rax)),
     ];
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         rax,
         &sleigh,
@@ -247,7 +245,7 @@ fn resolves_link_register_to_link_register() {
         addr_off: 0x100, addr_space: VnSpace::REGISTER,
     };
     let region = vec![ri(0x2000, 0, branch_indirect(lr_like))];
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         lr_like,
         &sleigh,
@@ -299,7 +297,7 @@ fn resolves_rodata_load_to_single() {
     let region = lift_region(&mut sleigh, 0x1000, 7);
     let target = find_branch_indirect_target(&region);
     let rom = OneEntryRom;
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
@@ -327,7 +325,7 @@ fn unknown_memory_returns_ok_none() {
     .expect("create x86 Sleigh");
     let region = lift_region(&mut sleigh, 0x1000, 7);
     let target = find_branch_indirect_target(&region);
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
@@ -389,7 +387,7 @@ fn runtime_input_returns_ok_none() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![ri(0x1000, 0, branch_indirect(target))];
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
@@ -409,7 +407,7 @@ fn empty_region_returns_ok_none() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region: Vec<RegionInstruction> = Vec::new();
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
@@ -447,7 +445,7 @@ fn malformed_branch_indirect_returns_ok_none() {
             inputs: vec![].into(),
         },
     )];
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
@@ -471,7 +469,7 @@ fn cfg_time_unresolved_returns_ok_none() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![ri(0x1000, 0, branch_indirect(target))];
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
@@ -504,7 +502,7 @@ fn cfg_time_resolved_const_returns_ok_some_single() {
         ),
         ri(0x1004, 0, branch_indirect(target)),
     ];
-    let res = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target(
         &region,
         target,
         &sleigh,
