@@ -76,7 +76,7 @@ mod endianness_tests {
 }
 
 /// Architecture-preset discriminator used as a key for
-/// [`crate::call_other_abi::classify`].  One variant per [`SleighArch`]
+/// [`crate::target::call_other_abi::classify`].  One variant per [`SleighArch`]
 /// preset constructor — this gives full granularity, so Arm-32 vs
 /// Arm-32 big-endian vs Arm Thumb-mode (which use the same `ARM8` SLA
 /// spec but different `pspec`s and could in principle have different
@@ -123,7 +123,7 @@ pub struct ArchContext {
 /// Pass a `SleighArch` to `Strider::new` (in the `strider` crate) along
 /// with the calling convention to build a strider for that target.  The
 /// calling convention owns the stack-pointer register name (see
-/// [`crate::CallingConvention::build`]) rather than the arch, so that
+/// [`crate::target::CallingConvention::build`]) rather than the arch, so that
 /// `CallingConvention::build` is self-contained and different ABIs on the
 /// same arch can in principle declare different SP registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -152,7 +152,7 @@ impl SleighArch {
     }
 
     /// Read the arch-preset discriminator — used by
-    /// [`crate::call_other_abi::classify`] to dispatch arch-specific user-op
+    /// [`crate::target::call_other_abi::classify`] to dispatch arch-specific user-op
     /// ABIs.  Set by each preset constructor; not user-overridable.
     #[must_use]
     pub fn preset(&self) -> ArchPreset {

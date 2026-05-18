@@ -1,6 +1,6 @@
 use super::*;
 
-fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
+fn regs_for(arch: crate::target::arch::SleighArch) -> rsleigh::SleighRegs {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
     rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .unwrap()
@@ -14,7 +14,7 @@ fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
 struct Case {
     name: &'static str,
     cc: fn() -> CallingConvention,
-    arch: fn() -> crate::arch::SleighArch,
+    arch: fn() -> crate::target::arch::SleighArch,
     arg_count: usize,
     callee_saved_count: usize,
     ret_count: usize,
@@ -29,7 +29,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "x86-64 SysV",
             cc: CallingConvention::x86_64_systemv,
-            arch: crate::arch::SleighArch::x86_64,
+            arch: crate::target::arch::SleighArch::x86_64,
             arg_count: 6,
             callee_saved_count: 6,
             ret_count: 2,
@@ -41,7 +41,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "x86 cdecl",
             cc: CallingConvention::x86_cdecl,
-            arch: crate::arch::SleighArch::x86,
+            arch: crate::target::arch::SleighArch::x86,
             arg_count: 0,
             callee_saved_count: 4,
             ret_count: 2,
@@ -53,7 +53,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "ARM AAPCS",
             cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm,
+            arch: crate::target::arch::SleighArch::arm,
             arg_count: 4,
             callee_saved_count: 9,
             ret_count: 2,
@@ -65,7 +65,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "AArch64 AAPCS64",
             cc: CallingConvention::aarch64_aapcs64,
-            arch: crate::arch::SleighArch::aarch64,
+            arch: crate::target::arch::SleighArch::aarch64,
             arg_count: 8,
             callee_saved_count: 12,
             ret_count: 2,
@@ -77,7 +77,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "MIPS O32 (LE)",
             cc: CallingConvention::mips_o32,
-            arch: crate::arch::SleighArch::mipsle32,
+            arch: crate::target::arch::SleighArch::mipsle32,
             arg_count: 4,
             callee_saved_count: 11,
             ret_count: 2,
@@ -89,7 +89,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "MIPS O32 (BE)",
             cc: CallingConvention::mips_o32,
-            arch: crate::arch::SleighArch::mipsbe32,
+            arch: crate::target::arch::SleighArch::mipsbe32,
             arg_count: 4,
             callee_saved_count: 11,
             ret_count: 2,
@@ -101,7 +101,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "MIPS N64 (LE)",
             cc: CallingConvention::mips_n64,
-            arch: crate::arch::SleighArch::mipsle64,
+            arch: crate::target::arch::SleighArch::mipsle64,
             arg_count: 8,
             callee_saved_count: 11,
             ret_count: 2,
@@ -113,7 +113,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "MIPS N64 (BE)",
             cc: CallingConvention::mips_n64,
-            arch: crate::arch::SleighArch::mipsbe64,
+            arch: crate::target::arch::SleighArch::mipsbe64,
             arg_count: 8,
             callee_saved_count: 11,
             ret_count: 2,
@@ -125,7 +125,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "PowerPC SysV 32 (BE)",
             cc: CallingConvention::powerpc_sysv32,
-            arch: crate::arch::SleighArch::ppc32be,
+            arch: crate::target::arch::SleighArch::ppc32be,
             arg_count: 8,
             callee_saved_count: 19,
             ret_count: 2,
@@ -137,7 +137,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "PowerPC SysV 32 (LE)",
             cc: CallingConvention::powerpc_sysv32,
-            arch: crate::arch::SleighArch::ppc32le,
+            arch: crate::target::arch::SleighArch::ppc32le,
             arg_count: 8,
             callee_saved_count: 19,
             ret_count: 2,
@@ -149,7 +149,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "PowerPC ELFv1 (BE)",
             cc: CallingConvention::powerpc64_elf_v1,
-            arch: crate::arch::SleighArch::ppc64be,
+            arch: crate::target::arch::SleighArch::ppc64be,
             arg_count: 8,
             // r2 + r14..r31 (18) + LR — added LR per
             // CLAUDE.md deliberate-tradeoff (consistent with PPC32).
@@ -163,7 +163,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "PowerPC ELFv2 (LE)",
             cc: CallingConvention::powerpc64_elf_v2,
-            arch: crate::arch::SleighArch::ppc64le,
+            arch: crate::target::arch::SleighArch::ppc64le,
             arg_count: 8,
             // See PowerPC ELFv1 (BE) above.
             callee_saved_count: 20,
@@ -176,7 +176,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "AArch64 AAPCS64 (BE)",
             cc: CallingConvention::aarch64_aapcs64,
-            arch: crate::arch::SleighArch::aarch64be,
+            arch: crate::target::arch::SleighArch::aarch64be,
             arg_count: 8,
             callee_saved_count: 12,
             ret_count: 2,
@@ -188,7 +188,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "ARM AAPCS (Thumb)",
             cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm_thumb,
+            arch: crate::target::arch::SleighArch::arm_thumb,
             arg_count: 4,
             callee_saved_count: 9,
             ret_count: 2,
@@ -200,7 +200,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "ARM AAPCS (BE)",
             cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm_be,
+            arch: crate::target::arch::SleighArch::arm_be,
             arg_count: 4,
             callee_saved_count: 9,
             ret_count: 2,
@@ -220,7 +220,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "x86 Linux kernel (regparm-3)",
             cc: CallingConvention::x86_linux_kernel,
-            arch: crate::arch::SleighArch::x86,
+            arch: crate::target::arch::SleighArch::x86,
             arg_count: 3,            // EAX, EDX, ECX
             callee_saved_count: 4,   // EBX, ESI, EDI, EBP
             ret_count: 2,            // EAX, EDX
@@ -232,7 +232,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "x86 Linux syscall (int 0x80)",
             cc: CallingConvention::x86_linux_syscall,
-            arch: crate::arch::SleighArch::x86,
+            arch: crate::target::arch::SleighArch::x86,
             arg_count: 6,            // EBX, ECX, EDX, ESI, EDI, EBP
             callee_saved_count: 0,   // every cdecl-callee-saved reg is consumed as an arg
             ret_count: 1,            // EAX
@@ -244,7 +244,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "x86_64 Linux syscall",
             cc: CallingConvention::x86_64_linux_syscall,
-            arch: crate::arch::SleighArch::x86_64,
+            arch: crate::target::arch::SleighArch::x86_64,
             arg_count: 6,            // RDI, RSI, RDX, R10, R8, R9
             callee_saved_count: 6,   // unchanged from SysV
             ret_count: 1,            // RAX
@@ -256,7 +256,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "AArch64 Linux syscall",
             cc: CallingConvention::aarch64_linux_syscall,
-            arch: crate::arch::SleighArch::aarch64,
+            arch: crate::target::arch::SleighArch::aarch64,
             arg_count: 6,            // x0..x5
             callee_saved_count: 12,  // unchanged from AAPCS64
             ret_count: 1,            // x0
@@ -268,7 +268,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "ARM Linux syscall",
             cc: CallingConvention::arm_linux_syscall,
-            arch: crate::arch::SleighArch::arm,
+            arch: crate::target::arch::SleighArch::arm,
             arg_count: 7,            // r0..r6
             callee_saved_count: 5,   // r8, r9, r10, r11, lr (r4..r7 stripped)
             ret_count: 1,            // r0
@@ -280,7 +280,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "MIPS Linux syscall (O32)",
             cc: CallingConvention::mips_linux_syscall_o32,
-            arch: crate::arch::SleighArch::mipsle32,
+            arch: crate::target::arch::SleighArch::mipsle32,
             arg_count: 4,            // a0..a3
             callee_saved_count: 11,  // unchanged from O32
             ret_count: 1,            // v0
@@ -292,7 +292,7 @@ fn cases() -> Vec<Case> {
         Case {
             name: "MIPS Linux syscall (N64)",
             cc: CallingConvention::mips_linux_syscall_n64,
-            arch: crate::arch::SleighArch::mipsle64,
+            arch: crate::target::arch::SleighArch::mipsle64,
             arg_count: 6,            // a0..a3, t0..t1 (= $4..$9 in N64)
             callee_saved_count: 11,  // unchanged from N64
             ret_count: 1,            // v0
@@ -450,7 +450,7 @@ fn presets_stack_pointer_and_arg_offsets() {
 /// regardless of architecture.
 #[test]
 fn build_returns_error_for_unknown_register_name() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = regs_for(crate::target::arch::SleighArch::x86_64());
     for bad_name in &["NOTAREG", "", "rax_FAKE"] {
         let cc = CallingConvention {
             stack_ptr_reg_name: "RSP",
@@ -478,7 +478,7 @@ fn build_returns_error_for_unknown_register_name() {
 /// silently succeeding for the remaining valid names.
 #[test]
 fn build_returns_error_even_when_some_names_are_valid() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = regs_for(crate::target::arch::SleighArch::x86_64());
     let cc = CallingConvention {
         stack_ptr_reg_name: "RSP",
         arg_passing_regs: &["RDI", "NOT_A_REG", "RSI"],
@@ -497,7 +497,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
 #[test]
 #[ignore = "diagnostic — uncomment locally to print MIPS register names"]
 fn dump_mips_register_names() {
-    let arch = crate::arch::SleighArch::mipsle32();
+    let arch = crate::target::arch::SleighArch::mipsle32();
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
     let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .unwrap().regs().unwrap();
@@ -520,7 +520,7 @@ fn dump_mips_register_names() {
 struct LinkRegCase {
     name: &'static str,
     cc: fn() -> CallingConvention,
-    arch: fn() -> crate::arch::SleighArch,
+    arch: fn() -> crate::target::arch::SleighArch,
     expected_lr_name: Option<&'static str>,
 }
 
@@ -529,91 +529,91 @@ fn link_reg_cases() -> Vec<LinkRegCase> {
         LinkRegCase {
             name: "ARM AAPCS",
             cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm,
+            arch: crate::target::arch::SleighArch::arm,
             expected_lr_name: Some("lr"),
         },
         LinkRegCase {
             name: "ARM AAPCS (Thumb)",
             cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm_thumb,
+            arch: crate::target::arch::SleighArch::arm_thumb,
             expected_lr_name: Some("lr"),
         },
         LinkRegCase {
             name: "ARM AAPCS (BE)",
             cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm_be,
+            arch: crate::target::arch::SleighArch::arm_be,
             expected_lr_name: Some("lr"),
         },
         LinkRegCase {
             name: "AArch64 AAPCS64",
             cc: CallingConvention::aarch64_aapcs64,
-            arch: crate::arch::SleighArch::aarch64,
+            arch: crate::target::arch::SleighArch::aarch64,
             expected_lr_name: Some("x30"),
         },
         LinkRegCase {
             name: "AArch64 AAPCS64 (BE)",
             cc: CallingConvention::aarch64_aapcs64,
-            arch: crate::arch::SleighArch::aarch64be,
+            arch: crate::target::arch::SleighArch::aarch64be,
             expected_lr_name: Some("x30"),
         },
         LinkRegCase {
             name: "MIPS O32 (LE)",
             cc: CallingConvention::mips_o32,
-            arch: crate::arch::SleighArch::mipsle32,
+            arch: crate::target::arch::SleighArch::mipsle32,
             expected_lr_name: Some("ra"),
         },
         LinkRegCase {
             name: "MIPS O32 (BE)",
             cc: CallingConvention::mips_o32,
-            arch: crate::arch::SleighArch::mipsbe32,
+            arch: crate::target::arch::SleighArch::mipsbe32,
             expected_lr_name: Some("ra"),
         },
         LinkRegCase {
             name: "MIPS N64 (LE)",
             cc: CallingConvention::mips_n64,
-            arch: crate::arch::SleighArch::mipsle64,
+            arch: crate::target::arch::SleighArch::mipsle64,
             expected_lr_name: Some("ra"),
         },
         LinkRegCase {
             name: "MIPS N64 (BE)",
             cc: CallingConvention::mips_n64,
-            arch: crate::arch::SleighArch::mipsbe64,
+            arch: crate::target::arch::SleighArch::mipsbe64,
             expected_lr_name: Some("ra"),
         },
         LinkRegCase {
             name: "PowerPC SysV 32 (BE)",
             cc: CallingConvention::powerpc_sysv32,
-            arch: crate::arch::SleighArch::ppc32be,
+            arch: crate::target::arch::SleighArch::ppc32be,
             expected_lr_name: Some("LR"),
         },
         LinkRegCase {
             name: "PowerPC SysV 32 (LE)",
             cc: CallingConvention::powerpc_sysv32,
-            arch: crate::arch::SleighArch::ppc32le,
+            arch: crate::target::arch::SleighArch::ppc32le,
             expected_lr_name: Some("LR"),
         },
         LinkRegCase {
             name: "PowerPC ELFv1 (BE)",
             cc: CallingConvention::powerpc64_elf_v1,
-            arch: crate::arch::SleighArch::ppc64be,
+            arch: crate::target::arch::SleighArch::ppc64be,
             expected_lr_name: Some("LR"),
         },
         LinkRegCase {
             name: "PowerPC ELFv2 (LE)",
             cc: CallingConvention::powerpc64_elf_v2,
-            arch: crate::arch::SleighArch::ppc64le,
+            arch: crate::target::arch::SleighArch::ppc64le,
             expected_lr_name: Some("LR"),
         },
         LinkRegCase {
             name: "x86-64 SysV",
             cc: CallingConvention::x86_64_systemv,
-            arch: crate::arch::SleighArch::x86_64,
+            arch: crate::target::arch::SleighArch::x86_64,
             expected_lr_name: None,
         },
         LinkRegCase {
             name: "x86 cdecl",
             cc: CallingConvention::x86_cdecl,
-            arch: crate::arch::SleighArch::x86,
+            arch: crate::target::arch::SleighArch::x86,
             expected_lr_name: None,
         },
     ]
@@ -713,7 +713,7 @@ fn link_register_vn_resolves_to_callee_saved_lr() {
 /// own lookup path separate from `regs_to_vns`.
 #[test]
 fn build_returns_error_for_unknown_stack_pointer_name() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = regs_for(crate::target::arch::SleighArch::x86_64());
     let cc = CallingConvention {
         stack_ptr_reg_name: "NOT_A_SP",
         arg_passing_regs: &[],
@@ -737,7 +737,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
 #[test]
 #[ignore = "probe float registers to verify names across architectures — uncomment locally to print results"]
 fn probe_float_regs() {
-fn try_resolve(arch: crate::arch::SleighArch, names: &[&str]) {
+fn try_resolve(arch: crate::target::arch::SleighArch, names: &[&str]) {
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
     let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe).unwrap().regs().unwrap();
     for n in names {
@@ -746,23 +746,23 @@ fn try_resolve(arch: crate::arch::SleighArch, names: &[&str]) {
     }
 }
 println!("=== aarch64 ===");
-try_resolve(crate::arch::SleighArch::aarch64(), &[
+try_resolve(crate::target::arch::SleighArch::aarch64(), &[
     "q0", "q1", "v0", "v1", "d0", "d1", "s0", "s1", "Q0", "V0", "D0", "S0",
 ]);
 println!("=== x86_64 ===");
-try_resolve(crate::arch::SleighArch::x86_64(), &[
+try_resolve(crate::target::arch::SleighArch::x86_64(), &[
     "XMM0", "XMM1", "xmm0", "xmm1", "ST0", "ST1", "st0",
 ]);
 println!("=== arm ===");
-try_resolve(crate::arch::SleighArch::arm(), &[
+try_resolve(crate::target::arch::SleighArch::arm(), &[
     "s0", "s1", "d0", "d1", "S0", "D0",
 ]);
 println!("=== x86 ===");
-try_resolve(crate::arch::SleighArch::x86(), &[
+try_resolve(crate::target::arch::SleighArch::x86(), &[
     "XMM0", "ST0", "st0",
 ]);
 println!("=== mips32le ===");
-try_resolve(crate::arch::SleighArch::mipsle32(), &[
+try_resolve(crate::target::arch::SleighArch::mipsle32(), &[
     "f0", "f1", "f2", "f3", "f12", "F0", "F12",
 ]);
 }

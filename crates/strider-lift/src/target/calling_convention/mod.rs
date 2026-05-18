@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 
-use crate::Result;
+use crate::target::Result;
 
 /// Resolves a single Sleigh register name to its [`rsleigh::Vn`], or returns
 /// an error if the name is not known.  Single source of truth for the
@@ -437,7 +437,7 @@ impl CallingConvention {
     /// all caller state.
     ///
     /// Pair with the per-address override map on
-    /// [`crate::CallingConvention`] consumers (e.g.
+    /// [`crate::target::CallingConvention`] consumers (e.g.
     /// `strider::RunConfig::per_address_ccs`) so the override applies
     /// only to specific Call sites; the function-default CC stays
     /// SystemV.
@@ -477,8 +477,8 @@ impl CallingConvention {
     /// the return address to `lr` rather than pushing it.
     ///
     /// AAPCS64 register conventions are independent of byte order, so this
-    /// preset pairs equally with [`crate::SleighArch::aarch64`] (LE) and
-    /// [`crate::SleighArch::aarch64be`] (BE).
+    /// preset pairs equally with [`crate::target::SleighArch::aarch64`] (LE) and
+    /// [`crate::target::SleighArch::aarch64be`] (BE).
     #[must_use]
     pub fn aarch64_aapcs64() -> CallingConvention {
         CallingConvention {
@@ -516,9 +516,9 @@ impl CallingConvention {
     /// is `0`.
     ///
     /// AAPCS register conventions are independent of byte order, so this
-    /// preset pairs equally with [`crate::SleighArch::arm`] (LE),
-    /// [`crate::SleighArch::arm_be`] (BE), and
-    /// [`crate::SleighArch::arm_thumb`] (Thumb-2).
+    /// preset pairs equally with [`crate::target::SleighArch::arm`] (LE),
+    /// [`crate::target::SleighArch::arm_be`] (BE), and
+    /// [`crate::target::SleighArch::arm_thumb`] (Thumb-2).
     #[must_use]
     pub fn arm_aapcs() -> CallingConvention {
         CallingConvention {
@@ -545,7 +545,7 @@ impl CallingConvention {
     ///
     /// Used by 32-bit MIPS Linux binaries on both LE and BE targets — the ABI
     /// is identical regardless of byte order.  Pairs equally with
-    /// [`crate::SleighArch::mipsle32`] and [`crate::SleighArch::mipsbe32`].
+    /// [`crate::target::SleighArch::mipsle32`] and [`crate::target::SleighArch::mipsbe32`].
     ///
     /// Argument registers: a0, a1, a2, a3 (= r4–r7)
     /// Callee-saved:       s0–s7, s8 (= fp), gp, ra (= r16–r23, r30, r28, r31)

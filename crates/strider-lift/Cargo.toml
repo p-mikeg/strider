@@ -5,7 +5,9 @@ edition.workspace = true
 
 [dependencies]
 strider-ir = { workspace = true }
-# other deps added as modules absorb
+# Absorbed from `target` (Phase 2 Task 2.2).
+rsleigh.workspace = true
+anyhow.workspace = true
 
 [lints]
 workspace = true

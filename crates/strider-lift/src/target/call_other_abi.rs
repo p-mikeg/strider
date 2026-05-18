@@ -58,7 +58,7 @@ pub enum CallOtherClass {
 /// treats `None` as "fall through to today's behaviour" (insn stays in
 /// the region) — the ir layer is the single strict gate.
 #[must_use]
-pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
+pub fn classify(preset: crate::target::ArchPreset, name: &str) -> Option<CallOtherClass> {
     classify_arch_specific(preset, name).or_else(|| classify_arch_independent(name))
 }
 
@@ -73,14 +73,14 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 // defeat the table's per-line property.
 #[allow(clippy::match_same_arms)]
 #[must_use]
-fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
+fn classify_arch_specific(preset: crate::target::ArchPreset, name: &str) -> Option<CallOtherClass> {
     match (preset, name) {
         // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
         // (up to 7), r0 = return value.  See `arch/arm/kernel/entry-common.S`
         // and the EABI variant in `arch/arm/include/uapi/asm/unistd.h`.
         // All three 32-bit ARM presets share this ABI; if Thumb ever
         // needs a different one, split the alternation into separate arms.
-        (crate::ArchPreset::Arm | crate::ArchPreset::ArmBe | crate::ArchPreset::ArmThumb,
+        (crate::target::ArchPreset::Arm | crate::target::ArchPreset::ArmBe | crate::target::ArchPreset::ArmThumb,
          "swi") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
             implicit_writes: &["r0"],
@@ -91,7 +91,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // models per-(arch, INT-vector, OS) syscall conventions.  Without
         // this entry, any x86 lift containing an INT instruction would
         // error with UnknownCallOtherError (e.g. INT3 padding bytes).
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "swi") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: true,
         })),
@@ -101,7 +101,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // the SYSCALL instruction itself (RCX=return rip, R11=rflags).
         // Arch-specific because the register names only resolve on
         // x86_64's Sleigh register table.
-        (crate::ArchPreset::X86_64, "syscall") => Some(CallOtherClass::Call(CallOtherAbi {
+        (crate::target::ArchPreset::X86_64, "syscall") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
             implicit_writes: &["RAX", "RCX", "R11"],
             memory_edge:     true,
@@ -112,7 +112,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // share the convention.  Arch-specific because `x0..x7` only
         // resolve on aarch64's Sleigh register table (arm-32 has
         // `r0..r12`).
-        (crate::ArchPreset::Aarch64 | crate::ArchPreset::Aarch64Be,
+        (crate::target::ArchPreset::Aarch64 | crate::target::ArchPreset::Aarch64Be,
          "CallHyperVisor" | "CallSecureMonitor") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             implicit_writes: &["x0", "x1", "x2", "x3"],
@@ -122,7 +122,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // x86 RDPKRU: ECX must be 0 (read by the op), writes EAX,
         // clears EDX.  Arch-specific because ECX/EAX/EDX are x86's
         // 32-bit register names.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "rdpkru_u32") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["ECX"],
             implicit_writes: &["EAX", "EDX"],
@@ -131,7 +131,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
 
         // x86 RDTSC: no inputs, writes EDX:EAX.  Arch-specific
         // because EAX/EDX are x86 32-bit register names.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "rdtsc") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &["EAX", "EDX"],
@@ -142,7 +142,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // MSR's low 32 bits).  Without the ECX clobber, a pattern
         // reading post-RDTSCP ECX would incorrectly see the pre-call
         // value.  No memory edge: TSC reads don't observe RAM.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "rdtscp") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &["EAX", "EDX", "ECX"],
@@ -154,7 +154,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // so ECX is an explicit pcode arg and the EDX/EAX writes are
         // separate downstream pcode ops.  Nothing implicit; no memory
         // edge (an MSR read doesn't observe RAM).
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "rdmsr") => PURE,
 
         // x86 WRMSR — write model-specific register.  Sleigh emits
@@ -163,21 +163,21 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // operands of upstream ops feeding this CALLOTHER.  Memory
         // edge: a WRMSR can change TSC, FSBASE, etc., so subsequent
         // loads must observe the write.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "wrmsr") => PURE_WITH_MEM_EDGE,
 
         // x86_64 RDFSBASE / RDGSBASE — read FS/GS segment base into a
         // GPR.  Sleigh emits `r32 = readfsbase()` / `r64 = readfsbase()`
         // (destination is the explicit pcode output, no inputs).
         // Nothing implicit; no memory edge.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "readfsbase" | "readgsbase") => PURE,
 
         // WRFSBASE / WRGSBASE — write FS/GS base from a GPR.  Sleigh
         // emits `writefsbase(r64)` (or `zext(r32)`) with the source
         // register as the explicit pcode arg.  Memory edge: subsequent
         // FS:/GS:-based loads depend on the new base.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "writefsbase" | "writegsbase") => PURE_WITH_MEM_EDGE,
 
         // x86_64 MONITOR (0F 01 C8) — sets up address-range monitor.
@@ -187,14 +187,14 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // RAX = linear address to monitor, ECX = extensions (must be 0),
         // EDX = hints (must be 0).  Memory edge: the operation interacts
         // with the cache subsystem and pairs with a subsequent MWAIT.
-        (crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86_64,
          "monitor") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX", "ECX", "EDX"],
             implicit_writes: &[],
             memory_edge:     true,
         })),
         // x86 32-bit MONITOR — same operation, EAX-relative address.
-        (crate::ArchPreset::X86,
+        (crate::target::ArchPreset::X86,
          "monitor") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX", "EDX"],
             implicit_writes: &[],
@@ -204,13 +204,13 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // AMD MONITORX (0F 01 FA) — like MONITOR but available outside
         // CPL 0 with vendor-specific cache hints.  Implicit reads match
         // MONITOR per AMD64 Vol. 3.
-        (crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86_64,
          "monitorx") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX", "ECX", "EDX"],
             implicit_writes: &[],
             memory_edge:     true,
         })),
-        (crate::ArchPreset::X86,
+        (crate::target::ArchPreset::X86,
          "monitorx") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX", "EDX"],
             implicit_writes: &[],
@@ -222,7 +222,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // Vol. 2B §4-44: EAX = hints, ECX = extensions (must be 0).
         // No GPR writes.  Memory edge: serialises with the prior
         // MONITOR's cache-line arming and acts as a memory-order point.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "mwait" | "mwaitx") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX"],
             implicit_writes: &[],
@@ -237,7 +237,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // kernel-context control does not return to its kernel-context
         // caller); a future `ReturnToUserMode` classification could
         // differentiate user-mode trampolines.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "sysret") => NO_RETURN,
 
         // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
@@ -248,7 +248,7 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // forward `%gs:`-loads across the swap.  Analogous to
         // wr{fs,gs}base above.  Arch-specific so it cannot misclassify
         // a non-x86 user-op coincidentally named `swapgs`.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+        (crate::target::ArchPreset::X86 | crate::target::ArchPreset::X86_64,
          "swapgs") => PURE_WITH_MEM_EDGE,
 
         // x86's INT instruction also lifts to "swi" in some Sleigh
@@ -445,7 +445,7 @@ mod tests {
         // promoted to Call so patterns can find them.
         for n in ["setEndianState", "setISAMode"] {
             assert_eq!(
-                classify(crate::ArchPreset::X86_64, n),
+                classify(crate::target::ArchPreset::X86_64, n),
                 Some(CallOtherClass::NoOp),
                 "{n}",
             );
@@ -463,7 +463,7 @@ mod tests {
             "DataMemoryBarrier", "DataSynchronizationBarrier",
             "InstructionSynchronizationBarrier", "DC_CVAC",
         ] {
-            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
+            let class = classify(crate::target::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
@@ -482,7 +482,7 @@ mod tests {
             "ExclusiveMonitorPass", "ExclusiveMonitorsStatus",
             "UnkSytemRegRead", "software_udf",
         ] {
-            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
+            let class = classify(crate::target::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
@@ -497,30 +497,30 @@ mod tests {
         // Previously they lived in `classify_arch_independent` and
         // would have been classified even on ARM/AArch64/MIPS/PowerPC.
         for arch in [
-            crate::ArchPreset::Arm,
-            crate::ArchPreset::ArmBe,
-            crate::ArchPreset::ArmThumb,
-            crate::ArchPreset::Aarch64,
-            crate::ArchPreset::Aarch64Be,
-            crate::ArchPreset::MipsLe32,
-            crate::ArchPreset::MipsBe32,
-            crate::ArchPreset::MipsLe64,
-            crate::ArchPreset::MipsBe64,
-            crate::ArchPreset::Ppc32Le,
-            crate::ArchPreset::Ppc32Be,
-            crate::ArchPreset::Ppc64Le,
-            crate::ArchPreset::Ppc64Be,
+            crate::target::ArchPreset::Arm,
+            crate::target::ArchPreset::ArmBe,
+            crate::target::ArchPreset::ArmThumb,
+            crate::target::ArchPreset::Aarch64,
+            crate::target::ArchPreset::Aarch64Be,
+            crate::target::ArchPreset::MipsLe32,
+            crate::target::ArchPreset::MipsBe32,
+            crate::target::ArchPreset::MipsLe64,
+            crate::target::ArchPreset::MipsBe64,
+            crate::target::ArchPreset::Ppc32Le,
+            crate::target::ArchPreset::Ppc32Be,
+            crate::target::ArchPreset::Ppc64Le,
+            crate::target::ArchPreset::Ppc64Be,
         ] {
             assert_eq!(classify(arch, "sysret"), None, "sysret on {arch:?}");
             assert_eq!(classify(arch, "swapgs"), None, "swapgs on {arch:?}");
         }
         // Still classified on x86 / x86_64.
         assert_eq!(
-            classify(crate::ArchPreset::X86, "sysret"),
+            classify(crate::target::ArchPreset::X86, "sysret"),
             Some(CallOtherClass::NoReturn)
         );
         assert_eq!(
-            classify(crate::ArchPreset::X86_64, "sysret"),
+            classify(crate::target::ArchPreset::X86_64, "sysret"),
             Some(CallOtherClass::NoReturn)
         );
     }
@@ -530,7 +530,7 @@ mod tests {
         // Sleigh emits `monitor()` / `mwait()` with zero pcode operands,
         // so the implicit register reads need to live in `implicit_reads`.
         // Per Intel SDM Vol. 2B §4-39 (MONITOR) and §4-44 (MWAIT).
-        let m64 = classify(crate::ArchPreset::X86_64, "monitor").expect("monitor x86_64");
+        let m64 = classify(crate::target::ArchPreset::X86_64, "monitor").expect("monitor x86_64");
         let CallOtherClass::Call(abi) = m64 else {
             panic!("expected Call(abi) for monitor")
         };
@@ -538,11 +538,11 @@ mod tests {
         assert!(abi.implicit_writes.is_empty());
         assert!(abi.memory_edge);
 
-        let m32 = classify(crate::ArchPreset::X86, "monitor").expect("monitor x86");
+        let m32 = classify(crate::target::ArchPreset::X86, "monitor").expect("monitor x86");
         let CallOtherClass::Call(abi) = m32 else { panic!() };
         assert_eq!(abi.implicit_reads, &["EAX", "ECX", "EDX"]);
 
-        let mwait = classify(crate::ArchPreset::X86_64, "mwait").expect("mwait classified");
+        let mwait = classify(crate::target::ArchPreset::X86_64, "mwait").expect("mwait classified");
         let CallOtherClass::Call(abi) = mwait else { panic!() };
         assert_eq!(abi.implicit_reads, &["EAX", "ECX"]);
         assert!(abi.implicit_writes.is_empty());
@@ -550,19 +550,19 @@ mod tests {
 
         // AMD variants share the same shape.
         assert!(matches!(
-            classify(crate::ArchPreset::X86_64, "monitorx"),
+            classify(crate::target::ArchPreset::X86_64, "monitorx"),
             Some(CallOtherClass::Call(_))
         ));
         assert!(matches!(
-            classify(crate::ArchPreset::X86_64, "mwaitx"),
+            classify(crate::target::ArchPreset::X86_64, "mwaitx"),
             Some(CallOtherClass::Call(_))
         ));
 
         // Not classified on non-x86 — `monitor` is also an English word
         // and could appear in a future spec; the arch-specific guard
         // prevents misclassification.
-        assert_eq!(classify(crate::ArchPreset::Aarch64, "monitor"), None);
-        assert_eq!(classify(crate::ArchPreset::Aarch64, "mwait"), None);
+        assert_eq!(classify(crate::target::ArchPreset::Aarch64, "monitor"), None);
+        assert_eq!(classify(crate::target::ArchPreset::Aarch64, "mwait"), None);
     }
 
     #[test]
@@ -573,7 +573,7 @@ mod tests {
         // PURE_WITH_MEM_EDGE.  Without memory_edge=true, StackLoadForward /
         // LoadReadOnly could incorrectly forward across swapgs in kernel
         // entry/exit code.
-        let cls = classify(crate::ArchPreset::X86_64, "swapgs").unwrap();
+        let cls = classify(crate::target::ArchPreset::X86_64, "swapgs").unwrap();
         let CallOtherClass::Call(abi) = cls else { panic!("expected Call(abi)") };
         assert!(abi.implicit_reads.is_empty());
         assert!(abi.implicit_writes.is_empty());
@@ -589,13 +589,13 @@ mod tests {
             "sysret",
             "trap",
         ] {
-            assert_eq!(classify(crate::ArchPreset::X86_64, n), Some(CallOtherClass::NoReturn), "{n}");
+            assert_eq!(classify(crate::target::ArchPreset::X86_64, n), Some(CallOtherClass::NoReturn), "{n}");
         }
     }
 
     #[test]
     fn syscall_has_linux_x86_64_abi() {
-        let class = classify(crate::ArchPreset::X86_64, "syscall").expect("syscall classified");
+        let class = classify(crate::target::ArchPreset::X86_64, "syscall").expect("syscall classified");
         let CallOtherClass::Call(abi) = class else {
             panic!("expected Call, got {class:?}")
         };
@@ -634,7 +634,7 @@ mod tests {
             "cpuid_brand_part2_info",
             "cpuid_brand_part3_info",
         ] {
-            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
+            let class = classify(crate::target::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn rdtsc_writes_edx_eax_no_memory_edge() {
-        let class = classify(crate::ArchPreset::X86_64, "rdtsc").expect("rdtsc classified");
+        let class = classify(crate::target::ArchPreset::X86_64, "rdtsc").expect("rdtsc classified");
         let CallOtherClass::Call(abi) = class else {
             panic!("expected Call, got {class:?}")
         };
@@ -660,7 +660,7 @@ mod tests {
         // RDTSCP differs from RDTSC: writes ECX (= IA32_TSC_AUX MSR low
         // 32 bits) in addition to EAX/EDX.  Pattern queries reading
         // post-RDTSCP ECX must see the clobber.
-        let class = classify(crate::ArchPreset::X86_64, "rdtscp").expect("rdtscp classified");
+        let class = classify(crate::target::ArchPreset::X86_64, "rdtscp").expect("rdtscp classified");
         let CallOtherClass::Call(abi) = class else {
             panic!("expected Call, got {class:?}")
         };
@@ -683,7 +683,7 @@ mod tests {
             "ExclusiveMonitorPass",
             "ExclusiveMonitorsStatus",
         ] {
-            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
+            let class = classify(crate::target::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -695,7 +695,7 @@ mod tests {
     fn smccc_ops_share_x0_x7_in_x0_x3_out() {
         // SMCCC entries live in classify_arch_specific because their
         // x0..x7 register names only resolve on aarch64.
-        for preset in [crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be] {
+        for preset in [crate::target::ArchPreset::Aarch64, crate::target::ArchPreset::Aarch64Be] {
             for n in ["CallHyperVisor", "CallSecureMonitor"] {
                 let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
                 let CallOtherClass::Call(abi) = class else {
@@ -710,8 +710,8 @@ mod tests {
                 assert!(abi.memory_edge, "{preset:?}/{n}");
             }
             // Non-aarch64 presets must NOT resolve these names.
-            assert_eq!(classify(crate::ArchPreset::X86_64, "CallHyperVisor"), None);
-            assert_eq!(classify(crate::ArchPreset::Arm, "CallHyperVisor"), None);
+            assert_eq!(classify(crate::target::ArchPreset::X86_64, "CallHyperVisor"), None);
+            assert_eq!(classify(crate::target::ArchPreset::Arm, "CallHyperVisor"), None);
         }
     }
 
@@ -719,7 +719,7 @@ mod tests {
     fn rdpkru_is_arch_specific_to_x86() {
         // rdpkru_u32 lives in classify_arch_specific because ECX/EAX/EDX
         // only resolve on x86 / x86_64.
-        for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
+        for preset in [crate::target::ArchPreset::X86, crate::target::ArchPreset::X86_64] {
             let class = classify(preset, "rdpkru_u32").expect("rdpkru classified");
             let CallOtherClass::Call(abi) = class else { panic!("expected Call") };
             assert_eq!(abi.implicit_reads, &["ECX"]);
@@ -727,8 +727,8 @@ mod tests {
             assert!(!abi.memory_edge);
         }
         // Non-x86 presets must NOT resolve.
-        assert_eq!(classify(crate::ArchPreset::Aarch64, "rdpkru_u32"), None);
-        assert_eq!(classify(crate::ArchPreset::Arm, "rdpkru_u32"), None);
+        assert_eq!(classify(crate::target::ArchPreset::Aarch64, "rdpkru_u32"), None);
+        assert_eq!(classify(crate::target::ArchPreset::Arm, "rdpkru_u32"), None);
     }
 
     #[test]
@@ -741,7 +741,7 @@ mod tests {
         // forward across them.
         let pure_ops    = ["rdmsr", "readfsbase", "readgsbase"];
         let edge_ops    = ["wrmsr", "writefsbase", "writegsbase"];
-        for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
+        for preset in [crate::target::ArchPreset::X86, crate::target::ArchPreset::X86_64] {
             for n in pure_ops {
                 let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
                 let CallOtherClass::Call(abi) = class else {
@@ -763,8 +763,8 @@ mod tests {
         // Non-x86 presets must NOT resolve these names — the encoded
         // instructions only exist on x86/x86_64.
         for n in pure_ops.iter().chain(edge_ops.iter()) {
-            assert_eq!(classify(crate::ArchPreset::Aarch64, n), None, "{n} on aarch64");
-            assert_eq!(classify(crate::ArchPreset::Arm, n), None, "{n} on arm");
+            assert_eq!(classify(crate::target::ArchPreset::Aarch64, n), None, "{n} on aarch64");
+            assert_eq!(classify(crate::target::ArchPreset::Arm, n), None, "{n} on arm");
         }
     }
 
@@ -773,12 +773,12 @@ mod tests {
         // The arch-independent fallback must NOT provide "syscall" for
         // non-x86_64 presets (the RAX/RDI/... names wouldn't resolve).
         assert!(matches!(
-            classify(crate::ArchPreset::X86_64, "syscall"),
+            classify(crate::target::ArchPreset::X86_64, "syscall"),
             Some(CallOtherClass::Call(_)),
         ));
-        assert_eq!(classify(crate::ArchPreset::X86, "syscall"), None);
-        assert_eq!(classify(crate::ArchPreset::Aarch64, "syscall"), None);
-        assert_eq!(classify(crate::ArchPreset::Arm, "syscall"), None);
+        assert_eq!(classify(crate::target::ArchPreset::X86, "syscall"), None);
+        assert_eq!(classify(crate::target::ArchPreset::Aarch64, "syscall"), None);
+        assert_eq!(classify(crate::target::ArchPreset::Arm, "syscall"), None);
     }
 
     #[test]
@@ -822,7 +822,7 @@ mod tests {
         // Use any preset for the lookup — by definition these resolve
         // identically on every arch.
         for n in arch_independent_names {
-            let class = match classify(crate::ArchPreset::X86_64, n) {
+            let class = match classify(crate::target::ArchPreset::X86_64, n) {
                 Some(c) => c,
                 None => continue,  // not in table
             };
@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn port_io_has_memory_edge_no_implicit_regs() {
         for n in ["in", "out"] {
-            let class = classify(crate::ArchPreset::X86_64, n).expect(n);
+            let class = classify(crate::target::ArchPreset::X86_64, n).expect(n);
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -860,16 +860,16 @@ mod tests {
 
     #[test]
     fn unknown_returns_none() {
-        assert_eq!(classify(crate::ArchPreset::X86_64, "nonexistent_op_xyzzy_abc"), None);
+        assert_eq!(classify(crate::target::ArchPreset::X86_64, "nonexistent_op_xyzzy_abc"), None);
     }
 
     #[test]
     fn swi_on_arm_family_returns_linux_arm_abi() {
         // All three 32-bit ARM presets share the Linux SVC/SWI ABI.
         for preset in [
-            crate::ArchPreset::Arm,
-            crate::ArchPreset::ArmBe,
-            crate::ArchPreset::ArmThumb,
+            crate::target::ArchPreset::Arm,
+            crate::target::ArchPreset::ArmBe,
+            crate::target::ArchPreset::ArmThumb,
         ] {
             let class = classify(preset, "swi").unwrap_or_else(|| panic!("{preset:?}/swi"));
             let CallOtherClass::Call(abi) = class else {
@@ -892,18 +892,18 @@ mod tests {
         let empty = CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: true,
         });
-        assert_eq!(classify(crate::ArchPreset::X86, "swi"), Some(empty));
-        assert_eq!(classify(crate::ArchPreset::X86_64, "swi"), Some(empty));
+        assert_eq!(classify(crate::target::ArchPreset::X86, "swi"), Some(empty));
+        assert_eq!(classify(crate::target::ArchPreset::X86_64, "swi"), Some(empty));
     }
 
     #[test]
     fn arch_independent_entries_resolve_on_every_arch() {
         // Spot-check that the fallback works regardless of arch.
         for arch in [
-            crate::ArchPreset::X86,
-            crate::ArchPreset::X86_64,
-            crate::ArchPreset::Arm,
-            crate::ArchPreset::Aarch64,
+            crate::target::ArchPreset::X86,
+            crate::target::ArchPreset::X86_64,
+            crate::target::ArchPreset::Arm,
+            crate::target::ArchPreset::Aarch64,
         ] {
             // setISAMode is the only true NoOp now (Sleigh decoder bit).
             assert_eq!(
@@ -931,22 +931,22 @@ mod tests {
     fn sleigh_arch_presets_set_distinct_preset_discriminators() {
         // One ArchPreset per preset constructor — full granularity so
         // Arm-32 LE / BE / Thumb are distinguishable.
-        use crate::SleighArch;
-        assert_eq!(SleighArch::x86_64().preset, crate::ArchPreset::X86_64);
-        assert_eq!(SleighArch::x86().preset, crate::ArchPreset::X86);
-        assert_eq!(SleighArch::arm().preset, crate::ArchPreset::Arm);
-        assert_eq!(SleighArch::arm_be().preset, crate::ArchPreset::ArmBe);
-        assert_eq!(SleighArch::arm_thumb().preset, crate::ArchPreset::ArmThumb);
-        assert_eq!(SleighArch::aarch64().preset, crate::ArchPreset::Aarch64);
-        assert_eq!(SleighArch::aarch64be().preset, crate::ArchPreset::Aarch64Be);
-        assert_eq!(SleighArch::mipsbe32().preset, crate::ArchPreset::MipsBe32);
-        assert_eq!(SleighArch::mipsle32().preset, crate::ArchPreset::MipsLe32);
-        assert_eq!(SleighArch::mipsbe64().preset, crate::ArchPreset::MipsBe64);
-        assert_eq!(SleighArch::mipsle64().preset, crate::ArchPreset::MipsLe64);
-        assert_eq!(SleighArch::ppc32be().preset, crate::ArchPreset::Ppc32Be);
-        assert_eq!(SleighArch::ppc32le().preset, crate::ArchPreset::Ppc32Le);
-        assert_eq!(SleighArch::ppc64be().preset, crate::ArchPreset::Ppc64Be);
-        assert_eq!(SleighArch::ppc64le().preset, crate::ArchPreset::Ppc64Le);
+        use crate::target::SleighArch;
+        assert_eq!(SleighArch::x86_64().preset, crate::target::ArchPreset::X86_64);
+        assert_eq!(SleighArch::x86().preset, crate::target::ArchPreset::X86);
+        assert_eq!(SleighArch::arm().preset, crate::target::ArchPreset::Arm);
+        assert_eq!(SleighArch::arm_be().preset, crate::target::ArchPreset::ArmBe);
+        assert_eq!(SleighArch::arm_thumb().preset, crate::target::ArchPreset::ArmThumb);
+        assert_eq!(SleighArch::aarch64().preset, crate::target::ArchPreset::Aarch64);
+        assert_eq!(SleighArch::aarch64be().preset, crate::target::ArchPreset::Aarch64Be);
+        assert_eq!(SleighArch::mipsbe32().preset, crate::target::ArchPreset::MipsBe32);
+        assert_eq!(SleighArch::mipsle32().preset, crate::target::ArchPreset::MipsLe32);
+        assert_eq!(SleighArch::mipsbe64().preset, crate::target::ArchPreset::MipsBe64);
+        assert_eq!(SleighArch::mipsle64().preset, crate::target::ArchPreset::MipsLe64);
+        assert_eq!(SleighArch::ppc32be().preset, crate::target::ArchPreset::Ppc32Be);
+        assert_eq!(SleighArch::ppc32le().preset, crate::target::ArchPreset::Ppc32Le);
+        assert_eq!(SleighArch::ppc64be().preset, crate::target::ArchPreset::Ppc64Be);
+        assert_eq!(SleighArch::ppc64le().preset, crate::target::ArchPreset::Ppc64Le);
     }
 
     #[test]
@@ -954,7 +954,7 @@ mod tests {
         // Compile-time guard: every variant of CallOtherClass is matched
         // exhaustively here, so adding/removing a variant fails compile.
         for n in ["setISAMode", "invalidInstructionException", "cpuid"] {
-            let class = classify(crate::ArchPreset::X86_64, n).unwrap();
+            let class = classify(crate::target::ArchPreset::X86_64, n).unwrap();
             match class {
                 CallOtherClass::NoOp | CallOtherClass::NoReturn | CallOtherClass::Call(_) => {}
             }
@@ -968,7 +968,7 @@ mod tests {
     /// the IR layer.
     #[test]
     fn x86_memory_fences_classify_as_pure_with_mem_edge() {
-        for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
+        for preset in [crate::target::ArchPreset::X86, crate::target::ArchPreset::X86_64] {
             for name in ["mfence", "sfence", "lfence"] {
                 let cls = classify(preset, name)
                     .unwrap_or_else(|| panic!("({preset:?}, {name}) must classify"));
