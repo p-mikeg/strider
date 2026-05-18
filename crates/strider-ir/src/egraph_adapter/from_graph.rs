@@ -30,7 +30,7 @@ use egg::{EGraph, Id};
 
 use super::language::StriderLang;
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, NodeKind, NodeOutputId};
 
 /// Adapter holding the egraph plus the mapping tables needed to round-trip
 /// a strider graph through egg with zero rewrites applied.
@@ -244,6 +244,17 @@ impl EGraphAdapter {
 ///   a bug.
 /// - `SegmentOp`, `CPoolRef`, `New` → opaque (opaque/user-defined; the
 ///   spike doesn't model them).
+/// Public alias for [`is_opaque_value_kind`] used by
+/// [`super::extract::EGraphAdapter::extract_into_graph`].
+///
+/// Kept as a single-source-of-truth predicate so the from/to classification
+/// agrees by construction (no chance of from_graph treating a node as
+/// internal but extract treating it as opaque).
+#[inline]
+pub(crate) fn is_opaque_value_kind_for_extract(kind: &NodeKind) -> bool {
+    is_opaque_value_kind(kind)
+}
+
 fn is_opaque_value_kind(kind: &NodeKind) -> bool {
     use NodeKind as K;
     matches!(
@@ -309,6 +320,7 @@ fn take_two(v: &mut Vec<Id>, ctx: &str) -> [Id; 2] {
 mod tests {
     use super::*;
     use crate::IntBinaryOp;
+    use crate::node::NodeOutputKind;
 
     /// Building from an empty graph (just Entry + InitialMemory + Return)
     /// produces an empty egraph: no value-producing nodes to add.
