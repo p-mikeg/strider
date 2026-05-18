@@ -1361,6 +1361,7 @@ dependencies = [
  "bitflags",
  "cfg",
  "cranelift-entity",
+ "egg",
  "entity-utils",
  "ethnum",
  "ir",

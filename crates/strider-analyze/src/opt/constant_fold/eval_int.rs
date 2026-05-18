@@ -16,7 +16,7 @@ use crate::opt::error::Result;
 /// re-masking is cheap insurance against any caller passing raw bits.
 /// Operations that aren't safe under masking-commutativity (Div, Rem,
 /// ShiftRight, signed cmps) need this mask to give correct results.
-pub(super) fn eval_int_binary(
+pub(crate) fn eval_int_binary(
     op: IntBinaryOp,
     l: u128,
     r: u128,
@@ -123,7 +123,7 @@ pub(super) fn eval_int_binary(
 }
 
 /// Evaluates a comparison on two constant integer values.
-pub(super) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -> Result<bool> {
+pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -> Result<bool> {
     // Mask both inputs to ty at entry.  Unsigned comparisons (Equal, Less,
     // LessEqual, Carry) operate on raw u128s and would otherwise return
     // wrong answers for narrow IntConsts that carry high bits beyond the

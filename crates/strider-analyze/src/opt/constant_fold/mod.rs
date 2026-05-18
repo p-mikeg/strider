@@ -5,7 +5,7 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::worklist::WorkSet;
 
 mod eval_float;
-mod eval_int;
+pub(crate) mod eval_int;
 mod rules;
 #[cfg(test)]
 mod tests;

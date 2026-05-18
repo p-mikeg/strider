@@ -45,7 +45,10 @@ mod pipeline;
 pub(crate) mod sp_expr;
 mod worklist;
 pub use error::Result;
-mod constant_fold;
+pub(crate) mod constant_fold;
+// Phase 3 Task 3.2 — egg-based ConstantFold parity rewriter (alongside
+// the imperative one; not yet wired into the production pipeline).
+pub mod constant_fold_egg;
 mod dead_branch;
 mod flag_cmp_canonicalize;
 mod function_args;

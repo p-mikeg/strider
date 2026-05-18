@@ -32,6 +32,10 @@ bitflags = "2"
 # the pcode-lift shim are pulled in for the moved `Strider` /
 # `IrStrider` types.
 pcode-lift = { workspace = true }
+# Egg — value-slice egraph driver, used by the Phase 3 Task 3.2
+# `ConstantFoldEgg` rewriter alongside the existing imperative
+# `ConstantFold` (parity test in tests/constant_fold_egg_parity.rs).
+egg = "0.10"
 
 [dev-dependencies]
 ir = { workspace = true, features = ["test-utils"] }
