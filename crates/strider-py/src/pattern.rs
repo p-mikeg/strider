@@ -77,6 +77,13 @@ macro_rules! pat_builder_finalise {
 
 // ── Capture ──────────────────────────────────────────────────────────────
 
+// Phase 4 Task 4.0 — `#[gen_stub_pyclass]` derives `PyStubType` for
+// `PyCapture` so the V2 reference type's `.capture(c: PyRef<'_,
+// PyCapture>)` signature compiles under `#[gen_stub_pymethods]`.  This
+// only adds the type-info impl; the existing `#[pymethods]` block
+// below is unchanged (no `#[gen_stub_pymethods]` here — the v1
+// hand-written `pattern.pyi` already covers PyCapture's surface).
+#[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Capture", module = "strider.pattern", frozen)]
 #[derive(Clone)]
 pub struct PyCapture {
@@ -144,6 +151,8 @@ pub(crate) fn intern_str(name: &str) -> PyResult<pattern::Capture> {
 ///
 /// Held inside an `Arc` so PyPat can be cheaply cloned and passed as
 /// sub-patterns to multiple builder field methods.
+// See PyCapture above for the `#[gen_stub_pyclass]` rationale.
+#[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Pat", module = "strider.pattern")]
 #[derive(Clone)]
 pub struct PyPat {
@@ -256,6 +265,27 @@ pub enum PatLike<'py> {
     IntBinaryPat(Bound<'py, PyIntBinaryPat>),
     BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
     FloatBinaryPat(Bound<'py, PyFloatBinaryPat>),
+}
+
+// Phase 4 Task 4.0 — manual `PyStubType` impl so `pyo3-stub-gen`'s
+// proc-macros translate `PatLike` parameters to the canonical
+// `PatLike` Python type alias defined by hand in `strider/pattern.pyi`
+// (line 34: `PatLike = Union[str, Capture, Pat, ...]`).  Without this
+// impl, the type would be elided as `Any` in the generated stub and
+// fail `mypy --strict` on callers that pass a typed builder directly.
+//
+// EMISSION_SPEC implication: when Task 4.1's proc-macro encounters a
+// `PatLike<'_>` argument, it must NOT attempt to auto-derive the
+// PyStubType; the macro-generated emission relies on this hand-written
+// impl staying valid across the migration.
+impl pyo3_stub_gen::PyStubType for PatLike<'_> {
+    fn type_output() -> pyo3_stub_gen::TypeInfo {
+        // Resolve to `strider.pattern.PatLike`, the typed Union alias
+        // already declared in the hand-written `pattern.pyi`.  Using
+        // `with_module` rather than `unqualified` so mypy can find
+        // the alias when the consumer module imports `strider.pattern`.
+        pyo3_stub_gen::TypeInfo::with_module("strider.pattern.PatLike", "strider.pattern".into())
+    }
 }
 
 impl PatLike<'_> {
@@ -462,7 +492,7 @@ impl PyPartialMatch {
 /// inside a predicate.  Re-raising via `PyErr::restore` defers the
 /// exception to the next GIL re-entry point, which the matcher's
 /// shallow loop re-checks naturally.
-fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
+pub(crate) fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
     inner.when_match(move |graph, _ty, bindings| {
         Python::with_gil(|py| {
             let proxy = PyPartialMatch::new(bindings.clone(), graph);
@@ -2090,6 +2120,12 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(float_bin_any);
     add_fn!(float_un_any);
     add_fn!(float_cmp_any);
+
+    // Phase 4 Task 4.0 — register the reference V2 type alongside v1.
+    // The macro-generated emission in Task 4.1 will replace this hook
+    // with the same `register(&m)` shape, so this line survives the
+    // migration unchanged.
+    crate::pattern_reference::register(&m)?;
 
     parent.add_submodule(&m)?;
     let sys = py.import_bound("sys")?;

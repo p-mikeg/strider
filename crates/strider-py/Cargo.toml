@@ -4,8 +4,26 @@ version = "0.1.0"
 edition = { workspace = true }
 
 [lib]
-name = "strider"
-crate-type = ["cdylib"]
+# Phase 4 Task 4.0 — lib name flipped from `strider` to `strider_py`
+# so the rlib produced for the `stub_gen` example doesn't collide with
+# the workspace `strider` orchestrator crate's rlib (cargo can't pick
+# between two `libstrider.rlib` candidates in `target/.../deps/`).
+# Maturin re-renames the cdylib artefact at packaging time via
+# `[tool.maturin] module-name = "strider.strider"`, so the Python
+# import path stays `import strider` — the rename only affects the
+# Rust-side identifier and the on-disk `lib*.{rlib,so}` filenames.
+name = "strider_py"
+# `rlib` is needed so the `stub_gen` example can link the crate as a
+# regular Rust library and run `pyo3-stub-gen`'s inventory-driven
+# generator from outside the Python interpreter.  The `cdylib`
+# artefact is what Python loads via `maturin develop`; the `rlib`
+# artefact is what the stub-gen binary consumes.  pyo3's
+# `extension-module` feature would normally make the `rlib` build
+# fail by leaving the Python symbols unresolved at static-link time,
+# but on Linux `extension-module` only affects how the final `cdylib`
+# shared object is linked — the `rlib` build is unaffected because
+# nothing actually invokes a Python symbol from a Rust binary.
+crate-type = ["cdylib", "rlib"]
 # strider-py is a Python extension module; its pyo3 bindings need a
 # Python runtime to load and dispatch.  Tests of the FFI surface live
 # in `tests/python/` and run via `pytest` after `maturin develop`.
@@ -24,7 +42,20 @@ doctest = false
 # `#[pymethods]` block, which is what the `pat_builder_finalise!` macro
 # needs to splice the four shared finalise methods (capture/cap/when/
 # into_pat) into every typed pattern builder without duplicating them.
-pyo3 = { version = "0.22", features = ["abi3-py39", "extension-module", "anyhow", "multiple-pymethods"] }
+# `extension-module` is only enabled by default so Python loads the
+# resulting `.so` without dragging in libpython at runtime.  It MUST
+# be off when building a regular Rust binary (e.g. the `stub_gen`
+# example) because those need libpython's symbols resolved at link
+# time.  The `stub_gen` feature flag suppresses it so a binary build
+# of the rlib can pull in a real libpython instead.
+pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "anyhow", "multiple-pymethods"] }
+# pyo3-stub-gen 0.6 — 0.8 are the line that still depends on pyo3
+# >= 0.21 (and so are compatible with our pinned pyo3 0.22).  Newer
+# pyo3-stub-gen majors (0.9+) require pyo3 0.24+; 0.22+ requires pyo3
+# 0.26+.  This crate's release line confusingly reuses pyo3's
+# version-number scheme without tracking it, so pin 0.8 explicitly.
+# Disable defaults to skip the optional numpy bridge.
+pyo3-stub-gen = { version = "=0.7.0", default-features = false }
 anyhow = { workspace = true }
 
 strider = { workspace = true }
@@ -40,3 +71,26 @@ object = { workspace = true }
 
 [lints]
 workspace = true
+
+# Phase 4 Task 4.0 — opt-in feature for the `stub_gen` example.
+#
+# `extension-module` (the pyo3 feature that tells the linker NOT to
+# pull libpython into the cdylib) is on by default so `maturin
+# develop` works the same way it did pre-Phase-4.  When building the
+# `stub_gen` example we need a real Rust binary that actually links
+# libpython (so `pyo3::Python::with_gil` works) — toggling
+# `stub_gen` does that by switching pyo3 from `extension-module` to
+# `auto-initialize`.  `maturin build/develop` MUST be invoked without
+# the `stub_gen` feature; `cargo run --example stub_gen` MUST be
+# invoked with it.
+[features]
+default = ["pyo3/extension-module"]
+stub_gen = ["pyo3/auto-initialize"]
+
+[[example]]
+name = "stub_gen"
+# Build this example only when the `stub_gen` feature is on.  Without
+# the `required-features` gate, `cargo build --workspace --examples`
+# would try to link the example unconditionally and trip the rlib
+# collision described above.
+required-features = ["stub_gen"]

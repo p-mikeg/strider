@@ -39,6 +39,7 @@ mod graph;
 mod matcher;
 mod opt;
 mod pattern;
+mod pattern_reference;
 mod reader;
 mod run;
 mod sleigh;
@@ -73,6 +74,14 @@ fn force_anyhow_backtrace_capture() {
         }
     }
 }
+
+// Phase 4 Task 4.0 — register the stub-info-gathering function used
+// by the `examples/stub_gen.rs` binary to emit `.pyi` files for every
+// `#[gen_stub_*]`-annotated type in the crate.  Lives next to the
+// pyclass definitions per pyo3-stub-gen's documentation: the
+// `inventory::submit!` calls the proc-macros emit are statically
+// collected per-rlib, so the gatherer must be in the same crate.
+pyo3_stub_gen::define_stub_info_gatherer!(stub_info);
 
 #[pymodule]
 fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

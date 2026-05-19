@@ -19,3 +19,8 @@ __pycache__/
 
 # Stray ELF artifacts from out-of-tree test builds
 /rust_out
+
+# Phase 4 Task 4.0 — auto-generated .pyi stubs from `cargo run -p
+# strider-py --example stub_gen`.  Dev tool only; the wheel ships
+# the hand-written `crates/strider-py/strider/pattern.pyi` instead.
+/crates/strider-py/strider/_generated/

@@ -2,6 +2,11 @@
 resolver = "2"
 members = ["crates/*"]
 default-members = ["crates/*"]
+# Phase 4 Task 4.0 staged this directory with the EMISSION_SPEC.md
+# spec; Task 4.1 will turn it into a real proc-macro crate by adding
+# a Cargo.toml + src/lib.rs.  Until then, exclude it from the glob so
+# `cargo metadata` doesn't fail on a missing manifest.
+exclude = ["crates/strider-pattern-macros"]
 
 
 [workspace.package]
