@@ -36,8 +36,14 @@ pcode-lift = { workspace = true }
 # `ConstantFoldEgg` rewriter alongside the existing imperative
 # `ConstantFold` (parity test in tests/constant_fold_egg_parity.rs).
 egg = "0.10"
+# Salsa 0.26.2 — Phase 3 Task 3.9 incremental query graph for the
+# orchestrator's indirect-branch fixed-point.  Pinned to the same
+# version as rust-analyzer / Astral's ruff per the V2 verification.
+salsa = "0.26.2"
 
 [dev-dependencies]
+reader = { workspace = true }
+object.workspace = true
 ir = { workspace = true, features = ["test-utils"] }
 
 [lints]
