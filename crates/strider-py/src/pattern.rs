@@ -1275,10 +1275,12 @@ pub struct StackStorePatDef {
     offset: Option<i64>,
 
     /// Match only stack-stores whose offset is in `offsets`.  Empty
-    /// set vacuously fails (matches nothing) — mirrors the contract
-    /// of `int_const_any_of`.
+    /// list vacuously fails (matches nothing) — mirrors the contract
+    /// of `int_const_any_of`.  Accepts a Python list (or any iterable);
+    /// the underlying builder dedupes internally so duplicates in the
+    /// list are harmless.
     #[field(arg = "offsets")]
-    offset_any: Option<std::collections::BTreeSet<i64>>,
+    offset_any: Option<Vec<i64>>,
 
     /// Constrain the stored-value operand.
     #[field(accepts = "Pat", arg = "p")]
