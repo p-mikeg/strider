@@ -5,7 +5,7 @@
 //! `crates/strider-analyze/tests/constant_fold_egg_parity.rs` proves both
 //! produce structurally identical IR for the supported shapes.
 //!
-//! # Scope (full v1 parity, ported across 5 commits)
+//! # Scope (full v1 parity, ported across 4 follow-up commits)
 //!
 //! All five of v1's rule groups are mirrored as egg rewrites:
 //!
