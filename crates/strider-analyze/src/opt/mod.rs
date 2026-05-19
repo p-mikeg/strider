@@ -66,6 +66,9 @@ mod known_bits;
 // the imperative one; not yet wired into the production pipeline).
 pub mod known_bits_egg;
 mod load_readonly;
+// Phase 3 Task 3.6 — egg-based LoadReadOnly parity rewriter (alongside
+// the imperative one; not yet wired into the production pipeline).
+pub mod load_readonly_egg;
 mod redundant_phis;
 pub mod stack_load_forward;
 mod stack_store;
