@@ -81,6 +81,10 @@ pub mod stack_load_forward_egg;
 // from the egraph; the module name preserves naming consistency with
 // the other Phase-3 egg ports).
 pub mod call_stack_arg_collect_egg;
+// Phase 3 Task 3.7b — egg-based FunctionArgDetect parity rewriter
+// (faithful direct port — function-boundary post-passes don't
+// benefit from the egraph; same posture as `IfCondInversionEgg`).
+pub mod function_arg_detect_egg;
 #[cfg(test)]
 mod test_support;
 
