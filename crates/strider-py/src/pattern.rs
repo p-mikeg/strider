@@ -804,6 +804,18 @@ pub fn value_phi() -> PyValuePhiPat { PyValuePhiPat::new() }
 /// constrain where the argument was sourced from (matches the
 /// `FunctionArgSource::Register` / `FunctionArgSource::Stack`
 /// variants of the IR enum).
+//
+// Phase 4 Task 4.2c — intentionally hand-written, not migrated to
+// `#[strider_pattern]`.  Reason: `.source_register(vn)` and
+// `.source_stack(space, offset)` are two Python methods that write
+// the SAME underlying `Option<FunctionArgSource>` field via
+// different enum variants.  The macro's current shape is one
+// `Option<T>` per field with one setter per field; an enum-dispatch
+// extension (call it `#[field(enum_dispatch = "FunctionArgSource")]`)
+// would need to track multiple Python method names that all write
+// to the same underlying state, which is out of scope for the
+// current `Option<T>`-per-field design.  Adding it would gain ~30
+// LOC at the call site versus a chunky proc-macro change.
 #[pyclass(name = "FunctionArgPat", module = "strider.pattern")]
 pub struct PyFunctionArgPat {
     source: std::cell::RefCell<Option<ir::node::FunctionArgSource>>,
@@ -1363,6 +1375,9 @@ pub struct CallPatDef {
 // `int_const_any_of` Pat from a literal address).  They don't fit the
 // macro's `Option<T>`-per-field shape, so we expose them via a
 // secondary `#[pymethods]` block (allowed by `multiple-pymethods`).
+// `#[gen_stub_pymethods]` is required on the secondary block too so
+// pyo3-stub-gen picks up these methods into the generated `.pyi`.
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyCallPat {
     /// Constrain the call target to the literal address `addr`.
@@ -1453,6 +1468,9 @@ pub struct CallOtherPatDef {
 // They drive the inner Mutex directly here rather than reusing the
 // emitted `arg` / `ret` methods, because `multiple-pymethods` can't
 // borrow `PyRef<Self>` recursively in a single chain.
+// `#[gen_stub_pymethods]` on the secondary block so the four aliases
+// appear in the generated `.pyi`.
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyCallOtherPat {
     /// Convenience: match `inputs[0]` (control predecessor).
@@ -1650,6 +1668,16 @@ fn parse_float_binary_op(name: &str) -> PyResult<ir::FloatBinaryOp> {
 /// `pattern::IntBinaryOpPat` so callers can chain `.ordered()` /
 /// `.capture(c)` / `.cap(name)` / `.when(f)` before finalising as a
 /// `Pat`.
+//
+// Phase 4 Task 4.2c — `PyIntBinaryPat` / `PyBoolBinaryPat` /
+// `PyFloatBinaryPat` are intentionally hand-written, not migrated to
+// `#[strider_pattern]`.  Reason: their constructors REQUIRE the op,
+// lhs, and rhs fields up front (`int_binary("Add", "x", "y")`) — they
+// don't fit the macro's `*Def { Option<T>, … }` shape, which models
+// every field as optional and threads them in via builder calls
+// after the underlying `pattern::*` constructor.  Auto-generating
+// these would need a separate "required-construction" path in the
+// macro that's not worth the LOC right now.
 #[pyclass(name = "IntBinaryPat", module = "strider.pattern")]
 pub struct PyIntBinaryPat {
     op: ir::IntBinaryOp,
