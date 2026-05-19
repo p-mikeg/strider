@@ -715,46 +715,31 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
 
 // ── PhiPat ───────────────────────────────────────────────────────────
 
-/// Typed builder for `VarPhi` / `MemPhi` / `ValuePhi` patterns.
-/// Chain `.for_vn(vn)` to constrain the matched VarPhi to a specific
-/// varnode, and `.input(idx, p)` to constrain the value arriving
-/// from the given predecessor slot.
-#[pyclass(name = "PhiPat", module = "strider.pattern")]
-pub struct PyPhiPat {
-    for_vn: std::cell::RefCell<Option<rsleigh::Vn>>,
-    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
-}
+/// Typed builder for `VarPhi` patterns.  Chain `.for_vn(vn)` to
+/// constrain the matched VarPhi to a specific varnode, and
+/// `.input(idx, p)` to constrain the value arriving from the given
+/// predecessor slot.
+#[strider_pattern(
+    rust_name = "PyPhiPat",
+    py_name = "PhiPat",
+    py_module = "strider.pattern",
+    base_builder = "phi",
+    node_phrase = "phi node",
+)]
+pub struct PhiPatDef {
+    /// Restrict the match to phi nodes for varnode `vn`.
+    //
+    // The underlying `pattern::PhiPat` exposes this as `for_vn(Vn)`,
+    // not as a `phi_for(vn)` constructor — the macro's
+    // `accepts = "Vn"` path emits `b.for_vn(v)` exactly.
+    #[field(accepts = "Vn", arg = "vn")]
+    for_vn: Option<rsleigh::Vn>,
 
-impl PyPhiPat {
-    fn new() -> Self {
-        Self {
-            for_vn: std::cell::RefCell::new(None),
-            inputs: std::cell::RefCell::new(Vec::new()),
-        }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = if let Some(vn) = *self.for_vn.borrow() {
-            pattern::phi_for(vn)
-        } else {
-            pattern::phi()
-        };
-        for (idx, p) in self.inputs.borrow().iter().cloned() {
-            b = b.input(idx, p);
-        }
-        b.into()
-    }
-}
-
-#[pymethods]
-impl PyPhiPat {
-    fn for_vn(slf: Py<Self>, py: Python<'_>, vn: crate::sleigh::PyVn) -> Py<Self> {
-        slf.borrow(py).for_vn.replace(Some(vn.inner)); slf
-    }
-    fn input(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
-        Ok(slf)
-    }
+    /// Constrain the value arriving from predecessor slot `idx`
+    /// (0-based; the builder shifts onto raw input slot `idx + 1` to
+    /// skip the phi-token edge from the owning `ControlState`).
+    #[field(multi, accepts = "Pat", arg = "idx")]
+    input: Option<Vec<(usize, pattern::Pat)>>,
 }
 
 #[pyfunction]
@@ -765,38 +750,28 @@ pub fn phi() -> PyPhiPat { PyPhiPat::new() }
 #[pyfunction]
 pub fn phi_for(vn: crate::sleigh::PyVn) -> PyPhiPat {
     let b = PyPhiPat::new();
-    b.for_vn.replace(Some(vn.inner));
+    {
+        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.for_vn = Some(vn.inner);
+    }
     b
 }
 
 /// Builder for `MemPhi` patterns.  No varnode payload (memory-token
 /// phis don't carry one); chain `.input(idx, p)` to constrain the
 /// memory-input from predecessor `idx`.
-#[pyclass(name = "MemPhiPat", module = "strider.pattern")]
-pub struct PyMemPhiPat {
-    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
-}
-
-impl PyMemPhiPat {
-    fn new() -> Self {
-        Self { inputs: std::cell::RefCell::new(Vec::new()) }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::mem_phi();
-        for (idx, p) in self.inputs.borrow().iter().cloned() {
-            b = b.input(idx, p);
-        }
-        b.into()
-    }
-}
-
-#[pymethods]
-impl PyMemPhiPat {
-    fn input(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
-        Ok(slf)
-    }
+#[strider_pattern(
+    rust_name = "PyMemPhiPat",
+    py_name = "MemPhiPat",
+    py_module = "strider.pattern",
+    base_builder = "mem_phi",
+    node_phrase = "mem-phi node",
+)]
+pub struct MemPhiPatDef {
+    /// Constrain the memory token arriving from predecessor slot
+    /// `idx` (the builder shifts onto raw input `idx + 1`).
+    #[field(multi, accepts = "Pat", arg = "idx")]
+    input: Option<Vec<(usize, pattern::Pat)>>,
 }
 
 #[pyfunction]
@@ -805,31 +780,17 @@ pub fn mem_phi() -> PyMemPhiPat { PyMemPhiPat::new() }
 /// Builder for `ValuePhi` patterns.  ValuePhi is synthesised by
 /// `StackLoadForward` to phi together stack-store values across a
 /// control-flow join.
-#[pyclass(name = "ValuePhiPat", module = "strider.pattern")]
-pub struct PyValuePhiPat {
-    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
-}
-
-impl PyValuePhiPat {
-    fn new() -> Self {
-        Self { inputs: std::cell::RefCell::new(Vec::new()) }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::value_phi();
-        for (idx, p) in self.inputs.borrow().iter().cloned() {
-            b = b.input(idx, p);
-        }
-        b.into()
-    }
-}
-
-#[pymethods]
-impl PyValuePhiPat {
-    fn input(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
-        Ok(slf)
-    }
+#[strider_pattern(
+    rust_name = "PyValuePhiPat",
+    py_name = "ValuePhiPat",
+    py_module = "strider.pattern",
+    base_builder = "value_phi",
+    node_phrase = "value-phi node",
+)]
+pub struct ValuePhiPatDef {
+    /// Constrain the value arriving from predecessor slot `idx`.
+    #[field(multi, accepts = "Pat", arg = "idx")]
+    input: Option<Vec<(usize, pattern::Pat)>>,
 }
 
 #[pyfunction]
@@ -2058,9 +2019,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
 // methods.  See `pat_builder_finalise!` (declared near the top of the
 // file) for the body.
 
-pat_builder_finalise!(PyPhiPat);
-pat_builder_finalise!(PyMemPhiPat);
-pat_builder_finalise!(PyValuePhiPat);
+// PyPhiPat, PyMemPhiPat, PyValuePhiPat: capture/cap/when/into_pat
+// emitted by `#[strider_pattern]` (Phase 4 Task 4.2b).
 pat_builder_finalise!(PyFunctionArgPat);
 // PyLoadPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
 // PyStorePat, PyStackStorePat, PyStackStorePhiPat: capture/cap/when/into_pat
