@@ -489,6 +489,16 @@ fn build_finalise_impl(
                             b = b.#py_name(set.iter().copied().collect::<::std::vec::Vec<#inner_t>>());
                         }
                     }
+                } else if is_vec(&f.inner_ty) {
+                    // Vec<T> isn't Copy, so we can't move out of the
+                    // MutexGuard; clone the inner vector instead.  The
+                    // underlying builder takes `IntoIterator<Item = T>`,
+                    // so a clone'd `Vec<T>` is accepted by value.
+                    quote! {
+                        if let ::core::option::Option::Some(ref v) = guard.#rust_ident {
+                            b = b.#py_name(::core::clone::Clone::clone(v));
+                        }
+                    }
                 } else {
                     quote! {
                         if let ::core::option::Option::Some(v) = guard.#rust_ident {
@@ -542,6 +552,15 @@ fn build_finalise_impl(
             }
         }
     }
+}
+
+/// `true` if `ty` is `Vec<...>` (any path ending in `Vec<...>`).
+fn is_vec(ty: &Type) -> bool {
+    let Type::Path(path) = ty else { return false };
+    let Some(last) = path.path.segments.last() else {
+        return false;
+    };
+    last.ident == "Vec"
 }
 
 /// `true` if `ty` is `BTreeSet<...>` (any path ending in

@@ -25,6 +25,12 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
+// Brought into scope so the `#[strider_pattern]` proc-macro emits bare
+// `#[gen_stub_pyclass]` / `#[gen_stub_pymethods]` attributes that
+// pyo3-stub-gen can recognise.
+#[allow(unused_imports)]
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use strider_pattern_macros::strider_pattern;
 
 use crate::errors::into_pattern_err;
 
@@ -1161,56 +1167,31 @@ pub fn extend(op: &str, operand: PatLike<'_>) -> PyResult<PyPat> {
 /// Typed builder for `Load` node patterns.  Chain `.addr(p)` to
 /// constrain the address operand and `.space(s)` to restrict the
 /// match to a specific memory space (e.g. `VnSpace.ram()`).
-#[pyclass(name = "LoadPat", module = "strider.pattern")]
-pub struct PyLoadPat {
-    addr: std::cell::RefCell<Option<pattern::Pat>>,
-    space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
-    mem_in: std::cell::RefCell<Option<pattern::Pat>>,
-    bit_width: std::cell::RefCell<Option<u32>>,
-}
+#[strider_pattern(
+    rust_name = "PyLoadPat",
+    py_name = "LoadPat",
+    py_module = "strider.pattern",
+    base_builder = "load",
+    node_phrase = "load node",
+)]
+pub struct LoadPatDef {
+    /// Constrain the load's address operand.
+    #[field(accepts = "Pat", arg = "p")]
+    addr: Option<pattern::Pat>,
 
-impl PyLoadPat {
-    fn new() -> Self {
-        Self {
-            addr: std::cell::RefCell::new(None),
-            space: std::cell::RefCell::new(None),
-            mem_in: std::cell::RefCell::new(None),
-            bit_width: std::cell::RefCell::new(None),
-        }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::load();
-        if let Some(s) = *self.space.borrow() { b = b.space(s); }
-        if let Some(p) = self.addr.borrow().clone() { b = b.addr(p); }
-        if let Some(p) = self.mem_in.borrow().clone() { b = b.mem_in(p); }
-        if let Some(n) = *self.bit_width.borrow() { b = b.bit_width(n); }
-        b.into()
-    }
-}
+    /// Restrict the match to a specific memory space (e.g.
+    /// `VnSpace.ram()`).
+    #[field(accepts = "VnSpace", arg = "s")]
+    space: Option<rsleigh::VnSpace>,
 
-#[pymethods]
-impl PyLoadPat {
-    fn addr(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).addr.replace(Some(pat));
-        Ok(slf)
-    }
-    fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
-        slf.borrow(py).space.replace(Some(s.inner));
-        slf
-    }
     /// Constrain the load's memory predecessor (inputs[0]).
-    fn mem_in(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).mem_in.replace(Some(pat));
-        Ok(slf)
-    }
+    #[field(accepts = "Pat", arg = "p")]
+    mem_in: Option<pattern::Pat>,
+
     /// Filter loads by value width in bits (matches U32 and F32 on
     /// bit_width(32), etc.).
-    fn bit_width(slf: Py<Self>, py: Python<'_>, n: u32) -> Py<Self> {
-        slf.borrow(py).bit_width.replace(Some(n));
-        slf
-    }
+    #[field(arg = "n")]
+    bit_width: Option<u32>,
 }
 
 #[pyfunction]
@@ -1218,7 +1199,9 @@ impl PyLoadPat {
 pub fn load(addr: Option<PatLike<'_>>) -> PyResult<PyLoadPat> {
     let b = PyLoadPat::new();
     if let Some(a) = addr {
-        b.addr.replace(Some(a.into_pat()?));
+        let pat = a.into_pat()?;
+        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.addr = Some(pat);
     }
     Ok(b)
 }
@@ -1226,191 +1209,137 @@ pub fn load(addr: Option<PatLike<'_>>) -> PyResult<PyLoadPat> {
 /// Typed builder for `Store` node patterns.  Chain `.addr(p)`,
 /// `.data(p)`, `.space(s)` to constrain the address, value, and
 /// memory space respectively.
-#[pyclass(name = "StorePat", module = "strider.pattern")]
-pub struct PyStorePat {
-    addr: std::cell::RefCell<Option<pattern::Pat>>,
-    data: std::cell::RefCell<Option<pattern::Pat>>,
-    space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
-    mem_in: std::cell::RefCell<Option<pattern::Pat>>,
-    next_mem: std::cell::RefCell<Option<pattern::Pat>>,
-    bit_width: std::cell::RefCell<Option<u32>>,
-}
+#[strider_pattern(
+    rust_name = "PyStorePat",
+    py_name = "StorePat",
+    py_module = "strider.pattern",
+    base_builder = "store",
+    node_phrase = "store node",
+)]
+pub struct StorePatDef {
+    /// Constrain the store's address operand.
+    #[field(accepts = "Pat", arg = "p")]
+    addr: Option<pattern::Pat>,
 
-impl PyStorePat {
-    fn new() -> Self {
-        Self {
-            addr: std::cell::RefCell::new(None),
-            data: std::cell::RefCell::new(None),
-            space: std::cell::RefCell::new(None),
-            mem_in: std::cell::RefCell::new(None),
-            next_mem: std::cell::RefCell::new(None),
-            bit_width: std::cell::RefCell::new(None),
-        }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::store();
-        if let Some(s) = *self.space.borrow() { b = b.space(s); }
-        if let Some(p) = self.addr.borrow().clone() { b = b.addr(p); }
-        if let Some(p) = self.data.borrow().clone() { b = b.data(p); }
-        if let Some(p) = self.mem_in.borrow().clone() { b = b.mem_in(p); }
-        if let Some(p) = self.next_mem.borrow().clone() { b = b.next_mem(p); }
-        if let Some(n) = *self.bit_width.borrow() { b = b.bit_width(n); }
-        b.into()
-    }
-}
+    /// Constrain the store's stored-value operand.
+    #[field(accepts = "Pat", arg = "p")]
+    data: Option<pattern::Pat>,
 
-#[pymethods]
-impl PyStorePat {
-    fn addr(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).addr.replace(Some(pat));
-        Ok(slf)
-    }
-    fn data(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).data.replace(Some(pat));
-        Ok(slf)
-    }
-    fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
-        slf.borrow(py).space.replace(Some(s.inner));
-        slf
-    }
+    /// Restrict the match to a specific memory space.
+    #[field(accepts = "VnSpace", arg = "s")]
+    space: Option<rsleigh::VnSpace>,
+
     /// Constrain the store's memory predecessor (inputs[0]).
-    fn mem_in(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).mem_in.replace(Some(pat));
-        Ok(slf)
-    }
+    #[field(accepts = "Pat", arg = "p")]
+    mem_in: Option<pattern::Pat>,
+
     /// Match against the unique consumer of the store's memory output
     /// (outputs[0]).  No match if zero or multiple consumers.
-    fn next_mem(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).next_mem.replace(Some(pat));
-        Ok(slf)
-    }
+    #[field(accepts = "Pat", arg = "p")]
+    next_mem: Option<pattern::Pat>,
+
     /// Filter stores by data width in bits (matches U32 and F32 on
     /// bit_width(32), etc.).
-    fn bit_width(slf: Py<Self>, py: Python<'_>, n: u32) -> Py<Self> {
-        slf.borrow(py).bit_width.replace(Some(n));
-        slf
-    }
+    #[field(arg = "n")]
+    bit_width: Option<u32>,
 }
 
 #[pyfunction]
 #[pyo3(signature = (addr=None, data=None))]
 pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<PyStorePat> {
     let b = PyStorePat::new();
-    if let Some(a) = addr { b.addr.replace(Some(a.into_pat()?)); }
-    if let Some(v) = data { b.data.replace(Some(v.into_pat()?)); }
+    {
+        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(a) = addr {
+            guard.addr = Some(a.into_pat()?);
+        }
+        if let Some(v) = data {
+            guard.data = Some(v.into_pat()?);
+        }
+    }
     Ok(b)
 }
 
 /// Typed builder for `StackStore` node patterns.  Chain
 /// `.offset(o)`, `.offset_any([…])`, `.data(p)`, `.space(s)`.
-#[pyclass(name = "StackStorePat", module = "strider.pattern")]
-pub struct PyStackStorePat {
-    offset: std::cell::RefCell<Option<i64>>,
-    offset_any: std::cell::RefCell<Option<Vec<i64>>>,
-    data: std::cell::RefCell<Option<pattern::Pat>>,
-    space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
-}
+#[strider_pattern(
+    rust_name = "PyStackStorePat",
+    py_name = "StackStorePat",
+    py_module = "strider.pattern",
+    base_builder = "stack_store",
+    node_phrase = "stack-store node",
+)]
+pub struct StackStorePatDef {
+    /// Match only stack-stores whose SP-relative offset equals `o`.
+    #[field(arg = "o")]
+    offset: Option<i64>,
 
-impl PyStackStorePat {
-    fn new() -> Self {
-        Self {
-            offset: std::cell::RefCell::new(None),
-            offset_any: std::cell::RefCell::new(None),
-            data: std::cell::RefCell::new(None),
-            space: std::cell::RefCell::new(None),
-        }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::stack_store();
-        if let Some(s) = *self.space.borrow() { b = b.space(s); }
-        if let Some(o) = *self.offset.borrow() { b = b.offset(o); }
-        if let Some(set) = self.offset_any.borrow().clone() { b = b.offset_any(set); }
-        if let Some(p) = self.data.borrow().clone() { b = b.data(p); }
-        b.into()
-    }
-}
-
-#[pymethods]
-impl PyStackStorePat {
-    fn offset(slf: Py<Self>, py: Python<'_>, o: i64) -> Py<Self> {
-        slf.borrow(py).offset.replace(Some(o)); slf
-    }
     /// Match only stack-stores whose offset is in `offsets`.  Empty
-    /// list vacuously fails (matches nothing) — mirrors the contract
+    /// set vacuously fails (matches nothing) — mirrors the contract
     /// of `int_const_any_of`.
-    fn offset_any(slf: Py<Self>, py: Python<'_>, offsets: Vec<i64>) -> Py<Self> {
-        slf.borrow(py).offset_any.replace(Some(offsets)); slf
-    }
-    fn data(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).data.replace(Some(pat));
-        Ok(slf)
-    }
-    fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
-        slf.borrow(py).space.replace(Some(s.inner)); slf
-    }
+    #[field(arg = "offsets")]
+    offset_any: Option<std::collections::BTreeSet<i64>>,
+
+    /// Constrain the stored-value operand.
+    #[field(accepts = "Pat", arg = "p")]
+    data: Option<pattern::Pat>,
+
+    /// Match only stack-stores in the given address space.
+    #[field(accepts = "VnSpace", arg = "s")]
+    space: Option<rsleigh::VnSpace>,
 }
 
 #[pyfunction]
 #[pyo3(signature = (offset=None, data=None))]
 pub fn stack_store(offset: Option<i64>, data: Option<PatLike<'_>>) -> PyResult<PyStackStorePat> {
     let b = PyStackStorePat::new();
-    if let Some(o) = offset { b.offset.replace(Some(o)); }
-    if let Some(v) = data { b.data.replace(Some(v.into_pat()?)); }
+    {
+        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(o) = offset {
+            guard.offset = Some(o);
+        }
+        if let Some(v) = data {
+            guard.data = Some(v.into_pat()?);
+        }
+    }
     Ok(b)
 }
 
 /// Typed builder for `StackStorePhi` node patterns.  Chain
 /// `.data(p)`, `.space(s)`, `.offsets(list)` (per-predecessor stack
 /// offsets).
-#[pyclass(name = "StackStorePhiPat", module = "strider.pattern")]
-pub struct PyStackStorePhiPat {
-    data: std::cell::RefCell<Option<pattern::Pat>>,
-    space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
-    offsets: std::cell::RefCell<Option<Vec<i64>>>,
-}
+#[strider_pattern(
+    rust_name = "PyStackStorePhiPat",
+    py_name = "StackStorePhiPat",
+    py_module = "strider.pattern",
+    base_builder = "stack_store_phi",
+    node_phrase = "stack-store-phi node",
+)]
+pub struct StackStorePhiPatDef {
+    /// Constrain the per-predecessor stored value.
+    #[field(accepts = "Pat", arg = "p")]
+    data: Option<pattern::Pat>,
 
-impl PyStackStorePhiPat {
-    fn new() -> Self {
-        Self {
-            data: std::cell::RefCell::new(None),
-            space: std::cell::RefCell::new(None),
-            offsets: std::cell::RefCell::new(None),
-        }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::stack_store_phi();
-        if let Some(s) = *self.space.borrow() { b = b.space(s); }
-        if let Some(p) = self.data.borrow().clone() { b = b.data(p); }
-        if let Some(os) = self.offsets.borrow().clone() { b = b.offsets(os); }
-        b.into()
-    }
-}
+    /// Match only in the given address space.
+    #[field(accepts = "VnSpace", arg = "s")]
+    space: Option<rsleigh::VnSpace>,
 
-#[pymethods]
-impl PyStackStorePhiPat {
-    fn data(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).data.replace(Some(pat));
-        Ok(slf)
-    }
-    fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
-        slf.borrow(py).space.replace(Some(s.inner)); slf
-    }
-    fn offsets(slf: Py<Self>, py: Python<'_>, os: Vec<i64>) -> Py<Self> {
-        slf.borrow(py).offsets.replace(Some(os)); slf
-    }
+    /// Per-predecessor stack offsets, in CFG-predecessor order.  Must
+    /// match the node's `Graph::stack_phi_offsets` entry exactly
+    /// (length and values).
+    #[field(arg = "os")]
+    offsets: Option<Vec<i64>>,
 }
 
 #[pyfunction]
 #[pyo3(signature = (data=None))]
 pub fn stack_store_phi(data: Option<PatLike<'_>>) -> PyResult<PyStackStorePhiPat> {
     let b = PyStackStorePhiPat::new();
-    if let Some(v) = data { b.data.replace(Some(v.into_pat()?)); }
+    if let Some(v) = data {
+        let pat = v.into_pat()?;
+        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.data = Some(pat);
+    }
     Ok(b)
 }
 
@@ -2151,10 +2080,9 @@ pat_builder_finalise!(PyPhiPat);
 pat_builder_finalise!(PyMemPhiPat);
 pat_builder_finalise!(PyValuePhiPat);
 pat_builder_finalise!(PyFunctionArgPat);
-pat_builder_finalise!(PyLoadPat);
-pat_builder_finalise!(PyStorePat);
-pat_builder_finalise!(PyStackStorePat);
-pat_builder_finalise!(PyStackStorePhiPat);
+// PyLoadPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
+// PyStorePat, PyStackStorePat, PyStackStorePhiPat: capture/cap/when/into_pat
+// emitted by `#[strider_pattern]`.
 pat_builder_finalise!(PyCallPat);
 pat_builder_finalise!(PyCallOtherPat);
 pat_builder_finalise!(PyRetPat);
