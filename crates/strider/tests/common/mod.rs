@@ -230,6 +230,82 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
     graph
 }
 
+/// Phase 3 Task 3.8 parity entry point.  Same shape as [`analyze`] but
+/// runs the v2 [`opt::pipeline_v2::PipelineV2`] (interleaved
+/// destructive+nondestructive fixed-point) instead of v1's
+/// `Strider::build_optimizer_pipeline()`.
+///
+/// Returns the analyzed graph PLUS the v2 iteration count to
+/// convergence (for reporting; the parity test averages across
+/// fixtures).
+pub fn analyze_v2(
+    arch: Arch,
+    case: &str,
+    fn_name: &str,
+) -> (ir::BuiltFunctionGraph, u32) {
+    let path = binary_path(arch, case);
+    if !path.exists() {
+        panic!(
+            "missing test binary {path:?}; run `make -C fixtures` (or \
+             `make -C fixtures ARCH={} CASE={case}` for just this case)",
+            arch.name()
+        );
+    }
+    let obj = reader::load_elf(&path)
+        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
+    let sleigh_arch = arch.sleigh();
+    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
+    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
+        .expect("probe sleigh new")
+        .regs()
+        .expect("probe sleigh regs");
+    let ana = strider::Strider::new(sleigh_arch, regs, arch.cc())
+        .expect("Strider::new");
+    let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
+        .expect("real sleigh new");
+    let raw_addr = obj
+        .symbol_by_name(fn_name)
+        .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
+        .address();
+    let addr = match arch {
+        Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
+        _ => raw_addr,
+    };
+    let rom_for_cfg: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
+    );
+    let mut cfg_opts_b = cfg::OptionsBuilder::new()
+        .allow_code_before_start_addr()
+        .set_read_only_memory(rom_for_cfg);
+    if let Some(lr) = ana.calling_convention().link_register_vn() {
+        cfg_opts_b = cfg_opts_b.set_link_register(lr);
+    }
+    let cfg_opts = cfg_opts_b.build();
+    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
+        .build()
+        .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
+    let mut graph = ana.analyze_cfg(&cfg)
+        .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"))
+        .graph;
+
+    // v2 pipeline: build PipelineV2 with the same ROM that v1's
+    // `LoadReadOnly` overlay uses.  `Arc<dyn ReadOnlyMemory>` erases
+    // the concrete reader so PipelineV2 doesn't need to be generic.
+    let rom_for_opt: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),
+    );
+    let pipeline = opt::pipeline_v2::PipelineV2::with_rom(
+        ana.calling_convention(),
+        sleigh_arch.endianness(),
+        rom_for_opt,
+    );
+    let iters = pipeline
+        .run(&mut graph.graph, graph.entry)
+        .unwrap_or_else(|e| panic!("PipelineV2 for {fn_name}: {e:?}"));
+    (graph, iters)
+}
+
 // ── Assertion vocabulary ─────────────────────────────────────────────────────
 //
 // All counters walk the graph in pre-order and filter on the node kind.

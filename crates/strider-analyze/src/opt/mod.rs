@@ -85,6 +85,14 @@ pub mod call_stack_arg_collect_egg;
 // (faithful direct port — function-boundary post-passes don't
 // benefit from the egraph; same posture as `IfCondInversionEgg`).
 pub mod function_arg_detect_egg;
+// Phase 3 Task 3.8 — interleaved destructive+nondestructive
+// fixed-point optimizer loop (v2 pipeline).  Built alongside the
+// existing `OptimizerPipeline` / `default_pipeline` — NOT a
+// replacement.  Production code still calls
+// `Strider::build_optimizer_pipeline` (v1); v2 lands here so the
+// parity test can prove equivalence before later phases switch
+// the production path.
+pub mod pipeline_v2;
 #[cfg(test)]
 mod test_support;
 
