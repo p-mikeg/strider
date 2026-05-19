@@ -76,6 +76,11 @@ mod stack_store;
 pub mod stack_store_detect_egg;
 // Phase 3 Task 3.5b — egg-based StackLoadForward parity rewriter.
 pub mod stack_load_forward_egg;
+// Phase 3 Task 3.7a — egg-based CallStackArgCollect parity rewriter
+// (faithful direct port — memory-chain post-passes don't benefit
+// from the egraph; the module name preserves naming consistency with
+// the other Phase-3 egg ports).
+pub mod call_stack_arg_collect_egg;
 #[cfg(test)]
 mod test_support;
 
