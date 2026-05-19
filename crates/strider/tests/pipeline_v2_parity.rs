@@ -276,35 +276,33 @@ fn assert_parity(case: &str, fn_name: &str) -> u32 {
 // re-arm the parity contract.
 
 #[test]
-#[ignore = "Phase 3.2 ConstantFoldEgg covers const-eval only; v1's identity/reassoc/bitcast/extend rule groups unported. See module-level comment."]
 fn parity_arithmetic_add() {
     let iters = assert_parity("arithmetic", "add");
     eprintln!("parity_arithmetic_add: v2 converged in {iters} iters");
 }
 
 #[test]
-#[ignore = "Phase 3.2 ConstantFoldEgg covers const-eval only; v1's identity/reassoc/bitcast/extend rule groups unported. See module-level comment."]
+#[ignore = "Phase 3.2.5: small residual histogram diff (1 Add, 1 Neg). Lowered `Add(x, Neg(x))` shape in real binary doesn't collapse — likely lift-time aliasing keeps the two `x`s in separate e-classes."]
 fn parity_control_sum_to_n() {
     let iters = assert_parity("control", "sum_to_n");
     eprintln!("parity_control_sum_to_n: v2 converged in {iters} iters");
 }
 
 #[test]
-#[ignore = "Phase 3.2 ConstantFoldEgg covers const-eval only; v1's identity/reassoc/bitcast/extend rule groups unported. See module-level comment."]
+#[ignore = "Phase 3.2.5: small residual histogram diff (1 Add, 1 IntConst). Likely a stack-offset address calc v1 collapses via a rule not yet ported."]
 fn parity_calling_convention_forward_1() {
     let iters = assert_parity("calling_convention", "forward_1");
     eprintln!("parity_calling_convention_forward_1: v2 converged in {iters} iters");
 }
 
 #[test]
-#[ignore = "Phase 3.2 ConstantFoldEgg covers const-eval only; v1's identity/reassoc/bitcast/extend rule groups unported. See module-level comment."]
+#[ignore = "Phase 3.2.5: small residual histogram diff (1 Add, 1 Neg). Same root cause as parity_control_sum_to_n."]
 fn parity_memory_array_sum() {
     let iters = assert_parity("memory", "array_sum");
     eprintln!("parity_memory_array_sum: v2 converged in {iters} iters");
 }
 
 #[test]
-#[ignore = "Phase 3.2 ConstantFoldEgg covers const-eval only; v1's identity/reassoc/bitcast/extend rule groups unported. See module-level comment."]
 fn parity_switch_f() {
     let iters = assert_parity("switch", "f");
     eprintln!("parity_switch_f: v2 converged in {iters} iters");

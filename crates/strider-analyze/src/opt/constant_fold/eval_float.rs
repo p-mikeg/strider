@@ -50,7 +50,7 @@ macro_rules! eval_unary {
 /// Evaluates a float binary op on raw bit patterns.  Returns the result as a
 /// raw bit pattern, or `None` for undefined operations (should not occur in
 /// IEEE 754, but we keep the Option for consistency with the int version).
-pub(super) fn eval_float_binary(
+pub(crate) fn eval_float_binary(
     op: FloatBinaryOp,
     bits_l: u64,
     bits_r: u64,
@@ -69,7 +69,7 @@ pub(super) fn eval_float_binary(
 }
 
 /// Evaluates a float comparison on raw bit patterns.
-pub(super) fn eval_float_cmp(
+pub(crate) fn eval_float_cmp(
     op: FloatCmpOp,
     bits_l: u64,
     bits_r: u64,
@@ -83,7 +83,7 @@ pub(super) fn eval_float_cmp(
 }
 
 /// Evaluates a float unary op on a raw bit pattern.
-pub(super) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u64> {
+pub(crate) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u64> {
     match ty {
         NodeOutputType::F32 => Some(eval_unary!(f32, op, bits as u32)),
         NodeOutputType::F64 => Some(eval_unary!(f64, op, bits)),

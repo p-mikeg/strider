@@ -4,7 +4,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::worklist::WorkSet;
 
-mod eval_float;
+pub(crate) mod eval_float;
 pub(crate) mod eval_int;
 mod rules;
 #[cfg(test)]
