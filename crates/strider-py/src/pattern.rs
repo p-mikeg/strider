@@ -1618,47 +1618,25 @@ pub fn ret() -> PyRetPat {
 /// and the consumers of the true/false outputs.  When `cond` is set
 /// the matcher also tries the compiler-inverted layout (input
 /// `Not(cond)` with branches swapped) — see `pattern::IfPat` docs.
-#[pyclass(name = "IfPat", module = "strider.pattern")]
-pub struct PyIfPat {
-    cond: std::cell::RefCell<Option<pattern::Pat>>,
-    true_branch: std::cell::RefCell<Option<pattern::Pat>>,
-    false_branch: std::cell::RefCell<Option<pattern::Pat>>,
-}
+#[strider_pattern(
+    rust_name = "PyIfPat",
+    py_name = "IfPat",
+    py_module = "strider.pattern",
+    base_builder = "if_node",
+    node_phrase = "If node",
+)]
+pub struct IfPatDef {
+    /// Constrain the If's condition operand.
+    #[field(accepts = "Pat", arg = "p")]
+    cond: Option<pattern::Pat>,
 
-impl PyIfPat {
-    fn new() -> Self {
-        Self {
-            cond: std::cell::RefCell::new(None),
-            true_branch: std::cell::RefCell::new(None),
-            false_branch: std::cell::RefCell::new(None),
-        }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::if_node();
-        if let Some(c) = self.cond.borrow().clone() { b = b.cond(c); }
-        if let Some(t) = self.true_branch.borrow().clone() { b = b.true_branch(t); }
-        if let Some(f) = self.false_branch.borrow().clone() { b = b.false_branch(f); }
-        b.into()
-    }
-}
+    /// Match the unique consumer of the If's true output.
+    #[field(accepts = "Pat", arg = "p")]
+    true_branch: Option<pattern::Pat>,
 
-#[pymethods]
-impl PyIfPat {
-    fn cond(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).cond.replace(Some(pat));
-        Ok(slf)
-    }
-    fn true_branch(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).true_branch.replace(Some(pat));
-        Ok(slf)
-    }
-    fn false_branch(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).false_branch.replace(Some(pat));
-        Ok(slf)
-    }
+    /// Match the unique consumer of the If's false output.
+    #[field(accepts = "Pat", arg = "p")]
+    false_branch: Option<pattern::Pat>,
 }
 
 #[pyfunction]
@@ -1666,7 +1644,9 @@ impl PyIfPat {
 pub fn if_(cond: Option<PatLike<'_>>) -> PyResult<PyIfPat> {
     let b = PyIfPat::new();
     if let Some(c) = cond {
-        b.cond.replace(Some(c.into_pat()?));
+        let pat = c.into_pat()?;
+        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.cond = Some(pat);
     }
     Ok(b)
 }
@@ -2086,7 +2066,7 @@ pat_builder_finalise!(PyFunctionArgPat);
 pat_builder_finalise!(PyCallPat);
 pat_builder_finalise!(PyCallOtherPat);
 pat_builder_finalise!(PyRetPat);
-pat_builder_finalise!(PyIfPat);
+// PyIfPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
 pat_builder_finalise!(PyIntBinaryPat);
 pat_builder_finalise!(PyBoolBinaryPat);
 pat_builder_finalise!(PyFloatBinaryPat);
