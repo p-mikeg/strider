@@ -60,6 +60,16 @@ impl PyMatch {
 
 #[pymethods]
 impl PyMatch {
+    /// The root node where the top-level pattern matched, as a `u32`
+    /// node id.  Pair with `Graph.asm_fingerprint(node_id)` /
+    /// `Analysis.fingerprint(node)` for proof-of-correctness queries
+    /// that don't carry an explicit `Capture` (the root has no
+    /// user-visible capture binding).
+    #[getter]
+    fn root(&self) -> u32 {
+        self.inner.root().as_u32()
+    }
+
     /// `m["name"]` / `m[capture]` — best-effort: integer if value
     /// output is an int, bool if it's a bool, raw bits otherwise.
     fn __getitem__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<PyObject> {

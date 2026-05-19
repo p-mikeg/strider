@@ -59,6 +59,40 @@ CPython 3.9+ version.  No CI / PyPI upload is configured; install via
 import strider
 from strider.pattern import Capture, var, add, load
 
+# 1. Load — auto-picks arch + calling convention from the ELF header.
+s = strider.load("fixtures/out/x86/memory.elf")
+
+# 2. Analyze a single function by symbol name (or by address int).
+a = s.analyze("array_sum")
+
+# 3. Query the optimized graph with a pattern.
+base, off = Capture(), Capture()
+pat = load(addr=add(var(base), var(off)))
+for hit in a.find(pat, ignore_casts=True):
+    print(hit.uint(off))
+    # `a.fingerprint(hit.root)` returns the contributing-instruction
+    # machine addresses — proof-of-correctness audit trail.
+
+# 4. Visualize.
+a.dump_html("graph.html")
+
+# Walk every function in the binary:
+for name in s.functions():
+    if "init" in name:
+        print(name, hex(s.symbol(name)))
+```
+
+For workflows that need granular control — explicit calling
+conventions (Linux kernel / syscall / custom), callback-style memory
+readers, custom optimizer pipelines, per-address CC overrides — drop
+down to the building blocks documented below.
+
+## Low-level API — building blocks
+
+```python
+import strider
+from strider.pattern import Capture, var, add, load
+
 # 1. Load a binary into a MemoryMap (caches the parsed ELF for symbol
 #    lookups — no pyelftools dance needed).
 mem = strider.MemoryMap()

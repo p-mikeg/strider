@@ -21,3 +21,17 @@ if hasattr(_ext, "pattern"):
 
 # __version__ comes from the cdylib.
 __version__ = _ext.__version__
+
+# High-level Python facade (Phase 5 Task 5.2).  Adds:
+#   * `strider.load(path)` → high-level handle
+#   * `strider.Analysis` — wrapper around a RunResult
+#
+# Does NOT shadow the cdylib's `strider.Strider` class — that remains
+# the lift-driver type used by existing tests/examples (constructed as
+# `Strider(arch, sleigh, cc)` and consumed by the orchestrator).  The
+# high-level facade class is `strider._api.Strider` (importable as
+# `from strider._api import Strider as StriderHandle` for explicit
+# typing), but the user-facing entry point is `strider.load(path)`
+# which returns an already-constructed instance.
+from . import _api as _api  # noqa: E402,F401
+from ._api import Analysis, load  # noqa: E402,F401
