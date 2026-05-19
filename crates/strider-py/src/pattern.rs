@@ -1319,44 +1319,59 @@ pub fn stack_store_phi(data: Option<PatLike<'_>>) -> PyResult<PyStackStorePhiPat
 /// passed directly to any field setter or query that takes a
 /// pattern (e.g. `g.find_all(call().arg(0, int_const(8)))`); the
 /// `into_pat()` call is implicit at use-site.
-#[pyclass(name = "CallPat", module = "strider.pattern")]
-pub struct PyCallPat {
-    target: std::cell::RefCell<Option<pattern::Pat>>,
-    args: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
-    ret_outputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+/// Typed builder for `Call` node patterns.  Wraps `pattern::CallPat`
+/// so callers can chain `.at(addr)`, `.target(p)`, `.arg(idx, p)`,
+/// `.ret_output(idx, p)`, plus the universal capture / predicate /
+/// finaliser methods (`.capture(c)` / `.cap(name)` / `.when(f)` /
+/// `.into_pat()`).
+///
+/// Returned by [`call`] (the free function).  Because [`PyCallPat`]
+/// is a variant of [`PatLike`], an un-finalised builder can be
+/// passed directly to any field setter or query that takes a
+/// pattern (e.g. `g.find_all(call().arg(0, int_const(8)))`); the
+/// `into_pat()` call is implicit at use-site.
+#[strider_pattern(
+    rust_name = "PyCallPat",
+    py_name = "CallPat",
+    py_module = "strider.pattern",
+    base_builder = "call",
+    node_phrase = "Call node",
+)]
+pub struct CallPatDef {
+    /// Constrain the call target with an arbitrary pattern (e.g.
+    /// `function_arg(0)` or a captured value reference).
+    #[field(accepts = "Pat", arg = "p")]
+    target: Option<pattern::Pat>,
+
+    /// Constrain the argument at position `idx` (0-based, after the
+    /// implicit `[ctrl, mem]` inputs).  The `Call` node's input layout
+    /// is `[ctrl, mem, target, arg0, arg1, …]`; this method maps `idx`
+    /// onto the arg slot.
+    #[field(multi, accepts = "Pat", arg = "idx")]
+    arg: Option<Vec<(usize, pattern::Pat)>>,
+
+    /// Capture the Call's return-value output at ABI position `idx`
+    /// — e.g. `.ret_output(0, var(c))` binds `c` to the
+    /// `NodeOutputId` of the calling convention's first return
+    /// register.  See `pattern::CallPat::ret_output` for details.
+    #[field(multi, accepts = "Pat", arg = "idx")]
+    ret_output: Option<Vec<(usize, pattern::Pat)>>,
 }
 
-impl PyCallPat {
-    fn new() -> Self {
-        Self {
-            target: std::cell::RefCell::new(None),
-            args: std::cell::RefCell::new(Vec::new()),
-            ret_outputs: std::cell::RefCell::new(Vec::new()),
-        }
-    }
-    /// Materialise the current builder state into a finalised `Pat`.
-    /// Cheap: clones the inner Vecs once.
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::call();
-        if let Some(t) = self.target.borrow().clone() {
-            b = b.target(t);
-        }
-        for (idx, p) in self.args.borrow().iter().cloned() {
-            b = b.arg(idx, p);
-        }
-        for (idx, p) in self.ret_outputs.borrow().iter().cloned() {
-            b = b.ret_output(idx, p);
-        }
-        b.into()
-    }
-}
-
+// Phase 4 Task 4.2c — `at` / `at_any` are special transformations on
+// the same `target` field (constructing an `int_const` /
+// `int_const_any_of` Pat from a literal address).  They don't fit the
+// macro's `Option<T>`-per-field shape, so we expose them via a
+// secondary `#[pymethods]` block (allowed by `multiple-pymethods`).
 #[pymethods]
 impl PyCallPat {
     /// Constrain the call target to the literal address `addr`.
     /// Equivalent to `target(int_const(addr))`.
-    fn at(slf: Py<Self>, py: Python<'_>, addr: u64) -> Py<Self> {
-        slf.borrow(py).target.replace(Some(pattern::int_const(addr)));
+    fn at(slf: PyRef<'_, Self>, addr: u64) -> PyRef<'_, Self> {
+        {
+            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
+            guard.target = Some(pattern::int_const(addr));
+        }
         slf
     }
     /// Constrain the call target to any address in `addrs`.
@@ -1364,36 +1379,12 @@ impl PyCallPat {
     /// matches any address in the list.  Equivalent to
     /// `target(int_const_any_of(addrs))`.  An empty list vacuously
     /// fails (matches nothing).
-    fn at_any(slf: Py<Self>, py: Python<'_>, addrs: Vec<u64>) -> Py<Self> {
-        slf.borrow(py)
-            .target
-            .replace(Some(pattern::int_const_any_of(addrs)));
+    fn at_any(slf: PyRef<'_, Self>, addrs: Vec<u64>) -> PyRef<'_, Self> {
+        {
+            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
+            guard.target = Some(pattern::int_const_any_of(addrs));
+        }
         slf
-    }
-    /// Constrain the call target with an arbitrary pattern (e.g.
-    /// `function_arg(0)` or a captured value reference).
-    fn target(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).target.replace(Some(pat));
-        Ok(slf)
-    }
-    /// Constrain the argument at position `idx` (0-based, after the
-    /// implicit `[ctrl, mem]` inputs).  The `Call` node's input layout
-    /// is `[ctrl, mem, target, arg0, arg1, …]`; this method maps `idx`
-    /// onto the arg slot.
-    fn arg(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).args.borrow_mut().push((idx, pat));
-        Ok(slf)
-    }
-    /// Capture the Call's return-value output at ABI position `idx`
-    /// — e.g. `.ret_output(0, var(c))` binds `c` to the
-    /// `NodeOutputId` of the calling convention's first return
-    /// register.  See `pattern::CallPat::ret_output` for details.
-    fn ret_output(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).ret_outputs.borrow_mut().push((idx, pat));
-        Ok(slf)
     }
 }
 
@@ -1402,7 +1393,8 @@ impl PyCallPat {
 pub fn call(at: Option<u64>) -> PyCallPat {
     let b = PyCallPat::new();
     if let Some(addr) = at {
-        b.target.replace(Some(pattern::int_const(addr)));
+        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.target = Some(pattern::int_const(addr));
     }
     b
 }
@@ -2025,7 +2017,8 @@ pat_builder_finalise!(PyFunctionArgPat);
 // PyLoadPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
 // PyStorePat, PyStackStorePat, PyStackStorePhiPat: capture/cap/when/into_pat
 // emitted by `#[strider_pattern]`.
-pat_builder_finalise!(PyCallPat);
+// PyCallPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`
+// (Phase 4 Task 4.2c).
 pat_builder_finalise!(PyCallOtherPat);
 pat_builder_finalise!(PyRetPat);
 // PyIfPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.

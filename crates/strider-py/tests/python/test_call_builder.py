@@ -56,20 +56,28 @@ def test_into_pat_returns_pat():
     assert isinstance(p, Pat)
 
 
-def test_capture_finalises_to_pat():
+# Phase 4 Task 4.2c — after the `#[strider_pattern]` macro migration
+# the `.capture(c)` / `.cap(name)` / `.when(f)` builder methods return
+# the same builder (so further chaining stays typed), not an eagerly
+# finalised `Pat`.  Call `.into_pat()` (or pass the builder directly
+# as a `PatLike`) to materialise.
+def test_capture_returns_builder_with_into_pat_then_pat():
     c = Capture()
-    p = call().capture(c)
-    assert isinstance(p, Pat)
+    b = call().capture(c)
+    assert b is not None
+    assert isinstance(b.into_pat(), Pat)
 
 
-def test_cap_name_finalises_to_pat():
-    p = call().cap("call_site")
-    assert isinstance(p, Pat)
+def test_cap_name_returns_builder_with_into_pat_then_pat():
+    b = call().cap("call_site")
+    assert b is not None
+    assert isinstance(b.into_pat(), Pat)
 
 
-def test_when_predicate_finalises_to_pat():
-    p = call().when(lambda m: True)
-    assert isinstance(p, Pat)
+def test_when_predicate_returns_builder_with_into_pat_then_pat():
+    b = call().when(lambda m: True)
+    assert b is not None
+    assert isinstance(b.into_pat(), Pat)
 
 
 def test_target_accepts_pat_like():
