@@ -1682,6 +1682,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "strider-pattern-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "strider-py"
 version = "0.1.0"
 dependencies = [
@@ -1697,6 +1706,7 @@ dependencies = [
  "reader",
  "rsleigh",
  "strider",
+ "strider-pattern-macros",
  "target",
 ]
 

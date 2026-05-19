@@ -2127,6 +2127,12 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // migration unchanged.
     crate::pattern_reference::register(&m)?;
 
+    // Phase 4 Task 4.1 — register the macro-driven V3 type so its
+    // generated `.pyi` lands in the stub_gen output next to the V2
+    // reference.  Diffing the two is the smoking-gun validation that
+    // `#[strider_pattern]` matches `EMISSION_SPEC.md`.
+    crate::pattern_macro_v2::register(&m)?;
+
     parent.add_submodule(&m)?;
     let sys = py.import_bound("sys")?;
     sys.getattr("modules")?.set_item("strider.pattern", &m)?;

@@ -2,11 +2,11 @@
 resolver = "2"
 members = ["crates/*"]
 default-members = ["crates/*"]
-# Phase 4 Task 4.0 staged this directory with the EMISSION_SPEC.md
-# spec; Task 4.1 will turn it into a real proc-macro crate by adding
-# a Cargo.toml + src/lib.rs.  Until then, exclude it from the glob so
-# `cargo metadata` doesn't fail on a missing manifest.
-exclude = ["crates/strider-pattern-macros"]
+# Phase 4 Task 4.1 — `strider-pattern-macros` is the proc-macro crate
+# that emits Rust + PyO3 pattern builders from a single annotated
+# struct.  See `crates/strider-pattern-macros/EMISSION_SPEC.md` for the
+# emission contract and `crates/strider-py/src/pattern_reference.rs`
+# for the hand-written shape it must mirror.
 
 
 [workspace.package]
@@ -27,6 +27,7 @@ pcode-lift = { path = "crates/pcode-lift" }
 strider-ir = { path = "crates/strider-ir" }
 strider-lift = { path = "crates/strider-lift" }
 strider-analyze = { path = "crates/strider-analyze" }
+strider-pattern-macros = { path = "crates/strider-pattern-macros" }
 rsleigh = { path = "../rsleigh" }
 
 cranelift-bitset = "0.112.2"
