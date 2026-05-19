@@ -164,6 +164,40 @@ Phase 4 Task 4.2 flips the dependency direction: the generated
 stubs become canonical, and `pattern.pyi` is auto-rewritten from
 them (a small `cargo xtask sync-stubs` script will land then).
 
+## Field annotations — extended set (Task 4.2b)
+
+The base spec (Task 4.1) covers four field shapes: `#[field]` for
+primitives, `#[field(accepts = "Pat")]` for `PatLike` operands, and
+`#[field(accepts = "VnSpace")]` for `rsleigh::VnSpace`.  Task 4.2b
+adds:
+
+| Annotation | Field type | Setter signature | Used by |
+|---|---|---|---|
+| `#[field]` on `Option<String>` | `Option<String>` | `fn name(slf, s: String) -> PyRef<Self>` | `PyCallOtherPat.name` |
+| `#[field(accepts = "Vn")]` | `Option<rsleigh::Vn>` | `fn for_vn(slf, vn: PyVn) -> PyRef<Self>` | `PyPhiPat.for_vn` |
+| `#[field(multi, accepts = "Pat")]` | `Option<Vec<(usize, pattern::Pat)>>` | `fn arg(slf, idx: usize, p: PatLike) -> PyResult<PyRef<Self>>` | `PyCallPat.arg`, `PyPhiPat.input`, `PyRetPat.ret_val`, … |
+
+Notes on `#[field(multi)]`:
+
+- The inner-state field must be typed `Option<Vec<(IDX, T)>>` where
+  `IDX` is `usize` or `u32`; the macro extracts `IDX` from the tuple
+  to build the right setter signature.
+- The vec is lazily allocated on first push, so an unset field stays
+  `None` (matching the non-multi field contract).  The `finalise()`
+  body iterates the vec in insertion order and applies the
+  underlying builder's `.<py_name>(idx, value)` for each entry.
+- The current implementation only supports `accepts = "Pat"` for
+  multi-arg fields.  Non-Pat accumulators (e.g. `Vec<(u32, u64)>`)
+  would need a separate emission path and have no in-tree call site
+  today.
+
+## Patterns that intentionally stay hand-written
+
+| Pattern | Reason |
+|---|---|
+| `PyFunctionArgPat` | Enum-dispatch source: `.index(u32)`, `.source_register(vn)`, `.source_stack(space, offset)` all write the same underlying `Option<FunctionArgSource>`.  Out of scope for the current `Option<T>`-per-field macro shape. |
+| `PyIntBinaryPat`, `PyBoolBinaryPat`, `PyFloatBinaryPat` | Required-construction (op + lhs + rhs supplied at the constructor, then `.ordered()` toggles a bool).  Doesn't fit the `*Def { Option<T>, … }` shape — every field is required, not optional. |
+
 ## Coexistence with v1
 
 The reference type is named `PyStackStorePatV2` (Rust) /

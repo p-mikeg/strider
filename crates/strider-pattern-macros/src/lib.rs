@@ -44,6 +44,16 @@
 //! - `#[field(accepts = "VnSpace")]` — accepts a `PyVnSpace` and reads
 //!   `.inner` to get the underlying `rsleigh::VnSpace`.
 //!
+//! - `#[field(accepts = "Vn")]` — accepts a `PyVn` and reads
+//!   `.inner` to get the underlying `rsleigh::Vn`.
+//!
+//! - `#[field(multi)]` (combine with `accepts = "Pat"`) — for
+//!   accumulating setters that take `(idx, p)` and push onto a
+//!   `Vec<(usize, T)>`.  Each call appends an entry; the inner-state
+//!   field must be typed `Option<Vec<(usize, T)>>` (or
+//!   `Option<Vec<(u32, T)>>`).  The generated `finalise()` walks the
+//!   vec and applies `.<py_name>(idx, value)` in insertion order.
+//!
 //! - `#[field(alias = "py_name")]` — overrides the Python method name
 //!   (default: same as the Rust field).
 //!
@@ -178,17 +188,58 @@ impl Parse for KeyValue {
     }
 }
 
+/// A `#[field(...)]` inner item — either a bare flag (`multi`) or a
+/// `key = "value"` pair (`alias = "py_name"`).
+enum FieldArg {
+    Flag(Ident),
+    KeyValue(KeyValue),
+}
+
+impl Parse for FieldArg {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let key: Ident = input.parse()?;
+        if input.peek(Token![=]) {
+            let _eq: Token![=] = input.parse()?;
+            let value: LitStr = input.parse()?;
+            Ok(FieldArg::KeyValue(KeyValue { key, value }))
+        } else {
+            Ok(FieldArg::Flag(key))
+        }
+    }
+}
+
 // ─── Per-field parsing ──────────────────────────────────────────────
 
 /// The kind of value a field's Python setter accepts.
+//
+// `large_enum_variant` fires on the `MultiPat { idx_ty: Type }` arm
+// because `syn::Type` is large; this enum lives one-per-field during
+// macro expansion (a handful of values total) and never crosses a hot
+// path, so the indirection isn't worth the noise.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum FieldKind {
-    /// Plain primitive — passed by value, stored as `Some(v)`.
+    /// Plain primitive — passed by value, stored as `Some(v)`.  Covers
+    /// numerics (`i64`, `u64`, `u32`, `bool`, …) as well as `String`
+    /// (the finalise step clones via `Clone` because `String` isn't
+    /// `Copy` and we can't partial-move out of a `MutexGuard`).
     Primitive,
     /// `PatLike` — calls `.into_pat()?`, returns `PyResult<...>`.
     PatLike,
     /// `PyVnSpace` — reads `.inner` to get the underlying space.
     VnSpace,
+    /// `PyVn` — reads `.inner` to get the underlying `rsleigh::Vn`.
+    Vn,
+    /// `#[field(multi, accepts = "Pat")]` — accumulating `(idx, p)`
+    /// setter that pushes onto a `Vec<(usize, Pat)>` (or
+    /// `Vec<(u32, Pat)>`).  The carried type is the **tuple-inner**
+    /// `T` (i.e. for `Option<Vec<(usize, Pat)>>` the field's
+    /// `inner_ty` is `Vec<(usize, Pat)>` and `multi_idx_ty` is
+    /// `usize`).
+    MultiPat {
+        /// The index type — `usize` or `u32`.
+        idx_ty: Type,
+    },
 }
 
 /// One field of the annotated `*Def` struct.  The macro emits one
@@ -242,28 +293,50 @@ impl Field {
         let mut arg: Option<String> = None;
         let mut accepts: Option<String> = None;
         let mut doc: Option<String> = None;
+        let mut multi: bool = false;
 
-        // Parse the inner attribute meta items (`alias = "..."`, etc.).
+        // Parse the inner attribute meta items.  Each item is either a
+        // bare flag like `multi` or a `key = "value"` pair.  We accept
+        // both shapes in any order, e.g. `#[field(multi, accepts =
+        // "Pat", arg = "p")]`.
         if !matches!(attr.meta, Meta::Path(_)) {
             // `#[field(...)]` form.
             let nested = attr.parse_args_with(
-                syn::punctuated::Punctuated::<KeyValue, Token![,]>::parse_terminated,
+                syn::punctuated::Punctuated::<FieldArg, Token![,]>::parse_terminated,
             )?;
-            for kv in nested {
-                let key_str = kv.key.to_string();
-                match key_str.as_str() {
-                    "alias" => alias = Some(kv.value.value()),
-                    "arg" => arg = Some(kv.value.value()),
-                    "accepts" => accepts = Some(kv.value.value()),
-                    "doc" => doc = Some(kv.value.value()),
-                    other => {
-                        return Err(syn::Error::new_spanned(
-                            kv.key,
-                            format!(
-                                "unknown #[field(...)] key `{other}`; expected one of \
-                                 alias, arg, accepts, doc",
-                            ),
-                        ));
+            for item in nested {
+                match item {
+                    FieldArg::Flag(ident) => {
+                        let s = ident.to_string();
+                        match s.as_str() {
+                            "multi" => multi = true,
+                            other => {
+                                return Err(syn::Error::new_spanned(
+                                    &ident,
+                                    format!(
+                                        "unknown #[field(...)] flag `{other}`; expected `multi`",
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                    FieldArg::KeyValue(kv) => {
+                        let key_str = kv.key.to_string();
+                        match key_str.as_str() {
+                            "alias" => alias = Some(kv.value.value()),
+                            "arg" => arg = Some(kv.value.value()),
+                            "accepts" => accepts = Some(kv.value.value()),
+                            "doc" => doc = Some(kv.value.value()),
+                            other => {
+                                return Err(syn::Error::new_spanned(
+                                    kv.key,
+                                    format!(
+                                        "unknown #[field(...)] key `{other}`; expected one of \
+                                         alias, arg, accepts, doc, or the flag `multi`",
+                                    ),
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -276,18 +349,43 @@ impl Field {
             doc = extract_rust_doc(&field.attrs);
         }
 
-        let kind = match accepts.as_deref() {
-            None => FieldKind::Primitive,
-            Some("Pat") => FieldKind::PatLike,
-            Some("VnSpace") => FieldKind::VnSpace,
-            Some(other) => {
-                return Err(syn::Error::new_spanned(
-                    attr,
-                    format!(
-                        "unknown #[field(accepts = \"{other}\")] target; expected one of \
-                         \"Pat\", \"VnSpace\"",
-                    ),
-                ));
+        let kind = if multi {
+            // `multi` requires `accepts = "Pat"` and the field must be
+            // typed `Option<Vec<(IDX, T)>>`.  Extract `IDX` from the
+            // tuple so the generated setter has the right signature.
+            match accepts.as_deref() {
+                Some("Pat") => {
+                    let idx_ty = extract_multi_idx_ty(&inner_ty).ok_or_else(|| {
+                        syn::Error::new_spanned(
+                            &field.ty,
+                            "#[field(multi, accepts = \"Pat\")] requires \
+                             `Option<Vec<(usize, T)>>` or `Option<Vec<(u32, T)>>`",
+                        )
+                    })?;
+                    FieldKind::MultiPat { idx_ty }
+                }
+                Some(_) | None => {
+                    return Err(syn::Error::new_spanned(
+                        attr,
+                        "`#[field(multi)]` currently requires `accepts = \"Pat\"`",
+                    ));
+                }
+            }
+        } else {
+            match accepts.as_deref() {
+                None => FieldKind::Primitive,
+                Some("Pat") => FieldKind::PatLike,
+                Some("VnSpace") => FieldKind::VnSpace,
+                Some("Vn") => FieldKind::Vn,
+                Some(other) => {
+                    return Err(syn::Error::new_spanned(
+                        attr,
+                        format!(
+                            "unknown #[field(accepts = \"{other}\")] target; expected one of \
+                             \"Pat\", \"VnSpace\", \"Vn\"",
+                        ),
+                    ));
+                }
             }
         };
 
@@ -309,6 +407,29 @@ impl Field {
             doc,
         }))
     }
+}
+
+/// Extract the index type `IDX` from `Vec<(IDX, T)>`.  Returns `None`
+/// if the type isn't a 2-tuple-typed `Vec`.  Used by the `multi`
+/// field kind to wire the right `idx: usize` / `idx: u32` setter
+/// signature.
+fn extract_multi_idx_ty(ty: &Type) -> Option<Type> {
+    let Type::Path(path) = ty else { return None };
+    let last = path.path.segments.last()?;
+    if last.ident != "Vec" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    for arg in &args.args {
+        if let syn::GenericArgument::Type(Type::Tuple(tup)) = arg
+            && tup.elems.len() == 2
+        {
+            return Some(tup.elems[0].clone());
+        }
+    }
+    None
 }
 
 /// Unwrap `Option<T>` -> `T`.  Returns `None` if the type isn't an
@@ -473,7 +594,7 @@ fn build_finalise_impl(
     let apply_fields = fields.iter().map(|f| {
         let rust_ident = &f.rust_ident;
         let py_name = format_ident!("{}", &f.py_name);
-        match f.kind {
+        match &f.kind {
             FieldKind::Primitive => {
                 // BTreeSet fields need `.iter().copied().collect()`
                 // so the v1 builder's `Vec<T>` API takes them by
@@ -499,6 +620,17 @@ fn build_finalise_impl(
                             b = b.#py_name(::core::clone::Clone::clone(v));
                         }
                     }
+                } else if is_string(&f.inner_ty) {
+                    // `String` isn't `Copy`, and we can't partial-move
+                    // out of a `MutexGuard` (it derefs to `&mut T`).
+                    // Clone the contents instead — the underlying
+                    // builder typically takes `impl Into<String>` which
+                    // accepts an owned `String` by value.
+                    quote! {
+                        if let ::core::option::Option::Some(ref s) = guard.#rust_ident {
+                            b = b.#py_name(::core::clone::Clone::clone(s));
+                        }
+                    }
                 } else {
                     quote! {
                         if let ::core::option::Option::Some(v) = guard.#rust_ident {
@@ -514,10 +646,26 @@ fn build_finalise_impl(
                     }
                 }
             }
-            FieldKind::VnSpace => {
+            // `VnSpace` and `Vn` both stash a `Copy` rsleigh varnode in
+            // the inner state.  The finalise body is identical — the
+            // setter signature is the only difference, handled in
+            // `emit_field_method`.
+            FieldKind::VnSpace | FieldKind::Vn => {
                 quote! {
                     if let ::core::option::Option::Some(v) = guard.#rust_ident {
                         b = b.#py_name(v);
+                    }
+                }
+            }
+            FieldKind::MultiPat { .. } => {
+                // The vec entries are `(idx, Pat)`.  We can't move out
+                // of the MutexGuard, so iterate-by-reference and clone
+                // each Pat (cheap — `Pat` is `Arc`-backed).
+                quote! {
+                    if let ::core::option::Option::Some(ref entries) = guard.#rust_ident {
+                        for &(idx, ref p) in entries.iter() {
+                            b = b.#py_name(idx, ::core::clone::Clone::clone(p));
+                        }
                     }
                 }
             }
@@ -561,6 +709,15 @@ fn is_vec(ty: &Type) -> bool {
         return false;
     };
     last.ident == "Vec"
+}
+
+/// `true` if `ty` is `String` (path ends in `String`).
+fn is_string(ty: &Type) -> bool {
+    let Type::Path(path) = ty else { return false };
+    let Some(last) = path.path.segments.last() else {
+        return false;
+    };
+    last.ident == "String"
 }
 
 /// `true` if `ty` is `BTreeSet<...>` (any path ending in
@@ -718,7 +875,7 @@ fn emit_field_method(_rust_name: &Ident, field: &Field) -> TokenStream2 {
         })
         .unwrap_or_default();
 
-    match field.kind {
+    match &field.kind {
         FieldKind::Primitive => {
             let ty = &field.inner_ty;
             quote! {
@@ -769,6 +926,49 @@ fn emit_field_method(_rust_name: &Ident, field: &Field) -> TokenStream2 {
                     guard.#rust_ident = ::core::option::Option::Some(#arg_name.inner);
                     ::core::mem::drop(guard);
                     slf
+                }
+            }
+        }
+        FieldKind::Vn => {
+            quote! {
+                #(#doc_attrs)*
+                fn #py_name(
+                    slf: ::pyo3::PyRef<'_, Self>,
+                    #arg_name: crate::sleigh::PyVn,
+                ) -> ::pyo3::PyRef<'_, Self> {
+                    let mut guard = slf
+                        .inner
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    guard.#rust_ident = ::core::option::Option::Some(#arg_name.inner);
+                    ::core::mem::drop(guard);
+                    slf
+                }
+            }
+        }
+        FieldKind::MultiPat { idx_ty } => {
+            // Accumulating two-arg setter: `.method(idx, p)` pushes
+            // `(idx, p)` onto the inner `Vec<(IDX, Pat)>`.  The Vec is
+            // lazily allocated on first push so an unset field stays
+            // `None` (matching the contract of non-multi fields).
+            quote! {
+                #(#doc_attrs)*
+                fn #py_name<'py>(
+                    slf: ::pyo3::PyRef<'py, Self>,
+                    #arg_name: #idx_ty,
+                    p: crate::pattern::PatLike<'py>,
+                ) -> ::pyo3::PyResult<::pyo3::PyRef<'py, Self>> {
+                    let pat = p.into_pat()?;
+                    let mut guard = slf
+                        .inner
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    guard
+                        .#rust_ident
+                        .get_or_insert_with(::std::vec::Vec::new)
+                        .push((#arg_name, pat));
+                    ::core::mem::drop(guard);
+                    ::core::result::Result::Ok(slf)
                 }
             }
         }
