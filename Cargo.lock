@@ -1636,6 +1636,7 @@ dependencies = [
  "ir",
  "object",
  "pcode-lift",
+ "proptest",
  "reader",
  "rsleigh",
  "rustc-hash",

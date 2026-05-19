@@ -45,6 +45,9 @@ salsa = "0.26.2"
 reader = { workspace = true }
 object.workspace = true
 ir = { workspace = true, features = ["test-utils"] }
+# Phase 6 Task 6.3 — property-based testing for value-only IR invariants
+# under the optimizer (see tests/proptest_optimizer.rs).
+proptest = "1"
 
 [lints]
 workspace = true

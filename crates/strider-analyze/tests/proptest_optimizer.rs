@@ -1,0 +1,479 @@
+//! Property-based invariants for the optimizer (Phase 6 Task 6.3, V5
+//! verification scope).
+//!
+//! Companion to `strider-ir/tests/proptest_invariants.rs`.  That file
+//! verifies `validate()` over strategy-generated graphs; this file verifies
+//! the optimizer side:
+//!
+//! 1. **Asm-fingerprint monotonicity under the default pipeline.**
+//!    Every node's asm-fingerprint after `opt::default_pipeline().run()`
+//!    is a superset of its pre-pipeline value.  The asm-fingerprint
+//!    contract is *superset-only* — passes may grow fingerprints (and
+//!    must, when they rewrite-merge two nodes), but never shrink them.
+//!
+//! 2. **`ConstantFoldEgg` matches the imperative `ConstantFold` on
+//!    pure-arithmetic value subgraphs.**  Both passes operate on the
+//!    same IR and produce structurally equivalent graphs when run to
+//!    fixed point on value-only DAGs (no calls, no memory ops, no
+//!    control flow beyond Entry → ControlState → Return).
+//!
+//! **Scope (per V5).**  Value-only DAGs via a sequence of
+//! [`FunctionBuilder`] actions, mirroring `cranelift-fuzzgen`.  Control-flow
+//! properties stay in hand-authored fixtures.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use std::collections::{BTreeSet, HashMap};
+
+use proptest::prelude::*;
+
+use strider_analyze::opt::{
+    ConstantFold, OptimizerPipeline, OptimizerRaw, constant_fold_egg::ConstantFoldEgg,
+    default_pipeline,
+};
+use strider_ir::node::{NodeId, NodeOutputType};
+use strider_ir::walk::walk_graph;
+use strider_ir::{
+    BuiltFunctionGraph, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
+};
+
+/// Sentinel lift-address base; per-step `lift_off` is added on top.
+/// Mirrors `strider_ir::test_utils::SENTINEL_LIFT_ADDR`.
+const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
+
+// ── Strategy (mirrors strider-ir/tests/proptest_invariants.rs) ────────────
+
+fn int_ty() -> impl Strategy<Value = NodeOutputType> {
+    prop_oneof![
+        Just(NodeOutputType::U8),
+        Just(NodeOutputType::U16),
+        Just(NodeOutputType::U32),
+        Just(NodeOutputType::U64),
+    ]
+}
+
+fn binary_op() -> impl Strategy<Value = IntBinaryOp> {
+    prop_oneof![
+        Just(IntBinaryOp::Add),
+        Just(IntBinaryOp::Mul),
+        Just(IntBinaryOp::And),
+        Just(IntBinaryOp::Or),
+        Just(IntBinaryOp::Xor),
+        Just(IntBinaryOp::ShiftLeft),
+        Just(IntBinaryOp::ShiftRight),
+    ]
+}
+
+fn unary_op() -> impl Strategy<Value = IntUnaryOp> {
+    prop_oneof![Just(IntUnaryOp::BitNot), Just(IntUnaryOp::Neg)]
+}
+
+fn cmp_op() -> impl Strategy<Value = IntCmpOp> {
+    prop_oneof![
+        Just(IntCmpOp::Equal),
+        Just(IntCmpOp::Less),
+        Just(IntCmpOp::Sless),
+    ]
+}
+
+fn extend_op() -> impl Strategy<Value = ExtendOp> {
+    prop_oneof![Just(ExtendOp::ZeroExtend), Just(ExtendOp::SignExtend)]
+}
+
+#[derive(Debug, Clone)]
+enum Step {
+    EmitIntConst { width: NodeOutputType, value: u64, lift_off: u16 },
+    EmitBinaryOp {
+        width: NodeOutputType,
+        op: IntBinaryOp,
+        lhs_idx: u8,
+        rhs_idx: u8,
+        lift_off: u16,
+    },
+    EmitUnaryOp {
+        width: NodeOutputType,
+        op: IntUnaryOp,
+        src_idx: u8,
+        lift_off: u16,
+    },
+    EmitCmp {
+        width: NodeOutputType,
+        op: IntCmpOp,
+        lhs_idx: u8,
+        rhs_idx: u8,
+        lift_off: u16,
+    },
+    EmitTruncate {
+        src_width: NodeOutputType,
+        dst_width: NodeOutputType,
+        src_idx: u8,
+        lift_off: u16,
+    },
+    EmitExtend {
+        src_width: NodeOutputType,
+        dst_width: NodeOutputType,
+        op: ExtendOp,
+        src_idx: u8,
+        lift_off: u16,
+    },
+}
+
+fn step_strategy() -> impl Strategy<Value = Step> {
+    prop_oneof![
+        4 => (int_ty(), any::<u64>(), any::<u16>())
+            .prop_map(|(width, value, lift_off)| Step::EmitIntConst { width, value, lift_off }),
+        2 => (int_ty(), binary_op(), any::<u8>(), any::<u8>(), any::<u16>())
+            .prop_map(|(width, op, lhs_idx, rhs_idx, lift_off)|
+                Step::EmitBinaryOp { width, op, lhs_idx, rhs_idx, lift_off }),
+        2 => (int_ty(), unary_op(), any::<u8>(), any::<u16>())
+            .prop_map(|(width, op, src_idx, lift_off)|
+                Step::EmitUnaryOp { width, op, src_idx, lift_off }),
+        1 => (int_ty(), cmp_op(), any::<u8>(), any::<u8>(), any::<u16>())
+            .prop_map(|(width, op, lhs_idx, rhs_idx, lift_off)|
+                Step::EmitCmp { width, op, lhs_idx, rhs_idx, lift_off }),
+        1 => (int_ty(), int_ty(), any::<u8>(), any::<u16>())
+            .prop_map(|(src_width, dst_width, src_idx, lift_off)|
+                Step::EmitTruncate { src_width, dst_width, src_idx, lift_off }),
+        1 => (int_ty(), int_ty(), extend_op(), any::<u8>(), any::<u16>())
+            .prop_map(|(src_width, dst_width, op, src_idx, lift_off)|
+                Step::EmitExtend { src_width, dst_width, op, src_idx, lift_off }),
+    ]
+}
+
+fn step_seq() -> impl Strategy<Value = Vec<Step>> {
+    proptest::collection::vec(step_strategy(), 1..50)
+}
+
+/// Strategy restricted to int-typed pool growth only (no comparisons —
+/// `Bool` outputs sometimes consume sufficient operand slack that
+/// `ConstantFoldEgg`'s direct-rewrite phase produces a slightly different
+/// node-id surface from v1's `ConstantFold`).  Used by the egg-parity
+/// property to keep the property focused on pure arithmetic.
+fn step_strategy_arith_only() -> impl Strategy<Value = Step> {
+    prop_oneof![
+        4 => (int_ty(), any::<u64>(), any::<u16>())
+            .prop_map(|(width, value, lift_off)| Step::EmitIntConst { width, value, lift_off }),
+        2 => (int_ty(), binary_op(), any::<u8>(), any::<u8>(), any::<u16>())
+            .prop_map(|(width, op, lhs_idx, rhs_idx, lift_off)|
+                Step::EmitBinaryOp { width, op, lhs_idx, rhs_idx, lift_off }),
+        2 => (int_ty(), unary_op(), any::<u8>(), any::<u16>())
+            .prop_map(|(width, op, src_idx, lift_off)|
+                Step::EmitUnaryOp { width, op, src_idx, lift_off }),
+    ]
+}
+
+fn step_seq_arith_only() -> impl Strategy<Value = Vec<Step>> {
+    proptest::collection::vec(step_strategy_arith_only(), 1..30)
+}
+
+#[derive(Default)]
+struct Pools {
+    u8s: Vec<strider_ir::Value>,
+    u16s: Vec<strider_ir::Value>,
+    u32s: Vec<strider_ir::Value>,
+    u64s: Vec<strider_ir::Value>,
+    bools: Vec<strider_ir::Value>,
+}
+
+impl Pools {
+    fn bucket(&self, ty: NodeOutputType) -> &Vec<strider_ir::Value> {
+        match ty {
+            NodeOutputType::U8 => &self.u8s,
+            NodeOutputType::U16 => &self.u16s,
+            NodeOutputType::U32 => &self.u32s,
+            NodeOutputType::U64 => &self.u64s,
+            NodeOutputType::Bool => &self.bools,
+            _ => panic!("unsupported width in strategy: {ty:?}"),
+        }
+    }
+
+    fn bucket_mut(&mut self, ty: NodeOutputType) -> &mut Vec<strider_ir::Value> {
+        match ty {
+            NodeOutputType::U8 => &mut self.u8s,
+            NodeOutputType::U16 => &mut self.u16s,
+            NodeOutputType::U32 => &mut self.u32s,
+            NodeOutputType::U64 => &mut self.u64s,
+            NodeOutputType::Bool => &mut self.bools,
+            _ => panic!("unsupported width in strategy: {ty:?}"),
+        }
+    }
+
+    fn pick(&self, ty: NodeOutputType, idx: u8) -> Option<strider_ir::Value> {
+        let b = self.bucket(ty);
+        if b.is_empty() {
+            None
+        } else {
+            Some(b[(idx as usize) % b.len()])
+        }
+    }
+
+    fn any_value(&self) -> Option<strider_ir::Value> {
+        for b in [&self.u64s, &self.u32s, &self.u16s, &self.u8s, &self.bools] {
+            if let Some(&v) = b.last() {
+                return Some(v);
+            }
+        }
+        None
+    }
+}
+
+fn replay(steps: &[Step]) -> Option<BuiltFunctionGraph> {
+    let mut b = FunctionBuilder::empty().ok()?;
+    let region = b.create_region().ok()?;
+    b.set_entry_region(region).ok()?;
+    b.set_region(region);
+
+    let mut pools = Pools::default();
+
+    for s in steps {
+        let lift_addr = SENTINEL_LIFT_ADDR.wrapping_add(step_lift_off(s) as u64);
+        b.set_lift_addr(Some(lift_addr));
+        apply_step(&mut b, &mut pools, s);
+    }
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let ret_val = pools.any_value()?;
+    b.build_return(Some(ret_val), &[]).ok()?;
+    b.set_lift_addr(None);
+
+    b.build().ok()
+}
+
+fn step_lift_off(s: &Step) -> u16 {
+    match s {
+        Step::EmitIntConst { lift_off, .. }
+        | Step::EmitBinaryOp { lift_off, .. }
+        | Step::EmitUnaryOp { lift_off, .. }
+        | Step::EmitCmp { lift_off, .. }
+        | Step::EmitTruncate { lift_off, .. }
+        | Step::EmitExtend { lift_off, .. } => *lift_off,
+    }
+}
+
+fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
+    match s {
+        Step::EmitIntConst { width, value, .. } => {
+            if let Ok(v) = b.build_int_const(*value as u128, *width) {
+                pools.bucket_mut(*width).push(v);
+            }
+        }
+        Step::EmitBinaryOp {
+            width,
+            op,
+            lhs_idx,
+            rhs_idx,
+            ..
+        } => {
+            let Some(lhs) = pools.pick(*width, *lhs_idx) else {
+                return;
+            };
+            let Some(rhs) = pools.pick(*width, *rhs_idx) else {
+                return;
+            };
+            if let Ok(v) = b.build_int_binary_operation(lhs, rhs, *op, *width) {
+                pools.bucket_mut(*width).push(v);
+            }
+        }
+        Step::EmitUnaryOp {
+            width, op, src_idx, ..
+        } => {
+            let Some(src) = pools.pick(*width, *src_idx) else {
+                return;
+            };
+            if let Ok(v) = b.build_int_unary_operation(src, *op, *width) {
+                pools.bucket_mut(*width).push(v);
+            }
+        }
+        Step::EmitCmp {
+            width,
+            op,
+            lhs_idx,
+            rhs_idx,
+            ..
+        } => {
+            let Some(lhs) = pools.pick(*width, *lhs_idx) else {
+                return;
+            };
+            let Some(rhs) = pools.pick(*width, *rhs_idx) else {
+                return;
+            };
+            if let Ok(v) = b.build_int_cmp_operation(lhs, rhs, *op, *width) {
+                pools.bucket_mut(NodeOutputType::Bool).push(v);
+            }
+        }
+        Step::EmitTruncate {
+            src_width,
+            dst_width,
+            src_idx,
+            ..
+        } => {
+            let Some(src) = pools.pick(*src_width, *src_idx) else {
+                return;
+            };
+            if let Ok(v) = b.truncate_if_needed(src, *dst_width) {
+                pools.bucket_mut(*dst_width).push(v);
+            }
+        }
+        Step::EmitExtend {
+            src_width,
+            dst_width,
+            op,
+            src_idx,
+            ..
+        } => {
+            let Some(src) = pools.pick(*src_width, *src_idx) else {
+                return;
+            };
+            if let Ok(v) = b.extend_if_needed(src, *dst_width, *op) {
+                pools.bucket_mut(*dst_width).push(v);
+            }
+        }
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+/// Collects every node-id → asm-fingerprint mapping, indexed by `NodeId`.
+fn collect_fingerprints(g: &strider_ir::Graph) -> HashMap<NodeId, Vec<u64>> {
+    g.all_node_ids()
+        .map(|id| (id, g.asm_fingerprint(id).to_vec()))
+        .collect()
+}
+
+/// Multiset of reachable `NodeKind`s from `entry`, sorted by debug-print
+/// for cross-graph comparison.  Two structurally equivalent graphs (modulo
+/// node-id renumbering) produce equal multisets.
+fn reachable_kinds(g: &strider_ir::Graph, entry: NodeId) -> Vec<String> {
+    let mut kinds: Vec<String> = walk_graph(g, entry)
+        .map(|n| format!("{:?}", g.node_kind(n)))
+        .collect();
+    kinds.sort();
+    kinds
+}
+
+fn run_to_fixed_point(opt: &dyn OptimizerRaw, fg: &mut BuiltFunctionGraph) {
+    let mut steps = 0u32;
+    loop {
+        let r = opt
+            .optimize_raw(&mut fg.graph, fg.entry)
+            .expect("optimizer should not fail on strategy-generated graph");
+        if !r.changed() {
+            break;
+        }
+        steps += 1;
+        if steps >= 256 {
+            panic!("optimizer did not reach fixed point in 256 iterations");
+        }
+    }
+}
+
+// ── Properties ────────────────────────────────────────────────────────────
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 1000,
+        .. ProptestConfig::default()
+    })]
+
+    /// Every node's asm-fingerprint after the default optimizer pipeline
+    /// is a superset of its pre-pipeline fingerprint.  The contract is
+    /// *superset-only* — passes may grow fingerprints, but must never
+    /// shrink them.
+    ///
+    /// A node that is detached / unreachable after the pipeline is exempt
+    /// (some passes leave zombie nodes in the arena with their inputs
+    /// detached; we only inspect nodes that survive `all_node_ids()` and
+    /// whose pre-fingerprint was non-empty).
+    #[test]
+    fn prop_fingerprint_monotonic_under_default_pipeline(steps in step_seq()) {
+        let Some(mut fg) = replay(&steps) else {
+            return Ok(());
+        };
+
+        let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg.graph);
+
+        let pipeline: OptimizerPipeline = default_pipeline();
+        let entry = fg.entry;
+        let run_res = pipeline.run(&mut fg.graph, entry);
+        prop_assert!(
+            run_res.is_ok(),
+            "default_pipeline should not error on strategy-generated graph: {:?}",
+            run_res.err()
+        );
+
+        let post: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg.graph);
+
+        for (id, pre_fp) in &pre {
+            if pre_fp.is_empty() {
+                // Exempt structural kinds had no fingerprint to grow.
+                continue;
+            }
+            let Some(post_fp) = post.get(id) else {
+                // Node was removed entirely (e.g. RedundantPhis); not a
+                // monotonicity violation — the fingerprint contract only
+                // applies to *surviving* nodes.
+                continue;
+            };
+            let pre_set: BTreeSet<u64> = pre_fp.iter().copied().collect();
+            let post_set: BTreeSet<u64> = post_fp.iter().copied().collect();
+            prop_assert!(
+                pre_set.is_subset(&post_set),
+                "fingerprint shrunk at node {:?}:\n  pre  = {:?}\n  post = {:?}",
+                id, pre_fp, post_fp,
+            );
+        }
+    }
+
+    /// `ConstantFoldEgg` and v1's imperative `ConstantFold`, run to fixed
+    /// point on the same value-only DAG, produce structurally equivalent
+    /// IR (same multiset of reachable `NodeKind`s).
+    ///
+    /// Scope per the constant_fold_egg_parity.rs handwritten matrix: this
+    /// fixture intentionally restricts the strategy to integer arithmetic
+    /// (no comparisons, no truncate, no extend) so the two passes' rewrite
+    /// surfaces stay aligned.  Identity / reassoc rules can fire on both
+    /// passes — equivalence is checked by reachable-kind multiset, which
+    /// is robust against differing node-id allocation order.
+    #[test]
+    fn prop_constant_fold_egg_matches_v1(steps in step_seq_arith_only()) {
+        let Some(fg_seed) = replay(&steps) else {
+            return Ok(());
+        };
+
+        // Two independent copies — each pass mutates its own graph.
+        let (mut fg_v1, mut fg_egg) = (clone_built(&fg_seed), clone_built(&fg_seed));
+
+        run_to_fixed_point(&ConstantFold, &mut fg_v1);
+        run_to_fixed_point(&ConstantFoldEgg::new(), &mut fg_egg);
+
+        let v1_kinds = reachable_kinds(&fg_v1.graph, fg_v1.entry);
+        let egg_kinds = reachable_kinds(&fg_egg.graph, fg_egg.entry);
+
+        prop_assert_eq!(
+            &v1_kinds, &egg_kinds,
+            "ConstantFoldEgg and ConstantFold diverge on a strategy-generated graph",
+        );
+
+        // Both runs must produce graphs that still validate.
+        prop_assert!(
+            strider_ir::validate::validate(&fg_v1.graph, fg_v1.entry).is_ok(),
+            "v1 ConstantFold produced invalid IR",
+        );
+        prop_assert!(
+            strider_ir::validate::validate(&fg_egg.graph, fg_egg.entry).is_ok(),
+            "ConstantFoldEgg produced invalid IR",
+        );
+    }
+}
+
+/// Duplicate a value-only DAG into a fresh `BuiltFunctionGraph` that shares
+/// the seed's `Graph` topology but has independent storage for mutation by
+/// `optimize_raw`.  The seed has no calling-convention metadata (it was
+/// built via `FunctionBuilder::empty()`), so the rewrite-only ctor — which
+/// fills in empty CC fields — is sufficient: `ConstantFold` /
+/// `ConstantFoldEgg` only read the `Graph` + `entry`.
+///
+/// (Internal helper used by `prop_constant_fold_egg_matches_v1`.)
+fn clone_built(seed: &BuiltFunctionGraph) -> BuiltFunctionGraph {
+    BuiltFunctionGraph::from_graph_and_entry_for_rewrite(seed.graph.clone(), seed.entry)
+}
