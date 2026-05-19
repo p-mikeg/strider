@@ -24,7 +24,8 @@
 //!
 //! # Design
 //!
-//! Four-step in-place rewrite loop, NOT a full graph round-trip:
+//! Four-step in-place rewrite loop, NOT a full graph round-trip.
+//! See per-step doc-comments in `optimize_raw` for details.
 //!
 //! 1. Build an `EGraphAdapter` from the value-slice subgraph reachable
 //!    from `entry` (see [`strider_ir::egraph_adapter`]).
