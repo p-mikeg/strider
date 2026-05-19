@@ -81,14 +81,18 @@ def test_ret_pat_ret_val_constraint_chains():
 
 
 def test_ret_pat_capture_finalises():
+    # Phase 4 Task 4.2c — `.capture(c)` returns the same builder after
+    # the strider_pattern macro migration; call `.into_pat()` to get a
+    # `Pat`.
     c = Capture()
-    p = ret().capture(c)
-    assert isinstance(p, Pat)
+    b = ret().capture(c)
+    assert isinstance(b.into_pat(), Pat)
 
 
 def test_ret_pat_when_finalises():
-    p = ret().when(lambda m: True)
-    assert isinstance(p, Pat)
+    # Phase 4 Task 4.2c — same builder-chain contract as `.capture(c)`.
+    b = ret().when(lambda m: True)
+    assert isinstance(b.into_pat(), Pat)
 
 
 def test_ret_pat_finds_returns_in_real_graph():
@@ -127,9 +131,13 @@ def test_call_other_pat_chain_compiles():
 
 
 def test_call_other_pat_capture_finalises():
+    # Phase 4 Task 4.2c — after the strider_pattern macro migration,
+    # `.capture(c)` returns the same builder (so subsequent .arg/.ret
+    # chains stay typed).  Call `.into_pat()` (or pass the builder
+    # directly as a PatLike) to materialise.
     c = Capture()
-    p = call_other().user_op_id(0).capture(c)
-    assert isinstance(p, Pat)
+    b = call_other().user_op_id(0).capture(c)
+    assert isinstance(b.into_pat(), Pat)
 
 
 def test_call_other_pat_name_smoke():

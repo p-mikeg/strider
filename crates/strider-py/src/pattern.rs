@@ -1406,107 +1406,102 @@ pub fn call(at: Option<u64>) -> PyCallPat {
 /// user-op id (e.g. ARM `setISAMode`'s id), `.name(s)` to constrain
 /// the user-op name (read from `Graph::call_other_name`), and
 /// `.arg(idx, p)` to constrain a specific argument.
-#[pyclass(name = "CallOtherPat", module = "strider.pattern")]
-pub struct PyCallOtherPat {
-    user_op_id: std::cell::RefCell<Option<u64>>,
-    name: std::cell::RefCell<Option<String>>,
-    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
-    outputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
-    next_ctrl: std::cell::RefCell<Option<pattern::Pat>>,
-    next_mem: std::cell::RefCell<Option<pattern::Pat>>,
-}
+#[strider_pattern(
+    rust_name = "PyCallOtherPat",
+    py_name = "CallOtherPat",
+    py_module = "strider.pattern",
+    base_builder = "call_other",
+    node_phrase = "CallOther node",
+)]
+pub struct CallOtherPatDef {
+    /// Constrain the matched node to a specific user-op id.
+    #[field(arg = "v")]
+    user_op_id: Option<u64>,
 
-impl PyCallOtherPat {
-    fn new() -> Self {
-        Self {
-            user_op_id: std::cell::RefCell::new(None),
-            name: std::cell::RefCell::new(None),
-            inputs: std::cell::RefCell::new(Vec::new()),
-            outputs: std::cell::RefCell::new(Vec::new()),
-            next_ctrl: std::cell::RefCell::new(None),
-            next_mem: std::cell::RefCell::new(None),
-        }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::call_other();
-        if let Some(id) = *self.user_op_id.borrow() {
-            b = b.user_op_id(id);
-        }
-        if let Some(n) = self.name.borrow().clone() {
-            b = b.name(n);
-        }
-        for (idx, p) in self.inputs.borrow().iter().cloned() {
-            b = b.arg(idx, p);
-        }
-        for (idx, p) in self.outputs.borrow().iter().cloned() {
-            b = b.ret(idx, p);
-        }
-        if let Some(p) = self.next_ctrl.borrow().clone() {
-            b = b.next_ctrl(p);
-        }
-        if let Some(p) = self.next_mem.borrow().clone() {
-            b = b.next_mem(p);
-        }
-        b.into()
-    }
-}
+    /// Constrain the matched node's user-op name (read from
+    /// `Graph::call_other_name`).  Combinable with `user_op_id` and
+    /// `arg`.
+    #[field(arg = "n")]
+    name: Option<String>,
 
-#[pymethods]
-impl PyCallOtherPat {
-    fn user_op_id(slf: Py<Self>, py: Python<'_>, v: u64) -> Py<Self> {
-        slf.borrow(py).user_op_id.replace(Some(v));
-        slf
-    }
-    fn name(slf: Py<Self>, py: Python<'_>, n: String) -> Py<Self> {
-        slf.borrow(py).name.replace(Some(n));
-        slf
-    }
     /// Constrain raw `inputs[idx]` of the matched CallOther.
     /// `idx=0` is ctrl, `idx=1` is mem, `idx>=2` are pcode-explicit
     /// args followed by ABI implicit reads.
-    fn arg(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
-        Ok(slf)
-    }
+    #[field(multi, accepts = "Pat", arg = "idx")]
+    arg: Option<Vec<(usize, pattern::Pat)>>,
+
     /// Constrain raw `outputs[idx]` of the matched CallOther.
     /// `idx=0` is ctrl, `idx=1` is mem, `idx=2` is the pcode-explicit
     /// value (when present), `idx>=2+has_value` are ABI clobbers.
-    fn ret(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).outputs.borrow_mut().push((idx, pat));
-        Ok(slf)
-    }
-    /// Convenience: match `inputs[0]` (control predecessor).
-    fn ctrl(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        Self::arg(slf, py, 0, p)
-    }
-    /// Convenience: match `inputs[1]` (memory predecessor).
-    fn mem(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        Self::arg(slf, py, 1, p)
-    }
-    /// Convenience: match `outputs[0]` (control output).
-    fn ctrl_out(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        Self::ret(slf, py, 0, p)
-    }
-    /// Convenience: match `outputs[1]` (memory output; dangles when
-    /// the ABI's `memory_edge` is `false`).
-    fn mem_out(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        Self::ret(slf, py, 1, p)
-    }
+    #[field(multi, accepts = "Pat", arg = "idx")]
+    ret: Option<Vec<(usize, pattern::Pat)>>,
+
     /// Match against the unique consumer of the CallOther's control
     /// output (outputs[0]).  No match if zero or multiple consumers.
-    fn next_ctrl(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).next_ctrl.replace(Some(pat));
-        Ok(slf)
-    }
+    #[field(accepts = "Pat", arg = "p")]
+    next_ctrl: Option<pattern::Pat>,
+
     /// Match against the unique consumer of the CallOther's memory
     /// output (outputs[1]).  No match if zero or multiple consumers,
     /// or when the ABI's `memory_edge` is `false`.
-    fn next_mem(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+    #[field(accepts = "Pat", arg = "p")]
+    next_mem: Option<pattern::Pat>,
+}
+
+// Phase 4 Task 4.2c — `ctrl` / `mem` / `ctrl_out` / `mem_out` are
+// convenience aliases that delegate to `arg(0/1, p)` / `ret(0/1, p)`.
+// They drive the inner Mutex directly here rather than reusing the
+// emitted `arg` / `ret` methods, because `multiple-pymethods` can't
+// borrow `PyRef<Self>` recursively in a single chain.
+#[pymethods]
+impl PyCallOtherPat {
+    /// Convenience: match `inputs[0]` (control predecessor).
+    fn ctrl<'py>(
+        slf: PyRef<'py, Self>,
+        p: PatLike<'py>,
+    ) -> PyResult<PyRef<'py, Self>> {
         let pat = p.into_pat()?;
-        slf.borrow(py).next_mem.replace(Some(pat));
+        {
+            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
+            guard.arg.get_or_insert_with(Vec::new).push((0, pat));
+        }
+        Ok(slf)
+    }
+    /// Convenience: match `inputs[1]` (memory predecessor).
+    fn mem<'py>(
+        slf: PyRef<'py, Self>,
+        p: PatLike<'py>,
+    ) -> PyResult<PyRef<'py, Self>> {
+        let pat = p.into_pat()?;
+        {
+            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
+            guard.arg.get_or_insert_with(Vec::new).push((1, pat));
+        }
+        Ok(slf)
+    }
+    /// Convenience: match `outputs[0]` (control output).
+    fn ctrl_out<'py>(
+        slf: PyRef<'py, Self>,
+        p: PatLike<'py>,
+    ) -> PyResult<PyRef<'py, Self>> {
+        let pat = p.into_pat()?;
+        {
+            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
+            guard.ret.get_or_insert_with(Vec::new).push((0, pat));
+        }
+        Ok(slf)
+    }
+    /// Convenience: match `outputs[1]` (memory output; dangles when
+    /// the ABI's `memory_edge` is `false`).
+    fn mem_out<'py>(
+        slf: PyRef<'py, Self>,
+        p: PatLike<'py>,
+    ) -> PyResult<PyRef<'py, Self>> {
+        let pat = p.into_pat()?;
+        {
+            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
+            guard.ret.get_or_insert_with(Vec::new).push((1, pat));
+        }
         Ok(slf)
     }
 }
@@ -1522,43 +1517,25 @@ pub fn call_other() -> PyCallOtherPat {
 /// to match Returns whose direct ctrl predecessor is `p` (typically a
 /// `ControlState` after a Call), and `.ret_val(idx, p)` to constrain
 /// the value returned at ABI position `idx`.
-#[pyclass(name = "RetPat", module = "strider.pattern")]
-pub struct PyRetPat {
-    preceded_by: std::cell::RefCell<Option<pattern::Pat>>,
-    ret_vals: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
-}
+#[strider_pattern(
+    rust_name = "PyRetPat",
+    py_name = "RetPat",
+    py_module = "strider.pattern",
+    base_builder = "ret",
+    node_phrase = "Return node",
+)]
+pub struct RetPatDef {
+    /// Match `p` against the Return's direct ctrl predecessor (the
+    /// node producing input slot 0 — typically a `ControlState` at a
+    /// region header).  Single-step match, not a backward walk.
+    #[field(accepts = "Pat", arg = "p")]
+    preceded_by: Option<pattern::Pat>,
 
-impl PyRetPat {
-    fn new() -> Self {
-        Self {
-            preceded_by: std::cell::RefCell::new(None),
-            ret_vals: std::cell::RefCell::new(Vec::new()),
-        }
-    }
-    pub(crate) fn finalise(&self) -> pattern::Pat {
-        let mut b = pattern::ret();
-        if let Some(p) = self.preceded_by.borrow().clone() {
-            b = b.preceded_by(p);
-        }
-        for (idx, p) in self.ret_vals.borrow().iter().cloned() {
-            b = b.ret_val(idx, p);
-        }
-        b.into()
-    }
-}
-
-#[pymethods]
-impl PyRetPat {
-    fn preceded_by(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).preceded_by.replace(Some(pat));
-        Ok(slf)
-    }
-    fn ret_val(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
-        let pat = p.into_pat()?;
-        slf.borrow(py).ret_vals.borrow_mut().push((idx, pat));
-        Ok(slf)
-    }
+    /// Constrain return value at ABI position `idx` (0-based after
+    /// the ctrl and mem inputs — i.e. mapped to the Return's input
+    /// slot `2 + idx`).
+    #[field(multi, accepts = "Pat", arg = "idx")]
+    ret_val: Option<Vec<(usize, pattern::Pat)>>,
 }
 
 #[pyfunction]
@@ -2017,10 +1994,8 @@ pat_builder_finalise!(PyFunctionArgPat);
 // PyLoadPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
 // PyStorePat, PyStackStorePat, PyStackStorePhiPat: capture/cap/when/into_pat
 // emitted by `#[strider_pattern]`.
-// PyCallPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`
-// (Phase 4 Task 4.2c).
-pat_builder_finalise!(PyCallOtherPat);
-pat_builder_finalise!(PyRetPat);
+// PyCallPat, PyCallOtherPat, PyRetPat: capture/cap/when/into_pat
+// emitted by `#[strider_pattern]` (Phase 4 Task 4.2c).
 // PyIfPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
 pat_builder_finalise!(PyIntBinaryPat);
 pat_builder_finalise!(PyBoolBinaryPat);
