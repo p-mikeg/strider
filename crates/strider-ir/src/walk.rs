@@ -40,7 +40,7 @@ pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
 
 /// A pre-order walk over the IR graph using a [`DenseEntitySet`] as the
 /// visited tracker.
-pub type PreOrder<G> = crate::graphwalk::PreOrder<G, DenseEntitySet<NodeId>>;
+pub type PreOrder<G> = graphwalk::PreOrder<G, DenseEntitySet<NodeId>>;
 
 /// A [`graphwalk::GraphRef`] implementation that drives successor enumeration
 /// for IR graph walks.
@@ -98,7 +98,7 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
 
-impl crate::graphwalk::GraphRef for GraphWalkSuccs<'_> {
+impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
     fn try_successors(

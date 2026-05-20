@@ -47,8 +47,6 @@
 
 extern crate alloc;
 
-pub mod graphwalk;
-
 // Absorbed ir crate (Phase 1 Task 1.3).
 mod builder;
 pub mod error;

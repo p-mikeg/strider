@@ -178,7 +178,7 @@ pub type RegionId = NodeIndex;
 /// (Fallthrough / Branch / IfCaseTrue / IfCaseFalse); callers that
 /// need edge-kind filtering should walk `cfg.graph().edges(node)`
 /// directly.
-impl<R: rsleigh::MemReader> strider_ir::graphwalk::GraphRef for Cfg<R> {
+impl<R: rsleigh::MemReader> graphwalk::GraphRef for Cfg<R> {
     type NodeId = NodeIndex;
 
     fn try_successors(

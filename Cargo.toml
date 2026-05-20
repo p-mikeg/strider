@@ -18,6 +18,7 @@ reader = { path = "crates/reader" }
 target = { path = "crates/target" }
 dot = { path = "crates/dot" }
 entity-utils = { path = "crates/entity-utils" }
+graphwalk = { path = "crates/graphwalk" }
 strider-ir = { path = "crates/strider-ir" }
 strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }
 strider-lift = { path = "crates/strider-lift" }
