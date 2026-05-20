@@ -38,7 +38,7 @@ digraph "G" {
   "7" -> "5" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "7" [label="FloatToFloat\nf64 → f32", shape=box, fillcolor="#302018"];
   "8" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "8" [label="CastToFloat\nu64 → f64", shape=box, fillcolor="#302018"];
+  "8" [label="bitcast\nu64 → f64", shape=box, fillcolor="#302018"];
   "9" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "9" [label="init\nf12_13", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="init\nv1", shape=Mdiamond, fillcolor="#1a3a5c"];

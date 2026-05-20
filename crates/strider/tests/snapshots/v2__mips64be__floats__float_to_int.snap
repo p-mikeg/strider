@@ -40,7 +40,7 @@ digraph "G" {
   "7" -> "3" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "7" [label="FloatToInt\nf32 → u32", shape=box, fillcolor="#302018"];
   "8" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "8" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
+  "8" [label="bitcast\nu32 → f32", shape=box, fillcolor="#302018"];
   "9" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "9" [label="init\nregister[0x1064]:4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];

@@ -45,7 +45,7 @@ digraph "G" {
   "8" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
   "11" -> "8" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "12" -> "8" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "12" [label="const 0x18450:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "12" [label="const 0x10000000000018450:u64", shape=ellipse, fillcolor="#2d2d2d"];
   "11" [label="init\nt9", shape=Mdiamond, fillcolor="#1a3a5c"];
   "7" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "13" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
@@ -65,7 +65,7 @@ digraph "G" {
   "19" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
   "11" -> "19" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "20" -> "19" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "20" [label="const 0x10490:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "20" [label="const 0x10000000000010490:u64", shape=ellipse, fillcolor="#2d2d2d"];
   "6" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "15" [label="ShiftLeft:u64", shape=box, fillcolor="#2d2d2d"];
   "21" -> "15" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];

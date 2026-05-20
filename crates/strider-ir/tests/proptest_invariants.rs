@@ -18,9 +18,9 @@
 //!  non-empty fingerprint by construction; if the strategy ever produces a
 //!  graph that fails validation, that's a real bug worth investigating.
 //!
-//! Properties that require the optimizer (`opt::default_pipeline`,
-//! `ConstantFoldEgg`) live in `strider-analyze/tests/proptest_optimizer.rs`
-//! because `strider-ir` cannot depend on the analyzer.
+//! Properties that require the optimizer (`opt::default_pipeline`)
+//! live in `strider-analyze/tests/proptest_optimizer.rs` because
+//! `strider-ir` cannot depend on the analyzer.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

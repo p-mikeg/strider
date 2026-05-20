@@ -1,23 +1,12 @@
-//! v2 IR snapshot baseline.
+//! Imperative-pipeline IR snapshot baseline (regression oracle).
 //!
-//! This pins the **v2** behavior contract: every (arch, case, function)
-//! tuple built under `fixtures/out/<arch>/<case>.elf` is lifted +
-//! optimized through the **v2 egg-based pipeline**
-//! ([`strider_analyze::opt::pipeline_v2::PipelineV2`]) and its post-optimization IR
-//! (rendered as DOT) is snapshotted via `insta`.  Any later change to
-//! the lifter, the v2 optimizer, or the IR layout that moves these
-//! snapshots must go through explicit review.
+//! This file was originally pinned at the v2 egg-based pipeline; after the
+//! egg infrastructure was retired, it was redirected at `common::analyze`
+//! (the imperative pipeline) and its snapshots regenerated.  Kept as a
+//! second oracle alongside `v3_baseline` so future refactors must reproduce
+//! the same IR shape twice.
 //!
-//! Sister-test of `v1_baseline.rs`.  The two coexist:
-//!
-//!   * `v1_baseline` — pinned to [`common::analyze_v1`].  Snapshots
-//!     encode the v1 imperative pipeline (`build_optimizer_pipeline` +
-//!     `LoadReadOnly`).  Frozen as the historical v1 contract.
-//!   * `v2_baseline` — pinned to [`common::analyze_v2`] (this file).
-//!     Snapshots encode the v2 egg pipeline (`PipelineV2`).  This is
-//!     the production-default contract as of Phase 8.5c.
-//!
-//! Lift failures (panics from `common::analyze_v2`) are themselves part
+//! Lift failures (panics from `common::analyze`) are themselves part
 //! of the contract — they are captured as `LIFT_FAILED:<message>`
 //! snapshots rather than silently skipped, so future rewrites must
 //! reproduce the same failures unless explicitly fixed.
@@ -25,9 +14,6 @@
 //! Function-name discovery walks the ELF symbol table via the `object`
 //! crate; case discovery reads `fixtures/cases/*.c`.  Neither list is
 //! hard-coded.
-//!
-//! Phase 8.5d of the strider v2 rewrite plan
-//! (`docs/superpowers/specs/2026-05-20-v2-final-pr-body.md`).
 
 #![allow(
     clippy::panic,
@@ -120,7 +106,7 @@ fn exported_function_names(path: &Path) -> Vec<String> {
 }
 
 /// Build the sleigh handle for `(arch, path)`.  Used only for the dot
-/// dumper — `common::analyze_v2` builds its own internal sleigh.
+/// dumper — `common::analyze` builds its own internal sleigh.
 fn sleigh_for(
     arch: Arch,
     path: &Path,

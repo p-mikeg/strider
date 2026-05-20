@@ -120,7 +120,7 @@ digraph "G" {
   "45" [label="Equal\nf64 → bool", shape=box, fillcolor="#1a3020"];
   "46" -> "45" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "46" -> "45" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "46" [label="CastToFloat\nu64 → f64", shape=box, fillcolor="#302018"];
+  "46" [label="bitcast\nu64 → f64", shape=box, fillcolor="#302018"];
   "10" -> "46" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "42" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
   "47" -> "42" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
@@ -129,7 +129,7 @@ digraph "G" {
   "48" [label="Equal\nf64 → bool", shape=box, fillcolor="#1a3020"];
   "49" -> "48" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "49" -> "48" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "49" [label="CastToFloat\nu64 → f64", shape=box, fillcolor="#302018"];
+  "49" [label="bitcast\nu64 → f64", shape=box, fillcolor="#302018"];
   "9" -> "49" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "37" [label="Or:u32", shape=box, fillcolor="#2d2d2d"];
   "50" -> "37" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];

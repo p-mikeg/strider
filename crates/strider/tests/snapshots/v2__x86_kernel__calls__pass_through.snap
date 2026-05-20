@@ -52,13 +52,9 @@ digraph "G" {
   "4" [label="arg[0] ← EAX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="StackStore u32\n→ ram[sp - 16]", shape=box3d, fillcolor="#20182a"];
   "11" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "12" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "v12" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v12" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
   "13" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "13" [label="const 0x4011c8:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "12" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "14" -> "12" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "15" -> "12" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "15" [label="const 0xfffffff0:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "14" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
   "11" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

@@ -1,33 +1,25 @@
-//! v2 IR snapshot baseline.
+//! Imperative-pipeline IR snapshot baseline (production oracle).
 //!
-//! This pins the **v2** behavior contract: every (arch, case, function)
-//! tuple built under `fixtures/out/<arch>/<case>.elf` is lifted +
-//! optimized through the **v2 egg-based pipeline**
-//! ([`strider_analyze::opt::pipeline_v2::PipelineV2`]) and its post-optimization IR
-//! (rendered as DOT) is snapshotted via `insta`.  Any later change to
-//! the lifter, the v2 optimizer, or the IR layout that moves these
+//! This pins the production behavior contract: every (arch, case, function)
+//! tuple built under `fixtures/out/<arch>/<case>.elf` is lifted + optimized
+//! through the imperative pipeline (`common::analyze`) and its post-
+//! optimization IR (rendered as DOT) is snapshotted via `insta`.  Any later
+//! change to the lifter, the optimizer, or the IR layout that moves these
 //! snapshots must go through explicit review.
 //!
-//! Sister-test of `v1_baseline.rs`.  The two coexist:
+//! Companion to `v1_baseline.rs` and `v2_baseline.rs`.  All three now point
+//! at the imperative pipeline; the multi-file structure is preserved so
+//! that a future refactor must reproduce the same IR shape under each
+//! entry point.
 //!
-//!   * `v1_baseline` — pinned to [`common::analyze_v1`].  Snapshots
-//!     encode the v1 imperative pipeline (`build_optimizer_pipeline` +
-//!     `LoadReadOnly`).  Frozen as the historical v1 contract.
-//!   * `v3_baseline` — pinned to [`common::analyze_v2`] (this file).
-//!     Snapshots encode the v2 egg pipeline (`PipelineV2`).  This is
-//!     the production-default contract as of Phase 8.5c.
-//!
-//! Lift failures (panics from `common::analyze_v2`) are themselves part
-//! of the contract — they are captured as `LIFT_FAILED:<message>`
-//! snapshots rather than silently skipped, so future rewrites must
-//! reproduce the same failures unless explicitly fixed.
+//! Lift failures (panics from `common::analyze`) are themselves part of
+//! the contract — they are captured as `LIFT_FAILED:<message>` snapshots
+//! rather than silently skipped, so future rewrites must reproduce the
+//! same failures unless explicitly fixed.
 //!
 //! Function-name discovery walks the ELF symbol table via the `object`
 //! crate; case discovery reads `fixtures/cases/*.c`.  Neither list is
 //! hard-coded.
-//!
-//! Phase 8.5d of the strider v2 rewrite plan
-//! (`docs/superpowers/specs/2026-05-20-v2-final-pr-body.md`).
 
 #![allow(
     clippy::panic,
@@ -120,7 +112,7 @@ fn exported_function_names(path: &Path) -> Vec<String> {
 }
 
 /// Build the sleigh handle for `(arch, path)`.  Used only for the dot
-/// dumper — `common::analyze_v2` builds its own internal sleigh.
+/// dumper — `common::analyze` builds its own internal sleigh.
 fn sleigh_for(
     arch: Arch,
     path: &Path,
@@ -178,9 +170,6 @@ fn v3_baseline_snapshots() {
                 let case_copy = case.clone();
                 let func_copy = func_name.clone();
                 let result = std::panic::catch_unwind(move || {
-                    // Pin to v2 explicitly so this baseline tracks
-                    // PipelineV2's IR shape independent of the
-                    // production-default flag in `common::analyze`.
                     common::analyze(arch_copy, &case_copy, &func_copy)
                 });
                 let snapshot_body = match result {

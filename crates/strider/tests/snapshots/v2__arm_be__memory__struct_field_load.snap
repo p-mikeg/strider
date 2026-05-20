@@ -45,18 +45,14 @@ digraph "G" {
   "8" [label="arg[0] ← r0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="StackStore u32\n→ ram[sp - 4]", shape=box3d, fillcolor="#20182a"];
   "10" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "11" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "v11" [label="init\nsp", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v11" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
   "8" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "11" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "12" -> "11" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "13" -> "11" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "13" [label="const 0xfffffffc:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "12" [label="init\nsp", shape=Mdiamond, fillcolor="#1a3a5c"];
   "10" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "3" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "14" -> "3" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "12" -> "3" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "4" -> "3" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "14" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
-  "2" -> "14" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "8" -> "14" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "12" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "2" -> "12" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "8" -> "12" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
 }
