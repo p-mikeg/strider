@@ -64,7 +64,7 @@ fn matcher(g: &strider_ir::BuiltFunctionGraph) -> Matcher<'_> {
 /// Returns the set of `index` values present on `FunctionArg` nodes in `g`.
 fn function_arg_indices(g: &strider_ir::BuiltFunctionGraph) -> HashSet<u32> {
     g.preorder()
-        .filter_map(|n| match g.graph.node_kind(n) {
+        .filter_map(|n| match g.node_kind(n) {
             NodeKind::FunctionArg { index, .. } => Some(*index),
             _ => None,
         })
@@ -251,7 +251,7 @@ fn narrow_widths_assertions(g: &strider_ir::BuiltFunctionGraph) {
     //     correctly when it does emit one.
     let by_index: std::collections::HashMap<u32, FunctionArgSource> = g
         .preorder()
-        .filter_map(|n| match g.graph.node_kind(n) {
+        .filter_map(|n| match g.node_kind(n) {
             NodeKind::FunctionArg { index, source } => Some((*index, *source)),
             _ => None,
         })
@@ -310,7 +310,7 @@ fn uses_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // `complex_patterns.rs::call_uses_call_return`.
     use strider_ir::node::NodeId;
     let calls: Vec<NodeId> = g.preorder()
-        .filter(|&n| matches!(g.graph.node_kind(n), NodeKind::Call))
+        .filter(|&n| matches!(g.node_kind(n), NodeKind::Call))
         .collect();
     assert!(!calls.is_empty(),
             "uses_return must have ≥1 Call; got {}", calls.len());
@@ -319,11 +319,11 @@ fn uses_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // {Store, StackStore, Load, ControlState, ValuePhi}.
     // If we hit another Call, the test passes.
     let chained = calls.iter().any(|&outer| {
-        let outer_inputs: Vec<_> = g.graph.node_inputs(outer).into_iter().collect();
+        let outer_inputs: Vec<_> = g.node_inputs(outer).into_iter().collect();
         outer_inputs.iter().any(|&inp| {
-            let mut producer = g.graph.get_node_from_output(inp);
+            let mut producer = g.get_node_from_output(inp);
             for _ in 0..16 {
-                match g.graph.node_kind(producer) {
+                match g.node_kind(producer) {
                     NodeKind::Call if producer != outer => return true,
                     NodeKind::Load(_)
                     | NodeKind::ControlState
@@ -332,16 +332,16 @@ fn uses_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
                         // memory predecessor (producing store/Call), and
                         // ControlState/ValuePhi pass through their first input.
                         let inps: Vec<_> =
-                            g.graph.node_inputs(producer).into_iter().collect();
+                            g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.graph.get_node_from_output(first);
+                        producer = g.get_node_from_output(first);
                     }
                     NodeKind::Store(_) | NodeKind::StackStore { .. } => {
                         // Store[memory, addr, data] — walk the data input.
                         let inps: Vec<_> =
-                            g.graph.node_inputs(producer).into_iter().collect();
+                            g.node_inputs(producer).into_iter().collect();
                         let Some(&data) = inps.get(2) else { break; };
-                        producer = g.graph.get_node_from_output(data);
+                        producer = g.get_node_from_output(data);
                     }
                     _ => break,
                 }

@@ -155,7 +155,7 @@ impl RegionIndex {
         graph: &strider_ir::BuiltFunctionGraph,
         placeholder: NodeId,
     ) -> Option<&ExitVnToValue> {
-        let inputs: Vec<_> = graph.graph.node_inputs(placeholder).into_iter().collect();
+        let inputs: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
         let ctrl_in = *inputs.first()?;
         self.by_exit_control.get(&ctrl_in)
     }
@@ -538,7 +538,7 @@ where
                 continue;
             };
             let placeholder_return =
-                crate::opt::find_placeholder_return_for_anchor(&graph.graph, *anchor_output);
+                crate::opt::find_placeholder_return_for_anchor(graph.graph(), *anchor_output);
             let can_inplace = match (&resolved, placeholder_return) {
                 (ResolvedTargets::LinkRegister, Some(_)) => true,
                 (ResolvedTargets::Single(target), Some(_)) => {
@@ -583,14 +583,14 @@ where
         // `FunctionArgDetect`'s post-detection invariant that all
         // argument-register reads flow through `FunctionArg` nodes.
         let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
-        for nid in graph.graph.preorder(graph.entry) {
-            if let strider_ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid) {
+        for nid in graph.graph().preorder(graph.entry()) {
+            if let strider_ir::node::NodeKind::InitialVar(existing) = graph.node_kind(nid) {
                 // InitialVar's signature is `[]; outputs: [Value]` —
                 // exactly one output.  A non-1 count is a graph-shape
                 // bug (zombie or malformed); surfacing it as Err
                 // prevents `read_or_init_var` from later resurrecting
                 // the malformed node and silently producing wrong IR.
-                let [out] = graph.graph.node_outputs_exact::<1>(nid).map_err(|e| {
+                let [out] = graph.node_outputs_exact::<1>(nid).map_err(|e| {
                     anyhow!(
                         "apply_in_place_edits: InitialVar({existing:?}) has wrong output \
                          arity (expected 1): {e}"
@@ -638,7 +638,7 @@ where
         Ok(unresolved
             .into_iter()
             .filter(|(_, anchor)| {
-                crate::opt::find_placeholder_return_for_anchor(&graph.graph, *anchor).is_some()
+                crate::opt::find_placeholder_return_for_anchor(graph.graph(), *anchor).is_some()
             })
             .collect())
     }
@@ -720,7 +720,7 @@ fn apply_in_place_edit(
             {
                 let clobber_vars: Vec<rsleigh::Vn> =
                     override_clobber_vars(graph, cc, strider).collect();
-                graph.graph.set_call_clobbered_override(call_id, clobber_vars);
+                graph.graph_mut().set_call_clobbered_override(call_id, clobber_vars);
             }
             Ok(())
         }
@@ -742,21 +742,21 @@ fn apply_in_place_edit(
 ///   * `Call -> Return` (direct): one walk hop.
 ///   * `Call -> ControlState -> Return` (region-join): two walk hops.
 fn locate_spliced_call(graph: &strider_ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
-    let inputs: Vec<_> = graph.graph.node_inputs(ret).into_iter().collect();
+    let inputs: Vec<_> = graph.node_inputs(ret).into_iter().collect();
     let ctrl_in = *inputs.first()?;
-    let (producer, _slot) = graph.graph.output_definition(ctrl_in);
-    if matches!(graph.graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
+    let (producer, _slot) = graph.output_definition(ctrl_in);
+    if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
         return Some(producer);
     }
     // ControlState bridge: walk the ControlState's first control input
     // and check if THAT producer is a Call.  Mirrors the splice shape
     // when `apply_tail_call`'s freshly-spliced Call feeds an existing
     // ControlState that the new Return then consumes.
-    if matches!(graph.graph.node_kind(producer), strider_ir::node::NodeKind::ControlState) {
-        let cs_inputs: Vec<_> = graph.graph.node_inputs(producer).into_iter().collect();
+    if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::ControlState) {
+        let cs_inputs: Vec<_> = graph.node_inputs(producer).into_iter().collect();
         for cs_in in cs_inputs {
-            let (cs_producer, _) = graph.graph.output_definition(cs_in);
-            if matches!(graph.graph.node_kind(cs_producer), strider_ir::node::NodeKind::Call) {
+            let (cs_producer, _) = graph.output_definition(cs_in);
+            if matches!(graph.node_kind(cs_producer), strider_ir::node::NodeKind::Call) {
                 return Some(cs_producer);
             }
         }
@@ -906,12 +906,12 @@ fn read_or_init_var(
         return Ok(out);
     }
     let ty = vn_size_to_node_output_type(&vn)?;
-    let nid = graph.graph.create_node(
+    let nid = graph.graph_mut().create_node(
         strider_ir::node::NodeKind::InitialVar(vn),
         [],
         [strider_ir::node::NodeOutputKind::OutputType(ty)],
     );
-    let [out] = graph.graph.node_outputs_exact::<1>(nid)?;
+    let [out] = graph.node_outputs_exact::<1>(nid)?;
     initial_var_index.insert(vn, out);
     Ok(out)
 }

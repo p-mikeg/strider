@@ -572,26 +572,18 @@ impl FunctionBuilder {
             .copied()
             .filter(|v| Some(*v) != stack_ptr_vn)
             .collect();
+        let entry = self.function.entry;
         let cc_metadata = crate::graph::CcMetadata {
-            variables: self.variables.clone(),
-            call_clobbered: self.call_clobbered_variables.clone().into_boxed_slice(),
-            ret_val_regs: self.ret_val_vars.clone().into_boxed_slice(),
-            call_other_clobbered: call_other_clobbered.clone(),
-            no_memory_clobber: self.no_memory_clobber,
-        };
-        let mut graph = self.function.graph;
-        graph.entry = Some(self.function.entry);
-        graph.cc_metadata = Some(cc_metadata);
-        let built = crate::function::BuiltFunctionGraph {
-            graph,
-            entry: self.function.entry,
             variables: self.variables,
             call_clobbered: self.call_clobbered_variables.into_boxed_slice(),
             ret_val_regs: self.ret_val_vars.into_boxed_slice(),
             call_other_clobbered,
             no_memory_clobber: self.no_memory_clobber,
         };
-        crate::validate::validate(&built.graph, built.entry)?;
-        Ok(built)
+        let mut graph = self.function.graph;
+        graph.entry = Some(entry);
+        graph.cc_metadata = Some(cc_metadata);
+        crate::validate::validate(&graph, entry)?;
+        Ok(crate::function::BuiltFunctionGraph::from_graph(graph))
     }
 }

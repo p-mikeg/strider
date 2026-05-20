@@ -73,13 +73,13 @@ fn bounded_lift_handles_tail_call_terminator() {
     let mut had_call_with_target = false;
     let mut had_return = false;
     for nid in graph.preorder() {
-        match graph.graph.node_kind(nid) {
+        match graph.node_kind(nid) {
             NodeKind::Call => {
                 // Call inputs: [ctrl, mem, target, args...].  Slot 2 is the target.
-                let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
+                let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
                 if let Some(&target_out) = inputs.get(2)
                     && let NodeKind::IntConst(v) =
-                        *graph.graph.node_kind(graph.graph.get_node_from_output(target_out))
+                        *graph.node_kind(graph.get_node_from_output(target_out))
                     && (v as u64) == TAIL_TARGET
                 {
                     had_call_with_target = true;
@@ -108,12 +108,12 @@ fn graph_has_tail_call_to(graph: &strider_ir::BuiltFunctionGraph, target: u64) -
     let mut had_call = false;
     let mut had_return = false;
     for nid in graph.preorder() {
-        match graph.graph.node_kind(nid) {
+        match graph.node_kind(nid) {
             NodeKind::Call => {
-                let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
+                let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
                 if let Some(&target_out) = inputs.get(2)
                     && let NodeKind::IntConst(v) =
-                        *graph.graph.node_kind(graph.graph.get_node_from_output(target_out))
+                        *graph.node_kind(graph.get_node_from_output(target_out))
                     && (v as u64) == target
                 {
                     had_call = true;

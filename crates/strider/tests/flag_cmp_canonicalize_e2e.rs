@@ -37,14 +37,15 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> BuiltFunctio
     let mut graph = outcome.graph;
 
     let p = strider.build_optimizer_pipeline();
-    p.run(&mut graph.graph, graph.entry).expect("optimizer pipeline");
+    let entry = graph.entry();
+    p.run(graph.graph_mut(), entry).expect("optimizer pipeline");
     graph
 }
 
 fn find_unique_if(fg: &BuiltFunctionGraph) -> NodeId {
     let ifs: Vec<NodeId> = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::If))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .collect();
     assert_eq!(ifs.len(), 1, "fixture must have exactly one reachable If; got {ifs:?}");
     ifs[0]
@@ -72,10 +73,9 @@ fn aarch64_cmp_eq_branch_bytes() -> Vec<u8> {
 
 /// Returns the producer-`NodeKind` of `if_node`'s cond input.
 fn if_cond_kind(fg: &BuiltFunctionGraph, if_node: NodeId) -> NodeKind {
-    let [_ctrl, cond_out] = fg.graph
-                .node_inputs_exact::<2>(if_node)
+    let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)
         .expect("If has 2 inputs");
-    *fg.graph.node_kind(fg.graph.get_node_from_output(cond_out))
+    *fg.node_kind(fg.get_node_from_output(cond_out))
 }
 
 #[test]

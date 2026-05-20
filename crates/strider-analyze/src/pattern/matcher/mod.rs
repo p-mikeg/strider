@@ -106,7 +106,7 @@ impl<'g> Matcher<'g> {
     /// empty CC fields.
     #[must_use]
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
-        Self::for_graph(&fn_graph.graph, fn_graph.entry)
+        Self::for_graph(fn_graph.graph(), fn_graph.entry())
     }
 
     /// Creates a new `Matcher` over a raw `(graph, entry)` pair —

@@ -72,9 +72,9 @@ pub struct GraphRewriter<'a> {
 impl<'a> GraphRewriter<'a> {
     /// Wraps a [`BuiltFunctionGraph`].
     pub fn wrap_built(built: &'a mut BuiltFunctionGraph) -> Self {
-        let entry = built.entry;
+        let entry = built.entry();
         Self {
-            graph: &mut built.graph,
+            graph: built.graph_mut(),
             entry,
         }
     }

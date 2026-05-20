@@ -370,19 +370,18 @@ fn bound_via_known_bits_handles_zero_extend() {
     builder.build_indirect_branch(placeholder).expect("build_indirect_branch");
     builder.set_lift_addr(None);
     let mut g = builder.build().expect("build");
-    let extend_node = g.graph.create_node(
+    let extend_node = g.create_node(
         NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
         [narrow],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    g.graph.set_asm_fingerprint(extend_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+    g.set_asm_fingerprint(extend_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let [idx] = g
-        .graph
         .node_outputs_exact::<1>(extend_node)
         .expect("extend output");
     // Replace the placeholder with the Extend so the Return
     // depends on it; `walk_graph` then sweeps it into preorder.
-    g.graph.replace_all_uses(placeholder, idx).expect("rewire");
+    g.replace_all_uses(placeholder, idx).expect("rewire");
     let known = analyze_known_bits((&g).into()).expect("kb analyze");
     let bound = bound_via_known_bits((&g).into(), idx, &known).expect("bound from zero-extend");
     // U8 narrows to 0..255, so bound = 256.
@@ -416,31 +415,28 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // narrowing kb result IF the analyzer reached it.  Wire its
     // input to a fresh IntConst that is also detached so the AND is
     // truly unreachable from entry.
-    let detached_const = g.graph.create_node(
+    let detached_const = g.create_node(
         NodeKind::IntConst(0xffff_ffffu128),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
     let detached_const_out = g
-        .graph
         .node_outputs_exact::<1>(detached_const)
         .expect("output")[0];
-    let mask_const = g.graph.create_node(
+    let mask_const = g.create_node(
         NodeKind::IntConst(0x7u128),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
     let mask_const_out = g
-        .graph
         .node_outputs_exact::<1>(mask_const)
         .expect("output")[0];
-    let detached_and = g.graph.create_node(
+    let detached_and = g.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::And),
         [detached_const_out, mask_const_out],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
     let detached_idx = g
-        .graph
         .node_outputs_exact::<1>(detached_and)
         .expect("output")[0];
 
@@ -758,10 +754,10 @@ fn build_pred_if_graph(
     // The placeholder Return is the 3-input one in dispatch.
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
+        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
@@ -838,10 +834,10 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
+        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
@@ -885,10 +881,10 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
+        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
@@ -940,10 +936,10 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
+        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
@@ -1130,10 +1126,10 @@ fn build_diamond_two_bounds(
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
+        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
@@ -1220,10 +1216,10 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
+        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }

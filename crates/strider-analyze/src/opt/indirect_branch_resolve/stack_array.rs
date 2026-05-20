@@ -608,7 +608,8 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
-        p.run(&mut fg.graph, fg.entry).unwrap();
+        let entry = fg.entry();
+        p.run(fg.graph_mut(), entry).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -652,7 +653,8 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
-        p.run(&mut fg.graph, fg.entry).unwrap();
+        let entry = fg.entry();
+        p.run(fg.graph_mut(), entry).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -705,7 +707,8 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
-        p.run(&mut fg.graph, fg.entry).unwrap();
+        let entry = fg.entry();
+        p.run(fg.graph_mut(), entry).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -803,7 +806,7 @@ mod tests {
     fn strip_target_mask_and_with_const_rhs_strips_one_layer() {
         let (mut fg, inner) = build_load_anchor();
         let wrapped = build_binop_wrapped(
-            &mut fg.graph, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            fg.graph_mut(), inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
         let (out, mask) = strip_target_mask((&fg).into(), wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
@@ -814,7 +817,7 @@ mod tests {
     fn strip_target_mask_and_with_const_lhs_strips_one_layer() {
         let (mut fg, inner) = build_load_anchor();
         let wrapped = build_binop_wrapped(
-            &mut fg.graph, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
+            fg.graph_mut(), inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
         );
         let (out, mask) = strip_target_mask((&fg).into(), wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
@@ -829,10 +832,10 @@ mod tests {
         // is fully cleared by the surviving mask `0xFFFE`).
         let (mut fg, inner) = build_load_anchor();
         let or_layer = build_binop_wrapped(
-            &mut fg.graph, inner, IntBinaryOp::Or, 1, NodeOutputType::U64, false,
+            fg.graph_mut(), inner, IntBinaryOp::Or, 1, NodeOutputType::U64, false,
         );
         let and_layer = build_binop_wrapped(
-            &mut fg.graph, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            fg.graph_mut(), or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
         let (out, mask) = strip_target_mask((&fg).into(), and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
@@ -846,10 +849,10 @@ mod tests {
         // the surrounding And contributes its mask.
         let (mut fg, inner) = build_load_anchor();
         let or_layer = build_binop_wrapped(
-            &mut fg.graph, inner, IntBinaryOp::Or, 0xFF, NodeOutputType::U64, false,
+            fg.graph_mut(), inner, IntBinaryOp::Or, 0xFF, NodeOutputType::U64, false,
         );
         let and_layer = build_binop_wrapped(
-            &mut fg.graph, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            fg.graph_mut(), or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
         let (out, mask) = strip_target_mask((&fg).into(), and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
@@ -862,10 +865,10 @@ mod tests {
         // Both layers strip; surviving mask is the intersection.
         let (mut fg, inner) = build_load_anchor();
         let inner_and = build_binop_wrapped(
-            &mut fg.graph, inner, IntBinaryOp::And, 0xFFFF, NodeOutputType::U64, false,
+            fg.graph_mut(), inner, IntBinaryOp::And, 0xFFFF, NodeOutputType::U64, false,
         );
         let outer_and = build_binop_wrapped(
-            &mut fg.graph, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
+            fg.graph_mut(), inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
         );
         let (out, mask) = strip_target_mask((&fg).into(), outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");

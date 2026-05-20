@@ -68,10 +68,10 @@ fn f32_arith_graph_is_valid(g: &strider_ir::BuiltFunctionGraph) {
     // IntBitsToFloat node must have a U64 input (the latter would indicate
     // that read_reg_vn failed to truncate s0/f12 to U32 before the fix).
     for nid in g.all_node_ids() {
-        if matches!(g.graph.node_kind(nid), NodeKind::IntBitsToFloat) {
-            let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        if matches!(g.node_kind(nid), NodeKind::IntBitsToFloat) {
+            let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
             if let Some(input) = inputs.first() {
-                let kind = g.graph.output_kind(*input);
+                let kind = g.output_kind(*input);
                 assert_ne!(
                     kind,
                     strider_ir::node::NodeOutputKind::OutputType(strider_ir::node::NodeOutputType::U64),

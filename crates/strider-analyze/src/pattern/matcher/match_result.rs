@@ -187,12 +187,12 @@ impl Match {
     pub fn get_vn(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
         if let Some(out) = binding.output {
-            let (node, slot) = graph.graph.output_definition(out);
-            let kind = graph.graph.node_kind(node);
+            let (node, slot) = graph.output_definition(out);
+            let kind = graph.node_kind(node);
             // Call: clobber slots start at index 2.
             if matches!(kind, NodeKind::Call) && slot >= 2 {
                 let idx = (slot - 2) as usize;
-                if let Some(override_list) = graph.graph.call_clobbered_override(node) {
+                if let Some(override_list) = graph.call_clobbered_override(node) {
                     return override_list.get(idx).copied();
                 }
                 return graph.call_clobbered_regs().get(idx).copied();
@@ -213,9 +213,8 @@ impl Match {
             // a "shape we don't recognise" miss for every per-CallOther
             // override whose length differs from the default.
             if matches!(kind, NodeKind::CallOther { .. }) {
-                let total_outputs = graph.graph.node_outputs(node).len();
+                let total_outputs = graph.node_outputs(node).len();
                 let clobber_len = graph
-                    .graph
                     .call_clobbered_override(node)
                     .map_or(graph.call_other_clobbered_regs().len(), |ov| ov.len());
                 let clobber_start: u32 = if total_outputs == 2 + clobber_len {
@@ -233,13 +232,13 @@ impl Match {
                     return None;
                 }
                 let idx = (slot - clobber_start) as usize;
-                if let Some(override_list) = graph.graph.call_clobbered_override(node) {
+                if let Some(override_list) = graph.call_clobbered_override(node) {
                     return override_list.get(idx).copied();
                 }
                 return graph.call_other_clobbered_regs().get(idx).copied();
             }
         }
-        match graph.graph.node_kind(binding.node) {
+        match graph.node_kind(binding.node) {
             NodeKind::InitialVar(vn) => Some(*vn),
             _ => None,
         }

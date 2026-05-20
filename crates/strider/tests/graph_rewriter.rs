@@ -85,7 +85,7 @@ fn analyze_with_known_targets(
 
 fn count_if_nodes(g: &BuiltFunctionGraph) -> usize {
     g.preorder()
-        .filter(|nid| matches!(g.graph.node_kind(*nid), NodeKind::If))
+        .filter(|nid| matches!(g.node_kind(*nid), NodeKind::If))
         .count()
 }
 
@@ -93,7 +93,7 @@ fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
-                g.graph.node_kind(*nid),
+                g.node_kind(*nid),
                 NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
             )
         })
@@ -123,7 +123,7 @@ fn count_adds(g: &BuiltFunctionGraph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
-                g.graph.node_kind(*nid),
+                g.node_kind(*nid),
                 NodeKind::IntBinaryOp(IntBinaryOp::Add),
             )
         })
@@ -311,7 +311,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
     rewriter.apply_rule(rule)?;
 
-    strider_ir::validate::validate(&g.graph, g.entry)
+    strider_ir::validate::validate(g.graph(), g.entry())
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
     Ok(())
 }

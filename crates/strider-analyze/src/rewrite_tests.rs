@@ -99,7 +99,7 @@ fn count_adds(g: &strider_ir::BuiltFunctionGraph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
-                g.graph.node_kind(*nid),
+                g.node_kind(*nid),
                 strider_ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add),
             )
         })
@@ -114,12 +114,12 @@ fn count_subs(g: &strider_ir::BuiltFunctionGraph) -> usize {
         .filter(|&nid| {
             // Outer node must be Add with exactly two value inputs.
             if !matches!(
-                g.graph.node_kind(nid),
+                g.node_kind(nid),
                 strider_ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add)
             ) {
                 return false;
             }
-            let inputs = g.graph.node_inputs(nid);
+            let inputs = g.node_inputs(nid);
             if inputs.len() != 2 {
                 return false;
             }
@@ -127,11 +127,11 @@ fn count_subs(g: &strider_ir::BuiltFunctionGraph) -> usize {
             // here since the lowering always emits Neg as the second
             // input, but check both for robustness against later
             // commutativity-driven canonicalisation.)
-            let lhs_node = g.graph.get_node_from_output(inputs[0]);
-            let rhs_node = g.graph.get_node_from_output(inputs[1]);
+            let lhs_node = g.get_node_from_output(inputs[0]);
+            let rhs_node = g.get_node_from_output(inputs[1]);
             let is_neg = |id: strider_ir::node::NodeId| {
                 matches!(
-                    g.graph.node_kind(id),
+                    g.node_kind(id),
                     strider_ir::node::NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg),
                 )
             };
@@ -265,6 +265,6 @@ fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
     rewriter.apply_rule(rule)?;
     // Run validate directly (local typing + use-list + graph invariants).
     // If any check fails we surface the bundle as a strider error.
-    strider_ir::validate::validate(&built.graph, built.entry)
+    strider_ir::validate::validate(built.graph(), built.entry())
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed: {e}"))
 }

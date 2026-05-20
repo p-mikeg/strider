@@ -145,7 +145,7 @@ mod tests {
         })?;
         let has_initial_var_sp = fg
             .all_node_ids()
-            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::InitialVar(v) if *v == sp));
+            .any(|n| matches!(fg.node_kind(n), NodeKind::InitialVar(v) if *v == sp));
         assert!(has_initial_var_sp);
         Ok(())
     }

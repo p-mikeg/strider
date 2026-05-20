@@ -161,14 +161,14 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // Return is therefore an internal bug, not a "can't classify"
     // outcome, and propagates as an error.
     let return_node = find_unique_return(&fg)?;
-    let inputs = fg.graph.node_inputs(return_node);
+    let inputs = fg.node_inputs(return_node);
     // Layout: [control, memory, value].  `build_return` above passed
     // `Some(value)` and `&[]`, so slot 2 is always present.
     let &value_input = inputs.get(2).ok_or_else(|| {
         anyhow::anyhow!("indirect_resolve mini-graph Return has no value input slot")
     })?;
-    let producer = fg.graph.get_node_from_output(value_input);
-    let kind = *fg.graph.node_kind(producer);
+    let producer = fg.get_node_from_output(value_input);
+    let kind = *fg.node_kind(producer);
 
     match kind {
         strider_ir::node::NodeKind::IntConst(k) => {
@@ -369,20 +369,20 @@ fn resolve_const_loads(
     let nodes: Vec<_> = fg.preorder().collect();
     let mut any_folded = false;
     for node_id in nodes {
-        let kind = *fg.graph.node_kind(node_id);
+        let kind = *fg.node_kind(node_id);
         let strider_ir::node::NodeKind::Load(space) = kind else {
             continue;
         };
-        let inputs = fg.graph.node_inputs(node_id);
+        let inputs = fg.node_inputs(node_id);
         if inputs.len() < 2 {
             continue;
         }
         let addr_input = inputs[1];
-        let Some(addr) = fg.graph.int_const_val(addr_input) else {
+        let Some(addr) = fg.int_const_val(addr_input) else {
             continue;
         };
-        let [data_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-        let Some(ty) = fg.graph.output_kind(data_out).as_value() else {
+        let [data_out] = fg.node_outputs_exact::<1>(node_id)?;
+        let Some(ty) = fg.output_kind(data_out).as_value() else {
             continue;
         };
         let size = ty.byte_size();
@@ -398,16 +398,16 @@ fn resolve_const_loads(
         let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
             continue;
         };
-        let new_out = fg.graph.make_int_const(masked, ty)?;
+        let new_out = fg.make_int_const(masked, ty)?;
         // Absorb the rewritten Load's asm-fingerprint into the new
         // IntConst so the Layer-C always-on check sees a non-empty
         // fingerprint on the freshly-introduced constant even after
         // the cache-hit dedup path.  `make_int_const` is the
         // low-level `Graph` method and does NOT stamp on its own.
-        let new_node = fg.graph.get_node_from_output(new_out);
-        let load_node = fg.graph.get_node_from_output(data_out);
-        fg.graph.extend_asm_fingerprint_from(new_node, load_node);
-        if fg.graph.replace_all_uses(data_out, new_out)? {
+        let new_node = fg.get_node_from_output(new_out);
+        let load_node = fg.get_node_from_output(data_out);
+        fg.extend_asm_fingerprint_from(new_node, load_node);
+        if fg.replace_all_uses(data_out, new_out)? {
             any_folded = true;
         }
     }

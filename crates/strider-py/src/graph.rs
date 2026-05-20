@@ -146,23 +146,23 @@ impl PyGraph {
             if !reachable.contains(&n) {
                 continue;
             }
-            if !matches!(graph.graph.node_kind(n), NodeKind::ControlState) {
+            if !matches!(graph.node_kind(n), NodeKind::ControlState) {
                 continue;
             }
-            let preds: Vec<_> = graph.graph.node_inputs(n).into_iter().collect();
+            let preds: Vec<_> = graph.node_inputs(n).into_iter().collect();
             let has_back_edge = preds.iter().any(|&pred_out| {
-                let pred = graph.graph.get_node_from_output(pred_out);
+                let pred = graph.get_node_from_output(pred_out);
                 let mut seen: HashSet<NodeId> = HashSet::new();
                 let mut stack = vec![pred];
                 while let Some(cur) = stack.pop() {
                     if !seen.insert(cur) {
                         continue;
                     }
-                    for out in graph.graph.node_outputs(cur) {
-                        if !graph.graph.output_kind(out).is_control() {
+                    for out in graph.node_outputs(cur) {
+                        if !graph.output_kind(out).is_control() {
                             continue;
                         }
-                        for (consumer, _) in graph.graph.output_uses(out) {
+                        for (consumer, _) in graph.output_uses(out) {
                             if consumer == n {
                                 return true;
                             }
@@ -196,7 +196,7 @@ impl PyGraph {
     fn node_kind(&self, node_id: u32) -> PyResult<String> {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let nid = node_id_from_u32(&graph, node_id)?;
-        Ok(format!("{:?}", graph.graph.node_kind(nid)))
+        Ok(format!("{:?}", graph.node_kind(nid)))
     }
 
     /// Returns the asm-fingerprint addresses recorded on the node at
@@ -209,7 +209,7 @@ impl PyGraph {
     fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let nid = node_id_from_u32(&graph, node_id)?;
-        Ok(graph.graph.asm_fingerprint(nid).to_vec())
+        Ok(graph.asm_fingerprint(nid).to_vec())
     }
 
     /// Returns the raw little-endian bytes of an `IntConstWide` node's
@@ -222,9 +222,9 @@ impl PyGraph {
     fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let nid = node_id_from_u32(&graph, node_id)?;
-        match graph.graph.node_kind(nid) {
+        match graph.node_kind(nid) {
             strider_ir::node::NodeKind::IntConstWide(id) => {
-                Ok(Some(graph.graph.wide_const(*id).to_le_bytes()))
+                Ok(Some(graph.wide_const(*id).to_le_bytes()))
             }
             _ => Ok(None),
         }
@@ -235,7 +235,7 @@ impl PyGraph {
     fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let nid = node_id_from_u32(&graph, node_id)?;
-        Ok(graph.graph.call_other_name(nid).map(str::to_owned))
+        Ok(graph.call_other_name(nid).map(str::to_owned))
     }
 
     /// Re-validates the graph and returns `None` on success or a
@@ -249,7 +249,7 @@ impl PyGraph {
     fn validate(&self, check_asm_fingerprints: bool) -> PyResult<Option<String>> {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let opts = strider_ir::validate::ValidateOptions { check_asm_fingerprints };
-        match strider_ir::validate::validate_with_options(&graph.graph, graph.entry, opts) {
+        match strider_ir::validate::validate_with_options(graph.graph(), graph.entry(), opts) {
             Ok(()) => Ok(None),
             Err(e) => Ok(Some(format!("{e}"))),
         }

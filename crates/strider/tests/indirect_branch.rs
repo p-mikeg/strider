@@ -113,7 +113,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
         let mut p = ana.build_optimizer_pipeline();
         p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
-        p.run(&mut graph.graph.graph, graph.graph.entry)
+        let entry = graph.graph.entry();
+        p.run(graph.graph.graph_mut(), entry)
             .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
         return;
     }
@@ -124,7 +125,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
-    p.run(&mut graph.graph.graph, graph.graph.entry)
+    let entry = graph.graph.entry();
+    p.run(graph.graph.graph_mut(), entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn();
@@ -144,9 +146,9 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // the surviving placeholder on the post-optimizer graph.
         let mut live_anchors: Vec<strider_ir::node::NodeOutputId> = Vec::new();
         for n in graph.graph.preorder() {
-            if matches!(graph.graph.graph.node_kind(n), strider_ir::node::NodeKind::IndirectBranch) {
+            if matches!(graph.graph.node_kind(n), strider_ir::node::NodeKind::IndirectBranch) {
                 let inputs: Vec<strider_ir::node::NodeOutputId> =
-                    graph.graph.graph.node_inputs(n).into_iter().collect();
+                    graph.graph.node_inputs(n).into_iter().collect();
                 if inputs.len() == 3 {
                     live_anchors.push(inputs[2]);
                 }

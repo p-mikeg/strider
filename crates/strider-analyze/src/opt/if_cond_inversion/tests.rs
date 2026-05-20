@@ -44,7 +44,6 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::BuiltFunctionGraph, strider_i
 /// Returns the cond input (input slot 1) of the given `If` node.
 fn if_cond_kind(fg: &strider_ir::BuiltFunctionGraph, if_node: strider_ir::node::NodeId) -> NodeKind {
     let [_ctrl, cond_out] = fg
-        .graph
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
     *fg.kind_of_output(cond_out)
@@ -59,7 +58,8 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
         NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)
     ));
 
-    let r = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    let r = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed());
 
     // After: cond is the inner CastToBool (the BoolNeg's input was the
@@ -75,9 +75,11 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
 #[test]
 fn idempotent_after_one_application() -> Result<()> {
     let (mut fg, _if_node) = build_if_with_neg_cond()?;
-    let first = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    let first = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(first.changed());
-    let second = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    let second = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(!second.changed(), "second pass must be a no-op");
     Ok(())
 }
@@ -114,11 +116,13 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     // ConstantFold first: collapses `!!x → x`.
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
+        let entry = fg.entry();
+        changed = ConstantFold.optimize_raw(fg.graph_mut(), entry)?.changed();
     }
     // After ConstantFold the cond is no longer `BoolNeg`, so
     // IfCondInversion must NOT fire.  Even-parity → no branch swap.
-    let r = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    let r = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(
         !r.changed(),
         "IfCondInversion must be a no-op after !!x simplification — even parity preserves direct layout"
@@ -135,7 +139,6 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
     let consumer_of = |fg: &strider_ir::BuiltFunctionGraph, out: strider_ir::node::NodeOutputId| -> strider_ir::node::NodeId {
         let (consumer, _idx) = fg
-            .graph
             .output_uses(out)
             .next()
             .expect("each If output has exactly one consumer in this fixture");
@@ -149,7 +152,8 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
         "pre-pass consumers must be distinct ControlState nodes"
     );
 
-    IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
 
     let [out0_post, out1_post] = fg.node_outputs_exact::<2>(if_node)?;
     let post_true_consumer = consumer_of(&fg, out0_post);
@@ -211,16 +215,17 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)))
         .expect("BoolUnaryOp::Neg present pre-pass");
 
-    let r = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    let r = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed());
 
     // The BoolNeg's fingerprint MUST have been absorbed into the
     // inner-cond node (the new If cond input's producer).
     let if_node = find_unique_if((&fg).into());
-    let [_ctrl, cond_out] = fg.graph.node_inputs_exact::<2>(if_node)?;
-    let inner_node = fg.graph.get_node_from_output(cond_out);
-    let inner_fp = fg.graph.asm_fingerprint(inner_node);
-    let bool_neg_fp = fg.graph.asm_fingerprint(bool_neg_node);
+    let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)?;
+    let inner_node = fg.get_node_from_output(cond_out);
+    let inner_fp = fg.asm_fingerprint(inner_node);
+    let bool_neg_fp = fg.asm_fingerprint(bool_neg_node);
     for addr in bool_neg_fp {
         assert!(
             inner_fp.contains(addr),

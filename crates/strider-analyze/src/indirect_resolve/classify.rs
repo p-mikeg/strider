@@ -183,11 +183,11 @@ mod tests {
         // VarPhi in the test if we hit one, since
         // RedundantPhis would have done that in production.
         let mut producer_output = anchor;
-        while let NodeKind::VarPhi(_) = graph.graph.kind_of_output(producer_output) {
+        while let NodeKind::VarPhi(_) = graph.kind_of_output(producer_output) {
             // VarPhi inputs: [phi_token, ...per-pred values].
             // With one predecessor, slot 1 is the value.
-            let pid = graph.graph.get_node_from_output(producer_output);
-            let inputs: Vec<_> = graph.graph.node_inputs(pid).into_iter().collect();
+            let pid = graph.get_node_from_output(producer_output);
+            let inputs: Vec<_> = graph.node_inputs(pid).into_iter().collect();
             if inputs.len() != 2 {
                 break;
             }
@@ -228,9 +228,9 @@ mod tests {
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
-        while let NodeKind::VarPhi(_) = graph.graph.kind_of_output(producer_output) {
-            let pid = graph.graph.get_node_from_output(producer_output);
-            let inputs: Vec<_> = graph.graph.node_inputs(pid).into_iter().collect();
+        while let NodeKind::VarPhi(_) = graph.kind_of_output(producer_output) {
+            let pid = graph.get_node_from_output(producer_output);
+            let inputs: Vec<_> = graph.node_inputs(pid).into_iter().collect();
             if inputs.len() != 2 {
                 break;
             }
@@ -268,9 +268,9 @@ mod tests {
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
-        while let NodeKind::VarPhi(_) = graph.graph.kind_of_output(producer_output) {
-            let pid = graph.graph.get_node_from_output(producer_output);
-            let inputs: Vec<_> = graph.graph.node_inputs(pid).into_iter().collect();
+        while let NodeKind::VarPhi(_) = graph.kind_of_output(producer_output) {
+            let pid = graph.get_node_from_output(producer_output);
+            let inputs: Vec<_> = graph.node_inputs(pid).into_iter().collect();
             if inputs.len() != 2 {
                 break;
             }
@@ -329,7 +329,7 @@ mod tests {
         // construct one with no inputs.  We need the phi-token
         // output kind for the ValuePhi's first input slot to
         // typecheck against `expected_signature`'s `PHI` slot.
-        let fake_token_node = graph.graph.create_node(
+        let fake_token_node = graph.create_node(
             NodeKind::VarPhi(rsleigh::Vn {
                 addr_off: 0xdead,
                 addr_space: rsleigh::VnSpace::REGISTER,
@@ -339,19 +339,17 @@ mod tests {
             [NodeOutputKind::PhiToken],
         );
         let [token_out] = graph
-            .graph
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
 
         // Build the ValuePhi: inputs = [phi_token, ...vals]; output
         // is a single value (U64 for definiteness).
-        let vp_node = graph.graph.create_node(
+        let vp_node = graph.create_node(
             NodeKind::ValuePhi,
             std::iter::once(token_out).chain(const_outputs.iter().copied()),
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
         let [vp_out] = graph
-            .graph
             .node_outputs_exact::<1>(vp_node)
             .expect("value-phi output");
         (graph, vp_out)
@@ -399,7 +397,7 @@ mod tests {
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
         let mut graph = builder.build().expect("build");
-        let fake_token_node = graph.graph.create_node(
+        let fake_token_node = graph.create_node(
             NodeKind::VarPhi(rsleigh::Vn {
                 addr_off: 0xdead,
                 addr_space: rsleigh::VnSpace::REGISTER,
@@ -409,16 +407,14 @@ mod tests {
             [NodeOutputKind::PhiToken],
         );
         let [token_out] = graph
-            .graph
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
-        let vp_node = graph.graph.create_node(
+        let vp_node = graph.create_node(
             NodeKind::ValuePhi,
             [token_out, const_out, var_out],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
         let [vp_out] = graph
-            .graph
             .node_outputs_exact::<1>(vp_node)
             .expect("value-phi output");
 
@@ -459,7 +455,7 @@ mod tests {
         // we don't run the optimiser here — the unit tests use the
         // raw builder output.  The returned anchor's producer is
         // an IntBinaryOp node, which the `_ => None` arm catches.
-        let producer_kind = *graph.graph.kind_of_output(anchor);
+        let producer_kind = *graph.kind_of_output(anchor);
         assert!(
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"

@@ -392,7 +392,7 @@ mod tests {
     /// Count `If` nodes via the post-build preorder walk.
     fn count_if_nodes(g: &strider_ir::BuiltFunctionGraph) -> usize {
         g.preorder()
-            .filter(|nid| matches!(g.graph.node_kind(*nid), NodeKind::If))
+            .filter(|nid| matches!(g.node_kind(*nid), NodeKind::If))
             .count()
     }
 
@@ -401,7 +401,7 @@ mod tests {
         g.preorder()
             .filter(|nid| {
                 matches!(
-                    g.graph.node_kind(*nid),
+                    g.node_kind(*nid),
                     NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
                 )
             })
@@ -413,7 +413,7 @@ mod tests {
         g.preorder()
             .filter(|nid| {
                 matches!(
-                    g.graph.node_kind(*nid),
+                    g.node_kind(*nid),
                     NodeKind::IntConst(c) if *c == u128::from(want),
                 )
             })

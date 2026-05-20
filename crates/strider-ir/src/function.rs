@@ -1,6 +1,6 @@
 use crate::builder::VarId;
+use crate::graph::{CcMetadata, Graph};
 use crate::graph_dot::GraphDotDumper;
-use crate::graph::Graph;
 use crate::node::{NodeId, NodeOutputId};
 use cranelift_entity::PrimaryMap;
 use cranelift_entity::packed_option::ReservedValue;
@@ -8,8 +8,8 @@ use cranelift_entity::packed_option::ReservedValue;
 /// An under-construction IR function graph.
 ///
 /// Holds the node graph together with the entry-node ids that anchor the
-/// control-flow and memory chains.  Call [`FunctionBuilder::build`] to
-/// consume a `FunctionGraph` and produce a [`BuiltFunctionGraph`].
+/// control-flow and memory chains.  Call [`crate::FunctionBuilder::build`]
+/// to consume a `FunctionGraph` and produce a [`BuiltFunctionGraph`].
 #[derive(Clone)]
 pub struct FunctionGraph {
     /// The sea-of-nodes graph being built.
@@ -39,145 +39,137 @@ impl FunctionGraph {
 
 /// A fully-built, immutable IR function graph ready for analysis.
 ///
-/// Produced by consuming a [`crate::FunctionBuilder`] after all regions have been
-/// wired together.  The graph can be walked, queried, and passed to
-/// optimisation passes and the pattern matcher.
+/// Produced by consuming a [`crate::FunctionBuilder`] after all regions
+/// have been wired together.  Internally, a `BuiltFunctionGraph` is a
+/// thin wrapper around a [`Graph`] whose `entry` and `cc_metadata` fields
+/// are guaranteed `Some(_)` — the wrapper exists purely to encode that
+/// invariant in the type system.  All CC metadata (variables map,
+/// call-clobbered list, ret-val regs, call-other-clobbered list,
+/// no-memory-clobber flag) lives on the wrapped `Graph` itself, in its
+/// `cc_metadata` side-table.
 ///
-/// Implements [`Clone`] — every field is `Clone` (the underlying [`Graph`]
-/// is already `Clone`, and the CC metadata fields are `Box<[_]>` /
-/// primitive types).  Cloning produces a structural copy of the
-/// sea-of-nodes arena (typical functions: hundreds of nodes → micro-
-/// seconds), which is meaningfully cheaper than re-lifting from pcode.
-/// The Phase 7 salsa orchestrator (`orchestrator_salsa::run_v2`) uses
-/// this to return an owned BFG from a cached entry without a second
-/// out-of-band rebuild.
+/// Implements [`Clone`] — every field is `Clone`.  Cloning produces a
+/// structural copy of the sea-of-nodes arena (typical functions:
+/// hundreds of nodes → microseconds), which is meaningfully cheaper
+/// than re-lifting from pcode.
 #[derive(Clone)]
 pub struct BuiltFunctionGraph {
-    /// The sea-of-nodes graph.
-    pub graph: Graph,
-    /// The `Entry` node; use as the root for any graph walk.
-    pub entry: NodeId,
-    /// Map from [`VarId`] to the corresponding [`rsleigh::Vn`] varnode.
-    ///
-    /// Tightened to `pub(crate)` to keep call-sites on the
-    /// [`Self::variables_map`] accessor — mutating this map post-`build()`
-    /// desynchronises it from the graph's `InitialVar` / phi nodes (which
-    /// key on `VarId` indices) and silently breaks pattern queries that
-    /// resolve a `VarId` via `Match::get_vn`.
-    pub(crate) variables: PrimaryMap<VarId, rsleigh::Vn>,
-    /// Ordered list of varnodes clobbered by every `Call` node.
-    /// The i-th clobbered output of any Call (output index `i + 2`) corresponds
-    /// to `call_clobbered[i]`.  The list is the same for all calls.
-    ///
-    /// The first `ret_val_regs.len()` entries are the calling convention's
-    /// return registers in ABI order (see [`BuiltFunctionGraph::ret_val_regs`]);
-    /// the rest are remaining caller-clobbered registers.
-    ///
-    /// Tightened to `pub(crate)` so external readers go through
-    /// [`Self::call_clobbered_regs`]; mutating this list post-`build()`
-    /// desynchronises it from existing `Call` nodes' clobber output slots
-    /// and silently breaks `Match::get_vn` (which indexes the slot list
-    /// by varnode position).
-    pub(crate) call_clobbered: Box<[rsleigh::Vn]>,
-    /// The calling convention's return-value registers, in ABI order.
-    /// Matches the first `ret_val_regs.len()` entries of
-    /// [`BuiltFunctionGraph::call_clobbered`] when those regs are caller-clobbered
-    /// (they normally are — callee-saved ret regs are unusual), and matches
-    /// `Return` node input slots `2..2+ret_val_regs.len()`.
-    ///
-    /// Tightened to `pub(crate)` — read via [`Self::ret_val_regs_as_slice`].
-    pub(crate) ret_val_regs: Box<[rsleigh::Vn]>,
-    /// Function-default clobber list for every `CallOther` node.
-    ///
-    /// Equals the function's tracked-variable set (`variables.values()`)
-    /// filtered to exclude the stack pointer.  Order matches the
-    /// CallOther's clobber output slots: the i-th clobber output of any
-    /// CallOther (output index `i + 2` for value-less CallOther,
-    /// `i + 3` for CallOther with a value output) corresponds to
-    /// `call_other_clobbered[i]`.  Distinct from
-    /// [`Self::call_clobbered`] (which excludes both callee-saved AND
-    /// SP and is per-CC) — `call_other_clobbered` is the conservative
-    /// "everything except SP" set used by every CallOther unless a
-    /// per-CallOther override on
-    /// `Graph::call_clobbered_overrides` shadows it.
-    ///
-    /// Tightened to `pub(crate)` — read via [`Self::call_other_clobbered_regs`].
-    pub(crate) call_other_clobbered: Box<[rsleigh::Vn]>,
-    /// Function-default value of
-    /// [`target::CallingConvention::no_memory_clobber`] (carried over
-    /// from the building [`crate::FunctionBuilder`]).  When `true`,
-    /// callers under this convention preserve all observable state
-    /// including memory — `LoadReadOnly` and `StackLoadForward` may
-    /// forward across them.  Set on `x86_64_all_preserving` and
-    /// analogous transparent-hook presets (Linux-kernel `__fentry__`,
-    /// `mcount`).  Read via [`Self::no_memory_clobber`].
-    pub(crate) no_memory_clobber: bool,
+    /// The wrapped graph.  Guaranteed (by the wrapper) to have
+    /// `entry.is_some()` and `cc_metadata.is_some()`.
+    inner: Graph,
 }
 
 impl std::ops::Deref for BuiltFunctionGraph {
     type Target = Graph;
     fn deref(&self) -> &Graph {
-        &self.graph
+        &self.inner
     }
 }
 
 impl std::ops::DerefMut for BuiltFunctionGraph {
     fn deref_mut(&mut self) -> &mut Graph {
-        &mut self.graph
+        &mut self.inner
     }
 }
 
-// canonical read-only accessors for the CC
-// fields.  The fields themselves remain `pub` for back-compat (the
-// workspace has ~30+ direct-field readers), but new code should use
-// these accessors — they're the migration path for tightening field
-// visibility to `pub(crate)` in a future round.  Method bodies are
-// trivial (`&self.field`) so the indirection cost is zero.
 impl BuiltFunctionGraph {
+    /// Wraps a `Graph` whose `entry` and `cc_metadata` fields have been
+    /// populated by [`crate::FunctionBuilder::build`].  Asserts the
+    /// `Some(_)` invariant in debug builds; release builds trust the
+    /// caller (only `FunctionBuilder::build` and
+    /// [`Self::from_graph_and_entry_for_rewrite`] construct wrappers).
+    pub(crate) fn from_graph(graph: Graph) -> Self {
+        debug_assert!(
+            graph.entry.is_some(),
+            "BuiltFunctionGraph requires graph.entry to be Some(_)"
+        );
+        debug_assert!(
+            graph.cc_metadata.is_some(),
+            "BuiltFunctionGraph requires graph.cc_metadata to be Some(_)"
+        );
+        Self { inner: graph }
+    }
+
+    /// The `Entry` node of the function — the root for any graph walk.
+    #[must_use]
+    pub fn entry(&self) -> NodeId {
+        self.inner
+            .entry
+            .expect("BuiltFunctionGraph invariant: entry is Some")
+    }
+
+    /// Read-only access to the wrapped [`Graph`].
+    #[must_use]
+    pub fn graph(&self) -> &Graph {
+        &self.inner
+    }
+
+    /// Mutable access to the wrapped [`Graph`].  Callers must not clear
+    /// `entry` or `cc_metadata` — the wrapper invariant assumes both
+    /// remain `Some(_)`.
+    #[must_use]
+    pub fn graph_mut(&mut self) -> &mut Graph {
+        &mut self.inner
+    }
+
+    /// Read-only access to the calling-convention metadata captured at
+    /// build time.  See [`CcMetadata`].
+    #[must_use]
+    pub fn cc_metadata(&self) -> &CcMetadata {
+        self.inner
+            .cc_metadata
+            .as_ref()
+            .expect("BuiltFunctionGraph invariant: cc_metadata is Some")
+    }
+
     /// Read the calling convention's call-clobbered varnode list.
-    /// Mirrors the [`Self::call_clobbered`] field.
+    /// Convenience for `bfg.cc_metadata().call_clobbered`.
     #[must_use]
     pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.call_clobbered
+        &self.cc_metadata().call_clobbered
     }
+
     /// Function-default `no_memory_clobber` flag — whether calls under
     /// this convention preserve memory (zero-side-effect hooks like
     /// `__fentry__` / `mcount`).  When `true`, `LoadReadOnly` and
     /// `StackLoadForward` may forward across calls.
     #[must_use]
     pub fn no_memory_clobber(&self) -> bool {
-        self.no_memory_clobber
-    }
-    /// Read the function-default CallOther clobber list.
-    /// Mirrors the [`Self::call_other_clobbered`] field.
-    #[must_use]
-    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.call_other_clobbered
-    }
-    /// Read the `VarId → Vn` map for tracked variables.
-    /// Mirrors the [`Self::variables`] field.
-    #[must_use]
-    pub fn variables_map(&self) -> &PrimaryMap<VarId, rsleigh::Vn> {
-        &self.variables
+        self.cc_metadata().no_memory_clobber
     }
 
-    /// Test-only setter: overwrite [`Self::call_other_clobbered`] in
+    /// Read the function-default CallOther clobber list.
+    /// Convenience for `bfg.cc_metadata().call_other_clobbered`.
+    #[must_use]
+    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
+        &self.cc_metadata().call_other_clobbered
+    }
+
+    /// Read the `VarId → Vn` map for tracked variables.
+    /// Convenience for `bfg.cc_metadata().variables`.
+    #[must_use]
+    pub fn variables_map(&self) -> &PrimaryMap<VarId, rsleigh::Vn> {
+        &self.cc_metadata().variables
+    }
+
+    /// Test-only setter: overwrite the `call_other_clobbered` list in
     /// `pattern` tests that construct a synthetic `Call` / `CallOther`
     /// node shape and need a matching function-default clobber list to
     /// exercise the call-other clobber queries.  Production paths
     /// should set this via [`crate::FunctionBuilder::build`].  The
     /// `_for_test` suffix is the documented signal that the caller has
     /// verified the slot/varnode correspondence with the synthetic
-    /// graph's `CallOther` outputs (see
-    /// [`Self::call_other_clobbered`]'s caveat).
+    /// graph's `CallOther` outputs.
     pub fn set_call_other_clobbered_for_test(&mut self, list: Box<[rsleigh::Vn]>) {
-        self.call_other_clobbered = list;
+        self.inner
+            .cc_metadata
+            .as_mut()
+            .expect("BuiltFunctionGraph invariant: cc_metadata is Some")
+            .call_other_clobbered = list;
     }
-}
 
-impl BuiltFunctionGraph {
     /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph` with
-    /// empty `variables` / `call_clobbered` / `ret_val_regs`.
+    /// empty CC metadata.
     ///
     /// **Construct a rewrite-only `BuiltFunctionGraph` with empty CC
     /// fields.**  Used by `compact`'s test fixture and a few pattern test
@@ -188,42 +180,33 @@ impl BuiltFunctionGraph {
     ///
     /// # Contract — caller responsibility
     ///
-    /// The returned `BuiltFunctionGraph` has **empty** `variables`,
-    /// `call_clobbered`, `ret_val_regs`, and `call_other_clobbered`.
+    /// The returned `BuiltFunctionGraph` has **empty** CC metadata.
     /// Callers MUST pass it only to consumers that touch `graph` and
-    /// `entry`; consulting any other field returns a meaningless
-    /// empty value silently.  The `pattern::rewrite_rule` machinery
-    /// and the `opt::Optimizer` trait are vetted to honour this
-    /// contract.  Bespoke callers must verify by inspection.
+    /// `entry`; consulting any CC accessor returns a meaningless empty
+    /// value silently.  The `pattern::rewrite_rule` machinery and the
+    /// `opt::Optimizer` trait are vetted to honour this contract.
+    /// Bespoke callers must verify by inspection.
     ///
     /// For real CC metadata use [`crate::FunctionBuilder::build`].
-    ///
-    /// Test-only partial-state ctor.  Production rewrite paths use
-    /// `pattern::RewriteCtx::new(&mut graph, entry)`.  Remaining callers
-    /// are `compact`'s test fixture and a few pattern test scaffolds
-    /// that need `BuiltFunctionGraph` (e.g. to set call-other clobber
-    /// lists via `set_call_other_clobbered_for_test`) without going
-    /// through the build path.  Hidden from docs to discourage
-    /// external adoption.
     #[doc(hidden)]
     #[must_use]
-    pub fn from_graph_and_entry_for_rewrite(graph: crate::graph::Graph, entry: NodeId) -> Self {
-        Self {
-            graph,
-            entry,
+    pub fn from_graph_and_entry_for_rewrite(mut graph: Graph, entry: NodeId) -> Self {
+        graph.entry = Some(entry);
+        graph.cc_metadata = Some(CcMetadata {
             variables: PrimaryMap::new(),
             call_clobbered: Box::new([]),
             ret_val_regs: Box::new([]),
             call_other_clobbered: Box::new([]),
             no_memory_clobber: false,
-        }
+        });
+        Self::from_graph(graph)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
-    /// starting from [`BuiltFunctionGraph::entry`].
+    /// starting from [`Self::entry`].
     #[must_use]
     pub fn preorder(&self) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph(&self.graph, self.entry)
+        crate::walk::walk_graph(&self.inner, self.entry())
     }
 
     /// Reachable preorder filtered by a predicate over the node's
@@ -234,23 +217,21 @@ impl BuiltFunctionGraph {
         P: FnMut(&crate::node::NodeKind) -> bool + 'a,
     {
         self.preorder()
-            .filter(move |&n| pred(self.graph.node_kind(n)))
+            .filter(move |&n| pred(self.inner.node_kind(n)))
     }
 
-    /// Iterates over **every** node id in the graph, including nodes that are
-    /// not reachable from the entry via the control-flow or data-dependency
-    /// chains (e.g. `Store` nodes whose memory output is not consumed by any
-    /// node visible from `preorder`).
+    /// Iterates over **every** node id in the graph, including nodes
+    /// that are not reachable from the entry via the control-flow or
+    /// data-dependency chains (e.g. `Store` nodes whose memory output
+    /// is not consumed by any node visible from `preorder`).
     pub fn all_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.graph.nodes.keys()
+        self.inner.nodes.keys()
     }
 
-    /// Rebuilds the underlying [`crate::graph::Graph`] to retain only
-    /// nodes reachable from [`Self::entry`] via
-    /// [`crate::walk::walk_graph`].  `self.entry` is remapped through
-    /// the returned [`crate::graph::NodeIdRemap`]; other fields
-    /// (`variables`, `call_clobbered`, `ret_val_regs`) are vn-keyed
-    /// and stay valid as-is.
+    /// Rebuilds the underlying [`Graph`] to retain only nodes reachable
+    /// from [`Self::entry`] via [`crate::walk::walk_graph`].  The entry
+    /// node id is remapped on the wrapped graph; CC metadata is
+    /// vn-keyed and stays valid as-is.
     ///
     /// External callers that hold any pre-compaction `NodeId` /
     /// `NodeOutputId` / `NodeInputId` MUST rewrite them through the
@@ -265,14 +246,15 @@ impl BuiltFunctionGraph {
     /// than panicking keeps every error path typed so Python users see
     /// a clean exception.
     pub fn compact(&mut self) -> crate::Result<crate::graph::NodeIdRemap> {
-        let remap = self.graph.retain_reachable(self.entry)?;
-        let new_entry = remap.node_old_to_new(self.entry).ok_or_else(|| {
+        let entry = self.entry();
+        let remap = self.inner.retain_reachable(entry)?;
+        let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
             anyhow::anyhow!(
                 "BuiltFunctionGraph::compact: entry {:?} missing from retain_reachable remap (invariant violation)",
-                self.entry
+                entry
             )
         })?;
-        self.entry = new_entry;
+        self.inner.entry = Some(new_entry);
         Ok(remap)
     }
 
@@ -283,12 +265,13 @@ impl BuiltFunctionGraph {
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
     ) -> crate::graph_dot::GraphDotDumper<'a, R> {
+        let cc = self.cc_metadata();
         GraphDotDumper {
-            entry: self.entry,
-            graph: &self.graph,
+            entry: self.entry(),
+            graph: &self.inner,
             sleigh,
-            call_clobbered: &self.call_clobbered,
-            ret_val_regs: &self.ret_val_regs,
+            call_clobbered: &cc.call_clobbered,
+            ret_val_regs: &cc.ret_val_regs,
         }
     }
 }
@@ -310,15 +293,16 @@ mod compact_tests {
             [NodeOutputKind::OutputType(crate::node::NodeOutputType::U64)],
         );
         let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
-        let pre_count = bfg.graph.all_node_ids().count();
+        let pre_count = bfg.graph().all_node_ids().count();
 
         let _remap = bfg.compact().expect("compact succeeds on a valid graph");
 
-        let post_count = bfg.graph.all_node_ids().count();
+        let post_count = bfg.graph().all_node_ids().count();
         assert!(post_count < pre_count, "compact must shrink the graph");
         // entry was remapped; new entry id still has the Control output.
-        let outs: Vec<_> = bfg.graph.node_outputs(bfg.entry).into_iter().collect();
+        let entry_id = bfg.entry();
+        let outs: Vec<_> = bfg.graph().node_outputs(entry_id).into_iter().collect();
         assert_eq!(outs.len(), 1);
-        assert!(bfg.graph.output_kind(outs[0]).is_control());
+        assert!(bfg.graph().output_kind(outs[0]).is_control());
     }
 }

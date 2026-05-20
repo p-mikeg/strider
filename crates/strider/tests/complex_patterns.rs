@@ -518,16 +518,16 @@ fn call_uses_call_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // If we hit another Call, the test passes — that's proof of
     // Call→Call dataflow.
     let calls: Vec<NodeId> = g.preorder()
-        .filter(|&n| matches!(g.graph.node_kind(n), NodeKind::Call))
+        .filter(|&n| matches!(g.node_kind(n), NodeKind::Call))
         .collect();
     let chained = calls.iter().any(|&outer| {
-        let outer_inputs: Vec<_> = g.graph.node_inputs(outer).into_iter().collect();
+        let outer_inputs: Vec<_> = g.node_inputs(outer).into_iter().collect();
         outer_inputs.iter().any(|&inp| {
-            let mut producer = g.graph.get_node_from_output(inp);
+            let mut producer = g.get_node_from_output(inp);
             // Bound walk to avoid pathological cycles; 16 hops is far
             // more than any reasonable spill round-trip.
             for _ in 0..16 {
-                match g.graph.node_kind(producer) {
+                match g.node_kind(producer) {
                     NodeKind::Call if producer != outer => return true,
                     // Walk through plumbing that doesn't change the
                     // value identity.  For each kind, follow the
@@ -541,27 +541,27 @@ fn call_uses_call_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
                         // memory edge surfaces the producing store /
                         // call.
                         let inps: Vec<_> =
-                            g.graph.node_inputs(producer).into_iter().collect();
+                            g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.graph.get_node_from_output(first);
+                        producer = g.get_node_from_output(first);
                     }
                     NodeKind::Store(_) | NodeKind::StackStore { .. } => {
                         // Store inputs: [mem, addr, data] (Store) or
                         // [mem, sp, data] (StackStore) — `data` is
                         // the value being persisted.
                         let inps: Vec<_> =
-                            g.graph.node_inputs(producer).into_iter().collect();
+                            g.node_inputs(producer).into_iter().collect();
                         let Some(&data) = inps.get(2) else { break; };
-                        producer = g.graph.get_node_from_output(data);
+                        producer = g.get_node_from_output(data);
                     }
                     NodeKind::ControlState | NodeKind::ValuePhi => {
                         // Take the first input; if it doesn't lead
                         // back to a Call we'll bail at the next step
                         // anyway.
                         let inps: Vec<_> =
-                            g.graph.node_inputs(producer).into_iter().collect();
+                            g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.graph.get_node_from_output(first);
+                        producer = g.get_node_from_output(first);
                     }
                     _ => break,
                 }

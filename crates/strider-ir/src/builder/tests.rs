@@ -1743,7 +1743,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     let mut bfg = b.build()?;
     bfg.compact()?;
 
-    let post = bfg.graph.wide_consts.len();
+    let post = bfg.wide_consts.len();
     assert_eq!(
         post, 1,
         "compact must drop the unreferenced zombie wide const; got {post} entries"

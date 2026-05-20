@@ -251,7 +251,8 @@ pub fn analyze_v1(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFun
     // Re-borrow from the Arc — every test crate's analyze runs in a
     // fresh process so Arc ref-counting cost is negligible.
     p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
-    p.run(&mut graph.graph, graph.entry)
+    let entry = graph.entry();
+    p.run(graph.graph_mut(), entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     graph
 }
@@ -279,7 +280,7 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFuncti
 use strider_ir::node::NodeKind;
 
 pub fn count_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::BuiltFunctionGraph, pred: F) -> usize {
-    g.preorder().filter(|nid| pred(g.graph.node_kind(*nid))).count()
+    g.preorder().filter(|nid| pred(g.node_kind(*nid))).count()
 }
 
 pub fn count_int_binop(g: &strider_ir::BuiltFunctionGraph, op: strider_ir::IntBinaryOp) -> usize {
@@ -326,24 +327,24 @@ pub fn count_returns(g: &strider_ir::BuiltFunctionGraph) -> usize { count_kind(g
 pub fn count_return_paths(g: &strider_ir::BuiltFunctionGraph) -> usize {
     let mut total = 0usize;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(g.node_kind(nid), NodeKind::Return) {
             continue;
         }
         // Return inputs: [Control, Memory, ...return values].  Slot 0 is the
         // Control predecessor.
-        let inputs = g.graph.node_inputs(nid);
+        let inputs = g.node_inputs(nid);
         let Some(ctrl_out) = inputs.get(0).copied() else {
             // A Return with no inputs is malformed; the validator would catch
             // it.  Treat as a single path so we don't silently drop it.
             total += 1;
             continue;
         };
-        let pred = g.graph.get_node_from_output(ctrl_out);
-        match g.graph.node_kind(pred) {
+        let pred = g.get_node_from_output(ctrl_out);
+        match g.node_kind(pred) {
             // ControlState's control inputs form the leading run of its input
             // list (see node_signature: `inputs: []; in_tail: CTRL`), so the
             // total input count IS the predecessor count.
-            NodeKind::ControlState => total += g.graph.node_inputs(pred).len(),
+            NodeKind::ControlState => total += g.node_inputs(pred).len(),
             _ => total += 1,
         }
     }
@@ -366,26 +367,26 @@ pub fn count_loops(g: &strider_ir::BuiltFunctionGraph) -> usize {
         if !reachable.contains(&n) {
             continue;
         }
-        if !matches!(g.graph.node_kind(n), NodeKind::ControlState) {
+        if !matches!(g.node_kind(n), NodeKind::ControlState) {
             continue;
         }
         // Back-edge detection: from each predecessor, walk forward
         // through Control outputs.  If we land back on `n`, that
         // predecessor closes a loop.
-        let preds: Vec<_> = g.graph.node_inputs(n).into_iter().collect();
+        let preds: Vec<_> = g.node_inputs(n).into_iter().collect();
         let has_back_edge = preds.iter().any(|&pred_out| {
-            let pred = g.graph.get_node_from_output(pred_out);
+            let pred = g.get_node_from_output(pred_out);
             let mut seen: HashSet<_> = HashSet::new();
             let mut stack = vec![pred];
             while let Some(cur) = stack.pop() {
                 if !seen.insert(cur) {
                     continue;
                 }
-                for out in g.graph.node_outputs(cur) {
-                    if !g.graph.output_kind(out).is_control() {
+                for out in g.node_outputs(cur) {
+                    if !g.output_kind(out).is_control() {
                         continue;
                     }
-                    for (consumer, _) in g.graph.output_uses(out) {
+                    for (consumer, _) in g.output_uses(out) {
                         if consumer == n {
                             return true;
                         }

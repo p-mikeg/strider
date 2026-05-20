@@ -25,10 +25,10 @@ use strider::{CallingConvention, SleighArch, Strider};
 pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<strider_ir::Value> {
     let mut found: Option<strider_ir::Value> = None;
     for nid in graph.preorder() {
-        if !matches!(graph.graph.node_kind(nid), NodeKind::IndirectBranch) {
+        if !matches!(graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
         assert!(
             inputs.len() == 3,
             "IndirectBranch placeholder must have exactly 3 inputs; got {}",
@@ -81,7 +81,8 @@ pub fn run_pipeline_x86_64(
     // RedundantPhis simplifies the trivial Return shape we don't
     // need to walk past.
     let p = strider.build_optimizer_pipeline();
-    p.run(&mut graph.graph, graph.entry).expect("optimizer pipeline");
+    let entry = graph.entry();
+    p.run(graph.graph_mut(), entry).expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),

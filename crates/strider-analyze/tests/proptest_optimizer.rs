@@ -330,18 +330,18 @@ proptest! {
             return Ok(());
         };
 
-        let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg.graph);
+        let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(fg.graph());
 
         let pipeline: OptimizerPipeline = default_pipeline();
-        let entry = fg.entry;
-        let run_res = pipeline.run(&mut fg.graph, entry);
+        let entry = fg.entry();
+        let run_res = pipeline.run(fg.graph_mut(), entry);
         prop_assert!(
             run_res.is_ok(),
             "default_pipeline should not error on strategy-generated graph: {:?}",
             run_res.err()
         );
 
-        let post: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg.graph);
+        let post: HashMap<NodeId, Vec<u64>> = collect_fingerprints(fg.graph());
 
         for (id, pre_fp) in &pre {
             if pre_fp.is_empty() {

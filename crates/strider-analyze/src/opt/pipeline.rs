@@ -311,8 +311,8 @@ impl OptimizerPipeline {
         &self,
         function: &mut strider_ir::BuiltFunctionGraph,
     ) -> crate::opt::Result<()> {
-        let entry = function.entry;
-        self.run(&mut function.graph, entry)
+        let entry = function.entry();
+        self.run(function.graph_mut(), entry)
     }
 }
 
@@ -351,8 +351,8 @@ mod tests {
         let pipeline = crate::opt::default_pipeline();
 
         // Path A: run via the new (graph, entry) signature.
-        let entry = a.entry;
-        pipeline.run(&mut a.graph, entry)?;
+        let entry = a.entry();
+        pipeline.run(a.graph_mut(), entry)?;
 
         // Path B: run via the back-compat run_on_built wrapper.
         pipeline.run_on_built(&mut b)?;
@@ -377,9 +377,9 @@ mod tests {
     fn pipeline_run_validates_final_graph_on_clean_input() -> crate::opt::Result<()> {
         let mut g = one_const_fn(3);
         let pipeline = crate::opt::default_pipeline();
-        let entry = g.entry;
+        let entry = g.entry();
         let before = g.preorder().count();
-        pipeline.run(&mut g.graph, entry)?;
+        pipeline.run(g.graph_mut(), entry)?;
         let after = g.preorder().count();
         // The default pipeline on an already-folded constant cannot fold
         // further; the reachable-count is stable.  This pins that

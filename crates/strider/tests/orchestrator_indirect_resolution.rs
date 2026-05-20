@@ -48,7 +48,7 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
     let graph = run(config).expect("orchestrator");
     let mut had_return = false;
     for nid in graph.preorder() {
-        if matches!(graph.graph.node_kind(nid), strider_ir::node::NodeKind::Return) {
+        if matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Return) {
             had_return = true;
         }
     }
@@ -125,7 +125,7 @@ fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
     let graph = run(config).expect("orchestrator must succeed in fast path");
     let mut had_return = false;
     for nid in graph.preorder() {
-        if matches!(graph.graph.node_kind(nid), strider_ir::node::NodeKind::Return) {
+        if matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Return) {
             had_return = true;
         }
     }
@@ -157,9 +157,9 @@ fn orchestrator_correctness_unchanged_after_sleigh_persistence() {
     let g2 = make_run();
 
     let kinds_1: Vec<strider_ir::node::NodeKind> =
-        g1.preorder().map(|nid| *g1.graph.node_kind(nid)).collect();
+        g1.preorder().map(|nid| *g1.node_kind(nid)).collect();
     let kinds_2: Vec<strider_ir::node::NodeKind> =
-        g2.preorder().map(|nid| *g2.graph.node_kind(nid)).collect();
+        g2.preorder().map(|nid| *g2.node_kind(nid)).collect();
     assert_eq!(kinds_1, kinds_2);
 }
 

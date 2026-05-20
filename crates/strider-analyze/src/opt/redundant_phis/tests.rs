@@ -56,7 +56,8 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.run(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    pipeline.run(fg.graph_mut(), entry)?;
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
@@ -93,7 +94,8 @@ fn mem_phi_single_pred_eliminated() -> crate::opt::Result<()> {
     b.set_lift_addr(None);
 
     let mut fg = b.build()?;
-    RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    RedundantPhis.optimize_raw(fg.graph_mut(), entry)?;
 
     // Surviving (reachable) MemPhis with at most 1+1 inputs (token + 1 value)
     // must be 0.  `count_reachable` only filters by `NodeKind`, so the
@@ -125,8 +127,9 @@ fn control_state_single_pred_collapses() -> crate::opt::Result<()> {
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
+    let entry = fg.entry();
     assert!(
-        RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?.changed(),
+        RedundantPhis.optimize_raw(fg.graph_mut(), entry)?.changed(),
         "single-pred CS must be simplified"
     );
     Ok(())
@@ -160,7 +163,8 @@ fn unreachable_store_inputs_detached() -> crate::opt::Result<()> {
     pipeline.add(crate::opt::ConstantFold);
     pipeline.add(crate::opt::DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    pipeline.run(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    pipeline.run(fg.graph_mut(), entry)?;
     // Validation runs at the end of `pipeline.run`, so reaching here means
     // the unreachable store didn't leave an invalid graph.
     Ok(())
@@ -194,8 +198,10 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
     // Settle the graph by running RedundantPhis to fixed point first.  After
     // this, any further RedundantPhis invocation on the unmodified graph
     // returns NoChange; that's our baseline.
-    while RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?.changed() {}
-    let baseline = RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    while RedundantPhis.optimize_raw(fg.graph_mut(), entry)?.changed() {}
+    let entry = fg.entry();
+    let baseline = RedundantPhis.optimize_raw(fg.graph_mut(), entry)?;
     assert_eq!(
         baseline,
         OptimizationResult::NoChange,
@@ -214,7 +220,8 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
 
-    let res = RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    let res = RedundantPhis.optimize_raw(fg.graph_mut(), entry)?;
     assert_eq!(
         res,
         OptimizationResult::NoChange,
@@ -283,7 +290,6 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     fg.add_node_input(cs_node, cs_ctrl_out)?;
 
     let phi_consumers: Vec<strider_ir::node::NodeId> = fg
-        .graph
         .output_uses(cs_phi_out)
         .map(|(n, _)| n)
         .collect();
@@ -298,7 +304,8 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     );
 
     // Run the pass under test.
-    RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
+    let entry = fg.entry();
+    RedundantPhis.optimize_raw(fg.graph_mut(), entry)?;
 
     // After collapse, the Return's value input must reference the
     // initial entry value, *not* the phi's output.  `replace_all_uses`

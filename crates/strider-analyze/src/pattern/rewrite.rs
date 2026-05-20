@@ -179,9 +179,10 @@ impl<'g> RewriteCtx<'g> {
     /// fully-built form and want to drive the rewrite engine without
     /// surrendering the wrapper.
     pub fn for_built(bfg: &'g mut strider_ir::BuiltFunctionGraph) -> Self {
+        let entry = bfg.entry();
         Self {
-            graph: &mut bfg.graph,
-            entry: bfg.entry,
+            graph: bfg.graph_mut(),
+            entry,
         }
     }
 
@@ -272,7 +273,7 @@ impl<'g> RewriteCtxView<'g> {
 
 impl<'g> From<&'g strider_ir::BuiltFunctionGraph> for RewriteCtxView<'g> {
     fn from(bfg: &'g strider_ir::BuiltFunctionGraph) -> Self {
-        Self { graph: &bfg.graph, entry: bfg.entry }
+        Self { graph: bfg.graph(), entry: bfg.entry() }
     }
 }
 

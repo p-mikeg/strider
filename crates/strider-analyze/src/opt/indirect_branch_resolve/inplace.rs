@@ -222,7 +222,7 @@ mod tests {
         // Locate the unique IndirectBranch placeholder.
         let mut found: Option<NodeId> = None;
         for nid in built.preorder() {
-            if matches!(built.graph.node_kind(nid), NodeKind::IndirectBranch) {
+            if matches!(built.node_kind(nid), NodeKind::IndirectBranch) {
                 assert!(found.is_none(), "more than one IndirectBranch");
                 found = Some(nid);
             }
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn apply_link_register_rejects_non_indirect_branch_node() {
         let (mut ctx, _placeholder) = build_placeholder_graph();
-        let int_const_id = ctx.graph
+        let int_const_id = ctx
             .all_node_ids()
             .find(|&nid| matches!(ctx.node_kind(nid), NodeKind::IntConst(_)))
             .expect("graph has at least one IntConst");
@@ -285,7 +285,7 @@ mod tests {
         builder.build_return(None, &[]).expect("return");
         builder.set_lift_addr(None);
         let mut ctx = builder.build().expect("build");
-        let ret_id = ctx.graph
+        let ret_id = ctx
             .all_node_ids()
             .find(|&nid| matches!(ctx.node_kind(nid), NodeKind::Return))
             .expect("Return");
@@ -335,8 +335,8 @@ mod tests {
         let (mut ctx, placeholder) = build_placeholder_graph();
         let inputs_before: Vec<_> = ctx.node_inputs(placeholder).into_iter().collect();
         assert_eq!(inputs_before.len(), 3);
-        let r0 = synth_value_output(&mut ctx.graph, 0x42, NodeOutputType::U64);
-        let r1 = synth_value_output(&mut ctx.graph, 0x43, NodeOutputType::U64);
+        let r0 = synth_value_output(ctx.graph_mut(), 0x42, NodeOutputType::U64);
+        let r1 = synth_value_output(ctx.graph_mut(), 0x43, NodeOutputType::U64);
         apply_link_register(&mut crate::pattern::RewriteCtx::for_built(&mut ctx), placeholder, &[r0, r1]).expect("apply");
         let inputs_after: Vec<_> = ctx.node_inputs(placeholder).into_iter().collect();
         assert_eq!(
@@ -353,9 +353,9 @@ mod tests {
         // Three arg-passing outputs → Call's inputs are
         // `[ctrl, mem, IntConst(target), arg_0, arg_1, arg_2]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let a0 = synth_value_output(&mut ctx.graph, 0x01, NodeOutputType::U64);
-        let a1 = synth_value_output(&mut ctx.graph, 0x02, NodeOutputType::U64);
-        let a2 = synth_value_output(&mut ctx.graph, 0x03, NodeOutputType::U64);
+        let a0 = synth_value_output(ctx.graph_mut(), 0x01, NodeOutputType::U64);
+        let a1 = synth_value_output(ctx.graph_mut(), 0x02, NodeOutputType::U64);
+        let a2 = synth_value_output(ctx.graph_mut(), 0x03, NodeOutputType::U64);
         let new_return =
             apply_tail_call(&mut crate::pattern::RewriteCtx::for_built(&mut ctx), placeholder, 0xc0de, &[a0, a1, a2], &[], &[])
                 .expect("apply");
@@ -414,8 +414,8 @@ mod tests {
         // Two ret-val outputs → new Return's inputs are
         // `[call_ctrl, call_mem, ret_val_0, ret_val_1]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let r0 = synth_value_output(&mut ctx.graph, 0x10, NodeOutputType::U64);
-        let r1 = synth_value_output(&mut ctx.graph, 0x11, NodeOutputType::U64);
+        let r0 = synth_value_output(ctx.graph_mut(), 0x10, NodeOutputType::U64);
+        let r1 = synth_value_output(ctx.graph_mut(), 0x11, NodeOutputType::U64);
         let new_return =
             apply_tail_call(&mut crate::pattern::RewriteCtx::for_built(&mut ctx), placeholder, 0xface, &[], &[], &[r0, r1])
                 .expect("apply");
@@ -441,18 +441,15 @@ mod tests {
             [],
             [NodeOutputKind::OutputType(NodeOutputType::Bool)],
         );
-        ctx.graph
-            .set_asm_fingerprint(bool_const, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        ctx.set_asm_fingerprint(bool_const, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let bool_out = ctx.node_outputs(bool_const).into_iter().next().unwrap();
         // Replace the IndirectBranch's input[2] (target_value) with the Bool output.
         let target_input_id = ctx
-            .graph
             .node_input_id_at(placeholder, 2)
             .expect("input slot 2 exists");
         ctx.update_input(target_input_id, bool_out);
         // Sanity: the placeholder now has a Bool target_value.
         let target_value_kind = ctx
-            .graph
             .output_kind(ctx.node_inputs(placeholder)[2]);
         assert!(
             matches!(target_value_kind, NodeOutputKind::OutputType(NodeOutputType::Bool)),

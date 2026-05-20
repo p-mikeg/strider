@@ -512,7 +512,7 @@ mod tests {
         b.build_return(Some(v), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
-        assert_eq!(int_const_signed(&fg.graph, v), Some(-4));
+        assert_eq!(int_const_signed(fg.graph(), v), Some(-4));
         Ok(())
     }
 
@@ -536,7 +536,7 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         // Modular: wrapping_neg(0x8000_0000) = 0x8000_0000 → sign-extended to i32 = -2^31.
-        assert_eq!(int_const_signed(&fg.graph, neg), Some(i32::MIN.into()));
+        assert_eq!(int_const_signed(fg.graph(), neg), Some(i32::MIN.into()));
         Ok(())
     }
 
@@ -553,7 +553,7 @@ mod tests {
         b.build_return(Some(neg), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
-        assert_eq!(int_const_signed(&fg.graph, neg), Some(-7));
+        assert_eq!(int_const_signed(fg.graph(), neg), Some(-7));
         Ok(())
     }
 
@@ -573,7 +573,7 @@ mod tests {
         // collapses to Terminal{base: InitialVar(sp), offset: 0}.
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let r = decompose_sp(&fg.graph, sp_val, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(fg.graph(), sp_val, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
         Ok(())
     }
@@ -594,7 +594,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let r = decompose_sp(&fg.graph, addr, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(fg.graph(), addr, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
     }
@@ -616,7 +616,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let r = decompose_sp(&fg.graph, addr, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(fg.graph(), addr, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
     }
@@ -640,13 +640,13 @@ mod tests {
         let mut memo = SpExprMemo::default();
         let r1 = {
             let mut v: entity_utils::DenseEntitySet<strider_ir::node::NodeId> = entity_utils::DenseEntitySet::new();
-            decompose_sp(&fg.graph, addr, sp, &mut memo, &mut v)
+            decompose_sp(fg.graph(), addr, sp, &mut memo, &mut v)
         };
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
         let r2 = {
             let mut v: entity_utils::DenseEntitySet<strider_ir::node::NodeId> = entity_utils::DenseEntitySet::new();
-            decompose_sp(&fg.graph, addr, sp, &mut memo, &mut v)
+            decompose_sp(fg.graph(), addr, sp, &mut memo, &mut v)
         };
         assert!(matches!((&r1, &r2),
             (Some(SpExpr::Terminal { offset: -4, .. }),
@@ -669,7 +669,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        assert!(decompose_sp(&fg.graph, c, sp, &mut memo, &mut visiting).is_none());
+        assert!(decompose_sp(fg.graph(), c, sp, &mut memo, &mut visiting).is_none());
         Ok(())
     }
 
@@ -701,7 +701,7 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let r = decompose_sp(&fg.graph, s3, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(fg.graph(), s3, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
@@ -732,7 +732,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let r = decompose_sp(&fg.graph, c, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(fg.graph(), c, sp, &mut memo, &mut visiting);
         assert!(r.is_none());
         assert!(
             !memo.contains_key(&c),
@@ -791,7 +791,7 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let r = decompose_sp(&fg.graph, sp_at_c, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(fg.graph(), sp_at_c, sp, &mut memo, &mut visiting);
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -825,7 +825,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let r = decompose_sp(&fg.graph, aligned, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(fg.graph(), aligned, sp, &mut memo, &mut visiting);
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
@@ -870,9 +870,9 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let aligned_dec = decompose_sp(&fg.graph, aligned, sp, &mut memo, &mut visiting)
+        let aligned_dec = decompose_sp(fg.graph(), aligned, sp, &mut memo, &mut visiting)
             .expect("aligned must decompose");
-        let post_sub_dec = decompose_sp(&fg.graph, post_sub, sp, &mut memo, &mut visiting)
+        let post_sub_dec = decompose_sp(fg.graph(), post_sub, sp, &mut memo, &mut visiting)
             .expect("post_sub must decompose");
         let SpExpr::Terminal { base: aligned_base, offset: aligned_off } = aligned_dec else {
             panic!("aligned must be Terminal");
@@ -913,7 +913,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-        let r = decompose_sp(&fg.graph, current, sp, &mut memo, &mut visiting)
+        let r = decompose_sp(fg.graph(), current, sp, &mut memo, &mut visiting)
             .expect("5000-node chain must decompose without stack-overflowing");
         let SpExpr::Terminal { offset, .. } = r else {
             panic!("expected Terminal, got {r:?}");
@@ -955,20 +955,20 @@ mod tests {
         let cs_outs = fg.node_outputs(cs).into_iter().collect::<Vec<_>>();
         let phi_token = *cs_outs
             .iter()
-            .find(|&&o| matches!(fg.graph.output_kind(o), NodeOutputKind::PhiToken))
+            .find(|&&o| matches!(fg.output_kind(o), NodeOutputKind::PhiToken))
             .expect("PhiToken slot");
         let init_mem = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
             .expect("InitialMemory present");
         let mem_out = fg.node_outputs(init_mem).into_iter().next().unwrap();
-        let phi_node = fg.graph.create_node(
+        let phi_node = fg.create_node(
             NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM },
             [phi_token, mem_out, data],
             [NodeOutputKind::Memory],
         );
         // DELIBERATELY do NOT call set_stack_phi_offsets.
-        let alias = step_through_stack_store_phi(&fg.graph, phi_node, 0, 8);
+        let alias = step_through_stack_store_phi(fg.graph(), phi_node, 0, 8);
         assert!(
             matches!(alias, AliasStep::MayAlias),
             "empty stack_phi_offsets must yield MayAlias (sound default)"

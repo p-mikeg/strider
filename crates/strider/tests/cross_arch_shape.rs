@@ -187,7 +187,7 @@ fn structural_fingerprint(g: &strider_ir::BuiltFunctionGraph) -> Fingerprint {
 
     for nid in g.preorder() {
         reachable_nodes += 1;
-        let kind = g.graph.node_kind(nid);
+        let kind = g.node_kind(nid);
         *kind_histogram.entry(kind_bucket(kind)).or_insert(0) += 1;
         match kind {
             NodeKind::ControlState => regions += 1,
@@ -198,8 +198,8 @@ fn structural_fingerprint(g: &strider_ir::BuiltFunctionGraph) -> Fingerprint {
             _ => {}
         }
         // Count incoming edges by producer-output kind.
-        for input in g.graph.node_inputs(nid) {
-            match g.graph.output_kind(input) {
+        for input in g.node_inputs(nid) {
+            match g.output_kind(input) {
                 NodeOutputKind::Control => edges_control += 1,
                 NodeOutputKind::Memory => edges_memory += 1,
                 NodeOutputKind::OutputType(_) => edges_value += 1,

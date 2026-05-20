@@ -38,11 +38,11 @@ fn arithmetic_x86_add_every_reachable_value_node_has_a_fingerprint() {
     let g = analyze(Arch::X86, "arithmetic", "add");
     let mut empty_non_exempt: Vec<(strider_ir::node::NodeId, NodeKind)> = Vec::new();
     for node in g.preorder() {
-        let kind = *g.graph.node_kind(node);
+        let kind = *g.node_kind(node);
         if is_exempt(&kind) {
             continue;
         }
-        if g.graph.asm_fingerprint(node).is_empty() {
+        if g.asm_fingerprint(node).is_empty() {
             empty_non_exempt.push((node, kind));
         }
     }
@@ -60,7 +60,7 @@ fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
     // hook so we exercise the public surface end-to-end.
     let g = analyze(Arch::X86, "arithmetic", "add");
     let opts = ValidateOptions { check_asm_fingerprints: true };
-    validate_with_options(&g.graph, g.entry, opts)
+    validate_with_options(g.graph(), g.entry(), opts)
         .expect("every reachable non-exempt node must have a fingerprint");
 }
 
@@ -68,7 +68,7 @@ fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
 fn arithmetic_x86_default_validate_remains_unchanged() {
     // Sanity: the default `validate` call still works post-pipeline.
     let g = analyze(Arch::X86, "arithmetic", "add");
-    validate(&g.graph, g.entry).expect("default validate still passes");
+    validate(g.graph(), g.entry()).expect("default validate still passes");
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn control_x86_clamp_validate_with_asm_fingerprint_check() {
     // dead-branch, redundant-phi propagation alongside lift-time.
     let g = analyze(Arch::X86, "control", "clamp");
     let opts = ValidateOptions { check_asm_fingerprints: true };
-    validate_with_options(&g.graph, g.entry, opts)
+    validate_with_options(g.graph(), g.entry(), opts)
         .expect("clamp pipeline preserves the fingerprint invariant");
 }
 
@@ -86,7 +86,7 @@ fn control_x86_count_bits_validate_with_asm_fingerprint_check() {
     // Loop body — exercises mem-phi / var-phi at the join points.
     let g = analyze(Arch::X86, "control", "count_bits");
     let opts = ValidateOptions { check_asm_fingerprints: true };
-    validate_with_options(&g.graph, g.entry, opts)
+    validate_with_options(g.graph(), g.entry(), opts)
         .expect("count_bits pipeline preserves the fingerprint invariant");
 }
 
@@ -97,7 +97,7 @@ fn arithmetic_x86_complex_validate_with_asm_fingerprint_check() {
     for fn_name in ["bit_and", "bit_or", "shl", "lshr", "bit_xor"] {
         let g = analyze(Arch::X86, "arithmetic", fn_name);
         let opts = ValidateOptions { check_asm_fingerprints: true };
-        validate_with_options(&g.graph, g.entry, opts)
+        validate_with_options(g.graph(), g.entry(), opts)
             .unwrap_or_else(|e| panic!("{fn_name}: {e}"));
     }
 }
@@ -111,7 +111,7 @@ fn arithmetic_x86_add_node_fingerprint_is_inside_function_extent() {
     let g = analyze(Arch::X86, "arithmetic", "add");
     let mut saw_any = false;
     for node in g.preorder() {
-        let fp = g.graph.asm_fingerprint(node);
+        let fp = g.asm_fingerprint(node);
         for &addr in fp {
             assert_ne!(addr, 0, "asm-fingerprint addr 0 is suspicious");
             // x86 fixtures are linked at the default location; everything

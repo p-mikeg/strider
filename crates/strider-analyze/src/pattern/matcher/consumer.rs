@@ -51,8 +51,7 @@ mod tests {
     }
 
     fn entry_ctrl_out(g: &strider_ir::BuiltFunctionGraph) -> NodeOutputId {
-        g.graph
-            .node_outputs(g.entry)
+        g.node_outputs(g.entry())
             .into_iter()
             .next()
             .expect("Entry has a Control output")
@@ -66,20 +65,19 @@ mod tests {
         // it is the single consumer. The walk helper does not skip it;
         // the caller's pattern decides whether to match a ControlState.
         let got = next_control_node(&m, entry_ctrl_out(&g)).expect("one consumer");
-        assert!(matches!(g.graph.node_kind(got), NodeKind::ControlState));
+        assert!(matches!(g.node_kind(got), NodeKind::ControlState));
         Ok(())
     }
 
     #[test]
     fn next_control_node_returns_none_when_no_consumer() -> strider_ir::Result<()> {
         let mut g = graph_call_return()?;
-        let detached = g.graph.create_node(
+        let detached = g.create_node(
             NodeKind::Entry,
             [],
             [strider_ir::node::NodeOutputKind::Control],
         );
         let out = g
-            .graph
             .node_outputs(detached)
             .into_iter()
             .next()

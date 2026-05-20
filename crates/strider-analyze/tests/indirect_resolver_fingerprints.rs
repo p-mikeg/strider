@@ -98,7 +98,7 @@ fn resolver_mini_ir_passes_graph_invariants_asm_fingerprint_check() {
     let opts = strider_ir::validate::ValidateOptions {
         check_asm_fingerprints: true,
     };
-    let result = strider_ir::validate::validate_with_options(&fg.graph, fg.entry, opts);
+    let result = strider_ir::validate::validate_with_options(fg.graph(), fg.entry(), opts);
     assert!(
         result.is_ok(),
         "mini-IR violates Layer-C asm-fingerprint invariant: {:?}",

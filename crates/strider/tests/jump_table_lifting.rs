@@ -85,7 +85,7 @@ fn analyze_with_known_targets(
 
 fn count_if_nodes(g: &BuiltFunctionGraph) -> usize {
     g.preorder()
-        .filter(|nid| matches!(g.graph.node_kind(*nid), NodeKind::If))
+        .filter(|nid| matches!(g.node_kind(*nid), NodeKind::If))
         .count()
 }
 
@@ -93,7 +93,7 @@ fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
-                g.graph.node_kind(*nid),
+                g.node_kind(*nid),
                 NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
             )
         })
@@ -104,7 +104,7 @@ fn count_int_consts_eq(g: &BuiltFunctionGraph, want: u64) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
-                g.graph.node_kind(*nid),
+                g.node_kind(*nid),
                 NodeKind::IntConst(c) if *c == u128::from(want),
             )
         })
@@ -233,8 +233,9 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     );
 
     let pipeline = strider.build_optimizer_pipeline();
+    let entry = graph.entry();
     pipeline
-        .run(&mut graph.graph, graph.entry)
+        .run(graph.graph_mut(), entry)
         .expect("optimizer pipeline");
 
     let if_count_post = count_if_nodes(&graph);
@@ -273,7 +274,7 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // (no UnresolvedIndirectBranch placeholder generated).
     let placeholder_count = g
         .preorder()
-        .filter(|nid| matches!(g.graph.node_kind(*nid), NodeKind::IndirectBranch))
+        .filter(|nid| matches!(g.node_kind(*nid), NodeKind::IndirectBranch))
         .count();
     assert_eq!(
         placeholder_count, 0,
