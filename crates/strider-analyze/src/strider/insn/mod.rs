@@ -3,11 +3,11 @@ use strider_ir::node::NodeOutputType;
 use rsleigh::Opcode;
 use strider_lift::region_driver::RegionDriver;
 
-use super::IrStrider;
+use super::PerRegionDriver;
 
 mod control;
 
-impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
+impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// Translates a single p-code instruction `insn` from `region_id` into
     /// one or more IR nodes.
     ///
@@ -34,7 +34,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // Salsa-side lift driver.  We can't use a closure-passing API
         // directly because `process_insn_inner` also borrows `self.cfg`
         // / `self.strider`, which sits next to `self.builder` inside
-        // `IrStrider` — splitting into open-call brackets sidesteps the
+        // `PerRegionDriver` — splitting into open-call brackets sidesteps the
         // borrow.
         let machine_addr = addr.machine_addr_u64();
         RegionDriver::set_lift_addr(&mut self.builder, Some(machine_addr));

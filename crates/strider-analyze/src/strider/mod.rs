@@ -11,7 +11,7 @@ pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, RegionLiftHandles, Strider};
 ///
 /// Holds a reference to the shared [`Strider`] (register / calling-convention
 /// information) and a fresh [`strider_ir::FunctionBuilder`].
-pub struct IrStrider<'a, R: rsleigh::MemReader> {
+pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     pub(crate) strider: &'a Strider,
     pub(crate) builder: strider_ir::FunctionBuilder,
     pub(crate) cfg: &'a strider_lift::cfg::Cfg<R>,
@@ -29,8 +29,8 @@ pub struct IrStrider<'a, R: rsleigh::MemReader> {
         &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
 }
 
-impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
-    /// Creates a new `IrStrider` for the given CFG.
+impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+    /// Creates a new `PerRegionDriver` for the given CFG.
     ///
     /// Constructs the IR [`FunctionBuilder`] with the supplied
     /// `all_vns` (the set of every varnode any instruction in `cfg`

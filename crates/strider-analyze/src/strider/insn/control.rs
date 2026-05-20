@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 
-use super::super::IrStrider;
+use super::super::PerRegionDriver;
 
 /// Emits an If-ladder dispatching `idx` against `targets_and_regions`.
 ///
@@ -104,7 +104,7 @@ pub(crate) fn build_switch_if_ladder(
     Ok(())
 }
 
-impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
+impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     pub(super) fn handle_branch(
         &mut self,
         region_id: strider_lift::cfg::RegionId,
@@ -309,7 +309,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// tail-call resolutions without re-walking the CFG.
     ///
     /// The `(addr, target_value)` pair is recorded on
-    /// `IrStrider::unresolved_branches` so the resolver can correlate
+    /// `PerRegionDriver::unresolved_branches` so the resolver can correlate
     /// each placeholder with the offending pcode address.
     pub(crate) fn handle_unresolved_indirect_branch(
         &mut self,

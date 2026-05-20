@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use anyhow::{anyhow, Result};
 use strider_lift::region_driver::RegionDriver;
 
-use super::IrStrider;
+use super::PerRegionDriver;
 
 /// Process-wide empty `per_address_ccs` map.  Borrowed by
 /// [`AnalyzeOptions::default`] so the default options bag has a real
@@ -133,7 +133,7 @@ pub struct Strider {
     pub(super) calling_convention: target::BuiltCallingConvention,
     pub(crate) arch: target::SleighArch,
     /// Cached `SleighRegs` table from Strider construction.  Used by the
-    /// CallOther per-op-ABI dispatch in `IrStrider::handle_call_other`
+    /// CallOther per-op-ABI dispatch in `PerRegionDriver::handle_call_other`
     /// to resolve `CallOtherAbi::implicit_reads`/`implicit_writes` register
     /// names to `rsleigh::Vn`s without paying the per-call cost of
     /// `Sleigh::regs()` (an "expensive operation" per its docstring).
@@ -304,7 +304,7 @@ impl Strider {
     ///
     /// # Errors
     ///
-    /// Propagates errors from `IrStrider::new` (variable-table init,
+    /// Propagates errors from `PerRegionDriver::new` (variable-table init,
     /// CC build), `FunctionBuilder::build_entry`, the per-region IR
     /// translation (`pcode-lift` value-producer failures, control-op
     /// routing, calling-convention plumbing), and final
@@ -317,8 +317,8 @@ impl Strider {
         let all_vns = opts
             .all_vns
             .unwrap_or_else(|| self.find_all_unique_vns(cfg));
-        let mut ir_strider = IrStrider::new(self, cfg, all_vns, opts.per_address_ccs)?;
-        ir_strider.builder.build_entry()?;
+        let mut per_region_driver = PerRegionDriver::new(self, cfg, all_vns, opts.per_address_ccs)?;
+        per_region_driver.builder.build_entry()?;
 
         // Map every CFG region id to its newly-allocated IR region id.
         // Indexed by `RegionId.index()` so the per-instruction loop
@@ -327,7 +327,7 @@ impl Strider {
         let max_index = cfg_region_ids.iter().map(|r| r.index()).max().unwrap_or(0);
         let mut region_map: Vec<Option<strider_ir::RegionId>> = vec![None; max_index + 1];
         for cfg_rid in &cfg_region_ids {
-            region_map[cfg_rid.index()] = Some(ir_strider.builder.create_region()?);
+            region_map[cfg_rid.index()] = Some(per_region_driver.builder.create_region()?);
         }
         let ir_region_of = |region_id: strider_lift::cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
@@ -337,14 +337,14 @@ impl Strider {
                 .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))
         };
 
-        ir_strider
+        per_region_driver
             .builder
             .set_entry_region(ir_region_of(cfg.entry())?)?;
 
         // Translate instructions for each region.
         for &cfg_rid in &cfg_region_ids {
             let ir_region = ir_region_of(cfg_rid)?;
-            ir_strider.builder.set_region(ir_region);
+            per_region_driver.builder.set_region(ir_region);
             let region = cfg
                 .graph()
                 .node_weight(cfg_rid)
@@ -366,7 +366,7 @@ impl Strider {
                 {
                     continue;
                 }
-                ir_strider.process_insn(
+                per_region_driver.process_insn(
                     cfg_rid,
                     &wrapped_insn.insn,
                     wrapped_insn.addr,
@@ -388,14 +388,14 @@ impl Strider {
             // `None` when the region has zero pcode insns (e.g. empty
             // Branch regions produced by the bounded-lift
             // CondBranch-OOB collapse); the funnel accepts `Option<u64>`.
-            RegionDriver::set_lift_addr(&mut ir_strider.builder, term_addr);
+            RegionDriver::set_lift_addr(&mut per_region_driver.builder, term_addr);
             let term_res = (|| -> Result<()> {
                 match special_terminator {
                     Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
-                        ir_strider.handle_unresolved_indirect_branch(&target_vn, addr)?;
+                        per_region_driver.handle_unresolved_indirect_branch(&target_vn, addr)?;
                     }
                     Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
-                        ir_strider.handle_switch(
+                        per_region_driver.handle_switch(
                             cfg_rid,
                             &target_vn,
                             &targets,
@@ -404,13 +404,13 @@ impl Strider {
                         )?;
                     }
                     Some(SpecialTerm::TailCall(target)) => {
-                        ir_strider.handle_tail_call(target)?;
+                        per_region_driver.handle_tail_call(target)?;
                     }
                     None => {}
                 }
                 Ok(())
             })();
-            RegionDriver::clear_lift_addr(&mut ir_strider.builder);
+            RegionDriver::clear_lift_addr(&mut per_region_driver.builder);
             term_res?;
         }
 
@@ -435,7 +435,7 @@ impl Strider {
             };
             match weight {
                 strider_lift::cfg::RegionEdgeKind::Fallthrough => {
-                    ir_strider
+                    per_region_driver
                         .builder
                         .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
                 }
@@ -445,7 +445,7 @@ impl Strider {
                         .node_weight(src)
                         .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?;
                     if src_region.insns.is_empty() {
-                        ir_strider
+                        per_region_driver
                             .builder
                             .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
                     }
@@ -468,9 +468,9 @@ impl Strider {
 
             let mut entry_var_phis: std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeId> =
                 std::collections::HashMap::new();
-            for (var_id, phi_out) in ir_strider.builder.region_initial_variables(ir_region_id) {
-                if let Some(vn) = ir_strider.builder.vn_of_var(var_id) {
-                    let phi_node = ir_strider
+            for (var_id, phi_out) in per_region_driver.builder.region_initial_variables(ir_region_id) {
+                if let Some(vn) = per_region_driver.builder.vn_of_var(var_id) {
+                    let phi_node = per_region_driver
                         .builder
                         .body()
                         .graph
@@ -484,21 +484,21 @@ impl Strider {
                 rsleigh::Vn,
                 strider_ir::node::NodeOutputId,
             > = std::collections::HashMap::new();
-            for (var_id, val_out) in ir_strider.builder.region_exit_variables(ir_region_id) {
-                if let Some(vn) = ir_strider.builder.vn_of_var(var_id) {
+            for (var_id, val_out) in per_region_driver.builder.region_exit_variables(ir_region_id) {
+                if let Some(vn) = per_region_driver.builder.vn_of_var(var_id) {
                     exit_vn_to_value.insert(vn, val_out);
                 }
             }
 
-            let entry_control = ir_strider.builder.region_entry_control(ir_region_id)?;
-            let entry_memory = ir_strider.builder.region_entry_memory(ir_region_id)?;
-            let exit_control = ir_strider.builder.region_cur_ctrl(ir_region_id);
-            let exit_memory = ir_strider.builder.region_cur_memory(ir_region_id);
+            let entry_control = per_region_driver.builder.region_entry_control(ir_region_id)?;
+            let entry_memory = per_region_driver.builder.region_entry_memory(ir_region_id)?;
+            let exit_control = per_region_driver.builder.region_cur_ctrl(ir_region_id);
+            let exit_memory = per_region_driver.builder.region_cur_memory(ir_region_id);
 
             region_handles.push(RegionLiftHandles {
                 start_addr: region.start_addr,
-                entry_control_state: ir_strider.builder.region_control_node(ir_region_id),
-                entry_mem_phi: ir_strider.builder.region_memory_node(ir_region_id),
+                entry_control_state: per_region_driver.builder.region_control_node(ir_region_id),
+                entry_mem_phi: per_region_driver.builder.region_memory_node(ir_region_id),
                 entry_control,
                 entry_memory,
                 exit_control,
@@ -508,8 +508,8 @@ impl Strider {
             });
         }
 
-        let unresolved_branches = std::mem::take(&mut ir_strider.unresolved_branches);
-        let graph = ir_strider.builder.build()?;
+        let unresolved_branches = std::mem::take(&mut per_region_driver.unresolved_branches);
+        let graph = per_region_driver.builder.build()?;
         Ok(AnalyzeOutcome {
             graph,
             unresolved_branches,

@@ -1,18 +1,18 @@
 //! Strider-side wrapper around [`strider_lift::pcode_lift::ValueLifter::read_vn`] /
 //! [`strider_lift::pcode_lift::ValueLifter::write_vn`].
 //!
-//! Both methods used to live directly on `IrStrider` (along with the
+//! Both methods used to live directly on `PerRegionDriver` (along with the
 //! register-aliasing logic).  They have moved into the lower-layer
 //! `pcode-lift` crate so that `cfg`'s indirect-branch resolver can
 //! reuse them; this module's only job is to construct a `ValueLifter`
-//! around `IrStrider`'s existing borrows and delegate.
+//! around `PerRegionDriver`'s existing borrows and delegate.
 
 use anyhow::Result;
 
-use super::IrStrider;
+use super::PerRegionDriver;
 
-impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
-    /// Builds a [`strider_lift::pcode_lift::ValueLifter`] sharing this `IrStrider`'s IR
+impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+    /// Builds a [`strider_lift::pcode_lift::ValueLifter`] sharing this `PerRegionDriver`'s IR
     /// builder, sleigh context, and target endianness.
     pub(super) fn value_lifter(&mut self) -> strider_lift::pcode_lift::ValueLifter<'_, R> {
         strider_lift::pcode_lift::ValueLifter::new(

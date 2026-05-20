@@ -25,13 +25,13 @@
 //!
 //! The natural API would be a `with_lift_addr(builder, addr, |b| …)`
 //! helper, but every existing call site in `strider` runs the inner
-//! work using methods on `IrStrider` itself (e.g.
+//! work using methods on `PerRegionDriver` itself (e.g.
 //! `self.process_insn_inner(...)`, `self.handle_switch(...)`).  A
 //! closure that captures `&mut self` cannot coexist with a `&mut
 //! self.builder` argument the helper would need — the borrow checker
 //! rejects the split.  Splitting [`RegionDriver`] into a pair of
 //! `set_lift_addr` and `clear_lift_addr` open-call methods sidesteps
-//! the borrow without forcing a deeper refactor of `IrStrider`.  The
+//! the borrow without forcing a deeper refactor of `PerRegionDriver`.  The
 //! caller writes:
 //!
 //! ```ignore
