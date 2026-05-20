@@ -27,7 +27,7 @@ use strider_ir::{
 };
 
 /// Sentinel lift-address base; per-step `lift_off` is added on top.
-/// Mirrors `strider_ir::test_utils::SENTINEL_LIFT_ADDR`.
+/// Mirrors `strider_ir_test_utils::SENTINEL_LIFT_ADDR`.
 const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
 // ── Strategy (mirrors strider-ir/tests/proptest_invariants.rs) ────────────

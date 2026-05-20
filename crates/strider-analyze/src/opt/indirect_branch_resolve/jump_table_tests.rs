@@ -100,7 +100,7 @@ fn build_with_anchor(
     let region = builder.create_region().expect("create_region");
     builder.set_entry_region(region).expect("set_entry_region");
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let anchor = anchor_inputs(&mut builder);
     builder.build_indirect_branch(anchor).expect("build_indirect_branch");
     builder.set_lift_addr(None);
@@ -359,7 +359,7 @@ fn bound_via_known_bits_handles_zero_extend() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let addr = builder.build_int_const(0x9000u64, NodeOutputType::U32).unwrap();
     let narrow = builder
         .build_load(addr, VnSpace::RAM, NodeOutputType::U8)
@@ -375,7 +375,7 @@ fn bound_via_known_bits_handles_zero_extend() {
         [narrow],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    g.graph.set_asm_fingerprint(extend_node, vec![strider_ir::test_utils::SENTINEL_LIFT_ADDR]);
+    g.graph.set_asm_fingerprint(extend_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let [idx] = g
         .graph
         .node_outputs_exact::<1>(extend_node)
@@ -405,7 +405,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     // Build a placeholder Return so build() succeeds.
     let placeholder = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
     builder.build_indirect_branch(placeholder).unwrap();
@@ -614,7 +614,7 @@ fn bound_from_if_condition_idx_less_than_n_true() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let cmp = builder
@@ -635,7 +635,7 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let cmp = builder
@@ -669,7 +669,7 @@ fn bound_from_if_condition_signed_less_treated_as_unsigned_bound() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(8u64, NodeOutputType::U32).unwrap();
     let cmp = builder
@@ -693,7 +693,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
     // BoolNeg(IntLess(n, idx)) — operand order is (n, idx) per the
@@ -734,7 +734,7 @@ fn build_pred_if_graph(
     b.set_entry_region(entry).unwrap();
 
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
     let bound_c = b.build_int_const(bound, NodeOutputType::U32).unwrap();
     let cond = b
@@ -815,7 +815,7 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     let exit = regions[DEPTH + 1];
     b.set_entry_region(entry).unwrap();
 
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     for i in 0..DEPTH {
         b.set_region(regions[i]);
         let idx = b.read_variable(&idx_var).unwrap();
@@ -878,7 +878,7 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = b.read_variable(&idx_var).unwrap();
     b.build_indirect_branch(idx).unwrap();
     b.set_lift_addr(None);
@@ -921,7 +921,7 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
     b.set_entry_region(entry).unwrap();
 
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     // Compare OTHER var, not idx.
     let other = b.read_variable(&other_var).unwrap();
     let bound_c = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
@@ -965,7 +965,7 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let cmp = builder
@@ -997,7 +997,7 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
     // N on LHS, idx on RHS — `N < idx` shape.
@@ -1024,7 +1024,7 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let other = builder.build_int_const(7u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
@@ -1090,7 +1090,7 @@ fn build_diamond_two_bounds(
     // entry: split on a non-idx-related boolean so both arms proceed.
     // We use `idx == 0` as a dummy so both paths exist.
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
     let zero = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let dummy = b
@@ -1188,7 +1188,7 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
 
     // entry: dummy split so both paths start.
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx_e = b.read_variable(&idx_var).unwrap();
     let zero = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let dummy = b

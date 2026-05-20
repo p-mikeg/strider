@@ -89,7 +89,7 @@ mod tests {
     use strider_lift::cfg::ResolvedTargets;
     use strider_ir::FunctionBuilder;
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use strider_ir::test_utils::{reg_vn as fake_reg_vn, SENTINEL_LIFT_ADDR};
+    use strider_ir_test_utils::{reg_vn as fake_reg_vn, SENTINEL_LIFT_ADDR};
 
     /// Build a minimal `BuiltFunctionGraph` with one tracked
     /// variable and an empty body region terminated by a Return

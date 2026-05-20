@@ -2,7 +2,7 @@ use super::*;
 use crate::opt::pipeline::OptimizerRaw;
 use crate::opt::{ConstantFold, OptimizerPipeline};
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 // ── Original test ─────────────────────────────────────────────────────────────
@@ -237,7 +237,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
 /// canonical `FunctionArg(0)`.
 #[test]
 fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
-    use strider_ir::test_utils::reg_vn;
+    use strider_ir_test_utils::reg_vn;
     let var = reg_vn(0x1000, 8);
     let mut b = FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
     let entry = b.create_region()?;

@@ -13,7 +13,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::node::NodeOutputType;
-use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use crate::pattern::{add, boxed_rule, int_const, rewrite_rule, sub, var, Capture};
 

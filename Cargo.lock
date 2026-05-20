@@ -1295,6 +1295,7 @@ dependencies = [
  "serde",
  "strider-analyze",
  "strider-ir",
+ "strider-ir-test-utils",
  "strider-lift",
  "target",
  "thiserror",
@@ -1315,6 +1316,7 @@ dependencies = [
  "rustc-hash",
  "smallvec",
  "strider-ir",
+ "strider-ir-test-utils",
  "strider-lift",
  "target",
  "thiserror",
@@ -1334,7 +1336,16 @@ dependencies = [
  "rsleigh",
  "rustc-hash",
  "smallvec",
+ "strider-ir-test-utils",
  "thiserror",
+]
+
+[[package]]
+name = "strider-ir-test-utils"
+version = "0.1.0"
+dependencies = [
+ "rsleigh",
+ "strider-ir",
 ]
 
 [[package]]

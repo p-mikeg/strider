@@ -17,11 +17,12 @@ rustc-hash = "2"
 
 [dev-dependencies]
 proptest = "1"
-
-[features]
-# Exposes shared mock-IR test helpers (`make_empty_fn`, `reg_vn`, `sp_vn_x86`,
-# `sp_vn_x86_64`, ...).  Test-only — not callable from production code.
-test-utils = []
+# Dev-dep cycle is fine: cargo only links dev-deps for `cargo test`, never for
+# the regular `cargo build`, so the cycle (test-utils -> ir, ir [dev] ->
+# test-utils) is acceptable.  strider-ir's own `#[cfg(test)] mod tests` blocks
+# in `src/builder/tests.rs` use SENTINEL_LIFT_ADDR / sp_vn_x86_64 etc., so
+# they need the helpers visible at test time.
+strider-ir-test-utils = { workspace = true }
 
 [lints]
 workspace = true

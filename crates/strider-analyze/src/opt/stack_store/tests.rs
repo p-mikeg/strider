@@ -4,7 +4,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::OptimizerRaw;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use strider_ir::test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 /// Counts how many nodes in `ctx` match the predicate.
@@ -22,7 +22,7 @@ fn count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView<'_>, pred
 #[test]
 fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
             b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
@@ -58,7 +58,7 @@ fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
 #[test]
 fn add_sp_with_negative_unsigned_constant_becomes_stack_store() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // 0xFFFFFFFC_U32 == -4 when sign-extended.
         let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
         let addr = b.build_int_binary_operation(
@@ -280,7 +280,7 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
 #[test]
 fn buf_init_does_not_leak_into_args() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp0| {
         // Simulate: `push ebx` + `sub esp, 16` + 4× zero-init + push arg1 +
         // push arg0 + implicit-call ret-push.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
@@ -376,7 +376,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
 #[test]
 fn non_stack_store_is_untouched() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, _sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
         let addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
         let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
@@ -414,7 +414,7 @@ fn find_call(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<NodeId> {
 #[test]
 fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 (= 22) at sp - 4
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
@@ -476,7 +476,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 #[test]
 fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
             b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
@@ -517,7 +517,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
 #[test]
 fn missing_slot_zero_skips_collection() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
 
         // arg1 at sp + 4 (rel = +4 from sp_v0; will be rel = 8 from
@@ -565,7 +565,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
 #[test]
 fn call_with_no_stack_stores_unchanged() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, _sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
         let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
@@ -597,7 +597,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
 #[test]
 fn detect_mixed_add_sub_reduces() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v| {
         let s16 = b.build_int_const(16u64, NodeOutputType::U32)?;
         let s4 = b.build_int_const(4u64, NodeOutputType::U32)?;
         let plus16 =
@@ -678,7 +678,7 @@ fn detect_non_sp_base_skipped() -> Result<()> {
 #[test]
 fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 (= 22) at sp - 4.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
@@ -750,7 +750,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 #[test]
 fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 = 22 at sp - 4.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
@@ -816,7 +816,7 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
 fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
     let sp = sp_vn();
     let arg_vals: [u64; 4] = [11, 22, 33, 44];
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_initial| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_initial| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
 
         let mut sp_cur = sp_initial;
@@ -900,7 +900,7 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
 #[test]
 fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // arg0 = 11 stored at sp + 0  (cdecl: outgoing-args region is at the
         // bottom of the frame, written without first decrementing SP).
         let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
@@ -967,7 +967,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
 #[test]
 fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
 
@@ -1036,7 +1036,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
 #[test]
 fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
 
         // Stale arg0 = 0xBAD at sp + 0 (older write).
@@ -1103,7 +1103,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
 #[test]
 fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sixteen = b.build_int_const(16u64, NodeOutputType::U32)?;
 

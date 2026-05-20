@@ -108,7 +108,7 @@ fn add_k_plus_zero(k: u64) -> BuiltFunctionGraph {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let lhs = b.build_int_const(k, NodeOutputType::U64).unwrap();
     let rhs = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
     let sum = b
@@ -235,7 +235,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let a = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
     let z = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
     let one = b.build_int_const(1u64, NodeOutputType::U64).unwrap();

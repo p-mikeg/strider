@@ -32,7 +32,7 @@
 //! use strider_ir::node::NodeOutputType;
 //!
 //! // Build a minimal graph: `fn() -> 0u64`.
-//! let mut built = strider_ir::test_utils::make_empty_fn(|b| {
+//! let mut built = strider_ir_test_utils::make_empty_fn(|b| {
 //!     b.build_int_const(0u64, NodeOutputType::U64)
 //! })?;
 //!

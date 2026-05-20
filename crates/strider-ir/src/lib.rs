@@ -72,8 +72,6 @@ mod ops;
 mod region;
 pub mod read_only_memory;
 pub use read_only_memory::ReadOnlyMemory;
-#[cfg(any(feature = "test-utils", test))]
-pub mod test_utils;
 pub mod validate;
 pub mod walk;
 pub mod wide_const;

@@ -8,7 +8,7 @@ use strider_ir::{
 };
 
 use crate::opt::test_support::{make_fn, make_fn_with_var, return_kind, return_value};
-use strider_ir::test_utils::reg_vn;
+use strider_ir_test_utils::reg_vn;
 
 // ── integer binary folding ────────────────────────────────────────────────
 
@@ -369,7 +369,7 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let x = b.read_variable(&xv)?;
     let y = b.read_variable(&yv)?;
     let z = b.read_variable(&zv)?;
@@ -398,7 +398,7 @@ fn distribution_rewrite() -> Result<()> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let a = b.read_variable(&av)?;
     let bval = b.read_variable(&bv)?;
     let f0 = b.build_int_const(0xF0u64, NodeOutputType::U64).unwrap();

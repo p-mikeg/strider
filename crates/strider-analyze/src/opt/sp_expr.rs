@@ -446,7 +446,7 @@ fn decompose_sp_phi(
 mod tests {
     use super::*;
     use strider_ir::node::NodeOutputType;
-    use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
     use strider_ir::{FunctionBuilder, IntBinaryOp};
 
     fn sp() -> rsleigh::Vn {

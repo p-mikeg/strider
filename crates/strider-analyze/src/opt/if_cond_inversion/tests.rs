@@ -13,7 +13,7 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 /// fresh boolean variable read from a register.  Returns the graph and
 /// the `If` node id for downstream assertions.
 fn build_if_with_neg_cond() -> Result<(strider_ir::BuiltFunctionGraph, strider_ir::node::NodeId)> {
-    let cond_vn = strider_ir::test_utils::reg_vn(0x1000, 1);
+    let cond_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
     let mut b = FunctionBuilder::new_raw(vec![cond_vn], &[], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let t = b.create_region()?;
@@ -21,7 +21,7 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::BuiltFunctionGraph, strider_i
 
     b.set_entry_region(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let raw = b.read_variable(&cond_vn)?;
     let cond_bool = b.convert_to_bool_if_needed(raw)?;
     let neg_cond = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
@@ -89,14 +89,14 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     // IfCondInversion (running on the same fixed-point loop in real
     // pipelines) the If is canonical with no swap.  Pin the
     // even-parity-no-swap invariant.
-    let cond_vn = strider_ir::test_utils::reg_vn(0x1000, 1);
+    let cond_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
     let mut b = FunctionBuilder::new_raw(vec![cond_vn], &[], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let t = b.create_region()?;
     let f = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let raw = b.read_variable(&cond_vn)?;
     let cond_bool = b.convert_to_bool_if_needed(raw)?;
     let n1 = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
@@ -176,7 +176,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
 /// own lift_addr; the BoolNeg's address would be silently dropped.
 #[test]
 fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
-    let cond_vn = strider_ir::test_utils::reg_vn(0x2000, 1);
+    let cond_vn = strider_ir_test_utils::reg_vn(0x2000, 1);
     let mut b = FunctionBuilder::new_raw(vec![cond_vn], &[], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let t = b.create_region()?;
@@ -191,7 +191,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let cond_bool = b.convert_to_bool_if_needed(raw)?;
     b.set_lift_addr(Some(0x504));
     let neg_cond = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
-    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     b.build_if(neg_cond, t, f)?;
 
     b.set_region(t);

@@ -26,7 +26,7 @@ bitflags = "2"
 [dev-dependencies]
 reader = { workspace = true }
 object.workspace = true
-strider-ir = { workspace = true, features = ["test-utils"] }
+strider-ir-test-utils = { workspace = true }
 # Phase 6 Task 6.3 — property-based testing for value-only IR invariants
 # under the optimizer (see tests/proptest_optimizer.rs).
 proptest = "1"

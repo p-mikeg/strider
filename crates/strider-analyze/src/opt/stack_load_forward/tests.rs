@@ -2,7 +2,7 @@ use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::OptimizerRaw;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use target::Endianness;
 
@@ -49,7 +49,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     const CHAIN_LEN: usize = 10_000;
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Store 0x99 at sp+0 first (the value we'll forward to).
         let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
         let target_addr = b.build_int_binary_operation(
@@ -100,7 +100,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
@@ -131,7 +131,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
         let addr4 =
@@ -172,7 +172,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U64)?;
         let addr4 =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
@@ -207,7 +207,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let narrow = b.build_int_const(0x11u64, NodeOutputType::U32)?;
         b.build_store(sp_val, narrow, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
@@ -241,7 +241,7 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr4 =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
@@ -569,7 +569,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     use crate::opt::{OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let store_addr =
             b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
@@ -623,7 +623,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
         let addr =
             b.build_int_sub(sp_val, eight, NodeOutputType::U32)?;
@@ -674,7 +674,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
         let addr =
             b.build_int_sub(sp_val, twelve, NodeOutputType::U32)?;
@@ -725,7 +725,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     use crate::opt::{OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
         let addr =
             b.build_int_sub(sp_val, eight, NodeOutputType::U32)?;
@@ -898,7 +898,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let twentyfour = b.build_int_const(24u64, NodeOutputType::U64)?;
         let addr = b.build_int_sub(sp_val, twentyfour, NodeOutputType::U64,
         )?;
@@ -952,7 +952,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Two stores at distinct offsets that both belong to the chain reaching
         // a final load — mimics the array-of-labels prologue.
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
@@ -1019,7 +1019,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let addr_24 =
             b.build_int_sub(sp_val, off24, NodeOutputType::U64)?;
@@ -1065,7 +1065,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let addr_24 =
             b.build_int_sub(sp_val, off24, NodeOutputType::U64)?;
@@ -1116,7 +1116,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let addr_24 =
             b.build_int_sub(sp_val, off24, NodeOutputType::U64)?;
@@ -1165,7 +1165,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Mirror the x64 prologue: store target0 at sp-24, target1 at sp-16.
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;

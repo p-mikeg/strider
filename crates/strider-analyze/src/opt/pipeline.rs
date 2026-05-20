@@ -325,7 +325,7 @@ mod tests {
 
     use strider_ir::FunctionBuilder;
     use strider_ir::node::NodeOutputType;
-    use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
     fn one_const_fn(k: u64) -> strider_ir::BuiltFunctionGraph {

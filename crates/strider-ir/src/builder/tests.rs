@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use crate::error::Result;
 use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
 use crate::ops::{BoolBinaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
-use crate::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
 /// Build a minimal builder with no variables so tests that do not need
 /// SSA variables remain simple.
@@ -917,7 +917,7 @@ fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
 
 // ── post-call SP adjust ─────────────────────────────────────────────────
 
-use crate::test_utils::sp_vn_x86_64 as sp_vn_u64;
+use strider_ir_test_utils::sp_vn_x86_64 as sp_vn_u64;
 
 /// After `build_call` returns, SP must be rebound to
 /// `Add(pre_call_SP, IntConst(ret_stack_pop))` — the caller-visible effect

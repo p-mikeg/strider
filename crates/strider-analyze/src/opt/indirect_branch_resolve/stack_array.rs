@@ -556,7 +556,7 @@ mod tests {
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
-        b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp).unwrap();
         for (i, &target_addr) in targets.iter().enumerate() {
             let off = base_offset + (i as i64) * (stride as i64);
@@ -573,7 +573,7 @@ mod tests {
             [arg_val],
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
-        b.graph_mut().set_asm_fingerprint(arg_u32, vec![strider_ir::test_utils::SENTINEL_LIFT_ADDR]);
+        b.graph_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let one = b.build_int_const(1u64, NodeOutputType::U32).unwrap();
         let masked = b
@@ -584,7 +584,7 @@ mod tests {
             [masked],
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        b.graph_mut().set_asm_fingerprint(idx_u64, vec![strider_ir::test_utils::SENTINEL_LIFT_ADDR]);
+        b.graph_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
         let idx_scaled = b
@@ -635,7 +635,7 @@ mod tests {
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
-        b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp).unwrap();
         let off = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr = b
@@ -674,7 +674,7 @@ mod tests {
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
-        b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
         let sp_val = b.read_variable(&sp).unwrap();
         let off24 = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr_24 = b
@@ -751,7 +751,7 @@ mod tests {
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
-        b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
         let addr = b.read_variable(&reg).unwrap();
         let v = b
             .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
@@ -779,7 +779,7 @@ mod tests {
             [],
             [strider_ir::node::NodeOutputKind::OutputType(ty)],
         );
-        graph.set_asm_fingerprint(const_node, vec![strider_ir::test_utils::SENTINEL_LIFT_ADDR]);
+        graph.set_asm_fingerprint(const_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let const_out = graph.node_outputs_exact::<1>(const_node).unwrap()[0];
         let (lhs, rhs) = if swap { (const_out, inner) } else { (inner, const_out) };
         let n = graph.create_node(
@@ -787,7 +787,7 @@ mod tests {
             [lhs, rhs],
             [strider_ir::node::NodeOutputKind::OutputType(ty)],
         );
-        graph.set_asm_fingerprint(n, vec![strider_ir::test_utils::SENTINEL_LIFT_ADDR]);
+        graph.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         graph.node_outputs_exact::<1>(n).unwrap()[0]
     }
 

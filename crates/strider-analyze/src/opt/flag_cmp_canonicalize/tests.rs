@@ -54,8 +54,8 @@ where
         NodeOutputId, // OV
     ) -> Result<NodeOutputId>,
 {
-    let a_vn = strider_ir::test_utils::reg_vn(0x1000, 4);
-    let b_vn = strider_ir::test_utils::reg_vn(0x1008, 4);
+    let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
     let mut fb = FunctionBuilder::new_raw(vec![a_vn, b_vn], &[], &[], &[], None, 0)?;
     let entry = fb.create_region()?;
     let t = fb.create_region()?;
@@ -63,7 +63,7 @@ where
     fb.set_entry_region(entry)?;
 
     fb.set_region(entry);
-    fb.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
+    fb.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let a = fb.read_variable(&a_vn)?;
     let b = fb.read_variable(&b_vn)?;
     let (zr, ng, cy, ov) = build_cmp_flags(&mut fb, a, b)?;

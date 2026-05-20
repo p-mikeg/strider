@@ -1,7 +1,10 @@
 //! Re-exports of shared mock-IR helpers for white-box tests inside `opt`.
 //!
-//! These live in `strider_ir::test_utils` (feature-gated) so all crates that build
-//! mock IR for testing share one canonical implementation.
+//! The mock-IR builders themselves live in the dedicated
+//! `strider-ir-test-utils` crate so every consumer (this crate's
+//! `#[cfg(test)] mod tests` blocks, strider-ir's own builder tests,
+//! strider's integration tests, strider-analyze's proptest) shares one
+//! canonical implementation.
 //!
 //! Also hosts `count` / `count_reachable` / `return_value` / `return_kind`
 //! — the bookkeeping helpers that white-box (`src/<pass>/tests.rs`) and
@@ -16,7 +19,7 @@ use anyhow::anyhow;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::Value;
 
-pub(crate) use strider_ir::test_utils::{make_empty_fn as make_fn, make_fn_with_var};
+pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
 /// The output id that the (unique) Return node receives as its value
 /// argument (input[2]: input[0]=ctrl, input[1]=mem).

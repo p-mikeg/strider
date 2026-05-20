@@ -12,7 +12,7 @@
 //!
 //! ```rust
 //! use strider_ir::{FunctionBuilder, IntBinaryOp, node::NodeOutputType};
-//! use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+//! use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 //! use strider_analyze::pattern::{Capture, Matcher, add, load, var};
 //!
 //! // *(0x1000 + 8); return the loaded value.
@@ -112,7 +112,7 @@
 //!
 //! ```rust
 //! use strider_ir::FunctionBuilder;
-//! use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+//! use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 //! use strider_analyze::pattern::Matcher;
 //!
 //! let mut fb = FunctionBuilder::empty().unwrap();

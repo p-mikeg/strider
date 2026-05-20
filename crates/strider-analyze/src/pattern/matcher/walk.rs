@@ -31,7 +31,7 @@ mod tests {
 
     use strider_ir::FunctionBuilder;
     use strider_ir::node::{NodeKind, NodeOutputType};
-    use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     use crate::pattern::matcher::Matcher;
 

@@ -341,7 +341,7 @@ mod tests {
 
     use super::*;
     use strider_ir::node::NodeKind;
-    use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
     use strider_ir::FunctionBuilder;
 
     /// Build a 4-byte register VN to act as the `idx` source.

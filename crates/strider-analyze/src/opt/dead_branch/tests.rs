@@ -1,7 +1,7 @@
 use super::*;
 use strider_ir::FunctionBuilder;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::test_utils::{reg_vn, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{reg_vn, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::OptimizerRaw;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};

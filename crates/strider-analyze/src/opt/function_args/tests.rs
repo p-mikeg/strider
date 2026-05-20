@@ -2,7 +2,7 @@ use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::OptimizerRaw;
 use strider_ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
-use strider_ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 fn rdi_like_vn() -> rsleigh::Vn {
@@ -84,7 +84,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // addr = sp + 4; load[addr]; return loaded
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
@@ -149,7 +149,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, _sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
         let a = build_sp_load(b, &sp, 4)?;
         let c = build_sp_load(b, &sp, 12)?;
         // Combine both loads so neither is dead.
@@ -213,7 +213,7 @@ fn prior_stackstore_shadows() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // *(sp + 4) = 0x11; return *(sp + 4)
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
@@ -331,7 +331,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Read sp+0 as U32, then sp+0 as U64.  Combine so neither is dead.
         let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         let wide = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
@@ -522,7 +522,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // *(sp+0) = U64(0xDEAD_BEEF_CAFE_BABE)
         let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::U64)?;
         b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
@@ -562,7 +562,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // *(sp+0) = U32(0x11) — covers [0,4).
         let a = b.build_int_const(0x11u64, NodeOutputType::U32)?;
         b.build_store(sp_val, a, rsleigh::VnSpace::RAM)?;
@@ -678,7 +678,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, _sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
         let v = build_sp_load(b, &sp, 12)?;
         b.build_return(Some(v), &[])?;
         Ok(())
@@ -708,7 +708,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     use crate::opt::{OptimizerPipeline, RedundantPhis};
 
     let sp = sp_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // 0xFFFFFFFFFFFFFFFC_U64 == -4 when interpreted as signed i64.
         let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, NodeOutputType::U64)?;
         let addr = b.build_int_sub(sp_val, neg_four, NodeOutputType::U64,
@@ -767,7 +767,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // *(sp + 4) = U32(0x11)  — covers [4,8); a plain Store (no
         // StackStoreDetect in the pipeline).
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
@@ -810,7 +810,7 @@ fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Volatile global write: store to fixed `.data` address.  decompose_sp
         // returns None for an IntConst address — the new branch must continue
         // past it.
@@ -862,7 +862,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // *(sp + 0) = U32(0x11) — covers [0,4); plain Store (no StackStoreDetect).
         let zero_data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
         b.build_store(sp_val, zero_data, rsleigh::VnSpace::RAM)?;
@@ -985,7 +985,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     const CHAIN_LEN: usize = 10_000;
 
     let sp = sp32_vn();
-    let mut fg = strider_ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // CHAIN_LEN disjoint stack stores at offsets [16, 20, 24, ...].
         for i in 0..CHAIN_LEN {
             let off = b.build_int_const(((i * 4) as u64) + 16, NodeOutputType::U32)?;

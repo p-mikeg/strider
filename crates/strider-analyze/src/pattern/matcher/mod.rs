@@ -166,7 +166,7 @@ impl<'g> Matcher<'g> {
     ///
     /// ```rust
     /// # use strider_ir::FunctionBuilder;
-    /// # use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+    /// # use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
     /// # use strider_analyze::pattern::{CastMask, Matcher};
     /// # let mut fb = FunctionBuilder::empty().unwrap();
     /// # let r = fb.create_region().unwrap();

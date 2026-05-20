@@ -1,20 +1,20 @@
 //! Shared mock-IR helpers used by tests across the workspace.
 //!
-//! Gated by `feature = "test-utils"` so production code can't reach it.
-//! Consumers add `ir = { workspace = true, features = ["test-utils"] }`
-//! to their `[dev-dependencies]`.
-//!
 //! Every helper here sets a **sentinel lift address** on the
 //! `FunctionBuilder` for the duration of the closure so every node
-//! created through `build_*` API inherits a non-empty asm-fingerprint.
-//! This makes mock-graph tests satisfy the always-on Layer-C
-//! asm-fingerprint check (Phase 1 Task 1.4b / G3) without needing to
-//! stamp each node by hand.  The sentinel value is the magic constant
-//! [`SENTINEL_LIFT_ADDR`] (`0xDEAD_BEEF_0000_0001`) so debugging is
-//! unambiguous when a sentinel leaks into production output.
+//! created through the `build_*` API inherits a non-empty
+//! asm-fingerprint.  This makes mock-graph tests satisfy the always-on
+//! Layer-C asm-fingerprint check without needing to stamp each node by
+//! hand.  The sentinel value is the magic constant [`SENTINEL_LIFT_ADDR`]
+//! (`0xDEAD_BEEF_0000_0001`) so debugging is unambiguous when a sentinel
+//! leaks into production output.
+//!
+//! This is a dedicated test-utility crate so consumers can dev-depend on
+//! it without forcing strider-ir to carry a feature flag.
 
-use crate::error::Result;
-use crate::{BuiltFunctionGraph, FunctionBuilder, Value};
+#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+
+use strider_ir::{BuiltFunctionGraph, FunctionBuilder, Result, Value};
 
 /// Sentinel asm-fingerprint address used by every helper in this
 /// module.  Distinct from any real machine address so debug output
@@ -134,7 +134,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::NodeKind;
+    use strider_ir::node::NodeKind;
 
     #[test]
     fn make_sp_fn_emits_initial_var_for_sp() -> Result<()> {
