@@ -154,14 +154,23 @@ pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
 
 // ── Pipeline runner ──────────────────────────────────────────────────────────
 
-/// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
-/// full strider + optimiser pipeline (with `LoadReadOnly` against the same
-/// ELF) and returns the resulting graph.
+/// Internal helper: load the (arch, case) ELF, build a CFG at `fn_name`,
+/// and lift it to IR.  Returns the lifted graph, the strider instance,
+/// the sleigh arch (for endianness), and an Arc-shared ROM that callers
+/// can use to drive their optimizer pipeline.
 ///
-/// Panics on any failure — system tests are pass/fail end-to-end checks.  If
-/// the binary is missing, the panic carries an actionable message including
-/// the `make -C fixtures` instruction.
-pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph {
+/// Used by both [`analyze_v1`] and [`analyze_v2`] — they differ only in
+/// which optimizer pipeline runs over the lifted graph.
+fn lift_for_pipeline(
+    arch: Arch,
+    case: &str,
+    fn_name: &str,
+) -> (
+    ir::BuiltFunctionGraph,
+    strider::Strider,
+    strider::SleighArch,
+    std::sync::Arc<dyn opt::ReadOnlyMemory>,
+) {
     let path = binary_path(arch, case);
     if !path.exists() {
         panic!(
@@ -195,13 +204,6 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    // Thread the calling-convention link-register varnode and an
-    // `Arc<dyn ReadOnlyMemory>` view of the ELF into the cfg builder so
-    // the indirect-branch resolver can classify `bx lr` as Return and
-    // fold rodata-stored jump targets.  The optimiser's `LoadReadOnly`
-    // pass takes its own `ElfFileMemReader` (its `M: 'static` bound
-    // requires an owned concrete type) — both readers see the same
-    // ELF, just via separate Arcs.
     let rom_for_cfg: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
@@ -219,82 +221,68 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
     let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
-    let mut graph = ana.analyze_cfg(&cfg)
+    let graph = ana.analyze_cfg(&cfg)
         .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"))
         .graph;
-    let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
+    let rom_for_opt: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),
+    );
+    (graph, ana, sleigh_arch, rom_for_opt)
+}
+
+/// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
+/// **v1** imperative optimiser pipeline
+/// ([`Strider::build_optimizer_pipeline`] + `LoadReadOnly`) over the
+/// lifted IR, and returns the resulting graph.
+///
+/// This is the explicit v1 entry point: even after the production
+/// default flips to PipelineV2, `analyze_v1` keeps using v1.
+/// `v1_baseline.rs` pins to this entry so its snapshots stay frozen as
+/// the historical v1 contract.
+///
+/// Panics on any failure — system tests are pass/fail end-to-end checks.  If
+/// the binary is missing, the panic carries an actionable message including
+/// the `make -C fixtures` instruction.
+pub fn analyze_v1(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph {
+    let (mut graph, ana, _sleigh_arch, rom_for_opt) =
+        lift_for_pipeline(arch, case, fn_name);
     let mut p = ana.build_optimizer_pipeline();
+    // `LoadReadOnly` requires an owned concrete reader (`M: 'static`).
+    // Re-borrow from the Arc — every test crate's analyze runs in a
+    // fresh process so Arc ref-counting cost is negligible.
     p.add(opt::LoadReadOnly(rom_for_opt));
     p.run(&mut graph.graph, graph.entry)
-        .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
+        .unwrap_or_else(|e| panic!("v1 optimizer pipeline for {fn_name}: {e:?}"));
     graph
 }
 
-/// Phase 3 Task 3.8 parity entry point.  Same shape as [`analyze`] but
-/// runs the v2 [`opt::pipeline_v2::PipelineV2`] (interleaved
-/// destructive+nondestructive fixed-point) instead of v1's
-/// `Strider::build_optimizer_pipeline()`.
+/// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs
+/// the **v2** [`opt::pipeline_v2::PipelineV2`] (interleaved
+/// destructive+nondestructive fixed-point) over the lifted IR, and
+/// returns the resulting graph.
 ///
-/// Returns the analyzed graph PLUS the v2 iteration count to
-/// convergence (for reporting; the parity test averages across
-/// fixtures).
-pub fn analyze_v2(
+/// This is the explicit v2 entry point: even before the production
+/// default flips to PipelineV2, `analyze_v2` always runs v2.
+/// `v2_baseline.rs` pins to this entry so its snapshots pin the v2 IR
+/// contract.
+///
+/// Callers that need the v2 outer-loop iteration count (e.g. for
+/// performance reporting in the parity test) should use
+/// [`analyze_v2_with_iters`] instead.
+pub fn analyze_v2(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph {
+    analyze_v2_with_iters(arch, case, fn_name).0
+}
+
+/// Same as [`analyze_v2`] but also returns the v2 fixed-point loop's
+/// iteration count to convergence.  Used by `pipeline_v2_parity.rs`'s
+/// liveness checks (`v2_terminates_on_*`) and parity diagnostics.
+pub fn analyze_v2_with_iters(
     arch: Arch,
     case: &str,
     fn_name: &str,
 ) -> (ir::BuiltFunctionGraph, u32) {
-    let path = binary_path(arch, case);
-    if !path.exists() {
-        panic!(
-            "missing test binary {path:?}; run `make -C fixtures` (or \
-             `make -C fixtures ARCH={} CASE={case}` for just this case)",
-            arch.name()
-        );
-    }
-    let obj = reader::load_elf(&path)
-        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let sleigh_arch = arch.sleigh();
-    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
-        .expect("probe sleigh new")
-        .regs()
-        .expect("probe sleigh regs");
-    let ana = strider::Strider::new(sleigh_arch, regs, arch.cc())
-        .expect("Strider::new");
-    let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("real sleigh new");
-    let raw_addr = obj
-        .symbol_by_name(fn_name)
-        .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
-        .address();
-    let addr = match arch {
-        Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
-        _ => raw_addr,
-    };
-    let rom_for_cfg: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
-    );
-    let mut cfg_opts_b = cfg::OptionsBuilder::new()
-        .allow_code_before_start_addr()
-        .set_read_only_memory(rom_for_cfg);
-    if let Some(lr) = ana.calling_convention().link_register_vn() {
-        cfg_opts_b = cfg_opts_b.set_link_register(lr);
-    }
-    let cfg_opts = cfg_opts_b.build();
-    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
-        .build()
-        .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
-    let mut graph = ana.analyze_cfg(&cfg)
-        .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"))
-        .graph;
-
-    // v2 pipeline: build PipelineV2 with the same ROM that v1's
-    // `LoadReadOnly` overlay uses.  `Arc<dyn ReadOnlyMemory>` erases
-    // the concrete reader so PipelineV2 doesn't need to be generic.
-    let rom_for_opt: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),
-    );
+    let (mut graph, ana, sleigh_arch, rom_for_opt) =
+        lift_for_pipeline(arch, case, fn_name);
     let pipeline = opt::pipeline_v2::PipelineV2::with_rom(
         ana.calling_convention(),
         sleigh_arch.endianness(),
@@ -304,6 +292,25 @@ pub fn analyze_v2(
         .run(&mut graph.graph, graph.entry)
         .unwrap_or_else(|e| panic!("PipelineV2 for {fn_name}: {e:?}"));
     (graph, iters)
+}
+
+/// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs
+/// the **production-default** optimizer pipeline, and returns the
+/// resulting graph.
+///
+/// Currently a thin call to [`analyze_v1`].  When the production default
+/// flips to PipelineV2 (Phase 8.5c), this delegates to [`analyze_v2`]
+/// instead — every test that calls `analyze` automatically picks up the
+/// flip.  `v1_baseline.rs` and `v2_baseline.rs` use the explicit
+/// `analyze_v1` / `analyze_v2` entry points so they stay pinned to
+/// their respective contracts regardless of which way the default flag
+/// points.
+///
+/// Panics on any failure — system tests are pass/fail end-to-end checks.  If
+/// the binary is missing, the panic carries an actionable message including
+/// the `make -C fixtures` instruction.
+pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph {
+    analyze_v1(arch, case, fn_name)
 }
 
 // ── Assertion vocabulary ─────────────────────────────────────────────────────

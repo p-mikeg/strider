@@ -168,7 +168,7 @@ fn structural_fingerprint(g: &ir::BuiltFunctionGraph) -> Fingerprint {
 fn fingerprints_for(case: &str, fn_name: &str) -> (Fingerprint, Fingerprint, u32) {
     let arch = Arch::X64;
     let g1 = common::analyze(arch, case, fn_name);
-    let (g2, iters) = common::analyze_v2(arch, case, fn_name);
+    let (g2, iters) = common::analyze_v2_with_iters(arch, case, fn_name);
     (
         structural_fingerprint(&g1),
         structural_fingerprint(&g2),
@@ -317,35 +317,35 @@ fn parity_switch_f() {
 
 #[test]
 fn v2_terminates_on_arithmetic_add() {
-    let (_g, iters) = common::analyze_v2(Arch::X64, "arithmetic", "add");
+    let (_g, iters) = common::analyze_v2_with_iters(Arch::X64, "arithmetic", "add");
     eprintln!("v2 iters arithmetic::add = {iters}");
     assert!(iters < 64, "v2 took {iters} iters on a trivial add");
 }
 
 #[test]
 fn v2_terminates_on_control_sum_to_n() {
-    let (_g, iters) = common::analyze_v2(Arch::X64, "control", "sum_to_n");
+    let (_g, iters) = common::analyze_v2_with_iters(Arch::X64, "control", "sum_to_n");
     eprintln!("v2 iters control::sum_to_n = {iters}");
     assert!(iters < 64, "v2 took {iters} iters on sum_to_n");
 }
 
 #[test]
 fn v2_terminates_on_calling_convention_forward_1() {
-    let (_g, iters) = common::analyze_v2(Arch::X64, "calling_convention", "forward_1");
+    let (_g, iters) = common::analyze_v2_with_iters(Arch::X64, "calling_convention", "forward_1");
     eprintln!("v2 iters calling_convention::forward_1 = {iters}");
     assert!(iters < 64, "v2 took {iters} iters on forward_1");
 }
 
 #[test]
 fn v2_terminates_on_memory_array_sum() {
-    let (_g, iters) = common::analyze_v2(Arch::X64, "memory", "array_sum");
+    let (_g, iters) = common::analyze_v2_with_iters(Arch::X64, "memory", "array_sum");
     eprintln!("v2 iters memory::array_sum = {iters}");
     assert!(iters < 64, "v2 took {iters} iters on array_sum");
 }
 
 #[test]
 fn v2_terminates_on_switch_f() {
-    let (_g, iters) = common::analyze_v2(Arch::X64, "switch", "f");
+    let (_g, iters) = common::analyze_v2_with_iters(Arch::X64, "switch", "f");
     eprintln!("v2 iters switch::f = {iters}");
     assert!(iters < 64, "v2 took {iters} iters on switch::f");
 }
