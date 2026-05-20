@@ -515,7 +515,7 @@ git push
 The user identified this as a critical structural smell. Test helpers in production `src/` files are gated by `#[cfg(any(feature = "test-utils", test))]`, but this is a workaround. The right home for test helpers is either:
 
 - **`tests/common/`** of the same crate (when only that crate's integration tests need them).
-- **A dedicated `(no separate test-support crate)` crate** when multiple downstream crates need them as dev-deps.
+- **A dedicated `strider-ir-test-utils` crate** when multiple downstream crates need them as dev-deps.
 
 ### Task D.1: Audit the test-code-in-src footprint
 
@@ -602,27 +602,27 @@ git push
 
 Repeat for the other three files.
 
-### Task D.3: Extract `TestGraph` to a dedicated `(no separate test-support crate)` crate
+### Task D.3: Extract `TestGraph` to a dedicated `strider-ir-test-utils` crate
 
 **Why a separate crate:** `TestGraph` is used by tests in *multiple* downstream crates (strider-analyze, strider). A `pub mod tests::common` in one crate isn't reachable from another crate's tests. The clean solution is a workspace dev-dep crate.
 
 **Files:**
-- Create: `crates/(no separate test-support crate)/Cargo.toml`
-- Create: `crates/(no separate test-support crate)/src/lib.rs`
-- Move: `crates/strider-ir/src/test_helpers.rs` → `crates/(no separate test-support crate)/src/lib.rs` (renamed module)
+- Create: `crates/strider-ir-test-utils/Cargo.toml`
+- Create: `crates/strider-ir-test-utils/src/lib.rs`
+- Move: `crates/strider-ir/src/test_helpers.rs` → `crates/strider-ir-test-utils/src/lib.rs` (renamed module)
 - Modify: `crates/strider-ir/Cargo.toml` — drop the `test-utils` feature.
-- Modify: Every downstream crate's `Cargo.toml` — replace `strider-ir = { workspace = true, features = ["test-utils"] }` in dev-deps with `(no separate test-support crate) = { workspace = true }`.
+- Modify: Every downstream crate's `Cargo.toml` — replace `strider-ir = { workspace = true, features = ["test-utils"] }` in dev-deps with `strider-ir-test-utils = { workspace = true }`.
 
 - [ ] **Step 1: Create the new crate**
 
 ```bash
-mkdir -p crates/(no separate test-support crate)/src
+mkdir -p crates/strider-ir-test-utils/src
 ```
 
-`crates/(no separate test-support crate)/Cargo.toml`:
+`crates/strider-ir-test-utils/Cargo.toml`:
 ```toml
 [package]
-name = "(no separate test-support crate)"
+name = "strider-ir-test-utils"
 edition.workspace = true
 
 [dependencies]
@@ -633,7 +633,7 @@ rsleigh.workspace = true
 workspace = true
 ```
 
-`crates/(no separate test-support crate)/src/lib.rs`:
+`crates/strider-ir-test-utils/src/lib.rs`:
 ```rust
 //! Test-support helpers for strider-ir. Used as a dev-dep by every
 //! downstream crate that builds mock graphs in its integration tests.
@@ -646,7 +646,7 @@ workspace = true
 
 Add to workspace `Cargo.toml` `[workspace.dependencies]`:
 ```toml
-(no separate test-support crate) = { path = "crates/(no separate test-support crate)" }
+strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }
 ```
 
 - [ ] **Step 2: Delete `test_helpers.rs` from strider-ir/src + drop the feature**
@@ -682,10 +682,10 @@ strider-ir = { workspace = true, features = ["test-utils"] }
 
 # After:
 strider-ir = { workspace = true }
-(no separate test-support crate) = { workspace = true }
+strider-ir-test-utils = { workspace = true }
 ```
 
-And in the test files themselves: `use strider_ir::test_helpers::TestGraph` → `use strider_ir_test_support::TestGraph`.
+And in the test files themselves: `use strider_ir::test_helpers::TestGraph` → `use strider_ir_test_utils::TestGraph`.
 
 - [ ] **Step 4: Build + verify**
 
@@ -697,10 +697,10 @@ cargo test -p strider --test v3_baseline 2>&1 | tail -3
 - [ ] **Step 5: Commit + push**
 
 ```bash
-git commit -m "feat((no separate test-support crate)): extract TestGraph to a dedicated crate
+git commit -m "feat(strider-ir-test-utils): extract TestGraph to a dedicated crate
 
 strider-ir's src/ no longer contains test code. The 'test-utils'
-feature is gone. Downstream tests dev-dep on (no separate test-support crate)
+feature is gone. Downstream tests dev-dep on strider-ir-test-utils
 instead of feature-toggling strider-ir.
 
 ~300 LOC moves to its proper home; ~50 LOC of feature/cfg ceremony removed."
@@ -1496,7 +1496,7 @@ git commit -m "delete the strider crate (was a re-export shim of strider_analyze
 git push
 ```
 
-After this, `crates/` contains: `reader`, `strider-analyze`, `strider-ir`, `(no separate test-support crate)`, `strider-lift`, `strider-pattern-macros`, `strider-py`, `target`. 8 crates. The "strider" name persists only as the Python package's distribution name (configured in `strider-py/Cargo.toml`).
+After this, `crates/` contains: `reader`, `strider-analyze`, `strider-ir`, `strider-ir-test-utils`, `strider-lift`, `strider-pattern-macros`, `strider-py`, `target`. 8 crates. The "strider" name persists only as the Python package's distribution name (configured in `strider-py/Cargo.toml`).
 
 ## Theme N: Crate-Prefix Consistency (0.5 day)
 
@@ -1505,7 +1505,7 @@ User-surfaced. Current workspace mixes prefix conventions:
 **Prefixed** (5 crates): `strider-analyze`, `strider-ir`, `strider-lift`, `strider-pattern-macros`, `strider-py`.
 **Unprefixed** (3 crates): `reader`, `strider`, `target`.
 
-After Theme L deletes `crates/strider/`, the remaining inconsistency is `reader` and `target` (and `(no separate test-support crate)` if Theme D created it).
+After Theme L deletes `crates/strider/`, the remaining inconsistency is `reader` and `target` (and `strider-ir-test-utils` if Theme D created it).
 
 **Recommended:** every project crate gets the `strider-` prefix. Rename `reader` → `strider-reader` (matches the v2 plan's deferred rename — `binary` reflects "binary loader" better than `reader`), and `target` → `strider-target`.
 
@@ -1606,7 +1606,7 @@ After N.1 + N.2 + Theme L (which deletes `crates/strider/`), the workspace conta
 - `strider-analyze`
 - `strider-reader` (renamed from reader)
 - `strider-ir`
-- `(no separate test-support crate)` (created in Theme D)
+- `strider-ir-test-utils` (created in Theme D)
 - `strider-lift`
 - `strider-pattern-macros`
 - `strider-py`
@@ -1623,7 +1623,7 @@ After N.1 + N.2 + Theme L (which deletes `crates/strider/`), the workspace conta
 - [ ] **Step 1: Per-crate**
 
 ```bash
-for c in strider-ir (no separate test-support crate) strider-lift strider-analyze strider-py strider target reader strider-pattern-macros; do
+for c in strider-ir strider-ir-test-utils strider-lift strider-analyze strider-py strider target reader strider-pattern-macros; do
     echo "=== $c ==="
     cargo test -p "$c" --no-fail-fast 2>&1 | grep "test result" | tail -3
 done
@@ -1675,7 +1675,7 @@ Append a "V3 simplification" section to the existing PR body.
 |---|---|---|
 | A | v3_baseline = copy of v2 snapshots | Cheap to set up; allows independent contract anchoring. |
 | B.1 | If imperative pipeline diverges from PipelineV2, regenerate v3_baseline ONCE | The 2 surfaced flip-blockers (Phase 8a, 8b) are documented pre-existing v1 issues. |
-| D.3 | TestGraph moves to dedicated `(no separate test-support crate)` crate | Multiple downstream crates need it; tests/common/ in strider-ir isn't reachable cross-crate. |
+| D.3 | TestGraph moves to dedicated `strider-ir-test-utils` crate | Multiple downstream crates need it; tests/common/ in strider-ir isn't reachable cross-crate. |
 | E | dot/graphwalk/entity-utils become `pub(crate)` (not re-extracted as separate crates) | Privatization is simpler than re-extraction; restores conceptual boundary without churn. |
 | F.1 | Rename layer_a/b/c → local_typing/use_list_consistency/graph_invariants | User-readable. |
 | F.2 | Rename `IrStrider` → `PerRegionDriver`; keep `Strider` (clarify it's the orchestrator) | Reduces struct/package/Python class name collision. |
