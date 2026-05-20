@@ -271,3 +271,142 @@ function-sized `Graph` (hundreds of nodes) is sub-millisecond vs the
   cache rather than re-running the tracked body.
 - `strider-ir` (full suite, 317+ tests): pass.
 - `strider-analyze` (full suite, 480+ tests): pass.
+
+## Phase 7.2 follow-up — per-region salsa + cfg-signatures wrapper
+
+> Commits `3e7a841a` (Phase 7 Task 7.2a — split `optimized_function`
+> into per-region salsa queries) and `630a8a1b` (Phase 7 Task 7.2 —
+> cache `cfg_region_signatures` via a `#[salsa::tracked]` wrapper).
+>
+> The Task 7.3 follow-up re-ran the bench to decide whether to flip
+> the default optimizer pipeline to v2.  **The numbers regressed
+> vs Phase 7.1 on all three workloads.**  The default is therefore
+> *not* flipped; v1 remains the production pipeline.
+
+### Updated ratios (same machine, same fixture)
+
+| Workload                  | v1 @ 7.1 | v2 @ 7.1 | v2/v1 @ 7.1 | v1 @ 7.2 | v2 @ 7.2 | v2/v1 @ 7.2 | Δ vs 7.1 |
+|---|---|---|---|---|---|---|---|
+| Single-function cold       | 93.0 ms | 95.1 ms | **1.02×** (parity) | 93.6 ms | 148.0 ms | **1.58× slower** | regressed |
+| Multi-function (8 fns)     | 739 ms  | 763 ms  | **1.03×** (parity) | 751 ms  | 1212 ms  | **1.61× slower** | regressed |
+| Repeat-query (10× same fn) | 949 ms  | 559 ms  | **0.59× (v2 faster)** | 996 ms  | 1089 ms  | **1.09× slower** | regressed |
+
+(Numbers from two back-to-back bench runs on the same machine; ±2 %
+run-to-run variance.)
+
+### Verification — Phase 7.1 baseline reproduces cleanly
+
+To confirm the regression is from Phase 7.2 (not a system-load
+artefact), the Task 7.3 follow-up checked out
+`orchestrator_salsa.rs` at commit `ef1b190a` (end of Phase 7.1) and
+re-ran the bench:
+
+| Workload | v1 | v2 | Ratio |
+|---|---|---|---|
+| Cold              | 95.8 ms | 98.0 ms | **1.02×** (matches docs) |
+| Multi-fn          | 766 ms  | 804 ms  | **1.05×** (matches docs) |
+| Repeat-query      | 999 ms  | 595 ms  | **0.60×** (matches docs) |
+
+The Phase 7.1 baseline reproduces.  The regression is therefore
+introduced by the Phase 7.2 changes to `orchestrator_salsa.rs`.
+
+### Why the regression?
+
+The Phase 7.2 commits added two salsa pieces on top of the existing
+`optimized_function` body:
+
+1. **`region_signatures_query`** (commit `630a8a1b`): a
+   `#[salsa::tracked]` wrapper around `cfg_region_signatures`.
+   This is invoked at the top of every `optimized_function` body
+   call.  Cold-path: the wrapper's body runs `cfg_region_signatures`,
+   which **builds the full CFG** just to enumerate per-region
+   fingerprints.  v1's own pipeline then builds the CFG a *second*
+   time inside `run_v1_with_targets`.  Net cost on cold path:
+   **+1 full CFG build per function** (~50 ms on `nested_loops`),
+   directly accounting for the 1.58× single-function slowdown.
+
+2. **Per-region tracked queries** (commit `3e7a841a`): for each of
+   N regions returned by `region_signatures_query`, the body interns
+   a `RegionKey` and calls `region_lift_signature`.  Each call is
+   a cheap salsa cache lookup, but at N ≈ 5–10 regions × per-call
+   intern + tracked-body dispatch cost, the additive overhead is
+   measurable (~3–5 ms / function).
+
+3. **Repeat-query** *should* have benefited from caching but
+   regressed instead: the `region_signatures_query` cache hits on
+   call 2..10 (good), but the per-region intern/tracked-call
+   loop still runs and the *interning* itself is per-call cost
+   (the interned id is stable across revisions but `RegionKey::new`
+   is still invoked per call).  Net: the repeat-query path lost
+   its 0.59× win and is now 1.09× slower than v1.
+
+### What the Phase 7.2 design assumed (and where it fell short)
+
+The Phase 7.2 design rationale (Task 7.2 plan section):
+
+> "Without this wrapper, every `optimized_function` body invocation
+> would re-build the CFG just to enumerate fingerprints — pure
+> overhead on top of the lift that happens inside
+> `run_v1_with_targets`."
+
+The wrapper *does* save the CFG rebuild on **repeat** calls (good),
+but it makes the *cold* call pay for **two** CFG builds (the
+wrapper's enumeration call + v1's own build inside `run`).  Net
+trade: cold path pays +50 ms, repeat path saves nothing meaningful
+because v1's `run_v1_with_targets` still does the full work
+out-of-band (Phase 7.1's `BuiltFunctionGraph::clone` win came from
+reusing the **lifted IR** cached in `BfgEntry`, not from the
+signatures wrapper).
+
+In short: **the per-region cache scaffolding was added without a
+corresponding per-region IR producer**.  The dependency-graph
+plumbing is in place, but it pays for itself only when Phase 8
+splits `Strider::analyze_cfg_with` into per-region IR-producing
+queries (so the per-region cache stores `Arc<RegionIrShard>`, not a
+sentinel `u64` fingerprint).
+
+### Decision for Task 7.3
+
+Per the Task 7.3 flip-or-not criteria:
+
+> Flip if: v2 is at parity or faster than v1 across ALL 3 workloads
+> (no regressions).
+
+v2 regressed on **all three** workloads vs v1.  **Default pipeline is
+not flipped.**  v1 remains the production optimizer.
+
+The Phase 7.2 cache scaffolding is **not reverted** — the
+dependency-graph topology is correct and unblocks Phase 8 work.
+Reverting it would just push the cost back into Phase 8.  The right
+fix is the Phase 8 per-region IR split.
+
+### Recommended follow-ups for Phase 8
+
+1. **Skip the cold-path signatures call when the cache is cold.**
+   The cold-path signature enumeration is pure overhead today.
+   Either:
+   - (a) Have `run_v1_with_targets` *also* return the per-region
+     signatures it computed during its own CFG build, then populate
+     the `region_signatures_query` cache as a side effect.  Cost:
+     one CFG build (v1's) + one cache populate; saves the
+     duplicate CFG build.
+   - (b) Defer `region_signatures_query` until after the first
+     successful BFG lift (i.e. only call it when there's reason to
+     believe we'll *use* per-region invalidation downstream).
+
+2. **Phase 8 per-region IR producer.** Split
+   `Strider::analyze_cfg_with` into per-region tracked queries that
+   each return an `Arc<RegionIrShard>`.  Compose them in a final
+   join query that does cross-region phi merging.  This is the
+   plan's original ≥10× lever — incremental indirect-resolve
+   iterations only pay for regions whose `IndirectTargets`
+   dependencies changed.
+
+### Tests
+
+All Phase 7.2 tests still pass:
+- `orchestrator_salsa_per_region` (1 test): pass.
+- `orchestrator_salsa_parity` (4 tests): pass.
+- `orchestrator_salsa_incremental` (4 tests): pass.
+
+The regression is purely performance, not correctness.
