@@ -22,13 +22,8 @@ smallvec.workspace = true
 # Absorbed from `pattern` (Phase 3 Task 3.0).
 thiserror.workspace = true
 bitflags = "2"
-# Egg — value-slice egraph driver, used by the Phase 3 Task 3.2
-# `ConstantFoldEgg` rewriter alongside the existing imperative
-# `ConstantFold` (parity test in tests/constant_fold_egg_parity.rs).
-egg = "0.10"
-# Salsa 0.26.2 — Phase 3 Task 3.9 incremental query graph for the
-# orchestrator's indirect-branch fixed-point.  Pinned to the same
-# version as rust-analyzer / Astral's ruff per the V2 verification.
+# Salsa 0.26.2 — incremental query graph for the orchestrator's
+# indirect-branch fixed-point.
 salsa = "0.26.2"
 
 [dev-dependencies]

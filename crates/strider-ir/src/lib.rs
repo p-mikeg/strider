@@ -82,9 +82,6 @@ pub mod walk;
 pub mod wide_const;
 pub use wide_const::{WideConstId, WideConstStorage};
 
-// Phase 1 Task 1.5 — egraph adapter spike (V1 verification execution).
-pub mod egraph_adapter;
-
 pub use crate::error::Result;
 pub use builder::{FunctionBuilder, VarId};
 pub use ops::{
