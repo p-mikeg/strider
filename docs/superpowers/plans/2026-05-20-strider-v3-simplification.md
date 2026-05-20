@@ -19,6 +19,25 @@
 
 ---
 
+## Aggressive Dead-Code Removal (apply to every theme)
+
+Every theme actively removes dead code revealed by the change. Not just the items named in the audit — anything that becomes unreferenced as a side effect. Examples:
+- After Theme B deletes the egg passes, types like `EGraphAdapter`, `StriderLang`, helper functions only used by egg passes — gone.
+- After Theme C deletes Salsa, types like `BfgEntry`, `RegionKey`, `StriderDb` trait, the `unsafe impl salsa::Update` boilerplate — gone.
+- After Theme G folds `BuiltFunctionGraph` into `Graph`, any `pub(crate)` methods that existed only to bridge the two — gone.
+- After Theme H merges Phi variants, any helper like `is_var_phi` / `is_value_phi` — gone.
+- After Theme I collapses orchestrator types, any builder/destructuring helpers — gone.
+
+**Tools to apply at every theme boundary:**
+
+```bash
+cargo build --workspace 2>&1 | grep -E "warning: (unused|dead_code|never used)" | head -20
+cargo machete 2>&1 | head -10            # finds unused deps
+cargo +nightly udeps 2>&1 | head -10     # finds unused deps (alternative)
+```
+
+Final Theme K asserts zero `dead_code` / `unused_*` warnings. If a warning remains, the code it points at IS dead — delete it.
+
 ## Naming Convention (mandatory)
 
 **Code, doc comments, commit messages, file names, test names — none of them mention plan identifiers.** Never write "Theme G", "Phase V3", "Task H.3", "Step B.2", or audit-finding numbers like "F4 / F21" anywhere a future engineer reading the durable artifact would see them. The plan exists to organize the work; the work doesn't exist to advertise the plan.
