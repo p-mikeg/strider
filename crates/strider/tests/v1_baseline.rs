@@ -2,15 +2,22 @@
 //!
 //! This pins the v1 behavior contract: every (arch, case, function) tuple
 //! built under `fixtures/out/<arch>/<case>.elf` is lifted + optimized through
-//! the current strider pipeline and its post-optimization IR (rendered as
-//! DOT) is snapshotted via `insta`.  Any later change to the lifter, the
+//! the **v1 imperative pipeline** (`Strider::build_optimizer_pipeline` +
+//! `LoadReadOnly`) and its post-optimization IR (rendered as DOT) is
+//! snapshotted via `insta`.  Any later change to the lifter, the v1
 //! optimizer, or the IR layout must NOT change these snapshots without
 //! explicit review.
 //!
-//! Lift failures (panics from `common::analyze`) are themselves part of the
-//! contract — they are captured as `LIFT_FAILED:<message>` snapshots rather
-//! than silently skipped, so that future rewrites must reproduce the same
-//! failures unless explicitly fixed.
+//! Pinned to v1 explicitly (via [`common::analyze_v1`]): the production
+//! default in [`common::analyze`] flips to v2 in Phase 8.5c, but
+//! `v1_baseline` keeps using the explicit v1 entry point so the
+//! historical v1 contract stays frozen.  The companion `v2_baseline`
+//! pins the v2 shape via [`common::analyze_v2`].
+//!
+//! Lift failures (panics from `common::analyze_v1`) are themselves part of
+//! the contract — they are captured as `LIFT_FAILED:<message>` snapshots
+//! rather than silently skipped, so that future rewrites must reproduce
+//! the same failures unless explicitly fixed.
 //!
 //! Function-name discovery walks the ELF symbol table via the `object`
 //! crate; case discovery reads `fixtures/cases/*.c`.  Neither list is
@@ -110,7 +117,7 @@ fn exported_function_names(path: &Path) -> Vec<String> {
 }
 
 /// Build the sleigh handle for `(arch, path)`.  Used only for the dot
-/// dumper — `common::analyze` builds its own internal sleigh.
+/// dumper — `common::analyze_v1` builds its own internal sleigh.
 fn sleigh_for(
     arch: Arch,
     path: &Path,
@@ -168,7 +175,9 @@ fn v1_baseline_snapshots() {
                 let case_copy = case.clone();
                 let func_copy = func_name.clone();
                 let result = std::panic::catch_unwind(move || {
-                    common::analyze(arch_copy, &case_copy, &func_copy)
+                    // Pin to v1 explicitly so the production-default
+                    // flip (Phase 8.5c) does not move these snapshots.
+                    common::analyze_v1(arch_copy, &case_copy, &func_copy)
                 });
                 let snapshot_body = match result {
                     Ok(g) => to_dot_string(&g, &sleigh),
