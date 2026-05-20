@@ -62,7 +62,7 @@ The user surfaced this: `crates/strider/src/lib.rs` is a ~50-line re-export shim
 
 This is added as Theme L below.
 
-## Themes (11 themes, ~14 days)
+## Themes (13 themes, ~14 days)
 
 | Theme | Scope | LOC removed | Days |
 |---|---|---|---|
@@ -70,13 +70,15 @@ This is added as Theme L below.
 | B | Drop egg | ~3500 | 2 |
 | C | Drop Salsa | ~1400 | 1 |
 | D | Move test code out of src/ | ~600 | 1 |
-| E | Eject dot + graphwalk + entity-utils from strider-ir | ~200 (split, not removed) | 1 |
+| E | Eject dot + graphwalk + entity-utils from strider-ir; consolidate the 3 walkers | ~200 (split, not removed) | 1 |
 | F | Rename non-descriptive identifiers | ~50 (mostly renames) | 0.5 |
 | G | Collapse the FunctionBuilder + Graph + BuiltFunctionGraph triple | ~300 | 1.5 |
 | H | Unify duplicate types (CC, Phi, Cast, BinaryOp pattern builders, NodeOutputType+Kind) | ~600 | 2 |
 | I | Collapse orchestrator sprawl (Strider/IrStrider/RegionLiftHandles/AnalyzeOptions/AnalyzeOutcome/RunConfig) | ~700 | 1.5 |
 | J | Drop v1+v2 dual code + leftover scaffolding + final cleanup | ~1400 | 2.5 |
+| M | Scrub plan-identifier references from surviving code | ~0 (renames only) | 0.5 |
 | L | Delete `crates/strider/` shim (move tests + example into strider-analyze) | ~50 | 0.5 |
+| N | Crate-prefix consistency: rename `reader` → `strider-binary`, `target` → `strider-target` | ~0 (rename) | 0.5 |
 | K | Final checkpoint + tag | 0 | 0.5 |
 | **Total** | | **~8750 LOC** | **~14 days** |
 
@@ -1448,6 +1450,124 @@ git push
 ```
 
 After this, `crates/` contains: `reader`, `strider-analyze`, `strider-ir`, `strider-ir-test-support`, `strider-lift`, `strider-pattern-macros`, `strider-py`, `target`. 8 crates. The "strider" name persists only as the Python package's distribution name (configured in `strider-py/Cargo.toml`).
+
+## Theme N: Crate-Prefix Consistency (0.5 day)
+
+User-surfaced. Current workspace mixes prefix conventions:
+
+**Prefixed** (5 crates): `strider-analyze`, `strider-ir`, `strider-lift`, `strider-pattern-macros`, `strider-py`.
+**Unprefixed** (3 crates): `reader`, `strider`, `target`.
+
+After Theme L deletes `crates/strider/`, the remaining inconsistency is `reader` and `target` (and `strider-ir-test-support` if Theme D created it).
+
+**Recommended:** every project crate gets the `strider-` prefix. Rename `reader` → `strider-binary` (matches the v2 plan's deferred rename — `binary` reflects "binary loader" better than `reader`), and `target` → `strider-target`.
+
+The Python package name (`strider`) is unaffected — it's set in `strider-py`'s maturin config and is independent of Rust crate names.
+
+### Task N.1: Rename `reader` → `strider-binary`
+
+- [ ] **Step 1: Move the crate**
+
+```bash
+git mv crates/reader crates/strider-binary
+```
+
+- [ ] **Step 2: Update `crates/strider-binary/Cargo.toml`**
+
+```toml
+[package]
+name = "strider-binary"
+# ...
+```
+
+- [ ] **Step 3: Update workspace `Cargo.toml`**
+
+In `[workspace.dependencies]`:
+```toml
+# Before:
+reader = { path = "crates/reader" }
+
+# After:
+strider-binary = { path = "crates/strider-binary" }
+```
+
+- [ ] **Step 4: Update every downstream `Cargo.toml`**
+
+```bash
+grep -rln "^reader = \|reader.workspace" crates/*/Cargo.toml
+```
+
+For each: `reader.workspace = true` → `strider-binary.workspace = true`.
+
+- [ ] **Step 5: Update every `use reader::` import**
+
+```bash
+grep -rln "use reader::\|reader::" crates/ --include="*.rs"
+```
+
+For each: `use reader::X` → `use strider_binary::X` (note underscore: cargo crate names use hyphens; Rust identifiers use underscores).
+
+- [ ] **Step 6: Verify**
+
+```bash
+cargo build --workspace 2>&1 | tail -5
+cargo test -p strider --test v3_baseline 2>&1 | tail -3   # before Theme L moves baseline
+```
+
+- [ ] **Step 7: Commit + push**
+
+```bash
+git commit -m "rename reader crate to strider-binary
+
+Every project crate now carries the strider- prefix. The python package
+distribution name (strider) is unaffected — it's configured in strider-py's
+maturin metadata."
+git push
+```
+
+### Task N.2: Rename `target` → `strider-target`
+
+Same pattern as N.1.
+
+- [ ] **Step 1: Move + rename Cargo.toml + update workspace + update downstreams + update imports**
+
+Note: `target` is a tricky name to grep for (collides with Rust's `target/` build directory, the `target_arch` cfg, etc.). Use anchored grep:
+
+```bash
+grep -rEn '^use target::\|target::\b|^target = \{' crates/ --include="*.rs" --include="*.toml"
+```
+
+- [ ] **Step 2: For each match, edit to `strider_target` (Rust) or `strider-target` (Cargo.toml).**
+
+- [ ] **Step 3: Verify**
+
+- [ ] **Step 4: Commit + push**
+
+```bash
+git commit -m "rename target crate to strider-target
+
+Avoids collision with widely-used 'target' name and the Rust ecosystem's
+'target/' build directory. All project crates now share the strider-
+prefix."
+git push
+```
+
+### Task N.3: Sanity-check final crate layout
+
+After N.1 + N.2 + Theme L (which deletes `crates/strider/`), the workspace contains:
+
+- `strider-analyze`
+- `strider-binary` (renamed from reader)
+- `strider-ir`
+- `strider-ir-test-support` (created in Theme D)
+- `strider-lift`
+- `strider-pattern-macros`
+- `strider-py`
+- `strider-target` (renamed from target)
+
+8 crates, all prefixed. Plus the external path-dep `rsleigh` (lives at `../rsleigh`, not part of this workspace).
+
+- [ ] Update CLAUDE.md's crate listing.
 
 ## Theme K: Final Checkpoint + Tag (0.5 day)
 
