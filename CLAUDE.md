@@ -29,11 +29,9 @@ cargo clippy --workspace
 
 This repository is mid-way through the **strider v2 rewrite**
 (`docs/superpowers/plans/2026-05-17-strider-v2-rewrite.md`).  The 12-crate v1
-layout has been consolidated into **5 main crates + 1 proc-macro crate**, with
-the old crate paths kept as thin re-export shims so downstream code
-(strider-py, integration tests, examples) compiles unchanged.  The shim
-crates are scheduled for deletion in Phase 6.2; the re-exports remain
-functional today.
+layout has been consolidated into **5 main crates + 1 proc-macro crate**.
+Phase 6.2 deleted the v1 shim crates and rewrote every downstream import to
+reference the absorber crate directly; no `pub use <old>::*` shims remain.
 
 **V1 baseline snapshots (`crates/strider/tests/v1_baseline.rs`) PASS
 throughout the rewrite** and are the ground-truth contract every phase
@@ -82,24 +80,22 @@ struct + `ReadOnlyMemory` trait into `strider-ir` (V6.A/B fixes).
 `BuiltCallingConvention` keeps its rich API in `strider-lift::target` and
 ships `impl From<BuiltCallingConvention> for FunctionBuilderCC`.
 
-### Shim Crates (deletion-pending in Phase 6.2)
+### V1 → V2 Crate Map (post-Phase-6.2)
 
-Each shim crate is a `pub use <new_crate>::*` re-export of its v1 surface.
-All compile cleanly; no code paths break by importing from the old name.
-Phase 6.2 deletes them along with cleaning up downstream imports.
+Phase 6.2 deleted every v1 shim crate.  The remaining `crates/`
+directory is the V2 layout.
 
-| v1 crate | v2 home | Shim status |
-|---|---|---|
-| `reader` | `strider-binary` (rename pending) | Still present as `crates/reader/` |
-| `ir` | `strider-ir` | Shim: `pub use strider_ir::*;` |
-| `graphwalk`, `entity-utils`, `dot`, `graphmock` | `strider-ir` modules | Absorbed (Tasks 1.1–1.2) |
-| `target` | `strider-lift::target` (re-exported standalone for cycle-break) | Still present as `crates/target/` |
-| `pcode-lift` | `strider-lift::pcode_lift` | Shim |
-| `cfg` | `strider-lift::cfg` | Shim |
-| `opt` | `strider-analyze::opt` | Shim: `pub use strider_analyze::opt::*;` |
-| `pattern` | `strider-analyze::pattern` | Shim |
-| `strider` (orchestrator) | `strider-analyze::orchestrator` + re-exports | Shim: `pub use strider_analyze::{…};` |
-| `strider-py` | top-level `strider` maturin crate (Phase 5 rename pending) | Still present as `crates/strider-py/` |
+| v1 crate | v2 home |
+|---|---|
+| `reader` | `crates/reader/` (rename to `strider-binary` pending Phase 6) |
+| `ir`, `graphwalk`, `entity-utils`, `dot`, `graphmock` | `strider-ir` (modules) |
+| `target` | `crates/target/` (re-exported as `strider_lift::target` for cycle-break) |
+| `pcode-lift` | `strider-lift::pcode_lift` |
+| `cfg` | `strider-lift::cfg` |
+| `opt` | `strider-analyze::opt` |
+| `pattern` | `strider-analyze::pattern` |
+| `strider` (orchestrator) | `strider-analyze::{run, RunConfig, Strider, GraphRewriter, …}`, re-exported through `crates/strider/` for back-compat |
+| `strider-py` | `crates/strider-py/` (rename to top-level `strider` maturin crate pending Phase 5) |
 
 ### Key Crates
 
