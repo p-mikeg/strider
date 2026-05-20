@@ -31,7 +31,3 @@ serde = { version = "1", features = ["derive"] }
 [[bench]]
 name = "scaling"
 harness = false
-
-[[bench]]
-name = "v1_vs_v2"
-harness = false
