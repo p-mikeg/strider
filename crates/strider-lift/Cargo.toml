@@ -13,7 +13,6 @@ target.workspace = true
 # Absorbed from `cfg` (Phase 2 Task 2.3).
 petgraph.workspace = true
 dot.workspace = true
-graphwalk.workspace = true
 rustc-hash = "2"
 
 [dev-dependencies]
