@@ -91,7 +91,16 @@ fn build_db(
 
 /// First query primes the per-region cache: at least one
 /// `region_lift_signature` body invocation per CFG region.
+///
+/// **Phase 7.3a — ignored**: the per-region pre-pass in
+/// `optimized_function` was disabled because it caused a 1.58-1.61×
+/// bench regression (a redundant CFG build per call with no consumer
+/// reading the cached fingerprints).  Re-enable when Phase 8 wires
+/// the per-region IR producer that justifies the cache; until then
+/// the counter stays at 0 because no caller drives the per-region
+/// queries.
 #[test]
+#[ignore = "Phase 7.3a — per-region pre-pass disabled until Phase 8"]
 fn first_query_invokes_one_signature_per_region() {
     let (db, _) = build_db("control", "nested_loops");
     let binary = Binary::new(&db, "control::nested_loops".to_string());
@@ -109,7 +118,10 @@ fn first_query_invokes_one_signature_per_region() {
 
 /// Repeat query with identical inputs: per-region cache hits across the board.
 /// Counter must NOT grow on the second query.
+///
+/// **Phase 7.3a — ignored**: see `first_query_invokes_one_signature_per_region`.
 #[test]
+#[ignore = "Phase 7.3a — per-region pre-pass disabled until Phase 8"]
 fn repeat_query_hits_per_region_cache() {
     let (db, _) = build_db("control", "nested_loops");
     let binary = Binary::new(&db, "control::nested_loops".to_string());
@@ -138,7 +150,10 @@ fn repeat_query_hits_per_region_cache() {
 ///
 /// This is the **headline Phase 7.2 demonstration**: per-region
 /// invalidation granularity is finer than function-level.
+///
+/// **Phase 7.3a — ignored**: see `first_query_invokes_one_signature_per_region`.
 #[test]
+#[ignore = "Phase 7.3a — per-region pre-pass disabled until Phase 8"]
 fn adding_one_indirect_target_re_lifts_few_regions() {
     let (mut db, _) = build_db("control", "nested_loops");
     let binary = Binary::new(&db, "control::nested_loops".to_string());
@@ -190,7 +205,10 @@ fn adding_one_indirect_target_re_lifts_few_regions() {
 
 /// Multiple successive indirect-target additions: cumulative
 /// re-lifts must stay sub-linear in the number of additions.
+///
+/// **Phase 7.3a — ignored**: see `first_query_invokes_one_signature_per_region`.
 #[test]
+#[ignore = "Phase 7.3a — per-region pre-pass disabled until Phase 8"]
 fn successive_indirect_target_adds_stay_sublinear() {
     let (mut db, _) = build_db("control", "nested_loops");
     let binary = Binary::new(&db, "control::nested_loops".to_string());

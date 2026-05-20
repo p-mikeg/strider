@@ -403,33 +403,32 @@ pub fn optimized_function<'db>(
     db.record_optimized_call();
     let map = targets.map(db);
 
-    // Phase 7 Task 7.2 — drive the per-region tracked queries.
-    // `region_signatures_query` is a salsa-tracked wrapper around the
-    // CFG-enumeration call, so the (expensive) CFG rebuild only
-    // happens once per `IndirectTargets` revision.  Repeat queries
-    // with identical inputs hit the cache and the body skips the
-    // entire CFG path.
-    //
-    // Errors from the signatures query are NOT fatal here: a failure
-    // to enumerate signatures means we've lost incremental
-    // granularity for this revision, but the BFG can still be lifted
-    // via v1's `run`.  We swallow the error after logging so the
-    // orchestrator's parity contract holds even when (e.g.) the
-    // binary fails to load on the signature path but succeeds on the
-    // lift path — an unlikely but possible skew.
-    let sigs_arc = region_signatures_query(db, targets).clone();
-    match sigs_arc.as_ref() {
-        Ok(sigs) => {
-            for (addr, fp) in sigs {
-                let key = RegionKey::new(db, *addr, *fp);
-                let _ = region_lift_signature(db, key);
+    // Phase 7 Task 7.3a — the per-region pre-pass was a 50+ms-per-function
+    // regression (1.58-1.61× slower than Phase 7.1) because it forces an
+    // additional CFG build for every `optimized_function` invocation with
+    // no consumer reading the cached fingerprints.  The scaffolding
+    // (`RegionKey`, `region_lift_signature`, `region_signatures_query`,
+    // `cfg_region_signatures`) is kept in place — the dependency-graph
+    // topology is correct and Phase 8 will wire the per-region IR
+    // producer that justifies the cache.  Until then, the pre-pass is
+    // disabled.  Flip the constant below to re-enable for local
+    // experimentation; production stays off until Phase 8.
+    const RUN_PER_REGION_PREPASS: bool = false;
+    if RUN_PER_REGION_PREPASS {
+        let sigs_arc = region_signatures_query(db, targets).clone();
+        match sigs_arc.as_ref() {
+            Ok(sigs) => {
+                for (addr, fp) in sigs {
+                    let key = RegionKey::new(db, *addr, *fp);
+                    let _ = region_lift_signature(db, key);
+                }
             }
-        }
-        Err(msg) => {
-            eprintln!(
-                "salsa optimized_function: cfg_region_signatures failed; \
-                 proceeding without per-region cache for this revision: {msg}"
-            );
+            Err(msg) => {
+                eprintln!(
+                    "salsa optimized_function: cfg_region_signatures failed; \
+                     proceeding without per-region cache for this revision: {msg}"
+                );
+            }
         }
     }
 
