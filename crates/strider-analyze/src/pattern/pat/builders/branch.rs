@@ -140,7 +140,7 @@ fn match_branch_consumer(
     let Some(out) = outputs.into_iter().nth(output_index) else {
         return false;
     };
-    let Some(consumer) = crate::pattern::matcher::walk::next_control_node(ctx.matcher, out) else {
+    let Some(consumer) = crate::pattern::matcher::consumer::next_control_node(ctx.matcher, out) else {
         return false;
     };
     crate::pattern::pat::node_pat::match_consumer_node(ctx, consumer, pat, b)

@@ -29,7 +29,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::pattern::error::Result;
 use crate::pattern::matcher::Bindings;
-use crate::pattern::matcher::walk;
+use crate::pattern::matcher::consumer;
 use crate::pattern::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 
 /// Node-level check closure used by [`NodePat::post_match`].
@@ -544,7 +544,7 @@ pub(crate) fn match_consumer_node(
     }) else {
         return false;
     };
-    let Some(next) = walk::next_control_node(ctx.matcher, ctrl_out) else {
+    let Some(next) = consumer::next_control_node(ctx.matcher, ctrl_out) else {
         return false;
     };
     if match_consumer_node(ctx, next, pat, b) {

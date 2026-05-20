@@ -10,13 +10,10 @@
 
 //! Strider IR: sea-of-nodes graph, validation, traversal.
 //!
-//! v2-rewrite consolidation crate.  Absorbs `entity-utils`, `graphwalk`,
-//! `dot`, and the former `ir` crate.  See
-//! `docs/superpowers/plans/2026-05-17-strider-v2-rewrite.md` Phase 1 for the
-//! migration plan.
-//!
 //! Sea-of-nodes intermediate representation for the Strider binary analysis
-//! framework.
+//! framework.  Generic helpers live in their own unprefixed sibling crates:
+//! `dot` (Graphviz rendering), `entity-utils` (cranelift-entity helpers),
+//! `graphwalk` (graph traversal).
 //!
 //! The IR represents a lifted function as a directed graph where each
 //! [`node::NodeId`] is a computation or control-flow primitive.  Nodes have
@@ -47,7 +44,6 @@
 
 extern crate alloc;
 
-// Absorbed ir crate (Phase 1 Task 1.3).
 mod builder;
 pub mod error;
 mod function;

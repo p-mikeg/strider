@@ -191,7 +191,7 @@ impl CallOtherPat {
 
     /// Match `p` against the unique consumer of the CallOther's control
     /// output (`outputs[0]`) — forward walk via
-    /// `super::walk_helpers::match_unique_output_consumer`.  Returns
+    /// `super::consumer_match::match_unique_output_consumer`.  Returns
     /// no match if the output has zero or multiple consumers.
     pub fn next_ctrl(mut self, p: impl Into<Pat>) -> Self {
         self.next_ctrl = Some(p.into());
@@ -247,12 +247,12 @@ impl From<CallOtherPat> for Pat {
                     }
                 }
                 if let Some(ref p) = nc
-                    && !super::walk_helpers::match_unique_output_consumer(ctx, node, 0, p, b)
+                    && !super::consumer_match::match_unique_output_consumer(ctx, node, 0, p, b)
                 {
                     return false;
                 }
                 if let Some(ref p) = nm
-                    && !super::walk_helpers::match_unique_output_consumer(ctx, node, 1, p, b)
+                    && !super::consumer_match::match_unique_output_consumer(ctx, node, 1, p, b)
                 {
                     return false;
                 }

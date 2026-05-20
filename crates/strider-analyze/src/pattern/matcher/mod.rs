@@ -13,7 +13,7 @@ pub(crate) mod bindings;
 pub(crate) mod cast_mask;
 pub(crate) mod commutativity;
 mod match_result;
-pub(crate) mod walk;
+pub(crate) mod consumer;
 pub(crate) mod walk_through;
 
 pub use bindings::Bindings;

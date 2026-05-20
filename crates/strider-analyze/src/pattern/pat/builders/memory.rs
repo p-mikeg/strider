@@ -214,7 +214,7 @@ impl From<StorePat> for Pat {
                     }
                 }
                 if let Some(ref p) = next_mem_pat
-                    && !super::walk_helpers::match_unique_output_consumer(ctx, node, 0, p, b)
+                    && !super::consumer_match::match_unique_output_consumer(ctx, node, 0, p, b)
                 {
                     return false;
                 }

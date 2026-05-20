@@ -5,7 +5,7 @@
 use strider_ir::node::NodeId;
 
 use crate::pattern::matcher::Bindings;
-use crate::pattern::matcher::walk::next_control_node;
+use crate::pattern::matcher::consumer::next_control_node;
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::match_consumer_node;
 use crate::pattern::pat::traits::MatchCtx;
