@@ -1,0 +1,50 @@
+---
+source: crates/strider/tests/v2_baseline.rs
+expression: snapshot_body
+---
+digraph "G" {
+  graph [
+    rankdir=TB,
+    bgcolor="#1e1e1e",
+    fontcolor=white,
+  ];
+
+  node [
+    shape=box,
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor=white,
+    fontname=monospace,
+    margin=0.2,
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor=white,
+    penwidth=1.2,
+  ];
+
+  "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "1" [label="IndirectBranch", shape=doublecircle, fillcolor="#103a10"];
+  "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "2" -> "1" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "3" -> "1" [color="#ffdd44", label=target, fontcolor="#cccccc", fontsize=9];
+  "3" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "2" -> "3" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "4" -> "3" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "4" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "5" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "5" [label="const 0x4000ec:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "6" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "6" [label="Mul:u32", shape=box, fillcolor="#2d2d2d"];
+  "7" -> "6" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "8" -> "6" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "8" [label="const 0x4:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "7" [label="And:u32", shape=box, fillcolor="#2d2d2d"];
+  "9" -> "7" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "10" -> "7" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "10" [label="const 0x7:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "9" [label="arg[0] ← EAX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+}

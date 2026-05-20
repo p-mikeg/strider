@@ -1,0 +1,88 @@
+---
+source: crates/strider/tests/v2_baseline.rs
+expression: snapshot_body
+---
+digraph "G" {
+  graph [
+    rankdir=TB,
+    bgcolor="#1e1e1e",
+    fontcolor=white,
+  ];
+
+  node [
+    shape=box,
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor=white,
+    fontname=monospace,
+    margin=0.2,
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor=white,
+    penwidth=1.2,
+  ];
+
+  "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "1" [label="Return", shape=doublecircle, fillcolor="#103a10"];
+  "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "2" -> "1" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "3" -> "1" [color="#88cc88", label=RAX, fontcolor="#cccccc", fontsize=9];
+  "4" -> "1" [color="#88cc88", label=RDX, fontcolor="#cccccc", fontsize=9];
+  "4" [label="const 0x101010101010101:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "5" -> "1" [color="#88cc88", label=XMM0, fontcolor="#cccccc", fontsize=9];
+  "6" -> "1" [color="#88cc88", label=XMM1, fontcolor="#cccccc", fontsize=9];
+  "6" [label="init\nXMM1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="init\nXMM0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "3" [label="ShiftRight:u64", shape=box, fillcolor="#2d2d2d"];
+  "7" -> "3" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "8" -> "3" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "8" [label="const 0x38:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "7" [label="Mul:u64", shape=box, fillcolor="#2d2d2d"];
+  "9" -> "7" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "10" -> "7" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "10" [label="const 0x101010101010101:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "9" [label="And:u64", shape=box, fillcolor="#2d2d2d"];
+  "11" -> "9" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "12" -> "9" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "12" [label="const 0xf0f0f0f0f0f0f0f:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "11" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
+  "13" -> "11" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "14" -> "11" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "14" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
+  "15" -> "14" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "16" -> "14" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "16" [label="And:u64", shape=box, fillcolor="#2d2d2d"];
+  "17" -> "16" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "18" -> "16" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "18" [label="const 0x3333333333333333:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "17" [label="ShiftRight:u64", shape=box, fillcolor="#2d2d2d"];
+  "19" -> "17" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "20" -> "17" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "20" [label="const 0x2:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "19" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
+  "21" -> "19" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "22" -> "19" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "22" [label="Neg\nu64 → u64", shape=box, fillcolor="#2d2d2d"];
+  "23" -> "22" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "23" [label="And:u64", shape=box, fillcolor="#2d2d2d"];
+  "24" -> "23" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "25" -> "23" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "25" [label="const 0x5555555555555555:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "24" [label="ShiftRight:u64", shape=box, fillcolor="#2d2d2d"];
+  "21" -> "24" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "26" -> "24" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "26" [label="const 0x1:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "21" [label="arg[0] ← RDI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "15" [label="And:u64", shape=box, fillcolor="#2d2d2d"];
+  "19" -> "15" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "27" -> "15" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "27" [label="const 0x3333333333333333:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "13" [label="ShiftRight:u64", shape=box, fillcolor="#2d2d2d"];
+  "14" -> "13" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "28" -> "13" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "28" [label="const 0x4:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+}

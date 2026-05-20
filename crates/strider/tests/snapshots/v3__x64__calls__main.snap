@@ -1,0 +1,268 @@
+---
+source: crates/strider/tests/v2_baseline.rs
+expression: snapshot_body
+---
+digraph "G" {
+  graph [
+    rankdir=TB,
+    bgcolor="#1e1e1e",
+    fontcolor=white,
+  ];
+
+  node [
+    shape=box,
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor=white,
+    fontname=monospace,
+    margin=0.2,
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor=white,
+    penwidth=1.2,
+  ];
+
+  "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "1" [label="Call", shape=rarrow, fillcolor="#3a1010"];
+  "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "2" -> "1" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "3" -> "1" [color="#ffdd44", label=target, fontcolor="#cccccc", fontsize=9];
+  "3" [label="const 0x4011e0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "4" -> "1" [color="#ff8800", label=arg0, fontcolor="#cccccc", fontsize=9];
+  "4" [label="const 0x6:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "5" -> "1" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
+  "6" -> "1" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
+  "7" -> "1" [color="#ff8800", label=arg3, fontcolor="#cccccc", fontsize=9];
+  "8" [label="Call", shape=rarrow, fillcolor="#3a1010"];
+  "1" -> "8" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "9" -> "8" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "10" -> "8" [color="#ffdd44", label=target, fontcolor="#cccccc", fontsize=9];
+  "10" [label="const 0x401250:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "11" -> "8" [color="#ff8800", label=arg0, fontcolor="#cccccc", fontsize=9];
+  "11" [label="const 0x5:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "v12" [label="Post Call\nRSI", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "1" -> "v12" [color="#888888", style=dashed];
+  "v12" -> "8" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
+  "v13" [label="Post Call\nRDX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "1" -> "v13" [color="#888888", style=dashed];
+  "v13" -> "8" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
+  "14" -> "8" [color="#ff8800", label=arg3, fontcolor="#cccccc", fontsize=9];
+  "15" [label="Call", shape=rarrow, fillcolor="#3a1010"];
+  "8" -> "15" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "16" -> "15" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "17" -> "15" [color="#ffdd44", label=target, fontcolor="#cccccc", fontsize=9];
+  "17" [label="const 0x401290:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "18" -> "15" [color="#ff8800", label=arg0, fontcolor="#cccccc", fontsize=9];
+  "18" [label="const 0x3:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "19" -> "15" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
+  "19" [label="const 0x2:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "v20" [label="Post Call\nRDX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "8" -> "v20" [color="#888888", style=dashed];
+  "v20" -> "15" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
+  "21" -> "15" [color="#ff8800", label=arg3, fontcolor="#cccccc", fontsize=9];
+  "22" [label="Call", shape=rarrow, fillcolor="#3a1010"];
+  "15" -> "22" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "23" -> "22" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "24" -> "22" [color="#ffdd44", label=target, fontcolor="#cccccc", fontsize=9];
+  "24" [label="const 0x4012b0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "25" -> "22" [color="#ff8800", label=arg0, fontcolor="#cccccc", fontsize=9];
+  "25" [label="const 0x1:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "v26" [label="Post Call\nRSI", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "15" -> "v26" [color="#888888", style=dashed];
+  "v26" -> "22" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
+  "v27" [label="Post Call\nRDX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "15" -> "v27" [color="#888888", style=dashed];
+  "v27" -> "22" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
+  "28" -> "22" [color="#ff8800", label=arg3, fontcolor="#cccccc", fontsize=9];
+  "29" [label="Call", shape=rarrow, fillcolor="#3a1010"];
+  "22" -> "29" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "30" -> "29" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "31" -> "29" [color="#ffdd44", label=target, fontcolor="#cccccc", fontsize=9];
+  "31" [label="const 0x4012d0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "32" -> "29" [color="#ff8800", label=arg0, fontcolor="#cccccc", fontsize=9];
+  "32" [label="const 0x4:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "33" -> "29" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
+  "33" [label="const 0x5:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "v34" [label="Post Call\nRDX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "22" -> "v34" [color="#888888", style=dashed];
+  "v34" -> "29" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
+  "35" -> "29" [color="#ff8800", label=arg3, fontcolor="#cccccc", fontsize=9];
+  "36" [label="Call", shape=rarrow, fillcolor="#3a1010"];
+  "29" -> "36" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "37" -> "36" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "38" -> "36" [color="#ffdd44", label=target, fontcolor="#cccccc", fontsize=9];
+  "38" [label="const 0x4012e0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "39" -> "36" [color="#ff8800", label=arg0, fontcolor="#cccccc", fontsize=9];
+  "39" [label="const 0x4011d0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "v40" [label="Post Call\nRSI", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "29" -> "v40" [color="#888888", style=dashed];
+  "v40" -> "36" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
+  "v41" [label="Post Call\nRDX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "29" -> "v41" [color="#888888", style=dashed];
+  "v41" -> "36" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
+  "42" -> "36" [color="#ff8800", label=arg3, fontcolor="#cccccc", fontsize=9];
+  "43" [label="Return", shape=doublecircle, fillcolor="#103a10"];
+  "36" -> "43" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "44" -> "43" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "45" -> "43" [color="#88cc88", label=RAX, fontcolor="#cccccc", fontsize=9];
+  "v46" [label="Post Call\nRDX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "36" -> "v46" [color="#888888", style=dashed];
+  "v46" -> "43" [color="#88cc88", label=RDX, fontcolor="#cccccc", fontsize=9];
+  "v47" [label="Post Call\nXMM0", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "36" -> "v47" [color="#888888", style=dashed];
+  "v47" -> "43" [color="#88cc88", label=XMM0, fontcolor="#cccccc", fontsize=9];
+  "v48" [label="Post Call\nXMM1", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "36" -> "v48" [color="#888888", style=dashed];
+  "v48" -> "43" [color="#88cc88", label=XMM1, fontcolor="#cccccc", fontsize=9];
+  "45" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "49" -> "45" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "49" [label="Xor:u32", shape=box, fillcolor="#2d2d2d"];
+  "50" -> "49" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "51" -> "49" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "51" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "v52" [label="Post Call\nRAX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "36" -> "v52" [color="#888888", style=dashed];
+  "v52" -> "51" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "50" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "36" -> "50" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "53" -> "50" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "53" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
+  "54" -> "53" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "55" -> "53" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "55" [label="const 0xfffffffffffffff4:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "54" [label="init\nRSP", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "44" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "36" -> "44" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "53" -> "44" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "49" -> "44" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "42" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "56" -> "42" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "56" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "v57" [label="Post Call\nRAX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "29" -> "v57" [color="#888888", style=dashed];
+  "v57" -> "56" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "37" [label="StackStore u64\n→ ram[sp - 32]", shape=box3d, fillcolor="#20182a"];
+  "58" -> "37" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "59" -> "37" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "60" -> "37" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "60" [label="const 0x4010bc:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "59" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
+  "54" -> "59" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "61" -> "59" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "61" [label="const 0xffffffffffffffe0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "58" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "29" -> "58" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "58" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "63" -> "58" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "63" [label="Xor:u32", shape=box, fillcolor="#2d2d2d"];
+  "64" -> "63" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "56" -> "63" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "64" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "29" -> "64" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "64" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "62" [label="Add:u64", shape=box, fillcolor="#2d2d2d"];
+  "54" -> "62" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "65" -> "62" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "65" [label="const 0xfffffffffffffff4:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "35" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "66" -> "35" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "66" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "v67" [label="Post Call\nRAX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "22" -> "v67" [color="#888888", style=dashed];
+  "v67" -> "66" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "30" [label="StackStore u64\n→ ram[sp - 32]", shape=box3d, fillcolor="#20182a"];
+  "68" -> "30" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "59" -> "30" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "69" -> "30" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "69" [label="const 0x4010a4:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "68" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "22" -> "68" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "68" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "70" -> "68" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "70" [label="Xor:u32", shape=box, fillcolor="#2d2d2d"];
+  "71" -> "70" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "66" -> "70" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "71" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "22" -> "71" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "71" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "28" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "72" -> "28" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "72" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "v73" [label="Post Call\nRAX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "15" -> "v73" [color="#888888", style=dashed];
+  "v73" -> "72" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "23" [label="StackStore u64\n→ ram[sp - 32]", shape=box3d, fillcolor="#20182a"];
+  "74" -> "23" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "59" -> "23" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "75" -> "23" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "75" [label="const 0x401087:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "74" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "15" -> "74" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "74" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "76" -> "74" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "76" [label="Xor:u32", shape=box, fillcolor="#2d2d2d"];
+  "77" -> "76" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "72" -> "76" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "77" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "15" -> "77" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "77" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "21" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "78" -> "21" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "78" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "v79" [label="Post Call\nRAX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "8" -> "v79" [color="#888888", style=dashed];
+  "v79" -> "78" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "16" [label="StackStore u64\n→ ram[sp - 32]", shape=box3d, fillcolor="#20182a"];
+  "80" -> "16" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "59" -> "16" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "81" -> "16" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "81" [label="const 0x40106f:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "80" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "8" -> "80" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "80" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "82" -> "80" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "82" [label="Xor:u32", shape=box, fillcolor="#2d2d2d"];
+  "83" -> "82" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "78" -> "82" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "83" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "8" -> "83" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "83" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "14" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "84" -> "14" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "84" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "v85" [label="Post Call\nRAX", shape=box, fillcolor="#28102a", style="filled,dashed"];
+  "1" -> "v85" [color="#888888", style=dashed];
+  "v85" -> "84" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "9" [label="StackStore u64\n→ ram[sp - 32]", shape=box3d, fillcolor="#20182a"];
+  "86" -> "9" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "59" -> "9" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "87" -> "9" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "87" [label="const 0x401052:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "86" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "1" -> "86" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "86" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "88" -> "86" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "88" [label="Xor:u32", shape=box, fillcolor="#2d2d2d"];
+  "89" -> "88" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "84" -> "88" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "89" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "1" -> "89" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "89" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "7" [label="arg[4] ← R8", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "6" [label="arg[2] ← RDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="arg[1] ← RSI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "2" [label="StackStore u64\n→ ram[sp - 32]", shape=box3d, fillcolor="#20182a"];
+  "90" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "59" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "91" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "91" [label="const 0x40103a:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "90" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "92" -> "90" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "62" -> "90" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "93" -> "90" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "93" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "92" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+}
