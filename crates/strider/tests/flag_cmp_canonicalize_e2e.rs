@@ -13,8 +13,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use cfg::{Builder, OptionsBuilder};
-use ir::BuiltFunctionGraph;
-use ir::node::{NodeId, NodeKind};
+use strider_ir::BuiltFunctionGraph;
+use strider_ir::node::{NodeId, NodeKind};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::{CallingConvention, SleighArch, Strider};
@@ -88,7 +88,7 @@ fn aarch64_b_eq_after_pipeline_has_direct_int_cmp_cond() {
     let if_node = find_unique_if(&graph);
     assert_eq!(
         if_cond_kind(&graph, if_node),
-        NodeKind::IntCmpOp(ir::IntCmpOp::Equal),
+        NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
         "AArch64 b.eq should canonicalise to IntCmpOp::Equal",
     );
 }
@@ -115,7 +115,7 @@ fn x86_64_je_after_pipeline_has_direct_int_cmp_cond() {
     let if_node = find_unique_if(&graph);
     assert_eq!(
         if_cond_kind(&graph, if_node),
-        NodeKind::IntCmpOp(ir::IntCmpOp::Equal),
+        NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
         "x86_64 JE should canonicalise to IntCmpOp::Equal",
     );
 }
@@ -142,7 +142,7 @@ fn arm_thumb_beq_after_pipeline_has_direct_int_cmp_cond() {
     let if_node = find_unique_if(&graph);
     assert_eq!(
         if_cond_kind(&graph, if_node),
-        NodeKind::IntCmpOp(ir::IntCmpOp::Equal),
+        NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
         "Thumb BEQ should canonicalise to IntCmpOp::Equal (Thumb's IntNotEqual(ZR, 0) leaf must reduce too)",
     );
 }

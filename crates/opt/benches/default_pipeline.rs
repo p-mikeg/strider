@@ -3,11 +3,11 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ir::node::NodeOutputType;
-use ir::{FunctionBuilder, IntBinaryOp};
+use strider_ir::node::NodeOutputType;
+use strider_ir::{FunctionBuilder, IntBinaryOp};
 use opt::default_pipeline;
 
-fn build_mixed(n: usize) -> ir::BuiltFunctionGraph {
+fn build_mixed(n: usize) -> strider_ir::BuiltFunctionGraph {
     let vn = rsleigh::Vn {
         addr_off: 0x1000,
         addr_space: rsleigh::VnSpace::REGISTER,

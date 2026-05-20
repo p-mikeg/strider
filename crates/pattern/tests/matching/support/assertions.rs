@@ -1,8 +1,8 @@
 //! Assertion DSL for pattern-match tests.  Every test should end in one
 //! of these helpers so failure messages are uniform and informative.
 
-use ir::BuiltFunctionGraph;
-use ir::node::{NodeId, NodeKind};
+use strider_ir::BuiltFunctionGraph;
+use strider_ir::node::{NodeId, NodeKind};
 use pattern::{Match, Matcher, Pat};
 
 // ── Core assertions ───────────────────────────────────────────────────────────

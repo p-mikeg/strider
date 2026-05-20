@@ -54,7 +54,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
         "cpuid_brand_part2_info",
         "cpuid_brand_part3_info",
     ];
-    let mut found_node: Option<ir::node::NodeId> = None;
+    let mut found_node: Option<strider_ir::node::NodeId> = None;
     let mut found_name: Option<&'static str> = None;
     for n in cpuid_names {
         let pat = pattern::Pat::from(call_other().name(n));

@@ -10,7 +10,7 @@
 //!     directly via the graph; unbound captures and shape-mismatched
 //!     bindings both yield `None`.
 
-use ir::node::NodeKind;
+use strider_ir::node::NodeKind;
 use pattern::*;
 
 use super::support::Tb;

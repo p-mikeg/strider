@@ -4,7 +4,7 @@
 //! `int_eq`, `int_lt`, …) including deep nesting and wrong-op / wrong-operand
 //! rejections.  Commutative-vs-ordered semantics live in `commutativity.rs`.
 
-use ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -167,8 +167,8 @@ fn int_sle_matches_lowered_shape() {
 /// Build the lowered shape directly and verify the alias matches it.
 #[test]
 fn float_le_matches_lowered_shape() {
-    use ir::node::NodeOutputType;
-    use ir::{BoolBinaryOp, FloatCmpOp};
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::{BoolBinaryOp, FloatCmpOp};
 
     let mut t = Tb::empty();
     let l = t.f64(1.0);

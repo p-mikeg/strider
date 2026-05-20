@@ -12,9 +12,9 @@
 
 mod common;
 use common::*;
-use ir::ValidateOptions;
-use ir::node::NodeKind;
-use ir::validate::{validate, validate_with_options};
+use strider_ir::ValidateOptions;
+use strider_ir::node::NodeKind;
+use strider_ir::validate::{validate, validate_with_options};
 
 /// Returns true if `kind` is documented as legitimately empty in the
 /// asm-fingerprint side-table.  Mirrors the validator's exempt list.
@@ -36,7 +36,7 @@ fn is_exempt(kind: &NodeKind) -> bool {
 #[test]
 fn arithmetic_x86_add_every_reachable_value_node_has_a_fingerprint() {
     let g = analyze(Arch::X86, "arithmetic", "add");
-    let mut empty_non_exempt: Vec<(ir::node::NodeId, NodeKind)> = Vec::new();
+    let mut empty_non_exempt: Vec<(strider_ir::node::NodeId, NodeKind)> = Vec::new();
     for node in g.preorder() {
         let kind = *g.graph.node_kind(node);
         if is_exempt(&kind) {

@@ -27,8 +27,8 @@
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-use ir::FunctionBuilder;
-use ir::node::NodeKind;
+use strider_ir::FunctionBuilder;
+use strider_ir::node::NodeKind;
 use pcode_lift::ValueLifter;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -110,8 +110,8 @@ fn x86_64_sleigh_exposes_rax_eax_al_containment() {
 /// has node kind `target` in the post-write graph.  Bounded walk
 /// (max 64 nodes) — every chain we inspect here is a handful of nodes.
 fn ancestor_has_kind(
-    builder: &ir::FunctionBuilder,
-    start: ir::node::NodeId,
+    builder: &strider_ir::FunctionBuilder,
+    start: strider_ir::node::NodeId,
     target: NodeKind,
 ) -> bool {
     let body = builder.body();
@@ -138,8 +138,8 @@ fn ancestor_has_kind(
 /// `InitialVar(target_vn)` somewhere.  Same bounded walk as
 /// `ancestor_has_kind`.
 fn ancestor_references_initial_var(
-    builder: &ir::FunctionBuilder,
-    start: ir::node::NodeId,
+    builder: &strider_ir::FunctionBuilder,
+    start: strider_ir::node::NodeId,
     target_vn: rsleigh::Vn,
 ) -> bool {
     let body = builder.body();
@@ -179,7 +179,7 @@ fn write_al_then_read_eax_preserves_upper_rax_bits() {
     // Build a constant 0x7e (1 byte) and write it to AL.
     let const_byte = lifter
         .builder
-        .build_int_const(0x7eu64, ir::ValueType::U8)
+        .build_int_const(0x7eu64, strider_ir::ValueType::U8)
         .expect("build_int_const(0x7e)");
     lifter.write_vn(&al, const_byte).expect("write_vn(AL, 0x7e)");
 
@@ -222,7 +222,7 @@ fn write_al_then_read_eax_chain_contains_or_merge() {
 
     let v = lifter
         .builder
-        .build_int_const(0xffu64, ir::ValueType::U8)
+        .build_int_const(0xffu64, strider_ir::ValueType::U8)
         .expect("build_int_const(0xff)");
     lifter.write_vn(&al, v).expect("write_vn(AL)");
     let eax_value = lifter.read_vn(&eax).expect("read_vn(EAX)");
@@ -232,7 +232,7 @@ fn write_al_then_read_eax_chain_contains_or_merge() {
         ancestor_has_kind(
             &builder,
             eax_producer,
-            NodeKind::IntBinaryOp(ir::IntBinaryOp::Or),
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Or),
         ),
         "partial-write merge must emit an IntBinaryOp(Or) joining masked AL bits and masked container preserve",
     );
@@ -251,7 +251,7 @@ fn write_rax_then_read_rax_is_direct_no_merge() {
 
     let v = lifter
         .builder
-        .build_int_const(0xdead_beefu64, ir::ValueType::U64)
+        .build_int_const(0xdead_beefu64, strider_ir::ValueType::U64)
         .expect("build_int_const");
     lifter.write_vn(&rax, v).expect("write_vn(RAX)");
     let rax_value = lifter.read_vn(&rax).expect("read_vn(RAX)");

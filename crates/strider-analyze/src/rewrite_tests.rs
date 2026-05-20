@@ -12,9 +12,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use ir::node::NodeOutputType;
-use ir::test_utils::SENTINEL_LIFT_ADDR;
-use ir::{FunctionBuilder, IntBinaryOp};
+use strider_ir::node::NodeOutputType;
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::{FunctionBuilder, IntBinaryOp};
 use crate::pattern::{add, boxed_rule, int_const, rewrite_rule, sub, var, Capture};
 
 use super::GraphRewriter;
@@ -25,7 +25,7 @@ use super::GraphRewriter;
 ///
 /// — a single `IntConst(7)` returned via `build_return`.  No Add /
 /// Sub / Load nodes — used by the no-match test.
-fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
+fn one_const_fn(k: u64) -> strider_ir::BuiltFunctionGraph {
     let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
@@ -43,7 +43,7 @@ fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
 ///
 /// — exactly one `Add(IntConst(7), IntConst(0))`.  The `add(x, 0) → x`
 /// rule fires once on this fixture.
-fn add_x_plus_zero(x: u64) -> ir::BuiltFunctionGraph {
+fn add_x_plus_zero(x: u64) -> strider_ir::BuiltFunctionGraph {
     let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
@@ -70,7 +70,7 @@ fn add_x_plus_zero(x: u64) -> ir::BuiltFunctionGraph {
 /// match).  Pinning the round-robin contract: `apply_rules` walks
 /// every reachable node once per call, so 2 firings on a single
 /// call.
-fn sub_of_two_add_zeros(a: u64, b: u64) -> ir::BuiltFunctionGraph {
+fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::BuiltFunctionGraph {
     let mut bd = FunctionBuilder::empty().unwrap();
     let region = bd.create_region().unwrap();
     bd.set_entry_region(region).unwrap();
@@ -95,12 +95,12 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> ir::BuiltFunctionGraph {
 
 /// Counts reachable Add nodes — the easy way to assert "the rule
 /// fired" without poking at internal graph slot ids.
-fn count_adds(g: &ir::BuiltFunctionGraph) -> usize {
+fn count_adds(g: &strider_ir::BuiltFunctionGraph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
                 g.graph.node_kind(*nid),
-                ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add),
+                strider_ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add),
             )
         })
         .count()
@@ -109,13 +109,13 @@ fn count_adds(g: &ir::BuiltFunctionGraph) -> usize {
 /// Counts reachable lowered-Sub shapes: `Add(_, IntUnaryOp::Neg(_))`.
 /// `IntBinaryOp::Sub` is not a primitive in this IR — `build_int_sub`
 /// produces this two-node shape, and `crate::pattern::sub(_, _)` matches it.
-fn count_subs(g: &ir::BuiltFunctionGraph) -> usize {
+fn count_subs(g: &strider_ir::BuiltFunctionGraph) -> usize {
     g.preorder()
         .filter(|&nid| {
             // Outer node must be Add with exactly two value inputs.
             if !matches!(
                 g.graph.node_kind(nid),
-                ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add)
+                strider_ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add)
             ) {
                 return false;
             }
@@ -129,10 +129,10 @@ fn count_subs(g: &ir::BuiltFunctionGraph) -> usize {
             // commutativity-driven canonicalisation.)
             let lhs_node = g.graph.get_node_from_output(inputs[0]);
             let rhs_node = g.graph.get_node_from_output(inputs[1]);
-            let is_neg = |id: ir::node::NodeId| {
+            let is_neg = |id: strider_ir::node::NodeId| {
                 matches!(
                     g.graph.node_kind(id),
-                    ir::node::NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg),
+                    strider_ir::node::NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg),
                 )
             };
             is_neg(lhs_node) || is_neg(rhs_node)
@@ -254,7 +254,7 @@ fn re_optimize_is_idempotent() -> anyhow::Result<()> {
 fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
     // The rewriter goes through `crate::pattern::rewrite_rule` →
     // `replace_all_uses`, which uses the bidirectional use-list.
-    // After the rewrite, `ir::validate::validate` must pass —
+    // After the rewrite, `strider_ir::validate::validate` must pass —
     // Layer B is the use-list-consistency check.  Pin this here
     // so any future change that breaks use-list bookkeeping
     // surfaces as a unit-test failure.
@@ -265,6 +265,6 @@ fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
     rewriter.apply_rule(rule)?;
     // Run validate directly (Layer A + B + C).  If any layer
     // fails we surface the bundle as a strider error.
-    ir::validate::validate(&built.graph, built.entry)
+    strider_ir::validate::validate(&built.graph, built.entry)
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed: {e}"))
 }

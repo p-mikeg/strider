@@ -34,7 +34,7 @@
 mod common;
 
 use common::Arch;
-use ir::node::{NodeKind, NodeOutputKind};
+use strider_ir::node::{NodeKind, NodeOutputKind};
 use std::collections::BTreeMap;
 
 /// All architectures with a fixture directory under `fixtures/out/`.
@@ -173,7 +173,7 @@ fn kind_bucket(k: &NodeKind) -> String {
 ///   * region count (one per `ControlState` reachable node — matches
 ///     how `cfg::Cfg` regions are projected into the IR),
 ///   * per-kind phi counts (broken out for sensitivity to kind drift).
-fn structural_fingerprint(g: &ir::BuiltFunctionGraph) -> Fingerprint {
+fn structural_fingerprint(g: &strider_ir::BuiltFunctionGraph) -> Fingerprint {
     let mut kind_histogram: BTreeMap<String, usize> = BTreeMap::new();
     let mut reachable_nodes = 0usize;
     let mut regions = 0usize;

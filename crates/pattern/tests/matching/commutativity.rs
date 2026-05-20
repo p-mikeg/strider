@@ -10,7 +10,7 @@
 //! cases in `arithmetic.rs` — are rechecked here with swapped operands to
 //! confirm they do NOT match.
 
-use ir::{BoolBinaryOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp};
+use strider_ir::{BoolBinaryOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp};
 use pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -143,9 +143,9 @@ fn float_sub_and_div_do_not_commute() {
         let mut t = Tb::empty();
         let a = t.f64(5.0);
         let b = t.f64(2.0);
-        let neg_b = t.fun(b, ir::FloatUnaryOp::Neg, ir::node::NodeOutputType::F64);
-        let lowered = t.fbin(a, neg_b, FloatBinaryOp::Add, ir::node::NodeOutputType::F64);
-        let as_int = t.float_to_int(lowered, ir::node::NodeOutputType::U64);
+        let neg_b = t.fun(b, strider_ir::FloatUnaryOp::Neg, strider_ir::node::NodeOutputType::F64);
+        let lowered = t.fbin(a, neg_b, FloatBinaryOp::Add, strider_ir::node::NodeOutputType::F64);
+        let as_int = t.float_to_int(lowered, strider_ir::node::NodeOutputType::U64);
         t.ret_val(as_int)
     };
     a::none(
@@ -222,12 +222,12 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
 
 /// Builds a graph that asserts a float comparison `a OP b` and returns
 /// the boolean result (cast to u64 for typability).
-fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> ir::BuiltFunctionGraph {
+fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::BuiltFunctionGraph {
     let mut t = Tb::empty();
     let a = t.f64(l);
     let b = t.f64(r);
     let v = t.fcmp(a, b, op);
-    let as_int = t.as_int(v, ir::node::NodeOutputType::U64);
+    let as_int = t.as_int(v, strider_ir::node::NodeOutputType::U64);
     t.ret_val(as_int)
 }
 
@@ -250,8 +250,8 @@ fn float_ne_commutes() {
         let a = t.f64(1.0);
         let b = t.f64(2.0);
         let eq = t.fcmp(a, b, FloatCmpOp::Equal);
-        let ne = t.bool_un(eq, ir::BoolUnaryOp::Neg);
-        let as_int = t.as_int(ne, ir::node::NodeOutputType::U64);
+        let ne = t.bool_un(eq, strider_ir::BoolUnaryOp::Neg);
+        let as_int = t.as_int(ne, strider_ir::node::NodeOutputType::U64);
         t.ret_val(as_int)
     };
     a::matches(&g, float_ne(float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);

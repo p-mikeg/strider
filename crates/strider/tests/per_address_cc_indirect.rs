@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use ir::node::NodeKind;
+use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
 use strider::{RunConfig, SleighArch, Strider};
 use target::CallingConvention as TargetCC;

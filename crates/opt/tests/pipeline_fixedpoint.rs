@@ -10,8 +10,8 @@
 
 mod common;
 
-use ir::node::NodeOutputType;
-use ir::IntBinaryOp;
+use strider_ir::node::NodeOutputType;
+use strider_ir::IntBinaryOp;
 use opt::default_pipeline;
 use opt::{OptimizationResult, Optimizer, OptimizerPipeline};
 

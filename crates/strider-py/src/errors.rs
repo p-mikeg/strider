@@ -42,7 +42,7 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     if e.downcast_ref::<strider::UnresolvedIndirectBranch>().is_some() {
         return UnresolvedIndirectBranchError::new_err(format!("{e:?}"));
     }
-    if e.downcast_ref::<ir::error::UnknownCallOtherError>().is_some() {
+    if e.downcast_ref::<strider_ir::error::UnknownCallOtherError>().is_some() {
         return UnknownCallOtherError::new_err(format!("{e:?}"));
     }
     // String-match heuristic for lift failures.  The orchestrator path
@@ -72,7 +72,7 @@ pub fn into_lift_err(e: anyhow::Error) -> PyErr {
     if let Some(pending) = Python::with_gil(PyErr::take) {
         return pending;
     }
-    if e.downcast_ref::<ir::error::UnknownCallOtherError>().is_some() {
+    if e.downcast_ref::<strider_ir::error::UnknownCallOtherError>().is_some() {
         return UnknownCallOtherError::new_err(format!("{e:?}"));
     }
     LiftError::new_err(format!("{e:?}"))

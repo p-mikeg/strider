@@ -5,8 +5,8 @@
 //! lives in `opt`.
 
 use cfg::test_api::ResolvedTargets;
-use ir::BuiltFunctionGraph;
-use ir::node::NodeOutputId;
+use strider_ir::BuiltFunctionGraph;
+use strider_ir::node::NodeOutputId;
 use crate::opt::ReadOnlyMemory;
 
 /// Classify a placeholder anchor's producer node into a
@@ -75,7 +75,7 @@ mod tests {
     //! Unit tests for [`classify_anchor`].
     //!
     //! Each test constructs a minimal [`BuiltFunctionGraph`] via
-    //! [`ir::FunctionBuilder::new_raw`], appends nodes directly via
+    //! [`strider_ir::FunctionBuilder::new_raw`], appends nodes directly via
     //! `graph.create_node` to control the producer shape exactly,
     //! and then invokes the classifier on the targeted output.
     //! These tests intentionally bypass the strider IR-lift path so
@@ -87,9 +87,9 @@ mod tests {
 
     use super::*;
     use cfg::test_api::ResolvedTargets;
-    use ir::FunctionBuilder;
-    use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use ir::test_utils::{reg_vn as fake_reg_vn, SENTINEL_LIFT_ADDR};
+    use strider_ir::FunctionBuilder;
+    use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+    use strider_ir::test_utils::{reg_vn as fake_reg_vn, SENTINEL_LIFT_ADDR};
 
     /// Build a minimal `BuiltFunctionGraph` with one tracked
     /// variable and an empty body region terminated by a Return
@@ -452,7 +452,7 @@ mod tests {
         let (graph, anchor) = empty_graph_returning(|fb| {
             let lhs = fb.build_int_const(1u64, NodeOutputType::U64).unwrap();
             let rhs = fb.build_int_const(2u64, NodeOutputType::U64).unwrap();
-            fb.build_int_binary_operation(lhs, rhs, ir::IntBinaryOp::Add, NodeOutputType::U64)
+            fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, NodeOutputType::U64)
                 .expect("build_int_binary_operation")
         });
         // Note: ConstantFold would turn 1+2 into IntConst(3), but

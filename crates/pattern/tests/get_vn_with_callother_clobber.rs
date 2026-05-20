@@ -5,9 +5,9 @@
 
 #![allow(clippy::unwrap_used)]
 
-use ir::BuiltFunctionGraph;
-use ir::Graph;
-use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+use strider_ir::BuiltFunctionGraph;
+use strider_ir::Graph;
+use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 use pattern::{Binding, Bindings, Capture};
 use target::SleighArch;
 

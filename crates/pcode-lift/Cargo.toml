@@ -9,7 +9,7 @@ strider-lift.workspace = true
 # Kept so external consumers depending on pcode-lift's transitive re-exports
 # keep working through the shim.
 rsleigh.workspace = true
-ir.workspace = true
+strider-ir.workspace = true
 target.workspace = true
 anyhow.workspace = true
 

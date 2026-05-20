@@ -80,7 +80,7 @@ pub struct CallingConvention {
     syscall_number_reg_name: Option<&'static str>,
     /// `true` if calls under this convention preserve **all** observable
     /// state, including memory.  When set, [`build_call_with_cc`](
-    /// `ir::FunctionBuilder::build_call_with_cc`) skips emitting a Memory
+    /// `strider_ir::FunctionBuilder::build_call_with_cc`) skips emitting a Memory
     /// output on the resulting Call node and does not advance the region's
     /// memory chain — so passes like `LoadReadOnly` and `StackLoadForward`
     /// can forward loads across the call.

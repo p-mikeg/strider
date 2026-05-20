@@ -10,17 +10,17 @@ pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, RegionLiftHandles, Strider};
 /// graph region by region.
 ///
 /// Holds a reference to the shared [`Strider`] (register / calling-convention
-/// information) and a fresh [`ir::FunctionBuilder`].
+/// information) and a fresh [`strider_ir::FunctionBuilder`].
 pub struct IrStrider<'a, R: rsleigh::MemReader> {
     pub(crate) strider: &'a Strider,
-    pub(crate) builder: ir::FunctionBuilder,
+    pub(crate) builder: strider_ir::FunctionBuilder,
     pub(crate) cfg: &'a cfg::Cfg<R>,
     /// Anchors for the indirect-branch resolver.  Each entry maps a
     /// `BranchIndirect`'s pcode address to the IR `NodeOutputId` whose
     /// producer represents `target_vn`'s value at that BranchIndirect
     /// site.  Populated by `handle_unresolved_indirect_branch` at lift
     /// time, drained by `analyze_cfg` into the [`AnalyzeOutcome`].
-    pub(crate) unresolved_branches: Vec<(cfg::PcodeInsnAddr, ir::Value)>,
+    pub(crate) unresolved_branches: Vec<(cfg::PcodeInsnAddr, strider_ir::Value)>,
     /// Per-target-address CC override map.  Defaults to a process-wide
     /// empty map (`pipeline::EMPTY_PER_ADDRESS_CCS`); set to a real map
     /// at constructor time when the caller has overrides.  Lookup is a
@@ -44,9 +44,9 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
     ) -> Result<Self> {
-        let builder = ir::FunctionBuilder::new(
+        let builder = strider_ir::FunctionBuilder::new(
             all_vns,
-            &ir::FunctionBuilderCC::from(&strider.calling_convention),
+            &strider_ir::FunctionBuilderCC::from(&strider.calling_convention),
         )?;
         Ok(Self {
             strider,

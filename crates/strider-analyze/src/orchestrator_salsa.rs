@@ -57,7 +57,7 @@ use anyhow::{Result, anyhow};
 use crate::orchestrator::RunConfig;
 use crate::strider::Strider;
 use crate::opt::ReadOnlyMemory;
-use ir::BuiltFunctionGraph;
+use strider_ir::BuiltFunctionGraph;
 
 // ── Salsa cache entry ──────────────────────────────────────────────────────
 //
@@ -707,8 +707,8 @@ pub fn run_v2(
 /// `(machine_addr, node_id)`.  Phase 3.9 wrapper-mode: v1's internal
 /// `run` already resolves these, so an `IndirectBranch` remaining at
 /// this layer is a genuinely-unresolved anchor.
-fn collect_unresolved(bfg: &BuiltFunctionGraph) -> Vec<(u64, ir::node::NodeId)> {
-    use ir::node::NodeKind;
+fn collect_unresolved(bfg: &BuiltFunctionGraph) -> Vec<(u64, strider_ir::node::NodeId)> {
+    use strider_ir::node::NodeKind;
     let mut out = Vec::new();
     for nid in bfg.graph.all_node_ids() {
         if matches!(bfg.graph.node_kind(nid), NodeKind::IndirectBranch) {
@@ -744,7 +744,7 @@ fn collect_unresolved(bfg: &BuiltFunctionGraph) -> Vec<(u64, ir::node::NodeId)> 
 ///   loop — same call site, different implementation.
 fn classify_unresolved_external(
     _bfg: &BuiltFunctionGraph,
-    _unresolved: &[(u64, ir::node::NodeId)],
+    _unresolved: &[(u64, strider_ir::node::NodeId)],
 ) -> Vec<(u64, BTreeSet<u64>)> {
     Vec::new()
 }

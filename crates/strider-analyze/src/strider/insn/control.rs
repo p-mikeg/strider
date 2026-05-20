@@ -49,9 +49,9 @@ use super::super::IrStrider;
 /// `create_region`, plus an explicit error when `targets_and_regions`
 /// is empty.
 pub(crate) fn build_switch_if_ladder(
-    builder: &mut ir::FunctionBuilder,
-    idx: ir::Value,
-    targets_and_regions: &[(u64, ir::RegionId)],
+    builder: &mut strider_ir::FunctionBuilder,
+    idx: strider_ir::Value,
+    targets_and_regions: &[(u64, strider_ir::RegionId)],
     caller_region: cfg::RegionId,
 ) -> Result<()> {
     let n = targets_and_regions.len();
@@ -77,7 +77,7 @@ pub(crate) fn build_switch_if_ladder(
     // branch is the final target's region (no extra dispatcher).
     for i in 0..n - 1 {
         let (k_i, region_i) = targets_and_regions[i];
-        let next_else: ir::RegionId = if i + 1 == n - 1 {
+        let next_else: strider_ir::RegionId = if i + 1 == n - 1 {
             // Final iteration's else IS the final target.
             targets_and_regions[n - 1].1
         } else {
@@ -88,7 +88,7 @@ pub(crate) fn build_switch_if_ladder(
         let cond = builder.build_int_cmp_operation(
             idx,
             target_const,
-            ir::IntCmpOp::Equal,
+            strider_ir::IntCmpOp::Equal,
             idx_ty,
         )?;
         builder.build_if(cond, region_i, next_else)?;
@@ -108,7 +108,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     pub(super) fn handle_branch(
         &mut self,
         region_id: cfg::RegionId,
-        region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
+        region_lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
         // Most unconditional p-code `Branch` ops correspond to a `Branch`
         // CFG edge, which we lower into an explicit IR branch.  The cfg
@@ -152,8 +152,8 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         region_id: cfg::RegionId,
         target_vn: &rsleigh::Vn,
         targets: &[u64],
-        target_value: Option<ir::Value>,
-        region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
+        target_value: Option<strider_ir::Value>,
+        region_lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
         if targets.is_empty() {
             bail!("switch terminator at region {region_id:?} has no targets");
@@ -163,7 +163,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // as it constructs the Switch (see
         // `cfg/src/cfg/builder/region_builder.rs:436`), so each
         // target IS the start of a region by lift time.
-        let mut targets_and_regions: Vec<(u64, ir::RegionId)> =
+        let mut targets_and_regions: Vec<(u64, strider_ir::RegionId)> =
             Vec::with_capacity(targets.len());
         for &target in targets {
             let machine_addr = cfg::MachineInsnAddr::new(target);
@@ -189,7 +189,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         &mut self,
         region_id: cfg::RegionId,
         insn: &rsleigh::Insn,
-        region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
+        region_lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
         let cond_raw = self.read_vn(&insn.inputs[1])?;
         // Most archs feed `If` a Bool-typed flag-register or compare result,
@@ -243,9 +243,9 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.  Convert the rich
         // `target::BuiltCallingConvention` to the thin
-        // `ir::FunctionBuilderCC` slice the builder consumes (see V6
+        // `strider_ir::FunctionBuilderCC` slice the builder consumes (see V6
         // back-edge fix, Phase 1 Task 1.3c).
-        let override_cc = self.per_address_ccs.get(&target_addr).map(ir::FunctionBuilderCC::from);
+        let override_cc = self.per_address_ccs.get(&target_addr).map(strider_ir::FunctionBuilderCC::from);
         self.builder
             .build_call_with_cc(call_address, override_cc.as_ref())
             .map(|_| ())?;
@@ -280,7 +280,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // Per-address CC override applies to lift-time tail calls too.
         // Convert from the rich `BuiltCallingConvention` to the thin
         // `FunctionBuilderCC` slice (V6 fix, see `handle_call`).
-        let override_cc = self.per_address_ccs.get(&target).map(ir::FunctionBuilderCC::from);
+        let override_cc = self.per_address_ccs.get(&target).map(strider_ir::FunctionBuilderCC::from);
         self.builder
             .build_call_with_cc(call_address, override_cc.as_ref())
             .map(|_| ())?;
@@ -340,9 +340,9 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use ir::node::NodeKind;
-    use ir::test_utils::SENTINEL_LIFT_ADDR;
-    use ir::FunctionBuilder;
+    use strider_ir::node::NodeKind;
+    use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir::FunctionBuilder;
 
     /// Build a 4-byte register VN to act as the `idx` source.
     fn idx_vn() -> rsleigh::Vn {
@@ -359,14 +359,14 @@ mod tests {
     /// the lifted `idx` value, and the per-target IR region IDs.
     fn make_builder_with_targets(
         n: usize,
-    ) -> (FunctionBuilder, ir::Value, Vec<ir::RegionId>) {
+    ) -> (FunctionBuilder, strider_ir::Value, Vec<strider_ir::RegionId>) {
         let idx = idx_vn();
         let mut b = FunctionBuilder::new_raw(vec![idx], &[], &[], &[], None, 0)
             .expect("FunctionBuilder::new_raw");
         let dispatch = b.create_region().expect("dispatch region");
         b.set_entry_region(dispatch).expect("set_entry_region");
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let target_regions: Vec<ir::RegionId> = (0..n)
+        let target_regions: Vec<strider_ir::RegionId> = (0..n)
             .map(|_| b.create_region().expect("create target region"))
             .collect();
         // Each target region terminates with a Return so `build()`
@@ -390,26 +390,26 @@ mod tests {
     }
 
     /// Count `If` nodes via the post-build preorder walk.
-    fn count_if_nodes(g: &ir::BuiltFunctionGraph) -> usize {
+    fn count_if_nodes(g: &strider_ir::BuiltFunctionGraph) -> usize {
         g.preorder()
             .filter(|nid| matches!(g.graph.node_kind(*nid), NodeKind::If))
             .count()
     }
 
     /// Count `IntCmpOp(Equal)` nodes via the post-build preorder walk.
-    fn count_eq_cmps(g: &ir::BuiltFunctionGraph) -> usize {
+    fn count_eq_cmps(g: &strider_ir::BuiltFunctionGraph) -> usize {
         g.preorder()
             .filter(|nid| {
                 matches!(
                     g.graph.node_kind(*nid),
-                    NodeKind::IntCmpOp(ir::IntCmpOp::Equal),
+                    NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
                 )
             })
             .count()
     }
 
     /// Count `IntConst` nodes whose value equals `want`.
-    fn count_int_consts_eq(g: &ir::BuiltFunctionGraph, want: u64) -> usize {
+    fn count_int_consts_eq(g: &strider_ir::BuiltFunctionGraph, want: u64) -> usize {
         g.preorder()
             .filter(|nid| {
                 matches!(

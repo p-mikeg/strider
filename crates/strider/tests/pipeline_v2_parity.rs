@@ -43,7 +43,7 @@
 mod common;
 
 use common::Arch;
-use ir::node::{NodeKind, NodeOutputKind};
+use strider_ir::node::{NodeKind, NodeOutputKind};
 use std::collections::BTreeMap;
 
 /// Structural shape of one lifted IR graph, register-/address-/value-
@@ -114,7 +114,7 @@ fn kind_bucket(k: &NodeKind) -> String {
     }
 }
 
-fn structural_fingerprint(g: &ir::BuiltFunctionGraph) -> Fingerprint {
+fn structural_fingerprint(g: &strider_ir::BuiltFunctionGraph) -> Fingerprint {
     let mut kind_histogram: BTreeMap<String, usize> = BTreeMap::new();
     let mut reachable_nodes = 0usize;
     let mut regions = 0usize;

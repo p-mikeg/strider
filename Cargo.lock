@@ -116,7 +116,6 @@ name = "cfg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ir",
  "object",
  "opt",
  "petgraph",
@@ -674,17 +673,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ir"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "proptest",
- "rsleigh",
- "strider-ir",
- "target",
-]
-
-[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -863,7 +851,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "criterion",
- "ir",
  "pattern",
  "rsleigh",
  "strider-analyze",
@@ -915,7 +902,6 @@ name = "pattern"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ir",
  "opt",
  "rsleigh",
  "strider-analyze",
@@ -929,8 +915,8 @@ name = "pcode-lift"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ir",
  "rsleigh",
+ "strider-ir",
  "strider-lift",
  "target",
 ]
@@ -1577,7 +1563,6 @@ dependencies = [
  "criterion",
  "expect-test",
  "insta",
- "ir",
  "object",
  "opt",
  "paste",
@@ -1603,7 +1588,6 @@ dependencies = [
  "cranelift-entity",
  "egg",
  "ethnum",
- "ir",
  "object",
  "pcode-lift",
  "proptest",
@@ -1665,7 +1649,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cfg",
- "ir",
  "object",
  "opt",
  "pattern",

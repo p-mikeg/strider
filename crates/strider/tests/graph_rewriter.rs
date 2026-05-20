@@ -18,7 +18,7 @@
 //!    an already-optimised graph doesn't grow / shrink the reachable
 //!    set.
 //! 5. `manual_rewrite_does_not_break_validate` — after every rewrite,
-//!    `ir::validate::validate` passes.
+//!    `strider_ir::validate::validate` passes.
 //! 6. `apply_rule_using_pattern_var_capture` — non-trivial pattern
 //!    flow: `add(var(x), int_const(0)) -> var(x)` end-to-end on a
 //!    Sleigh-lifted function that contains an Add-by-zero shape.
@@ -28,8 +28,8 @@
 use std::collections::HashMap;
 
 use cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
-use ir::node::{NodeKind, NodeOutputType};
-use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
+use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -92,7 +92,7 @@ fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
         .filter(|nid| {
             matches!(
                 g.graph.node_kind(*nid),
-                NodeKind::IntCmpOp(ir::IntCmpOp::Equal),
+                NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
             )
         })
         .count()
@@ -106,7 +106,7 @@ fn add_k_plus_zero(k: u64) -> BuiltFunctionGraph {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
     let lhs = b.build_int_const(k, NodeOutputType::U64).unwrap();
     let rhs = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
     let sum = b
@@ -233,7 +233,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
     let a = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
     let z = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
     let one = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
@@ -299,7 +299,7 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
 
 #[test]
 fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
-    // After every rewrite, `ir::validate::validate` must pass.
+    // After every rewrite, `strider_ir::validate::validate` must pass.
     // Layer A (local typing) + Layer B (use-list) + Layer C
     // (graph-level invariants) — a broken use-list would only
     // surface here, hence pin it explicitly.
@@ -310,7 +310,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
     rewriter.apply_rule(rule)?;
 
-    ir::validate::validate(&g.graph, g.entry)
+    strider_ir::validate::validate(&g.graph, g.entry)
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
     Ok(())
 }

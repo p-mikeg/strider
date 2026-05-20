@@ -49,7 +49,7 @@ impl PyMatch {
     /// the key → borrow the PyGraph → read the inner RwLock → poison-map).
     fn with_graph<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
     where
-        F: FnOnce(pattern::Capture, &ir::BuiltFunctionGraph) -> R,
+        F: FnOnce(pattern::Capture, &strider_ir::BuiltFunctionGraph) -> R,
     {
         let cap = key.resolve()?;
         let g = self.graph.borrow(py);
@@ -228,7 +228,7 @@ impl PyMatch {
     /// bound to `c` as a sorted-deduplicated `list[int]`.  Returns an
     /// empty list when the capture is unbound or when the captured
     /// node is one of the documented exempt kinds (see
-    /// `ir::Graph::asm_fingerprint`).
+    /// `strider_ir::Graph::asm_fingerprint`).
     ///
     /// The fingerprint is the proof-of-correctness aid: when a pattern
     /// query captures a value node, this list names the machine
@@ -253,8 +253,8 @@ impl PyMatch {
 // the same string the constructor accepts, so a `find_all → recover
 // op → reconstruct pattern` round-trip stays consistent.
 
-fn int_binary_op_name(op: ir::IntBinaryOp) -> String {
-    use ir::IntBinaryOp::*;
+fn int_binary_op_name(op: strider_ir::IntBinaryOp) -> String {
+    use strider_ir::IntBinaryOp::*;
     match op {
         Add => "Add",
         Mul => "Mul",
@@ -272,8 +272,8 @@ fn int_binary_op_name(op: ir::IntBinaryOp) -> String {
     .to_string()
 }
 
-fn int_unary_op_name(op: ir::IntUnaryOp) -> String {
-    use ir::IntUnaryOp::*;
+fn int_unary_op_name(op: strider_ir::IntUnaryOp) -> String {
+    use strider_ir::IntUnaryOp::*;
     match op {
         BitNot => "BitNot",
         Neg => "Neg",
@@ -281,8 +281,8 @@ fn int_unary_op_name(op: ir::IntUnaryOp) -> String {
     .to_string()
 }
 
-fn int_cmp_op_name(op: ir::IntCmpOp) -> String {
-    use ir::IntCmpOp::*;
+fn int_cmp_op_name(op: strider_ir::IntCmpOp) -> String {
+    use strider_ir::IntCmpOp::*;
     match op {
         Equal => "Equal",
         Less => "Less",
@@ -294,8 +294,8 @@ fn int_cmp_op_name(op: ir::IntCmpOp) -> String {
     .to_string()
 }
 
-fn bool_binary_op_name(op: ir::BoolBinaryOp) -> String {
-    use ir::BoolBinaryOp::*;
+fn bool_binary_op_name(op: strider_ir::BoolBinaryOp) -> String {
+    use strider_ir::BoolBinaryOp::*;
     match op {
         And => "And",
         Or => "Or",
@@ -304,16 +304,16 @@ fn bool_binary_op_name(op: ir::BoolBinaryOp) -> String {
     .to_string()
 }
 
-fn bool_unary_op_name(op: ir::BoolUnaryOp) -> String {
-    use ir::BoolUnaryOp::*;
+fn bool_unary_op_name(op: strider_ir::BoolUnaryOp) -> String {
+    use strider_ir::BoolUnaryOp::*;
     match op {
         Neg => "Neg",
     }
     .to_string()
 }
 
-fn float_binary_op_name(op: ir::FloatBinaryOp) -> String {
-    use ir::FloatBinaryOp::*;
+fn float_binary_op_name(op: strider_ir::FloatBinaryOp) -> String {
+    use strider_ir::FloatBinaryOp::*;
     match op {
         Add => "Add",
         Mul => "Mul",
@@ -322,8 +322,8 @@ fn float_binary_op_name(op: ir::FloatBinaryOp) -> String {
     .to_string()
 }
 
-fn float_unary_op_name(op: ir::FloatUnaryOp) -> String {
-    use ir::FloatUnaryOp::*;
+fn float_unary_op_name(op: strider_ir::FloatUnaryOp) -> String {
+    use strider_ir::FloatUnaryOp::*;
     match op {
         Neg => "Neg",
         Abs => "Abs",
@@ -335,8 +335,8 @@ fn float_unary_op_name(op: ir::FloatUnaryOp) -> String {
     .to_string()
 }
 
-fn float_cmp_op_name(op: ir::FloatCmpOp) -> String {
-    use ir::FloatCmpOp::*;
+fn float_cmp_op_name(op: strider_ir::FloatCmpOp) -> String {
+    use strider_ir::FloatCmpOp::*;
     match op {
         Equal => "Equal",
         Less => "Less",

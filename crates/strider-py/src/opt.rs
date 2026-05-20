@@ -35,8 +35,8 @@ struct ForwardPass(ErasedPass);
 impl opt::OptimizerRaw for ForwardPass {
     fn optimize_raw(
         &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
+        graph: &mut strider_ir::Graph,
+        entry: strider_ir::node::NodeId,
     ) -> opt::Result<opt::OptimizationResult> {
         self.0.optimize_raw(graph, entry)
     }

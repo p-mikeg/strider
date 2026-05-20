@@ -1,8 +1,8 @@
 //! `Matcher` API surface: `find_all`, `match_at`, `function_arg*`, and the
 //! kind-prefilter early-out.
 
-use ir::IntBinaryOp;
-use ir::node::{NodeId, NodeKind};
+use strider_ir::IntBinaryOp;
+use strider_ir::node::{NodeId, NodeKind};
 use pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -116,7 +116,7 @@ fn function_arg_apis_on_graph_without_args() {
 /// Graph with three distinct Add nodes at different operand values; the
 /// `add(any_int_const, any_int_const)` pattern should find all three and
 /// each `Match` should carry its own captures.
-fn graph_three_adds() -> ir::BuiltFunctionGraph {
+fn graph_three_adds() -> strider_ir::BuiltFunctionGraph {
     let mut t = Tb::empty();
     let a = t.u64(1);
     let b = t.u64(2);
@@ -323,12 +323,12 @@ fn existing_pattern_unchanged_with_default_options() {
 /// Returns a graph whose return value is `Add(ZeroExt(Mul(2,3)), 4)` at U64,
 /// where the Mul is at U32.  Mirrors x64's IMUL register-merge chain in
 /// miniature.
-fn graph_add_zext_mul() -> ir::BuiltFunctionGraph {
-    use ir::node::NodeOutputType;
+fn graph_add_zext_mul() -> strider_ir::BuiltFunctionGraph {
+    use strider_ir::node::NodeOutputType;
     let mut t = Tb::empty();
     let two = t.u32(2);
     let three = t.u32(3);
-    let mul = t.int_bin_at(two, three, ir::IntBinaryOp::Mul, NodeOutputType::U32);
+    let mul = t.int_bin_at(two, three, strider_ir::IntBinaryOp::Mul, NodeOutputType::U32);
     let widened = t.zext_to(mul, NodeOutputType::U64);
     let four = t.u64(4);
     let total = t.add(widened, four);
@@ -371,7 +371,7 @@ fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
 /// match itself benefits from the same flag.
 #[test]
 fn add_mul_pattern_matches_through_chained_casts() {
-    use ir::node::NodeOutputType;
+    use strider_ir::node::NodeOutputType;
     let g = {
         let mut t = Tb::empty();
         let two = t.u64(2);
@@ -398,7 +398,7 @@ fn add_mul_pattern_matches_through_chained_casts() {
 /// `truncate(x)` would silently walk through to `x`.
 #[test]
 fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
-    use ir::node::{NodeKind, NodeOutputType};
+    use strider_ir::node::{NodeKind, NodeOutputType};
     let g = {
         let mut t = Tb::empty();
         // Use a non-const expression so `truncate_if_needed` actually
@@ -425,13 +425,13 @@ fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
 /// the RHS as the cast-bearing operand.
 #[test]
 fn commutative_add_finds_mul_in_either_operand_through_extend() {
-    use ir::node::NodeOutputType;
+    use strider_ir::node::NodeOutputType;
     // `Add(arg, ZeroExt(Mul))` — Mul is on the RHS, behind an Extend.
     let g = {
         let mut t = Tb::empty();
         let two = t.u32(2);
         let three = t.u32(3);
-        let mul = t.int_bin_at(two, three, ir::IntBinaryOp::Mul, NodeOutputType::U32);
+        let mul = t.int_bin_at(two, three, strider_ir::IntBinaryOp::Mul, NodeOutputType::U32);
         let widened = t.zext_to(mul, NodeOutputType::U64);
         let four = t.u64(4);
         // Note the operand order: arg first, mul-via-extend second.
@@ -458,7 +458,7 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
 /// Two-region graph: entry region runs `Call`; tail region runs `Return`.
 /// The Return's ctrl input is the tail region's `ControlState`, whose
 /// own control inputs trace back to the Call.
-fn graph_ret_via_controlstate_after_call() -> ir::BuiltFunctionGraph {
+fn graph_ret_via_controlstate_after_call() -> strider_ir::BuiltFunctionGraph {
     use super::support::graph::SENTINEL_LIFT_ADDR;
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let head = t.fb_mut().create_region().expect("head");
@@ -468,7 +468,7 @@ fn graph_ret_via_controlstate_after_call() -> ir::BuiltFunctionGraph {
 
     let target = t
         .fb_mut()
-        .build_int_const(0xCAFEu64, ir::node::NodeOutputType::U64).unwrap();
+        .build_int_const(0xCAFEu64, strider_ir::node::NodeOutputType::U64).unwrap();
     t.fb_mut().build_call(target).expect("call");
 
     let tail = t.fb_mut().create_region().expect("tail");

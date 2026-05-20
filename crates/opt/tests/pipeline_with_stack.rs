@@ -10,8 +10,8 @@
 
 mod common;
 
-use ir::node::{NodeKind, NodeOutputType};
-use ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
 use opt::*;
 
 use common::sp_vn;
@@ -32,7 +32,7 @@ fn pipeline_with_sp(sp: rsleigh::Vn, stack_offsets: Vec<i64>) -> OptimizerPipeli
 #[test]
 fn store_then_load_at_same_offset_forwarded() -> opt::Result<()> {
     let sp = sp_vn();
-    let mut b = ir::FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = strider_ir::FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -70,7 +70,7 @@ fn store_then_load_at_same_offset_forwarded() -> opt::Result<()> {
 #[test]
 fn stack_store_detect_and_load_forward_converge_in_two_iters() -> opt::Result<()> {
     let sp = sp_vn();
-    let mut b = ir::FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = strider_ir::FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -117,7 +117,7 @@ fn stack_store_detect_and_load_forward_converge_in_two_iters() -> opt::Result<()
 #[test]
 fn full_call_pipeline_collects_args() -> opt::Result<()> {
     let sp = sp_vn();
-    let mut b = ir::FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = strider_ir::FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);

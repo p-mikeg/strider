@@ -13,9 +13,9 @@
 
 mod common;
 
-use ir::node::{NodeKind, NodeOutputType};
-use ir::test_utils::SENTINEL_LIFT_ADDR;
-use ir::IntBinaryOp;
+use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::IntBinaryOp;
 use opt::*;
 
 use common::{make_fn, make_fn_with_var, reg_vn, return_kind, sp_vn};
@@ -27,7 +27,7 @@ use common::{make_fn, make_fn_with_var, reg_vn, return_kind, sp_vn};
 /// `RedundantPhis` collapses the resulting single-input phi nodes.
 #[test]
 fn const_fold_then_dbe_then_redundant_phis() -> opt::Result<()> {
-    let mut b = ir::FunctionBuilder::empty()?;
+    let mut b = strider_ir::FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let dead = b.create_region()?;
     let live = b.create_region()?;
@@ -36,7 +36,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> opt::Result<()> {
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let t = b.build_boolean_const(true);
     let f = b.build_boolean_const(false);
-    let cond = b.build_boolean_operation(t, f, ir::BoolBinaryOp::And)?;
+    let cond = b.build_boolean_operation(t, f, strider_ir::BoolBinaryOp::And)?;
     b.build_if(cond, dead, live)?;
     b.set_region(dead);
     b.build_return(None, &[])?;
@@ -87,7 +87,7 @@ fn known_bits_then_constant_fold() -> opt::Result<()> {
 #[test]
 fn dbe_strips_phi_then_redundant_phis_collapses() -> opt::Result<()> {
     let var = reg_vn(0x1000, 8);
-    let mut b = ir::FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
+    let mut b = strider_ir::FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;
@@ -152,7 +152,7 @@ fn reassoc_then_identity_collapses_to_x() -> opt::Result<()> {
 #[test]
 fn stack_pipeline_full_cooperation() -> opt::Result<()> {
     let sp = sp_vn();
-    let mut b = ir::FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = strider_ir::FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -235,7 +235,7 @@ fn deep_reassoc_chain_via_default_pipeline() -> opt::Result<()> {
 /// The pipeline must reach a state with zero `If` nodes.
 #[test]
 fn nested_const_branches_fully_eliminated() -> opt::Result<()> {
-    let mut b = ir::FunctionBuilder::empty()?;
+    let mut b = strider_ir::FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let outer_t = b.create_region()?;
     let outer_f = b.create_region()?;
@@ -284,7 +284,7 @@ fn nested_const_branches_fully_eliminated() -> opt::Result<()> {
 #[test]
 fn default_pipeline_exercises_all_passes() -> opt::Result<()> {
     let var = reg_vn(0x1000, 1);
-    let mut b = ir::FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
+    let mut b = strider_ir::FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let live = b.create_region()?;
     let dead = b.create_region()?;
@@ -358,7 +358,7 @@ fn pipeline_keeps_zero_sub_x_as_neg() -> opt::Result<()> {
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     let kind = return_kind(&fg)?;
     assert!(
-        matches!(kind, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg)),
+        matches!(kind, NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)),
         "0 - x must collapse to Neg(x) post-pipeline, got {kind:?}"
     );
     Ok(())

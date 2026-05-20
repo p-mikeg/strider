@@ -3,9 +3,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ir::test_utils::SENTINEL_LIFT_ADDR;
-use ir::FunctionBuilder;
-use ir::node::NodeOutputType;
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::FunctionBuilder;
+use strider_ir::node::NodeOutputType;
 use pattern::{Matcher, call_other, int_const, store};
 
 #[test]

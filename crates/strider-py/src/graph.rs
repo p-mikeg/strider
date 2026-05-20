@@ -1,4 +1,4 @@
-//! `PyGraph` — wraps `ir::BuiltFunctionGraph` and exposes dot
+//! `PyGraph` — wraps `strider_ir::BuiltFunctionGraph` and exposes dot
 //! rendering plus (in later tasks) pattern queries and rewrites.
 //!
 //! The IR graph's dot dumper requires a borrowed `Sleigh` for
@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use crate::cfg::PyCfg;
 use crate::dot::dot_style_for;
 
-/// Opaque wrapper over `ir::BuiltFunctionGraph`.
+/// Opaque wrapper over `strider_ir::BuiltFunctionGraph`.
 ///
 /// The graph is held in `Arc<RwLock<...>>` so optimization passes
 /// (added in phase 3) can mutate it without requiring `&mut self` on
@@ -22,15 +22,15 @@ use crate::dot::dot_style_for;
 /// multiple Python references.
 #[pyclass(name = "Graph", module = "strider")]
 pub struct PyGraph {
-    pub(crate) inner: Arc<RwLock<ir::BuiltFunctionGraph>>,
+    pub(crate) inner: Arc<RwLock<strider_ir::BuiltFunctionGraph>>,
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for
     /// dot rendering and ensures destruction order is graph-then-cfg.
     pub(crate) cfg: Py<PyCfg>,
 }
 
-/// Convert a Python-supplied `u32` node id into a validated `ir::NodeId`,
+/// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
 /// returning `StriderError` on lookup failure.
-fn node_id_from_u32(graph: &ir::BuiltFunctionGraph, node_id: u32) -> PyResult<ir::node::NodeId> {
+fn node_id_from_u32(graph: &strider_ir::BuiltFunctionGraph, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
     let nid = graph
         .all_node_ids()
         .find(|n| n.as_u32() == node_id)
@@ -43,7 +43,7 @@ fn node_id_from_u32(graph: &ir::BuiltFunctionGraph, node_id: u32) -> PyResult<ir
 }
 
 impl PyGraph {
-    pub(crate) fn new(graph: ir::BuiltFunctionGraph, cfg: Py<PyCfg>) -> Self {
+    pub(crate) fn new(graph: strider_ir::BuiltFunctionGraph, cfg: Py<PyCfg>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(graph)),
             cfg,
@@ -52,7 +52,7 @@ impl PyGraph {
 
     /// Borrow the inner graph for read.  Returns an `anyhow::Error`
     /// when the lock is poisoned.
-    pub(crate) fn read_inner(&self) -> anyhow::Result<std::sync::RwLockReadGuard<'_, ir::BuiltFunctionGraph>> {
+    pub(crate) fn read_inner(&self) -> anyhow::Result<std::sync::RwLockReadGuard<'_, strider_ir::BuiltFunctionGraph>> {
         self.inner
             .read()
             .map_err(|_| anyhow::anyhow!("Graph lock poisoned"))
@@ -61,7 +61,7 @@ impl PyGraph {
     /// Borrow the inner graph for write.  Returns an `anyhow::Error`
     /// when the lock is poisoned.
     #[allow(dead_code)]
-    pub(crate) fn write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, ir::BuiltFunctionGraph>> {
+    pub(crate) fn write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::BuiltFunctionGraph>> {
         self.inner
             .write()
             .map_err(|_| anyhow::anyhow!("Graph lock poisoned"))
@@ -72,7 +72,7 @@ impl PyGraph {
     /// re-entrant call from inside a `.when()` predicate (which holds the
     /// read lock for the duration of `find_all`) surfaces a typed error
     /// rather than deadlocking the thread.
-    pub(crate) fn try_write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, ir::BuiltFunctionGraph>> {
+    pub(crate) fn try_write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::BuiltFunctionGraph>> {
         use std::sync::TryLockError;
         self.inner.try_write().map_err(|e| match e {
             TryLockError::Poisoned(_) => anyhow::anyhow!("Graph lock poisoned"),
@@ -138,7 +138,7 @@ impl PyGraph {
     /// assert "the lifter recognised a loop here".
     fn count_loop_headers(&self) -> PyResult<usize> {
         use std::collections::HashSet;
-        use ir::node::{NodeId, NodeKind};
+        use strider_ir::node::{NodeId, NodeKind};
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let reachable: HashSet<NodeId> = graph.preorder().collect();
         let mut count = 0usize;
@@ -223,7 +223,7 @@ impl PyGraph {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let nid = node_id_from_u32(&graph, node_id)?;
         match graph.graph.node_kind(nid) {
-            ir::node::NodeKind::IntConstWide(id) => {
+            strider_ir::node::NodeKind::IntConstWide(id) => {
                 Ok(Some(graph.graph.wide_const(*id).to_le_bytes()))
             }
             _ => Ok(None),
@@ -248,15 +248,15 @@ impl PyGraph {
     #[pyo3(signature = (check_asm_fingerprints = false))]
     fn validate(&self, check_asm_fingerprints: bool) -> PyResult<Option<String>> {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let opts = ir::validate::ValidateOptions { check_asm_fingerprints };
-        match ir::validate::validate_with_options(&graph.graph, graph.entry, opts) {
+        let opts = strider_ir::validate::ValidateOptions { check_asm_fingerprints };
+        match strider_ir::validate::validate_with_options(&graph.graph, graph.entry, opts) {
             Ok(()) => Ok(None),
             Err(e) => Ok(Some(format!("{e}"))),
         }
     }
 
     /// Compact the graph arena: drop every node not reachable from
-    /// `entry` via [`ir::walk::walk_graph`].  Mutates in place.
+    /// `entry` via [`strider_ir::walk::walk_graph`].  Mutates in place.
     /// Pre-compaction node ids become invalid across this call.
     fn compact(&self) -> PyResult<()> {
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;

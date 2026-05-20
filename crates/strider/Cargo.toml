@@ -8,7 +8,6 @@ rsleigh.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 target.workspace = true
-ir.workspace = true
 strider-ir.workspace = true
 cfg.workspace = true
 opt.workspace = true
@@ -28,7 +27,7 @@ workspace = true
 [dev-dependencies]
 expect-test.workspace = true
 paste = "1"
-ir = { workspace = true, features = ["test-utils"] }
+strider-ir = { workspace = true, features = ["test-utils"] }
 criterion = { version = "0.7", features = ["html_reports"] }
 insta = { version = "1.40", features = ["yaml"] }
 serde = { version = "1", features = ["derive"] }

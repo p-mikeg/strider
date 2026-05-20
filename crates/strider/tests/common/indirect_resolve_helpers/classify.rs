@@ -23,8 +23,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
 use cfg::{Builder, OptionsBuilder};
-use ir::BuiltFunctionGraph;
-use ir::node::NodeKind;
+use strider_ir::BuiltFunctionGraph;
+use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::{CallingConvention, SleighArch, Strider};
@@ -54,7 +54,7 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// `IntConst → Single` test.  Use
 /// [`build_int_const_target_scenario_via_lr`] instead.
 #[allow(dead_code)]
-pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, ir::Value) {
+pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, strider_ir::Value) {
     unimplemented!(
         "cfg-time always classifies a constant target — use \
          build_int_const_target_scenario_phi_merge for the IntConst arm"
@@ -76,7 +76,7 @@ pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, ir::Valu
 /// exactly the shape IR-level indirect-branch resolver's IntConst arm classifies.
 pub fn build_int_const_target_scenario_via_stack(
     k: u64,
-) -> (BuiltFunctionGraph, ir::Value) {
+) -> (BuiltFunctionGraph, strider_ir::Value) {
     // x86_64 encoding:
     //   68 K K K K           push imm32       (sign-extended; rsp -= 8)
     //   58                   pop rax          (rax = pushed K; rsp += 8)
@@ -106,7 +106,7 @@ pub fn build_int_const_target_scenario_via_stack(
 /// On x86_64 there is no architectural link register, so the
 /// "InitialVar(target_vn) == InitialVar(lr_vn)" arm in the classifier
 /// returns `None` here regardless of caller-supplied lr.
-pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, ir::Value) {
+pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, strider_ir::Value) {
     // Just `jmp rax`.  RAX is a function-entry value with no constant
     // write; the placeholder's input is `InitialVar(rax)`.
     let bytes: Vec<u8> = vec![0xff, 0xe0];
@@ -143,9 +143,9 @@ pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, ir::Va
 /// shape across all `per_pred` lengths.
 pub fn build_value_phi_target_scenario(
     per_pred: &[u64],
-) -> (BuiltFunctionGraph, ir::Value) {
-    use ir::node::NodeOutputType;
-    use ir::{FunctionBuilder, IntBinaryOp};
+) -> (BuiltFunctionGraph, strider_ir::Value) {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::{FunctionBuilder, IntBinaryOp};
     use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use target::Endianness;
 
@@ -179,7 +179,7 @@ pub fn build_value_phi_target_scenario(
     // if(true)/else; each else feeds the next predicate.  This
     // keeps the fixture topology arbitrary-arity friendly.
     b.set_region(entry);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
     if per_pred.len() == 1 {
         b.build_branch(arm_regions[0]).expect("entry branch");
     } else {
@@ -261,9 +261,9 @@ pub fn build_value_phi_target_scenario(
 /// claim that the natural pop-pc shape resolves to LinkRegister
 /// via StackLoadForward without any special-cased heuristic.
 pub fn build_pop_pc_via_stack_load_forward_scenario(
-) -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
-    use ir::node::NodeOutputType;
-    use ir::FunctionBuilder;
+) -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::FunctionBuilder;
     use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use target::Endianness;
 
@@ -282,7 +282,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("set_entry_region");
     b.set_region(region);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
 
     // Compute `sp - 4` — the slot we'll push lr to.
     let sp_v = b.read_variable(&sp).expect("read sp");
@@ -328,7 +328,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     pipeline.add(opt::RedundantPhis);
     pipeline.run(&mut fg.graph, fg.entry).expect("opt pipeline");
 
-    let mut found: Option<ir::Value> = None;
+    let mut found: Option<strider_ir::Value> = None;
     for nid in fg.preorder() {
         if !matches!(fg.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
@@ -360,9 +360,9 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 /// LinkRegister arm doesn't false-positive.
 pub fn build_push_target_pop_pc_scenario(
     k: u64,
-) -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
-    use ir::node::NodeOutputType;
-    use ir::FunctionBuilder;
+) -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::FunctionBuilder;
     use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use target::Endianness;
 
@@ -381,7 +381,7 @@ pub fn build_push_target_pop_pc_scenario(
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("set_entry_region");
     b.set_region(region);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
 
     let sp_v = b.read_variable(&sp).expect("read sp");
     let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
@@ -410,7 +410,7 @@ pub fn build_push_target_pop_pc_scenario(
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry).expect("opt pipeline");
 
-    let mut found: Option<ir::Value> = None;
+    let mut found: Option<strider_ir::Value> = None;
     for nid in fg.preorder() {
         if !matches!(fg.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
@@ -456,9 +456,9 @@ pub fn build_jump_table_known_bits_scenario(
     base: u64,
     stride: u64,
     idx_mask: u64,
-) -> (BuiltFunctionGraph, ir::Value) {
-    use ir::node::NodeOutputType;
-    use ir::{FunctionBuilder, IntBinaryOp};
+) -> (BuiltFunctionGraph, strider_ir::Value) {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::{FunctionBuilder, IntBinaryOp};
     use opt::{ConstantFold, OptimizerPipeline};
 
     // Single tracked variable — a register-shaped VN.  We seed `idx`
@@ -474,7 +474,7 @@ pub fn build_jump_table_known_bits_scenario(
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("set_entry");
     b.set_region(region);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
 
     let raw_idx = b.read_variable(&idx_var).expect("read idx");
     let mask_c = b.build_int_const(idx_mask, NodeOutputType::U32).unwrap();
@@ -525,9 +525,9 @@ pub fn build_jump_table_predecessor_if_scenario(
     base: u64,
     stride: u64,
     bound: u64,
-) -> (BuiltFunctionGraph, ir::Value) {
-    use ir::node::NodeOutputType;
-    use ir::{FunctionBuilder, IntBinaryOp, IntCmpOp};
+) -> (BuiltFunctionGraph, strider_ir::Value) {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp};
     use opt::{ConstantFold, OptimizerPipeline};
 
     let idx_var = rsleigh::Vn {
@@ -544,7 +544,7 @@ pub fn build_jump_table_predecessor_if_scenario(
 
     // Entry: build `idx < bound`, branch to dispatch on true / exit on false.
     b.set_region(entry);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
     let raw_idx_at_entry = b.read_variable(&idx_var).expect("read idx (entry)");
     let bound_c = b.build_int_const(bound, NodeOutputType::U32).unwrap();
     let cond = b
@@ -593,9 +593,9 @@ pub fn build_jump_table_predecessor_if_scenario(
 pub fn build_jump_table_unbounded_scenario(
     base: u64,
     stride: u64,
-) -> (BuiltFunctionGraph, ir::Value) {
-    use ir::node::NodeOutputType;
-    use ir::{FunctionBuilder, IntBinaryOp};
+) -> (BuiltFunctionGraph, strider_ir::Value) {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::{FunctionBuilder, IntBinaryOp};
     use opt::{ConstantFold, OptimizerPipeline};
 
     let idx_var = rsleigh::Vn {
@@ -608,7 +608,7 @@ pub fn build_jump_table_unbounded_scenario(
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("set_entry");
     b.set_region(region);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
 
     let idx = b.read_variable(&idx_var).expect("read idx");
     let stride_c = b.build_int_const(stride, NodeOutputType::U32).unwrap();
@@ -638,9 +638,9 @@ pub fn build_jump_table_unbounded_scenario(
 /// shaped — used to verify the classifier's Load arm falls through
 /// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
 /// a simple global read).
-pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
-    use ir::node::NodeOutputType;
-    use ir::FunctionBuilder;
+pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, strider_ir::Value) {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::FunctionBuilder;
     use opt::{ConstantFold, OptimizerPipeline};
 
     let mut b = FunctionBuilder::empty()
@@ -648,7 +648,7 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("set_entry");
     b.set_region(region);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
 
     let addr = b.build_int_const(0x1234_u64, NodeOutputType::U32).unwrap();
     let loaded = b
@@ -698,9 +698,9 @@ pub fn build_stack_array_dispatch_scenario(
     targets: &[u64],
     base_offset: i64,
     stride: u64,
-) -> (BuiltFunctionGraph, ir::node::NodeOutputId, rsleigh::Vn) {
-    use ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
-    use ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
+) -> (BuiltFunctionGraph, strider_ir::node::NodeOutputId, rsleigh::Vn) {
+    use strider_ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
+    use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
     use opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let n = u64::try_from(targets.len()).expect("targets.len fits in u64");
@@ -727,7 +727,7 @@ pub fn build_stack_array_dispatch_scenario(
     let region = b.create_region().expect("create_region");
     b.set_entry_region(region).expect("set_entry_region");
     b.set_region(region);
-    b.set_lift_addr(Some(ir::test_utils::SENTINEL_LIFT_ADDR));
+    b.set_lift_addr(Some(strider_ir::test_utils::SENTINEL_LIFT_ADDR));
     let sp_val = b.read_variable(&sp).expect("read sp");
 
     // N entry stores: target[i] → *(sp + base_offset + i*stride).
@@ -748,14 +748,14 @@ pub fn build_stack_array_dispatch_scenario(
     // Index = (arg as u32) & MASK, zero-extended to u64.
     let arg_val = b.read_variable(&arg_vn).expect("read arg");
     let arg_u32_node = b.graph_mut().create_node(
-        ir::node::NodeKind::Truncate,
+        strider_ir::node::NodeKind::Truncate,
         [arg_val],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
     // Direct `graph_mut().create_node` bypasses FunctionBuilder's
     // auto-stamping; manually attribute these nodes to the sentinel
     // lift address so Layer-C asm-fingerprint validation accepts them.
-    b.graph_mut().set_asm_fingerprint(arg_u32_node, vec![ir::test_utils::SENTINEL_LIFT_ADDR]);
+    b.graph_mut().set_asm_fingerprint(arg_u32_node, vec![strider_ir::test_utils::SENTINEL_LIFT_ADDR]);
     let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
     let mask_c = b
         .build_int_const(mask, NodeOutputType::U32)
@@ -764,11 +764,11 @@ pub fn build_stack_array_dispatch_scenario(
         .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::U32)
         .expect("idx & mask");
     let idx_u64_node = b.graph_mut().create_node(
-        ir::node::NodeKind::Extend(ExtendOp::ZeroExtend),
+        strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend),
         [masked],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    b.graph_mut().set_asm_fingerprint(idx_u64_node, vec![ir::test_utils::SENTINEL_LIFT_ADDR]);
+    b.graph_mut().set_asm_fingerprint(idx_u64_node, vec![strider_ir::test_utils::SENTINEL_LIFT_ADDR]);
     let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
     let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
     let idx_scaled = b
@@ -834,7 +834,7 @@ pub fn build_stack_array_dispatch_scenario(
 /// `OptionsBuilder`), so the cfg builder defers via
 /// `UnresolvedIndirectBranch` and IR-level indirect-branch resolver sees the cleaned-up
 /// shape.
-pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
+pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
     //   mov x0, x30  →  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
     //   br  x0       →  00 00 1f d6

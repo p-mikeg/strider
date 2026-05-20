@@ -2,8 +2,8 @@
 //! test modules need it; single-use shapes stay inline in the test for
 //! readability.
 
-use ir::node::NodeOutputType;
-use ir::{
+use strider_ir::node::NodeOutputType;
+use strider_ir::{
     BoolBinaryOp, BoolUnaryOp, BuiltFunctionGraph, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
@@ -54,7 +54,7 @@ pub fn int_le_lowered_5_3() -> BuiltFunctionGraph {
     let r = t.u64(3);
     // `5 <= 3`  →  `!(3 < 5)`  →  Less(rhs=3, lhs=5).
     let lt = t.int_cmp(r, l, IntCmpOp::Less);
-    let neg = t.bool_un(lt, ir::BoolUnaryOp::Neg);
+    let neg = t.bool_un(lt, strider_ir::BoolUnaryOp::Neg);
     let cast = t.as_int(neg, NodeOutputType::U64);
     t.ret_val(cast)
 }
@@ -65,7 +65,7 @@ pub fn int_sle_lowered_5_3() -> BuiltFunctionGraph {
     let l = t.u64(5);
     let r = t.u64(3);
     let lt = t.int_cmp(r, l, IntCmpOp::Sless);
-    let neg = t.bool_un(lt, ir::BoolUnaryOp::Neg);
+    let neg = t.bool_un(lt, strider_ir::BoolUnaryOp::Neg);
     let cast = t.as_int(neg, NodeOutputType::U64);
     t.ret_val(cast)
 }
@@ -121,7 +121,7 @@ pub fn store_then_load_ram(addr: u64, data: u64) -> BuiltFunctionGraph {
     let a = t.u64(addr);
     let d = t.u64(data);
     t.store_ram(a, d);
-    let v = t.load_ram(a, ir::node::NodeOutputType::U64);
+    let v = t.load_ram(a, strider_ir::node::NodeOutputType::U64);
     t.ret_val(v)
 }
 
@@ -149,7 +149,7 @@ pub fn if_cmp_then_return(c: u64) -> BuiltFunctionGraph {
     t.enter(entry);
     let c_node = t.u64(c);
     let one = t.u64(1);
-    let cond = t.int_cmp(c_node, one, ir::IntCmpOp::Equal);
+    let cond = t.int_cmp(c_node, one, strider_ir::IntCmpOp::Equal);
     t.build_if(cond, true_r, false_r);
     t.finish()
 }
@@ -187,7 +187,7 @@ pub fn if_cmp_then_return_inverted(c: u64) -> BuiltFunctionGraph {
     t.enter(entry);
     let c_node = t.u64(c);
     let one = t.u64(1);
-    let inner = t.int_cmp(c_node, one, ir::IntCmpOp::Equal);
+    let inner = t.int_cmp(c_node, one, strider_ir::IntCmpOp::Equal);
     let cond = t.bool_un(inner, BoolUnaryOp::Neg);
     t.build_if(cond, true_r, false_r);
     t.finish()

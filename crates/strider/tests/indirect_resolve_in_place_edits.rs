@@ -3,7 +3,7 @@
 //! Drives the in-place editors against full strider lifts (not the
 //! unit-test scaffold in `inplace.rs::tests`).  Asserts that the
 //! placeholder Return is mutated correctly, the use-list stays
-//! consistent, and `ir::validate::validate` keeps passing post-edit.
+//! consistent, and `strider_ir::validate::validate` keeps passing post-edit.
 //!
 //! The fixtures use the existing helper at
 //! `tests/common/indirect_resolve_helpers/orchestrator.rs` (which lifts an
@@ -14,12 +14,12 @@
 mod common;
 use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
-use ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind};
 use strider::indirect_resolve::{apply_link_register, apply_tail_call};
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.
-fn locate_placeholder_return(graph: &ir::BuiltFunctionGraph) -> NodeId {
+fn locate_placeholder_return(graph: &strider_ir::BuiltFunctionGraph) -> NodeId {
     let mut found: Option<NodeId> = None;
     for nid in graph.preorder() {
         if !matches!(graph.graph.node_kind(nid), NodeKind::IndirectBranch) {
@@ -48,8 +48,8 @@ fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
     assert_eq!(inputs_after.len(), 2, "target_value dropped, no ret_vals appended");
     assert_eq!(inputs_after[0], inputs_before[0], "ctrl preserved");
     assert_eq!(inputs_after[1], inputs_before[1], "mem preserved");
-    // ir::validate::validate must still pass on the mutated graph.
-    ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
+    // strider_ir::validate::validate must still pass on the mutated graph.
+    strider_ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
     let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
     assert_eq!(inputs_after.len(), inputs_before.len(), "[ctrl, mem, ret_val_0]");
     assert_eq!(*inputs_after.last().expect("non-empty"), anchor);
-    ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
+    strider_ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
 }
 
 #[test]
@@ -99,8 +99,8 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     }
     assert!(new_seen, "new Return must be reachable from entry");
     assert!(!old_seen, "old placeholder must be detached / unreachable");
-    // ir::validate must still pass.
-    ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
+    // strider_ir::validate must still pass.
+    strider_ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
 }
 
 // ── G1-COMPLETE: cache-exit-handle / NodeId-stability tests ────────────────
@@ -205,7 +205,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     // the exact target value.  Pins the soundness contract — the
     // tail call dispatches to the resolved target, not some folded
     // approximation.
-    use ir::node::NodeKind;
+    use strider_ir::node::NodeKind;
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0xdead_beef_u64;
@@ -243,7 +243,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 /// pattern queries against resolved indirect Calls now work.
 #[test]
 fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
-    use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+    use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
     use pattern::{any, call, IntoPat, Matcher, Capture};
 
     // Strider-lifted x86_64 fixture: `jmp rax`.  After the optimiser
@@ -258,7 +258,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // an existing `InitialVar(rdi)`, but for this unit-level
     // integration test the IR identity of the value doesn't matter —
     // only that the in-place edit threads it through unchanged.
-    let mk_const = |g: &mut ir::BuiltFunctionGraph, v: u128| {
+    let mk_const = |g: &mut strider_ir::BuiltFunctionGraph, v: u128| {
         let nid = g.graph.create_node(
             NodeKind::IntConst(v),
             [],
@@ -267,7 +267,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         // Stamp a sentinel asm-fingerprint so Layer-C validation
         // accepts this synthetic-direct `create_node` node (no
         // `FunctionBuilder::set_lift_addr` plumbing was in scope here).
-        g.graph.set_asm_fingerprint(nid, vec![ir::test_utils::SENTINEL_LIFT_ADDR]);
+        g.graph.set_asm_fingerprint(nid, vec![strider_ir::test_utils::SENTINEL_LIFT_ADDR]);
         g.graph.node_outputs_exact::<1>(nid).expect("out")[0]
     };
     let arg0 = mk_const(&mut graph, 0xa00);
@@ -294,7 +294,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
 
     // Validate the post-edit graph.  `validate` is the contract the
     // optimiser's pipeline relies on between iterations.
-    ir::validate::validate(&graph.graph, graph.entry).expect("validate");
+    strider_ir::validate::validate(&graph.graph, graph.entry).expect("validate");
 
     // The headline assertion: a `pattern::call().arg(0, …)` query
     // matches at least once.  Before the ABI-threading fix this would

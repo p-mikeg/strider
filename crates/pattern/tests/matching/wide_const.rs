@@ -1,14 +1,14 @@
 //! Wide-const pattern matching: `int_const_wide(value)`,
 //! `any_wide_int_const(c)` + `Match::get_wide_bytes`.
 
-use ir::wide_const::WideConstStorage;
+use strider_ir::wide_const::WideConstStorage;
 use pattern::*;
 
 use super::support::Tb;
 
 /// Build a function that returns one wide constant.  Returns the
 /// `BuiltFunctionGraph` ready for the pattern matcher.
-fn fn_returning_u256(limbs: [u64; 4]) -> ir::BuiltFunctionGraph {
+fn fn_returning_u256(limbs: [u64; 4]) -> strider_ir::BuiltFunctionGraph {
     let mut t = Tb::empty();
     let v = t.u256(limbs);
     t.ret_val(v)

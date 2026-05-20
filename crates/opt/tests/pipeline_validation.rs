@@ -1,4 +1,4 @@
-//! `OptimizerPipeline::run` always calls `ir::validate::validate` at the end.
+//! `OptimizerPipeline::run` always calls `strider_ir::validate::validate` at the end.
 //! If any pass leaves an invalid graph, run returns Err.
 
 #![allow(
@@ -10,8 +10,8 @@
 
 mod common;
 
-use ir::node::NodeOutputType;
-use ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::node::NodeOutputType;
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
 use opt::*;
 
 use common::{make_fn, sp_vn};
@@ -25,7 +25,7 @@ fn run_validates_after_default_pipeline() -> opt::Result<()> {
 
 #[test]
 fn run_with_post_passes_validates() -> opt::Result<()> {
-    use ir::FunctionBuilder;
+    use strider_ir::FunctionBuilder;
     let sp = sp_vn();
     let mut fg = {
         let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;

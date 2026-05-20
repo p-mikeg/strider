@@ -16,8 +16,8 @@ use std::sync::Arc;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
 
-use ir::node::{NodeOutputType, NodeOutputKind};
-use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
+use strider_ir::node::{NodeOutputType, NodeOutputKind};
+use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use opt::{
     ConstantFold, OptimizerPipeline, OptimizerRaw, RedundantPhis, StackLoadForward, StackStoreDetect,
 };
@@ -45,7 +45,7 @@ fn binary_path(arch_name: &str, case: &str) -> PathBuf {
         .join(format!("{case}.elf"))
 }
 
-fn analyze_case(c: Case) -> ir::BuiltFunctionGraph {
+fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
     let path = binary_path(c.arch_name, c.case);
     let obj = reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = match c.arch_name {
@@ -159,7 +159,7 @@ mod synthetic {
         b.set_region(region);
         let sp_val = b.read_variable(&sp).unwrap();
         // Step 1: N stores at distinct SP offsets.
-        let mut load_addrs: Vec<ir::Value> = Vec::with_capacity(n);
+        let mut load_addrs: Vec<strider_ir::Value> = Vec::with_capacity(n);
         for i in 0..n {
             let off = -((i as i64 + 1) * 8) as u64;
             let off_const = b.build_int_const(off, NodeOutputType::U64).unwrap();
@@ -292,7 +292,7 @@ mod synthetic {
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
         let arg_u32 = b.graph_mut().create_node(
-            ir::node::NodeKind::Truncate,
+            strider_ir::node::NodeKind::Truncate,
             [arg_val],
             [NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
@@ -302,7 +302,7 @@ mod synthetic {
             .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::U32)
             .unwrap();
         let idx_u64 = b.graph_mut().create_node(
-            ir::node::NodeKind::Extend(ir::ExtendOp::ZeroExtend),
+            strider_ir::node::NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
             [masked],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );

@@ -29,7 +29,7 @@
 
 mod common;
 use common::*;
-use ir::node::NodeKind;
+use strider_ir::node::NodeKind;
 
 // ── Assertion ────────────────────────────────────────────────────────────────
 
@@ -45,7 +45,7 @@ use ir::node::NodeKind;
 /// For hardware-FPU targets the `FloatBinaryOp` assertion is the right check,
 /// but those arches are currently ignored because ConstantFold collapses
 /// the register-merge chain; they are not part of this regression guard.
-fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
+fn f32_arith_graph_is_valid(g: &strider_ir::BuiltFunctionGraph) {
     // The function returns a float; there must be a Return node.
     assert!(count_returns(g) >= 1, "f32_arith must have a Return");
 
@@ -54,9 +54,9 @@ fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
     // that the operations were lowered without a type error.
     // `FloatBinaryOp::Sub` is no longer a primitive (lowered to
     // `Add(_, Neg(_))`), so the Add count subsumes subtraction.
-    let float_ops = count_float_binop(g, ir::FloatBinaryOp::Add)
-        + count_float_binop(g, ir::FloatBinaryOp::Mul)
-        + count_float_binop(g, ir::FloatBinaryOp::Div);
+    let float_ops = count_float_binop(g, strider_ir::FloatBinaryOp::Add)
+        + count_float_binop(g, strider_ir::FloatBinaryOp::Mul)
+        + count_float_binop(g, strider_ir::FloatBinaryOp::Div);
     let calls = count_calls(g);
     assert!(
         float_ops >= 1 || calls >= 1,
@@ -74,7 +74,7 @@ fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
                 let kind = g.graph.output_kind(*input);
                 assert_ne!(
                     kind,
-                    ir::node::NodeOutputKind::OutputType(ir::node::NodeOutputType::U64),
+                    strider_ir::node::NodeOutputKind::OutputType(strider_ir::node::NodeOutputType::U64),
                     "IntBitsToFloat node received a U64 input — \
                      read_reg_vn must truncate the sub-register to its declared \
                      width (U32 for s0 / f12) before passing it to this node"

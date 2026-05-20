@@ -4,7 +4,7 @@
 //! `float_const(bits)`, `any_int_const/any_bool_const/any_float_const`,
 //! boundary values, and IR-level constant deduplication.
 
-use ir::node::NodeOutputType;
+use strider_ir::node::NodeOutputType;
 use pattern::*;
 
 use super::support::{Tb, assertions as a};
@@ -131,7 +131,7 @@ fn float_const_nan_bits_match_separately_from_zero() {
     let mut t = Tb::empty();
     let nan = t.float_bits(f64::NAN.to_bits(), NodeOutputType::F64);
     let zero = t.float_bits(0.0f64.to_bits(), NodeOutputType::F64);
-    let sum = t.fbin(nan, zero, ir::FloatBinaryOp::Add, NodeOutputType::F64);
+    let sum = t.fbin(nan, zero, strider_ir::FloatBinaryOp::Add, NodeOutputType::F64);
     let as_int = t.float_to_int(sum, NodeOutputType::U64);
     let g = t.ret_val(as_int);
 

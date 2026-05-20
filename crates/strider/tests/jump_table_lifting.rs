@@ -24,8 +24,8 @@ use std::collections::HashMap;
 use cfg::{
     Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets,
 };
-use ir::node::NodeKind;
-use ir::BuiltFunctionGraph;
+use strider_ir::node::NodeKind;
+use strider_ir::BuiltFunctionGraph;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::SleighArch;
@@ -94,7 +94,7 @@ fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
         .filter(|nid| {
             matches!(
                 g.graph.node_kind(*nid),
-                NodeKind::IntCmpOp(ir::IntCmpOp::Equal),
+                NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
             )
         })
         .count()

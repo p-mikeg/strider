@@ -20,4 +20,3 @@ strider-ir.workspace = true
 rsleigh.workspace = true
 opt.workspace = true
 target.workspace = true
-ir.workspace = true

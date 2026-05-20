@@ -9,14 +9,14 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use ir::node::{NodeId, NodeKind, NodeOutputType};
-use ir::test_utils::make_empty_fn;
-use ir::IntBinaryOp;
+use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
+use strider_ir::test_utils::make_empty_fn;
+use strider_ir::IntBinaryOp;
 use opt::{ConstantFold, KnownBits, OptimizerRaw};
 
 /// Walks the graph for the first node whose kind matches `pred`.
 fn find<F: Fn(&NodeKind) -> bool>(
-    fg: &ir::BuiltFunctionGraph,
+    fg: &strider_ir::BuiltFunctionGraph,
     pred: F,
 ) -> Option<NodeId> {
     fg.preorder().find(|&n| pred(fg.graph.node_kind(n)))
@@ -172,9 +172,9 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
 /// `validate_with_options(check_asm_fingerprints: true)`.
 #[test]
 fn constant_fold_rule_and_dist_attributes_inner_nodes() {
-    use ir::node::NodeOutputKind;
-    use ir::test_utils::{make_fn_with_var, reg_vn};
-    use ir::validate::{validate_with_options, ValidateOptions};
+    use strider_ir::node::NodeOutputKind;
+    use strider_ir::test_utils::{make_fn_with_var, reg_vn};
+    use strider_ir::validate::{validate_with_options, ValidateOptions};
 
     // Two distinct non-const inputs `a` and `b`, both derived from the
     // tracked variable `v` so they survive ConstantFold (Add(v, K) is

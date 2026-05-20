@@ -10,8 +10,7 @@ strider-analyze = { workspace = true }
 workspace = true
 
 [dev-dependencies]
-ir = { workspace = true, features = ["test-utils"] }
-strider-ir = { workspace = true }
+strider-ir = { workspace = true, features = ["test-utils"] }
 rsleigh = { workspace = true }
 target = { workspace = true }
 opt = { workspace = true }

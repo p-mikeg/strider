@@ -3,7 +3,7 @@
 //! Each test:
 //! 1. Builds a synthetic [`rsleigh::Sleigh`] (x86 — chosen for
 //!    minimal-fuss register-table availability).
-//! 2. Creates a [`ir::FunctionBuilder`] backed by a small set of
+//! 2. Creates a [`strider_ir::FunctionBuilder`] backed by a small set of
 //!    register varnodes.
 //! 3. Constructs a hand-crafted [`rsleigh::Insn`] and asks the
 //!    `ValueLifter` to lift it.
@@ -16,7 +16,7 @@
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-use ir::FunctionBuilder;
+use strider_ir::FunctionBuilder;
 use pcode_lift::ValueLifter;
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
@@ -314,20 +314,20 @@ fn lift_segment_op_recognised() {
 // regression (e.g. accidental round-trip back to a `LessEqual` variant
 // in some code path) fails immediately.
 
-use ir::BoolUnaryOp;
-use ir::IntBinaryOp;
-use ir::IntCmpOp;
-use ir::node::NodeKind;
+use strider_ir::BoolUnaryOp;
+use strider_ir::IntBinaryOp;
+use strider_ir::IntCmpOp;
+use strider_ir::node::NodeKind;
 
 /// Returns true if the graph contains at least one node of `target` kind.
-fn graph_has_kind(builder: &ir::FunctionBuilder, target: NodeKind) -> bool {
+fn graph_has_kind(builder: &strider_ir::FunctionBuilder, target: NodeKind) -> bool {
     let body = builder.body();
     body.graph.all_node_ids()
         .any(|id| body.graph.node_kind(id) == &target)
 }
 
 /// Returns the first node-id in the graph matching `target`, or `None`.
-fn find_first_node(builder: &ir::FunctionBuilder, target: NodeKind) -> Option<ir::node::NodeId> {
+fn find_first_node(builder: &strider_ir::FunctionBuilder, target: NodeKind) -> Option<strider_ir::node::NodeId> {
     let body = builder.body();
     body.graph
         .all_node_ids()
@@ -449,11 +449,11 @@ fn lift_int_sub_lowers_to_add_neg() {
     }
     // Canonical shape: IntBinaryOp::Add over (lhs, IntUnaryOp::Neg(rhs)).
     assert!(
-        graph_has_kind(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add)),
+        graph_has_kind(&builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add)),
         "expected IntBinaryOp::Add in graph (the lowering wrap)"
     );
     assert!(
-        graph_has_kind(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg)),
+        graph_has_kind(&builder, NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)),
         "expected IntUnaryOp::Neg in graph (the negated rhs)"
     );
 }
@@ -470,7 +470,7 @@ fn lift_int_sub_lowers_to_add_neg() {
 fn lift_int_sub_caches_lowered_shape_variable_operands() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let count = |b: &ir::FunctionBuilder, target: NodeKind| -> usize {
+    let count = |b: &strider_ir::FunctionBuilder, target: NodeKind| -> usize {
         b.body()
             .graph
             .all_node_ids()
@@ -487,8 +487,8 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
         };
         assert!(lifter.lift(&insn).unwrap());
     }
-    let adds_after_first = count(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add));
-    let negs_after_first = count(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg));
+    let adds_after_first = count(&builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add));
+    let negs_after_first = count(&builder, NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg));
     assert_eq!(adds_after_first, 1, "first IntSub lift must produce exactly one Add");
     assert_eq!(negs_after_first, 1, "first IntSub lift must produce exactly one Neg");
     {
@@ -502,8 +502,8 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
         };
         assert!(lifter.lift(&insn).unwrap());
     }
-    let adds_after_second = count(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add));
-    let negs_after_second = count(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg));
+    let adds_after_second = count(&builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add));
+    let negs_after_second = count(&builder, NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg));
     assert_eq!(
         adds_after_second, adds_after_first,
         "second IntSub lift with same operands must dedup the Add via the node cache"
@@ -521,11 +521,11 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
 fn lift_int_sub_caches_lowered_shape() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let count_subs_in_graph = |b: &ir::FunctionBuilder| -> usize {
+    let count_subs_in_graph = |b: &strider_ir::FunctionBuilder| -> usize {
         b.body()
             .graph
             .all_node_ids()
-            .filter(|&id| matches!(b.body().graph.node_kind(id), NodeKind::IntBinaryOp(ir::IntBinaryOp::Add)))
+            .filter(|&id| matches!(b.body().graph.node_kind(id), NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add)))
             .count()
     };
     {
@@ -681,7 +681,7 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
     assert!(
         matches!(
             kind,
-            ir::node::NodeKind::InitialVar(_) | ir::node::NodeKind::VarPhi(_)
+            strider_ir::node::NodeKind::InitialVar(_) | strider_ir::node::NodeKind::VarPhi(_)
         ),
         "first read of an unwritten register should produce InitialVar or VarPhi, got {kind:?}"
     );
@@ -693,14 +693,14 @@ fn write_vn_then_read_vn_round_trip() {
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
     // Write 42 to reg(0).
-    let const_42 = lifter.builder.build_int_const(42u64, ir::ValueType::U32).unwrap();
+    let const_42 = lifter.builder.build_int_const(42u64, strider_ir::ValueType::U32).unwrap();
     lifter.write_vn(&reg(0), const_42).expect("write_vn");
     // Read it back.
     let value = lifter.read_vn(&reg(0)).expect("read_vn");
     let producer = lifter.builder.body().graph.get_node_from_output(value);
     let kind = lifter.builder.body().graph.node_kind(producer);
     match kind {
-        ir::node::NodeKind::IntConst(n) => assert_eq!(*n, 42u128),
+        strider_ir::node::NodeKind::IntConst(n) => assert_eq!(*n, 42u128),
         other => panic!("expected IntConst(42), got {other:?}"),
     }
 }
@@ -710,7 +710,7 @@ fn write_vn_to_const_space_errors() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let val = lifter.builder.build_int_const(0u64, ir::ValueType::U32).unwrap();
+    let val = lifter.builder.build_int_const(0u64, strider_ir::ValueType::U32).unwrap();
     let res = lifter.write_vn(&const_vn(0, 4), val);
     assert!(res.is_err(), "writing to CONST space should error");
 }
@@ -779,11 +779,11 @@ fn lift_float_sub_lowers_to_float_add_neg() {
         assert!(lifter.lift(&insn).unwrap());
     }
     assert!(
-        graph_has_kind(&builder, NodeKind::FloatBinaryOp(ir::FloatBinaryOp::Add)),
+        graph_has_kind(&builder, NodeKind::FloatBinaryOp(strider_ir::FloatBinaryOp::Add)),
         "FloatSub lift must produce a FloatAdd (the lowering wrap)"
     );
     assert!(
-        graph_has_kind(&builder, NodeKind::FloatUnaryOp(ir::FloatUnaryOp::Neg)),
+        graph_has_kind(&builder, NodeKind::FloatUnaryOp(strider_ir::FloatUnaryOp::Neg)),
         "FloatSub lift must produce a FloatUnaryOp::Neg (the negated rhs)"
     );
 }
@@ -806,7 +806,7 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
         "FloatNotEqual lift must produce a BoolUnaryOp::Neg (the lowering wrap)"
     );
     assert!(
-        graph_has_kind(&builder, NodeKind::FloatCmpOp(ir::FloatCmpOp::Equal)),
+        graph_has_kind(&builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)),
         "FloatNotEqual lift must produce a FloatCmpOp::Equal (the lowered cmp)"
     );
 }
@@ -827,15 +827,15 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
         assert!(lifter.lift(&insn).unwrap());
     }
     assert!(
-        graph_has_kind(&builder, NodeKind::BoolBinaryOp(ir::BoolBinaryOp::Or)),
+        graph_has_kind(&builder, NodeKind::BoolBinaryOp(strider_ir::BoolBinaryOp::Or)),
         "FloatLessEqual lift must produce a BoolBinaryOp::Or (the disjunction wrap)"
     );
     assert!(
-        graph_has_kind(&builder, NodeKind::FloatCmpOp(ir::FloatCmpOp::Less)),
+        graph_has_kind(&builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Less)),
         "FloatLessEqual lift must produce a FloatCmpOp::Less"
     );
     assert!(
-        graph_has_kind(&builder, NodeKind::FloatCmpOp(ir::FloatCmpOp::Equal)),
+        graph_has_kind(&builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)),
         "FloatLessEqual lift must produce a FloatCmpOp::Equal"
     );
 }
@@ -879,9 +879,9 @@ fn int_sub_lowers_to_add_with_inner_neg() {
     assert!(lifter.lift(&insn).unwrap());
     // Lift-time canonicalisation contract: no `IntBinaryOp::Sub` survives;
     // every Sub is rewritten as Add(_, Neg(_)).
-    use ir::node::NodeKind;
-    let saw_neg = graph_has_kind(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg));
-    let saw_add = graph_has_kind(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add));
+    use strider_ir::node::NodeKind;
+    let saw_neg = graph_has_kind(&builder, NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg));
+    let saw_add = graph_has_kind(&builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add));
     assert!(
         saw_neg && saw_add,
         "IntSub lift must produce both an inner Neg and an outer Add"

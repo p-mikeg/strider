@@ -10,9 +10,9 @@
 
 mod common;
 
-use ir::node::{NodeKind, NodeOutputType};
-use ir::test_utils::SENTINEL_LIFT_ADDR;
-use ir::IntBinaryOp;
+use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::IntBinaryOp;
 use opt::{ConstantFold, DeadBranchElimination, KnownBits, RedundantPhis, default_pipeline};
 
 use common::{make_fn, make_fn_with_var, reg_vn, return_kind};
@@ -38,7 +38,7 @@ fn default_pipeline_folds_int_chain() -> opt::Result<()> {
 /// the VarPhi at the join.
 #[test]
 fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
-    use ir::FunctionBuilder;
+    use strider_ir::FunctionBuilder;
     let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let t = b.create_region()?;
@@ -49,10 +49,10 @@ fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, t, f)?;
     b.set_region(t);
-    let v = b.build_int_const(1u64, ir::ValueType::U64).unwrap();
+    let v = b.build_int_const(1u64, strider_ir::ValueType::U64).unwrap();
     b.build_return(Some(v), &[])?;
     b.set_region(f);
-    let v2 = b.build_int_const(2u64, ir::ValueType::U64).unwrap();
+    let v2 = b.build_int_const(2u64, strider_ir::ValueType::U64).unwrap();
     b.build_return(Some(v2), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;

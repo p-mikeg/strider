@@ -91,7 +91,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     let m_d = a::unique(&g_direct, pat.clone());
     assert!(matches!(
         g_direct.graph.node_kind(m_d.node(n).unwrap()),
-        ir::node::NodeKind::If
+        strider_ir::node::NodeKind::If
     ));
 
     // Inverted fixture: same pattern matches AFTER the canonicalisation
@@ -101,7 +101,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     let m_i = a::unique(&g_inverted, pat);
     assert!(matches!(
         g_inverted.graph.node_kind(m_i.node(n).unwrap()),
-        ir::node::NodeKind::If
+        strider_ir::node::NodeKind::If
     ));
 }
 

@@ -12,12 +12,12 @@
     clippy::unreachable
 )]
 
-use ir::node::{NodeKind, NodeOutputType};
-use ir::{BuiltFunctionGraph, Value};
+use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::{BuiltFunctionGraph, Value};
 use anyhow::anyhow;
 use opt::Result;
 
-pub use ir::test_utils::{make_empty_fn as make_fn, make_fn_with_var, reg_vn, sp_vn_x86 as sp_vn};
+pub use strider_ir::test_utils::{make_empty_fn as make_fn, make_fn_with_var, reg_vn, sp_vn_x86 as sp_vn};
 
 /// The output id that the (unique) Return node receives as its value
 /// argument (input[2]: input[0]=ctrl, input[1]=mem).
@@ -71,4 +71,4 @@ pub fn run_to_fixed_point<P: opt::OptimizerRaw>(
 }
 
 // Re-export commonly used IR types so test files don't need long use-paths.
-pub use ir::node::NodeOutputType as Type;
+pub use strider_ir::node::NodeOutputType as Type;

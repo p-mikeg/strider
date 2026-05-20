@@ -12,8 +12,8 @@
 //!   * value captures (additional `.capture(Capture)`) compose with the
 //!     op-binding capture.
 
-use ir::node::NodeOutputType;
-use ir::{
+use strider_ir::node::NodeOutputType;
+use strider_ir::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
     IntUnaryOp,
 };

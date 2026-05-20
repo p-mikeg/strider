@@ -66,7 +66,7 @@ fn binary_path() -> PathBuf {
 // Builds a fresh `RunConfig` per call so we measure the full cost
 // of one function (ELF load + Sleigh probe + Strider::new + run).
 
-fn run_v1_for_function(fn_name: &str) -> ir::BuiltFunctionGraph {
+fn run_v1_for_function(fn_name: &str) -> strider_ir::BuiltFunctionGraph {
     let path = binary_path();
     let obj = reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = target::SleighArch::x86_64();
@@ -147,7 +147,7 @@ fn build_v2_db(fn_name: &str) -> (StriderDbImpl, String) {
     (db, key)
 }
 
-fn run_v2_for_function(fn_name: &str) -> ir::BuiltFunctionGraph {
+fn run_v2_for_function(fn_name: &str) -> strider_ir::BuiltFunctionGraph {
     let (mut db, key) = build_v2_db(fn_name);
     run_v2(&mut db, &key).expect("v2 run")
 }
@@ -159,7 +159,7 @@ fn run_v2_for_function(fn_name: &str) -> ir::BuiltFunctionGraph {
 // path is dominated by analysis; we include the pattern step so the
 // bench reflects the full user workflow.
 
-fn count_call_matches(bfg: &ir::BuiltFunctionGraph) -> usize {
+fn count_call_matches(bfg: &strider_ir::BuiltFunctionGraph) -> usize {
     use strider_analyze::pattern::{Matcher, call};
     let pat: strider_analyze::pattern::Pat = call().into();
     Matcher::new(bfg).find_all(&pat).len()

@@ -4,14 +4,14 @@
 //! `Store(sp + K)` nodes are lowered to dedicated `StackStore { offset: K }`
 //! (and `StackStorePhi` at join points).
 
-use ir::node::NodeOutputType;
+use strider_ir::node::NodeOutputType;
 use pattern::*;
 
 use super::support::{Tb, assertions as a, shapes, sp_vn};
 
 /// Graph where `*(sp - 4) = 0xAB`, then load it back.  After
 /// `StackStoreDetect` the Store becomes a `StackStore { offset: -4 }`.
-fn stack_store_minus_4(data: u64) -> ir::BuiltFunctionGraph {
+fn stack_store_minus_4(data: u64) -> strider_ir::BuiltFunctionGraph {
     let sp = sp_vn();
     let mut t = Tb::raw(vec![sp], &[], &[sp], &[], None, 0);
     let sp_val = t.read_var(&sp);
@@ -29,7 +29,7 @@ fn stack_store_minus_4(data: u64) -> ir::BuiltFunctionGraph {
 /// then a single store goes through the joined SP.  After StackStoreDetect,
 /// the merged store is a `StackStorePhi` with per-predecessor offsets
 /// `[-4, -8]`.
-fn stack_store_phi_4_and_8() -> ir::BuiltFunctionGraph {
+fn stack_store_phi_4_and_8() -> strider_ir::BuiltFunctionGraph {
     let sp = sp_vn();
     let mut t = Tb::bare(vec![sp], &[], &[sp], &[], None, 0);
     let entry = t.region();

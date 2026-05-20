@@ -3,14 +3,14 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ir::node::NodeOutputType;
-use ir::test_utils::sp_vn_x86 as sp_vn;
-use ir::FunctionBuilder;
+use strider_ir::node::NodeOutputType;
+use strider_ir::test_utils::sp_vn_x86 as sp_vn;
+use strider_ir::FunctionBuilder;
 use opt::{OptimizerRaw, StackStoreDetect};
 
 /// Builds a straight-line `cdecl`-style function: N consecutive `push reg`
 /// sequences (each is `sub esp, 4; store esp`) followed by `return`.
-fn build_pushes(n: usize) -> ir::BuiltFunctionGraph {
+fn build_pushes(n: usize) -> strider_ir::BuiltFunctionGraph {
     let sp = sp_vn();
     let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0).unwrap();
     let region = b.create_region().unwrap();

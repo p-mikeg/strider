@@ -4,7 +4,7 @@
 //! call return outputs, `.capture_node`, `ret().ret_val()` / `.preceded_by()`,
 //! `if_node().cond().true_branch().false_branch()`, `.at(addr)` convenience.
 
-use ir::IntCmpOp;
+use strider_ir::IntCmpOp;
 use pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
@@ -87,12 +87,12 @@ fn call_captures_node() {
     let node = m.node(n).expect("node capture");
     assert!(matches!(
         g.graph.node_kind(node),
-        ir::node::NodeKind::Call
+        strider_ir::node::NodeKind::Call
     ));
 }
 
 /// Call with one argument register pre-loaded with a constant value.
-fn graph_call_with_single_arg() -> ir::BuiltFunctionGraph {
+fn graph_call_with_single_arg() -> strider_ir::BuiltFunctionGraph {
     let arg = reg_vn(0, 8);
     let mut t = Tb::raw(vec![arg], &[arg], &[], &[], None, 0);
     let c = t.u64(42);
@@ -111,7 +111,7 @@ fn call_arg_by_index() {
 }
 
 /// Two argument registers, pre-loaded with 11 and 22 respectively.
-fn graph_call_with_two_args() -> ir::BuiltFunctionGraph {
+fn graph_call_with_two_args() -> strider_ir::BuiltFunctionGraph {
     let a0 = reg_vn(0, 8);
     let a1 = reg_vn(8, 8);
     let mut t = Tb::raw(vec![a0, a1], &[a0, a1], &[], &[], None, 0);
@@ -133,7 +133,7 @@ fn call_multiple_args() {
 
 /// Call that produces a return value in `ret_reg`; the returned value is
 /// piped into the function's own Return.
-fn graph_call_then_return_ret_reg() -> (ir::BuiltFunctionGraph, rsleigh::Vn) {
+fn graph_call_then_return_ret_reg() -> (strider_ir::BuiltFunctionGraph, rsleigh::Vn) {
     let ret = reg_vn(0, 8);
     let mut t = Tb::raw(vec![ret], &[], &[], &[ret], None, 0);
     t.call_at(0xCAFE);
@@ -148,7 +148,7 @@ fn call_ret_output_capture() {
     let m = a::unique(&g, call().at(0xCAFE).ret_output(0, var(v)));
     let out = m.output(v).expect("ret_output capture");
     // The captured output is a Call output slot.
-    assert!(matches!(g.graph.kind_of_output(out), ir::node::NodeKind::Call));
+    assert!(matches!(g.graph.kind_of_output(out), strider_ir::node::NodeKind::Call));
 }
 
 // ── Return ────────────────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ fn ret_captures_node() {
     let n = Capture::new();
     let m = a::unique(&g, ret().capture(n));
     let node = m.node(n).expect("ret node capture");
-    assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::Return));
+    assert!(matches!(g.graph.node_kind(node), strider_ir::node::NodeKind::Return));
 }
 
 /// A control-flow `Capture` (bound to a Return node, which has
@@ -246,11 +246,11 @@ fn if_node_captures() {
     let n = Capture::new();
     let m = a::unique(&g, if_node().capture(n));
     let node = m.node(n).expect("if node capture");
-    assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::If));
+    assert!(matches!(g.graph.node_kind(node), strider_ir::node::NodeKind::If));
 }
 
 /// Graph: if (a < b) { return 10 } else { call(0x9999); return }
-fn graph_if_with_call_in_false_branch() -> ir::BuiltFunctionGraph {
+fn graph_if_with_call_in_false_branch() -> strider_ir::BuiltFunctionGraph {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
     let true_r = t.region();
@@ -307,10 +307,10 @@ fn if_node_branch_walks_through_control_state_when_flag_set() {
 
 /// `return(call_other(user_op_id, [IntConst(7)]))` — reused across CallOther
 /// tests.
-fn graph_call_other(user_op_id: u64) -> ir::BuiltFunctionGraph {
+fn graph_call_other(user_op_id: u64) -> strider_ir::BuiltFunctionGraph {
     let mut t = Tb::empty();
     let arg = t.u64(7);
-    t.call_other("cpuid", user_op_id, &[arg], Some(ir::node::NodeOutputType::U64), &[], &[]);
+    t.call_other("cpuid", user_op_id, &[arg], Some(strider_ir::node::NodeOutputType::U64), &[], &[]);
     t.ret_nothing()
 }
 
@@ -335,7 +335,7 @@ fn call_other_captures_node() {
     let node = m.node(n).expect("node capture");
     assert!(matches!(
         g.graph.node_kind(node),
-        ir::node::NodeKind::CallOther { .. }
+        strider_ir::node::NodeKind::CallOther { .. }
     ));
 }
 
@@ -353,9 +353,9 @@ fn call_other_captures_node() {
 /// the `Tb` test-builder doesn't expose `MemPhi` / `ValuePhi` synthesis
 /// (those phi kinds are produced by the lifter / `StackLoadForward`, not
 /// by the user-facing builder API).
-fn graph_with_all_three_phi_kinds() -> ir::BuiltFunctionGraph {
-    use ir::Graph;
-    use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+fn graph_with_all_three_phi_kinds() -> strider_ir::BuiltFunctionGraph {
+    use strider_ir::Graph;
+    use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
     let mut g = Graph::new();
 
@@ -377,7 +377,7 @@ fn graph_with_all_three_phi_kinds() -> ir::BuiltFunctionGraph {
     let cs_phi_tok = g.node_outputs(cs).into_iter().nth(1).unwrap();
 
     // Tracked-variable VarPhi.
-    let some_vn = ir::test_utils::reg_vn(0x40, 8);
+    let some_vn = strider_ir::test_utils::reg_vn(0x40, 8);
     let init_var = g.create_node(
         NodeKind::InitialVar(some_vn),
         [],
@@ -432,7 +432,7 @@ fn graph_with_all_three_phi_kinds() -> ir::BuiltFunctionGraph {
         [],
     );
 
-    ir::BuiltFunctionGraph::from_graph_and_entry_for_rewrite(g, entry)
+    strider_ir::BuiltFunctionGraph::from_graph_and_entry_for_rewrite(g, entry)
 }
 
 #[test]
@@ -443,7 +443,7 @@ fn phi_ctor_matches_only_var_phi() {
     let m = a::unique(&g, phi().capture(n));
     let node = m.node(n).expect("phi node capture");
     assert!(
-        matches!(g.graph.node_kind(node), ir::node::NodeKind::VarPhi(_)),
+        matches!(g.graph.node_kind(node), strider_ir::node::NodeKind::VarPhi(_)),
         "phi() must match VarPhi, got {:?}",
         g.graph.node_kind(node)
     );
@@ -457,7 +457,7 @@ fn mem_phi_ctor_matches_only_mem_phi() {
     let m = a::unique(&g, mem_phi().capture(n));
     let node = m.node(n).expect("mem_phi node capture");
     assert!(
-        matches!(g.graph.node_kind(node), ir::node::NodeKind::MemPhi),
+        matches!(g.graph.node_kind(node), strider_ir::node::NodeKind::MemPhi),
         "mem_phi() must match MemPhi, got {:?}",
         g.graph.node_kind(node)
     );
@@ -471,7 +471,7 @@ fn value_phi_ctor_matches_only_value_phi() {
     let m = a::unique(&g, value_phi().capture(n));
     let node = m.node(n).expect("value_phi node capture");
     assert!(
-        matches!(g.graph.node_kind(node), ir::node::NodeKind::ValuePhi),
+        matches!(g.graph.node_kind(node), strider_ir::node::NodeKind::ValuePhi),
         "value_phi() must match ValuePhi, got {:?}",
         g.graph.node_kind(node)
     );

@@ -9,10 +9,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
-use ir::node::{NodeKind, NodeOutputType};
-use ir::test_utils::SENTINEL_LIFT_ADDR;
-use ir::wide_const::WideConstStorage;
-use ir::FunctionBuilder;
+use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::wide_const::WideConstStorage;
+use strider_ir::FunctionBuilder;
 
 #[test]
 fn default_pipeline_preserves_wide_consts() {
@@ -62,7 +62,7 @@ fn default_pipeline_preserves_wide_consts() {
     assert_eq!(bfg.graph.wide_const(*id), &v);
 
     // Validator stays clean.
-    ir::validate::validate(&bfg.graph, bfg.entry).expect("validate after pipeline");
+    strider_ir::validate::validate(&bfg.graph, bfg.entry).expect("validate after pipeline");
 }
 
 #[test]
@@ -91,5 +91,5 @@ fn known_bits_skips_wide_outputs_without_taint() {
     opt::default_pipeline()
         .run_on_built(&mut bfg)
         .expect("default pipeline tolerates orphan wide consts");
-    ir::validate::validate(&bfg.graph, bfg.entry).expect("validate after pipeline");
+    strider_ir::validate::validate(&bfg.graph, bfg.entry).expect("validate after pipeline");
 }

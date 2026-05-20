@@ -8,8 +8,8 @@
 //! on `FunctionBuilder`, tests use those helpers to create the target nodes
 //! and then match against them with the corresponding pattern constructor.
 
-use ir::ExtendOp;
-use ir::node::NodeOutputType;
+use strider_ir::ExtendOp;
+use strider_ir::node::NodeOutputType;
 use pattern::*;
 
 use super::support::{Tb, assertions as a};
@@ -20,13 +20,13 @@ use super::support::{Tb, assertions as a};
 // exercise the cast nodes themselves each helper below threads the value
 // through an `Add` of two constants so the operand is non-const.
 
-fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> ir::node::NodeOutputId {
+fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::NodeOutputId {
     let a_ = t.u32(a_v);
     let b_ = t.u32(b_v);
-    t.int_bin_at(a_, b_, ir::IntBinaryOp::Add, NodeOutputType::U32)
+    t.int_bin_at(a_, b_, strider_ir::IntBinaryOp::Add, NodeOutputType::U32)
 }
 
-fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> ir::node::NodeOutputId {
+fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::NodeOutputId {
     let a_ = t.u64(a_v);
     let b_ = t.u64(b_v);
     t.add(a_, b_)
@@ -180,7 +180,7 @@ fn float_bits_to_int_matches() {
     let mut t = Tb::empty();
     let fa = t.f64(1.0);
     let fb = t.f64(2.0);
-    let s = t.fbin(fa, fb, ir::FloatBinaryOp::Add, NodeOutputType::F64);
+    let s = t.fbin(fa, fb, strider_ir::FloatBinaryOp::Add, NodeOutputType::F64);
     let i = t.float_bits_to_int(s, NodeOutputType::U64);
     let g = t.ret_val(i);
     a::matches(&g, float_bits_to_int(any()), 1);

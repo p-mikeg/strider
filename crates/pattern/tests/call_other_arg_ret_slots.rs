@@ -5,14 +5,14 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ir::test_utils::SENTINEL_LIFT_ADDR;
-use ir::FunctionBuilder;
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::FunctionBuilder;
 use pattern::{any, Matcher, call_other, Capture, IntoPat};
 
 /// Build a graph with a single `cpuid` CallOther whose pcode-explicit
 /// inputs/outputs are bound through real Vns so we can pattern-match
 /// each slot.  Returns the FunctionBuilder ready for `.build()`.
-fn build_cpuid_graph() -> ir::FunctionBuilder {
+fn build_cpuid_graph() -> strider_ir::FunctionBuilder {
     let mut b = FunctionBuilder::empty().expect("builder");
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("entry");

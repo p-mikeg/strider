@@ -15,7 +15,7 @@ use object::{Object, ObjectSymbol};
 use std::sync::Arc;
 
 fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
-    -> anyhow::Result<ir::BuiltFunctionGraph>
+    -> anyhow::Result<strider_ir::BuiltFunctionGraph>
 {
     let path = common::binary_path(arch, case);
     if !path.exists() {
@@ -73,7 +73,7 @@ fn orchestrator_resolves_switch_jump_table_x86() {
     // The IR must have NO IndirectBranch placeholder remaining.
     let placeholders = g
         .preorder()
-        .filter(|nid| matches!(g.graph.node_kind(*nid), ir::node::NodeKind::IndirectBranch))
+        .filter(|nid| matches!(g.graph.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
         .count();
     assert_eq!(placeholders, 0, "switch jump table must lower to switch edges");
 }

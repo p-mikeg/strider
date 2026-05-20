@@ -1,7 +1,7 @@
 //! Width-aware int_const matching: int_const(-50) matches an IntConst at any
 //! declared width without explicit per-arch pinning.
 
-use ir::node::NodeOutputType;
+use strider_ir::node::NodeOutputType;
 use pattern::{Matcher, int_const};
 
 use super::support::Tb;

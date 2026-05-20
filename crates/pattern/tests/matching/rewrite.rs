@@ -7,8 +7,8 @@
 //! the `Ok(bool)` return value — a rule that "fires" but leaves consumers
 //! pointing at the old output is a real bug that a bool-only check misses.
 
-use ir::IntBinaryOp;
-use ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::IntBinaryOp;
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use pattern::*;
 
 use super::support::{Tb, assertions as a};
@@ -17,7 +17,7 @@ use super::support::{Tb, assertions as a};
 
 /// `return(add(x, 0))` where `x` is `add(7, 1)` so the outer Add has a
 /// non-const LHS — useful for testing `add(var(x), int_const(0))` rewrites.
-fn graph_add_x_zero() -> ir::BuiltFunctionGraph {
+fn graph_add_x_zero() -> strider_ir::BuiltFunctionGraph {
     let mut t = Tb::empty();
     let c7 = t.u64(7);
     let c1 = t.u64(1);
@@ -28,7 +28,7 @@ fn graph_add_x_zero() -> ir::BuiltFunctionGraph {
 }
 
 /// `return(sub(x, x))` — prime candidate for `sub(var(x), var(x)) → 0`.
-fn graph_sub_x_x() -> ir::BuiltFunctionGraph {
+fn graph_sub_x_x() -> strider_ir::BuiltFunctionGraph {
     let mut t = Tb::empty();
     let c7 = t.u64(7);
     let c1 = t.u64(1);
@@ -39,7 +39,7 @@ fn graph_sub_x_x() -> ir::BuiltFunctionGraph {
 
 /// `return(add(IntConst(a), IntConst(b)))` — prime candidate for
 /// constant folding.
-fn graph_add_const_const(a: u64, b: u64) -> ir::BuiltFunctionGraph {
+fn graph_add_const_const(a: u64, b: u64) -> strider_ir::BuiltFunctionGraph {
     let mut t = Tb::empty();
     let ca = t.u64(a);
     let cb = t.u64(b);
@@ -50,7 +50,7 @@ fn graph_add_const_const(a: u64, b: u64) -> ir::BuiltFunctionGraph {
 // ── Assertion helpers local to this module ──────────────────────────────────
 
 #[track_caller]
-fn find_add(g: &ir::BuiltFunctionGraph) -> NodeId {
+fn find_add(g: &strider_ir::BuiltFunctionGraph) -> NodeId {
     a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
@@ -60,13 +60,13 @@ fn find_add(g: &ir::BuiltFunctionGraph) -> NodeId {
 /// graph has exactly one Add (the outer one wrapping `Neg(x)`), so finding
 /// it via `IntBinaryOp::Add` is unambiguous in the test fixtures here.
 #[track_caller]
-fn find_sub(g: &ir::BuiltFunctionGraph) -> NodeId {
+fn find_sub(g: &strider_ir::BuiltFunctionGraph) -> NodeId {
     a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 /// Returns the `NodeKind` of the node producing the Return's data input.
 /// That value lets tests check "after rewrite, what does Return consume?".
-fn return_data_input_kind(g: &ir::BuiltFunctionGraph) -> NodeKind {
+fn return_data_input_kind(g: &strider_ir::BuiltFunctionGraph) -> NodeKind {
     let ret = a::find_node(g, |k| matches!(k, NodeKind::Return));
     let inputs: Vec<NodeOutputId> = g.graph.node_inputs(ret).into_iter().collect();
     // Return inputs: [ctrl(0), mem(1), retval0(2), ...].  We want slot 2.
@@ -163,7 +163,7 @@ fn int_const_with_folds_two_captured_ints() {
 fn int_const_with_exposes_ty_and_in_ty() {
     // Rule: `Truncate(IntConst(v)) → int_const(v, ty)` — demonstrates the
     // `ty` magic binding in `int_const_with!`.
-    use ir::node::NodeOutputType;
+    use strider_ir::node::NodeOutputType;
 
     // non-const U64 → Truncate to U8.
     let mut t = Tb::empty();
@@ -314,7 +314,7 @@ fn rhs_closure_error_propagates_through_anyhow() {
 /// a silent rewire-of-the-wrong-slot.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
-    use ir::{FunctionBuilder, node::NodeOutputType, test_utils::SENTINEL_LIFT_ADDR};
+    use strider_ir::{FunctionBuilder, node::NodeOutputType, test_utils::SENTINEL_LIFT_ADDR};
     let mut fb = FunctionBuilder::empty().unwrap();
     let region = fb.create_region().unwrap();
     fb.set_entry_region(region).unwrap();

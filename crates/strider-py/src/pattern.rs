@@ -349,7 +349,7 @@ pub struct PyPartialMatch {
     /// instead of dereferencing a dangling pointer.  PyPartialMatch is
     /// `unsendable`, so no `Arc` is needed — the proxy never crosses
     /// threads.
-    graph_ptr: Mutex<Option<*const ir::Graph>>,
+    graph_ptr: Mutex<Option<*const strider_ir::Graph>>,
 }
 
 // SAFETY: We never share PyPartialMatch across threads (`unsendable`).
@@ -359,7 +359,7 @@ pub struct PyPartialMatch {
 // that re-enters Rust.
 
 impl PyPartialMatch {
-    fn new(bindings: pattern::Bindings, graph: &ir::Graph) -> Self {
+    fn new(bindings: pattern::Bindings, graph: &strider_ir::Graph) -> Self {
         Self {
             bindings,
             graph_ptr: Mutex::new(Some(graph as *const _)),
@@ -383,7 +383,7 @@ impl PyPartialMatch {
     /// the proxy has been invalidated.
     ///
     /// Recovers from `Mutex` poisoning via `into_inner()` — the inner is
-    /// `Option<*const ir::Graph>` (a single Copy slot), and only ever
+    /// `Option<*const strider_ir::Graph>` (a single Copy slot), and only ever
     /// written by `clear_graph_ptr` (atomic `*g = None`) or the matcher
     /// pointer-set (atomic `*g = Some(p)`).  Neither can panic after
     /// partial mutation, so the slot is consistent on entry.  Matches
@@ -394,7 +394,7 @@ impl PyPartialMatch {
     /// re-lock the same `Mutex` and deadlock (`std::sync::Mutex` is
     /// non-reentrant).  Current callers (`bindings.get_uint`, etc.) are
     /// pure-Rust accessors so the constraint is honoured trivially.
-    fn with_graph<R>(&self, f: impl FnOnce(&ir::Graph) -> R) -> Option<R> {
+    fn with_graph<R>(&self, f: impl FnOnce(&strider_ir::Graph) -> R) -> Option<R> {
         let guard = self.graph_ptr.lock().unwrap_or_else(|p| p.into_inner());
         let ptr = (*guard)?;
         // SAFETY: `ptr` was set to a valid `&BuiltFunctionGraph` by the
@@ -818,7 +818,7 @@ pub fn value_phi() -> PyValuePhiPat { PyValuePhiPat::new() }
 // LOC at the call site versus a chunky proc-macro change.
 #[pyclass(name = "FunctionArgPat", module = "strider.pattern")]
 pub struct PyFunctionArgPat {
-    source: std::cell::RefCell<Option<ir::node::FunctionArgSource>>,
+    source: std::cell::RefCell<Option<strider_ir::node::FunctionArgSource>>,
     index: std::cell::RefCell<Option<u32>>,
 }
 
@@ -843,10 +843,10 @@ impl PyFunctionArgPat {
         slf.borrow(py).index.replace(Some(i)); slf
     }
     fn source_register(slf: Py<Self>, py: Python<'_>, vn: crate::sleigh::PyVn) -> Py<Self> {
-        slf.borrow(py).source.replace(Some(ir::node::FunctionArgSource::Register(vn.inner))); slf
+        slf.borrow(py).source.replace(Some(strider_ir::node::FunctionArgSource::Register(vn.inner))); slf
     }
     fn source_stack(slf: Py<Self>, py: Python<'_>, space: crate::sleigh::PyVnSpace, offset: i64) -> Py<Self> {
-        slf.borrow(py).source.replace(Some(ir::node::FunctionArgSource::Stack {
+        slf.borrow(py).source.replace(Some(strider_ir::node::FunctionArgSource::Stack {
             space: space.inner,
             offset,
         }));
@@ -870,7 +870,7 @@ pub fn function_arg_any() -> PyFunctionArgPat {
 #[pyfunction]
 pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
     let b = PyFunctionArgPat::new();
-    b.source.replace(Some(ir::node::FunctionArgSource::Register(vn.inner)));
+    b.source.replace(Some(strider_ir::node::FunctionArgSource::Register(vn.inner)));
     b
 }
 
@@ -878,7 +878,7 @@ pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
 #[pyfunction]
 pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i64) -> PyFunctionArgPat {
     let b = PyFunctionArgPat::new();
-    b.source.replace(Some(ir::node::FunctionArgSource::Stack { space: space.inner, offset }));
+    b.source.replace(Some(strider_ir::node::FunctionArgSource::Stack { space: space.inner, offset }));
     b
 }
 
@@ -948,8 +948,8 @@ pub fn int_cmp(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     Ok(PyPat::from_pat(pattern::int_cmp(cmp_op, lp, rp)))
 }
 
-fn parse_int_cmp_op(name: &str) -> PyResult<ir::IntCmpOp> {
-    use ir::IntCmpOp::*;
+fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
+    use strider_ir::IntCmpOp::*;
     // `LessEqual` / `SlessEqual` are deliberately absent: the IR has no
     // such primitives.  Python callers wanting `a <= b` must use
     // `pattern.int_le(a, b)` (or `pattern.int_sle` for signed), which
@@ -1123,8 +1123,8 @@ conv_op!(sign_extend);
 #[pyfunction]
 pub fn extend(op: &str, operand: PatLike<'_>) -> PyResult<PyPat> {
     let extend_op = match op {
-        "zero" | "zero_extend" | "ZeroExtend" => ir::ExtendOp::ZeroExtend,
-        "sign" | "sign_extend" | "SignExtend" => ir::ExtendOp::SignExtend,
+        "zero" | "zero_extend" | "ZeroExtend" => strider_ir::ExtendOp::ZeroExtend,
+        "sign" | "sign_extend" | "SignExtend" => strider_ir::ExtendOp::SignExtend,
         other => {
             return Err(into_pattern_err(anyhow::anyhow!(
                 "unknown extend op {other:?} (expected 'zero' or 'sign')"
@@ -1606,12 +1606,12 @@ pub fn if_(cond: Option<PatLike<'_>>) -> PyResult<PyIfPat> {
 // `int_binary("Add", x, y)`, `bool_binary("And", x, y)`, `float_binary("Sub", x, y)`.
 // The op is a string that maps to the IR enum variant name.
 
-fn parse_int_binary_op(name: &str) -> PyResult<ir::IntBinaryOp> {
+fn parse_int_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
     // `Sub` is deliberately absent: `IntBinaryOp::Sub` is not a primitive
     // in this IR.  Python callers wanting `a - b` should use
     // `pattern.sub(a, b)` (which constructs the lowered
     // `Add(a, IntUnaryOp::Neg(b))` shape directly).
-    use ir::IntBinaryOp::*;
+    use strider_ir::IntBinaryOp::*;
     Ok(match name {
         "Add" | "add" => Add,
         "Mul" | "mul" => Mul,
@@ -1633,8 +1633,8 @@ fn parse_int_binary_op(name: &str) -> PyResult<ir::IntBinaryOp> {
     })
 }
 
-fn parse_bool_binary_op(name: &str) -> PyResult<ir::BoolBinaryOp> {
-    use ir::BoolBinaryOp::*;
+fn parse_bool_binary_op(name: &str) -> PyResult<strider_ir::BoolBinaryOp> {
+    use strider_ir::BoolBinaryOp::*;
     Ok(match name {
         "And" | "and" => And,
         "Or" | "or" => Or,
@@ -1647,11 +1647,11 @@ fn parse_bool_binary_op(name: &str) -> PyResult<ir::BoolBinaryOp> {
     })
 }
 
-fn parse_float_binary_op(name: &str) -> PyResult<ir::FloatBinaryOp> {
+fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
     // `Sub` is deliberately absent: `FloatBinaryOp::Sub` is not a primitive.
     // Python callers wanting `a - b` should use `pattern.float_sub(a, b)`,
     // which constructs the lowered `FloatAdd(a, FloatUnaryOp::Neg(b))` shape.
-    use ir::FloatBinaryOp::*;
+    use strider_ir::FloatBinaryOp::*;
     Ok(match name {
         "Add" | "add" => Add,
         "Mul" | "mul" => Mul,
@@ -1680,7 +1680,7 @@ fn parse_float_binary_op(name: &str) -> PyResult<ir::FloatBinaryOp> {
 // macro that's not worth the LOC right now.
 #[pyclass(name = "IntBinaryPat", module = "strider.pattern")]
 pub struct PyIntBinaryPat {
-    op: ir::IntBinaryOp,
+    op: strider_ir::IntBinaryOp,
     lhs: pattern::Pat,
     rhs: pattern::Pat,
     ordered: bool,
@@ -1707,7 +1707,7 @@ impl PyIntBinaryPat {
 /// Typed builder for a boolean binary-op pattern.
 #[pyclass(name = "BoolBinaryPat", module = "strider.pattern")]
 pub struct PyBoolBinaryPat {
-    op: ir::BoolBinaryOp,
+    op: strider_ir::BoolBinaryOp,
     lhs: pattern::Pat,
     rhs: pattern::Pat,
     ordered: bool,
@@ -1734,7 +1734,7 @@ impl PyBoolBinaryPat {
 /// Typed builder for a float binary-op pattern.
 #[pyclass(name = "FloatBinaryPat", module = "strider.pattern")]
 pub struct PyFloatBinaryPat {
-    op: ir::FloatBinaryOp,
+    op: strider_ir::FloatBinaryOp,
     lhs: pattern::Pat,
     rhs: pattern::Pat,
     ordered: bool,

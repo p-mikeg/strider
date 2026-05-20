@@ -44,7 +44,7 @@ use std::collections::{BTreeSet, HashMap};
 use anyhow::{anyhow, bail, Result};
 
 use cfg::{Builder, Cfg, DecodeCache, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
-use ir::node::{NodeId, NodeOutputId};
+use strider_ir::node::{NodeId, NodeOutputId};
 use crate::opt::ReadOnlyMemory;
 
 use crate::errors::UnresolvedIndirectBranch;
@@ -86,7 +86,7 @@ where
     /// intra-fn branch.
     pub allow_code_before_start_addr: bool,
     /// Compact the IR arena at finalize, dropping nodes that aren't
-    /// reachable from `entry` via [`ir::walk::walk_graph`].  Default
+    /// reachable from `entry` via [`strider_ir::walk::walk_graph`].  Default
     /// `true` is recommended (passes leave detached "zombie" nodes
     /// the destructive pipeline severs from the live graph; without
     /// compaction these stay in the arena).  Pre-compaction NodeIds
@@ -150,7 +150,7 @@ impl RegionIndex {
 
     fn region_for_placeholder(
         &self,
-        graph: &ir::BuiltFunctionGraph,
+        graph: &strider_ir::BuiltFunctionGraph,
         placeholder: NodeId,
     ) -> Option<&ExitVnToValue> {
         let inputs: Vec<_> = graph.graph.node_inputs(placeholder).into_iter().collect();
@@ -166,7 +166,7 @@ impl RegionIndex {
 /// Returns an error when the iteration cap is hit, when unresolved
 /// branches remain at fixed point, or any error propagated from
 /// strider / cfg / opt.
-pub fn run<R>(config: RunConfig<'_, R>) -> Result<ir::BuiltFunctionGraph>
+pub fn run<R>(config: RunConfig<'_, R>) -> Result<strider_ir::BuiltFunctionGraph>
 where
     R: rsleigh::MemReader,
 {
@@ -265,9 +265,9 @@ where
     /// `build_lift_stable`.
     sleigh: Option<rsleigh::Sleigh<R>>,
     /// The current optimised IR graph.
-    graph: Option<ir::BuiltFunctionGraph>,
+    graph: Option<strider_ir::BuiltFunctionGraph>,
     /// Pending placeholder anchors for the current iteration.
-    unresolved: Vec<(PcodeInsnAddr, ir::Value)>,
+    unresolved: Vec<(PcodeInsnAddr, strider_ir::Value)>,
     /// Pending count at iter 0; sets the cap.
     pending_at_iter_0: usize,
     /// Remaining stall budget.  Decrements each consecutive
@@ -490,7 +490,7 @@ where
 
     /// Run the destructive subset and consume `self`, returning the
     /// final graph.
-    fn finalize(mut self) -> Result<ir::BuiltFunctionGraph> {
+    fn finalize(mut self) -> Result<strider_ir::BuiltFunctionGraph> {
         let pipeline = self.opts.strider.build_destructive_optimizer_pipeline();
         let compact = self.opts.compact;
         let graph = self.graph_mut()?;
@@ -582,7 +582,7 @@ where
         // argument-register reads flow through `FunctionArg` nodes.
         let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
         for nid in graph.graph.preorder(graph.entry) {
-            if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid) {
+            if let strider_ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid) {
                 // InitialVar's signature is `[]; outputs: [Value]` —
                 // exactly one output.  A non-1 count is a graph-shape
                 // bug (zombie or malformed); surfacing it as Err
@@ -622,7 +622,7 @@ where
     fn recompute_unresolved(
         &mut self,
         in_place_edits: &[(NodeId, ResolvedTargets)],
-    ) -> Result<Vec<(PcodeInsnAddr, ir::Value)>> {
+    ) -> Result<Vec<(PcodeInsnAddr, strider_ir::Value)>> {
         let unresolved = std::mem::take(&mut self.unresolved);
         if in_place_edits.is_empty() {
             return Ok(unresolved);
@@ -641,7 +641,7 @@ where
             .collect())
     }
 
-    fn graph_mut(&mut self) -> Result<&mut ir::BuiltFunctionGraph> {
+    fn graph_mut(&mut self) -> Result<&mut strider_ir::BuiltFunctionGraph> {
         self.graph
             .as_mut()
             .ok_or_else(|| anyhow!("orchestrator: graph not initialised"))
@@ -662,7 +662,7 @@ fn is_tail_call(target: u64, opts: &RunOpts<'_>) -> bool {
 }
 
 fn apply_in_place_edit(
-    graph: &mut ir::BuiltFunctionGraph,
+    graph: &mut strider_ir::BuiltFunctionGraph,
     strider: &Strider,
     region_index: &RegionIndex,
     placeholder: NodeId,
@@ -739,22 +739,22 @@ fn apply_in_place_edit(
 /// Walks two levels to handle both shapes the splicer can produce:
 ///   * `Call -> Return` (direct): one walk hop.
 ///   * `Call -> ControlState -> Return` (region-join): two walk hops.
-fn locate_spliced_call(graph: &ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
+fn locate_spliced_call(graph: &strider_ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
     let inputs: Vec<_> = graph.graph.node_inputs(ret).into_iter().collect();
     let ctrl_in = *inputs.first()?;
     let (producer, _slot) = graph.graph.output_definition(ctrl_in);
-    if matches!(graph.graph.node_kind(producer), ir::node::NodeKind::Call) {
+    if matches!(graph.graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
         return Some(producer);
     }
     // ControlState bridge: walk the ControlState's first control input
     // and check if THAT producer is a Call.  Mirrors the splice shape
     // when `apply_tail_call`'s freshly-spliced Call feeds an existing
     // ControlState that the new Return then consumes.
-    if matches!(graph.graph.node_kind(producer), ir::node::NodeKind::ControlState) {
+    if matches!(graph.graph.node_kind(producer), strider_ir::node::NodeKind::ControlState) {
         let cs_inputs: Vec<_> = graph.graph.node_inputs(producer).into_iter().collect();
         for cs_in in cs_inputs {
             let (cs_producer, _) = graph.graph.output_definition(cs_in);
-            if matches!(graph.graph.node_kind(cs_producer), ir::node::NodeKind::Call) {
+            if matches!(graph.graph.node_kind(cs_producer), strider_ir::node::NodeKind::Call) {
                 return Some(cs_producer);
             }
         }
@@ -773,7 +773,7 @@ fn locate_spliced_call(graph: &ir::BuiltFunctionGraph, ret: NodeId) -> Option<No
 /// node's outputs match the canonical
 /// `FunctionBuilder::build_call`-shape.
 fn build_anchor_calling_context(
-    graph: &mut ir::BuiltFunctionGraph,
+    graph: &mut strider_ir::BuiltFunctionGraph,
     placeholder: NodeId,
     strider: &Strider,
     region_index: &RegionIndex,
@@ -817,7 +817,7 @@ fn build_anchor_calling_context(
         // would otherwise produce a malformed Call output kind.
         let ty = vn_size_to_node_output_type(vn)?;
         ctx.clobbered_kinds
-            .push(ir::node::NodeOutputKind::OutputType(ty));
+            .push(strider_ir::node::NodeOutputKind::OutputType(ty));
     }
     for vn in cc.ret_val_regs() {
         let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
@@ -826,7 +826,7 @@ fn build_anchor_calling_context(
     Ok(ctx)
 }
 
-/// Map a varnode's byte width to the matching [`ir::node::NodeOutputType`].
+/// Map a varnode's byte width to the matching [`strider_ir::node::NodeOutputType`].
 ///
 /// Used by the orchestrator's anchor-calling-context plumbing
 /// (`build_anchor_calling_context` for clobber outputs,
@@ -835,8 +835,8 @@ fn build_anchor_calling_context(
 /// slot.  Every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10, 16,
 /// 32, 64} which all map cleanly; the Err arm exists so a future CC
 /// addition with an exotic size surfaces the gap immediately.
-fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<ir::node::NodeOutputType> {
-    ir::node::NodeOutputType::try_from(vn.size).map_err(|_| {
+fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::NodeOutputType> {
+    strider_ir::node::NodeOutputType::try_from(vn.size).map_err(|_| {
         anyhow::anyhow!(
             "varnode size {} has no NodeOutputType — calling-convention \
              register {:?} cannot be modelled (supported sizes are 1, 2, 4, \
@@ -860,7 +860,7 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<ir::node::NodeOutputT
 /// `set_call_clobbered_override`, or iterate directly to feed
 /// `clobbered_kinds`).
 fn override_clobber_vars<'a>(
-    graph: &'a ir::BuiltFunctionGraph,
+    graph: &'a strider_ir::BuiltFunctionGraph,
     cc: &'a target::BuiltCallingConvention,
     strider: &'a Strider,
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
@@ -890,7 +890,7 @@ fn override_clobber_vars<'a>(
 /// output (the `node_signature` invariant guarantees this; the error
 /// path exists only for defensive completeness).
 fn read_or_init_var(
-    graph: &mut ir::BuiltFunctionGraph,
+    graph: &mut strider_ir::BuiltFunctionGraph,
     region: Option<&ExitVnToValue>,
     initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
     vn: rsleigh::Vn,
@@ -905,9 +905,9 @@ fn read_or_init_var(
     }
     let ty = vn_size_to_node_output_type(&vn)?;
     let nid = graph.graph.create_node(
-        ir::node::NodeKind::InitialVar(vn),
+        strider_ir::node::NodeKind::InitialVar(vn),
         [],
-        [ir::node::NodeOutputKind::OutputType(ty)],
+        [strider_ir::node::NodeOutputKind::OutputType(ty)],
     );
     let [out] = graph.graph.node_outputs_exact::<1>(nid)?;
     initial_var_index.insert(vn, out);
@@ -926,8 +926,8 @@ fn build_lift_stable<R>(
     vn_cache: &mut std::collections::HashSet<rsleigh::Vn>,
     vn_cache_region_count: &mut usize,
 ) -> Result<(
-    ir::BuiltFunctionGraph,
-    Vec<(PcodeInsnAddr, ir::Value)>,
+    strider_ir::BuiltFunctionGraph,
+    Vec<(PcodeInsnAddr, strider_ir::Value)>,
     RegionIndex,
     rsleigh::Sleigh<R>,
 )>

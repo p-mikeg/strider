@@ -6,7 +6,7 @@
 //! and graph-lookup helpers (`get_int_const`, `get_bool_const`,
 //! `get_float_bits`) — including the "unbound var returns None" contract.
 
-use ir::node::NodeOutputType;
+use strider_ir::node::NodeOutputType;
 use pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -51,7 +51,7 @@ fn node_var_captures_node_id() {
     let n = Capture::new();
     let m = a::unique(&g, call().at(0xABCD).capture(n));
     let node = m.node(n).expect("call node");
-    assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::Call));
+    assert!(matches!(g.graph.node_kind(node), strider_ir::node::NodeKind::Call));
 }
 
 // ── Predicates: `.when` on root pattern ──────────────────────────────────────
@@ -113,7 +113,7 @@ fn predicate_inspects_node_kind() {
     let g = t.ret_val(s);
 
     let hits = Matcher::new(&g).find_all(&predicate(|graph, _ty, o| {
-        matches!(graph.kind_of_output(o), ir::node::NodeKind::IntConst(7))
+        matches!(graph.kind_of_output(o), strider_ir::node::NodeKind::IntConst(7))
     }));
     assert_eq!(hits.len(), 1);
 }
@@ -191,6 +191,6 @@ fn match_root_is_the_matched_node() {
     // The matched root should be an Add.
     assert!(matches!(
         g.graph.node_kind(m.root()),
-        ir::node::NodeKind::IntBinaryOp(ir::IntBinaryOp::Add)
+        strider_ir::node::NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add)
     ));
 }

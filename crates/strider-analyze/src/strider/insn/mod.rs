@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Result};
-use ir::node::NodeOutputType;
+use strider_ir::node::NodeOutputType;
 use rsleigh::Opcode;
 use strider_lift::region_driver::RegionDriver;
 
@@ -23,7 +23,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         region_lookup: F,
     ) -> Result<()>
     where
-        F: Fn(cfg::RegionId) -> Result<ir::RegionId>,
+        F: Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
     {
         // Funnel: every IR node born from this pcode insn picks up the
         // parent machine-instruction address in its asm-fingerprint
@@ -50,7 +50,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         region_lookup: F,
     ) -> Result<()>
     where
-        F: Fn(cfg::RegionId) -> Result<ir::RegionId>,
+        F: Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
     {
         // Try the pcode-lift value lifter first.  It returns `Ok(true)` for
         // value-producing opcodes (`Add`, `Load`, casts, …) and `Ok(false)`
@@ -64,11 +64,11 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         match insn.opcode {
             Opcode::Nop => {}
             Opcode::Branch => {
-                let lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId> = &region_lookup;
+                let lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId> = &region_lookup;
                 self.handle_branch(region_id, lookup)?
             }
             Opcode::CondBranch => {
-                let lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId> = &region_lookup;
+                let lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId> = &region_lookup;
                 self.handle_cond_branch(region_id, insn, lookup)?
             }
             Opcode::Store => self.handle_store(insn)?,
@@ -126,7 +126,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         })?;
 
         let class = target::call_other_abi::classify(self.strider.arch.preset(), name)
-            .ok_or_else(|| ir::error::UnknownCallOtherError {
+            .ok_or_else(|| strider_ir::error::UnknownCallOtherError {
                 name: name.to_string(),
             })?;
 
@@ -141,7 +141,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             target::call_other_abi::CallOtherClass::Call(abi) => {
                 // 1. Resolve pcode-explicit inputs (args) via the
                 //    aliasing-aware value lifter.
-                let args: Vec<ir::Value> = if insn.inputs.len() > 1 {
+                let args: Vec<strider_ir::Value> = if insn.inputs.len() > 1 {
                     insn.inputs[1..]
                         .iter()
                         .map(|vn| self.read_vn(vn))
@@ -175,7 +175,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
                 // 3. Read implicit-read register values via the
                 //    aliasing-aware value lifter (so EAX correctly
                 //    reads the low 4 bytes of the RAX-tracked variable).
-                let implicit_read_values: Vec<ir::Value> = implicit_reads_vns
+                let implicit_read_values: Vec<strider_ir::Value> = implicit_reads_vns
                     .iter()
                     .map(|vn| self.read_vn(vn))
                     .collect::<Result<_>>()?;
@@ -184,11 +184,11 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
                 //    the Vn's size (clobber slots match the written
                 //    register's exact width — strider's write_vn below
                 //    inserts any necessary insert/extract for aliasing).
-                let implicit_write_kinds: Vec<ir::node::NodeOutputKind> =
+                let implicit_write_kinds: Vec<strider_ir::node::NodeOutputKind> =
                     implicit_writes_vns
                         .iter()
-                        .map(|vn| -> Result<ir::node::NodeOutputKind> {
-                            Ok(ir::node::NodeOutputKind::OutputType(vn.size.try_into()?))
+                        .map(|vn| -> Result<strider_ir::node::NodeOutputKind> {
+                            Ok(strider_ir::node::NodeOutputKind::OutputType(vn.size.try_into()?))
                         })
                         .collect::<Result<_>>()?;
 

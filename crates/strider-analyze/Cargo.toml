@@ -16,7 +16,6 @@ strider-lift = { workspace = true }
 # the Phase 3.1c move from `strider`.
 cfg = { workspace = true }
 # Absorbed from `opt` (Phase 3 Task 3.0).
-ir.workspace = true
 rsleigh.workspace = true
 target.workspace = true
 anyhow.workspace = true
@@ -43,7 +42,7 @@ salsa = "0.26.2"
 [dev-dependencies]
 reader = { workspace = true }
 object.workspace = true
-ir = { workspace = true, features = ["test-utils"] }
+strider-ir = { workspace = true, features = ["test-utils"] }
 # Phase 6 Task 6.3 — property-based testing for value-only IR invariants
 # under the optimizer (see tests/proptest_optimizer.rs).
 proptest = "1"

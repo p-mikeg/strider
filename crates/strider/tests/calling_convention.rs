@@ -43,14 +43,14 @@ use pattern::{
     CastMask, Matcher, Pat, call, function_arg,
 };
 
-use ir::node::{NodeKind, FunctionArgSource};
+use strider_ir::node::{NodeKind, FunctionArgSource};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Standard matcher for this suite — same selectivity as `complex_patterns.rs`.
-fn matcher(g: &ir::BuiltFunctionGraph) -> Matcher<'_> {
+fn matcher(g: &strider_ir::BuiltFunctionGraph) -> Matcher<'_> {
     Matcher::new(g)
         .ignore_casts_mask(
             CastMask::EXTEND
@@ -62,7 +62,7 @@ fn matcher(g: &ir::BuiltFunctionGraph) -> Matcher<'_> {
 }
 
 /// Returns the set of `index` values present on `FunctionArg` nodes in `g`.
-fn function_arg_indices(g: &ir::BuiltFunctionGraph) -> HashSet<u32> {
+fn function_arg_indices(g: &strider_ir::BuiltFunctionGraph) -> HashSet<u32> {
     g.preorder()
         .filter_map(|n| match g.graph.node_kind(n) {
             NodeKind::FunctionArg { index, .. } => Some(*index),
@@ -79,7 +79,7 @@ fn function_arg_indices(g: &ir::BuiltFunctionGraph) -> HashSet<u32> {
 /// `FunctionArg(0)` — and consequently no `FunctionArg` at all in the
 /// extreme case.
 fn assert_function_args_present(
-    g: &ir::BuiltFunctionGraph,
+    g: &strider_ir::BuiltFunctionGraph,
     n: u32,
     min: u32,
     fn_label: &str,
@@ -110,7 +110,7 @@ fn assert_function_args_present(
 /// follow; the universal cross-arch invariant the test enforces is
 /// "at least one slot threads through cleanly."
 fn assert_some_call_arg_threads_through(
-    g: &ir::BuiltFunctionGraph,
+    g: &strider_ir::BuiltFunctionGraph,
     n: u32,
     fn_label: &str,
 ) {
@@ -140,7 +140,7 @@ per_arch_test!(
     forward_1_assertions
 );
 
-fn forward_1_assertions(g: &ir::BuiltFunctionGraph) {
+fn forward_1_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // Strict: all 1 indices must be detected (the trivial single-arg case).
     assert_function_args_present(g, 1, 1, "forward_1");
     assert_some_call_arg_threads_through(g, 1, "forward_1");
@@ -156,7 +156,7 @@ per_arch_test!(
     forward_2_assertions
 );
 
-fn forward_2_assertions(g: &ir::BuiltFunctionGraph) {
+fn forward_2_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // Strict: all 2 args must be present on every arch.
     assert_function_args_present(g, 2, 2, "forward_2");
     assert_some_call_arg_threads_through(g, 2, "forward_2");
@@ -172,7 +172,7 @@ per_arch_test!(
     forward_4_assertions
 );
 
-fn forward_4_assertions(g: &ir::BuiltFunctionGraph) {
+fn forward_4_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // Strict: all 4 args must be present on every arch.
     assert_function_args_present(g, 4, 4, "forward_4");
     assert_some_call_arg_threads_through(g, 4, "forward_4");
@@ -189,7 +189,7 @@ per_arch_test!(
     forward_8_assertions
 );
 
-fn forward_8_assertions(g: &ir::BuiltFunctionGraph) {
+fn forward_8_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // Strict: the `function_args::mem_chain_is_dirty` `Store(_)` arm
     // lets all 8 stack-passed args be detected on x86 cdecl, mirroring
     // the resilience in `CallStackArgCollect` and
@@ -208,7 +208,7 @@ per_arch_test!(
     forward_16_assertions
 );
 
-fn forward_16_assertions(g: &ir::BuiltFunctionGraph) {
+fn forward_16_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // Floor at 8: the lowest-arity register sets (mips o32, arm aapcs)
     // pass 4–8 args in registers and spill the rest, and `FunctionArgDetect`
     // currently surfaces the register-passed callee reads but doesn't
@@ -234,7 +234,7 @@ per_arch_test!(
     narrow_widths_assertions
 );
 
-fn narrow_widths_assertions(g: &ir::BuiltFunctionGraph) {
+fn narrow_widths_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // (a) at least 2 FunctionArgs exist in 0..4 (loose floor; the strict
     //     0..4 form fails on big-endian / x86-cdecl arches).
     // Strict: 4 narrow-width args (signed/unsigned char + short)
@@ -289,7 +289,7 @@ per_arch_test!(
     mixed_4_assertions
 );
 
-fn mixed_4_assertions(g: &ir::BuiltFunctionGraph) {
+fn mixed_4_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // Strict: 4 args (int + ptr interleaved) must all be detected.
     assert_function_args_present(g, 4, 4, "mixed_4");
     assert_some_call_arg_threads_through(g, 4, "mixed_4");
@@ -301,14 +301,14 @@ fn mixed_4_assertions(g: &ir::BuiltFunctionGraph) {
 
 per_arch_test!("calling_convention", "uses_return", uses_return_assertions);
 
-fn uses_return_assertions(g: &ir::BuiltFunctionGraph) {
+fn uses_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
     // The function takes one `int x` → FunctionArg(0).
     assert_function_args_present(g, 1, 1, "uses_return");
 
     // We assert the call-of-call dataflow holds: at least one Call's input
     // chain must trace back to ANOTHER Call.  Modeled on
     // `complex_patterns.rs::call_uses_call_return`.
-    use ir::node::NodeId;
+    use strider_ir::node::NodeId;
     let calls: Vec<NodeId> = g.preorder()
         .filter(|&n| matches!(g.graph.node_kind(n), NodeKind::Call))
         .collect();

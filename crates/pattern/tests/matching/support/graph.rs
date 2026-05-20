@@ -1,4 +1,4 @@
-//! Thin DSL around `ir::FunctionBuilder` for test graphs.
+//! Thin DSL around `strider_ir::FunctionBuilder` for test graphs.
 //!
 //! `Tb` = "test builder".  It owns a `FunctionBuilder` with an active entry
 //! region already set up, exposes short helpers for the common builder calls
@@ -9,13 +9,13 @@
 //! calling-convention slots) tests reach into the underlying `FunctionBuilder`
 //! via `Tb::fb_mut`.
 
-use ir::node::{NodeOutputId, NodeOutputType};
-use ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder};
-use ir::{BoolBinaryOp, BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::node::{NodeOutputId, NodeOutputType};
+use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder};
+use strider_ir::{BoolBinaryOp, BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 // ── Varnode helpers ───────────────────────────────────────────────────────────
 
-pub use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
+pub use strider_ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
 
 // ── Tb ────────────────────────────────────────────────────────────────────────
 
@@ -80,7 +80,7 @@ impl Tb {
     }
 
     /// Makes `r` the entry region for the function.
-    pub fn set_entry(&mut self, r: ir::RegionId) {
+    pub fn set_entry(&mut self, r: strider_ir::RegionId) {
         self.fb.set_entry_region(r).expect("set_entry_region");
     }
 
@@ -107,7 +107,7 @@ impl Tb {
     pub fn u256(&mut self, limbs: [u64; 4]) -> NodeOutputId {
         self.fb
             .build_int_const_wide(
-                ir::wide_const::WideConstStorage::U256(limbs),
+                strider_ir::wide_const::WideConstStorage::U256(limbs),
                 NodeOutputType::U256,
             )
             .unwrap()
@@ -115,7 +115,7 @@ impl Tb {
     pub fn u512(&mut self, limbs: [u64; 8]) -> NodeOutputId {
         self.fb
             .build_int_const_wide(
-                ir::wide_const::WideConstStorage::U512(limbs),
+                strider_ir::wide_const::WideConstStorage::U512(limbs),
                 NodeOutputType::U512,
             )
             .unwrap()
@@ -142,7 +142,7 @@ impl Tb {
     /// Builds the canonical lowered shape for `l - r`: `Add(l, Neg(r))`.
     /// `IntBinaryOp::Sub` is not a primitive; pcode-lift produces this shape.
     pub fn sub(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
-        let neg = self.int_un(r, ir::IntUnaryOp::Neg);
+        let neg = self.int_un(r, strider_ir::IntUnaryOp::Neg);
         self.int_bin(l, neg, IntBinaryOp::Add)
     }
     pub fn mul(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
@@ -358,10 +358,10 @@ impl Tb {
         implicit_reads: &[NodeOutputId],
         implicit_writes: &[rsleigh::Vn],
     ) -> Option<NodeOutputId> {
-        let implicit_write_kinds: Vec<ir::node::NodeOutputKind> = implicit_writes
+        let implicit_write_kinds: Vec<strider_ir::node::NodeOutputKind> = implicit_writes
             .iter()
             .map(|vn| {
-                ir::node::NodeOutputKind::OutputType(
+                strider_ir::node::NodeOutputKind::OutputType(
                     vn.size.try_into().expect("vn size -> output type"),
                 )
             })
@@ -392,24 +392,24 @@ impl Tb {
 
     // ── Regions / branches ────────────────────────────────────────────────────
 
-    pub fn region(&mut self) -> ir::RegionId {
+    pub fn region(&mut self) -> strider_ir::RegionId {
         self.fb.create_region().expect("create_region")
     }
-    pub fn enter(&mut self, r: ir::RegionId) {
+    pub fn enter(&mut self, r: strider_ir::RegionId) {
         self.fb.set_region(r);
         // Re-stamp the sentinel — tests that switch regions explicitly
         // (`enter` after entering a fresh region) must keep nodes
         // attributable for the Layer-C asm-fingerprint check.
         self.fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     }
-    pub fn branch(&mut self, dst: ir::RegionId) {
+    pub fn branch(&mut self, dst: strider_ir::RegionId) {
         self.fb.build_branch(dst).expect("build_branch");
     }
     pub fn build_if(
         &mut self,
         cond: NodeOutputId,
-        t: ir::RegionId,
-        f: ir::RegionId,
+        t: strider_ir::RegionId,
+        f: strider_ir::RegionId,
     ) {
         self.fb.build_if(cond, t, f).expect("build_if");
     }
@@ -417,7 +417,7 @@ impl Tb {
     // ── Finalisation ──────────────────────────────────────────────────────────
 
     /// Emits `Return(v)` in the current region and finalises the graph.
-    pub fn ret_val(mut self, v: NodeOutputId) -> ir::BuiltFunctionGraph {
+    pub fn ret_val(mut self, v: NodeOutputId) -> strider_ir::BuiltFunctionGraph {
         // Re-stamp the sentinel so the Return is attributed even if a
         // test cleared `lift_addr` to set its own per-insn addresses.
         self.fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -426,13 +426,13 @@ impl Tb {
     }
 
     /// `return(IntConst(v) : U64)` — convenience for the one-constant graph.
-    pub fn ret_const(mut self, v: u64) -> ir::BuiltFunctionGraph {
+    pub fn ret_const(mut self, v: u64) -> strider_ir::BuiltFunctionGraph {
         let c = self.u64(v);
         self.ret_val(c)
     }
 
     /// Emits `Return()` with no data value and finalises the graph.
-    pub fn ret_nothing(mut self) -> ir::BuiltFunctionGraph {
+    pub fn ret_nothing(mut self) -> strider_ir::BuiltFunctionGraph {
         self.fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         self.fb.build_return(None, &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
@@ -440,7 +440,7 @@ impl Tb {
 
     /// Emits `Return()` in the current region, plus return registers, and
     /// finalises the graph.
-    pub fn ret_regs(mut self, regs: &[rsleigh::Vn]) -> ir::BuiltFunctionGraph {
+    pub fn ret_regs(mut self, regs: &[rsleigh::Vn]) -> strider_ir::BuiltFunctionGraph {
         self.fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         self.fb.build_return(None, regs).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
@@ -448,7 +448,7 @@ impl Tb {
 
     /// Finalises the graph without emitting any extra instructions — caller
     /// has already emitted the terminator(s) themselves.
-    pub fn finish(self) -> ir::BuiltFunctionGraph {
+    pub fn finish(self) -> strider_ir::BuiltFunctionGraph {
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 }

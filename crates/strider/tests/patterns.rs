@@ -35,7 +35,7 @@ per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern
 // fixtures/Makefile to keep the tail call from being elided.
 per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call);
 
-fn mac_pattern_finds_match(g: &ir::BuiltFunctionGraph) {
+fn mac_pattern_finds_match(g: &strider_ir::BuiltFunctionGraph) {
     // Pattern: add(mul(?, ?), ?).  We use `.ignore_casts()` because some
     // arches (notably x64) lower this as `Add(Extend_zext(Mul@W), arg)`
     // — the Mul is one hop deeper than the matcher's exact-walk would
@@ -48,7 +48,7 @@ fn mac_pattern_finds_match(g: &ir::BuiltFunctionGraph) {
             "expected ≥1 match of add(mul(_,_), _); got {} matches", hits.len());
 }
 
-fn xor_chain_pattern_finds_match(g: &ir::BuiltFunctionGraph) {
+fn xor_chain_pattern_finds_match(g: &strider_ir::BuiltFunctionGraph) {
     // ConstantFold collapses (x ^ k1) & m1 ^ k2  →  (x & m1) ^ (k1^k2)
     // before pattern matching — the inner xor disappears, so the original
     // three-deep xor(and(xor)) query never matches.  The post-fold shape
@@ -56,7 +56,7 @@ fn xor_chain_pattern_finds_match(g: &ir::BuiltFunctionGraph) {
     // survives.  An IntConst-aware variant of this query would require
     // constants the optimiser can't fold (e.g. volatile-loaded); that's a
     // separate, larger fixture redesign.
-    use ir::IntBinaryOp;
+    use strider_ir::IntBinaryOp;
     assert!(common::count_int_binop(g, IntBinaryOp::Xor) >= 1,
             "post-fold graph must contain ≥1 Xor; got {}",
             common::count_int_binop(g, IntBinaryOp::Xor));
@@ -65,7 +65,7 @@ fn xor_chain_pattern_finds_match(g: &ir::BuiltFunctionGraph) {
             common::count_int_binop(g, IntBinaryOp::And));
 }
 
-fn if_const_pattern_finds_two_consts(g: &ir::BuiltFunctionGraph) {
+fn if_const_pattern_finds_two_consts(g: &strider_ir::BuiltFunctionGraph) {
     // After RedundantPhis, both arms of the If feed a Phi resolving to either
     // IntConst(100) or IntConst(-50).  Pin both constants.
     //
@@ -84,7 +84,7 @@ fn if_const_pattern_finds_two_consts(g: &ir::BuiltFunctionGraph) {
             "expected IntConst(-50) — false-branch return value (any of {neg50_u32}, {neg50_u64})");
 }
 
-fn invariant_load_pattern_finds_load(g: &ir::BuiltFunctionGraph) {
+fn invariant_load_pattern_finds_load(g: &strider_ir::BuiltFunctionGraph) {
     // Pattern: any Load.
     let m = Matcher::new(g);
     let pat: Pat = pattern::load().into();
@@ -93,7 +93,7 @@ fn invariant_load_pattern_finds_load(g: &ir::BuiltFunctionGraph) {
     assert!(count_loops(g) >= 1, "loop must remain");
 }
 
-fn recursive_pattern_finds_self_call(g: &ir::BuiltFunctionGraph) {
+fn recursive_pattern_finds_self_call(g: &strider_ir::BuiltFunctionGraph) {
     // Pattern: any Call.
     let m = Matcher::new(g);
     let pat: Pat = call().into();

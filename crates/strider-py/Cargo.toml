@@ -62,7 +62,6 @@ strider = { workspace = true }
 pattern = { workspace = true }
 strider-pattern-macros = { workspace = true }
 opt = { workspace = true }
-ir = { workspace = true }
 strider-ir = { workspace = true }
 cfg = { workspace = true }
 reader = { workspace = true }

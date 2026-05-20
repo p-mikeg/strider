@@ -3,11 +3,11 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ir::node::NodeOutputType;
-use ir::{FunctionBuilder, IntBinaryOp};
+use strider_ir::node::NodeOutputType;
+use strider_ir::{FunctionBuilder, IntBinaryOp};
 use opt::{KnownBits, OptimizerRaw};
 
-fn build_or_and_chain(n: usize) -> ir::BuiltFunctionGraph {
+fn build_or_and_chain(n: usize) -> strider_ir::BuiltFunctionGraph {
     let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();

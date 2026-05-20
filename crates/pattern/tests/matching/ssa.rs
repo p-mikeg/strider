@@ -3,8 +3,8 @@
 //! Covers: `phi()` / `phi_for(vn)`, `initial_var()` / `initial_var_for(vn)`,
 //! `function_arg(i)` / `_any()` / `_reg(vn)` / `_stack(space, off)`.
 
-use ir::IntCmpOp;
-use ir::node::{FunctionArgSource, NodeOutputType};
+use strider_ir::IntCmpOp;
+use strider_ir::node::{FunctionArgSource, NodeOutputType};
 use pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes, sp_vn};
@@ -42,7 +42,7 @@ fn initial_var_capture_binds_value() {
 
 /// `if (reg != 0) { reg = 1 } else { reg = 2 }` — after merge, a VarPhi
 /// materialises the new value of `reg`.
-fn graph_phi_for_reg() -> (ir::BuiltFunctionGraph, rsleigh::Vn) {
+fn graph_phi_for_reg() -> (strider_ir::BuiltFunctionGraph, rsleigh::Vn) {
     let reg = reg_vn(0, 8);
     let mut t = Tb::bare(vec![reg], &[], &[reg], &[], None, 0);
     let entry = t.region();
@@ -127,7 +127,7 @@ fn phi_input_addresses_predecessor_slot_not_phi_token() {
 // ── FunctionArg ──────────────────────────────────────────────────────────────
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
-fn graph_fn_arg_stack() -> ir::BuiltFunctionGraph {
+fn graph_fn_arg_stack() -> strider_ir::BuiltFunctionGraph {
     use opt::{FunctionArgDetect, OptimizerRaw};
     let sp = sp_vn();
     let mut t = Tb::raw(vec![sp], &[], &[sp], &[], None, 0);

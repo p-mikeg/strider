@@ -23,19 +23,19 @@ pub struct RegionLiftHandles {
     /// Region's start address.
     pub start_addr: cfg::PcodeInsnAddr,
     /// `ControlState` `NodeId` (entry-boundary).
-    pub entry_control_state: ir::node::NodeId,
+    pub entry_control_state: strider_ir::node::NodeId,
     /// `MemPhi` `NodeId` (entry-boundary).
-    pub entry_mem_phi: ir::node::NodeId,
+    pub entry_mem_phi: strider_ir::node::NodeId,
     /// Entry control output produced by the `ControlState`.
-    pub entry_control: ir::node::NodeOutputId,
+    pub entry_control: strider_ir::node::NodeOutputId,
     /// Entry memory output produced by the `MemPhi`.
-    pub entry_memory: ir::node::NodeOutputId,
+    pub entry_memory: strider_ir::node::NodeOutputId,
     /// Exit control output (consumed by the region's terminator).
-    pub exit_control: ir::node::NodeOutputId,
+    pub exit_control: strider_ir::node::NodeOutputId,
     /// Exit memory output (consumed by the region's terminator).
-    pub exit_memory: ir::node::NodeOutputId,
+    pub exit_memory: strider_ir::node::NodeOutputId,
     /// Per-var entry-boundary `VarPhi` `NodeId`s, keyed by `Vn`.
-    pub entry_var_phis: std::collections::HashMap<rsleigh::Vn, ir::node::NodeId>,
+    pub entry_var_phis: std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeId>,
     /// Per-var exit-boundary value `NodeOutputId`s, keyed by `Vn`.
     ///
     /// Wrapped in `Arc` so the orchestrator's per-iteration
@@ -44,7 +44,7 @@ pub struct RegionLiftHandles {
     // TODO: remove after incremental indirect-resolve lands —
     // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     pub exit_vn_to_value:
-        std::sync::Arc<std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>>,
+        std::sync::Arc<std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeOutputId>>,
 }
 
 /// The full result of a strider lift, exposing the lifted IR plus the
@@ -56,14 +56,14 @@ pub struct RegionLiftHandles {
 /// callers read `unresolved_branches` and `region_handles`.
 pub struct AnalyzeOutcome {
     /// The lifted IR ready for the optimiser pipeline.
-    pub graph: ir::BuiltFunctionGraph,
+    pub graph: strider_ir::BuiltFunctionGraph,
     /// One entry per region whose CFG terminator was
     /// [`cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode
     /// address to the IR `NodeOutputId` that anchors its dispatch
     /// varnode (`target_vn`) in the placeholder Return.  Empty in
     /// the common case (no deferred branches).
-    pub unresolved_branches: Vec<(cfg::PcodeInsnAddr, ir::Value)>,
+    pub unresolved_branches: Vec<(cfg::PcodeInsnAddr, strider_ir::Value)>,
     /// Per-region IR-handle snapshots captured at lift time.  The
     /// orchestrator's per-iteration index uses these to map a
     /// placeholder's pre-edit ctrl input back to the region whose
@@ -324,7 +324,7 @@ impl Strider {
     /// drop pcode reads.  Over-tracking is safe but allocates one
     /// extra `InitialVar` per superfluous vn.  Direct Calls whose
     /// target is in [`AnalyzeOptions::per_address_ccs`] are built via
-    /// [`ir::FunctionBuilder::build_call_with_cc`] with the override.
+    /// [`strider_ir::FunctionBuilder::build_call_with_cc`] with the override.
     ///
     /// # Errors
     ///
@@ -332,7 +332,7 @@ impl Strider {
     /// CC build), `FunctionBuilder::build_entry`, the per-region IR
     /// translation (`pcode-lift` value-producer failures, control-op
     /// routing, calling-convention plumbing), and final
-    /// `FunctionBuilder::build`'s `ir::validate::validate` pass.
+    /// `FunctionBuilder::build`'s `strider_ir::validate::validate` pass.
     pub fn analyze_cfg_with<R: rsleigh::MemReader>(
         &self,
         cfg: &cfg::Cfg<R>,
@@ -349,11 +349,11 @@ impl Strider {
         // can resolve in O(1) without cloning the petgraph.
         let cfg_region_ids: Vec<cfg::RegionId> = cfg.region_ids().collect();
         let max_index = cfg_region_ids.iter().map(|r| r.index()).max().unwrap_or(0);
-        let mut region_map: Vec<Option<ir::RegionId>> = vec![None; max_index + 1];
+        let mut region_map: Vec<Option<strider_ir::RegionId>> = vec![None; max_index + 1];
         for cfg_rid in &cfg_region_ids {
             region_map[cfg_rid.index()] = Some(ir_strider.builder.create_region()?);
         }
-        let ir_region_of = |region_id: cfg::RegionId| -> Result<ir::RegionId> {
+        let ir_region_of = |region_id: cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
                 .get(region_id.index())
                 .copied()
@@ -490,7 +490,7 @@ impl Strider {
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
 
-            let mut entry_var_phis: std::collections::HashMap<rsleigh::Vn, ir::node::NodeId> =
+            let mut entry_var_phis: std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeId> =
                 std::collections::HashMap::new();
             for (var_id, phi_out) in ir_strider.builder.region_initial_variables(ir_region_id) {
                 if let Some(vn) = ir_strider.builder.vn_of_var(var_id) {
@@ -506,7 +506,7 @@ impl Strider {
 
             let mut exit_vn_to_value: std::collections::HashMap<
                 rsleigh::Vn,
-                ir::node::NodeOutputId,
+                strider_ir::node::NodeOutputId,
             > = std::collections::HashMap::new();
             for (var_id, val_out) in ir_strider.builder.region_exit_variables(ir_region_id) {
                 if let Some(vn) = ir_strider.builder.vn_of_var(var_id) {
@@ -560,7 +560,7 @@ enum SpecialTerm {
     },
     /// Resolved jump table: lifts to an If-ladder dispatching `idx`
     /// against `targets`.  Skip the trailing `BranchIndirect`.
-    Switch(rsleigh::Vn, Vec<u64>, Option<ir::Value>),
+    Switch(rsleigh::Vn, Vec<u64>, Option<strider_ir::Value>),
     /// Direct branch to an out-of-function target (`fn_max_size`
     /// bound exceeded, or sub-`start_addr` with
     /// `allow_code_before_start_addr=false`).  Lifts to

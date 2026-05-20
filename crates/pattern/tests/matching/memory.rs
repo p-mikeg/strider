@@ -4,7 +4,7 @@
 //! on the value slot; `store()` with `.space/.addr/.data`; store-then-load
 //! aliasing; wrong-space and addr-mismatch rejection.
 
-use ir::node::NodeOutputType;
+use strider_ir::node::NodeOutputType;
 use pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -49,7 +49,7 @@ fn load_captures_value_slot() {
     let out = m.output(v).expect("value slot capture");
     assert!(matches!(
         g.graph.kind_of_output(out),
-        ir::node::NodeKind::Load(_)
+        strider_ir::node::NodeKind::Load(_)
     ));
 }
 

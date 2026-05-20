@@ -13,7 +13,7 @@
 //! The example builds several small IR graphs by hand (no binary required),
 //! then shows a variety of pattern queries and how to read the results.
 
-use ir::{BoolBinaryOp, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, node::NodeOutputType};
+use strider_ir::{BoolBinaryOp, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, node::NodeOutputType};
 use pattern::*;
 
 fn main() {
@@ -115,7 +115,7 @@ fn example_arithmetic() {
         .build_int_cmp_operation(v1, v2, IntCmpOp::Less, NodeOutputType::U64)
         .expect("build");
     let not_cmp = b3
-        .build_boolean_unary_operation(cmp, ir::BoolUnaryOp::Neg)
+        .build_boolean_unary_operation(cmp, strider_ir::BoolUnaryOp::Neg)
         .expect("build");
     let bor = b3
         .build_boolean_operation(t, f, BoolBinaryOp::Or)
@@ -381,7 +381,7 @@ fn example_load_store() {
     b.set_region(r);
     let addr = b.build_int_const(0x100u64, NodeOutputType::U64).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)
+        .build_load(addr, rsleigh::VnSpace::RAM, strider_ir::node::NodeOutputType::U64)
         .expect("build");
     b.build_return(Some(loaded), &[]).expect("build");
     let g_load = b.build().expect("build failed");
@@ -432,7 +432,7 @@ fn example_load_store() {
     // A load immediately after consumes the store's memory output, making it
     // reachable from Return via the preorder walk.
     let loaded2 = b2
-        .build_load(addr2, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)
+        .build_load(addr2, rsleigh::VnSpace::RAM, strider_ir::node::NodeOutputType::U64)
         .expect("build");
     b2.build_return(Some(loaded2), &[]).expect("build");
     let g_store = b2.build().expect("build failed");

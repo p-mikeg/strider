@@ -95,10 +95,10 @@ fn resolver_mini_ir_passes_layer_c_asm_fingerprint_check() {
     // Opt-in Layer C asm-fingerprint check.  This is the contract
     // every node born from a real pcode insn must satisfy: a non-empty
     // contributor list naming the parent machine instruction.
-    let opts = ir::validate::ValidateOptions {
+    let opts = strider_ir::validate::ValidateOptions {
         check_asm_fingerprints: true,
     };
-    let result = ir::validate::validate_with_options(&fg.graph, fg.entry, opts);
+    let result = strider_ir::validate::validate_with_options(&fg.graph, fg.entry, opts);
     assert!(
         result.is_ok(),
         "mini-IR violates Layer-C asm-fingerprint invariant: {:?}",

@@ -17,7 +17,6 @@ pattern = { path = "crates/pattern" }
 strider = { path = "crates/strider" }
 cfg = { path = "crates/cfg" }
 reader = { path = "crates/reader" }
-ir = { path = "crates/ir" }
 opt = { path = "crates/opt" }
 target = { path = "crates/target" }
 pcode-lift = { path = "crates/pcode-lift" }

@@ -43,25 +43,25 @@ struct V1RunOutcome {
     returns: usize,
 }
 
-fn count_kind<F>(g: &ir::BuiltFunctionGraph, pred: F) -> usize
+fn count_kind<F>(g: &strider_ir::BuiltFunctionGraph, pred: F) -> usize
 where
-    F: Fn(&ir::node::NodeKind) -> bool,
+    F: Fn(&strider_ir::node::NodeKind) -> bool,
 {
     g.preorder().filter(|nid| pred(g.graph.node_kind(*nid))).count()
 }
 
-fn summarise(bfg: &ir::BuiltFunctionGraph) -> V1RunOutcome {
+fn summarise(bfg: &strider_ir::BuiltFunctionGraph) -> V1RunOutcome {
     V1RunOutcome {
         nodes: bfg.preorder().count(),
-        indirect_branches: count_kind(bfg, |k| matches!(k, ir::node::NodeKind::IndirectBranch)),
-        returns: count_kind(bfg, |k| matches!(k, ir::node::NodeKind::Return)),
+        indirect_branches: count_kind(bfg, |k| matches!(k, strider_ir::node::NodeKind::IndirectBranch)),
+        returns: count_kind(bfg, |k| matches!(k, strider_ir::node::NodeKind::Return)),
     }
 }
 
 /// Run v1 directly against a fixture.  Mirrors
 /// `crates/strider/tests/orchestrator_indirect_branch.rs::run_orchestrator_on`
 /// without the test-fixture dependency.
-fn run_v1(case: &str, fn_name: &str) -> ir::BuiltFunctionGraph {
+fn run_v1(case: &str, fn_name: &str) -> strider_ir::BuiltFunctionGraph {
     let path = binary_path("x64", case);
     assert!(path.exists(), "fixture {path:?} missing; run `make -C fixtures`");
     let obj = reader::load_elf(&path).expect("load_elf");
@@ -104,7 +104,7 @@ fn run_v1(case: &str, fn_name: &str) -> ir::BuiltFunctionGraph {
 }
 
 /// Run the salsa-driven v2 orchestrator against the same fixture.
-fn run_v2_for_fixture(case: &str, fn_name: &str) -> (ir::BuiltFunctionGraph, usize) {
+fn run_v2_for_fixture(case: &str, fn_name: &str) -> (strider_ir::BuiltFunctionGraph, usize) {
     let path = binary_path("x64", case);
     assert!(path.exists(), "fixture {path:?} missing; run `make -C fixtures`");
     let obj_owned = reader::load_elf(&path).expect("load_elf");

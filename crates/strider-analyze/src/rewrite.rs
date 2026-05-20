@@ -29,10 +29,10 @@
 //! ```
 //! # use anyhow::Result;
 //! # fn doc() -> Result<()> {
-//! use ir::node::NodeOutputType;
+//! use strider_ir::node::NodeOutputType;
 //!
 //! // Build a minimal graph: `fn() -> 0u64`.
-//! let mut built = ir::test_utils::make_empty_fn(|b| {
+//! let mut built = strider_ir::test_utils::make_empty_fn(|b| {
 //!     b.build_int_const(0u64, NodeOutputType::U64)
 //! })?;
 //!
@@ -48,8 +48,8 @@
 //! ```
 
 use anyhow::Result;
-use ir::node::NodeId;
-use ir::{BuiltFunctionGraph, Graph};
+use strider_ir::node::NodeId;
+use strider_ir::{BuiltFunctionGraph, Graph};
 
 /// Thin façade over [`crate::pattern::rewrite_rule`] / [`crate::pattern::apply_rules_in_order`]
 /// that lets users replace any node's input with a constant (or any other
@@ -119,10 +119,10 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// # Validation
     ///
-    /// `apply_rule` does **NOT** call [`ir::validate::validate`] after
+    /// `apply_rule` does **NOT** call [`strider_ir::validate::validate`] after
     /// the rule fires.  Callers building unusual rules should run
     /// `re_optimize` (which validates as the last step of the optimizer
-    /// pipeline) or call [`ir::validate::validate`] explicitly before
+    /// pipeline) or call [`strider_ir::validate::validate`] explicitly before
     /// relying on the graph being well-formed.
     pub fn apply_rule<F>(&mut self, rule: F) -> Result<usize>
     where

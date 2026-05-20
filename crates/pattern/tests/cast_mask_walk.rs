@@ -12,9 +12,9 @@
     clippy::unreachable
 )]
 
-use ir::node::{NodeOutputId, NodeOutputType};
-use ir::test_utils::SENTINEL_LIFT_ADDR;
-use ir::{BuiltFunctionGraph, ExtendOp, FunctionBuilder};
+use strider_ir::node::{NodeOutputId, NodeOutputType};
+use strider_ir::test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir::{BuiltFunctionGraph, ExtendOp, FunctionBuilder};
 use opt::{OptimizerRaw, RedundantPhis};
 use pattern::{CastMask, Matcher, Pat, Capture, add, any_int_const, initial_var_for};
 
@@ -64,7 +64,7 @@ where
     let wrapped = wrap(&mut fb, x);
     let c = fb.build_int_const(7u64, ty).unwrap();
     let total = fb
-        .build_int_binary_operation(wrapped, c, ir::IntBinaryOp::Add, ty)
+        .build_int_binary_operation(wrapped, c, strider_ir::IntBinaryOp::Add, ty)
         .unwrap();
     fb.build_return(Some(total), &[]).unwrap();
     fb.set_lift_addr(None);
