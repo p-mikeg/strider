@@ -21,7 +21,6 @@ reader = { path = "crates/reader" }
 ir = { path = "crates/ir" }
 opt = { path = "crates/opt" }
 target = { path = "crates/target" }
-entity-utils = { path = "crates/entity-utils" }
 graphwalk = { path = "crates/graphwalk" }
 pcode-lift = { path = "crates/pcode-lift" }
 strider-ir = { path = "crates/strider-ir" }

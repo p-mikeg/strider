@@ -19,7 +19,6 @@ cfg = { workspace = true }
 ir.workspace = true
 rsleigh.workspace = true
 target.workspace = true
-entity-utils.workspace = true
 anyhow.workspace = true
 cranelift-entity.workspace = true
 ethnum.workspace = true

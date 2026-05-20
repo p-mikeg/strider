@@ -423,15 +423,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
-name = "entity-utils"
-version = "0.1.0"
-dependencies = [
- "cranelift-bitset",
- "cranelift-entity",
- "strider-ir",
-]
-
-[[package]]
 name = "env_logger"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -554,7 +545,6 @@ name = "graphwalk"
 version = "0.1.0"
 dependencies = [
  "cranelift-entity",
- "entity-utils",
  "expect-test",
  "itertools 0.13.0",
  "strider-ir",
@@ -1631,7 +1621,6 @@ dependencies = [
  "cfg",
  "cranelift-entity",
  "egg",
- "entity-utils",
  "ethnum",
  "ir",
  "object",

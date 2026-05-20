@@ -359,7 +359,7 @@ fn match_stack_array_shape(
         if i == idx_pos {
             continue;
         }
-        let mut visiting: entity_utils::DenseEntitySet<strider_ir::node::NodeId> = entity_utils::DenseEntitySet::new();
+        let mut visiting: strider_ir::entity_utils::DenseEntitySet<strider_ir::node::NodeId> = strider_ir::entity_utils::DenseEntitySet::new();
         match decompose_sp(graph, *t, stack_ptr_vn, &mut sp_memo, &mut visiting) {
             Some(SpExpr::Terminal { base: _, offset }) => {
                 if found_sp {

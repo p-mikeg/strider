@@ -10,7 +10,6 @@ strider-ir.workspace = true
 
 # Kept so external consumers depending on graphwalk's transitive re-exports
 # keep working through the shim.
-entity-utils.workspace = true
 cranelift-entity.workspace = true
 
 [lints]

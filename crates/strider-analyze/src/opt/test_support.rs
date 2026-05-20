@@ -47,7 +47,7 @@ pub(crate) fn count_reachable<F: Fn(&NodeKind) -> bool>(
     ctx: crate::pattern::RewriteCtxView<'_>,
     pred: F,
 ) -> usize {
-    let reachable: entity_utils::DenseEntitySet<NodeId> = ctx.preorder().collect();
+    let reachable: strider_ir::entity_utils::DenseEntitySet<NodeId> = ctx.preorder().collect();
     ctx.all_node_ids()
         .filter(|n| reachable.contains(*n))
         .filter(|&n| pred(ctx.node_kind(n)))

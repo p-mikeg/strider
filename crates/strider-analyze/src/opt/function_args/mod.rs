@@ -247,7 +247,7 @@ fn detect_stack_args(
             continue;
         };
         let load_size = load_ty.byte_size() as i64;
-        let mut visiting: entity_utils::DenseEntitySet<strider_ir::node::NodeId> = entity_utils::DenseEntitySet::new();
+        let mut visiting: strider_ir::entity_utils::DenseEntitySet<strider_ir::node::NodeId> = strider_ir::entity_utils::DenseEntitySet::new();
         let Some(SpExpr::Terminal { base: _, offset }) =
             decompose_sp(ctx.graph_ref(), addr, sp_vn, &mut memo, &mut visiting)
         else {
@@ -259,8 +259,8 @@ fn detect_stack_args(
         if disqualified.contains(&j) {
             continue;
         }
-        let mut seen: entity_utils::DenseEntitySet<NodeOutputId> =
-            entity_utils::DenseEntitySet::new();
+        let mut seen: strider_ir::entity_utils::DenseEntitySet<NodeOutputId> =
+            strider_ir::entity_utils::DenseEntitySet::new();
         if mem_chain_is_dirty(
             ctx.as_view(),
             memory,
@@ -421,7 +421,7 @@ fn mem_chain_is_dirty(
     load_size: i64,
     sp_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
-    seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
+    seen: &mut strider_ir::entity_utils::DenseEntitySet<NodeOutputId>,
     memo: &mut ShadowMemo,
 ) -> Result<bool> {
     let entry_key = (mem, offset, load_size);

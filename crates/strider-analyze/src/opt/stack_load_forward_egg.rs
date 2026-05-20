@@ -163,7 +163,7 @@ fn try_forward_load_egg(
     let offset = if let Some(off) = classify_addr_via_egraph(addr, adapter) {
         off
     } else {
-        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
+        let mut visiting: strider_ir::entity_utils::DenseEntitySet<NodeId> = strider_ir::entity_utils::DenseEntitySet::new();
         let Some(SpExpr::Terminal { base: _, offset }) =
             decompose_sp(graph, addr, sp_vn, memo, &mut visiting)
         else {
@@ -173,7 +173,7 @@ fn try_forward_load_egg(
     };
 
     let load_size = load_ty.byte_size() as i64;
-    let mut visited: entity_utils::DenseEntitySet<NodeOutputId> = entity_utils::DenseEntitySet::new();
+    let mut visited: strider_ir::entity_utils::DenseEntitySet<NodeOutputId> = strider_ir::entity_utils::DenseEntitySet::new();
     let Some(shape) = probe(graph, mem, offset, load_size, load_ty, sp_vn, memo, &mut visited)
     else {
         return Ok(false);
@@ -213,7 +213,7 @@ fn probe(
     load_ty: NodeOutputType,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visited: &mut entity_utils::DenseEntitySet<NodeOutputId>,
+    visited: &mut strider_ir::entity_utils::DenseEntitySet<NodeOutputId>,
 ) -> Option<ResolveShape> {
     struct PhiFrame {
         phi_node: NodeId,

@@ -86,7 +86,7 @@ fn try_forward_load(
         return Ok(OptimizationResult::NoChange);
     };
 
-    let mut visiting: entity_utils::DenseEntitySet<strider_ir::node::NodeId> = entity_utils::DenseEntitySet::new();
+    let mut visiting: strider_ir::entity_utils::DenseEntitySet<strider_ir::node::NodeId> = strider_ir::entity_utils::DenseEntitySet::new();
     let Some(SpExpr::Terminal { base: _, offset }) =
         decompose_sp(ctx.graph_ref(), addr, sp_vn, memo, &mut visiting)
     else {
@@ -99,7 +99,7 @@ fn try_forward_load(
     // (Truncate / ShiftRight / ValuePhi) to the graph. This prevents
     // partial walks that fail downstream from leaving orphan nodes in
     // the arena.
-    let mut visited: entity_utils::DenseEntitySet<NodeOutputId> = entity_utils::DenseEntitySet::new();
+    let mut visited: strider_ir::entity_utils::DenseEntitySet<NodeOutputId> = strider_ir::entity_utils::DenseEntitySet::new();
     let Some(shape) = probe(
         ctx,
         mem,
@@ -189,7 +189,7 @@ fn probe(
     load_ty: strider_ir::node::NodeOutputType,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visited: &mut entity_utils::DenseEntitySet<NodeOutputId>,
+    visited: &mut strider_ir::entity_utils::DenseEntitySet<NodeOutputId>,
 ) -> Option<ResolveShape> {
     struct PhiFrame {
         phi_node: NodeId,
