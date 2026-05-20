@@ -183,6 +183,30 @@ impl Strider {
     ///    convergence), using the convention's positional stack-arg offsets.
     /// 4. [`crate::opt::FunctionArgDetect`] as a post-pass, canonicalising
     ///    register- and stack-passed argument reads into `FunctionArg` nodes.
+    ///
+    /// # Phase 7.3b — egg-pipeline flip blocked
+    ///
+    /// Phase 7.3b attempted to swap the value-slice passes for their
+    /// `*Egg` ports here.  PipelineV2's 5 parity tests have been green
+    /// since Phase 3.2.5d, but flipping the default reveals two
+    /// real-binary regressions the parity tests don't catch:
+    ///
+    /// 1. `calls::test_fib_recursive::arm_be` (and presumably other
+    ///    ARM-BE / similarly-shaped fixtures): a `>128 MiB` stack
+    ///    overflow inside one of the egg passes — an unbounded
+    ///    recursion the parity-fixture set never triggered.
+    /// 2. `memory::test_tagged_union_read::x86` /
+    ///    `::x86_kernel`: load-count drops from 2 to 1, indicating the
+    ///    egg pipeline over-canonicalises a union read v1 keeps
+    ///    distinct.
+    ///
+    /// Both are tracked in `docs/superpowers/specs/2026-05-20-v1-vs-v2-benchmark.md`
+    /// alongside the documented egraph aliasing gap from
+    /// `parity_control_sum_to_n` / `parity_memory_array_sum` /
+    /// `parity_calling_convention_forward_1`.  Until those are closed,
+    /// the imperative pipeline stays as the production default; the
+    /// `*Egg` ports are still constructible directly (re-exported from
+    /// `crate::opt`) and remain the canonical PipelineV2 body.
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::default_pipeline();

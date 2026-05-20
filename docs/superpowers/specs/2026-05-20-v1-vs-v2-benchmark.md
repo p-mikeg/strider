@@ -410,3 +410,82 @@ All Phase 7.2 tests still pass:
 - `orchestrator_salsa_incremental` (4 tests): pass.
 
 The regression is purely performance, not correctness.
+
+## Phase 7.3 follow-up — surgical undo + default-flip attempt
+
+> Commits `bada24ae` (Phase 7 Task 7.3a — disable per-region pre-pass)
+> and the unstaged `build_optimizer_pipeline` flip (Phase 7 Task 7.3b,
+> reverted in the same commit).
+
+### 7.3a — disable the per-region pre-pass
+
+The Phase 7.2 pre-pass in `optimized_function` was the proximate cause
+of the regression (a redundant CFG build with no downstream consumer
+reading the cached fingerprints).  Disabling the loop behind a
+`RUN_PER_REGION_PREPASS = false` local constant — leaving the
+`RegionKey`, `region_lift_signature`, `region_signatures_query`, and
+`cfg_region_signatures` scaffolding intact — restores Phase 7.1's
+v2-at-parity bench numbers and slightly improves the repeat-query
+cache win.
+
+The four `orchestrator_salsa_per_region` tests that asserted the
+per-region invalidation granularity are marked `#[ignore]` with a
+reference to Phase 7.3a.  Phase 8 un-ignores them when the per-region
+IR producer reads the cached fingerprints.
+
+#### Updated ratios after 7.3a (same machine, same fixture)
+
+| Workload                         | v1     | v2     | Ratio (v2/v1) |
+|----------------------------------|--------|--------|---------------|
+| Cold (`nested_loops`)            |  94.9 ms |  99.2 ms | **1.045×**  |
+| Multi-function (8 fns)           |  758 ms  |  800 ms  | **1.055×**  |
+| Repeat-query (10× `nested_loops`)|  990 ms  |  573 ms  | **0.578×**  |
+
+7.3a restored Phase 7.1's parity-or-faster posture across all three
+workloads.
+
+### 7.3b — flip attempt blocked
+
+After 7.3a restored bench parity, we attempted to flip
+`Strider::build_optimizer_pipeline` to the egg-pass body that
+PipelineV2 has been shipping with green parity tests since Phase
+3.2.5d (`ConstantFoldEgg` / `KnownBitsEgg` / `FlagCmpCanonicalizeEgg`
+/ `IfCondInversionEgg` / `StackStoreDetectEgg` / `StackLoadForwardEgg`
++ post-passes `CallStackArgCollectEgg` / `FunctionArgDetectEgg`).
+
+The flip surfaced two real-binary regressions the 5-fixture parity
+suite does not cover:
+
+1. **Unbounded recursion / stack overflow** on
+   `calls::test_fib_recursive::arm_be`: the egg pipeline overflows
+   even a 128 MiB thread stack.  Root cause is one of the egg passes
+   recursing without bounds on the ARM-BE recursive-call shape; the
+   parity-fixture set (x86_64 only) never exercised this code path.
+
+2. **Load-count semantic drift** on
+   `memory::test_tagged_union_read::x86` /
+   `::x86_kernel`: the union-read test expects ≥2 loads but the egg
+   pipeline emits 1, indicating an over-canonicalisation v1 doesn't
+   apply.  Likely related to the documented egraph aliasing gap
+   (`parity_control_sum_to_n`, `parity_memory_array_sum`,
+   `parity_calling_convention_forward_1` are already
+   `#[ignore]`d for the same family of issue).
+
+The flip was reverted.  `build_optimizer_pipeline` continues to return
+the v1 imperative pipeline.  The egg re-exports from `crate::opt`
+(`ConstantFoldEgg`, `KnownBitsEgg`, …) are kept — they're useful
+public surfaces and the parity tests still pass — but the production
+default stays v1 until:
+
+- (a) the egg passes converge to v1's IR on the parity-gap fixtures
+  (close the aliasing gap), and
+- (b) the recursion bug is bisected and fixed in whichever egg pass
+  unbounded-recurses on ARM-BE.
+
+Both are Phase 8 (or later) tasks.
+
+### Decision for Task 7.3b
+
+Per the Task 7.3 criteria: a `v1_baseline` regression blocks the flip.
+A stack overflow is the most extreme form of regression.  **Default
+pipeline is not flipped.**  v1 stays as the production optimizer.
