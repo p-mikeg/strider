@@ -28,6 +28,40 @@ pub use compact::NodeIdRemap;
 #[cfg(test)]
 mod tests;
 
+/// Calling-convention metadata captured at build time.
+///
+/// `None` on a `Graph` while it is being constructed by
+/// [`crate::FunctionBuilder`]; populated to `Some(_)` by
+/// [`crate::FunctionBuilder::build`] before the graph is wrapped in a
+/// [`crate::BuiltFunctionGraph`].  The wrapper guarantees the
+/// `Some(_)` invariant at the type level.
+///
+/// All four `Box<[rsleigh::Vn]>` lists' element-ordering invariants are
+/// the same as the fields they were lifted from on the old
+/// [`crate::BuiltFunctionGraph`] struct — see the field docs there for
+/// the slot-to-varnode correspondence each list maintains with the
+/// graph's `Call` / `CallOther` / `Return` nodes.
+#[derive(Clone, Debug)]
+pub struct CcMetadata {
+    /// Map from [`crate::VarId`] to the corresponding [`rsleigh::Vn`]
+    /// varnode.  Indexed by the same `VarId` keys the builder used.
+    pub variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn>,
+    /// Ordered list of varnodes clobbered by every `Call` node.  The
+    /// `i`-th clobbered output (slot `i + 2`) corresponds to
+    /// `call_clobbered[i]`.
+    pub call_clobbered: Box<[rsleigh::Vn]>,
+    /// The calling convention's return-value registers, in ABI order.
+    pub ret_val_regs: Box<[rsleigh::Vn]>,
+    /// Function-default clobber list for every `CallOther` node:
+    /// every tracked variable except the stack pointer.
+    pub call_other_clobbered: Box<[rsleigh::Vn]>,
+    /// Function-default `no_memory_clobber` flag — whether calls under
+    /// this convention preserve the memory chain.  `true` for
+    /// zero-side-effect hooks (`__fentry__` / `mcount` /
+    /// `x86_64_all_preserving`).
+    pub no_memory_clobber: bool,
+}
+
 /// The core IR graph structure.
 ///
 /// Stores nodes, their input/output slots, and a deduplication cache for
@@ -135,6 +169,15 @@ pub struct Graph {
         crate::wide_const::WideConstStorage,
         crate::wide_const::WideConstId,
     >,
+    /// The `Entry` node of the function, once
+    /// [`crate::FunctionBuilder::build`] has finalised the graph.
+    /// `None` during build; `Some(_)` after.  The
+    /// [`crate::BuiltFunctionGraph`] wrapper guarantees the `Some(_)`
+    /// invariant at the type level.
+    pub(crate) entry: Option<NodeId>,
+    /// Calling-convention metadata captured at build time.  `None`
+    /// during build; `Some(_)` after.  See [`CcMetadata`].
+    pub(crate) cc_metadata: Option<CcMetadata>,
 }
 
 impl Default for Graph {
@@ -160,6 +203,8 @@ impl Graph {
             call_clobbered_overrides: SecondaryMap::new(),
             wide_consts: PrimaryMap::new(),
             wide_const_dedup: rustc_hash::FxHashMap::default(),
+            entry: None,
+            cc_metadata: None,
         }
     }
 
