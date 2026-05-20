@@ -42,6 +42,16 @@ impl FunctionGraph {
 /// Produced by consuming a [`crate::FunctionBuilder`] after all regions have been
 /// wired together.  The graph can be walked, queried, and passed to
 /// optimisation passes and the pattern matcher.
+///
+/// Implements [`Clone`] — every field is `Clone` (the underlying [`Graph`]
+/// is already `Clone`, and the CC metadata fields are `Box<[_]>` /
+/// primitive types).  Cloning produces a structural copy of the
+/// sea-of-nodes arena (typical functions: hundreds of nodes → micro-
+/// seconds), which is meaningfully cheaper than re-lifting from pcode.
+/// The Phase 7 salsa orchestrator (`orchestrator_salsa::run_v2`) uses
+/// this to return an owned BFG from a cached entry without a second
+/// out-of-band rebuild.
+#[derive(Clone)]
 pub struct BuiltFunctionGraph {
     /// The sea-of-nodes graph.
     pub graph: Graph,

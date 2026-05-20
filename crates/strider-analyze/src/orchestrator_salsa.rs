@@ -61,18 +61,20 @@ use ir::BuiltFunctionGraph;
 
 // ── Salsa cache entry ──────────────────────────────────────────────────────
 //
-// `BuiltFunctionGraph` does not implement `PartialEq` or `Clone` and
-// owns sea-of-nodes arena state.  Salsa needs the cache entry to be
-// either `Eq` or marked `no_eq`.  We hold an `Arc<BfgEntry>` where the
-// entry stores either the BFG or an error message (we can't return
-// `Result` directly because the tracked function body's return type
-// must be `Update`).
+// `BuiltFunctionGraph` does not implement `PartialEq` but as of Phase 7
+// Task 7.1 it IS `Clone` (structural-copy clone of the sea-of-nodes
+// arena — meaningfully cheaper than re-lifting).  Salsa needs the cache
+// entry to be either `Eq` or marked `no_eq`.  We hold an `Arc<BfgEntry>`
+// so the salsa cache and the driver share ownership without copying the
+// graph until the driver actually needs an owned BFG (at which point it
+// `clone()`s out of the entry).
 
 /// Cache entry produced by [`optimized_function`].  Holds the lifted
 /// BFG on success or a stringified error on failure.
 ///
-/// Wrapped in `Arc` so cloning is O(1); the salsa cache and the driver
-/// share ownership.
+/// Wrapped in `Arc` so salsa-side cloning is O(1); the driver clones the
+/// inner BFG out by structural copy when it needs an owned value (see
+/// [`run_v2`]).
 pub struct BfgEntry {
     /// `Ok(bfg)` on a successful lift; `Err(message)` when v1's build
     /// closure failed.  We can't carry an `anyhow::Error` across the
@@ -316,11 +318,12 @@ pub fn run_v2(
                 let new_resolutions = classify_unresolved_external(bfg, &unresolved);
                 if new_resolutions.is_empty() {
                     // No external progress; v1 has done all it can.
-                    // Drop the cache entry's Arc reference and re-run
-                    // v1 directly to materialise an owned BFG (BFG is
-                    // not Clone, and salsa holds the cache copy).
-                    drop(entry);
-                    return db.run_v1_with_targets(&current_map);
+                    // Clone the BFG out of the cache entry — this is
+                    // a structural copy of the sea-of-nodes arena
+                    // (Phase 7 Task 7.1: `BuiltFunctionGraph: Clone`),
+                    // which is meaningfully cheaper than re-lifting
+                    // from pcode.
+                    return Ok(bfg.clone());
                 }
                 let mut next_map = current_map.clone();
                 let mut grew = false;
@@ -333,8 +336,7 @@ pub fn run_v2(
                     }
                 }
                 if !grew {
-                    drop(entry);
-                    return db.run_v1_with_targets(&current_map);
+                    return Ok(bfg.clone());
                 }
                 current_map = next_map;
                 targets.set_map(db).to(Arc::new(current_map.clone()));
