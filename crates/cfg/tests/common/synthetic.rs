@@ -82,7 +82,7 @@ pub fn make_builder_with_bytes(bytes: Vec<u8>, start_addr: u64) -> Builder<TestR
 #[must_use]
 pub fn test_indirect_resolver(
 ) -> std::sync::Arc<dyn cfg::IndirectTargetResolver<TestReader>> {
-    std::sync::Arc::new(opt::indirect_resolver::MiniIrIndirectResolver)
+    std::sync::Arc::new(strider_analyze::opt::indirect_resolver::MiniIrIndirectResolver)
 }
 
 /// Minimal dummy pcode instruction (no inputs/outputs, opcode = `Copy`).

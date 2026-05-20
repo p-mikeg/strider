@@ -251,7 +251,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
 
     let x = Capture::new();
     let rule_x_plus_zero = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let pipeline = opt::default_pipeline();
+    let pipeline = strider_analyze::opt::default_pipeline();
 
     // Edit 1: collapse the `Add(7, 0)`.  Returns 1 application.
     let mut rewriter = GraphRewriter::wrap_built(&mut graph);
@@ -278,7 +278,7 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     // Already-optimised graph.  Calling re_optimize must not change
     // the reachable-node count.
     let mut g = add_k_plus_zero(7);
-    let pipeline = opt::default_pipeline();
+    let pipeline = strider_analyze::opt::default_pipeline();
 
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
     rewriter.re_optimize(&pipeline)?; // first run: collapses Add(7,0)

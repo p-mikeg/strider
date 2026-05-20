@@ -177,7 +177,7 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 
 // ── O9 stack-array indirect-branch shape ──────────────────────────────────
 //
-// The classifier's stack-array arm (`opt::indirect_branch_resolve::
+// The classifier's stack-array arm (`strider_analyze::opt::indirect_branch_resolve::
 // stack_array::classify_stack_array`) is reached via
 // `classify_anchor_with_rom_and_sp` when the rodata jump-table arm
 // doesn't match and an SP varnode is supplied.  These tests pin the

@@ -169,7 +169,7 @@ fn lift_for_pipeline(
     strider_ir::BuiltFunctionGraph,
     strider::Strider,
     strider::SleighArch,
-    std::sync::Arc<dyn opt::ReadOnlyMemory>,
+    std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
 ) {
     let path = binary_path(arch, case);
     if !path.exists() {
@@ -204,7 +204,7 @@ fn lift_for_pipeline(
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let rom_for_cfg: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+    let rom_for_cfg: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
     let mut cfg_opts_b = cfg::OptionsBuilder::new()
@@ -224,7 +224,7 @@ fn lift_for_pipeline(
     let graph = ana.analyze_cfg(&cfg)
         .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"))
         .graph;
-    let rom_for_opt: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+    let rom_for_opt: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),
     );
     (graph, ana, sleigh_arch, rom_for_opt)
@@ -250,14 +250,14 @@ pub fn analyze_v1(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFun
     // `LoadReadOnly` requires an owned concrete reader (`M: 'static`).
     // Re-borrow from the Arc — every test crate's analyze runs in a
     // fresh process so Arc ref-counting cost is negligible.
-    p.add(opt::LoadReadOnly(rom_for_opt));
+    p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
     p.run(&mut graph.graph, graph.entry)
         .unwrap_or_else(|e| panic!("v1 optimizer pipeline for {fn_name}: {e:?}"));
     graph
 }
 
 /// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs
-/// the **v2** [`opt::pipeline_v2::PipelineV2`] (interleaved
+/// the **v2** [`strider_analyze::opt::pipeline_v2::PipelineV2`] (interleaved
 /// destructive+nondestructive fixed-point) over the lifted IR, and
 /// returns the resulting graph.
 ///
@@ -283,7 +283,7 @@ pub fn analyze_v2_with_iters(
 ) -> (strider_ir::BuiltFunctionGraph, u32) {
     let (mut graph, ana, sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, case, fn_name);
-    let pipeline = opt::pipeline_v2::PipelineV2::with_rom(
+    let pipeline = strider_analyze::opt::pipeline_v2::PipelineV2::with_rom(
         ana.calling_convention(),
         sleigh_arch.endianness(),
         rom_for_opt,

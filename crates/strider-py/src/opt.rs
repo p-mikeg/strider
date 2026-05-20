@@ -1,6 +1,6 @@
 //! `PyOptimizerPipeline` and one wrapper class per opt pass.
 //!
-//! The Rust `opt::OptimizerPipeline::add` is generic over the concrete
+//! The Rust `strider_analyze::opt::OptimizerPipeline::add` is generic over the concrete
 //! pass type (`O: Optimizer + 'static`) and stores it as
 //! `Box<dyn OptimizerRaw>` internally.  We can't directly stuff a
 //! type-erased `Box<dyn OptimizerRaw>` back into `add`, so the Python
@@ -14,37 +14,37 @@ use std::sync::Mutex;
 
 use crate::errors::into_strider_err;
 
-/// Trait-object holder owning a heap-allocated `opt::OptimizerRaw`.
+/// Trait-object holder owning a heap-allocated `strider_analyze::opt::OptimizerRaw`.
 /// The wrapper itself is `Send + Sync` so it can move across the
 /// PyO3 boundary safely (Python objects are reachable from any
 /// thread that holds the GIL).
 ///
-/// We use the low-level [`opt::OptimizerRaw`] trait (which takes
-/// `(&mut Graph, NodeId)`) rather than [`opt::Optimizer`] (which
+/// We use the low-level [`strider_analyze::opt::OptimizerRaw`] trait (which takes
+/// `(&mut Graph, NodeId)`) rather than [`strider_analyze::opt::Optimizer`] (which
 /// takes `&mut RewriteCtx`) because every passes' concrete type is
 /// already erased here — no per-call `RewriteCtx` construction is
 /// needed and the Rust signature stays purely in `Graph` terms.
-pub(crate) type ErasedPass = Box<dyn opt::OptimizerRaw + Send + Sync>;
+pub(crate) type ErasedPass = Box<dyn strider_analyze::opt::OptimizerRaw + Send + Sync>;
 
 /// Adapter that turns an owned `ErasedPass` into something
-/// `opt::OptimizerPipeline::add` can accept.  `add` requires
+/// `strider_analyze::opt::OptimizerPipeline::add` can accept.  `add` requires
 /// `O: OptimizerRaw + 'static`; this newtype satisfies both bounds and
 /// forwards `optimize_raw` straight through.
 struct ForwardPass(ErasedPass);
 
-impl opt::OptimizerRaw for ForwardPass {
+impl strider_analyze::opt::OptimizerRaw for ForwardPass {
     fn optimize_raw(
         &self,
         graph: &mut strider_ir::Graph,
         entry: strider_ir::node::NodeId,
-    ) -> opt::Result<opt::OptimizationResult> {
+    ) -> strider_analyze::opt::Result<strider_analyze::opt::OptimizationResult> {
         self.0.optimize_raw(graph, entry)
     }
 }
 
 /// Internal builder representation: a list of fixed-point passes and
 /// a list of post-passes, both as type-erased boxes.  Snapshot on
-/// `run` materialises a real `opt::OptimizerPipeline` ad-hoc.
+/// `run` materialises a real `strider_analyze::opt::OptimizerPipeline` ad-hoc.
 struct PipelineState {
     passes: Vec<ErasedPass>,
     post_passes: Vec<ErasedPass>,
@@ -60,43 +60,43 @@ impl PipelineState {
 
     fn from_default() -> Self {
         // Re-create the default pipeline by reconstructing each pass
-        // individually rather than calling opt::default_pipeline()
+        // individually rather than calling strider_analyze::opt::default_pipeline()
         // (which returns an OptimizerPipeline whose Box<dyn OptimizerRaw>
         // entries are not externally re-extractable).  Pass list and
-        // order MUST mirror `opt::default_pipeline()` — drift here
+        // order MUST mirror `strider_analyze::opt::default_pipeline()` — drift here
         // silently produces graphs that look different from the
         // orchestrator path's, e.g. flag-cmp shapes the lifter emits
         // never get canonicalised and pattern queries miss them.
         let mut s = Self::new();
-        s.passes.push(Box::new(opt::ConstantFold));
-        s.passes.push(Box::new(opt::KnownBits));
-        s.passes.push(Box::new(opt::FlagCmpCanonicalize));
-        s.passes.push(Box::new(opt::IfCondInversion));
-        s.passes.push(Box::new(opt::RedundantPhis));
-        s.passes.push(Box::new(opt::DeadBranchElimination));
+        s.passes.push(Box::new(strider_analyze::opt::ConstantFold));
+        s.passes.push(Box::new(strider_analyze::opt::KnownBits));
+        s.passes.push(Box::new(strider_analyze::opt::FlagCmpCanonicalize));
+        s.passes.push(Box::new(strider_analyze::opt::IfCondInversion));
+        s.passes.push(Box::new(strider_analyze::opt::RedundantPhis));
+        s.passes.push(Box::new(strider_analyze::opt::DeadBranchElimination));
         s
     }
 
     fn from_stable_default() -> Self {
-        // Mirrors `opt::stable_default_pipeline()` — see `from_default`
+        // Mirrors `strider_analyze::opt::stable_default_pipeline()` — see `from_default`
         // for why drift here is dangerous.
         let mut s = Self::new();
-        s.passes.push(Box::new(opt::ConstantFold));
-        s.passes.push(Box::new(opt::KnownBits));
-        s.passes.push(Box::new(opt::FlagCmpCanonicalize));
-        s.passes.push(Box::new(opt::IfCondInversion));
+        s.passes.push(Box::new(strider_analyze::opt::ConstantFold));
+        s.passes.push(Box::new(strider_analyze::opt::KnownBits));
+        s.passes.push(Box::new(strider_analyze::opt::FlagCmpCanonicalize));
+        s.passes.push(Box::new(strider_analyze::opt::IfCondInversion));
         s
     }
 
     fn from_destructive_default() -> Self {
         let mut s = Self::new();
-        s.passes.push(Box::new(opt::RedundantPhis));
-        s.passes.push(Box::new(opt::DeadBranchElimination));
+        s.passes.push(Box::new(strider_analyze::opt::RedundantPhis));
+        s.passes.push(Box::new(strider_analyze::opt::DeadBranchElimination));
         s
     }
 }
 
-/// Python-visible builder for an `opt::OptimizerPipeline`.
+/// Python-visible builder for an `strider_analyze::opt::OptimizerPipeline`.
 ///
 /// Holds the internal state behind a `Mutex` so `add` / `add_post`
 /// don't require `&mut self` (PyO3 method receivers are typically
@@ -122,16 +122,16 @@ impl PyOptimizerPipeline {
         let mut state = PipelineState::from_default();
         state
             .passes
-            .push(Box::new(opt::StackStoreDetect::from_convention(&cc)));
+            .push(Box::new(strider_analyze::opt::StackStoreDetect::from_convention(&cc)));
         state
             .passes
-            .push(Box::new(opt::StackLoadForward::from_convention(&cc, &arch)));
+            .push(Box::new(strider_analyze::opt::StackLoadForward::from_convention(&cc, &arch)));
         state
             .post_passes
-            .push(Box::new(opt::CallStackArgCollect::from_convention(&cc)));
+            .push(Box::new(strider_analyze::opt::CallStackArgCollect::from_convention(&cc)));
         state
             .post_passes
-            .push(Box::new(opt::FunctionArgDetect::from_convention(&cc)));
+            .push(Box::new(strider_analyze::opt::FunctionArgDetect::from_convention(&cc)));
         Self::new_with(state)
     }
 
@@ -144,13 +144,13 @@ impl PyOptimizerPipeline {
         let mut state = PipelineState::from_stable_default();
         state
             .passes
-            .push(Box::new(opt::StackStoreDetect::from_convention(&cc)));
+            .push(Box::new(strider_analyze::opt::StackStoreDetect::from_convention(&cc)));
         state
             .passes
-            .push(Box::new(opt::StackLoadForward::from_convention(&cc, &arch)));
+            .push(Box::new(strider_analyze::opt::StackLoadForward::from_convention(&cc, &arch)));
         state
             .post_passes
-            .push(Box::new(opt::FunctionArgDetect::from_convention(&cc)));
+            .push(Box::new(strider_analyze::opt::FunctionArgDetect::from_convention(&cc)));
         Self::new_with(state)
     }
 
@@ -160,11 +160,11 @@ impl PyOptimizerPipeline {
         let mut state = PipelineState::from_destructive_default();
         state
             .post_passes
-            .push(Box::new(opt::CallStackArgCollect::from_convention(&cc)));
+            .push(Box::new(strider_analyze::opt::CallStackArgCollect::from_convention(&cc)));
         Self::new_with(state)
     }
 
-    /// Materialise a real `opt::OptimizerPipeline` from the current
+    /// Materialise a real `strider_analyze::opt::OptimizerPipeline` from the current
     /// state.  Drains the internal pass lists — call once per
     /// "transfer" cycle and rebuild the wrapper afterwards if you
     /// need to keep it.
@@ -175,7 +175,7 @@ impl PyOptimizerPipeline {
     /// silently run an empty pipeline and report success — masking
     /// caller bugs where the same wrapper is reused after a previous
     /// `optimize` / `strider.run` consumed it.
-    pub(crate) fn drain_into_pipeline(&self) -> PyResult<opt::OptimizerPipeline> {
+    pub(crate) fn drain_into_pipeline(&self) -> PyResult<strider_analyze::opt::OptimizerPipeline> {
         let mut state = self
             .state
             .lock()
@@ -188,7 +188,7 @@ impl PyOptimizerPipeline {
                  calling again."
             )));
         }
-        let mut pipe = opt::OptimizerPipeline::new();
+        let mut pipe = strider_analyze::opt::OptimizerPipeline::new();
         for p in state.passes.drain(..) {
             pipe.add(ForwardPass(p));
         }
@@ -204,13 +204,13 @@ impl PyOptimizerPipeline {
     /// (otherwise the rom is silently discarded).
     pub(crate) fn prepend_load_read_only(
         &self,
-        rom: std::sync::Arc<dyn opt::ReadOnlyMemory>,
+        rom: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
     ) -> PyResult<()> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
-        let pass: ErasedPass = Box::new(opt::LoadReadOnly(rom));
+        let pass: ErasedPass = Box::new(strider_analyze::opt::LoadReadOnly(rom));
         state.passes.insert(0, pass);
         Ok(())
     }
@@ -311,7 +311,7 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion);
 /// `StackStoreDetect(sleigh, cc)`
 #[pyclass(name = "StackStoreDetect", module = "strider.opt")]
 pub struct PyStackStoreDetect {
-    pub(crate) inner: opt::StackStoreDetect,
+    pub(crate) inner: strider_analyze::opt::StackStoreDetect,
 }
 #[pymethods]
 impl PyStackStoreDetect {
@@ -323,7 +323,7 @@ impl PyStackStoreDetect {
     ) -> PyResult<Self> {
         let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
-            inner: opt::StackStoreDetect::from_convention(&built_cc),
+            inner: strider_analyze::opt::StackStoreDetect::from_convention(&built_cc),
         })
     }
 }
@@ -331,7 +331,7 @@ impl PyStackStoreDetect {
 /// `StackLoadForward(sleigh, cc, arch)`
 #[pyclass(name = "StackLoadForward", module = "strider.opt")]
 pub struct PyStackLoadForward {
-    pub(crate) inner: opt::StackLoadForward,
+    pub(crate) inner: strider_analyze::opt::StackLoadForward,
 }
 #[pymethods]
 impl PyStackLoadForward {
@@ -344,7 +344,7 @@ impl PyStackLoadForward {
     ) -> PyResult<Self> {
         let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
-            inner: opt::StackLoadForward::from_convention(&built_cc, &arch.inner),
+            inner: strider_analyze::opt::StackLoadForward::from_convention(&built_cc, &arch.inner),
         })
     }
 }
@@ -352,7 +352,7 @@ impl PyStackLoadForward {
 /// `FunctionArgDetect(sleigh, cc)`
 #[pyclass(name = "FunctionArgDetect", module = "strider.opt")]
 pub struct PyFunctionArgDetect {
-    pub(crate) inner: opt::FunctionArgDetect,
+    pub(crate) inner: strider_analyze::opt::FunctionArgDetect,
 }
 #[pymethods]
 impl PyFunctionArgDetect {
@@ -364,7 +364,7 @@ impl PyFunctionArgDetect {
     ) -> PyResult<Self> {
         let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
-            inner: opt::FunctionArgDetect::from_convention(&built_cc),
+            inner: strider_analyze::opt::FunctionArgDetect::from_convention(&built_cc),
         })
     }
 }
@@ -372,7 +372,7 @@ impl PyFunctionArgDetect {
 /// `CallStackArgCollect(sleigh, cc)`
 #[pyclass(name = "CallStackArgCollect", module = "strider.opt")]
 pub struct PyCallStackArgCollect {
-    pub(crate) inner: opt::CallStackArgCollect,
+    pub(crate) inner: strider_analyze::opt::CallStackArgCollect,
 }
 #[pymethods]
 impl PyCallStackArgCollect {
@@ -384,7 +384,7 @@ impl PyCallStackArgCollect {
     ) -> PyResult<Self> {
         let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
-            inner: opt::CallStackArgCollect::from_convention(&built_cc),
+            inner: strider_analyze::opt::CallStackArgCollect::from_convention(&built_cc),
         })
     }
 }
@@ -395,7 +395,7 @@ impl PyCallStackArgCollect {
 /// path share one wrapper class.
 #[pyclass(name = "LoadReadOnly", module = "strider.opt")]
 pub struct PyLoadReadOnly {
-    pub(crate) rom: std::sync::Arc<dyn opt::ReadOnlyMemory>,
+    pub(crate) rom: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
 }
 #[pymethods]
 impl PyLoadReadOnly {
@@ -437,18 +437,18 @@ pub enum PyOptPass<'py> {
 impl PyOptPass<'_> {
     fn into_erased(self) -> ErasedPass {
         match self {
-            PyOptPass::ConstantFold(_) => Box::new(opt::ConstantFold),
-            PyOptPass::KnownBits(_) => Box::new(opt::KnownBits),
-            PyOptPass::RedundantPhis(_) => Box::new(opt::RedundantPhis),
-            PyOptPass::DeadBranchElim(_) => Box::new(opt::DeadBranchElimination),
-            PyOptPass::FlagCmpCanonicalize(_) => Box::new(opt::FlagCmpCanonicalize),
-            PyOptPass::IfCondInversion(_) => Box::new(opt::IfCondInversion),
+            PyOptPass::ConstantFold(_) => Box::new(strider_analyze::opt::ConstantFold),
+            PyOptPass::KnownBits(_) => Box::new(strider_analyze::opt::KnownBits),
+            PyOptPass::RedundantPhis(_) => Box::new(strider_analyze::opt::RedundantPhis),
+            PyOptPass::DeadBranchElim(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
+            PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize),
+            PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion),
             PyOptPass::StackStoreDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::StackLoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::LoadReadOnly(b) => {
-                Box::new(opt::LoadReadOnly(std::sync::Arc::clone(&b.borrow().rom)))
+                Box::new(strider_analyze::opt::LoadReadOnly(std::sync::Arc::clone(&b.borrow().rom)))
             }
         }
     }

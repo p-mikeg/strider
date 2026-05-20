@@ -20,7 +20,7 @@ use common::{
 
 use cfg::test_api::{self, ProcessInsnRes, Region};
 use cfg::{Builder, OptionsBuilder, RegionEdgeKind, RegionTerminator};
-use opt::ReadOnlyMemory;
+use strider_analyze::opt::ReadOnlyMemory;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Sleigh, VnSpace};
@@ -171,7 +171,7 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
     let arm = target::SleighArch::arm();
     let cfg = Builder::for_arch(&arm, sleigh, base, opts)
         .with_indirect_resolver(std::sync::Arc::new(
-            opt::indirect_resolver::MiniIrIndirectResolver,
+            strider_analyze::opt::indirect_resolver::MiniIrIndirectResolver,
         ))
         .build()
         .expect("Builder::build");

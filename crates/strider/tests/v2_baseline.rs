@@ -3,7 +3,7 @@
 //! This pins the **v2** behavior contract: every (arch, case, function)
 //! tuple built under `fixtures/out/<arch>/<case>.elf` is lifted +
 //! optimized through the **v2 egg-based pipeline**
-//! ([`opt::pipeline_v2::PipelineV2`]) and its post-optimization IR
+//! ([`strider_analyze::opt::pipeline_v2::PipelineV2`]) and its post-optimization IR
 //! (rendered as DOT) is snapshotted via `insta`.  Any later change to
 //! the lifter, the v2 optimizer, or the IR layout that moves these
 //! snapshots must go through explicit review.

@@ -42,7 +42,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         _ => raw_addr,
     };
 
-    let rom: Arc<dyn opt::ReadOnlyMemory> = Arc::new(
+    let rom: Arc<dyn strider_analyze::opt::ReadOnlyMemory> = Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom"),
     );
 

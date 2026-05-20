@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_dot("graph.dot")?;
 
     let mut pipeline = strider.build_optimizer_pipeline();
-    pipeline.add(opt::LoadReadOnly(rom));
+    pipeline.add(strider_analyze::opt::LoadReadOnly(rom));
     pipeline.run_on_built(&mut function)?;
     println!("dumping opt IR graph...");
 

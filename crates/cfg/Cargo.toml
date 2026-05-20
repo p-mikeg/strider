@@ -18,5 +18,5 @@ object.workspace = true
 petgraph.workspace = true
 strider-ir.workspace = true
 rsleigh.workspace = true
-opt.workspace = true
+strider-analyze.workspace = true
 target.workspace = true

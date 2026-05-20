@@ -13,7 +13,7 @@
 //! forwarding** (`StackStoreDetect` + `StackLoadForward` joined
 //! across the function's region graph), routed through the
 //! IR-level resolver's stack-array classifier arm
-//! (`opt::indirect_branch_resolve::classify_stack_array`).  The
+//! (`strider_analyze::opt::indirect_branch_resolve::classify_stack_array`).  The
 //! cfg-time mini-graph resolver runs `ConstantFold` + `KnownBits` on
 //! a single region only and cannot prove the loaded target is one of
 //! the pushed label addresses; the IR-level resolver gets visibility
@@ -79,7 +79,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let rom_for_cfg: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+    let rom_for_cfg: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
     let mut cfg_opts_b = cfg::OptionsBuilder::new()
@@ -112,7 +112,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // pipeline regression on the placeholder code-path is caught.
         let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
         let mut p = ana.build_optimizer_pipeline();
-        p.add(opt::LoadReadOnly(rom_for_opt));
+        p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
         p.run(&mut graph.graph.graph, graph.graph.entry)
             .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
         return;
@@ -123,13 +123,13 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     // pre-classify pass.
     let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
-    p.add(opt::LoadReadOnly(rom_for_opt));
+    p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
     p.run(&mut graph.graph.graph, graph.graph.entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn();
     let sp_vn = Some(ana.calling_convention().stack_ptr_vn());
-    let rom_for_classify: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+    let rom_for_classify: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
     );
     for (anchor_addr, anchor_output) in &unresolved {

@@ -1,6 +1,6 @@
 //! Integration tests for the optimiser-tier separation
-//! (`opt::stable_default_pipeline` vs
-//! `opt::destructive_default_pipeline`).
+//! (`strider_analyze::opt::stable_default_pipeline` vs
+//! `strider_analyze::opt::destructive_default_pipeline`).
 //!
 //! Pin the soundness contracts the strider fixed-point orchestrator
 //! depends on:
@@ -25,7 +25,7 @@
 mod common;
 use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
-use opt::{destructive_default_pipeline, stable_default_pipeline};
+use strider_analyze::opt::{destructive_default_pipeline, stable_default_pipeline};
 
 #[test]
 fn stable_subset_is_idempotent_on_optimised_graph() {
@@ -53,7 +53,7 @@ fn stable_then_destructive_equals_full_default_pipeline_node_count() {
     // the orchestrator relies on at fixed point.
     let (mut g_full, _) = build_initial_var_target_scenario_x86_64();
     let (mut g_split, _) = build_initial_var_target_scenario_x86_64();
-    opt::default_pipeline().run(&mut g_full.graph, g_full.entry).expect("full");
+    strider_analyze::opt::default_pipeline().run(&mut g_full.graph, g_full.entry).expect("full");
     stable_default_pipeline().run(&mut g_split.graph, g_split.entry).expect("stable");
     destructive_default_pipeline()
         .run(&mut g_split.graph, g_split.entry)
@@ -141,7 +141,7 @@ fn ir_level_classification_robust_to_destructive_subset() {
 
 // ── default pipeline composition ────────────────────────────────────────────
 
-fn pass_names_t17(p: &opt::OptimizerPipeline) -> Vec<String> {
+fn pass_names_t17(p: &strider_analyze::opt::OptimizerPipeline) -> Vec<String> {
     p.optimizer_names().iter().map(|s| (*s).to_string()).collect()
 }
 

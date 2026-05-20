@@ -56,7 +56,7 @@ pub fn build_cfg(
     // site via `UnresolvedIndirectBranch`.  Phase 3 Task 3.1.
     let resolver: std::sync::Arc<
         dyn cfg::IndirectTargetResolver<AnyMemReader>,
-    > = std::sync::Arc::new(opt::indirect_resolver::MiniIrIndirectResolver);
+    > = std::sync::Arc::new(strider_analyze::opt::indirect_resolver::MiniIrIndirectResolver);
     let built = cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .with_indirect_resolver(resolver)
         .build()

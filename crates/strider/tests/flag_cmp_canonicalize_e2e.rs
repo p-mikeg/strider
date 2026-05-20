@@ -1,4 +1,4 @@
-//! End-to-end smoke check for [`opt::FlagCmpCanonicalize`].
+//! End-to-end smoke check for [`strider_analyze::opt::FlagCmpCanonicalize`].
 //!
 //! Lifts a hand-encoded AArch64 `cmp w0, #5; b.eq +8; ret; ret` byte
 //! sequence through the full strider + opt pipeline and asserts that

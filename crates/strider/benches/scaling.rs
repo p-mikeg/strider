@@ -18,7 +18,7 @@ use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{NodeOutputType, NodeOutputKind};
 use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
-use opt::{
+use strider_analyze::opt::{
     ConstantFold, OptimizerPipeline, OptimizerRaw, RedundantPhis, StackLoadForward, StackStoreDetect,
 };
 
@@ -76,7 +76,7 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
         .unwrap_or_else(|| panic!("symbol {:?} not found in {path:?}", c.fn_name))
         .address();
     let addr = raw_addr;
-    let rom_for_cfg: Arc<dyn opt::ReadOnlyMemory> = Arc::new(
+    let rom_for_cfg: Arc<dyn strider_analyze::opt::ReadOnlyMemory> = Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
     let mut cfg_opts_b = cfg::OptionsBuilder::new()
@@ -95,7 +95,7 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
     let mut graph = ana.analyze_cfg(&cfg).expect("analyze_cfg").graph;
     let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
-    p.add(opt::LoadReadOnly(rom_for_opt));
+    p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
     p.run(&mut graph.graph, graph.entry).expect("optimizer pipeline");
     graph
 }

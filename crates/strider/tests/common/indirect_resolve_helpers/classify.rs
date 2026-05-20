@@ -146,7 +146,7 @@ pub fn build_value_phi_target_scenario(
 ) -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::{FunctionBuilder, IntBinaryOp};
-    use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use target::Endianness;
 
     assert!(
@@ -264,7 +264,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 ) -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::FunctionBuilder;
-    use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use target::Endianness;
 
     let sp = rsleigh::Vn {
@@ -319,13 +319,13 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     // produces in real-binary integration tests.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(opt::RedundantPhis);
+    pipeline.add(strider_analyze::opt::RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     // RedundantPhis again post-StackLoadForward to collapse any
     // single-input VarPhi the forward inserts (e.g. wrapping
     // the loaded InitialVar(lr) in a phi at the merge region).
-    pipeline.add(opt::RedundantPhis);
+    pipeline.add(strider_analyze::opt::RedundantPhis);
     pipeline.run(&mut fg.graph, fg.entry).expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
@@ -363,7 +363,7 @@ pub fn build_push_target_pop_pc_scenario(
 ) -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::FunctionBuilder;
-    use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use target::Endianness;
 
     let sp = rsleigh::Vn {
@@ -459,7 +459,7 @@ pub fn build_jump_table_known_bits_scenario(
 ) -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::{FunctionBuilder, IntBinaryOp};
-    use opt::{ConstantFold, OptimizerPipeline};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     // Single tracked variable — a register-shaped VN.  We seed `idx`
     // from `read_variable` so it's a non-IntConst (else the matcher
@@ -528,7 +528,7 @@ pub fn build_jump_table_predecessor_if_scenario(
 ) -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp};
-    use opt::{ConstantFold, OptimizerPipeline};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
@@ -596,7 +596,7 @@ pub fn build_jump_table_unbounded_scenario(
 ) -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::{FunctionBuilder, IntBinaryOp};
-    use opt::{ConstantFold, OptimizerPipeline};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
@@ -641,7 +641,7 @@ pub fn build_jump_table_unbounded_scenario(
 pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::FunctionBuilder;
-    use opt::{ConstantFold, OptimizerPipeline};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     let mut b = FunctionBuilder::empty()
         .expect("new_raw");
@@ -701,7 +701,7 @@ pub fn build_stack_array_dispatch_scenario(
 ) -> (BuiltFunctionGraph, strider_ir::node::NodeOutputId, rsleigh::Vn) {
     use strider_ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
     use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
-    use opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use strider_analyze::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let n = u64::try_from(targets.len()).expect("targets.len fits in u64");
     assert!(n > 0, "stack-array fixture needs at least one target");

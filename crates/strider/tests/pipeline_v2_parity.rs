@@ -2,7 +2,7 @@
 //!
 //! For 5 representative fixtures, prove that the v1 optimizer pipeline
 //! ([`Strider::build_optimizer_pipeline`] + `LoadReadOnly`) and the v2
-//! optimizer pipeline ([`opt::pipeline_v2::PipelineV2`]) produce the
+//! optimizer pipeline ([`strider_analyze::opt::pipeline_v2::PipelineV2`]) produce the
 //! same *structural* IR shape on x86_64.
 //!
 //! v1 is the contract.  v2 is the new interleaved

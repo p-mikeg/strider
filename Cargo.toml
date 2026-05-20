@@ -16,7 +16,6 @@ edition = "2024"
 strider = { path = "crates/strider" }
 cfg = { path = "crates/cfg" }
 reader = { path = "crates/reader" }
-opt = { path = "crates/opt" }
 target = { path = "crates/target" }
 pcode-lift = { path = "crates/pcode-lift" }
 strider-ir = { path = "crates/strider-ir" }

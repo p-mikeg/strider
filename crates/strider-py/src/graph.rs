@@ -281,11 +281,11 @@ impl PyGraph {
     /// rewrite (`graph.rewrite(...)`) to re-converge the graph.
     #[pyo3(signature = (destructive=false))]
     fn reoptimize(&self, destructive: bool) -> PyResult<()> {
-        let mut pipe = opt::stable_default_pipeline();
+        let mut pipe = strider_analyze::opt::stable_default_pipeline();
         if destructive {
             // Append the destructive passes after the stable ones.
-            pipe.add(opt::RedundantPhis);
-            pipe.add(opt::DeadBranchElimination);
+            pipe.add(strider_analyze::opt::RedundantPhis);
+            pipe.add(strider_analyze::opt::DeadBranchElimination);
         }
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         pipe.run_on_built(&mut graph).map_err(|e| {

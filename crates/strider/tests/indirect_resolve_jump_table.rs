@@ -48,7 +48,7 @@ struct TableRom {
     size: usize,
 }
 
-impl opt::ReadOnlyMemory for TableRom {
+impl strider_analyze::opt::ReadOnlyMemory for TableRom {
     fn read(&self, _space: VnSpace, addr: u64, size: usize) -> Option<u64> {
         if size != self.size {
             return None;
@@ -76,7 +76,7 @@ struct PartialRom {
     cutoff: usize,
 }
 
-impl opt::ReadOnlyMemory for PartialRom {
+impl strider_analyze::opt::ReadOnlyMemory for PartialRom {
     fn read(&self, space: VnSpace, addr: u64, size: usize) -> Option<u64> {
         if addr < self.inner.base {
             return None;
