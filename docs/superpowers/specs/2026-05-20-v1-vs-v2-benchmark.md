@@ -489,3 +489,53 @@ Both are Phase 8 (or later) tasks.
 Per the Task 7.3 criteria: a `v1_baseline` regression blocks the flip.
 A stack overflow is the most extreme form of regression.  **Default
 pipeline is not flipped.**  v1 stays as the production optimizer.
+
+## Phase 8 follow-up — partial unblocks
+
+### 8a — ConstantFoldEgg cycle-safety fix (LANDED)
+
+Commit `6af925c4`.  Root cause: `reflect_changes` in
+`crates/strider-analyze/src/opt/constant_fold_egg.rs` forwarded a
+value-output `oid → forward_out` whenever egg unioned their e-classes
+and `forward_out`'s arena index was smaller.  When egg unioned an
+identity-rule chain `Add(x, 0) ≡ x` with `forward_out`'s producer
+being a downstream consumer of `oid` (e.g. the downstream Add that
+fed the identity-Add), the rewrite made that downstream producer
+consume its own output — a self-loop in the value DAG.  The cycle
+then cascaded into the recursive `EGraphAdapter::from_graph` traversal
+(memoised only on completed entries) producing unbounded recursion.
+
+Fix: cycle-safety guard `producer_transitively_consumes(graph,
+fwd_producer, oid)` — when forwarding would create a self-loop, skip
+the forward and leave the redundant node for a later iteration to
+canonicalise via a different path.  Phase 8a unblocks
+`calls::test_fib_recursive::arm_be` under PipelineV2.
+
+### 8b — `tagged_union_read::x86` is a pre-existing v1 failure
+
+Empirically, `test_tagged_union_read::x86` and `::x86_kernel` fail
+on **v1** (the production pipeline as of `96a0cf78`) with the same
+"got 1 load" assertion as the v2 attempt.  The v1_baseline snapshot
+for these fixtures records 1 load — meaning the v1 contract already
+encodes the "over-canonicalisation" the Phase 7.3b doc attributed to
+v2.  Phase 8b therefore does NOT change anything: the test stays
+failing on both pipelines and the snapshot stays at 1 load.
+
+### Phase 8 flip retry — still blocked by `v1_baseline_snapshots`
+
+After the 8a fix, retrying the `build_optimizer_pipeline` flip
+(swap v1 imperative passes for their `*Egg` counterparts) still
+diverges `v1_baseline_snapshots`.  The very first snapshot
+(`x86__abi__main`) shows the egg-based IR has FEWER nodes than v1:
+specifically, the egg pipeline eliminates `StackStore u32 → ram[sp - 24]`
+nodes whose data is a fresh `IntConst(0)`, which v1's
+`ConstantFold`/`KnownBits` keep.  This is the same egraph-aliasing
+gap family from `parity_control_sum_to_n` /
+`parity_calling_convention_forward_1` / `parity_memory_array_sum`
+(documented in `crates/strider/tests/pipeline_v2_parity.rs`).
+
+Per the Phase 8 task's "v1 contract is sacred" clause, **the flip
+stays reverted.**  The egg ports remain on the v2 side
+(`PipelineV2`); production stays on v1.  Closing the snapshot gap
+would require re-recording 2162 snapshots, which is out of scope
+here.

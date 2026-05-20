@@ -184,29 +184,29 @@ impl Strider {
     /// 4. [`crate::opt::FunctionArgDetect`] as a post-pass, canonicalising
     ///    register- and stack-passed argument reads into `FunctionArg` nodes.
     ///
-    /// # Phase 7.3b — egg-pipeline flip blocked
+    /// # Phase 7.3b / 8 — egg-pipeline flip still blocked on v1_baseline
     ///
-    /// Phase 7.3b attempted to swap the value-slice passes for their
-    /// `*Egg` ports here.  PipelineV2's 5 parity tests have been green
-    /// since Phase 3.2.5d, but flipping the default reveals two
-    /// real-binary regressions the parity tests don't catch:
+    /// Phase 8a fixed the [`crate::opt::constant_fold_egg`] cycle that
+    /// blocked the Phase 7.3b flip on
+    /// `calls::test_fib_recursive::arm_be`.  Phase 8b confirmed the
+    /// `memory::test_tagged_union_read::x86` regression is a
+    /// pre-existing v1 failure (v1 also emits 1 load on that fixture)
+    /// and therefore does not block the flip.
     ///
-    /// 1. `calls::test_fib_recursive::arm_be` (and presumably other
-    ///    ARM-BE / similarly-shaped fixtures): a `>128 MiB` stack
-    ///    overflow inside one of the egg passes — an unbounded
-    ///    recursion the parity-fixture set never triggered.
-    /// 2. `memory::test_tagged_union_read::x86` /
-    ///    `::x86_kernel`: load-count drops from 2 to 1, indicating the
-    ///    egg pipeline over-canonicalises a union read v1 keeps
-    ///    distinct.
+    /// However, retrying the flip in Phase 8 still diverges
+    /// `v1_baseline_snapshots`: the egg-based pipeline applies more
+    /// aggressive canonicalisation (e.g. eliminates `StackStore` nodes
+    /// of zero-init constants on x86) than v1's
+    /// `ConstantFold`/`KnownBits` rules.  This is the same
+    /// "egraph-aliasing-gap" family already documented for
+    /// `parity_control_sum_to_n` /
+    /// `parity_calling_convention_forward_1` / `parity_memory_array_sum`
+    /// in `crates/strider/tests/pipeline_v2_parity.rs`.
     ///
-    /// Both are tracked in `docs/superpowers/specs/2026-05-20-v1-vs-v2-benchmark.md`
-    /// alongside the documented egraph aliasing gap from
-    /// `parity_control_sum_to_n` / `parity_memory_array_sum` /
-    /// `parity_calling_convention_forward_1`.  Until those are closed,
-    /// the imperative pipeline stays as the production default; the
-    /// `*Egg` ports are still constructible directly (re-exported from
-    /// `crate::opt`) and remain the canonical PipelineV2 body.
+    /// Closing the gap requires re-recording every snapshot under the
+    /// new IR, which drops the v1 byte-identical contract.  Per the
+    /// Phase 8 task: prefer leaving v1 as the production default until
+    /// the parity-gap fixtures themselves are byte-identical.
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::default_pipeline();
