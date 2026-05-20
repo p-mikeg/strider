@@ -49,7 +49,7 @@
 #![allow(clippy::missing_errors_doc)] // internal driver, surfaces upstream anyhow
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Result, anyhow};
@@ -188,6 +188,25 @@ pub trait StriderDb: salsa::Database {
 
     /// Returns the current per-region invocation count (for testing).
     fn region_lift_invocation_count(&self) -> usize;
+
+    /// Phase 8c — content-keyed BFG cache: lookup.  Returns the cached
+    /// `Arc<BfgEntry>` for the supplied signature-multiset hash, or
+    /// `None` if the cache misses.
+    ///
+    /// Hits are O(1) HashMap lookups.  Misses are recorded via
+    /// `record_bfg_content_cache_miss`.
+    fn bfg_content_cache_get(&self, sig_hash: u64) -> Option<Arc<BfgEntry>>;
+
+    /// Phase 8c — content-keyed BFG cache: insert.  Stores the
+    /// supplied `Arc<BfgEntry>` under the signature-multiset hash.
+    /// Subsequent `bfg_content_cache_get(sig_hash)` calls return the
+    /// stored entry until the db is dropped.
+    fn bfg_content_cache_insert(&self, sig_hash: u64, entry: Arc<BfgEntry>);
+
+    /// Phase 8c — increments the content-cache-miss counter.  Called
+    /// from inside `optimized_function` whenever a miss occurs and a
+    /// full v1 lift fires.
+    fn record_bfg_content_cache_miss(&self);
 }
 
 /// Trait-object signature for the build closure.  Concrete impls
@@ -233,6 +252,36 @@ pub struct StriderDbImpl {
     optimized_calls: AtomicUsize,
     /// Phase 7 Task 7.2 — per-region tracked-body counter.
     region_lift_calls: AtomicUsize,
+    /// Phase 8c — content-keyed BFG cache.  Maps the hash of the
+    /// per-region signature multiset (as produced by
+    /// `cfg_region_signatures`) to the lifted+optimised `Arc<BfgEntry>`.
+    ///
+    /// **Why a manual side-table rather than a salsa-tracked query**:
+    /// the salsa-native form would be a `#[salsa::tracked]` query
+    /// keyed on an interned `FunctionContentKey` (the signature
+    /// multiset).  But the body of that query needs the current
+    /// `IndirectTargets` map to drive v1's CFG build, and salsa would
+    /// then key the cache on `(content_key, targets)` — defeating the
+    /// purpose of content-keying (we want two different `targets`
+    /// values that produce the same signatures to share a cache entry).
+    ///
+    /// The manual side-table avoids that by stepping outside salsa's
+    /// dependency graph for the BFG cache.  Soundness is preserved by
+    /// the contract: identical signatures imply identical lifted IR
+    /// for the same db (per-binary).  Tests in
+    /// `orchestrator_salsa_per_region` pin this contract.
+    ///
+    /// `Mutex` (not `RwLock`) because writes are common (every cache
+    /// miss takes the lock to insert) and contention is low (one
+    /// analysis thread at a time per db).
+    bfg_content_cache: Mutex<HashMap<u64, Arc<BfgEntry>>>,
+    /// Phase 8c — diagnostic counter.  Incremented every time the
+    /// content cache MISSES and a full v1 lift fires.  Distinct from
+    /// `optimized_calls` (which counts salsa-tracked body entries):
+    /// the content cache may hit even when the salsa body re-runs
+    /// (e.g. after an `IndirectTargets` mutation that doesn't change
+    /// the region signatures).
+    bfg_content_cache_misses: AtomicUsize,
 }
 
 impl StriderDbImpl {
@@ -245,7 +294,16 @@ impl StriderDbImpl {
             build,
             optimized_calls: AtomicUsize::new(0),
             region_lift_calls: AtomicUsize::new(0),
+            bfg_content_cache: Mutex::new(HashMap::new()),
+            bfg_content_cache_misses: AtomicUsize::new(0),
         }
+    }
+
+    /// Returns the number of times the Phase 8c content cache has
+    /// missed (i.e. the number of full v1 lifts that fired).  Used
+    /// by tests to assert the content cache is firing.
+    pub fn bfg_content_cache_miss_count(&self) -> usize {
+        self.bfg_content_cache_misses.load(Ordering::SeqCst)
     }
 }
 
@@ -282,6 +340,29 @@ impl StriderDb for StriderDbImpl {
 
     fn region_lift_invocation_count(&self) -> usize {
         self.region_lift_calls.load(Ordering::SeqCst)
+    }
+
+    fn bfg_content_cache_get(&self, sig_hash: u64) -> Option<Arc<BfgEntry>> {
+        // `expect` on `lock` is intentional: a poisoned Mutex here
+        // means an earlier insert panicked while holding the lock,
+        // which is unrecoverable analysis-internal state corruption.
+        // Surface immediately rather than silently miss-on-poison.
+        self.bfg_content_cache
+            .lock()
+            .expect("bfg_content_cache poisoned")
+            .get(&sig_hash)
+            .map(Arc::clone)
+    }
+
+    fn bfg_content_cache_insert(&self, sig_hash: u64, entry: Arc<BfgEntry>) {
+        self.bfg_content_cache
+            .lock()
+            .expect("bfg_content_cache poisoned")
+            .insert(sig_hash, entry);
+    }
+
+    fn record_bfg_content_cache_miss(&self) {
+        self.bfg_content_cache_misses.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -403,40 +484,88 @@ pub fn optimized_function<'db>(
     db.record_optimized_call();
     let map = targets.map(db);
 
-    // Phase 7 Task 7.3a — the per-region pre-pass was a 50+ms-per-function
-    // regression (1.58-1.61× slower than Phase 7.1) because it forces an
-    // additional CFG build for every `optimized_function` invocation with
-    // no consumer reading the cached fingerprints.  The scaffolding
-    // (`RegionKey`, `region_lift_signature`, `region_signatures_query`,
-    // `cfg_region_signatures`) is kept in place — the dependency-graph
-    // topology is correct and Phase 8 will wire the per-region IR
-    // producer that justifies the cache.  Until then, the pre-pass is
-    // disabled.  Flip the constant below to re-enable for local
-    // experimentation; production stays off until Phase 8.
-    const RUN_PER_REGION_PREPASS: bool = false;
-    if RUN_PER_REGION_PREPASS {
-        let sigs_arc = region_signatures_query(db, targets).clone();
-        match sigs_arc.as_ref() {
-            Ok(sigs) => {
-                for (addr, fp) in sigs {
-                    let key = RegionKey::new(db, *addr, *fp);
-                    let _ = region_lift_signature(db, key);
-                }
+    // Phase 8c — per-region cache consumer.
+    //
+    // The Phase 7.2 scaffolding (`RegionKey`, `region_lift_signature`,
+    // `region_signatures_query`, `cfg_region_signatures`) was previously
+    // disabled because no consumer was reading the cached fingerprints
+    // (Phase 7.3a — pure 50ms-per-call overhead).  Phase 8c wires the
+    // consumer: we hash the per-region signature multiset into a
+    // `content_hash`, and look up an `Arc<BfgEntry>` in the db's
+    // content-keyed side-table cache.  When `IndirectTargets` mutates
+    // but the resulting region signatures are unchanged (e.g. a fake
+    // target that doesn't intersect any real anchor), the content hash
+    // matches and we return the cached BFG without re-lifting.
+    //
+    // The per-region `region_lift_signature` salsa queries still fire
+    // for each region — their counter (`region_lift_invocation_count`)
+    // is what the Phase 7.2 `orchestrator_salsa_per_region` tests
+    // observe to demonstrate fine-grained invalidation.  Their value
+    // is currently a no-op `u64` (the fingerprint) but the dependency
+    // edges are set up so a future per-region IR producer can promote
+    // them to `Arc<RegionIrShard>` without changing this call site.
+    let sigs_arc = region_signatures_query(db, targets).clone();
+    let content_hash: Option<u64> = match sigs_arc.as_ref() {
+        Ok(sigs) => {
+            for (addr, fp) in sigs {
+                let key = RegionKey::new(db, *addr, *fp);
+                let _ = region_lift_signature(db, key);
             }
-            Err(msg) => {
-                eprintln!(
-                    "salsa optimized_function: cfg_region_signatures failed; \
-                     proceeding without per-region cache for this revision: {msg}"
-                );
-            }
+            Some(hash_region_signatures(sigs))
+        }
+        Err(msg) => {
+            // Signature enumeration failed — proceed without the
+            // content-cache lookup (we'll still attempt the v1 lift,
+            // which will likely surface the same error).  Don't bail
+            // here: the v1 lift's error is the authoritative one.
+            eprintln!(
+                "salsa optimized_function: cfg_region_signatures failed; \
+                 bypassing content cache for this revision: {msg}"
+            );
+            None
+        }
+    };
+
+    // Content-cache lookup.  When the signatures hash matches a
+    // previously-lifted BFG (for the same db / binary), return the
+    // cached entry directly — no v1 lift fires.
+    if let Some(h) = content_hash {
+        if let Some(cached) = db.bfg_content_cache_get(h) {
+            return cached;
         }
     }
 
+    // Cache miss — run the full v1 lift and store the result.
+    db.record_bfg_content_cache_miss();
     let result = match db.run_v1_with_targets(map.as_ref()) {
         Ok(bfg) => Ok(bfg),
         Err(e) => Err(format!("{e:?}")),
     };
-    Arc::new(BfgEntry { result })
+    let entry = Arc::new(BfgEntry { result });
+    if let Some(h) = content_hash {
+        db.bfg_content_cache_insert(h, Arc::clone(&entry));
+    }
+    entry
+}
+
+/// Hash the per-region signature multiset into a single 64-bit
+/// content key.  Order-stable: the `Vec<(u64, u64)>` produced by
+/// `cfg_region_signatures` is in CFG-iteration order, which the
+/// underlying `petgraph::StableDiGraph` keeps deterministic across
+/// rebuilds with identical `known_targets`.  Two `IndirectTargets`
+/// mutations that produce the same signatures hash to the same value.
+fn hash_region_signatures(sigs: &[(u64, u64)]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    // Hash length first so two signature vectors of different lengths
+    // can't collide on a prefix.
+    sigs.len().hash(&mut hasher);
+    for (addr, fp) in sigs {
+        addr.hash(&mut hasher);
+        fp.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 // ── External fixed-point driver ────────────────────────────────────────────
