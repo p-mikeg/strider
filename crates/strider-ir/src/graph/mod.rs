@@ -1,11 +1,11 @@
 //! Sea-of-nodes graph storage, dedup cache, use-list, and typed accessors.
 //!
 //! The implementation is split into three submodules along the contracts
-//! that the validator's three layers each protect:
+//! that the validator's three checks each protect:
 //!
-//! - `store` — node arena, dedup cache, side-tables. Layer A's input.
-//! - `uses`  — bidirectional use-list bookkeeping. Layer B's contract.
-//! - `access` — read-only typed accessors. Layer A's lookup surface.
+//! - `store` — node arena, dedup cache, side-tables. Local-typing's input.
+//! - `uses`  — bidirectional use-list bookkeeping. Use-list-consistency's contract.
+//! - `access` — read-only typed accessors. Local-typing's lookup surface.
 //!
 //! All public API names live in this module via the original paths:
 //! `ir::graph::Graph`, `ir::graph::Graph::create_node`, etc., regardless of
@@ -95,7 +95,7 @@ pub struct Graph {
     /// `InitialMemory`, `InitialVar`, `FunctionArg`, `ControlState`,
     /// `MemPhi`, `VarPhi`, `ValuePhi`, `StackStorePhi` — legitimately
     /// stay empty; the validator's opt-in fingerprint check
-    /// (`asm_fingerprint_exempt` in `validate/layer_c.rs`) exempts those
+    /// (`asm_fingerprint_exempt` in `validate/graph_invariants.rs`) exempts those
     /// kinds and flags any other reachable empty entry.  (`IfCase` is
     /// not a `NodeKind` — it's a CFG edge label only.)
     pub(crate) asm_fingerprints: SecondaryMap<NodeId, Vec<u64>>,

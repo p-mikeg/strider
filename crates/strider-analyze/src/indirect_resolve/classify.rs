@@ -290,7 +290,7 @@ mod tests {
     ///
     /// Synthesises the ValuePhi via `graph.create_node` directly
     /// after `build()` has returned — bypassing the validator's
-    /// per-predecessor-arity check (Layer C requires phi inputs
+    /// per-predecessor-arity check (the graph-invariants phi check requires phi inputs
     /// to match `ControlState`'s predecessor count, which we don't
     /// satisfy here).  This is intentional: the unit tests
     /// exercise `classify_anchor` against fully synthetic shapes

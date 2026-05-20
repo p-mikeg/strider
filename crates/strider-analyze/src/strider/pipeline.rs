@@ -425,7 +425,7 @@ impl Strider {
         // region edge) have no pcode to process, so no per-insn wiring
         // fires.  Walk the Branch edges here too and only link when the
         // source region is empty — otherwise we'd double-link the
-        // non-empty case and break Layer C predecessor counts.
+        // non-empty case and break graph-invariants predecessor counts.
         for edge_idx in cfg.graph().edge_indices() {
             let Some(weight) = cfg.graph().edge_weight(edge_idx) else {
                 continue;

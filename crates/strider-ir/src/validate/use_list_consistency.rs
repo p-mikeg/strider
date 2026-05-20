@@ -6,7 +6,7 @@ use crate::walk::NodeIdSet;
 
 use super::ValidationError;
 
-/// Layer B: use-list consistency.  For every node input, verify that the
+/// Use-list consistency.  For every node input, verify that the
 /// output it references still lists that input as one of its consumers
 /// (forward check).  For every output's use-list, verify that each listed
 /// input still points back to that output (backward check).
@@ -15,8 +15,8 @@ use super::ValidationError;
 /// (`RedundantPhis`, `DeadBranchElimination`) detach unreachable
 /// subgraphs but leave the zombie nodes in the arena, and re-checking
 /// their use-list integrity would surface noise rather than real bugs.
-/// Layer A and `check_layer_c_phis` are scoped the same way; this
-/// makes the three layers' coverage consistent.
+/// `check_local_typing` and `check_graph_invariants_phis` are scoped
+/// the same way; this makes the three checks' coverage consistent.
 ///
 /// Implementation: a single sweep over every reachable node's outputs
 /// builds a `listed_inputs` set of every `NodeInputId` that currently
@@ -25,7 +25,7 @@ use super::ValidationError;
 /// membership test against that set — total cost O(E) where E is the
 /// edge count, vs. the previous O(E·U) "for each edge, scan the
 /// target's use-list".
-pub(super) fn check_layer_b(
+pub(super) fn check_use_list_consistency(
     graph: &Graph,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -58,7 +58,7 @@ pub(super) fn check_layer_b(
     // Forward check: every reachable node's input must appear in some
     // use-list.  Catches the "input was created but never threaded into
     // the producer's use-list" failure mode (covered by the
-    // `layer_b_input_missing_from_use_list` test, which simulates a
+    // `use_list_input_missing_from_use_list` test, which simulates a
     // corrupted graph via `test_only_clear_first_use`).
     for node in graph.nodes.keys() {
         if !reachable.contains(node) {

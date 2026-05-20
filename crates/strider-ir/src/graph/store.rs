@@ -1,7 +1,7 @@
 //! Node arena, dedup cache, side-tables.
 //!
 //! Owns the methods that allocate nodes and feed the dedup cache that the
-//! validator's Layer A consults indirectly. The eviction helper used by both
+//! validator's local-typing check consults indirectly. The eviction helper used by both
 //! `update_input` and `detach_node_inputs` lives here too — both callers
 //! invoke it before mutating, so the cache key always matches the node's
 //! current inputs.

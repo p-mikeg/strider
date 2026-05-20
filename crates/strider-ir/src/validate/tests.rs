@@ -22,7 +22,7 @@ fn empty_graph_with_entry_only() {
 }
 
 #[test]
-fn layer_a_wrong_input_kind_on_int_unary_op() {
+fn local_typing_wrong_input_kind_on_int_unary_op() {
     use crate::node::NodeOutputType;
     use crate::ops::IntUnaryOp;
 
@@ -49,7 +49,7 @@ fn layer_a_wrong_input_kind_on_int_unary_op() {
 }
 
 #[test]
-fn layer_a_wrong_output_kind() {
+fn local_typing_wrong_output_kind() {
     let mut graph = Graph::new();
     // Entry should produce Control, we make it produce Memory instead.
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Memory]);
@@ -66,7 +66,7 @@ fn layer_a_wrong_output_kind() {
 }
 
 #[test]
-fn layer_b_input_missing_from_use_list() {
+fn use_list_input_missing_from_use_list() {
     use crate::node::NodeOutputType;
     use crate::ops::IntUnaryOp;
 
@@ -92,8 +92,8 @@ fn layer_b_input_missing_from_use_list() {
     // longer admits it as a consumer.
     graph.test_only_clear_first_use(c_out);
 
-    // Layer B is reachability-scoped (matches Layer A and
-    // check_layer_c_phis), so wire `neg` onto the reachable spine via
+    // use-list consistency is reachability-scoped (matches the local-typing check and
+    // check_graph_invariants_phis), so wire `neg` onto the reachable spine via
     // a Return that consumes Control + Memory + the value output.
     let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
     let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
@@ -111,7 +111,7 @@ fn layer_b_input_missing_from_use_list() {
 }
 
 #[test]
-fn layer_b_stale_input_in_use_list() {
+fn use_list_stale_input_in_use_list() {
     use crate::node::NodeOutputType;
     use crate::ops::IntUnaryOp;
 
@@ -145,7 +145,7 @@ fn layer_b_stale_input_in_use_list() {
     let input_id = graph.node_input_id_at(neg, 0).unwrap();
     graph.test_only_retarget_input(input_id, b_out);
 
-    // Layer B is reachability-scoped; wire `neg` AND `a` onto the
+    // use-list consistency is reachability-scoped; wire `neg` AND `a` onto the
     // reachable spine.  `a_out` must be reachable so the use-list sweep
     // visits its (now-stale) head; otherwise the forward check on
     // `neg`'s input fires first as InputMissingFromUseList instead of
@@ -169,11 +169,11 @@ fn layer_b_stale_input_in_use_list() {
     );
 }
 
-/// Layer B's forward check must still flag missing-from-use-list cases
+/// the use-list forward check must still flag missing-from-use-list cases
 /// at non-zero input slots (covers the O(E) refactor — the existing
-/// `layer_b_input_missing_from_use_list` only covers slot 0).
+/// `use_list_input_missing_from_use_list` only covers slot 0).
 #[test]
-fn layer_b_forward_check_catches_missing_at_non_zero_slot() {
+fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     use crate::node::NodeOutputType;
     use crate::ops::IntBinaryOp;
 
@@ -206,7 +206,7 @@ fn layer_b_forward_check_catches_missing_at_non_zero_slot() {
     // slot-1 input should be flagged as missing.
     graph.test_only_clear_first_use(b_out);
 
-    // Layer B is reachability-scoped; wire `add` onto the reachable
+    // use-list consistency is reachability-scoped; wire `add` onto the reachable
     // spine via Return[Ctrl, Memory, add_out].
     let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
     let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
@@ -230,10 +230,10 @@ fn layer_b_forward_check_catches_missing_at_non_zero_slot() {
 }
 
 #[test]
-fn layer_b_skips_unreachable_zombie_node() {
-    // Pin Layer B's reachability scoping (matches Layer A and
-    // check_layer_c_phis): a corrupted use-list on a node that's
-    // unreachable from the entry must NOT trip Layer B.  Opt passes
+fn use_list_skips_unreachable_zombie_node() {
+    // Pin the use-list reachability scoping (matches the local-typing check and
+    // check_graph_invariants_phis): a corrupted use-list on a node that's
+    // unreachable from the entry must NOT trip the use-list check.  Opt passes
     // (RedundantPhis, DeadBranchElimination) detach unreachable
     // subgraphs but leave the zombie nodes in the arena; surfacing
     // their use-list inconsistencies is noise, not real bugs.
@@ -245,7 +245,7 @@ fn layer_b_skips_unreachable_zombie_node() {
     let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
 
     // Detached / unreachable producer + consumer pair.  Corrupt their
-    // use-list link so that, were Layer B graph-wide, it would fire.
+    // use-list link so that, were the use-list check graph-wide, it would fire.
     let c = graph.create_node(
         NodeKind::IntConst(7),
         [],
@@ -257,7 +257,7 @@ fn layer_b_skips_unreachable_zombie_node() {
         [c_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    graph.test_only_clear_first_use(c_out); // Would fire Layer B graph-wide.
+    graph.test_only_clear_first_use(c_out); // Would fire the use-list check graph-wide.
 
     // Minimal reachable spine — entry + memory + a Return that takes
     // no values.  Neither `c` nor `_zombie_consumer` is reachable.
@@ -270,7 +270,7 @@ fn layer_b_skips_unreachable_zombie_node() {
 }
 
 #[test]
-fn layer_c_missing_initial_memory() {
+fn graph_invariants_missing_initial_memory() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
 
@@ -284,7 +284,7 @@ fn layer_c_missing_initial_memory() {
 }
 
 #[test]
-fn layer_c_duplicate_entry() {
+fn graph_invariants_duplicate_entry() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let _entry2 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
@@ -300,7 +300,7 @@ fn layer_c_duplicate_entry() {
 }
 
 #[test]
-fn layer_c_duplicate_initial_memory() {
+fn graph_invariants_duplicate_initial_memory() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let _mem1 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -316,9 +316,9 @@ fn layer_c_duplicate_initial_memory() {
 }
 
 #[test]
-fn layer_c_control_state_bad_predecessor() {
+fn graph_invariants_control_state_bad_predecessor() {
     // The bad ControlState must be **reachable** from entry — otherwise
-    // the reachability gate in `check_layer_c_control_state`
+    // the reachability gate in `check_graph_invariants_control_state`
     // correctly skips it as an unreachable zombie.  Build a 2-predecessor
     // ControlState: input[0] = entry's Control (well-formed) so the walk
     // reaches it via cfg-succs, input[1] = InitialMemory's Memory (the
@@ -359,7 +359,7 @@ fn test_vn() -> rsleigh::Vn {
 }
 
 #[test]
-fn layer_c_phi_token_from_wrong_node() {
+fn graph_invariants_phi_token_from_wrong_node() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -387,7 +387,7 @@ fn layer_c_phi_token_from_wrong_node() {
 }
 
 #[test]
-fn layer_c_phi_value_arity_mismatch() {
+fn graph_invariants_phi_value_arity_mismatch() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -419,7 +419,7 @@ fn layer_c_phi_value_arity_mismatch() {
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
 
-    // V-2: layer_c_phis is reachability-scoped, so the phi must be
+    // V-2: graph_invariants_phis is reachability-scoped, so the phi must be
     // attached to something reachable from the entry.  Wire its value
     // output through a Return that consumes the ControlState's Control
     // output too — this puts the phi on the cfg-reachable spine.
@@ -444,7 +444,7 @@ fn layer_c_phi_value_arity_mismatch() {
 }
 
 #[test]
-fn layer_c_stack_store_phi_does_not_fire_arity_mismatch() {
+fn graph_invariants_stack_store_phi_does_not_fire_arity_mismatch() {
     // StackStorePhi has fixed arity [token, memory, data] regardless of
     // how many predecessors the owning ControlState has.  The
     // per-predecessor arity rule that applies to VarPhi/MemPhi must
@@ -492,7 +492,7 @@ fn layer_c_stack_store_phi_does_not_fire_arity_mismatch() {
 }
 
 #[test]
-fn layer_c_phis_skips_unreachable_zombie_phi() {
+fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     // V-2 regression: opt passes (RedundantPhis, DeadBranchElimination)
     // detach phi inputs and leave the zero-input zombie node in the
     // arena.  The validator must not falsely fire
@@ -526,7 +526,7 @@ fn layer_c_phis_skips_unreachable_zombie_phi() {
 }
 
 #[test]
-fn layer_a_wrong_input_count() {
+fn local_typing_wrong_input_count() {
     use crate::node::NodeOutputType;
     use crate::ops::IntBinaryOp;
 
@@ -550,7 +550,7 @@ fn layer_a_wrong_input_count() {
     let bad_out = graph.node_outputs(bad).into_iter().next().unwrap();
 
     // Wire `bad` into the reachable sub-graph so the reachability-scoped
-    // Layer A actually inspects it.  A Return consuming entry's Control
+    // the local-typing check actually inspects it.  A Return consuming entry's Control
     // plus `bad`'s value output is the smallest reachable shape.
     let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, bad_out], []);
 
@@ -568,7 +568,7 @@ fn layer_a_wrong_input_count() {
     );
 }
 
-/// Layer C: two `FunctionArg` nodes sharing the same `index` (both
+/// Graph invariant: two `FunctionArg` nodes sharing the same `index` (both
 /// reachable from entry) are a construction/optimization bug — the
 /// validator must catch it.
 ///
@@ -577,7 +577,7 @@ fn layer_a_wrong_input_count() {
 /// unreachable zombie `FunctionArg` nodes (which `RedundantPhis` may
 /// leave behind) do NOT trigger this error.
 #[test]
-fn layer_c_duplicate_function_arg_index_detected() {
+fn graph_invariants_duplicate_function_arg_index_detected() {
     use crate::node::FunctionArgSource;
 
     let mut graph = Graph::new();
@@ -623,13 +623,13 @@ fn layer_c_duplicate_function_arg_index_detected() {
     );
 }
 
-/// Layer C: two `FunctionArg` nodes with the same `index` where ONE is
+/// Graph invariant: two `FunctionArg` nodes with the same `index` where ONE is
 /// unreachable (a zombie left behind by `RedundantPhis`) MUST NOT
 /// trigger `DuplicateFunctionArg`.  Reachability scoping prevents
 /// false-positive validation errors on graphs that have completed
 /// `RedundantPhis`-style detach-and-replace.
 #[test]
-fn layer_c_duplicate_function_arg_skips_unreachable_zombie() {
+fn graph_invariants_duplicate_function_arg_skips_unreachable_zombie() {
     use crate::node::FunctionArgSource;
 
     let mut graph = Graph::new();
@@ -667,12 +667,12 @@ fn layer_c_duplicate_function_arg_skips_unreachable_zombie() {
     validate(&graph, entry).expect("zombie FunctionArg must not trigger DuplicateFunctionArg");
 }
 
-/// Regression: Layer A must check variadic input tails, not just the fixed
+/// Regression: the local-typing check must check variadic input tails, not just the fixed
 /// head prefix. A `MemPhi` whose per-predecessor inputs are not Memory
 /// (e.g. a Control token leaks through) used to slip past validation
 /// because the variadic-tail kind check was elided.
 #[test]
-fn layer_a_mem_phi_variadic_tail_must_be_memory() {
+fn local_typing_mem_phi_variadic_tail_must_be_memory() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -699,7 +699,7 @@ fn layer_a_mem_phi_variadic_tail_must_be_memory() {
     let bad_mem_out = graph.node_outputs(bad_mem_phi).into_iter().next().unwrap();
     let _ = init_mem; // unused but kept to satisfy InitialMemory uniqueness
 
-    // Reach the MemPhi via a Return so Layer A walks to it.
+    // Reach the MemPhi via a Return so the local-typing check walks to it.
     graph.create_node(NodeKind::Return, [cs_ctrl, bad_mem_out], []);
 
     let errs = validate(&graph, entry).unwrap_err();
@@ -713,7 +713,7 @@ fn layer_a_mem_phi_variadic_tail_must_be_memory() {
 }
 
 #[test]
-fn layer_a_accepts_bool_value_phi_inputs() {
+fn local_typing_accepts_bool_value_phi_inputs() {
     // VarPhi / ValuePhi value inputs (the IN_PHI variadic tail) must
     // accept Bool-typed values: real binaries phi-merge x86 flag registers
     // (CF/ZF/SF), which the IR models as Bool. Same rationale as ARG/RET/CALL_OUT.
@@ -755,7 +755,7 @@ fn layer_a_accepts_bool_value_phi_inputs() {
 }
 
 #[test]
-fn layer_c_mem_phi_arity_mismatch() {
+fn graph_invariants_mem_phi_arity_mismatch() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -794,7 +794,7 @@ fn layer_c_mem_phi_arity_mismatch() {
 }
 
 #[test]
-fn layer_c_value_phi_arity_mismatch() {
+fn graph_invariants_value_phi_arity_mismatch() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -840,7 +840,7 @@ fn layer_c_value_phi_arity_mismatch() {
 }
 
 #[test]
-fn layer_a_rejects_wrong_output_count() {
+fn local_typing_rejects_wrong_output_count() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -868,9 +868,9 @@ fn layer_a_rejects_wrong_output_count() {
 }
 
 #[test]
-fn layer_c_rejects_control_state_with_zero_predecessors() {
-    // ControlState has a variadic head_len of 0, so Layer A's count check
-    // (>= 0) accepts zero inputs and Layer C's per-predecessor loop is a
+fn graph_invariants_rejects_control_state_with_zero_predecessors() {
+    // ControlState has a variadic head_len of 0, so the local-typing check's count check
+    // (>= 0) accepts zero inputs and the graph-invariants check's per-predecessor loop is a
     // no-op. Without an explicit check, a *reachable* zero-pred
     // ControlState slips through validation entirely.
     //
@@ -904,7 +904,7 @@ fn layer_c_rejects_control_state_with_zero_predecessors() {
 }
 
 #[test]
-fn layer_c_tolerates_unreachable_zero_predecessor_control_state() {
+fn graph_invariants_tolerates_unreachable_zero_predecessor_control_state() {
     // Zombie ControlState with zero inputs left behind by RedundantPhis is
     // expected; the validator must not flag it (this happens routinely on
     // real binaries after dead-branch elimination).
@@ -1107,7 +1107,7 @@ fn indirect_branch_with_control_memory_and_value_validates() {
 }
 
 #[test]
-fn layer_c_dangling_wide_const_id_detected() {
+fn graph_invariants_dangling_wide_const_id_detected() {
     use crate::wide_const::WideConstId;
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
@@ -1134,7 +1134,7 @@ fn layer_c_dangling_wide_const_id_detected() {
 }
 
 #[test]
-fn layer_c_wide_const_width_mismatch_detected() {
+fn graph_invariants_wide_const_width_mismatch_detected() {
     use crate::wide_const::WideConstStorage;
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);

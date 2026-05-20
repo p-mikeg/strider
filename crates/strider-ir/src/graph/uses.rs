@@ -1,8 +1,8 @@
-//! Use-list bookkeeping — Layer B's contract.
+//! Use-list bookkeeping — the validator's use-list-consistency contract.
 //!
 //! Every method that mutates an `(input → output)` edge updates both
 //! directions of the doubly-linked use-list as a pair. A single-direction
-//! update is a bug: the validator's Layer B walk would catch it, but the
+//! update is a bug: the validator's use-list-consistency walk would catch it, but the
 //! mutation itself must be correct or any later traversal sees a corrupt
 //! graph. Cacheable nodes have their stale dedup-cache entry evicted before
 //! the mutation (via `evict_cache_entry_if_cacheable` in `store`).
@@ -237,7 +237,7 @@ impl Graph {
 
     /// Test-only: forcibly clears the use-list head of `output`, breaking the
     /// forward link from the producer to its consumers.  Used to construct
-    /// the corrupted state that Layer B of the validator should detect.
+    /// the corrupted state that the validator's use-list check should detect.
     #[cfg(test)]
     pub(crate) fn test_only_clear_first_use(&mut self, output: NodeOutputId) {
         self.outputs[output].first_use = None.into();
@@ -245,8 +245,8 @@ impl Graph {
 
     /// Test-only: forcibly retargets `input` to reference `new_target`
     /// without updating either the old or new output's use-list.  Used to
-    /// construct the corrupted state that Layer B of the validator should
-    /// detect.
+    /// construct the corrupted state that the validator's use-list check
+    /// should detect.
     #[cfg(test)]
     pub(crate) fn test_only_retarget_input(
         &mut self,

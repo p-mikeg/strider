@@ -12,13 +12,13 @@ use strider_ir::{Graph, IntBinaryOp};
 #[test]
 fn default_validate_flags_missing_asm_fingerprint() {
     let mut g = Graph::new();
-    // Entry + InitialMemory are required by Layer-C uniqueness checks.
+    // Entry + InitialMemory are required by graph-invariants uniqueness checks.
     let entry = g.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let mem = g.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let mem_out = g.node_outputs(mem).into_iter().next().unwrap();
 
     // Two constants and an Add — these are NOT structural / exempt kinds,
-    // so they MUST carry a non-empty asm fingerprint to pass Layer C.
+    // so they MUST carry a non-empty asm fingerprint to pass the graph-invariants check.
     let a = g.create_node(
         NodeKind::IntConst(1),
         [],

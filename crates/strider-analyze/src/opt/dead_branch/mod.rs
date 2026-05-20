@@ -27,7 +27,7 @@ mod tests;
 ///   wired untouched.  Detaching the If or stripping its `ControlState`
 ///   predecessor would create zero-input zombies that the walker
 ///   re-reaches through backward-data from the live consumers, breaking
-///   Layer A / Layer C invariants.  `RedundantPhis` is responsible for
+///   local-typing / graph-invariants rules.  `RedundantPhis` is responsible for
 ///   tearing the live ↔ dead data edges apart on subsequent iterations;
 ///   a later DBE pass then sees a non-escaping subgraph and finishes
 ///   the job.
@@ -78,7 +78,7 @@ fn try_eliminate_dead_branch(
     // consumed by *live* nodes (e.g. a dead `Call`'s `mem_out` flowing into
     // the join's `MemPhi`), backward-data from those live consumers walks
     // back into the dead subgraph and reaches the now-zero-input If, which
-    // makes the validator's Layer A check fire `expected: 2, actual: 0`
+    // makes the validator's local-typing check fire `expected: 2, actual: 0`
     // (see `dead_branch_with_non_control_state_dead_consumer`).
     //
     // To stay correct in both cases: forward-control walk the dead subgraph
@@ -123,7 +123,7 @@ fn try_eliminate_dead_branch(
     // input alone and leave the If attached.  Stripping would create
     // zero-input `ControlState`s that the walker still reaches through
     // backward-data from a live `MemPhi` → dead `Call` → dead phi token,
-    // tripping Layer C's `EmptyControlStatePredecessors` check.  Letting
+    // tripping the graph-invariants `EmptyControlStatePredecessors` check.  Letting
     // `RedundantPhis` collapse the live join's phis on subsequent iterations
     // tears the live ↔ dead data edges apart; once they're gone a future
     // DBE iteration sees a non-escaping subgraph and finishes the job.
@@ -246,7 +246,7 @@ fn collect_dead_subgraph(
 /// True iff some node in `subgraph` has a non-Control output consumed by a
 /// node *outside* `subgraph`.  When true, detaching the If would leave the
 /// dead subgraph reachable through backward-data from those live consumers
-/// and the still-attached If would fail Layer A's input-count check.
+/// and the still-attached If would fail the local-typing input-count check.
 fn dead_subgraph_has_live_data_consumer(
     ctx: crate::pattern::RewriteCtxView<'_>,
     subgraph: &entity_utils::DenseEntitySet<NodeId>,

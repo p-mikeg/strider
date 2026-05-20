@@ -41,7 +41,7 @@ impl Index<usize> for Outputs<'_> {
     /// Panics on out-of-bounds.  For fallible access prefer `iter()`,
     /// `node_outputs_exact::<N>(node)`, or
     /// `Graph::node_outputs(node).into_iter().nth(idx)`.  The validator
-    /// (Layer A in `crate::validate`) pins the per-node-kind output
+    /// (the local-typing check in `crate::validate`) pins the per-node-kind output
     /// arity, so `outputs[N]` for a known kind+slot is a documented
     /// invariant; arbitrary indices on opaque-arity nodes are not.
     fn index(&self, index: usize) -> &Self::Output {

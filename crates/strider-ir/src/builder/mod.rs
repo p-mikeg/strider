@@ -172,7 +172,7 @@ impl FunctionBuilder {
     /// [`Self::body`] / [`Self::body_mut`], so any mutations are immediately
     /// visible through every accessor. Pairs with [`Self::entry`]: opt
     /// passes need `(graph, entry)` together because `entry` anchors the
-    /// reachable-node walk the validator's Layer A is scoped to.
+    /// reachable-node walk the validator's local-typing check is scoped to.
     pub fn graph_mut(&mut self) -> &mut Graph {
         &mut self.function.graph
     }

@@ -432,7 +432,7 @@ pub fn analyze(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> 
     // `node_known_bits` calls `node_inputs_exact::<N>` which would
     // surface a hard error on a zero-input zombie.  Reachability is
     // the validator's existing scope-of-correctness boundary
-    // (Layer A in `strider_ir::validate`), so it's the right scope here too.
+    // (the local-typing check in `strider_ir::validate`), so it's the right scope here too.
     let mut known: KnownBitsMap = SecondaryMap::new();
     let mut work = WorkSet::seeded(strider_ir::walk::walk_graph(ctx.graph_ref(), ctx.entry()));
     while let Some(node_id) = work.pop() {

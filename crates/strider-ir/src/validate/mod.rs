@@ -1,16 +1,17 @@
 //! Whole-graph validator for the IR.
 //!
 //! The validator walks a built [`Graph`] starting from an entry [`NodeId`] and
-//! checks structural invariants across three layers:
-//!   - **Layer A** (`layer_a`): per-node local typing against
-//!     `node_signature::expected_signature` (reachability-scoped).
-//!   - **Layer B** (`layer_b`): bidirectional use-list consistency
+//! checks structural invariants across three groups:
+//!   - **Local typing** (`local_typing`): per-node input/output kind checks
+//!     against `node_signature::expected_signature` (reachability-scoped).
+//!   - **Use-list consistency** (`use_list_consistency`): bidirectional
+//!     consistency between inputs and the outputs' use-lists
 //!     (reachability-scoped on the source side).
-//!   - **Layer C** (`layer_c`): graph-level invariants — Entry/InitialMemory
-//!     uniqueness, ControlState predecessor kinds, phi-token ownership, phi
-//!     per-predecessor arity, FunctionArg uniqueness, wide-const consistency,
-//!     and non-empty asm-fingerprints on every reachable non-exempt node
-//!     (always-on — Phase 1 Task 1.4 / Generalization Audit G3).
+//!   - **Graph invariants** (`graph_invariants`): whole-graph rules —
+//!     Entry/InitialMemory uniqueness, ControlState predecessor kinds,
+//!     phi-token ownership, phi per-predecessor arity, FunctionArg
+//!     uniqueness, wide-const consistency, and non-empty asm-fingerprints
+//!     on every reachable non-exempt node.
 //!
 //! On failure the validator returns a [`ValidationErrors`] bundle that
 //! aggregates every [`ValidationError`] it found during a single pass, so
@@ -21,36 +22,35 @@ use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind, NodeOutputT
 use crate::node_signature::ExpectedOutputKind;
 use crate::walk::{NodeIdSet, walk_graph};
 
-mod layer_a;
-mod layer_b;
-mod layer_c;
+mod graph_invariants;
+mod local_typing;
+mod use_list_consistency;
 #[cfg(test)]
 mod tests;
 
-use layer_a::check_layer_a;
-use layer_b::check_layer_b;
-use layer_c::{
-    check_layer_c_asm_fingerprints, check_layer_c_control_state,
-    check_layer_c_function_arg_uniqueness, check_layer_c_phis, check_layer_c_uniqueness,
-    check_layer_c_wide_consts,
+use graph_invariants::{
+    check_graph_invariants_asm_fingerprints, check_graph_invariants_control_state,
+    check_graph_invariants_function_arg_uniqueness, check_graph_invariants_phis,
+    check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
 };
+use local_typing::check_local_typing;
+use use_list_consistency::check_use_list_consistency;
 
 /// Optional checks the validator can opt into.
 ///
-/// **Phase 1 Task 1.4 / G3:** the previously-opt-in
-/// `check_asm_fingerprints` Layer-C check is now **always-on** in plain
-/// [`validate`]; the field on this struct is kept for backwards source
-/// compatibility (so existing call-sites that write
-/// `ValidateOptions { check_asm_fingerprints: true }` keep compiling)
-/// but it is **ignored** — the check fires unconditionally regardless of
-/// its value.
+/// The previously-opt-in `check_asm_fingerprints` asm-fingerprint
+/// check is now **always-on** in plain [`validate`]; the field on this
+/// struct is kept for backwards source compatibility (so existing
+/// call-sites that write `ValidateOptions { check_asm_fingerprints:
+/// true }` keep compiling) but it is **ignored** — the check fires
+/// unconditionally regardless of its value.
 ///
 /// The struct is retained as a placeholder for future opt-in checks.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ValidateOptions {
-    /// **Deprecated / no-op.** The asm-fingerprint Layer-C check is now
-    /// always-on in [`validate`]; this field is ignored.  Kept for
-    /// backwards source compatibility with existing struct-literal
+    /// **Deprecated / no-op.** The asm-fingerprint graph-invariant check
+    /// is now always-on in [`validate`]; this field is ignored.  Kept
+    /// for backwards source compatibility with existing struct-literal
     /// call-sites.
     pub check_asm_fingerprints: bool,
 }
@@ -60,19 +60,21 @@ pub struct ValidateOptions {
 /// Returns `Ok(())` if every checked invariant holds, or a
 /// [`ValidationErrors`] bundle describing every violation otherwise.
 ///
-/// Local per-node checks (Layer A) are scoped to nodes reachable from `entry`
-/// so that detached zombie nodes left behind by optimization passes (see
-/// `opt::redundant_phis::detach_unreachable_nodes`) do not trigger false
-/// positives.  Layer B and Layer C iterate all nodes but are naturally
-/// tolerant of detached nodes: `detach_node_inputs` scrubs the use-lists of
-/// the producers it disconnects, so a detached node contributes no inputs and
-/// no live use-list entries anywhere.
+/// Local per-node checks (`check_local_typing`) are scoped to nodes
+/// reachable from `entry` so that detached zombie nodes left behind by
+/// optimization passes (see `opt::redundant_phis::detach_unreachable_nodes`)
+/// do not trigger false positives.  Use-list consistency and graph-invariants
+/// checks iterate all nodes but are naturally tolerant of detached nodes:
+/// `detach_node_inputs` scrubs the use-lists of the producers it disconnects,
+/// so a detached node contributes no inputs and no live use-list entries
+/// anywhere.
 ///
 /// # Errors
 ///
-/// Returns a [`ValidationErrors`] bundle aggregating every Layer A / B / C
-/// violation found in `graph`. Validation does not fail fast — every layer
-/// runs to completion so the caller sees the full set of problems at once.
+/// Returns a [`ValidationErrors`] bundle aggregating every local-typing,
+/// use-list, and graph-invariants violation found in `graph`. Validation
+/// does not fail fast — every check runs to completion so the caller sees
+/// the full set of problems at once.
 pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     validate_with_options(graph, entry, ValidateOptions::default())
 }
@@ -90,10 +92,10 @@ pub fn validate_with_options(
     entry: NodeId,
     _options: ValidateOptions,
 ) -> Result<(), ValidationErrors> {
-    // Phase 1 Task 1.4 / G3: `ValidateOptions::check_asm_fingerprints` is no
-    // longer consulted — the Layer-C asm-fingerprint check is always-on.
-    // `validate_with_options` is kept as a no-op alias around `validate` for
-    // backwards source compatibility.
+    // `ValidateOptions::check_asm_fingerprints` is no longer consulted —
+    // the asm-fingerprint graph-invariants check is always-on.
+    // `validate_with_options` is kept as a no-op alias around `validate`
+    // for backwards source compatibility.
     //
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
@@ -107,23 +109,22 @@ pub fn validate_with_options(
         if !reachable.contains(node) {
             continue;
         }
-        check_layer_a(graph, node, &mut errs);
+        check_local_typing(graph, node, &mut errs);
     }
 
-    check_layer_b(graph, &reachable, &mut errs);
+    check_use_list_consistency(graph, &reachable, &mut errs);
 
-    check_layer_c_uniqueness(graph, &mut errs);
+    check_graph_invariants_uniqueness(graph, &mut errs);
 
-    check_layer_c_control_state(graph, &reachable, &mut errs);
+    check_graph_invariants_control_state(graph, &reachable, &mut errs);
 
-    check_layer_c_phis(graph, &reachable, &mut errs);
+    check_graph_invariants_phis(graph, &reachable, &mut errs);
 
-    check_layer_c_function_arg_uniqueness(graph, &reachable, &mut errs);
+    check_graph_invariants_function_arg_uniqueness(graph, &reachable, &mut errs);
 
-    check_layer_c_wide_consts(graph, &reachable, &mut errs);
+    check_graph_invariants_wide_consts(graph, &reachable, &mut errs);
 
-    // Always-on as of Phase 1 Task 1.4.
-    check_layer_c_asm_fingerprints(graph, &reachable, &mut errs);
+    check_graph_invariants_asm_fingerprints(graph, &reachable, &mut errs);
 
     if errs.is_empty() {
         Ok(())

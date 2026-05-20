@@ -302,9 +302,8 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
 #[test]
 fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     // After every rewrite, `strider_ir::validate::validate` must pass.
-    // Layer A (local typing) + Layer B (use-list) + Layer C
-    // (graph-level invariants) — a broken use-list would only
-    // surface here, hence pin it explicitly.
+    // Local typing + use-list consistency + graph invariants — a broken
+    // use-list would only surface here, hence pin it explicitly.
     let mut g = add_k_plus_zero(42);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));

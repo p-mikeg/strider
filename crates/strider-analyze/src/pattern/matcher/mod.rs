@@ -26,7 +26,7 @@ pub use match_result::Match;
 /// [`Matcher::function_args`], [`Matcher::function_arg_count`]).
 ///
 /// Built on first access; [`Matcher::match_at`] and [`Matcher::find_all`]
-/// never need it.  Layer C of the IR validator enforces at most one
+/// never need it.  The graph-invariants check of the IR validator enforces at most one
 /// `FunctionArg` per index, so at most one entry exists per key.
 struct FunctionArgIndex(HashMap<u32, NodeId>);
 

@@ -68,7 +68,7 @@ fn branch_indirect(target_vn: Vn) -> Insn {
 /// CONST operand) and a `Return` anchoring the target's value.  Both
 /// kinds are non-exempt under the contract.
 #[test]
-fn resolver_mini_ir_passes_layer_c_asm_fingerprint_check() {
+fn resolver_mini_ir_passes_graph_invariants_asm_fingerprint_check() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![
@@ -92,7 +92,7 @@ fn resolver_mini_ir_passes_layer_c_asm_fingerprint_check() {
     )
     .expect("build mini-graph");
 
-    // Opt-in Layer C asm-fingerprint check.  This is the contract
+    // Opt-in the graph-invariants asm-fingerprint check.  This is the contract
     // every node born from a real pcode insn must satisfy: a non-empty
     // contributor list naming the parent machine instruction.
     let opts = strider_ir::validate::ValidateOptions {

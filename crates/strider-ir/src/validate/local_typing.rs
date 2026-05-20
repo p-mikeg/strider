@@ -4,12 +4,12 @@ use crate::node_signature::expected_signature;
 
 use super::{ValidationError, kind_matches};
 
-/// Layer A: local node typing.  For each node, compare its actual input and
+/// Local node typing.  For each node, compare its actual input and
 /// output [`NodeOutputKind`]s against the [`Signature`] expected for its
 /// [`NodeKind`].  For fixed-arity slot lists both arity and each slot kind
 /// are checked; for variadic slot lists the head prefix is checked fully,
 /// plus every tail index is checked against the repeating tail kind.
-pub(super) fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<ValidationError>) {
+pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<ValidationError>) {
     let kind = *graph.node_kind(node);
     let sig = expected_signature(&kind);
 
@@ -28,7 +28,8 @@ pub(super) fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<Validati
     // least the head length.  Variadic CTRL lists with `head_len = 0`
     // (e.g. `ControlState`) trivially pass this check at zero
     // predecessors; the per-kind "must be reachable with >= 1
-    // predecessor" rule for those cases is enforced in Layer C.
+    // predecessor" rule for those cases is enforced by the
+    // graph-invariants checks.
     let input_head_len = sig.inputs.head_len();
     let output_head_len = sig.outputs.head_len();
 
@@ -64,7 +65,7 @@ pub(super) fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<Validati
     // need to accept any value type declare AnyValue (or AnyInt for
     // integer-only tails); honest narrow tails like `MemPhi`'s MEM and
     // `ControlState`'s CTRL are caught here when violated, regardless of
-    // what Layer C does.
+    // what the graph-invariants checks do.
     for (idx, &input) in actual_inputs.iter().enumerate() {
         let Some(slot) = sig.inputs.at(idx) else {
             // Past the head of a fixed-arity list — arity check above

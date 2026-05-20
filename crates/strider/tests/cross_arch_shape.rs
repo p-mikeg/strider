@@ -165,7 +165,7 @@ fn kind_bucket(k: &NodeKind) -> String {
 /// Compute the structural fingerprint of `g`.
 ///
 /// Walks every reachable node via `BuiltFunctionGraph::preorder` (same
-/// reachability scope used by the validator's Layer A), accumulating:
+/// reachability scope used by the validator's local-typing check), accumulating:
 ///   * histogram of payload-elided `NodeKind` buckets,
 ///   * total edge counts by kind (Control / Memory / Value), where an
 ///     "edge" is one input slot — counted by the kind of that input's

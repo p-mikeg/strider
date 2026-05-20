@@ -40,7 +40,7 @@ pub enum NodeKind {
     /// stack-passed arg reads (`Load[InitialVar(sp) + K]`) with this node.
     ///
     /// The per-graph invariant is that at most one `FunctionArg` node exists
-    /// per `index` (enforced by `validate::layer_c`).  Source nodes
+    /// per `index` (enforced by `validate::graph_invariants`).  Source nodes
     /// may become unreferenced after rewiring; `FunctionArg` itself is not
     /// cacheable, since identity matters for the uniqueness invariant.
     ///

@@ -392,7 +392,7 @@ fn bound_via_known_bits_handles_zero_extend() {
 #[test]
 fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // `analyze_known_bits` deliberately scopes its worklist to
-    // entry-reachable nodes (Layer A's reachability boundary).
+    // entry-reachable nodes (the local-typing reachability boundary).
     // An output whose producer is not in the preorder traversal
     // gets `Kb::default()` (all-unknown), which yields `max ==
     // type_mask` and `bound_via_known_bits` returns None.

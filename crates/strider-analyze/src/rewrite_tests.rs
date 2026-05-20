@@ -255,16 +255,16 @@ fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
     // The rewriter goes through `crate::pattern::rewrite_rule` →
     // `replace_all_uses`, which uses the bidirectional use-list.
     // After the rewrite, `strider_ir::validate::validate` must pass —
-    // Layer B is the use-list-consistency check.  Pin this here
-    // so any future change that breaks use-list bookkeeping
+    // its use-list check enforces bidirectional consistency.  Pin this
+    // here so any future change that breaks use-list bookkeeping
     // surfaces as a unit-test failure.
     let mut built = add_x_plus_zero(7);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     let mut rewriter = GraphRewriter::wrap_built(&mut built);
     rewriter.apply_rule(rule)?;
-    // Run validate directly (Layer A + B + C).  If any layer
-    // fails we surface the bundle as a strider error.
+    // Run validate directly (local typing + use-list + graph invariants).
+    // If any check fails we surface the bundle as a strider error.
     strider_ir::validate::validate(&built.graph, built.entry)
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed: {e}"))
 }

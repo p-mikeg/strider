@@ -1,4 +1,4 @@
-//! Read-only typed accessors — Layer A's lookup surface.
+//! Read-only typed accessors — the local-typing lookup surface.
 //!
 //! Returning typed slices and iterators over the per-node `inputs` /
 //! `outputs` lists kept inside `Graph::nodes`, plus a few cheap lookups

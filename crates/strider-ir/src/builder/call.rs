@@ -126,8 +126,9 @@ impl FunctionBuilder {
             override_cc.map_or(self.no_memory_clobber, |cc| cc.no_memory_clobber);
 
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
-        // The Call node's signature always includes a Memory output (validator
-        // Layer A enforces `[Control, Memory, *clobbers]`).  When the CC
+        // The Call node's signature always includes a Memory output
+        // (validator local-typing enforces `[Control, Memory, *clobbers]`).
+        // When the CC
         // declares no_memory_clobber, we keep the Memory output but leave it
         // dangling — the region's memory chain is NOT advanced, so subsequent
         // loads see the pre-call memory edge.  LoadReadOnly / StackLoadForward

@@ -370,7 +370,7 @@ mod tests {
 
     /// `U80` is an integer type; `F80` is a float type.  The category
     /// classifier drives `is_integer` / `is_float`, used by validator
-    /// signature checks (Layer A) and by the lifter's coerce helpers.
+    /// signature checks (the local-typing check) and by the lifter's coerce helpers.
     #[test]
     fn u80_is_integer_and_f80_is_float() {
         assert!(NodeOutputType::U80.is_integer());

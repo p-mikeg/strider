@@ -6,8 +6,8 @@ use super::ValidationError;
 
 /// Yields `(NodeId, &NodeKind)` for every node in the arena that is
 /// reachable from entry, paired with its kind.  Used by every
-/// per-node Layer-C check that needs reachability scoping; the
-/// uniqueness check intentionally bypasses this helper because it
+/// per-node graph-invariants check that needs reachability scoping;
+/// the uniqueness check intentionally bypasses this helper because it
 /// also wants to flag detached zombies of `Entry`/`InitialMemory`.
 fn reachable_nodes<'a>(
     graph: &'a Graph,
@@ -20,7 +20,7 @@ fn reachable_nodes<'a>(
         .map(move |n| (n, graph.node_kind(n)))
 }
 
-/// Layer C (shape check): enforce that the graph has exactly one
+/// Shape check: enforce that the graph has exactly one
 /// [`NodeKind::Entry`] node and exactly one [`NodeKind::InitialMemory`] node.
 ///
 /// This intentionally scans every node in the arena (including detached
@@ -36,7 +36,7 @@ fn reachable_nodes<'a>(
 /// [`ValidationError::MultipleEntryNodes`] /
 /// [`ValidationError::MultipleInitialMemoryNodes`] (carrying the first two
 /// offenders) when a kind appears more than once.
-pub(super) fn check_layer_c_uniqueness(graph: &Graph, errs: &mut Vec<ValidationError>) {
+pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<ValidationError>) {
     let mut entries: Vec<NodeId> = Vec::new();
     let mut initial_memories: Vec<NodeId> = Vec::new();
 
@@ -67,9 +67,10 @@ pub(super) fn check_layer_c_uniqueness(graph: &Graph, errs: &mut Vec<ValidationE
     }
 }
 
-/// Layer C: every input of a `ControlState` node must be a `Control`-kinded
-/// output. Emits `ControlStateNonControlPredecessor` per offending input.
-pub(super) fn check_layer_c_control_state(
+/// Graph invariant: every input of a `ControlState` node must be a
+/// `Control`-kinded output. Emits `ControlStateNonControlPredecessor`
+/// per offending input.
+pub(super) fn check_graph_invariants_control_state(
     graph: &Graph,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -103,16 +104,17 @@ pub(super) fn check_layer_c_control_state(
     }
 }
 
-/// Layer C: every phi node (`VarPhi`, `MemPhi`, `StackStorePhi`) must take
-/// its dispatch token (input[0]) from a `ControlState`'s `PhiToken` output.
+/// Graph invariant: every phi node (`VarPhi`, `MemPhi`, `StackStorePhi`)
+/// must take its dispatch token (input[0]) from a `ControlState`'s
+/// `PhiToken` output.
 ///
 /// For `VarPhi` and `MemPhi` (variadic phis), the number of value inputs
 /// must match the owning `ControlState`'s predecessor count.  `StackStorePhi`
-/// has fixed arity `[token, memory, data]` (Layer A enforces this) — its
+/// has fixed arity `[token, memory, data]` (local-typing enforces this) — its
 /// per-predecessor information lives in the side-table
 /// `Graph::stack_phi_offsets`, not in its inputs, so the per-predecessor
 /// arity rule does not apply to it.
-pub(super) fn check_layer_c_phis(
+pub(super) fn check_graph_invariants_phis(
     graph: &Graph,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -136,7 +138,9 @@ pub(super) fn check_layer_c_phis(
         let inputs: smallvec::SmallVec<[NodeOutputId; 4]> =
             graph.node_inputs(node).into_iter().collect();
         if inputs.is_empty() {
-            continue; // Layer A fires a count or kind mismatch for empty-input phis; skip here.
+            // The local-typing check fires a count or kind mismatch for
+            // empty-input phis; skip here.
+            continue;
         }
         let token = inputs[0];
         let token_kind = graph.output_kind(token);
@@ -198,13 +202,13 @@ fn asm_fingerprint_exempt(kind: &NodeKind) -> bool {
     )
 }
 
-/// Layer C: every reachable, non-exempt node must carry at least one
-/// asm-fingerprint contributor.  See
+/// Graph invariant: every reachable, non-exempt node must carry at
+/// least one asm-fingerprint contributor.  See
 /// [`crate::graph::Graph::asm_fingerprint`] for the full contract.
 ///
-/// Phase 1 Task 1.4 / G3: always-on (previously opt-in via
+/// Always-on (previously opt-in via
 /// `ValidateOptions::check_asm_fingerprints`).
-pub(super) fn check_layer_c_asm_fingerprints(
+pub(super) fn check_graph_invariants_asm_fingerprints(
     graph: &Graph,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -222,17 +226,17 @@ pub(super) fn check_layer_c_asm_fingerprints(
     }
 }
 
-/// Layer C: at most one [`NodeKind::FunctionArg`] per `index`.  The
-/// [`opt::FunctionArgDetect`] pass emits one canonical node per argument
-/// index; having two would mean patterns keyed by `matcher.function_arg(i)`
-/// become ambiguous.
+/// Graph invariant: at most one [`NodeKind::FunctionArg`] per `index`.
+/// The [`opt::FunctionArgDetect`] pass emits one canonical node per
+/// argument index; having two would mean patterns keyed by
+/// `matcher.function_arg(i)` become ambiguous.
 ///
-/// Reachability-scoped — every other Layer-C per-node check is
-/// reachability-gated, and `RedundantPhis` may leave a stale
+/// Reachability-scoped — every other per-node graph-invariants check
+/// is reachability-gated, and `RedundantPhis` may leave a stale
 /// `FunctionArg` zombie in the arena while a new canonical one is live.
 /// Without scoping, the validator would flag a structurally valid graph
 /// with `DuplicateFunctionArg`.
-pub(super) fn check_layer_c_function_arg_uniqueness(
+pub(super) fn check_graph_invariants_function_arg_uniqueness(
     graph: &Graph,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -257,16 +261,16 @@ pub(super) fn check_layer_c_function_arg_uniqueness(
     }
 }
 
-/// Layer C: verify every reachable `IntConstWide(id)` node references
-/// a live entry in `Graph::wide_consts` and that the stored value's
-/// byte size matches the node's declared output type.
+/// Graph invariant: verify every reachable `IntConstWide(id)` node
+/// references a live entry in `Graph::wide_consts` and that the stored
+/// value's byte size matches the node's declared output type.
 ///
 /// Emits [`ValidationError::DanglingWideConstId`] when the id is not
 /// present in the side-table (caller bypassed `intern_wide_const`),
 /// and [`ValidationError::WideConstWidthMismatch`] when the storage
 /// width contradicts the output type (e.g. U256 storage with U512
 /// declared output).
-pub(super) fn check_layer_c_wide_consts(
+pub(super) fn check_graph_invariants_wide_consts(
     graph: &Graph,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
@@ -295,12 +299,12 @@ pub(super) fn check_layer_c_wide_consts(
             NodeOutputType::U256 => 32,
             NodeOutputType::U512 => 64,
             _ => {
-                // Output type isn't U256/U512 — this is a Layer-A signature
-                // mismatch (IntConstWide's signature is `outputs: [INT_VAL]`,
-                // any int passes Layer A but only U256/U512 are semantically
-                // valid).  Surface as a width mismatch for the rare case
-                // where a synthetic graph produces, say, IntConstWide on a
-                // U64 output.
+                // Output type isn't U256/U512 — this is a local-typing
+                // signature mismatch (IntConstWide's signature is
+                // `outputs: [INT_VAL]`, any int passes local-typing but only
+                // U256/U512 are semantically valid).  Surface as a width
+                // mismatch for the rare case where a synthetic graph
+                // produces, say, IntConstWide on a U64 output.
                 errs.push(ValidationError::WideConstWidthMismatch {
                     node,
                     output_type: ty,
