@@ -1,5 +1,5 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider/tests/v3_baseline.rs
 expression: snapshot_body
 ---
 digraph "G" {
@@ -38,15 +38,11 @@ digraph "G" {
   "7" -> "5" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "7" [label="Neg\nf80 → f80", shape=box, fillcolor="#1a3020"];
   "8" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "8" [label="CastToFloat\nu80 → f80", shape=box, fillcolor="#302018"];
+  "8" [label="FloatToFloat\nf32 → f80", shape=box, fillcolor="#302018"];
   "9" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "9" [label="bitcast\nf80 → u80", shape=box, fillcolor="#302018"];
+  "9" [label="bitcast\nu32 → f32", shape=box, fillcolor="#302018"];
   "10" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "10" [label="FloatToFloat\nf32 → f80", shape=box, fillcolor="#302018"];
-  "11" -> "10" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "11" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
-  "12" -> "11" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "12" [label="arg[0] ← ram[sp + 4]", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "10" [label="arg[0] ← ram[sp + 4]", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="init\nEDX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "3" [label="init\nEAX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];

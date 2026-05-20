@@ -1,5 +1,5 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider/tests/v3_baseline.rs
 expression: snapshot_body
 ---
 digraph "G" {
@@ -66,12 +66,14 @@ digraph "G" {
   "17" [label="const 0xfffffff4:u32", shape=ellipse, fillcolor="#2d2d2d"];
   "2" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
   "18" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "4" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "v19" [label="init\nsp", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v19" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
   "6" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "18" [label="StackStore u32\n→ ram[sp - 4]", shape=box3d, fillcolor="#20182a"];
-  "19" -> "18" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "11" -> "18" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "20" -> "18" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "20" [label="init\nlr", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "19" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "20" -> "18" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v21" [label="init\nsp", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v21" -> "18" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "22" -> "18" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "22" [label="init\nlr", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "20" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

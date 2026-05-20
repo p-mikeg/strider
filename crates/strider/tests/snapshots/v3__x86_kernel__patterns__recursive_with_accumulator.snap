@@ -1,5 +1,5 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider/tests/v3_baseline.rs
 expression: snapshot_body
 ---
 digraph "G" {
@@ -86,23 +86,19 @@ digraph "G" {
   "24" [label="const 0xffffffff:u32", shape=ellipse, fillcolor="#2d2d2d"];
   "6" [label="StackStore u32\n→ ram[sp - 16]", shape=box3d, fillcolor="#20182a"];
   "22" -> "6" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "25" -> "6" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "v25" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v25" -> "6" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
   "26" -> "6" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "26" [label="const 0x401161:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "25" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "27" -> "25" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "28" -> "25" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "28" [label="const 0xfffffff0:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "27" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="Or:bool", shape=box, fillcolor="#2d2d2d"];
-  "29" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "30" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "30" [label="Sless\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
-  "23" -> "30" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "31" -> "30" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "31" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "29" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
-  "23" -> "29" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "32" -> "29" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "32" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "27" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "28" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "28" [label="Sless\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "23" -> "28" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "29" -> "28" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "29" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "27" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "23" -> "27" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "30" -> "27" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "30" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
 }

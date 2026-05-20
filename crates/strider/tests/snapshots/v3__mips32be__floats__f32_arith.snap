@@ -1,5 +1,5 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider/tests/v3_baseline.rs
 expression: snapshot_body
 ---
 digraph "G" {
@@ -40,45 +40,29 @@ digraph "G" {
   "7" [label="Div:f32", shape=box, fillcolor="#1a3020"];
   "8" -> "7" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "9" -> "7" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "9" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
-  "10" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "10" [label="bitcast\nf32 → u32", shape=box, fillcolor="#302018"];
-  "11" -> "10" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "11" [label="Add:f32", shape=box, fillcolor="#1a3020"];
-  "12" -> "11" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "13" -> "11" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "13" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
-  "14" -> "13" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "14" [label="const 0x3f800000:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "12" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
-  "15" -> "12" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "15" [label="init\nf12", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "8" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
-  "16" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "16" [label="bitcast\nf32 → u32", shape=box, fillcolor="#302018"];
+  "9" [label="Add:f32", shape=box, fillcolor="#1a3020"];
+  "10" -> "9" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "11" -> "9" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "11" [label="bitcast\nu32 → f32", shape=box, fillcolor="#302018"];
+  "12" -> "11" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "12" [label="const 0x3f800000:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "10" [label="bitcast\nu32 → f32", shape=box, fillcolor="#302018"];
+  "13" -> "10" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "13" [label="init\nf12", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "8" [label="Add:f32", shape=box, fillcolor="#1a3020"];
+  "14" -> "8" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "15" -> "8" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "15" [label="Neg\nf32 → f32", shape=box, fillcolor="#1a3020"];
+  "16" -> "15" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "16" [label="bitcast\nu32 → f32", shape=box, fillcolor="#302018"];
   "17" -> "16" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "17" [label="Add:f32", shape=box, fillcolor="#1a3020"];
-  "18" -> "17" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "19" -> "17" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "19" [label="Neg\nf32 → f32", shape=box, fillcolor="#1a3020"];
-  "20" -> "19" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "20" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
-  "21" -> "20" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "21" [label="init\nf14", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "18" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
-  "22" -> "18" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "22" [label="bitcast\nf32 → u32", shape=box, fillcolor="#302018"];
-  "23" -> "22" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "23" [label="Mul:f32", shape=box, fillcolor="#1a3020"];
-  "24" -> "23" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "12" -> "23" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "24" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
-  "25" -> "24" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "25" [label="bitcast\nf32 → u32", shape=box, fillcolor="#302018"];
-  "26" -> "25" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "26" [label="Add:f32", shape=box, fillcolor="#1a3020"];
-  "12" -> "26" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "20" -> "26" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "17" [label="init\nf14", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "14" [label="Mul:f32", shape=box, fillcolor="#1a3020"];
+  "18" -> "14" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "10" -> "14" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "18" [label="Add:f32", shape=box, fillcolor="#1a3020"];
+  "10" -> "18" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "16" -> "18" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "4" [label="init\nv1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

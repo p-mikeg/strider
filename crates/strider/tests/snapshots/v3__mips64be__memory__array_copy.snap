@@ -1,5 +1,5 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider/tests/v3_baseline.rs
 expression: snapshot_body
 ---
 digraph "G" {
@@ -34,13 +34,13 @@ digraph "G" {
   "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "4" -> "1" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
   "5" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
-  "v6" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
+  "v6" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v6" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v3" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "7" [label="If", shape=diamond, fillcolor="#3a2a10"];
-  "7" -> "v6" [color="#00cccc", label=true, fontcolor="#cccccc", fontsize=9];
-  "v8" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
-  "7" -> "v8" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
+  "v8" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
+  "7" -> "v8" [color="#00cccc", label=true, fontcolor="#cccccc", fontsize=9];
+  "7" -> "v6" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "5" -> "7" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "9" -> "7" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
   "10" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
@@ -109,17 +109,11 @@ digraph "G" {
   "10" -> "12" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
   "31" -> "12" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "30" -> "12" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "9" [label="Cast → bool\nfrom u8", shape=box, fillcolor="#2d2d2d"];
-  "36" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "36" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
-  "37" -> "36" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "37" [label="Neg:bool", shape=box, fillcolor="#2d2d2d"];
-  "38" -> "37" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "38" [label="Equal\nu64 → bool", shape=box, fillcolor="#2d2d2d"];
-  "28" -> "38" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "18" -> "38" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "9" [label="Equal\nu64 → bool", shape=box, fillcolor="#2d2d2d"];
+  "28" -> "9" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "18" -> "9" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "4" [label="Equal\nu64 → bool", shape=box, fillcolor="#2d2d2d"];
   "21" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "39" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "39" [label="const 0x0:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "36" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "36" [label="const 0x0:u64", shape=ellipse, fillcolor="#2d2d2d"];
 }

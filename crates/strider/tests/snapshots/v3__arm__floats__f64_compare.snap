@@ -1,5 +1,5 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider/tests/v3_baseline.rs
 expression: snapshot_body
 ---
 digraph "G" {
@@ -112,7 +112,7 @@ digraph "G" {
   "43" [label="Equal\nf64 → bool", shape=box, fillcolor="#1a3020"];
   "44" -> "43" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "44" -> "43" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "44" [label="CastToFloat\nu64 → f64", shape=box, fillcolor="#302018"];
+  "44" [label="bitcast\nu64 → f64", shape=box, fillcolor="#302018"];
   "20" -> "44" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "40" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
   "45" -> "40" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
@@ -121,7 +121,7 @@ digraph "G" {
   "46" [label="Equal\nf64 → bool", shape=box, fillcolor="#1a3020"];
   "47" -> "46" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "47" -> "46" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "47" [label="CastToFloat\nu64 → f64", shape=box, fillcolor="#302018"];
+  "47" [label="bitcast\nu64 → f64", shape=box, fillcolor="#302018"];
   "19" -> "47" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "35" [label="Or:u32", shape=box, fillcolor="#2d2d2d"];
   "48" -> "35" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];

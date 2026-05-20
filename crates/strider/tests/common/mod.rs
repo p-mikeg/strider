@@ -298,18 +298,15 @@ pub fn analyze_v2_with_iters(
 /// the **production-default** optimizer pipeline, and returns the
 /// resulting graph.
 ///
-/// As of Phase 8.5c this is a thin call to [`analyze_v2`] — every test
-/// that calls `analyze` exercises the egg-based v2 pipeline.
-/// `v1_baseline.rs` and `v2_baseline.rs` use the explicit
-/// `analyze_v1` / `analyze_v2` entry points so they stay pinned to
-/// their respective contracts regardless of which way the default flag
-/// points.
+/// Routes through [`analyze_v1`] (the imperative pipeline), which is the
+/// production default.  `v1_baseline.rs` and `v2_baseline.rs` keep their
+/// explicit entry points so they stay pinned to their respective contracts.
 ///
 /// Panics on any failure — system tests are pass/fail end-to-end checks.  If
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
 pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFunctionGraph {
-    analyze_v2(arch, case, fn_name)
+    analyze_v1(arch, case, fn_name)
 }
 
 // ── Assertion vocabulary ─────────────────────────────────────────────────────

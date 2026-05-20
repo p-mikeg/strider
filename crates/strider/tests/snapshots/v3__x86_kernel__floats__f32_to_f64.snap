@@ -1,5 +1,5 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider/tests/v3_baseline.rs
 expression: snapshot_body
 ---
 digraph "G" {
@@ -38,7 +38,7 @@ digraph "G" {
   "7" -> "5" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "7" [label="FloatToFloat\nf32 → f80", shape=box, fillcolor="#302018"];
   "8" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "8" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
+  "8" [label="bitcast\nu32 → f32", shape=box, fillcolor="#302018"];
   "9" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "9" [label="arg[3] ← ram[sp + 4]", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="arg[1] ← EDX", shape=Mdiamond, fillcolor="#1a3a5c"];

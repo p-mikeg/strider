@@ -1,5 +1,5 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider/tests/v3_baseline.rs
 expression: snapshot_body
 ---
 digraph "G" {
@@ -56,21 +56,17 @@ digraph "G" {
   "4" [label="And:bool", shape=box, fillcolor="#2d2d2d"];
   "14" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "15" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "15" [label="Equal\nu8 → bool", shape=box, fillcolor="#2d2d2d"];
-  "16" -> "15" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "16" [label="const 0x0:u8", shape=ellipse, fillcolor="#2d2d2d"];
-  "17" -> "15" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "17" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
-  "18" -> "17" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "18" [label="Sless\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
-  "19" -> "18" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "20" -> "18" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "20" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "19" [label="arg[0] ← EAX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "15" [label="Neg:bool", shape=box, fillcolor="#2d2d2d"];
+  "16" -> "15" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "16" [label="Sless\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "17" -> "16" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "18" -> "16" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "18" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "17" [label="arg[0] ← EAX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "14" [label="Neg:bool", shape=box, fillcolor="#2d2d2d"];
-  "21" -> "14" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "21" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
-  "19" -> "21" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "22" -> "21" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "22" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "19" -> "14" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "19" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "17" -> "19" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "20" -> "19" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "20" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
 }
