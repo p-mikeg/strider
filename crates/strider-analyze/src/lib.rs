@@ -15,7 +15,6 @@
 
 mod errors;
 pub mod orchestrator;
-pub mod orchestrator_salsa;
 pub mod rewrite;
 mod strider;
 

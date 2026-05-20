@@ -22,9 +22,6 @@ smallvec.workspace = true
 # Absorbed from `pattern` (Phase 3 Task 3.0).
 thiserror.workspace = true
 bitflags = "2"
-# Salsa 0.26.2 — incremental query graph for the orchestrator's
-# indirect-branch fixed-point.
-salsa = "0.26.2"
 
 [dev-dependencies]
 reader = { workspace = true }
