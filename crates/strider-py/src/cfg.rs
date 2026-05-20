@@ -70,18 +70,18 @@ impl PyCfg {
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark_cfg");
-        let d = strider_ir::dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
+        let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
         d.dump_as_html(Path::new(path)).map_err(into_strider_err)
     }
     #[pyo3(signature = (path,))]
     fn to_dot(&self, path: &str) -> PyResult<()> {
-        let d = strider_ir::dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some("dark_cfg")));
+        let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some("dark_cfg")));
         d.dump_as_dot(Path::new(path)).map_err(into_strider_err)
     }
     #[pyo3(signature = (style=None))]
     fn html_str(&self, style: Option<&str>) -> PyResult<String> {
         let style = style.unwrap_or("dark_cfg");
-        let d = strider_ir::dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
+        let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
         d.as_html_from_dot().map_err(into_strider_err)
     }
 }

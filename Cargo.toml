@@ -16,6 +16,7 @@ edition = "2024"
 strider = { path = "crates/strider" }
 reader = { path = "crates/reader" }
 target = { path = "crates/target" }
+dot = { path = "crates/dot" }
 strider-ir = { path = "crates/strider-ir" }
 strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }
 strider-lift = { path = "crates/strider-lift" }

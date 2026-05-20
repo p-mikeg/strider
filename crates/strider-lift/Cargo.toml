@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 strider-ir = { workspace = true }
+dot.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
 # `target` source lives in the external crate; this module re-exports it

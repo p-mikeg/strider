@@ -23,6 +23,7 @@ workspace = true
 [dev-dependencies]
 expect-test.workspace = true
 paste = "1"
+dot.workspace = true
 strider-ir-test-utils = { workspace = true }
 criterion = { version = "0.7", features = ["html_reports"] }
 insta = { version = "1.40", features = ["yaml"] }

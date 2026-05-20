@@ -47,8 +47,6 @@
 
 extern crate alloc;
 
-// Absorbed utility crates (Phase 1 Tasks 1.1 + 1.2).
-pub mod dot;
 pub mod entity_utils;
 pub mod graphwalk;
 
@@ -60,10 +58,8 @@ mod function_builder_cc;
 pub use function_builder_cc::FunctionBuilderCC;
 pub mod graph;
 pub use graph::Graph;
-/// IR-specific Graphviz/dot rendering (was `ir::dot` before Task 1.3 —
-/// renamed to `graph_dot` to disambiguate from the generic [`dot`] module
-/// absorbed in Task 1.2).  The `ir` shim re-exports this as `ir::dot` for
-/// backwards compatibility.
+/// IR-specific Graphviz/dot rendering (implements the [`dot::GraphDotDumper`]
+/// trait for the IR [`Graph`]).
 pub mod graph_dot;
 pub mod node;
 mod iterators;
