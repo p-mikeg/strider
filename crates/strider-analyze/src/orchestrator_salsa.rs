@@ -151,6 +151,27 @@ pub trait StriderDb: salsa::Database {
         targets: &BTreeMap<u64, BTreeSet<u64>>,
     ) -> Result<BuiltFunctionGraph>;
 
+    /// Builds the CFG (using the same configuration the build closure
+    /// captures) and returns one entry per region:
+    /// `(region_start_addr, region_content_fingerprint)`.
+    ///
+    /// The fingerprint hashes the region's pcode bytes plus its
+    /// terminator kind so two regions with identical contents at the
+    /// same start address produce the same fingerprint regardless of
+    /// CFG-rebuild iteration.  Phase 7 Task 7.2 uses this as the
+    /// granular cache key for per-region salsa queries:
+    /// `region_lift_signature(db, region_addr, fingerprint)` only
+    /// re-executes when `fingerprint` differs from the cached value.
+    ///
+    /// # Errors
+    ///
+    /// Surfaces any error from the underlying `cfg::Builder` or
+    /// `Sleigh` construction in the build closure.
+    fn cfg_region_signatures(
+        &self,
+        targets: &BTreeMap<u64, BTreeSet<u64>>,
+    ) -> Result<Vec<(u64, u64)>>;
+
     /// Increments the query-invocation counter.  Called from inside
     /// the tracked function body so salsa cache hits are
     /// distinguishable from misses.
@@ -158,30 +179,38 @@ pub trait StriderDb: salsa::Database {
 
     /// Returns the current invocation count (for testing).
     fn optimized_function_calls(&self) -> usize;
+
+    /// Increments the per-region tracked-body counter.  Called from
+    /// inside `region_lift_signature` so salsa cache hits on
+    /// `(region_addr, fingerprint)` pairs are distinguishable from
+    /// body executions.
+    fn record_region_lift_call(&self);
+
+    /// Returns the current per-region invocation count (for testing).
+    fn region_lift_invocation_count(&self) -> usize;
 }
 
-/// Trait-object signature for the build closure.  Implemented for any
-/// suitable `Fn(...)` by the blanket impl below.
+/// Trait-object signature for the build closure.  Concrete impls
+/// must support both the full `build` (BFG-producing) path and the
+/// lighter-weight `region_signatures` (per-region fingerprint) path.
+///
+/// The two methods take the same `targets` map so the per-region
+/// fingerprints reflect the CFG that `build` would produce for the
+/// same input.  Implementors typically build the CFG twice (once for
+/// signatures, once inside `build`); salsa's cache amortises this
+/// because both calls memoise independently on their inputs.
 pub trait RunBuilder: Send + Sync + 'static {
     fn build(
         &self,
         targets: &BTreeMap<u64, BTreeSet<u64>>,
     ) -> Result<BuiltFunctionGraph>;
-}
 
-impl<F> RunBuilder for F
-where
-    F: Fn(&BTreeMap<u64, BTreeSet<u64>>) -> Result<BuiltFunctionGraph>
-        + Send
-        + Sync
-        + 'static,
-{
-    fn build(
+    /// Build the CFG and return per-region fingerprints.  See
+    /// [`StriderDb::cfg_region_signatures`].
+    fn region_signatures(
         &self,
         targets: &BTreeMap<u64, BTreeSet<u64>>,
-    ) -> Result<BuiltFunctionGraph> {
-        (self)(targets)
-    }
+    ) -> Result<Vec<(u64, u64)>>;
 }
 
 /// Concrete strider database.  Owns the salsa storage plus the
@@ -202,6 +231,8 @@ pub struct StriderDbImpl {
     build: Box<dyn RunBuilder>,
     /// Diagnostic counter — incremented by `record_optimized_call`.
     optimized_calls: AtomicUsize,
+    /// Phase 7 Task 7.2 — per-region tracked-body counter.
+    region_lift_calls: AtomicUsize,
 }
 
 impl StriderDbImpl {
@@ -213,6 +244,7 @@ impl StriderDbImpl {
             storage: salsa::Storage::new(None),
             build,
             optimized_calls: AtomicUsize::new(0),
+            region_lift_calls: AtomicUsize::new(0),
         }
     }
 }
@@ -229,6 +261,13 @@ impl StriderDb for StriderDbImpl {
         self.build.build(targets)
     }
 
+    fn cfg_region_signatures(
+        &self,
+        targets: &BTreeMap<u64, BTreeSet<u64>>,
+    ) -> Result<Vec<(u64, u64)>> {
+        self.build.region_signatures(targets)
+    }
+
     fn record_optimized_call(&self) {
         self.optimized_calls.fetch_add(1, Ordering::SeqCst);
     }
@@ -236,12 +275,89 @@ impl StriderDb for StriderDbImpl {
     fn optimized_function_calls(&self) -> usize {
         self.optimized_calls.load(Ordering::SeqCst)
     }
+
+    fn record_region_lift_call(&self) {
+        self.region_lift_calls.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn region_lift_invocation_count(&self) -> usize {
+        self.region_lift_calls.load(Ordering::SeqCst)
+    }
 }
 
-// ── Tracked query ──────────────────────────────────────────────────────────
+// ── Salsa interned region key ─────────────────────────────────────────────
+//
+// Phase 7 Task 7.2 — per-region tracked queries are keyed by an
+// interned `RegionKey { addr, fingerprint }`.  Salsa interning
+// guarantees that two `RegionKey::new(db, a, f)` calls with the same
+// `(a, f)` return the same interned id, so the per-region tracked
+// query memoises on the underlying content fingerprint.
+//
+// Why interned rather than tracked: the key is a pure value (two
+// primitive `u64`s), not derived from another query.  Interned
+// structs are the salsa idiom for "stable identity for a value
+// tuple"; their identity is invariant across revisions, which is
+// what we want for the per-region cache (a region's fingerprint
+// doesn't depend on `IndirectTargets`'s current revision — it
+// depends only on the region's bytes).
 
-/// The single top-level tracked query: lift + optimise the function
-/// for the current `(Binary, IndirectTargets)` pair.
+/// Salsa-interned per-region key.  Two calls to `RegionKey::new(db,
+/// a, f)` with identical `(a, f)` return the same interned id, so
+/// `region_lift_signature` memoises on content rather than on
+/// invocation-order.
+#[salsa::interned]
+pub struct RegionKey<'db> {
+    /// Region start address (machine, not pcode-index).
+    pub addr: u64,
+    /// Per-region content fingerprint produced by
+    /// [`StriderDb::cfg_region_signatures`].  Two regions with the
+    /// same `(addr, fingerprint)` are assumed to lift to identical
+    /// per-region IR — the contract `cfg_region_signatures` must
+    /// honour.
+    pub fingerprint: u64,
+}
+
+// ── Tracked queries ────────────────────────────────────────────────────────
+
+/// Per-region tracked query.  Phase 7 Task 7.2.
+///
+/// The body is a near-no-op that records a per-region cache-miss
+/// counter.  Its **value** is the region fingerprint (returned
+/// unchanged); the **dependency edge** it establishes is what
+/// matters: every call site (currently `optimized_function`) becomes
+/// dependent on this specific `(addr, fingerprint)` key, so when a
+/// later salsa revision produces a CFG with the same per-region
+/// fingerprints, the per-region cache hits and the counter does NOT
+/// increment.
+///
+/// ## What it does NOT yet cache
+///
+/// The per-region IR itself.  The full IR lift remains monolithic in
+/// v1's `run`.  Splitting v1's `Strider::analyze_cfg_with` into
+/// per-region IR-producing queries is deferred to Phase 8 — the
+/// cross-region phi joins make `combine_and_optimize(Vec<RegionIr>)`
+/// non-trivial.  This delivery puts the salsa dep-graph in place so a
+/// Phase 8 cache-promote can swap the returned `u64` for an
+/// `Arc<RegionIrShard>` without changing the invalidation topology.
+#[salsa::tracked]
+pub fn region_lift_signature<'db>(
+    db: &'db dyn StriderDb,
+    region: RegionKey<'db>,
+) -> u64 {
+    db.record_region_lift_call();
+    region.fingerprint(db)
+}
+
+/// The top-level tracked query: lift + optimise the function for the
+/// current `(Binary, IndirectTargets)` pair.
+///
+/// Phase 7 Task 7.2 — body now drives the per-region tracked
+/// `region_lift_signature` queries before delegating to v1's `run`.
+/// This wires the per-region dependency edges into salsa's
+/// red-green algorithm: when `IndirectTargets` mutates, the
+/// per-region queries cache-hit on every region whose content
+/// fingerprint is unchanged (typically: every region in the function
+/// when the new target is a no-op).
 ///
 /// Salsa caches the returned `Arc<BfgEntry>` against the input pair.
 /// A repeat call with identical inputs returns the cached value
@@ -261,6 +377,38 @@ pub fn optimized_function<'db>(
 ) -> Arc<BfgEntry> {
     db.record_optimized_call();
     let map = targets.map(db);
+
+    // Phase 7 Task 7.2 — drive the per-region tracked queries.
+    // We build the CFG once (via the build closure) to enumerate
+    // region fingerprints, then for each region issue a
+    // `region_lift_signature` salsa query.  The first time a
+    // `(addr, fp)` pair is seen, the tracked body runs and the
+    // counter increments; subsequent revisions with the same pair
+    // hit the cache.
+    //
+    // Errors from `cfg_region_signatures` are NOT fatal here: a
+    // failure to enumerate signatures means we've lost incremental
+    // granularity for this revision, but the BFG can still be lifted
+    // via v1's `run`.  We swallow the error after logging via
+    // `eprintln!` so the orchestrator's parity contract holds even
+    // when (e.g.) the binary fails to load on the signature path
+    // but succeeds on the lift path — an unlikely but possible
+    // skew.
+    match db.cfg_region_signatures(map.as_ref()) {
+        Ok(sigs) => {
+            for (addr, fp) in sigs {
+                let key = RegionKey::new(db, addr, fp);
+                let _ = region_lift_signature(db, key);
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "salsa optimized_function: cfg_region_signatures failed; \
+                 proceeding without per-region cache for this revision: {e:?}"
+            );
+        }
+    }
+
     let result = match db.run_v1_with_targets(map.as_ref()) {
         Ok(bfg) => Ok(bfg),
         Err(e) => Err(format!("{e:?}")),
@@ -431,33 +579,161 @@ where
 {
     let regs = arch.probe_regs()?;
     let strider = Arc::new(Strider::new(arch, regs, cc)?);
-    let rom_arc = rom;
-    let per_address_ccs_arc = Arc::new(per_address_ccs);
-    let reader_factory_arc = Arc::new(reader_factory);
 
-    let build = Box::new(
-        move |targets: &BTreeMap<u64, BTreeSet<u64>>| -> Result<BuiltFunctionGraph> {
-            // For Phase 3.9 wrapper-mode: ignore `targets` and let
-            // v1's internal fixed-point loop converge.  When Phase 6
-            // splits the lift, this closure becomes thinner — just
-            // region lift for the regions whose dep on `targets`
-            // changed.
-            let _ = targets;
-            let reader = (reader_factory_arc)();
-            let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)?;
-            let config = RunConfig {
-                strider: strider.as_ref(),
-                start_addr: start_addr.into(),
-                sleigh,
-                rom: rom_arc.clone(),
-                fn_max_size,
-                allow_code_before_start_addr,
-                compact,
-                per_address_ccs: (*per_address_ccs_arc).clone(),
-            };
-            crate::orchestrator::run(config)
-        },
-    );
+    let builder = ElfRunBuilder {
+        arch,
+        strider,
+        rom,
+        fn_max_size,
+        allow_code_before_start_addr,
+        compact,
+        per_address_ccs: Arc::new(per_address_ccs),
+        reader_factory: Arc::new(reader_factory),
+        start_addr,
+    };
 
-    Ok(StriderDbImpl::new(build))
+    Ok(StriderDbImpl::new(Box::new(builder)))
+}
+
+/// `RunBuilder` implementation that re-builds a Sleigh + CFG + IR
+/// pipeline on every call from a captured arch / CC / reader factory.
+///
+/// Lives outside `make_db_for_elf` so we can implement both the
+/// full-`build` and the lighter-weight `region_signatures` methods.
+///
+/// Generic over `R: MemReader + 'static` because the rsleigh trait has
+/// an associated `Err` type that makes `dyn MemReader` impractical.
+/// The struct is parameterised, then boxed as `Box<dyn RunBuilder>`
+/// inside `StriderDbImpl` — the `RunBuilder` trait itself is
+/// dyn-safe (no associated types, no generic methods).
+struct ElfRunBuilder<R: rsleigh::MemReader, F: Fn() -> R + Send + Sync + 'static> {
+    arch: target::SleighArch,
+    strider: Arc<Strider>,
+    rom: Option<Arc<dyn ReadOnlyMemory>>,
+    fn_max_size: Option<u64>,
+    allow_code_before_start_addr: bool,
+    compact: bool,
+    per_address_ccs: Arc<HashMap<u64, target::CallingConvention>>,
+    reader_factory: Arc<F>,
+    start_addr: u64,
+}
+
+impl<R, F> RunBuilder for ElfRunBuilder<R, F>
+where
+    R: rsleigh::MemReader + 'static,
+    F: Fn() -> R + Send + Sync + 'static,
+{
+    fn build(
+        &self,
+        targets: &BTreeMap<u64, BTreeSet<u64>>,
+    ) -> Result<BuiltFunctionGraph> {
+        // For Phase 3.9 wrapper-mode: ignore `targets` and let v1's
+        // internal fixed-point loop converge.  When Phase 8 splits the
+        // lift, this body becomes thinner — just per-region calls
+        // through salsa's `region_lift_signature` (Phase 7.2) plus a
+        // monolithic optimizer post-pass.
+        let _ = targets;
+        let reader = (self.reader_factory)();
+        let sleigh = rsleigh::Sleigh::new(self.arch.sla_spec(), self.arch.pspec(), reader)?;
+        let config = RunConfig {
+            strider: self.strider.as_ref(),
+            start_addr: self.start_addr.into(),
+            sleigh,
+            rom: self.rom.clone(),
+            fn_max_size: self.fn_max_size,
+            allow_code_before_start_addr: self.allow_code_before_start_addr,
+            compact: self.compact,
+            per_address_ccs: (*self.per_address_ccs).clone(),
+        };
+        crate::orchestrator::run(config)
+    }
+
+    fn region_signatures(
+        &self,
+        targets: &BTreeMap<u64, BTreeSet<u64>>,
+    ) -> Result<Vec<(u64, u64)>> {
+        use cfg::{Builder, Cfg, OptionsBuilder};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Build a fresh CFG with the supplied `known_targets`.  We do
+        // this independently of `build` so we can call it from
+        // `optimized_function` BEFORE invoking the full lift — the
+        // per-region salsa cache hits on signature equality, which
+        // gates whether downstream per-region IR (a Phase 8 deliverable)
+        // gets invalidated.
+        let reader = (self.reader_factory)();
+        let sleigh = rsleigh::Sleigh::new(self.arch.sla_spec(), self.arch.pspec(), reader)?;
+
+        let mut opts_builder = OptionsBuilder::new();
+        if let Some(rom) = self.rom.clone() {
+            opts_builder = opts_builder.set_read_only_memory(rom);
+        }
+        if let Some(lr) = self.strider.calling_convention().link_register_vn() {
+            opts_builder = opts_builder.set_link_register(lr);
+        }
+        if let Some(max) = self.fn_max_size {
+            opts_builder = opts_builder.set_function_max_size(max);
+        }
+        if self.allow_code_before_start_addr {
+            opts_builder = opts_builder.allow_code_before_start_addr();
+        }
+        let cfg_opts = opts_builder.build();
+
+        let resolver: Arc<dyn cfg::IndirectTargetResolver<R>> =
+            Arc::new(crate::opt::indirect_resolver::MiniIrIndirectResolver);
+        // Convert BTreeMap → HashMap with PcodeInsnAddr keys for
+        // `with_known_targets`.  The map shape is BTreeMap<u64,
+        // BTreeSet<u64>> (anchor pcode-addr → resolved target
+        // addresses); we wrap as ResolvedTargets::Single when the set
+        // is a singleton, otherwise Multiple.
+        let known_targets: HashMap<cfg::PcodeInsnAddr, cfg::ResolvedTargets> = targets
+            .iter()
+            .map(|(addr, set)| {
+                let resolved = if set.len() == 1 {
+                    cfg::ResolvedTargets::Single(
+                        *set.iter().next().expect("len==1 set has one"),
+                    )
+                } else {
+                    cfg::ResolvedTargets::Multiple(set.iter().copied().collect())
+                };
+                (cfg::PcodeInsnAddr::at_machine_start(*addr), resolved)
+            })
+            .collect();
+
+        let cfg: Cfg<R> = Builder::for_arch(
+            &self.strider.arch,
+            sleigh,
+            self.start_addr,
+            cfg_opts,
+        )
+        .with_known_targets(known_targets)
+        .with_indirect_resolver(resolver)
+        .build()?;
+
+        // Per-region fingerprint: hash the region's start address,
+        // terminator kind, and per-instruction pcode bytes.  Two
+        // regions with identical content at the same address produce
+        // the same fingerprint — the contract `region_lift_signature`
+        // assumes.
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        for region in cfg.regions() {
+            let mut hasher = DefaultHasher::new();
+            region.start_addr.machine_addr_u64().hash(&mut hasher);
+            // Terminator kind discriminates regions that share bytes
+            // but differ in how they end (e.g. Fallthrough vs
+            // TailCall after a CondBranch-OOB collapse).
+            std::mem::discriminant(&region.terminator).hash(&mut hasher);
+            for wrapped in &region.insns {
+                wrapped.addr.machine_addr_u64().hash(&mut hasher);
+                // `rsleigh::Insn` does not implement Hash; hash its
+                // Debug form as a stable surrogate.  The format is
+                // deterministic for a given opcode + varnodes tuple.
+                format!("{:?}", wrapped.insn).hash(&mut hasher);
+            }
+            let fp = hasher.finish();
+            out.push((region.start_addr.machine_addr_u64(), fp));
+        }
+        Ok(out)
+    }
 }
