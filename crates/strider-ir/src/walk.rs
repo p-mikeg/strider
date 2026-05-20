@@ -1,6 +1,6 @@
 use core::{iter, ops::ControlFlow};
 
-pub use crate::entity_utils::set::DenseEntitySet;
+pub use entity_utils::set::DenseEntitySet;
 
 use crate::{
     graph::Graph,

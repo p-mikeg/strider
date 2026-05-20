@@ -370,6 +370,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
+name = "entity-utils"
+version = "0.1.0"
+dependencies = [
+ "cranelift-bitset",
+ "cranelift-entity",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1316,6 +1324,7 @@ dependencies = [
  "anyhow",
  "bitflags",
  "cranelift-entity",
+ "entity-utils",
  "ethnum",
  "object",
  "proptest",
@@ -1338,6 +1347,7 @@ dependencies = [
  "cranelift-bitset",
  "cranelift-entity",
  "dot",
+ "entity-utils",
  "ethnum",
  "hashbrown 0.16.1",
  "itertools 0.13.0",

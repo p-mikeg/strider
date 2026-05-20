@@ -217,8 +217,8 @@ fn dead_uses_all_zero_input(
 fn collect_dead_subgraph(
     ctx: crate::pattern::RewriteCtxView<'_>,
     dead_uses: &[(NodeId, u32)],
-) -> strider_ir::entity_utils::DenseEntitySet<NodeId> {
-    let mut subgraph: strider_ir::entity_utils::DenseEntitySet<NodeId> = strider_ir::entity_utils::DenseEntitySet::new();
+) -> entity_utils::DenseEntitySet<NodeId> {
+    let mut subgraph: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
     let mut worklist: Vec<NodeId> = dead_uses
         .iter()
         .filter(|(n, _)| !matches!(*ctx.node_kind(*n), NodeKind::ControlState))
@@ -249,7 +249,7 @@ fn collect_dead_subgraph(
 /// and the still-attached If would fail Layer A's input-count check.
 fn dead_subgraph_has_live_data_consumer(
     ctx: crate::pattern::RewriteCtxView<'_>,
-    subgraph: &strider_ir::entity_utils::DenseEntitySet<NodeId>,
+    subgraph: &entity_utils::DenseEntitySet<NodeId>,
 ) -> bool {
     subgraph.iter().any(|node| {
         ctx.node_outputs(node).into_iter().any(|out| {

@@ -17,6 +17,7 @@ strider = { path = "crates/strider" }
 reader = { path = "crates/reader" }
 target = { path = "crates/target" }
 dot = { path = "crates/dot" }
+entity-utils = { path = "crates/entity-utils" }
 strider-ir = { path = "crates/strider-ir" }
 strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }
 strider-lift = { path = "crates/strider-lift" }

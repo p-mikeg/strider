@@ -47,7 +47,6 @@
 
 extern crate alloc;
 
-pub mod entity_utils;
 pub mod graphwalk;
 
 // Absorbed ir crate (Phase 1 Task 1.3).

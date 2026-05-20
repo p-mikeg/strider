@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 dot.workspace = true
+entity-utils.workspace = true
 cranelift-bitset.workspace = true
 cranelift-entity.workspace = true
 rsleigh.workspace = true

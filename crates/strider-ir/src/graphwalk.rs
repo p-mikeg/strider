@@ -9,7 +9,7 @@ use core::ops::ControlFlow;
 
 use cranelift_entity::EntityRef;
 
-use crate::entity_utils::set::DenseEntitySet;
+use entity_utils::set::DenseEntitySet;
 
 /// The visit phase reported by a post-order walk event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 strider-ir = { workspace = true }
+entity-utils = { workspace = true }
 # strider-lift forward dep (Phase 3 Task 3.1): the cfg-time mini-IR
 # indirect-resolver implementation lives here as a concrete
 # `IndirectTargetResolver` impl (see src/indirect_resolver.rs).  Also

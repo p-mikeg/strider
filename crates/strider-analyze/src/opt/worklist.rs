@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 
 use strider_ir::Graph;
-use strider_ir::entity_utils::DenseEntitySet;
+use entity_utils::DenseEntitySet;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::pipeline::OptimizationResult;

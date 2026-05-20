@@ -2,7 +2,7 @@ use anyhow::bail;
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use strider_ir::entity_utils::DenseEntitySet;
+use entity_utils::DenseEntitySet;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 /// If every output of `node_id` has no uses and the node still has inputs,
