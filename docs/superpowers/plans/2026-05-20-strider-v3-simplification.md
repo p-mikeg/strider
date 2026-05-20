@@ -38,6 +38,34 @@ cargo +nightly udeps 2>&1 | head -10     # finds unused deps (alternative)
 
 Final Theme K asserts zero `dead_code` / `unused_*` warnings. If a warning remains, the code it points at IS dead — delete it.
 
+## Optimizer Architecture (peephole on top of the existing matcher)
+
+The v3 optimizer rewrites the IR via peephole transformations. **Each peephole pass uses the existing `pattern` crate's `Matcher` infrastructure** — `Matcher::find_all(&pat)`, `match_at(node, &pat)`, `Capture`, commutative auto-matching, `.when(predicate)`, lift-time-canonical aliases. Passes do NOT roll their own matching logic per-pass.
+
+**Why this matters for the plan:**
+- Theme B deletes the 9 *Egg passes. The replacement is NOT "rewrite each in egg-style without egg" — it's "use the imperative passes that already exist". Those imperative passes' v1 incarnations already use ad-hoc matching; v3 cleans them up to consume the `pattern` crate's matcher uniformly.
+- Theme J's optimizer-trait audit (Optimizer / OptimizerRaw / blanket impl / Box<dyn>) considers whether the pattern-matcher-based pass shape can be expressed via a simpler trait.
+- The pattern crate stays — it's the load-bearing matcher for peepholes AND for user pattern queries (the public API). No churn.
+
+A new peephole pass is structured:
+
+```rust
+pub struct ConstantFoldIdentityAdd;
+
+impl Optimizer for ConstantFoldIdentityAdd {
+    fn optimize(&self, ctx: &mut RewriteCtx<'_>) {
+        let x = Capture::new();
+        let pat = pattern::add(pattern::any().capture(x), pattern::int_const(0));
+        for m in ctx.matcher().find_all(&pat) {
+            let surviving = m.output(x).expect("any() always binds an output");
+            ctx.graph().replace_all_uses(m.root(), surviving);
+        }
+    }
+}
+```
+
+Multi-step rewrites (e.g. `(a + b) + c → a + (b + c)` for reassociation) use shared captures and `find_all_requirements(&[&p1, &p2])` for cross-pattern joins. Memory-chain rewrites (StackLoadForward) keep their imperative chain walks — the matcher covers value-DAG patterns, not memory threading.
+
 ## Naming Convention (mandatory)
 
 **Code, doc comments, commit messages, file names, test names — none of them mention plan identifiers.** Never write "Theme G", "Phase V3", "Task H.3", "Step B.2", or audit-finding numbers like "F4 / F21" anywhere a future engineer reading the durable artifact would see them. The plan exists to organize the work; the work doesn't exist to advertise the plan.
