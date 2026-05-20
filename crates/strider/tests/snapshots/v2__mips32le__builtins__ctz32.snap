@@ -1,0 +1,54 @@
+---
+source: crates/strider/tests/v2_baseline.rs
+expression: snapshot_body
+---
+digraph "G" {
+  graph [
+    rankdir=TB,
+    bgcolor="#1e1e1e",
+    fontcolor=white,
+  ];
+
+  node [
+    shape=box,
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor=white,
+    fontname=monospace,
+    margin=0.2,
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor=white,
+    penwidth=1.2,
+  ];
+
+  "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "1" [label="Return", shape=doublecircle, fillcolor="#103a10"];
+  "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "2" -> "1" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "3" -> "1" [color="#88cc88", label=v0, fontcolor="#cccccc", fontsize=9];
+  "4" -> "1" [color="#88cc88", label=v1, fontcolor="#cccccc", fontsize=9];
+  "4" [label="const 0x1f:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "5" -> "1" [color="#88cc88", label=f0, fontcolor="#cccccc", fontsize=9];
+  "6" -> "1" [color="#88cc88", label=f2, fontcolor="#cccccc", fontsize=9];
+  "6" [label="init\nf2", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="init\nf0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "3" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "7" -> "3" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "7" [label="const 0x1f:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "8" -> "3" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "8" [label="Neg\nu32 → u32", shape=box, fillcolor="#2d2d2d"];
+  "9" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "9" [label="Lzcount\nu32 → u32", shape=box, fillcolor="#2d2d2d"];
+  "10" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "10" [label="And:u32", shape=box, fillcolor="#2d2d2d"];
+  "11" -> "10" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "12" -> "10" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "12" [label="arg[0] ← a0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "11" [label="Neg\nu32 → u32", shape=box, fillcolor="#2d2d2d"];
+  "12" -> "11" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+}

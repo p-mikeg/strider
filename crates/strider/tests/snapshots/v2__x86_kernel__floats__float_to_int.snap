@@ -1,0 +1,91 @@
+---
+source: crates/strider/tests/v2_baseline.rs
+expression: snapshot_body
+---
+digraph "G" {
+  graph [
+    rankdir=TB,
+    bgcolor="#1e1e1e",
+    fontcolor=white,
+  ];
+
+  node [
+    shape=box,
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor=white,
+    fontname=monospace,
+    margin=0.2,
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor=white,
+    penwidth=1.2,
+  ];
+
+  "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "1" [label="Return", shape=doublecircle, fillcolor="#103a10"];
+  "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "2" -> "1" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "3" -> "1" [color="#88cc88", label=EAX, fontcolor="#cccccc", fontsize=9];
+  "4" -> "1" [color="#88cc88", label=EDX, fontcolor="#cccccc", fontsize=9];
+  "5" -> "1" [color="#88cc88", label=ST0, fontcolor="#cccccc", fontsize=9];
+  "6" -> "1" [color="#88cc88", label=XMM0, fontcolor="#cccccc", fontsize=9];
+  "6" [label="init\nXMM0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="init\nST0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="arg[1] ← EDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "3" [label="FloatToInt\nf80 → u32", shape=box, fillcolor="#302018"];
+  "7" -> "3" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "7" [label="CastToFloat\nu80 → f80", shape=box, fillcolor="#302018"];
+  "8" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "8" [label="bitcast\nf80 → u80", shape=box, fillcolor="#302018"];
+  "9" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "9" [label="Round\nf80 → f80", shape=box, fillcolor="#1a3020"];
+  "10" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "10" [label="CastToFloat\nu80 → f80", shape=box, fillcolor="#302018"];
+  "11" -> "10" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "11" [label="bitcast\nf80 → u80", shape=box, fillcolor="#302018"];
+  "12" -> "11" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "12" [label="FloatToFloat\nf32 → f80", shape=box, fillcolor="#302018"];
+  "13" -> "12" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "13" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
+  "14" -> "13" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "14" [label="arg[3] ← ram[sp + 4]", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "2" [label="StackStore u32\n→ ram[sp - 4]", shape=box3d, fillcolor="#20182a"];
+  "15" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "16" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "3" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "16" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "17" -> "16" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "18" -> "16" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "18" [label="const 0xfffffffc:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "17" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "15" [label="StackStore u16\n→ ram[sp - 6]", shape=box3d, fillcolor="#20182a"];
+  "19" -> "15" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "20" -> "15" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "21" -> "15" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "21" [label="Truncate\nu32 → u16", shape=box, fillcolor="#2d2d2d"];
+  "22" -> "21" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "22" [label="Or:u32", shape=box, fillcolor="#2d2d2d"];
+  "23" -> "22" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "24" -> "22" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "24" [label="const 0xc00:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "23" [label="ZeroExtend\nu16 → u32", shape=box, fillcolor="#2d2d2d"];
+  "25" -> "23" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "25" [label="init\nFPUControlWord", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "20" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "17" -> "20" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "26" -> "20" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "26" [label="const 0xfffffffa:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "19" [label="StackStore u16\n→ ram[sp - 8]", shape=box3d, fillcolor="#20182a"];
+  "27" -> "19" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "28" -> "19" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "25" -> "19" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "28" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "17" -> "28" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "29" -> "28" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "29" [label="const 0xfffffff8:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "27" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+}

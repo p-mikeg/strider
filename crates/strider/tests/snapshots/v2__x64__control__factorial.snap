@@ -1,0 +1,150 @@
+---
+source: crates/strider/tests/v2_baseline.rs
+expression: snapshot_body
+---
+digraph "G" {
+  graph [
+    rankdir=TB,
+    bgcolor="#1e1e1e",
+    fontcolor=white,
+  ];
+
+  node [
+    shape=box,
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor=white,
+    fontname=monospace,
+    margin=0.2,
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor=white,
+    penwidth=1.2,
+  ];
+
+  "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "1" [label="If", shape=diamond, fillcolor="#3a2a10"];
+  "v2" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
+  "1" -> "v2" [color="#00cccc", label=true, fontcolor="#cccccc", fontsize=9];
+  "v3" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
+  "1" -> "v3" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
+  "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "4" -> "1" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
+  "5" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "v6" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
+  "v6" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "v3" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "7" [label="If", shape=diamond, fillcolor="#3a2a10"];
+  "7" -> "v6" [color="#00cccc", label=true, fontcolor="#cccccc", fontsize=9];
+  "v8" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
+  "7" -> "v8" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
+  "5" -> "7" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "9" -> "7" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
+  "10" [label="Return", shape=doublecircle, fillcolor="#103a10"];
+  "v8" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "11" -> "10" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "12" -> "10" [color="#88cc88", label=RAX, fontcolor="#cccccc", fontsize=9];
+  "13" -> "10" [color="#88cc88", label=RDX, fontcolor="#cccccc", fontsize=9];
+  "14" -> "10" [color="#88cc88", label=XMM0, fontcolor="#cccccc", fontsize=9];
+  "15" -> "10" [color="#88cc88", label=XMM1, fontcolor="#cccccc", fontsize=9];
+  "15" [label="init\nXMM1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "14" [label="init\nXMM0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "13" [label="arg[2] ← RDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "12" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "16" -> "12" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "16" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "17" -> "16" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "17" [label="Mul:u64", shape=box, fillcolor="#2d2d2d"];
+  "18" -> "17" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "19" -> "17" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "19" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "20" -> "19" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "20" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "21" -> "20" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "21" [label="φ RAX", shape=house, fillcolor="#163030"];
+  "5" -> "21" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
+  "22" -> "21" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
+  "23" -> "21" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
+  "23" [label="const 0x2:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "22" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "24" -> "22" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "24" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "20" -> "24" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "25" -> "24" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "25" [label="const 0x1:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "18" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
+  "26" -> "18" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "26" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "27" -> "26" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "27" [label="φ R8", shape=house, fillcolor="#163030"];
+  "5" -> "27" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
+  "12" -> "27" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
+  "28" -> "27" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
+  "28" [label="const 0x1:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "11" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "9" [label="Cast → bool\nfrom u8", shape=box, fillcolor="#2d2d2d"];
+  "29" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "29" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
+  "30" -> "29" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "30" [label="Neg:bool", shape=box, fillcolor="#2d2d2d"];
+  "31" -> "30" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "31" [label="Cast → bool\nfrom u8", shape=box, fillcolor="#2d2d2d"];
+  "32" -> "31" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "32" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
+  "33" -> "32" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "33" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "34" -> "33" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "35" -> "33" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "35" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "34" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "24" -> "34" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "36" -> "34" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "36" [label="Neg\nu32 → u32", shape=box, fillcolor="#2d2d2d"];
+  "37" -> "36" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "37" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "38" -> "37" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "39" -> "37" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "39" [label="const 0x1:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "38" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
+  "40" -> "38" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "40" [label="arg[0] ← RDI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "41" [label="Return", shape=doublecircle, fillcolor="#103a10"];
+  "v2" -> "41" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "11" -> "41" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "42" -> "41" [color="#88cc88", label=RAX, fontcolor="#cccccc", fontsize=9];
+  "42" [label="const 0x1:u64", shape=ellipse, fillcolor="#2d2d2d"];
+  "13" -> "41" [color="#88cc88", label=RDX, fontcolor="#cccccc", fontsize=9];
+  "14" -> "41" [color="#88cc88", label=XMM0, fontcolor="#cccccc", fontsize=9];
+  "15" -> "41" [color="#88cc88", label=XMM1, fontcolor="#cccccc", fontsize=9];
+  "4" [label="Or:bool", shape=box, fillcolor="#2d2d2d"];
+  "43" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "44" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "44" [label="Neg:bool", shape=box, fillcolor="#2d2d2d"];
+  "45" -> "44" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "45" [label="Equal\nu8 → bool", shape=box, fillcolor="#2d2d2d"];
+  "46" -> "45" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "47" -> "45" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "47" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
+  "48" -> "47" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "48" [label="Sless\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "49" -> "48" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "50" -> "48" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "50" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "49" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "38" -> "49" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "51" -> "49" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "51" [label="const 0xffffffff:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "46" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
+  "52" -> "46" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "52" [label="Sborrow\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "38" -> "52" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "53" -> "52" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "53" [label="const 0x1:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "43" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "49" -> "43" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "54" -> "43" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "54" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+}

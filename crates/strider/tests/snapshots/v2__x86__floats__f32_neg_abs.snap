@@ -1,0 +1,53 @@
+---
+source: crates/strider/tests/v2_baseline.rs
+expression: snapshot_body
+---
+digraph "G" {
+  graph [
+    rankdir=TB,
+    bgcolor="#1e1e1e",
+    fontcolor=white,
+  ];
+
+  node [
+    shape=box,
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor=white,
+    fontname=monospace,
+    margin=0.2,
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor=white,
+    penwidth=1.2,
+  ];
+
+  "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "1" [label="Return", shape=doublecircle, fillcolor="#103a10"];
+  "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
+  "2" -> "1" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "3" -> "1" [color="#88cc88", label=EAX, fontcolor="#cccccc", fontsize=9];
+  "4" -> "1" [color="#88cc88", label=EDX, fontcolor="#cccccc", fontsize=9];
+  "5" -> "1" [color="#88cc88", label=ST0, fontcolor="#cccccc", fontsize=9];
+  "6" -> "1" [color="#88cc88", label=XMM0, fontcolor="#cccccc", fontsize=9];
+  "6" [label="init\nXMM0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="bitcast\nf80 → u80", shape=box, fillcolor="#302018"];
+  "7" -> "5" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "7" [label="Neg\nf80 → f80", shape=box, fillcolor="#1a3020"];
+  "8" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "8" [label="CastToFloat\nu80 → f80", shape=box, fillcolor="#302018"];
+  "9" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "9" [label="bitcast\nf80 → u80", shape=box, fillcolor="#302018"];
+  "10" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "10" [label="FloatToFloat\nf32 → f80", shape=box, fillcolor="#302018"];
+  "11" -> "10" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "11" [label="CastToFloat\nu32 → f32", shape=box, fillcolor="#302018"];
+  "12" -> "11" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "12" [label="arg[0] ← ram[sp + 4]", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="init\nEDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "3" [label="init\nEAX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+}
