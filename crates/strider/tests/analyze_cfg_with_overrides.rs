@@ -14,6 +14,8 @@ use rsleigh::mem_readers::BufMemReader;
 use strider::{AnalyzeOptions, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
+mod common;
+
 /// Same fixture as `tests/per_address_cc.rs::x86_64_call_then_ret`:
 /// `call 0x2000; ret` at 0x1000.
 fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
@@ -22,7 +24,7 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 }
 
 fn make_strider() -> Strider {
-    strider::test_utils::strider_x86_64()
+    common::strider_builders::strider_x86_64()
 }
 
 #[test]

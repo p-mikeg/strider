@@ -11,6 +11,8 @@ use rsleigh::mem_readers::BufMemReader;
 use strider::{RunConfig, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
+mod common;
+
 /// x86_64: `call $fentry; ret`.  Encoded with the call target near
 /// the function entry so we control the absolute address.
 ///
@@ -25,7 +27,7 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 }
 
 fn make_strider() -> Strider {
-    strider::test_utils::strider_x86_64()
+    common::strider_builders::strider_x86_64()
 }
 
 #[test]

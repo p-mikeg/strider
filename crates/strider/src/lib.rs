@@ -33,13 +33,3 @@ pub use strider_analyze::{
     UnresolvedIndirectBranch, run,
 };
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};
-
-// `test_utils` is unconditionally `pub` rather than gated on
-// `feature = "test-utils"`: integration tests under
-// `crates/strider/tests/` can't activate features on their own crate,
-// so a feature gate would force every integration-test file to add a
-// circular `strider = { features = ["test-utils"] }` dev-dep.  The
-// helpers carry no runtime weight (a thin wrapper around
-// `Strider::new`) so an always-public module is the simplest sound
-// choice.
-pub mod test_utils;

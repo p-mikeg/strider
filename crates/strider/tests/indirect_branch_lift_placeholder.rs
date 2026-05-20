@@ -24,6 +24,8 @@ use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
 use strider::SleighArch;
 
+mod common;
+
 /// Build a synthetic x86-64 CFG containing a single region whose
 /// terminator is `UnresolvedIndirectBranch{target_vn=RAX, addr=...}`.
 ///
@@ -66,7 +68,7 @@ fn make_unresolved_indirect_branch_cfg(
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
     let _ = arch; // arch is the SleighArch the cfg was built with; unused here
-    let strider = strider::test_utils::strider_x86_64();
+    let strider = common::strider_builders::strider_x86_64();
     let graph = strider
         .analyze_cfg(&cfg)
         .expect("strider must lift unresolved branches as IndirectBranch placeholder")
@@ -108,7 +110,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 fn unresolved_branches_table_tracks_each_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
     let _ = arch; // arch is the SleighArch the cfg was built with; unused here
-    let strider = strider::test_utils::strider_x86_64();
+    let strider = common::strider_builders::strider_x86_64();
     let outcome = strider
         .analyze_cfg(&cfg)
         .expect("analyze_cfg");

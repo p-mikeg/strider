@@ -10,6 +10,8 @@ use rsleigh::mem_readers::BufMemReader;
 use strider::{RunConfig, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
+mod common;
+
 /// x86_64: `mov eax, 5; jmp $TAIL_TARGET`.  With `fn_max_size = 10`
 /// the cfg builder classifies the `jmp` as a `TailCall { target }`
 /// terminator (out-of-function direct branch) and the IR-lifter
@@ -25,7 +27,7 @@ fn x86_64_tail_call_bytes() -> (Vec<u8>, u64, u64) {
 }
 
 fn make_strider() -> Strider {
-    strider::test_utils::strider_x86_64()
+    common::strider_builders::strider_x86_64()
 }
 
 #[test]

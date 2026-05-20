@@ -33,6 +33,11 @@ use std::path::PathBuf;
 // unchanged.
 pub mod indirect_resolve_helpers;
 
+// Per-arch `Strider::new(...)` builders shared across the integration tests.
+// Was `strider::test_utils` (always-public `pub mod` under `src/`) before
+// production code in `src/` and test code were separated.
+pub mod strider_builders;
+
 // ── Architecture enum ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

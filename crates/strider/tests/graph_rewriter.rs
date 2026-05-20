@@ -35,6 +35,8 @@ use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::{GraphRewriter, SleighArch, Strider};
 
+mod common;
+
 // ── Common fixture builders (private to this test crate) ────────────────────
 
 /// Build a synthetic x86-64 binary: `jmp rax` followed by `n` `ret`
@@ -76,7 +78,7 @@ fn analyze_with_known_targets(
         .build()
         .expect("cfg build");
 
-    let strider = strider::test_utils::strider_x86_64();
+    let strider = common::strider_builders::strider_x86_64();
     let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").graph;
     (graph, strider)
 }

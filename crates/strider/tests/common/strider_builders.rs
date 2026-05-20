@@ -2,12 +2,10 @@
 //! the `let arch = …; let regs = arch.probe_regs()…; Strider::new(arch,
 //! regs, cc)?` boilerplate at every test site.
 //!
-//! Exported as an unconditional `pub mod` (no `cfg(feature)` gate) so
-//! integration tests under `crates/strider/tests/` can use it without
-//! adding a circular dev-dep on their own crate.  See `strider/src/lib.rs`'s
-//! `pub mod test_utils;` for the rationale.  The helpers carry no
-//! runtime weight (thin wrappers around `Strider::new`) so always-public
-//! is the simplest sound choice.
+//! Lives under `tests/common/` because every consumer is an integration
+//! test under `crates/strider/tests/`.  The helpers carry no runtime
+//! weight (thin wrappers around `Strider::new`) so a single shared
+//! module is the simplest sound choice.
 //!
 //! Promoted from a per-test-file inline pattern — 18 sites duplicated
 //! the same 3-line setup.
@@ -18,7 +16,7 @@
 // forbids `expect`, so allow it explicitly for this test-only module.
 #![allow(clippy::expect_used, clippy::panic)]
 
-use crate::{CallingConvention, SleighArch, Strider};
+use strider::{CallingConvention, SleighArch, Strider};
 
 /// Construct a `Strider` for the given `arch` + `cc` pair, probing
 /// Sleigh against an empty memory reader for the register table.
