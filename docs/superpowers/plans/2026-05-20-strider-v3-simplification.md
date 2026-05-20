@@ -78,7 +78,7 @@ This is added as Theme L below.
 | J | Drop v1+v2 dual code + leftover scaffolding + final cleanup | ~1400 | 2.5 |
 | M | Scrub plan-identifier references from surviving code | ~0 (renames only) | 0.5 |
 | L | Delete `crates/strider/` shim (move tests + example into strider-analyze) | ~50 | 0.5 |
-| N | Crate-prefix consistency: rename `reader` → `strider-binary`, `target` → `strider-target` | ~0 (rename) | 0.5 |
+| N | Crate-prefix consistency: rename `reader` → `strider-reader`, `target` → `strider-target` | ~0 (rename) | 0.5 |
 | K | Final checkpoint + tag | 0 | 0.5 |
 | **Total** | | **~8750 LOC** | **~14 days** |
 
@@ -1460,23 +1460,23 @@ User-surfaced. Current workspace mixes prefix conventions:
 
 After Theme L deletes `crates/strider/`, the remaining inconsistency is `reader` and `target` (and `strider-ir-test-support` if Theme D created it).
 
-**Recommended:** every project crate gets the `strider-` prefix. Rename `reader` → `strider-binary` (matches the v2 plan's deferred rename — `binary` reflects "binary loader" better than `reader`), and `target` → `strider-target`.
+**Recommended:** every project crate gets the `strider-` prefix. Rename `reader` → `strider-reader` (matches the v2 plan's deferred rename — `binary` reflects "binary loader" better than `reader`), and `target` → `strider-target`.
 
 The Python package name (`strider`) is unaffected — it's set in `strider-py`'s maturin config and is independent of Rust crate names.
 
-### Task N.1: Rename `reader` → `strider-binary`
+### Task N.1: Rename `reader` → `strider-reader`
 
 - [ ] **Step 1: Move the crate**
 
 ```bash
-git mv crates/reader crates/strider-binary
+git mv crates/reader crates/strider-reader
 ```
 
-- [ ] **Step 2: Update `crates/strider-binary/Cargo.toml`**
+- [ ] **Step 2: Update `crates/strider-reader/Cargo.toml`**
 
 ```toml
 [package]
-name = "strider-binary"
+name = "strider-reader"
 # ...
 ```
 
@@ -1488,7 +1488,7 @@ In `[workspace.dependencies]`:
 reader = { path = "crates/reader" }
 
 # After:
-strider-binary = { path = "crates/strider-binary" }
+strider-reader = { path = "crates/strider-reader" }
 ```
 
 - [ ] **Step 4: Update every downstream `Cargo.toml`**
@@ -1497,7 +1497,7 @@ strider-binary = { path = "crates/strider-binary" }
 grep -rln "^reader = \|reader.workspace" crates/*/Cargo.toml
 ```
 
-For each: `reader.workspace = true` → `strider-binary.workspace = true`.
+For each: `reader.workspace = true` → `strider-reader.workspace = true`.
 
 - [ ] **Step 5: Update every `use reader::` import**
 
@@ -1505,7 +1505,7 @@ For each: `reader.workspace = true` → `strider-binary.workspace = true`.
 grep -rln "use reader::\|reader::" crates/ --include="*.rs"
 ```
 
-For each: `use reader::X` → `use strider_binary::X` (note underscore: cargo crate names use hyphens; Rust identifiers use underscores).
+For each: `use reader::X` → `use strider_reader::X` (note underscore: cargo crate names use hyphens; Rust identifiers use underscores).
 
 - [ ] **Step 6: Verify**
 
@@ -1517,7 +1517,7 @@ cargo test -p strider --test v3_baseline 2>&1 | tail -3   # before Theme L moves
 - [ ] **Step 7: Commit + push**
 
 ```bash
-git commit -m "rename reader crate to strider-binary
+git commit -m "rename reader crate to strider-reader
 
 Every project crate now carries the strider- prefix. The python package
 distribution name (strider) is unaffected — it's configured in strider-py's
@@ -1557,7 +1557,7 @@ git push
 After N.1 + N.2 + Theme L (which deletes `crates/strider/`), the workspace contains:
 
 - `strider-analyze`
-- `strider-binary` (renamed from reader)
+- `strider-reader` (renamed from reader)
 - `strider-ir`
 - `strider-ir-test-support` (created in Theme D)
 - `strider-lift`
