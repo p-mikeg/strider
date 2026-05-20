@@ -117,39 +117,9 @@ pub struct BuiltCallingConvention {
     pub(crate) no_memory_clobber: bool,
 }
 
-/// Owned-field bag for [`BuiltCallingConvention::try_from_parts`].  Used by
-/// callers (typically tests building one-off override CCs) that need to
-/// construct a `BuiltCallingConvention` without going through
-/// [`CallingConvention::build`].  Field names mirror the
-/// `BuiltCallingConvention`'s storage one-to-one; the field-by-field
-/// docs live on the accessors of [`BuiltCallingConvention`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BuiltCallingConventionParts {
-    /// Argument-passing register varnodes, in positional order.
-    pub arg_passing_regs: Vec<rsleigh::Vn>,
-    /// Callee-saved register varnodes (excludes SP).
-    pub callee_saved_regs: Vec<rsleigh::Vn>,
-    /// Integer return-value register varnodes, in positional order.
-    pub ret_val_regs: Vec<rsleigh::Vn>,
-    /// Float return-value register varnodes, in positional order.
-    pub ret_val_regs_float: Vec<rsleigh::Vn>,
-    /// Hardware stack-pointer varnode.
-    pub stack_ptr_vn: rsleigh::Vn,
-    /// Per-positional-arg call-time stack offsets.
-    pub stack_arg_offsets: Vec<i64>,
-    /// Net SP delta the callee's `ret` inflicts (0 on link-register ISAs).
-    pub ret_stack_pop: i64,
-    /// Link-register varnode on link-register ISAs, `None` on stack-push ISAs.
-    pub link_register_vn: Option<rsleigh::Vn>,
-    /// Syscall-number register varnode for `*_linux_syscall` CCs.
-    pub syscall_number_vn: Option<rsleigh::Vn>,
-    /// `true` when calls under this CC preserve memory (zero-side-effect hooks).
-    pub no_memory_clobber: bool,
-}
-
 impl BuiltCallingConvention {
     /// Validating constructor.  Builds a
-    /// `BuiltCallingConvention` from explicit parts and checks the
+    /// `BuiltCallingConvention` from explicit fields and checks the
     /// canonical ABI invariants:
     ///
     /// - `arg_passing_regs ∩ callee_saved_regs == ∅`
@@ -169,12 +139,22 @@ impl BuiltCallingConvention {
     /// debugging a typo (e.g. listing the same Vn in both
     /// `arg_passing_regs` and `callee_saved_regs`) sees the offending
     /// names rather than a downstream miscompile.
-    pub fn try_from_parts(
-        parts: BuiltCallingConventionParts,
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        arg_passing_regs: Vec<rsleigh::Vn>,
+        callee_saved_regs: Vec<rsleigh::Vn>,
+        ret_val_regs: Vec<rsleigh::Vn>,
+        ret_val_regs_float: Vec<rsleigh::Vn>,
+        stack_ptr_vn: rsleigh::Vn,
+        stack_arg_offsets: Vec<i64>,
+        ret_stack_pop: i64,
+        link_register_vn: Option<rsleigh::Vn>,
+        syscall_number_vn: Option<rsleigh::Vn>,
+        no_memory_clobber: bool,
     ) -> std::result::Result<Self, anyhow::Error> {
         // Disjointness: arg-passing must not overlap callee-saved.
-        for vn in &parts.arg_passing_regs {
-            if parts.callee_saved_regs.contains(vn) {
+        for vn in &arg_passing_regs {
+            if callee_saved_regs.contains(vn) {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: varnode {:?} appears in both \
                      arg_passing_regs and callee_saved_regs (a single varnode \
@@ -185,8 +165,8 @@ impl BuiltCallingConvention {
         }
         // Ret-val regs must not overlap callee-saved (the callee writes
         // them to deliver results — they cannot be required-preserved).
-        for vn in parts.ret_val_regs.iter().chain(parts.ret_val_regs_float.iter()) {
-            if parts.callee_saved_regs.contains(vn) {
+        for vn in ret_val_regs.iter().chain(ret_val_regs_float.iter()) {
+            if callee_saved_regs.contains(vn) {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: varnode {:?} appears in both \
                      ret_val_regs/ret_val_regs_float and callee_saved_regs",
@@ -196,26 +176,26 @@ impl BuiltCallingConvention {
         }
         // Stack-pointer must not be in any reg-list.
         for (list_name, list) in [
-            ("arg_passing_regs", &parts.arg_passing_regs),
-            ("callee_saved_regs", &parts.callee_saved_regs),
-            ("ret_val_regs", &parts.ret_val_regs),
-            ("ret_val_regs_float", &parts.ret_val_regs_float),
+            ("arg_passing_regs", &arg_passing_regs),
+            ("callee_saved_regs", &callee_saved_regs),
+            ("ret_val_regs", &ret_val_regs),
+            ("ret_val_regs_float", &ret_val_regs_float),
         ] {
-            if list.contains(&parts.stack_ptr_vn) {
+            if list.contains(&stack_ptr_vn) {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: stack_ptr_vn {:?} appears in {} \
                      (the SP is implicit and must not be in any reg list)",
-                    parts.stack_ptr_vn,
+                    stack_ptr_vn,
                     list_name,
                 ));
             }
         }
         // No duplicates within a list.
         for (list_name, list) in [
-            ("arg_passing_regs", &parts.arg_passing_regs),
-            ("callee_saved_regs", &parts.callee_saved_regs),
-            ("ret_val_regs", &parts.ret_val_regs),
-            ("ret_val_regs_float", &parts.ret_val_regs_float),
+            ("arg_passing_regs", &arg_passing_regs),
+            ("callee_saved_regs", &callee_saved_regs),
+            ("ret_val_regs", &ret_val_regs),
+            ("ret_val_regs_float", &ret_val_regs_float),
         ] {
             for (i, vn) in list.iter().enumerate() {
                 if list[i + 1..].contains(vn) {
@@ -228,8 +208,8 @@ impl BuiltCallingConvention {
             }
         }
         // Link-register-as-callee-saved invariant (CLAUDE.md note).
-        if let Some(lr) = parts.link_register_vn
-            && !parts.callee_saved_regs.contains(&lr)
+        if let Some(lr) = link_register_vn
+            && !callee_saved_regs.contains(&lr)
         {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: link_register_vn {:?} must also \
@@ -240,24 +220,12 @@ impl BuiltCallingConvention {
         }
         // ret_stack_pop is non-negative (a negative value would mean the
         // callee's `ret` *grew* the stack, which no real ABI does).
-        if parts.ret_stack_pop < 0 {
+        if ret_stack_pop < 0 {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: ret_stack_pop must be >= 0, got {}",
-                parts.ret_stack_pop,
+                ret_stack_pop,
             ));
         }
-        let BuiltCallingConventionParts {
-            arg_passing_regs,
-            callee_saved_regs,
-            ret_val_regs,
-            ret_val_regs_float,
-            stack_ptr_vn,
-            stack_arg_offsets,
-            ret_stack_pop,
-            link_register_vn,
-            syscall_number_vn,
-            no_memory_clobber,
-        } = parts;
         Ok(Self {
             arg_passing_regs,
             callee_saved_regs,
@@ -798,7 +766,7 @@ impl CallingConvention {
             Some(name) => Some(vn_for_name(sleigh_regs, name)?),
             None => None,
         };
-        // Route through `try_from_parts` so the disjointness invariants
+        // Route through `try_new` so the disjointness invariants
         // (SP not in any reg list, arg/callee-saved disjoint, no
         // duplicates within a list, link-reg in callee-saved when set,
         // non-negative ret_stack_pop) are enforced at build time.  The
@@ -806,18 +774,18 @@ impl CallingConvention {
         // future preset with a typo (SP in arg_passing_regs, missing
         // link-reg, etc.) fails at construction rather than producing
         // a downstream miscompile.
-        BuiltCallingConvention::try_from_parts(BuiltCallingConventionParts {
+        BuiltCallingConvention::try_new(
             arg_passing_regs,
             callee_saved_regs,
             ret_val_regs,
             ret_val_regs_float,
             stack_ptr_vn,
-            stack_arg_offsets: self.stack_arg_offsets.to_vec(),
-            ret_stack_pop: self.ret_stack_pop,
+            self.stack_arg_offsets.to_vec(),
+            self.ret_stack_pop,
             link_register_vn,
             syscall_number_vn,
-            no_memory_clobber: self.no_memory_clobber,
-        })
+            self.no_memory_clobber,
+        )
     }
 }
 
