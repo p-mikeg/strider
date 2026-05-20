@@ -94,6 +94,17 @@ plus per-crate sanity tests for the crate just touched.
 
 **`v3_baseline` is created in Theme A by copying `v2_baseline.rs` and re-keying snapshots.** After Theme B retires PipelineV2, v3_baseline may need a ONE-TIME regeneration to capture the imperative-pipeline output for fixtures where the egg pipeline diverged. The regeneration is documented in Theme B; after that, v3_baseline is frozen.
 
+## Scalability Requirement (mandatory)
+
+All code paths in v3 must scale to **thousands of nodes per function** without performance collapse. Concretely:
+
+- Peephole passes: O(reachable nodes) per fixed-point iteration. Never re-scan the whole graph per match candidate.
+- Use `entity_utils::DenseEntitySet<NodeId>` / `Worklist<NodeId>` for entity-keyed bookkeeping — they're bit-set-backed and cache-friendly. `HashSet<NodeId>` is the wrong default for dense entity keys.
+- Validation runs once per pipeline-converged graph; each layer's check is O(reachable nodes).
+- Pattern matching: the matcher does one topological walk per `find_all(&pat)` call — O(n × avg-pattern-depth). Don't add per-rewrite outer scans.
+
+Theme K's final benchmark verifies no per-pass time regression vs v2's `v1_vs_v2` bench. Theme J's dead-code sweep doubles as a "find the O(n²) loop" sweep — anything that scans `graph.all_nodes().filter(...)` per rewrite candidate is a perf bug, not just over-engineering.
+
 ## Open question: what is `crates/strider/` for?
 
 The user surfaced this: `crates/strider/src/lib.rs` is a ~50-line re-export shim around `strider_analyze::*`. The crate has tests (`tests/v3_baseline.rs`, `tests/common/mod.rs`) and an example (`examples/strider.rs`) but no actual source code.
