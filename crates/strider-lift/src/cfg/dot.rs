@@ -1,4 +1,4 @@
-use dot::GraphDotDumper;
+use strider_ir::dot::GraphDotDumper;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
@@ -50,7 +50,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     fn dump_as_dot(
         &self,
         node_id: Self::Node,
-        out: &mut dot::DotEmitter,
+        out: &mut strider_ir::dot::DotEmitter,
         _state: &mut Self::State,
     ) -> Result<()> {
         use std::fmt::Write;

@@ -10,7 +10,6 @@ strider-ir = { workspace = true }
 strider-ir = { workspace = true, features = ["test-utils"] }
 target.workspace = true
 rsleigh.workspace = true
-dot.workspace = true
 proptest = "1"
 criterion = { version = "0.7", features = ["html_reports"] }
 

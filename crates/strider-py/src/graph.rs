@@ -95,7 +95,7 @@ impl PyGraph {
         let cfg_borrow = self.cfg.borrow(py);
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
-        let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
+        let d = strider_ir::dot::GraphDot::new(dumper, dot_style_for(Some(style)));
         d.dump_as_html(Path::new(path))
             .map_err(crate::errors::into_strider_err)
     }
@@ -105,7 +105,7 @@ impl PyGraph {
         let cfg_borrow = self.cfg.borrow(py);
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
-        let d = dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
+        let d = strider_ir::dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
         d.dump_as_dot(Path::new(path))
             .map_err(crate::errors::into_strider_err)
     }
@@ -116,7 +116,7 @@ impl PyGraph {
         let cfg_borrow = self.cfg.borrow(py);
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
         let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
-        let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
+        let d = strider_ir::dot::GraphDot::new(dumper, dot_style_for(Some(style)));
         d.as_html_from_dot().map_err(crate::errors::into_strider_err)
     }
 

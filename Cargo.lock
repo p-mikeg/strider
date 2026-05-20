@@ -116,13 +116,13 @@ name = "cfg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dot",
  "ir",
  "object",
  "opt",
  "petgraph",
  "reader",
  "rsleigh",
+ "strider-ir",
  "strider-lift",
  "target",
 ]
@@ -368,14 +368,6 @@ name = "dissimilar"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
-
-[[package]]
-name = "dot"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "strider-ir",
-]
 
 [[package]]
 name = "duct"
@@ -686,7 +678,6 @@ name = "ir"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "dot",
  "proptest",
  "rsleigh",
  "strider-ir",
@@ -1584,7 +1575,6 @@ dependencies = [
  "anyhow",
  "cfg",
  "criterion",
- "dot",
  "expect-test",
  "insta",
  "ir",
@@ -1597,6 +1587,7 @@ dependencies = [
  "rsleigh",
  "serde",
  "strider-analyze",
+ "strider-ir",
  "strider-lift",
  "target",
  "thiserror 2.0.18",
@@ -1650,7 +1641,6 @@ name = "strider-lift"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dot",
  "object",
  "petgraph",
  "reader",
@@ -1675,7 +1665,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cfg",
- "dot",
  "ir",
  "object",
  "opt",
@@ -1685,6 +1674,7 @@ dependencies = [
  "reader",
  "rsleigh",
  "strider",
+ "strider-ir",
  "strider-pattern-macros",
  "target",
 ]

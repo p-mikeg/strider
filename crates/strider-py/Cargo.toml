@@ -63,10 +63,10 @@ pattern = { workspace = true }
 strider-pattern-macros = { workspace = true }
 opt = { workspace = true }
 ir = { workspace = true }
+strider-ir = { workspace = true }
 cfg = { workspace = true }
 reader = { workspace = true }
 target = { workspace = true }
-dot = { workspace = true }
 rsleigh = { workspace = true }
 object = { workspace = true }
 

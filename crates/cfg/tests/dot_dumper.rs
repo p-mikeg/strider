@@ -7,7 +7,7 @@
 mod common;
 use common::{binary, build_cfg};
 
-use dot::{DotStyle, GraphDot};
+use strider_ir::dot::{DotStyle, GraphDot};
 
 fn cfg_for(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader> {
     let p = binary("x64", fn_name);

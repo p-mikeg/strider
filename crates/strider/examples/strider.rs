@@ -37,13 +37,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cfg = cfg::Builder::for_arch(&arch, sleigh, addr, cfg_options).build()?;
 
-    let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark_cfg());
+    let dot = strider_ir::dot::GraphDot::new(cfg.dot_dumper(), strider_ir::dot::DotStyle::dark_cfg());
     dot.dump_as_html("cfg.html")?;
     dot.dump_as_dot("cfg.dot")?;
 
     let mut function = strider.analyze_cfg(&cfg)?.graph;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
+    let dot = strider_ir::dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), strider_ir::dot::DotStyle::dark());
     println!("dumping IR graph...");
     std::fs::write("graph.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph.dot")?;
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pipeline.run_on_built(&mut function)?;
     println!("dumping opt IR graph...");
 
-    let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
+    let dot = strider_ir::dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), strider_ir::dot::DotStyle::dark());
     std::fs::write("graph-opt.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph-opt.dot")?;
 
