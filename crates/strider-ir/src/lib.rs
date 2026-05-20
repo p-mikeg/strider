@@ -11,7 +11,7 @@
 //! Strider IR: sea-of-nodes graph, validation, traversal.
 //!
 //! v2-rewrite consolidation crate.  Absorbs `entity-utils`, `graphwalk`,
-//! `dot`, `graphmock`, and the former `ir` crate.  See
+//! `dot`, and the former `ir` crate.  See
 //! `docs/superpowers/plans/2026-05-17-strider-v2-rewrite.md` Phase 1 for the
 //! migration plan.
 //!
@@ -50,7 +50,6 @@ extern crate alloc;
 // Absorbed utility crates (Phase 1 Tasks 1.1 + 1.2).
 pub mod dot;
 pub mod entity_utils;
-pub mod graphmock;
 pub mod graphwalk;
 
 // Absorbed ir crate (Phase 1 Task 1.3).
@@ -73,8 +72,6 @@ mod ops;
 mod region;
 pub mod read_only_memory;
 pub use read_only_memory::ReadOnlyMemory;
-#[cfg(any(feature = "test-utils", test))]
-pub mod test_helpers;
 #[cfg(any(feature = "test-utils", test))]
 pub mod test_utils;
 pub mod validate;
