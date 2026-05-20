@@ -54,6 +54,16 @@
 //!   `Option<Vec<(u32, T)>>`).  The generated `finalise()` walks the
 //!   vec and applies `.<py_name>(idx, value)` in insertion order.
 //!
+//! - `#[field(terminal)]` (Phase 4 Task 4.3) — for an `Option<bool>`
+//!   field, the macro emits a no-arg setter that toggles the field
+//!   to `Some(true)` and immediately returns `PyPat` via
+//!   `self.finalise()`.  The underlying `pattern::*` builder is
+//!   expected to expose a no-arg method with the same name (e.g.
+//!   `b.ordered()`).  Used by `.ordered()` on the binary-op builders
+//!   so the call remains a terminal operation that returns `Pat`,
+//!   matching the v1 hand-written `PyIntBinaryPat::ordered` shape.
+//!   Mutually exclusive with `multi` and `accepts`.
+//!
 //! - `#[field(alias = "py_name")]` — overrides the Python method name
 //!   (default: same as the Rust field).
 //!
@@ -78,17 +88,41 @@
 //!   produces an empty builder (e.g. `"stack_store"`).  The
 //!   `finalise()` method starts from this builder and applies every
 //!   set field.
+//!
+//! - `constructor_args = "name: Ty, name: Ty, ..."` — optional comma-
+//!   separated list of required constructor parameters.  When set,
+//!   the macro emits a `pub(crate) fn new(name: Ty, ...) -> Self`
+//!   constructor (NOT `#[new]`-annotated, so Python can't construct
+//!   the type directly), the inner state stores these as required
+//!   (non-`Option`) fields, and `finalise()` calls `base_builder(name,
+//!   ...)` with them.  Used by the `IntBinaryPat`, `BoolBinaryPat`,
+//!   `FloatBinaryPat` types whose `op` + `lhs` + `rhs` operands are
+//!   required up-front and can't be modeled as `Option<T>` fields.
+//!   Required fields are stored in the order declared; their types
+//!   must be `Clone` (e.g. `Pat`) or `Copy` (e.g. `IntBinaryOp`).
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    parse::{Parse, ParseStream},
-    parse_macro_input, Attribute, Expr, ExprLit, Fields, Ident, ItemStruct, Lit, LitStr, Meta,
-    Token, Type,
+    parse::{Parse, ParseStream, Parser},
+    parse_macro_input, Attribute, Expr, ExprLit, FnArg, Fields, Ident, ItemStruct, Lit, LitStr,
+    Meta, Pat as SynPat, Token, Type,
 };
 
 // ─── Crate-attribute parsing ────────────────────────────────────────
+
+/// One required constructor parameter — `name: Ty`.  Extracted from
+/// the `constructor_args = "..."` crate attribute and used to emit
+/// the required-field storage, the `pub(crate) fn new(...)`
+/// constructor, and the `base_builder(...)` call inside `finalise()`.
+struct RequiredArg {
+    /// Identifier as it appears in the constructor signature and
+    /// inner-state struct.
+    ident: Ident,
+    /// Rust type — passed through verbatim.
+    ty: Type,
+}
 
 /// The `key = "value"` pairs supplied to `#[strider_pattern(...)]`.
 struct CrateAttrs {
@@ -101,6 +135,12 @@ struct CrateAttrs {
     /// {node_phrase}" slot — e.g. `"stack-store node"`.  Default:
     /// `"node"`.
     node_phrase: String,
+    /// Required constructor parameters (zero or more).  When non-
+    /// empty the macro switches to "required-construction" mode: no
+    /// `#[new]` annotation, plain `pub(crate) fn new(...)`, and the
+    /// `finalise()` body starts from `base_builder(args...)` instead
+    /// of `base_builder()`.
+    required_args: Vec<RequiredArg>,
 }
 
 impl Parse for CrateAttrs {
@@ -110,6 +150,7 @@ impl Parse for CrateAttrs {
         let mut py_module: Option<String> = None;
         let mut base_builder: Option<Ident> = None;
         let mut node_phrase: Option<String> = None;
+        let mut required_args: Vec<RequiredArg> = Vec::new();
 
         // Parse a comma-separated list of `key = "value"` pairs.
         let pairs: syn::punctuated::Punctuated<KeyValue, Token![,]> =
@@ -132,12 +173,55 @@ impl Parse for CrateAttrs {
                 "node_phrase" => {
                     node_phrase = Some(kv.value.value());
                 }
+                "constructor_args" => {
+                    // Parse the string as a comma-separated list of
+                    // `name: Type` `FnArg`s.  Reusing syn's `FnArg`
+                    // parser keeps the surface aligned with how the
+                    // user already writes Rust function signatures
+                    // — supports lifetimes, generic types, etc.
+                    let parser = syn::punctuated::Punctuated::<FnArg, Token![,]>::parse_terminated;
+                    let parsed: syn::punctuated::Punctuated<FnArg, Token![,]> = match parser
+                        .parse_str(&kv.value.value())
+                    {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return Err(syn::Error::new_spanned(
+                                &kv.value,
+                                format!(
+                                    "#[strider_pattern(constructor_args = ...)] failed to \
+                                     parse as a comma-separated `name: Type` list: {e}",
+                                ),
+                            ));
+                        }
+                    };
+                    for arg in parsed {
+                        let FnArg::Typed(pat_ty) = arg else {
+                            return Err(syn::Error::new_spanned(
+                                &kv.value,
+                                "#[strider_pattern(constructor_args = ...)] does not accept \
+                                 `self` arguments — use plain `name: Type` entries",
+                            ));
+                        };
+                        let SynPat::Ident(pat_ident) = pat_ty.pat.as_ref() else {
+                            return Err(syn::Error::new_spanned(
+                                &kv.value,
+                                "#[strider_pattern(constructor_args = ...)] entries must use \
+                                 a plain identifier on the left of `:` (no destructuring)",
+                            ));
+                        };
+                        required_args.push(RequiredArg {
+                            ident: pat_ident.ident.clone(),
+                            ty: (*pat_ty.ty).clone(),
+                        });
+                    }
+                }
                 other => {
                     return Err(syn::Error::new_spanned(
                         kv.key,
                         format!(
                             "unknown #[strider_pattern] argument `{other}`; expected one of \
-                             rust_name, py_name, py_module, base_builder, node_phrase",
+                             rust_name, py_name, py_module, base_builder, node_phrase, \
+                             constructor_args",
                         ),
                     ));
                 }
@@ -170,6 +254,7 @@ impl Parse for CrateAttrs {
                 )
             })?,
             node_phrase: node_phrase.unwrap_or_else(|| "node".to_string()),
+            required_args,
         })
     }
 }
@@ -240,6 +325,14 @@ enum FieldKind {
         /// The index type — `usize` or `u32`.
         idx_ty: Type,
     },
+    /// `#[field(terminal)]` — a no-arg terminal setter that toggles
+    /// the underlying `Option<bool>` to `Some(true)` and immediately
+    /// returns the finalised `PyPat`.  Used by `.ordered()` on the
+    /// binary-op builders; matches the v1 `PyIntBinaryPat::ordered`
+    /// shape that early-finalises instead of chaining.  Finalise
+    /// applies via `b.<py_name>()` (the underlying builder's method
+    /// takes no args).
+    TerminalBool,
 }
 
 /// One field of the annotated `*Def` struct.  The macro emits one
@@ -294,6 +387,7 @@ impl Field {
         let mut accepts: Option<String> = None;
         let mut doc: Option<String> = None;
         let mut multi: bool = false;
+        let mut terminal: bool = false;
 
         // Parse the inner attribute meta items.  Each item is either a
         // bare flag like `multi` or a `key = "value"` pair.  We accept
@@ -310,11 +404,13 @@ impl Field {
                         let s = ident.to_string();
                         match s.as_str() {
                             "multi" => multi = true,
+                            "terminal" => terminal = true,
                             other => {
                                 return Err(syn::Error::new_spanned(
                                     &ident,
                                     format!(
-                                        "unknown #[field(...)] flag `{other}`; expected `multi`",
+                                        "unknown #[field(...)] flag `{other}`; expected one of \
+                                         `multi`, `terminal`",
                                     ),
                                 ));
                             }
@@ -349,7 +445,27 @@ impl Field {
             doc = extract_rust_doc(&field.attrs);
         }
 
-        let kind = if multi {
+        if terminal && multi {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "`#[field(terminal)]` and `#[field(multi)]` are mutually exclusive",
+            ));
+        }
+        if terminal && accepts.is_some() {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "`#[field(terminal)]` does not accept `accepts = ...` — the setter is no-arg",
+            ));
+        }
+
+        let kind = if terminal {
+            // The inner type must be `bool` so the toggle is well-typed.
+            // (The macro doesn't strictly enforce this — anything that
+            // accepts `Some(true)` would compile — but the contract is
+            // that terminal setters are no-arg toggles backed by an
+            // `Option<bool>` field.)
+            FieldKind::TerminalBool
+        } else if multi {
             // `multi` requires `accepts = "Pat"` and the field must be
             // typed `Option<Vec<(IDX, T)>>`.  Extract `IDX` from the
             // tuple so the generated setter has the right signature.
@@ -494,7 +610,7 @@ pub fn strider_pattern(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(),
     };
 
-    let inner_struct = build_inner_struct(&input.ident, &fields);
+    let inner_struct = build_inner_struct(&input.ident, &fields, &attrs.required_args);
     let inner_ident = format_ident!("{}Inner", &input.ident);
     let pyclass_struct = build_pyclass_struct(&attrs, &inner_ident, &input);
     let finalise_impl = build_finalise_impl(&attrs, &inner_ident, &fields);
@@ -526,21 +642,45 @@ fn collect_fields(input: &ItemStruct) -> syn::Result<Vec<Field>> {
 }
 
 /// Emit the `*Inner` struct that holds the builder's accumulated
-/// state.  Each `#[field]` becomes an `Option<T>`; the universal
-/// `capture` / `when` slots are always present.
-fn build_inner_struct(def_ident: &Ident, fields: &[Field]) -> TokenStream2 {
+/// state.  Each `#[field]` becomes an `Option<T>`; required-
+/// construction parameters become plain (non-`Option`) fields; the
+/// universal `capture` / `when` slots are always present.
+fn build_inner_struct(
+    def_ident: &Ident,
+    fields: &[Field],
+    required_args: &[RequiredArg],
+) -> TokenStream2 {
     let inner_ident = format_ident!("{}Inner", def_ident);
+    let required_decls = required_args.iter().map(|r| {
+        let ident = &r.ident;
+        let ty = &r.ty;
+        quote! { #ident: #ty, }
+    });
     let field_decls = fields.iter().map(|f| {
         let ident = &f.rust_ident;
         let ty = &f.inner_ty;
         quote! { #ident: ::core::option::Option<#ty>, }
     });
-    quote! {
-        #[derive(::core::default::Default)]
-        struct #inner_ident {
-            #(#field_decls)*
-            when: ::core::option::Option<::pyo3::PyObject>,
-            capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
+    if required_args.is_empty() {
+        quote! {
+            #[derive(::core::default::Default)]
+            struct #inner_ident {
+                #(#field_decls)*
+                when: ::core::option::Option<::pyo3::PyObject>,
+                capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
+            }
+        }
+    } else {
+        // No `Default` derive — required fields don't have a
+        // sensible default.  The `new(...)` constructor in
+        // `build_pymethods_impl` initialises every slot explicitly.
+        quote! {
+            struct #inner_ident {
+                #(#required_decls)*
+                #(#field_decls)*
+                when: ::core::option::Option<::pyo3::PyObject>,
+                capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
+            }
         }
     }
 }
@@ -669,8 +809,31 @@ fn build_finalise_impl(
                     }
                 }
             }
+            FieldKind::TerminalBool => {
+                // `b.ordered()` (or whichever method) — no-arg toggle.
+                // Only call when the flag is `Some(true)`; treat `None`
+                // and `Some(false)` as "not requested".
+                quote! {
+                    if ::core::matches!(guard.#rust_ident, ::core::option::Option::Some(true)) {
+                        b = b.#py_name();
+                    }
+                }
+            }
         }
     });
+
+    // For required-construction mode the `base_builder` takes the
+    // required args directly; clone them out of the guard (every
+    // required type must be `Clone`).
+    let base_call = if attrs.required_args.is_empty() {
+        quote! { ::strider_analyze::pattern::#base_builder() }
+    } else {
+        let req_args = attrs.required_args.iter().map(|r| {
+            let ident = &r.ident;
+            quote! { ::core::clone::Clone::clone(&guard.#ident) }
+        });
+        quote! { ::strider_analyze::pattern::#base_builder(#(#req_args),*) }
+    };
 
     quote! {
         impl #rust_name {
@@ -685,7 +848,7 @@ fn build_finalise_impl(
                     .inner
                     .lock()
                     .unwrap_or_else(|p| p.into_inner());
-                let mut b = ::strider_analyze::pattern::#base_builder();
+                let mut b = #base_call;
                 #(#apply_fields)*
                 let mut pat: ::strider_analyze::pattern::Pat = b.into();
                 if let ::core::option::Option::Some(c) = guard.capture {
@@ -754,7 +917,7 @@ fn btreeset_inner(ty: &Type) -> Type {
 /// universal `capture` / `cap` / `when` / `into_pat` methods.
 fn build_pymethods_impl(
     attrs: &CrateAttrs,
-    _inner_ident: &Ident,
+    inner_ident: &Ident,
     fields: &[Field],
 ) -> TokenStream2 {
     let rust_name = &attrs.rust_name;
@@ -770,12 +933,21 @@ fn build_pymethods_impl(
 
     let field_methods = fields.iter().map(|f| emit_field_method(rust_name, f));
 
-    quote! {
-        // Same path-recognition constraint as `gen_stub_pyclass` —
-        // emit `pymethods` / `gen_stub_pymethods` unqualified.
-        #[gen_stub_pymethods]
-        #[pymethods]
-        impl #rust_name {
+    // The constructor takes one of two shapes:
+    //
+    // - Default-construction (no `constructor_args`): emit `#[new] fn
+    //   new() -> Self` that produces an empty builder via the inner
+    //   struct's `Default` impl.  Python can construct the type
+    //   directly: `PhiPat()`.
+    //
+    // - Required-construction (`constructor_args = "..."` set): emit
+    //   a plain `pub(crate) fn new(args...) -> Self` constructor —
+    //   NOT `#[new]`-annotated, so the type isn't Python-constructable
+    //   without going through the wrapper pyfunction.  Required
+    //   fields are stored explicitly; every optional field starts as
+    //   `None`.  Matches the v1 hand-written `PyIntBinaryPat` shape.
+    let (constructor, ctor_is_pyo3) = if attrs.required_args.is_empty() {
+        let ctor = quote! {
             /// Construct an empty builder.  All fields default to
             /// `None`; `finalise()` produces the unconstrained
             /// pattern until a field is set.
@@ -787,6 +959,77 @@ fn build_pymethods_impl(
                     )),
                 }
             }
+        };
+        (ctor, true)
+    } else {
+        let new_params = attrs.required_args.iter().map(|r| {
+            let ident = &r.ident;
+            let ty = &r.ty;
+            quote! { #ident: #ty }
+        });
+        let required_inits = attrs.required_args.iter().map(|r| {
+            let ident = &r.ident;
+            quote! { #ident, }
+        });
+        let optional_inits = fields.iter().map(|f| {
+            let ident = &f.rust_ident;
+            quote! { #ident: ::core::option::Option::None, }
+        });
+        // Construct the inner state via a struct literal — we can't
+        // use `Default::default()` because the inner struct has no
+        // `Default` impl in required-construction mode (required
+        // fields have no sensible default).
+        let ctor = quote! {
+            /// Construct a builder with the required operands
+            /// supplied up-front.  Optional fields (e.g. `.ordered()`)
+            /// default to unset and may be applied via the builder
+            /// methods before `finalise()` consumes the state.
+            pub(crate) fn new(#(#new_params),*) -> Self {
+                Self {
+                    inner: ::std::sync::Arc::new(::std::sync::Mutex::new(
+                        #inner_ident {
+                            #(#required_inits)*
+                            #(#optional_inits)*
+                            when: ::core::option::Option::None,
+                            capture: ::core::option::Option::None,
+                        },
+                    )),
+                }
+            }
+        };
+        (ctor, false)
+    };
+
+    // When the constructor is a plain Rust function (required-args
+    // mode), it lives in a separate `impl` block so it's not picked
+    // up by `#[pymethods]`.  `#[gen_stub_pymethods]` only walks
+    // method signatures it owns; emitting `new` outside the pymethods
+    // block keeps it out of the generated `.pyi`, matching the v1
+    // hand-written `IntBinaryPat` surface that has no `__new__`.
+    let constructor_outer = if ctor_is_pyo3 {
+        quote! {}
+    } else {
+        quote! {
+            impl #rust_name {
+                #constructor
+            }
+        }
+    };
+    let constructor_inner = if ctor_is_pyo3 {
+        quote! { #constructor }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        #constructor_outer
+
+        // Same path-recognition constraint as `gen_stub_pyclass` —
+        // emit `pymethods` / `gen_stub_pymethods` unqualified.
+        #[gen_stub_pymethods]
+        #[pymethods]
+        impl #rust_name {
+            #constructor_inner
 
             #(#field_methods)*
 
@@ -969,6 +1212,27 @@ fn emit_field_method(_rust_name: &Ident, field: &Field) -> TokenStream2 {
                         .push((#arg_name, pat));
                     ::core::mem::drop(guard);
                     ::core::result::Result::Ok(slf)
+                }
+            }
+        }
+        FieldKind::TerminalBool => {
+            // No-arg terminal setter: toggle the inner Option<bool>
+            // to `Some(true)` and immediately finalise into a PyPat.
+            // Mirrors the v1 hand-written `PyIntBinaryPat::ordered`
+            // shape that doesn't chain (no further builder methods are
+            // available after `.ordered()` because the return type is
+            // `PyPat`, not `PyRef<Self>`).
+            quote! {
+                #(#doc_attrs)*
+                fn #py_name(&self) -> crate::pattern::PyPat {
+                    {
+                        let mut guard = self
+                            .inner
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner());
+                        guard.#rust_ident = ::core::option::Option::Some(true);
+                    }
+                    crate::pattern::PyPat::from_pat(self.finalise())
                 }
             }
         }

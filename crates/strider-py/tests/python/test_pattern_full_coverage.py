@@ -237,16 +237,24 @@ def test_bool_binary_into_pat_returns_pat():
 
 
 def test_int_binary_capture_chains_to_pat():
-    from strider.pattern import int_binary
+    # Phase 4 Task 4.3 — `.capture(c)` returns the same builder after
+    # the strider_pattern macro migration; call `.into_pat()` to get a
+    # `Pat`.  (The free constructor `add(...)` continues to return a
+    # finalised `Pat` directly, but `int_binary(...).capture(c)` is
+    # now a chainable builder method.)
+    from strider.pattern import int_binary, IntBinaryPat
     c = Capture()
-    p = int_binary("Add", "x", "y").capture(c)
-    assert isinstance(p, Pat)
+    b = int_binary("Add", "x", "y").capture(c)
+    assert isinstance(b, IntBinaryPat)
+    assert isinstance(b.into_pat(), Pat)
 
 
 def test_int_binary_when_chains_to_pat():
-    from strider.pattern import int_binary
-    p = int_binary("Add", "x", "y").when(lambda m: True)
-    assert isinstance(p, Pat)
+    # Phase 4 Task 4.3 — same builder-chain contract as `.capture(c)`.
+    from strider.pattern import int_binary, IntBinaryPat
+    b = int_binary("Add", "x", "y").when(lambda m: True)
+    assert isinstance(b, IntBinaryPat)
+    assert isinstance(b.into_pat(), Pat)
 
 
 def test_int_binary_invalid_op_raises():

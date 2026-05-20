@@ -191,12 +191,35 @@ Notes on `#[field(multi)]`:
   would need a separate emission path and have no in-tree call site
   today.
 
+## Field annotations — Phase 4 Task 4.3 additions
+
+Two macro extensions were added in Phase 4 Task 4.3 to migrate
+`PyIntBinaryPat` / `PyBoolBinaryPat` / `PyFloatBinaryPat`:
+
+- **Crate attribute `constructor_args = "name: Ty, name: Ty, ..."`**
+  enables required-construction.  When set, the macro stores those
+  names as plain (non-`Option`) fields in the inner state, emits a
+  `pub(crate) fn new(name, ...) -> Self` constructor (NOT
+  `#[new]`-annotated — Python can't construct the type directly), and
+  the `finalise()` body calls `base_builder(name, ...)` with the
+  stored args.  Every required type must be `Clone` (e.g. `Pat`) or
+  `Copy` (e.g. `IntBinaryOp`).  No `Default` is derived on the inner
+  struct.
+
+- **`#[field(terminal)]`** marks a no-arg setter that toggles the
+  underlying `Option<bool>` to `Some(true)` and immediately returns
+  the finalised `PyPat` instead of `PyRef<Self>`.  The underlying
+  builder method takes no args (`b.ordered()`, not
+  `b.ordered(true)`).  Used by `.ordered()` on the binary-op
+  builders so it remains a terminal operation that finalises to
+  `Pat` (matches v1 behaviour).  Mutually exclusive with
+  `#[field(multi)]` and `#[field(accepts = ...)]`.
+
 ## Patterns that intentionally stay hand-written
 
 | Pattern | Reason |
 |---|---|
-| `PyFunctionArgPat` | Enum-dispatch source: `.index(u32)`, `.source_register(vn)`, `.source_stack(space, offset)` all write the same underlying `Option<FunctionArgSource>`.  Out of scope for the current `Option<T>`-per-field macro shape. |
-| `PyIntBinaryPat`, `PyBoolBinaryPat`, `PyFloatBinaryPat` | Required-construction (op + lhs + rhs supplied at the constructor, then `.ordered()` toggles a bool).  Doesn't fit the `*Def { Option<T>, … }` shape — every field is required, not optional. |
+| `PyFunctionArgPat` | Enum-dispatch source: `.index(u32)`, `.source_register(vn)`, `.source_stack(space, offset)` all write the same underlying `Option<FunctionArgSource>`.  Out of scope for the current `Option<T>`-per-field macro shape — adding a `#[field_setter(name = ..., variant = ..., args = ...)]` annotation that emits multiple named setters writing different enum variants into one field would gain ~30 LOC at the call site versus a chunky proc-macro change, so this is the one type left hand-written after Phase 4.3. |
 
 ## Coexistence with v1
 

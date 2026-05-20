@@ -1669,123 +1669,88 @@ fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
 /// `.capture(c)` / `.cap(name)` / `.when(f)` before finalising as a
 /// `Pat`.
 //
-// Phase 4 Task 4.2c — `PyIntBinaryPat` / `PyBoolBinaryPat` /
-// `PyFloatBinaryPat` are intentionally hand-written, not migrated to
-// `#[strider_pattern]`.  Reason: their constructors REQUIRE the op,
-// lhs, and rhs fields up front (`int_binary("Add", "x", "y")`) — they
-// don't fit the macro's `*Def { Option<T>, … }` shape, which models
-// every field as optional and threads them in via builder calls
-// after the underlying `strider_analyze::pattern::*` constructor.  Auto-generating
-// these would need a separate "required-construction" path in the
-// macro that's not worth the LOC right now.
-#[pyclass(name = "IntBinaryPat", module = "strider.pattern")]
-pub struct PyIntBinaryPat {
-    op: strider_ir::IntBinaryOp,
-    lhs: strider_analyze::pattern::Pat,
-    rhs: strider_analyze::pattern::Pat,
-    ordered: bool,
-}
-
-impl PyIntBinaryPat {
-    pub(crate) fn finalise(&self) -> strider_analyze::pattern::Pat {
-        let mut b = strider_analyze::pattern::int_binary(self.op, self.lhs.clone(), self.rhs.clone());
-        if self.ordered {
-            b = b.ordered();
-        }
-        b.into()
-    }
-}
-
-#[pymethods]
-impl PyIntBinaryPat {
-    fn ordered(&mut self) -> PyPat {
-        self.ordered = true;
-        PyPat::from_pat(self.finalise())
-    }
+// Phase 4 Task 4.3 — migrated to `#[strider_pattern]` using the
+// macro's `constructor_args` (required-construction) and
+// `#[field(terminal)]` (no-arg setter that finalises to `PyPat`)
+// extensions.  See `crates/strider-pattern-macros/EMISSION_SPEC.md`.
+#[strider_pattern(
+    rust_name = "PyIntBinaryPat",
+    py_name = "IntBinaryPat",
+    py_module = "strider.pattern",
+    base_builder = "int_binary",
+    node_phrase = "int-binary node",
+    constructor_args = "op: strider_ir::IntBinaryOp, lhs: strider_analyze::pattern::Pat, rhs: strider_analyze::pattern::Pat",
+)]
+pub struct IntBinaryPatDef {
+    /// Force the pattern to match operands in the stated order only.
+    /// By default, commutative variants of the op family also try the
+    /// reversed operand order.  Terminal — finalises to a [`Pat`] and
+    /// does NOT chain (return type is `Pat`, not `IntBinaryPat`).
+    #[field(terminal)]
+    ordered: Option<bool>,
 }
 
 /// Typed builder for a boolean binary-op pattern.
-#[pyclass(name = "BoolBinaryPat", module = "strider.pattern")]
-pub struct PyBoolBinaryPat {
-    op: strider_ir::BoolBinaryOp,
-    lhs: strider_analyze::pattern::Pat,
-    rhs: strider_analyze::pattern::Pat,
-    ordered: bool,
-}
-
-impl PyBoolBinaryPat {
-    pub(crate) fn finalise(&self) -> strider_analyze::pattern::Pat {
-        let mut b = strider_analyze::pattern::bool_binary(self.op, self.lhs.clone(), self.rhs.clone());
-        if self.ordered {
-            b = b.ordered();
-        }
-        b.into()
-    }
-}
-
-#[pymethods]
-impl PyBoolBinaryPat {
-    fn ordered(&mut self) -> PyPat {
-        self.ordered = true;
-        PyPat::from_pat(self.finalise())
-    }
+#[strider_pattern(
+    rust_name = "PyBoolBinaryPat",
+    py_name = "BoolBinaryPat",
+    py_module = "strider.pattern",
+    base_builder = "bool_binary",
+    node_phrase = "bool-binary node",
+    constructor_args = "op: strider_ir::BoolBinaryOp, lhs: strider_analyze::pattern::Pat, rhs: strider_analyze::pattern::Pat",
+)]
+pub struct BoolBinaryPatDef {
+    /// Force the pattern to match operands in the stated order only.
+    /// By default, commutative variants of the op family also try the
+    /// reversed operand order.  Terminal — finalises to a [`Pat`] and
+    /// does NOT chain (return type is `Pat`, not `BoolBinaryPat`).
+    #[field(terminal)]
+    ordered: Option<bool>,
 }
 
 /// Typed builder for a float binary-op pattern.
-#[pyclass(name = "FloatBinaryPat", module = "strider.pattern")]
-pub struct PyFloatBinaryPat {
-    op: strider_ir::FloatBinaryOp,
-    lhs: strider_analyze::pattern::Pat,
-    rhs: strider_analyze::pattern::Pat,
-    ordered: bool,
-}
-
-impl PyFloatBinaryPat {
-    pub(crate) fn finalise(&self) -> strider_analyze::pattern::Pat {
-        let mut b = strider_analyze::pattern::float_binary(self.op, self.lhs.clone(), self.rhs.clone());
-        if self.ordered {
-            b = b.ordered();
-        }
-        b.into()
-    }
-}
-
-#[pymethods]
-impl PyFloatBinaryPat {
-    fn ordered(&mut self) -> PyPat {
-        self.ordered = true;
-        PyPat::from_pat(self.finalise())
-    }
+#[strider_pattern(
+    rust_name = "PyFloatBinaryPat",
+    py_name = "FloatBinaryPat",
+    py_module = "strider.pattern",
+    base_builder = "float_binary",
+    node_phrase = "float-binary node",
+    constructor_args = "op: strider_ir::FloatBinaryOp, lhs: strider_analyze::pattern::Pat, rhs: strider_analyze::pattern::Pat",
+)]
+pub struct FloatBinaryPatDef {
+    /// Force the pattern to match operands in the stated order only.
+    /// By default, commutative variants of the op family also try the
+    /// reversed operand order.  Terminal — finalises to a [`Pat`] and
+    /// does NOT chain (return type is `Pat`, not `FloatBinaryPat`).
+    #[field(terminal)]
+    ordered: Option<bool>,
 }
 
 #[pyfunction]
 pub fn int_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyIntBinaryPat> {
-    Ok(PyIntBinaryPat {
-        op: parse_int_binary_op(op)?,
-        lhs: l.into_pat()?,
-        rhs: r.into_pat()?,
-        ordered: false,
-    })
+    Ok(PyIntBinaryPat::new(
+        parse_int_binary_op(op)?,
+        l.into_pat()?,
+        r.into_pat()?,
+    ))
 }
 
 #[pyfunction]
 pub fn bool_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyBoolBinaryPat> {
-    Ok(PyBoolBinaryPat {
-        op: parse_bool_binary_op(op)?,
-        lhs: l.into_pat()?,
-        rhs: r.into_pat()?,
-        ordered: false,
-    })
+    Ok(PyBoolBinaryPat::new(
+        parse_bool_binary_op(op)?,
+        l.into_pat()?,
+        r.into_pat()?,
+    ))
 }
 
 #[pyfunction]
 pub fn float_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyFloatBinaryPat> {
-    Ok(PyFloatBinaryPat {
-        op: parse_float_binary_op(op)?,
-        lhs: l.into_pat()?,
-        rhs: r.into_pat()?,
-        ordered: false,
-    })
+    Ok(PyFloatBinaryPat::new(
+        parse_float_binary_op(op)?,
+        l.into_pat()?,
+        r.into_pat()?,
+    ))
 }
 
 // Allow PyO3 to convert these typed builders into PyPat via Into<PyPat>
@@ -2025,6 +1990,7 @@ pat_builder_finalise!(PyFunctionArgPat);
 // PyCallPat, PyCallOtherPat, PyRetPat: capture/cap/when/into_pat
 // emitted by `#[strider_pattern]` (Phase 4 Task 4.2c).
 // PyIfPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
-pat_builder_finalise!(PyIntBinaryPat);
-pat_builder_finalise!(PyBoolBinaryPat);
-pat_builder_finalise!(PyFloatBinaryPat);
+// PyIntBinaryPat, PyBoolBinaryPat, PyFloatBinaryPat:
+// capture/cap/when/into_pat emitted by `#[strider_pattern]` via the
+// `constructor_args` (required-construction) + `#[field(terminal)]`
+// extensions (Phase 4 Task 4.3).
