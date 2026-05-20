@@ -1,21 +1,21 @@
 //! Phi node pattern builders.
 //!
-//! `PhiPat` matches `VarPhi` nodes (the SSA phi for a tracked variable);
-//! `MemPhiPat` matches `MemPhi` (the memory-token phi at join points);
-//! `ValuePhiPat` matches `ValuePhi` (the value-phi synthesised by
-//! `StackLoadForward`).  All three carry an optional per-predecessor
-//! input constraint.
+//! `PhiPat` matches `Phi(Some(vn))` nodes (the SSA phi for a tracked
+//! variable); `MemPhiPat` matches `MemPhi` (the memory-token phi at
+//! join points); `ValuePhiPat` matches `Phi(None)` (the value-phi
+//! synthesised by `StackLoadForward`).  All three carry an optional
+//! per-predecessor input constraint.
 
 use strider_ir::node::NodeKind;
 
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat, exemplar_vn};
 
-/// Builder for `VarPhi` node patterns.  Created by [`crate::pattern::pat::phi`] or
+/// Builder for `Phi(Some(vn))` node patterns.  Created by [`crate::pattern::pat::phi`] or
 /// [`crate::pattern::pat::phi_for`].
 ///
-/// Matches **only** `VarPhi`.  For `MemPhi` use [`MemPhiPat`] /
-/// [`crate::pattern::pat::mem_phi`]; for `ValuePhi` use [`ValuePhiPat`] /
+/// Matches **only** `Phi(Some(_))`.  For `MemPhi` use [`MemPhiPat`] /
+/// [`crate::pattern::pat::mem_phi`]; for `Phi(None)` use [`ValuePhiPat`] /
 /// [`crate::pattern::pat::value_phi`].
 ///
 /// Capture the matched output with `.capture(v)` from
@@ -51,10 +51,13 @@ impl From<PhiPat> for Pat {
     fn from(b: PhiPat) -> Pat {
         let PhiPat { vn, inputs } = b;
         let kind = match vn {
-            None => KindSpec::variant(&NodeKind::VarPhi(exemplar_vn())),
+            None => KindSpec::variant_with(
+                &NodeKind::Phi(Some(exemplar_vn())),
+                |k| matches!(k, NodeKind::Phi(Some(_))),
+            ),
             Some(expected) => KindSpec::variant_with(
-                &NodeKind::VarPhi(exemplar_vn()),
-                move |k| matches!(k, NodeKind::VarPhi(actual) if *actual == expected),
+                &NodeKind::Phi(Some(exemplar_vn())),
+                move |k| matches!(k, NodeKind::Phi(Some(actual)) if *actual == expected),
             ),
         };
         NodePat::matcher(kind, InputsSpec::Indexed(inputs)).into_pat()
@@ -96,10 +99,10 @@ impl From<MemPhiPat> for Pat {
     }
 }
 
-/// Builder for `ValuePhi` node patterns.  Created by
+/// Builder for `Phi(None)` (value-phi) node patterns.  Created by
 /// [`crate::pattern::pat::value_phi`].
 ///
-/// `ValuePhi` is synthesised by `StackLoadForward` to phi together
+/// `Phi(None)` is synthesised by `StackLoadForward` to phi together
 /// stack-store values that flow into a load through a control-flow
 /// join.  Patterns that walk forwarded stack values may need this.
 pub struct ValuePhiPat {
@@ -125,7 +128,10 @@ impl ValuePhiPat {
 impl From<ValuePhiPat> for Pat {
     fn from(b: ValuePhiPat) -> Pat {
         let ValuePhiPat { inputs } = b;
-        let kind = KindSpec::variant(&NodeKind::ValuePhi);
+        let kind = KindSpec::variant_with(
+            &NodeKind::Phi(None),
+            |k| matches!(k, NodeKind::Phi(None)),
+        );
         NodePat::matcher(kind, InputsSpec::Indexed(inputs)).into_pat()
     }
 }

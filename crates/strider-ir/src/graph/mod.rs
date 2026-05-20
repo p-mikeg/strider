@@ -127,7 +127,7 @@ pub struct Graph {
     /// The default value is the empty `Vec`, which represents "no
     /// contributors recorded".  Structural nodes — `Entry`,
     /// `InitialMemory`, `InitialVar`, `FunctionArg`, `ControlState`,
-    /// `MemPhi`, `VarPhi`, `ValuePhi`, `StackStorePhi` — legitimately
+    /// `MemPhi`, `Phi`, `StackStorePhi` — legitimately
     /// stay empty; the validator's opt-in fingerprint check
     /// (`asm_fingerprint_exempt` in `validate/graph_invariants.rs`) exempts those
     /// kinds and flags any other reachable empty entry.  (`IfCase` is

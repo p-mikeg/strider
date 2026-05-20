@@ -27,8 +27,7 @@ fn is_exempt(kind: &NodeKind) -> bool {
             | NodeKind::FunctionArg { .. }
             | NodeKind::ControlState
             | NodeKind::MemPhi
-            | NodeKind::VarPhi(_)
-            | NodeKind::ValuePhi
+            | NodeKind::Phi(_)
             | NodeKind::StackStorePhi { .. }
     )
 }

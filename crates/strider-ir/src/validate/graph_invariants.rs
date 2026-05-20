@@ -104,11 +104,11 @@ pub(super) fn check_graph_invariants_control_state(
     }
 }
 
-/// Graph invariant: every phi node (`VarPhi`, `MemPhi`, `StackStorePhi`)
+/// Graph invariant: every phi node (`Phi`, `MemPhi`, `StackStorePhi`)
 /// must take its dispatch token (input[0]) from a `ControlState`'s
 /// `PhiToken` output.
 ///
-/// For `VarPhi` and `MemPhi` (variadic phis), the number of value inputs
+/// For `Phi` and `MemPhi` (variadic phis), the number of value inputs
 /// must match the owning `ControlState`'s predecessor count.  `StackStorePhi`
 /// has fixed arity `[token, memory, data]` (local-typing enforces this) — its
 /// per-predecessor information lives in the side-table
@@ -126,10 +126,7 @@ pub(super) fn check_graph_invariants_phis(
     for (node, kind) in reachable_nodes(graph, reachable) {
         let is_phi = matches!(
             kind,
-            NodeKind::VarPhi(_)
-                | NodeKind::MemPhi
-                | NodeKind::StackStorePhi { .. }
-                | NodeKind::ValuePhi
+            NodeKind::Phi(_) | NodeKind::MemPhi | NodeKind::StackStorePhi { .. }
         );
         if !is_phi {
             continue;
@@ -196,8 +193,7 @@ fn asm_fingerprint_exempt(kind: &NodeKind) -> bool {
             | NodeKind::FunctionArg { .. }
             | NodeKind::ControlState
             | NodeKind::MemPhi
-            | NodeKind::VarPhi(_)
-            | NodeKind::ValuePhi
+            | NodeKind::Phi(_)
             | NodeKind::StackStorePhi { .. }
     )
 }

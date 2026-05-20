@@ -757,7 +757,7 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::Load(space), [memory, addr], output_type))
     }
 
-    /// Emits a `VarPhi` node for varnode `var`.
+    /// Emits a `Phi(Some(var))` node for varnode `var`.
     ///
     /// `phi_token` must be the `PhiToken` output of the owning `ControlState`.
     /// `incoming_values` are the data inputs, one per predecessor (may be empty
@@ -782,7 +782,7 @@ impl FunctionBuilder {
         }
         let output_type = var.size.try_into()?;
         Ok(self.build_single_output_pure(
-            NodeKind::VarPhi(var),
+            NodeKind::Phi(Some(var)),
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         ))

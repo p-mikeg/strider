@@ -104,7 +104,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
         .filter(|&nid| {
             matches!(
                 graph.node_kind(nid),
-                strider_ir::node::NodeKind::VarPhi(_) | strider_ir::node::NodeKind::MemPhi
+                strider_ir::node::NodeKind::Phi(Some(_)) | strider_ir::node::NodeKind::MemPhi
             )
         })
         .count();
@@ -115,7 +115,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
         .filter(|&nid| {
             matches!(
                 graph.node_kind(nid),
-                strider_ir::node::NodeKind::VarPhi(_) | strider_ir::node::NodeKind::MemPhi
+                strider_ir::node::NodeKind::Phi(Some(_)) | strider_ir::node::NodeKind::MemPhi
             )
         })
         .count();

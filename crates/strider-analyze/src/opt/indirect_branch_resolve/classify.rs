@@ -2,7 +2,7 @@
 //!
 //! Walks the producer node of a placeholder anchor's value-input and
 //! classifies it into a [`ResolvedTargets`].  Each arm is a
-//! soundness-checked shape (`IntConst`, `InitialVar(lr)`, `ValuePhi`
+//! soundness-checked shape (`IntConst`, `InitialVar(lr)`, `Phi(None)`
 //! of constants, jump-table load, stack-array load) — the comments on
 //! each arm spell out why the runtime target set is constrained.
 //!
@@ -168,12 +168,12 @@ pub fn classify_anchor_with_rom_and_sp(
         NodeKind::InitialVar(vn) if Some(vn) == link_register_vn => {
             Some(ResolvedTargets::LinkRegister)
         }
-        // SOUND: `ValuePhi`'s output is the merge of one
+        // SOUND: `Phi(None)`'s output is the merge of one
         // per-predecessor value input (slot 0 is the phi token,
         // slots 1.. are the values).  When *every* value input folds
         // to `IntConst(k_i)`, the runtime target set is exactly
         // `{k_i}` for the predecessors that ever reach this branch.
-        NodeKind::ValuePhi => {
+        NodeKind::Phi(None) => {
             let inputs: Vec<NodeOutputId> =
                 graph.node_inputs(producer_id).into_iter().collect();
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));

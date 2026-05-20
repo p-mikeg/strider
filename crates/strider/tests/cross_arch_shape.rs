@@ -121,8 +121,8 @@ fn kind_bucket(k: &NodeKind) -> String {
         NodeKind::FunctionArg { .. } => "FunctionArg".to_string(),
         NodeKind::ControlState => "ControlState".to_string(),
         NodeKind::MemPhi => "MemPhi".to_string(),
-        NodeKind::VarPhi(_) => "VarPhi".to_string(),
-        NodeKind::ValuePhi => "ValuePhi".to_string(),
+        NodeKind::Phi(Some(_)) => "VarPhi".to_string(),
+        NodeKind::Phi(None) => "ValuePhi".to_string(),
         NodeKind::If => "If".to_string(),
         NodeKind::Call => "Call".to_string(),
         NodeKind::Return => "Return".to_string(),
@@ -191,9 +191,9 @@ fn structural_fingerprint(g: &strider_ir::BuiltFunctionGraph) -> Fingerprint {
         *kind_histogram.entry(kind_bucket(kind)).or_insert(0) += 1;
         match kind {
             NodeKind::ControlState => regions += 1,
-            NodeKind::VarPhi(_) => var_phis += 1,
+            NodeKind::Phi(Some(_)) => var_phis += 1,
             NodeKind::MemPhi => mem_phis += 1,
-            NodeKind::ValuePhi => value_phis += 1,
+            NodeKind::Phi(None) => value_phis += 1,
             NodeKind::StackStorePhi { .. } => stack_store_phis += 1,
             _ => {}
         }

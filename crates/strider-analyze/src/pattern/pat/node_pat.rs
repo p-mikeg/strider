@@ -123,7 +123,7 @@ impl KindSpec {
 
 /// Arbitrary `rsleigh::Vn` used as a payload-don't-care exemplar when
 /// constructing `NodeKind` variants for discriminant-only purposes
-/// (e.g. `KindSpec::variant(&NodeKind::VarPhi(exemplar_vn()))`).
+/// (e.g. `KindSpec::variant(&NodeKind::Phi(Some(exemplar_vn())))`).
 #[inline]
 pub(crate) fn exemplar_vn() -> rsleigh::Vn {
     rsleigh::Vn {

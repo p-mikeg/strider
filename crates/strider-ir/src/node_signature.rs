@@ -14,7 +14,7 @@
 //! the slot list is fixed-arity (equal to `head.len()`), while `Some(tail)`
 //! means any index past the head repeats `tail`.  Variadic kinds include
 //! [`NodeKind::ControlState`], [`NodeKind::MemPhi`],
-//! [`NodeKind::VarPhi`], [`NodeKind::Call`], [`NodeKind::CallOther`],
+//! [`NodeKind::Phi`], [`NodeKind::Call`], [`NodeKind::CallOther`],
 //! [`NodeKind::Return`], [`NodeKind::CPoolRef`], and [`NodeKind::New`].
 
 use crate::node::NodeKind;
@@ -256,7 +256,7 @@ const REF: Slot = Slot {
     name: "ref",
     role: R::Ref,
 };
-// Per-predecessor value input for VarPhi / ValuePhi. AnyValue (not AnyInt)
+// Per-predecessor value input for Phi(Some(_)) / Phi(None). AnyValue (not AnyInt)
 // because flag-register phis are routinely Bool-typed — same rationale as
 // ARG / RET / CALL_OUT above.
 const IN_PHI: Slot = Slot {
@@ -308,13 +308,13 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::ControlState => sig!(inputs: []; in_tail: CTRL, outputs: [CTRL, PHI]),
         // MemPhi: [phi_token, ...per-predecessor Memory tokens].
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
-        // VarPhi: [phi_token, ...per-predecessor values].
-        // ValuePhi: same shape as VarPhi but not tied to a source varnode.
+        // Phi(Some(vn)): SSA φ tagged with source-level varnode `vn`.
+        // Phi(None):     value phi not tied to any source varnode (e.g.
+        //                synthesized by StackLoadForward).
+        // Both have shape [phi_token, ...per-predecessor values].
         // Output is AnyValue (not AnyInt): the phi's output type matches its
         // value inputs, which routinely include Bool-typed flag-register phis.
-        NodeKind::VarPhi(_) | NodeKind::ValuePhi => {
-            sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL])
-        }
+        NodeKind::Phi(_) => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL]),
 
         // ── Conditional branch ──────────────────────────────────────────────
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
@@ -724,8 +724,8 @@ mod tests {
             },
             NodeKind::ControlState,
             NodeKind::MemPhi,
-            NodeKind::VarPhi(vn),
-            NodeKind::ValuePhi,
+            NodeKind::Phi(Some(vn)),
+            NodeKind::Phi(None),
             NodeKind::If,
             NodeKind::Call,
             NodeKind::Return,
@@ -792,8 +792,8 @@ mod tests {
         let cases: &[(NodeKind, K)] = &[
             (NodeKind::ControlState, K::Control),
             (NodeKind::MemPhi, K::Memory),
-            (NodeKind::VarPhi(smoke_vn()), K::AnyValue),
-            (NodeKind::ValuePhi, K::AnyValue),
+            (NodeKind::Phi(Some(smoke_vn())), K::AnyValue),
+            (NodeKind::Phi(None), K::AnyValue),
             (NodeKind::Call, K::AnyValue),
             (NodeKind::CallOther { user_op_id: 0 }, K::AnyValue),
             (NodeKind::Return, K::AnyValue),

@@ -327,10 +327,10 @@ fn uses_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
                     NodeKind::Call if producer != outer => return true,
                     NodeKind::Load(_)
                     | NodeKind::ControlState
-                    | NodeKind::ValuePhi => {
+                    | NodeKind::Phi(None) => {
                         // Walk the first input — Load[memory, addr] gives the
                         // memory predecessor (producing store/Call), and
-                        // ControlState/ValuePhi pass through their first input.
+                        // ControlState/Phi(None) pass through their first input.
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };

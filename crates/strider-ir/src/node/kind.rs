@@ -58,21 +58,21 @@ pub enum NodeKind {
     ControlState,
     /// Memory phi: selects the live memory token at a join point.
     MemPhi,
-    /// SSA φ for varnode `Vn` at a join point.  Inputs:
-    /// `[phi_token, val_0, val_1, …]` where `phi_token` is the
-    /// `PhiToken` output of the joining `ControlState` and the rest
-    /// are one value per CFG predecessor in the same order as the
-    /// `ControlState`'s `Control` inputs.  Output: `[value]`.
-    VarPhi(rsleigh::Vn),
-    /// Value phi not tied to any source varnode.  Synthesized by
-    /// [`opt::StackLoadForward`](../../../opt/src/stack_load_forward/mod.rs) when
-    /// forwarding a `Load[sp+K]` across a `MemPhi`: each predecessor
-    /// resolves to a stored value, and those values are merged here.  Shape
-    /// matches `VarPhi` — inputs `[phi_token, val_0, val_1, …]`, output
-    /// is a single value — but without a `Vn` tag since the merged value
-    /// has no source-level register/memory identity.  Non-cacheable for the
-    /// same reason as `VarPhi`/`MemPhi`: phi identity matters.
-    ValuePhi,
+    /// SSA φ at a join point.  Inputs: `[phi_token, val_0, val_1, …]`
+    /// where `phi_token` is the `PhiToken` output of the joining
+    /// `ControlState` and the rest are one value per CFG predecessor
+    /// in the same order as the `ControlState`'s `Control` inputs.
+    /// Output: `[value]`.
+    ///
+    /// `Phi(Some(vn))` tags the phi with the source-level varnode it
+    /// represents (lifter-emitted SSA φ for register-aliased reads).
+    /// `Phi(None)` is a value phi not tied to any source varnode —
+    /// synthesized by `StackLoadForward` when forwarding a `Load[sp+K]`
+    /// across a `MemPhi`: each predecessor resolves to a stored value,
+    /// and those values are merged here without a `Vn` tag since the
+    /// merged value has no source-level register/memory identity.
+    /// Non-cacheable: phi identity matters.
+    Phi(Option<rsleigh::Vn>),
 
     // ── Conditional branch ─────────────────────────────────────────────────────
     /// Conditional branch.  Consumes `(control, bool_cond)` and produces two
@@ -261,7 +261,7 @@ impl NodeKind {
     /// cache.
     ///
     /// Nodes whose inputs are added incrementally after construction (e.g.
-    /// `ControlState`, `VarPhi`) or that must always produce a fresh node
+    /// `ControlState`, `Phi`) or that must always produce a fresh node
     /// (e.g. `Return`) are not cacheable.
     #[inline]
     #[must_use]
@@ -276,8 +276,7 @@ impl NodeKind {
                 | Self::IndirectBranch
                 | Self::ControlState
                 | Self::MemPhi
-                | Self::VarPhi(..)
-                | Self::ValuePhi
+                | Self::Phi(..)
                 | Self::Call
                 | Self::CallOther { .. }
                 | Self::CPoolRef

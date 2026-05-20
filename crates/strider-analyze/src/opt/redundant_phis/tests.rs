@@ -62,7 +62,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
     let surviving_sp_phis = crate::opt::test_support::count_reachable((&fg).into(), |k| {
-        matches!(k, NodeKind::VarPhi(vn) if *vn == sp)
+        matches!(k, NodeKind::Phi(Some(vn)) if *vn == sp)
     });
     assert_eq!(
         surviving_sp_phis, 0,
@@ -267,7 +267,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     // Locate the VarPhi(var) at `join` and its owning CS.
     let phi_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::VarPhi(v) if *v == var))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi(Some(v)) if *v == var))
         .expect("VarPhi(var) at join");
     let phi_inputs_pre = fg.node_inputs(phi_node);
     let phi_token = phi_inputs_pre[0];

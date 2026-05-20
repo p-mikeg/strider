@@ -300,7 +300,7 @@ pub fn decompose_sp(
                     offset: accumulated,
                 });
             }
-            NodeKind::VarPhi(vn) if vn == sp_vn => {
+            NodeKind::Phi(Some(vn)) if vn == sp_vn => {
                 break decompose_sp_phi(g, node, sp_vn, memo, visiting)
                     .map(|e| e.shifted(accumulated));
             }

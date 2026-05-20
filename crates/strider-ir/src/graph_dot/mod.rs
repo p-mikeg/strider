@@ -20,7 +20,7 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         | NodeKind::FunctionArg { .. } => "Mdiamond",
 
         NodeKind::ControlState => "invhouse",
-        NodeKind::VarPhi(_) | NodeKind::MemPhi | NodeKind::ValuePhi => "house",
+        NodeKind::Phi(_) | NodeKind::MemPhi => "house",
 
         NodeKind::If => "diamond",
 
@@ -53,7 +53,7 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::ControlState => "\"#2a1a4a\"",
 
-        NodeKind::VarPhi(_) | NodeKind::MemPhi | NodeKind::ValuePhi => "\"#163030\"",
+        NodeKind::Phi(_) | NodeKind::MemPhi => "\"#163030\"",
 
         NodeKind::If => "\"#3a2a10\"",
 
