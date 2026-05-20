@@ -796,7 +796,20 @@ fn reflect_changes(
                 && forward_out != oid
             {
                 let fwd_kind = graph.output_kind(forward_out);
-                if fwd_kind.as_value() == Some(out_ty) {
+                let fwd_producer = graph.get_node_from_output(forward_out);
+                // Cycle-safety guard: if `forward_out`'s producer
+                // transitively depends on `oid`, redirecting consumers of
+                // `oid` to `forward_out` would make that producer consume
+                // its own output.  This happens when egg unions an
+                // identity-rule chain like `Add(x, 0) ≡ x` AND the
+                // identity-Add's output flows into a downstream Add that
+                // shares the same e-class.  Skipping the forward leaves
+                // the redundant node in place — a later pass (or another
+                // iteration of this one) can canonicalise it through a
+                // different rewrite path.  See Phase 8a bug-fix note.
+                if fwd_kind.as_value() == Some(out_ty)
+                    && !producer_transitively_consumes(graph, fwd_producer, oid)
+                {
                     chosen = Some(Folded::ForwardTo(forward_out));
                 }
             }
@@ -1122,6 +1135,40 @@ fn try_xor_all_ones_direct(
     graph.extend_asm_fingerprint_from(new_node, node);
     let replaced = graph.replace_all_uses(out, new_out)?;
     Ok(replaced)
+}
+
+/// Returns `true` iff `start` transitively consumes `target_out` through
+/// its value-input chain.  Used by [`reflect_changes`] as a cycle-safety
+/// guard: when forwarding `target_out` to `start`'s output would create a
+/// self-loop (i.e. `start` would consume its own output post-forward),
+/// the forward must be skipped.
+///
+/// Walks the value-input DAG iteratively (explicit stack) — the
+/// search is bounded by the number of reachable input nodes; revisits
+/// are pruned via a `visited` set.
+fn producer_transitively_consumes(
+    graph: &strider_ir::Graph,
+    start: NodeId,
+    target_out: NodeOutputId,
+) -> bool {
+    use std::collections::HashSet;
+    let mut visited: HashSet<NodeId> = HashSet::new();
+    let mut stack: Vec<NodeId> = vec![start];
+    while let Some(nid) = stack.pop() {
+        if !visited.insert(nid) {
+            continue;
+        }
+        for inp in graph.node_inputs(nid).into_iter() {
+            if inp == target_out {
+                return true;
+            }
+            let (pred, _) = graph.output_definition(inp);
+            if !visited.contains(&pred) {
+                stack.push(pred);
+            }
+        }
+    }
+    false
 }
 
 /// If `out` is produced by an `IntConst(v)` node, returns `Some(v)`.
