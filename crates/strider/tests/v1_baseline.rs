@@ -1,18 +1,16 @@
-//! v1 IR snapshot baseline.
+//! Imperative-pipeline IR snapshot baseline.
 //!
-//! This pins the v1 behavior contract: every (arch, case, function) tuple
-//! built under `fixtures/out/<arch>/<case>.elf` is lifted + optimized through
-//! the **v1 imperative pipeline** (`Strider::build_optimizer_pipeline` +
-//! `LoadReadOnly`) and its post-optimization IR (rendered as DOT) is
-//! snapshotted via `insta`.  Any later change to the lifter, the v1
-//! optimizer, or the IR layout must NOT change these snapshots without
-//! explicit review.
+//! This pins the imperative-pipeline behavior contract: every (arch, case,
+//! function) tuple built under `fixtures/out/<arch>/<case>.elf` is lifted +
+//! optimized through the imperative pipeline
+//! (`Strider::build_optimizer_pipeline` + `LoadReadOnly`) and its
+//! post-optimization IR (rendered as DOT) is snapshotted via `insta`.  Any
+//! later change to the lifter, the optimizer, or the IR layout must NOT
+//! change these snapshots without explicit review.
 //!
-//! Pinned to v1 explicitly (via [`common::analyze_v1`]): the production
-//! default in [`common::analyze`] flips to v2 in Phase 8.5c, but
-//! `v1_baseline` keeps using the explicit v1 entry point so the
-//! historical v1 contract stays frozen.  The companion `v2_baseline`
-//! pins the v2 shape via [`common::analyze_v2`].
+//! Pinned to the imperative pipeline explicitly via [`common::analyze_v1`]
+//! so the historical contract stays frozen even if the production-default
+//! entry [`common::analyze`] later changes.
 //!
 //! Lift failures (panics from `common::analyze_v1`) are themselves part of
 //! the contract — they are captured as `LIFT_FAILED:<message>` snapshots

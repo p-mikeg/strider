@@ -158,9 +158,6 @@ pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
 /// and lift it to IR.  Returns the lifted graph, the strider instance,
 /// the sleigh arch (for endianness), and an Arc-shared ROM that callers
 /// can use to drive their optimizer pipeline.
-///
-/// Used by both [`analyze_v1`] and [`analyze_v2`] — they differ only in
-/// which optimizer pipeline runs over the lifted graph.
 fn lift_for_pipeline(
     arch: Arch,
     case: &str,
@@ -231,14 +228,12 @@ fn lift_for_pipeline(
 }
 
 /// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
-/// **v1** imperative optimiser pipeline
+/// imperative optimiser pipeline
 /// ([`Strider::build_optimizer_pipeline`] + `LoadReadOnly`) over the
 /// lifted IR, and returns the resulting graph.
 ///
-/// This is the explicit v1 entry point: even after the production
-/// default flips to PipelineV2, `analyze_v1` keeps using v1.
 /// `v1_baseline.rs` pins to this entry so its snapshots stay frozen as
-/// the historical v1 contract.
+/// the historical imperative-pipeline contract.
 ///
 /// Panics on any failure — system tests are pass/fail end-to-end checks.  If
 /// the binary is missing, the panic carries an actionable message including
@@ -252,46 +247,8 @@ pub fn analyze_v1(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFun
     // fresh process so Arc ref-counting cost is negligible.
     p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
     p.run(&mut graph.graph, graph.entry)
-        .unwrap_or_else(|e| panic!("v1 optimizer pipeline for {fn_name}: {e:?}"));
+        .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     graph
-}
-
-/// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs
-/// the **v2** [`strider_analyze::opt::pipeline_v2::PipelineV2`] (interleaved
-/// destructive+nondestructive fixed-point) over the lifted IR, and
-/// returns the resulting graph.
-///
-/// This is the explicit v2 entry point: even before the production
-/// default flips to PipelineV2, `analyze_v2` always runs v2.
-/// `v2_baseline.rs` pins to this entry so its snapshots pin the v2 IR
-/// contract.
-///
-/// Callers that need the v2 outer-loop iteration count (e.g. for
-/// performance reporting in the parity test) should use
-/// [`analyze_v2_with_iters`] instead.
-pub fn analyze_v2(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFunctionGraph {
-    analyze_v2_with_iters(arch, case, fn_name).0
-}
-
-/// Same as [`analyze_v2`] but also returns the v2 fixed-point loop's
-/// iteration count to convergence.  Used by `pipeline_v2_parity.rs`'s
-/// liveness checks (`v2_terminates_on_*`) and parity diagnostics.
-pub fn analyze_v2_with_iters(
-    arch: Arch,
-    case: &str,
-    fn_name: &str,
-) -> (strider_ir::BuiltFunctionGraph, u32) {
-    let (mut graph, ana, sleigh_arch, rom_for_opt) =
-        lift_for_pipeline(arch, case, fn_name);
-    let pipeline = strider_analyze::opt::pipeline_v2::PipelineV2::with_rom(
-        ana.calling_convention(),
-        sleigh_arch.endianness(),
-        rom_for_opt,
-    );
-    let iters = pipeline
-        .run(&mut graph.graph, graph.entry)
-        .unwrap_or_else(|e| panic!("PipelineV2 for {fn_name}: {e:?}"));
-    (graph, iters)
 }
 
 /// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs
@@ -299,8 +256,8 @@ pub fn analyze_v2_with_iters(
 /// resulting graph.
 ///
 /// Routes through [`analyze_v1`] (the imperative pipeline), which is the
-/// production default.  `v1_baseline.rs` and `v2_baseline.rs` keep their
-/// explicit entry points so they stay pinned to their respective contracts.
+/// production default.  `v1_baseline.rs` keeps its explicit entry point so
+/// it stays pinned to the imperative-pipeline contract.
 ///
 /// Panics on any failure — system tests are pass/fail end-to-end checks.  If
 /// the binary is missing, the panic carries an actionable message including

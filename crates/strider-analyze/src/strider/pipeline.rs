@@ -183,30 +183,6 @@ impl Strider {
     ///    convergence), using the convention's positional stack-arg offsets.
     /// 4. [`crate::opt::FunctionArgDetect`] as a post-pass, canonicalising
     ///    register- and stack-passed argument reads into `FunctionArg` nodes.
-    ///
-    /// # Phase 7.3b / 8 — egg-pipeline flip still blocked on v1_baseline
-    ///
-    /// Phase 8a fixed the [`crate::opt::constant_fold_egg`] cycle that
-    /// blocked the Phase 7.3b flip on
-    /// `calls::test_fib_recursive::arm_be`.  Phase 8b confirmed the
-    /// `memory::test_tagged_union_read::x86` regression is a
-    /// pre-existing v1 failure (v1 also emits 1 load on that fixture)
-    /// and therefore does not block the flip.
-    ///
-    /// However, retrying the flip in Phase 8 still diverges
-    /// `v1_baseline_snapshots`: the egg-based pipeline applies more
-    /// aggressive canonicalisation (e.g. eliminates `StackStore` nodes
-    /// of zero-init constants on x86) than v1's
-    /// `ConstantFold`/`KnownBits` rules.  This is the same
-    /// "egraph-aliasing-gap" family already documented for
-    /// `parity_control_sum_to_n` /
-    /// `parity_calling_convention_forward_1` / `parity_memory_array_sum`
-    /// in `crates/strider/tests/pipeline_v2_parity.rs`.
-    ///
-    /// Closing the gap requires re-recording every snapshot under the
-    /// new IR, which drops the v1 byte-identical contract.  Per the
-    /// Phase 8 task: prefer leaving v1 as the production default until
-    /// the parity-gap fixtures themselves are byte-identical.
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::default_pipeline();

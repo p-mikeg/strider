@@ -1,5 +1,4 @@
-//! Property-based invariants for the optimizer (Phase 6 Task 6.3, V5
-//! verification scope).
+//! Property-based invariants for the optimizer.
 //!
 //! Companion to `strider-ir/tests/proptest_invariants.rs`.  That file
 //! verifies `validate()` over strategy-generated graphs; this file verifies
@@ -11,13 +10,7 @@
 //!    contract is *superset-only* — passes may grow fingerprints (and
 //!    must, when they rewrite-merge two nodes), but never shrink them.
 //!
-//! 2. **`ConstantFoldEgg` matches the imperative `ConstantFold` on
-//!    pure-arithmetic value subgraphs.**  Both passes operate on the
-//!    same IR and produce structurally equivalent graphs when run to
-//!    fixed point on value-only DAGs (no calls, no memory ops, no
-//!    control flow beyond Entry → ControlState → Return).
-//!
-//! **Scope (per V5).**  Value-only DAGs via a sequence of
+//! **Scope.**  Value-only DAGs via a sequence of
 //! [`FunctionBuilder`] actions, mirroring `cranelift-fuzzgen`.  Control-flow
 //! properties stay in hand-authored fixtures.
 
@@ -27,12 +20,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use proptest::prelude::*;
 
-use strider_analyze::opt::{
-    ConstantFold, OptimizerPipeline, OptimizerRaw, constant_fold_egg::ConstantFoldEgg,
-    default_pipeline,
-};
+use strider_analyze::opt::{OptimizerPipeline, default_pipeline};
 use strider_ir::node::{NodeId, NodeOutputType};
-use strider_ir::walk::walk_graph;
 use strider_ir::{
     BuiltFunctionGraph, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
@@ -142,28 +131,6 @@ fn step_strategy() -> impl Strategy<Value = Step> {
 
 fn step_seq() -> impl Strategy<Value = Vec<Step>> {
     proptest::collection::vec(step_strategy(), 1..50)
-}
-
-/// Strategy restricted to int-typed pool growth only (no comparisons —
-/// `Bool` outputs sometimes consume sufficient operand slack that
-/// `ConstantFoldEgg`'s direct-rewrite phase produces a slightly different
-/// node-id surface from v1's `ConstantFold`).  Used by the egg-parity
-/// property to keep the property focused on pure arithmetic.
-fn step_strategy_arith_only() -> impl Strategy<Value = Step> {
-    prop_oneof![
-        4 => (int_ty(), any::<u64>(), any::<u16>())
-            .prop_map(|(width, value, lift_off)| Step::EmitIntConst { width, value, lift_off }),
-        2 => (int_ty(), binary_op(), any::<u8>(), any::<u8>(), any::<u16>())
-            .prop_map(|(width, op, lhs_idx, rhs_idx, lift_off)|
-                Step::EmitBinaryOp { width, op, lhs_idx, rhs_idx, lift_off }),
-        2 => (int_ty(), unary_op(), any::<u8>(), any::<u16>())
-            .prop_map(|(width, op, src_idx, lift_off)|
-                Step::EmitUnaryOp { width, op, src_idx, lift_off }),
-    ]
-}
-
-fn step_seq_arith_only() -> impl Strategy<Value = Vec<Step>> {
-    proptest::collection::vec(step_strategy_arith_only(), 1..30)
 }
 
 #[derive(Default)]
@@ -340,33 +307,6 @@ fn collect_fingerprints(g: &strider_ir::Graph) -> HashMap<NodeId, Vec<u64>> {
         .collect()
 }
 
-/// Multiset of reachable `NodeKind`s from `entry`, sorted by debug-print
-/// for cross-graph comparison.  Two structurally equivalent graphs (modulo
-/// node-id renumbering) produce equal multisets.
-fn reachable_kinds(g: &strider_ir::Graph, entry: NodeId) -> Vec<String> {
-    let mut kinds: Vec<String> = walk_graph(g, entry)
-        .map(|n| format!("{:?}", g.node_kind(n)))
-        .collect();
-    kinds.sort();
-    kinds
-}
-
-fn run_to_fixed_point(opt: &dyn OptimizerRaw, fg: &mut BuiltFunctionGraph) {
-    let mut steps = 0u32;
-    loop {
-        let r = opt
-            .optimize_raw(&mut fg.graph, fg.entry)
-            .expect("optimizer should not fail on strategy-generated graph");
-        if !r.changed() {
-            break;
-        }
-        steps += 1;
-        if steps >= 256 {
-            panic!("optimizer did not reach fixed point in 256 iterations");
-        }
-    }
-}
-
 // ── Properties ────────────────────────────────────────────────────────────
 
 proptest! {
@@ -424,56 +364,5 @@ proptest! {
         }
     }
 
-    /// `ConstantFoldEgg` and v1's imperative `ConstantFold`, run to fixed
-    /// point on the same value-only DAG, produce structurally equivalent
-    /// IR (same multiset of reachable `NodeKind`s).
-    ///
-    /// Scope per the constant_fold_egg_parity.rs handwritten matrix: this
-    /// fixture intentionally restricts the strategy to integer arithmetic
-    /// (no comparisons, no truncate, no extend) so the two passes' rewrite
-    /// surfaces stay aligned.  Identity / reassoc rules can fire on both
-    /// passes — equivalence is checked by reachable-kind multiset, which
-    /// is robust against differing node-id allocation order.
-    #[test]
-    fn prop_constant_fold_egg_matches_v1(steps in step_seq_arith_only()) {
-        let Some(fg_seed) = replay(&steps) else {
-            return Ok(());
-        };
-
-        // Two independent copies — each pass mutates its own graph.
-        let (mut fg_v1, mut fg_egg) = (clone_built(&fg_seed), clone_built(&fg_seed));
-
-        run_to_fixed_point(&ConstantFold, &mut fg_v1);
-        run_to_fixed_point(&ConstantFoldEgg::new(), &mut fg_egg);
-
-        let v1_kinds = reachable_kinds(&fg_v1.graph, fg_v1.entry);
-        let egg_kinds = reachable_kinds(&fg_egg.graph, fg_egg.entry);
-
-        prop_assert_eq!(
-            &v1_kinds, &egg_kinds,
-            "ConstantFoldEgg and ConstantFold diverge on a strategy-generated graph",
-        );
-
-        // Both runs must produce graphs that still validate.
-        prop_assert!(
-            strider_ir::validate::validate(&fg_v1.graph, fg_v1.entry).is_ok(),
-            "v1 ConstantFold produced invalid IR",
-        );
-        prop_assert!(
-            strider_ir::validate::validate(&fg_egg.graph, fg_egg.entry).is_ok(),
-            "ConstantFoldEgg produced invalid IR",
-        );
-    }
 }
 
-/// Duplicate a value-only DAG into a fresh `BuiltFunctionGraph` that shares
-/// the seed's `Graph` topology but has independent storage for mutation by
-/// `optimize_raw`.  The seed has no calling-convention metadata (it was
-/// built via `FunctionBuilder::empty()`), so the rewrite-only ctor — which
-/// fills in empty CC fields — is sufficient: `ConstantFold` /
-/// `ConstantFoldEgg` only read the `Graph` + `entry`.
-///
-/// (Internal helper used by `prop_constant_fold_egg_matches_v1`.)
-fn clone_built(seed: &BuiltFunctionGraph) -> BuiltFunctionGraph {
-    BuiltFunctionGraph::from_graph_and_entry_for_rewrite(seed.graph.clone(), seed.entry)
-}

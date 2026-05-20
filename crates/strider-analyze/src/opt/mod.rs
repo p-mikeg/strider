@@ -46,53 +46,16 @@ pub(crate) mod sp_expr;
 mod worklist;
 pub use error::Result;
 pub(crate) mod constant_fold;
-// Phase 3 Task 3.2 — egg-based ConstantFold parity rewriter (alongside
-// the imperative one; not yet wired into the production pipeline).
-pub mod constant_fold_egg;
 mod dead_branch;
 mod flag_cmp_canonicalize;
-// Phase 3 Task 3.3a — egg-based FlagCmpCanonicalize parity rewriter.
-pub mod flag_cmp_canonicalize_egg;
 mod function_args;
 mod if_cond_inversion;
-// Phase 3 Task 3.3b — egg-based IfCondInversion (straight port — `If`
-// is a control node and not in the egraph's value slice, so the
-// rewrite stays imperative; the module name preserves naming
-// consistency with the other Phase-3 egg ports).
-pub mod if_cond_inversion_egg;
 pub mod indirect_branch_resolve;
 mod known_bits;
-// Phase 3 Task 3.4 — egg-based KnownBits parity rewriter (alongside
-// the imperative one; not yet wired into the production pipeline).
-pub mod known_bits_egg;
 mod load_readonly;
-// Phase 3 Task 3.6 — egg-based LoadReadOnly parity rewriter (alongside
-// the imperative one; not yet wired into the production pipeline).
-pub mod load_readonly_egg;
 mod redundant_phis;
 pub mod stack_load_forward;
 mod stack_store;
-// Phase 3 Task 3.5a — egg-based StackStoreDetect parity rewriter.
-pub mod stack_store_detect_egg;
-// Phase 3 Task 3.5b — egg-based StackLoadForward parity rewriter.
-pub mod stack_load_forward_egg;
-// Phase 3 Task 3.7a — egg-based CallStackArgCollect parity rewriter
-// (faithful direct port — memory-chain post-passes don't benefit
-// from the egraph; the module name preserves naming consistency with
-// the other Phase-3 egg ports).
-pub mod call_stack_arg_collect_egg;
-// Phase 3 Task 3.7b — egg-based FunctionArgDetect parity rewriter
-// (faithful direct port — function-boundary post-passes don't
-// benefit from the egraph; same posture as `IfCondInversionEgg`).
-pub mod function_arg_detect_egg;
-// Phase 3 Task 3.8 — interleaved destructive+nondestructive
-// fixed-point optimizer loop (v2 pipeline).  Built alongside the
-// existing `OptimizerPipeline` / `default_pipeline` — NOT a
-// replacement.  Production code still calls
-// `Strider::build_optimizer_pipeline` (v1); v2 lands here so the
-// parity test can prove equivalence before later phases switch
-// the production path.
-pub mod pipeline_v2;
 #[cfg(test)]
 mod test_support;
 
@@ -113,21 +76,6 @@ pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline, OptimizerRa
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};
-// Phase 7.3b — egg passes re-exported at the `opt::` surface so
-// consumers (PipelineV2, parity tests, future egg-pipeline flip)
-// can name them without reaching into per-pass modules.  The Phase
-// 7.3b flip itself reverted (see `Strider::build_optimizer_pipeline`
-// docs), but the re-exports remain a useful public surface.
-pub use call_stack_arg_collect_egg::CallStackArgCollectEgg;
-pub use constant_fold_egg::ConstantFoldEgg;
-pub use flag_cmp_canonicalize_egg::FlagCmpCanonicalizeEgg;
-pub use function_arg_detect_egg::FunctionArgDetectEgg;
-pub use if_cond_inversion_egg::IfCondInversionEgg;
-pub use known_bits_egg::KnownBitsEgg;
-pub use load_readonly_egg::LoadReadOnlyEgg;
-pub use stack_load_forward_egg::StackLoadForwardEgg;
-pub use stack_store_detect_egg::StackStoreDetectEgg;
-
 /// Stable subset of the default pipeline — passes whose rewrites survive
 /// the addition of new phi inputs in a later strider fixed-point
 /// iteration.  Used while the IR `Graph` is still growing under the

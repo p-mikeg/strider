@@ -178,10 +178,7 @@ fn v2_baseline_snapshots() {
                 let case_copy = case.clone();
                 let func_copy = func_name.clone();
                 let result = std::panic::catch_unwind(move || {
-                    // Pin to v2 explicitly so this baseline tracks
-                    // PipelineV2's IR shape independent of the
-                    // production-default flag in `common::analyze`.
-                    common::analyze_v2(arch_copy, &case_copy, &func_copy)
+                    common::analyze(arch_copy, &case_copy, &func_copy)
                 });
                 let snapshot_body = match result {
                     Ok(g) => to_dot_string(&g, &sleigh),
