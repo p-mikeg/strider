@@ -271,8 +271,9 @@ impl PyGraph {
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let entry = graph.entry();
         real_pipeline
-            .run_on_built(&mut graph)
+            .run(graph.graph_mut(), entry)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -288,7 +289,8 @@ impl PyGraph {
             pipe.add(strider_analyze::opt::DeadBranchElimination);
         }
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        pipe.run_on_built(&mut graph).map_err(|e| {
+        let entry = graph.entry();
+        pipe.run(graph.graph_mut(), entry).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }

@@ -134,7 +134,8 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
         cc_link_register_vn,
         endianness,
     )?;
-    make_resolver_pipeline().run_on_built(&mut fg)?;
+    let entry = fg.entry();
+    make_resolver_pipeline().run(fg.graph_mut(), entry)?;
 
     // If the caller supplied a ReadOnlyMemory, resolve constant-address
     // loads against it and re-run the core fold pipeline so the loaded
@@ -146,7 +147,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // shapes resolve in subsequent sweeps.
     if let Some(rom) = rom {
         while resolve_const_loads(&mut fg, rom)? {
-            make_resolver_pipeline().run_on_built(&mut fg)?;
+            make_resolver_pipeline().run(fg.graph_mut(), entry)?;
         }
     }
 

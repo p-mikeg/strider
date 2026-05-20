@@ -294,32 +294,11 @@ impl OptimizerPipeline {
         Ok(())
     }
 
-    /// Back-compat wrapper that accepts a [`strider_ir::BuiltFunctionGraph`].
-    ///
-    /// Delegates to [`Self::run`] by extracting `(&mut graph.graph,
-    /// graph.entry)`.  Tests and downstream code that already hold a
-    /// `BuiltFunctionGraph` keep working unchanged through the
-    /// `Optimizer` / `OptimizerRaw` split; new code is encouraged
-    /// to call [`Self::run`] directly with a `(graph, entry)` pair
-    /// (e.g. from [`strider_ir::FunctionBuilder::graph_mut`] +
-    /// [`strider_ir::FunctionBuilder::entry`]).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`Self::run`].
-    pub fn run_on_built(
-        &self,
-        function: &mut strider_ir::BuiltFunctionGraph,
-    ) -> crate::opt::Result<()> {
-        let entry = function.entry();
-        self.run(function.graph_mut(), entry)
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for the [`OptimizerPipeline::run`] /
-    //! [`OptimizerPipeline::run_on_built`] equivalence contract.
+    //! Unit tests for [`OptimizerPipeline::run`].
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -338,33 +317,6 @@ mod tests {
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
         b.build().unwrap()
-    }
-
-    /// `run(graph, entry)` and `run_on_built(built)` produce the same
-    /// resulting graph state.  Pins the "new entry point is a drop-in
-    /// replacement" contract for the Optimizer / OptimizerRaw split.
-    #[test]
-    fn pipeline_run_with_graph_and_entry_replicates_old_built_behavior() -> crate::opt::Result<()> {
-        let mut a = one_const_fn(7);
-        let mut b = one_const_fn(7);
-
-        let pipeline = crate::opt::default_pipeline();
-
-        // Path A: run via the new (graph, entry) signature.
-        let entry = a.entry();
-        pipeline.run(a.graph_mut(), entry)?;
-
-        // Path B: run via the back-compat run_on_built wrapper.
-        pipeline.run_on_built(&mut b)?;
-
-        // Both runs must succeed and produce graphs of the same shape.
-        // We compare reachable-node counts as a coarse but objective
-        // structural fingerprint — the two pipelines applied identical
-        // rewrites, so the live-set sizes match exactly.
-        let a_count = a.preorder().count();
-        let b_count = b.preorder().count();
-        assert_eq!(a_count, b_count, "run and run_on_built must produce identical graph shapes");
-        Ok(())
     }
 
     /// `run(graph, entry)` validates the final graph — an invalid graph

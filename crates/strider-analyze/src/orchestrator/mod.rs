@@ -468,7 +468,8 @@ where
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.opts.strider.build_stable_optimizer_pipeline();
         let graph = self.graph_mut()?;
-        pipeline.run_on_built(graph)?;
+        let entry = graph.entry();
+        pipeline.run(graph.graph_mut(), entry)?;
         Ok(())
     }
 
@@ -496,7 +497,8 @@ where
         let pipeline = self.opts.strider.build_destructive_optimizer_pipeline();
         let compact = self.opts.compact;
         let graph = self.graph_mut()?;
-        pipeline.run_on_built(graph)?;
+        let entry = graph.entry();
+        pipeline.run(graph.graph_mut(), entry)?;
         if compact {
             graph.compact()?;
         }
@@ -1002,7 +1004,8 @@ where
     let unresolved = outcome.unresolved_branches;
 
     let pipeline = opts.strider.build_stable_optimizer_pipeline();
-    pipeline.run_on_built(&mut graph)?;
+    let entry = graph.entry();
+    pipeline.run(graph.graph_mut(), entry)?;
 
     // Harvest the Sleigh handle out of the consumed Cfg so the next
     // iteration can re-use it without re-loading the SLA spec.
