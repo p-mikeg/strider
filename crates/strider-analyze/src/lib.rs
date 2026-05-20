@@ -14,7 +14,7 @@
 //! `Strider` (Phase 3.1c).
 
 mod errors;
-mod orchestrator;
+pub mod orchestrator;
 pub mod orchestrator_salsa;
 pub mod rewrite;
 mod strider;
