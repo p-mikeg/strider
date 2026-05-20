@@ -348,6 +348,31 @@ pub fn region_lift_signature<'db>(
     region.fingerprint(db)
 }
 
+/// Tracked wrapper around [`StriderDb::cfg_region_signatures`] so
+/// the (expensive) CFG enumeration is cached across salsa revisions.
+///
+/// Without this wrapper, every `optimized_function` body invocation
+/// would re-build the CFG just to enumerate fingerprints — pure
+/// overhead on top of the lift that happens inside
+/// `run_v1_with_targets`.  Caching the result behind a salsa-tracked
+/// query means: identical `IndirectTargets` ⇒ identical
+/// `cfg_region_signatures` result ⇒ no CFG rebuild on repeat queries.
+///
+/// Returns `Arc<Vec<(u64, u64)>>` because `Vec<...>` doesn't implement
+/// `Update` cleanly for salsa's no-eq path.  Errors are stringified
+/// (same convention as [`BfgEntry::result`]).
+#[salsa::tracked(no_eq, returns(ref))]
+fn region_signatures_query<'db>(
+    db: &'db dyn StriderDb,
+    targets: IndirectTargets,
+) -> Arc<std::result::Result<Vec<(u64, u64)>, String>> {
+    let map = targets.map(db);
+    Arc::new(match db.cfg_region_signatures(map.as_ref()) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(format!("{e:?}")),
+    })
+}
+
 /// The top-level tracked query: lift + optimise the function for the
 /// current `(Binary, IndirectTargets)` pair.
 ///
@@ -379,32 +404,31 @@ pub fn optimized_function<'db>(
     let map = targets.map(db);
 
     // Phase 7 Task 7.2 — drive the per-region tracked queries.
-    // We build the CFG once (via the build closure) to enumerate
-    // region fingerprints, then for each region issue a
-    // `region_lift_signature` salsa query.  The first time a
-    // `(addr, fp)` pair is seen, the tracked body runs and the
-    // counter increments; subsequent revisions with the same pair
-    // hit the cache.
+    // `region_signatures_query` is a salsa-tracked wrapper around the
+    // CFG-enumeration call, so the (expensive) CFG rebuild only
+    // happens once per `IndirectTargets` revision.  Repeat queries
+    // with identical inputs hit the cache and the body skips the
+    // entire CFG path.
     //
-    // Errors from `cfg_region_signatures` are NOT fatal here: a
-    // failure to enumerate signatures means we've lost incremental
+    // Errors from the signatures query are NOT fatal here: a failure
+    // to enumerate signatures means we've lost incremental
     // granularity for this revision, but the BFG can still be lifted
-    // via v1's `run`.  We swallow the error after logging via
-    // `eprintln!` so the orchestrator's parity contract holds even
-    // when (e.g.) the binary fails to load on the signature path
-    // but succeeds on the lift path — an unlikely but possible
-    // skew.
-    match db.cfg_region_signatures(map.as_ref()) {
+    // via v1's `run`.  We swallow the error after logging so the
+    // orchestrator's parity contract holds even when (e.g.) the
+    // binary fails to load on the signature path but succeeds on the
+    // lift path — an unlikely but possible skew.
+    let sigs_arc = region_signatures_query(db, targets).clone();
+    match sigs_arc.as_ref() {
         Ok(sigs) => {
             for (addr, fp) in sigs {
-                let key = RegionKey::new(db, addr, fp);
+                let key = RegionKey::new(db, *addr, *fp);
                 let _ = region_lift_signature(db, key);
             }
         }
-        Err(e) => {
+        Err(msg) => {
             eprintln!(
                 "salsa optimized_function: cfg_region_signatures failed; \
-                 proceeding without per-region cache for this revision: {e:?}"
+                 proceeding without per-region cache for this revision: {msg}"
             );
         }
     }
