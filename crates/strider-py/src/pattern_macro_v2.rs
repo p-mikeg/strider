@@ -71,7 +71,7 @@ pub struct StackStorePatDef {
     /// builder).  Fails with `PatternError` if the inner pattern
     /// fails to finalise (e.g. a reserved capture name).
     #[field(accepts = "Pat", arg = "p")]
-    data: Option<pattern::Pat>,
+    data: Option<strider_analyze::pattern::Pat>,
 
     /// Match only stack-stores in the given address space.  Spaces
     /// are produced by `VnSpace.ram()` / `VnSpace.register()` /
@@ -81,7 +81,7 @@ pub struct StackStorePatDef {
 }
 
 /// Register the V3 (macro-driven) type into the `strider.pattern`
-/// submodule.  Called from `pattern::register` next to the V2
+/// submodule.  Called from `strider_analyze::pattern::register` next to the V2
 /// reference registration.
 pub(crate) fn register(m: &pyo3::Bound<'_, pyo3::types::PyModule>) -> pyo3::PyResult<()> {
     use pyo3::prelude::*;

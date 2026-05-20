@@ -39,7 +39,7 @@ mod common;
 
 use std::collections::HashSet;
 
-use pattern::{
+use strider_analyze::pattern::{
     CastMask, Matcher, Pat, call, function_arg,
 };
 

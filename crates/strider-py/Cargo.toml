@@ -59,7 +59,7 @@ pyo3-stub-gen = { version = "=0.7.0", default-features = false }
 anyhow = { workspace = true }
 
 strider = { workspace = true }
-pattern = { workspace = true }
+strider-analyze = { workspace = true }
 strider-pattern-macros = { workspace = true }
 opt = { workspace = true }
 strider-ir = { workspace = true }

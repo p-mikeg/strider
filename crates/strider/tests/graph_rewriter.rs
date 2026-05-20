@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
-use pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
+use strider_analyze::pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::{GraphRewriter, SleighArch, Strider};
@@ -158,8 +158,8 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
     let cmp_var = Capture::new();
     let rule = rewrite_rule(
         // LHS: int_eq(any, int_const(K_0))
-        pattern::int_eq(pattern::any(), int_const(targets[0] as i128)).capture(cmp_var),
-        pattern::bool_const(true),
+        strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), int_const(targets[0] as i128)).capture(cmp_var),
+        strider_analyze::pattern::bool_const(true),
     );
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
     let n = rewriter.apply_rule(rule)?;
@@ -201,8 +201,8 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
     // be unreachable, and the rest collapse via dead-branch-elim).
     let pipeline = strider.build_optimizer_pipeline();
     let rule_all_false = rewrite_rule(
-        pattern::int_eq(pattern::any(), pattern::any_int_const(pattern::Capture::new())),
-        pattern::bool_const(false),
+        strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), strider_analyze::pattern::any_int_const(strider_analyze::pattern::Capture::new())),
+        strider_analyze::pattern::bool_const(false),
     );
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
     let fired = rewriter.apply_rule(rule_all_false)?;
@@ -319,7 +319,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
 
 #[test]
 fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
-    // End-to-end exercise of the `pattern::rewrite_rule(lhs, rhs)`
+    // End-to-end exercise of the `strider_analyze::pattern::rewrite_rule(lhs, rhs)`
     // flow with a non-trivial Capture capture on both sides.  Pattern:
     // `add(var(x), int_const(0)) -> var(x)`.  The capture binds the
     // matched LHS subtree's left input on the LHS, and the RHS uses

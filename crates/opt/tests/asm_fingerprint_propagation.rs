@@ -160,7 +160,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     );
 }
 
-/// regression — `pattern::rewrite_rule` must
+/// regression — `strider_analyze::pattern::rewrite_rule` must
 /// attribute every fresh non-exempt node in a multi-node RHS, not only
 /// the outermost root.
 ///

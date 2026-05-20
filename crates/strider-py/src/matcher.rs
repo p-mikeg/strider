@@ -1,11 +1,11 @@
 //! `PyMatch` — result wrapper for a successful pattern match.
 //!
-//! The Rust `pattern::Matcher` borrows the BuiltFunctionGraph
+//! The Rust `strider_analyze::pattern::Matcher` borrows the BuiltFunctionGraph
 //! immutably for its lifetime; we cannot store one across Python
 //! method calls without an unsafe lifetime extension.  Instead each
 //! call constructs a fresh `Matcher`, runs the query, and converts
-//! every `pattern::Match` to a `PyMatch` that carries:
-//! - The `pattern::Match` itself (for capture lookup).
+//! every `strider_analyze::pattern::Match` to a `PyMatch` that carries:
+//! - The `strider_analyze::pattern::Match` itself (for capture lookup).
 //! - A `Py<PyGraph>` reference so accessors like `get_uint` can
 //!   re-borrow the graph and call `Match::get_uint(c, &graph)`.
 //!
@@ -21,7 +21,7 @@ use crate::pattern::{intern_str, PyCapture};
 /// Result of a successful pattern match.
 #[pyclass(name = "Match", module = "strider")]
 pub struct PyMatch {
-    pub(crate) inner: pattern::Match,
+    pub(crate) inner: strider_analyze::pattern::Match,
     pub(crate) graph: Py<PyGraph>,
 }
 
@@ -34,7 +34,7 @@ pub enum CaptureKey<'py> {
 }
 
 impl CaptureKey<'_> {
-    fn resolve(self) -> PyResult<pattern::Capture> {
+    fn resolve(self) -> PyResult<strider_analyze::pattern::Capture> {
         match self {
             CaptureKey::Capture(c) => Ok(c.borrow().inner),
             CaptureKey::Str(s) => intern_str(s.as_str()),
@@ -49,7 +49,7 @@ impl PyMatch {
     /// the key → borrow the PyGraph → read the inner RwLock → poison-map).
     fn with_graph<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
     where
-        F: FnOnce(pattern::Capture, &strider_ir::BuiltFunctionGraph) -> R,
+        F: FnOnce(strider_analyze::pattern::Capture, &strider_ir::BuiltFunctionGraph) -> R,
     {
         let cap = key.resolve()?;
         let g = self.graph.borrow(py);

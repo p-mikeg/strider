@@ -48,14 +48,14 @@ use crate::sleigh::PyVnSpace;
 /// Inner state of [`PyStackStorePatV2`].  Held inside an `Arc<Mutex<…>>`
 /// on the `#[pyclass]` so every Python-facing `&self` method can lock
 /// + mutate.  The `Send + Sync` boundary is honoured automatically:
-/// `PyVnSpace::inner` is `Copy + Send`, `pattern::Pat` is already used
+/// `PyVnSpace::inner` is `Copy + Send`, `strider_analyze::pattern::Pat` is already used
 /// from multiple threads in the v1 mirror, and `PyObject` (the closure
 /// for `.when(f)`) is `Send + Sync` per PyO3's contract.
 #[derive(Default)]
 struct StackStoreInner {
     offset: Option<i64>,
     offset_any: Option<BTreeSet<i64>>,
-    data: Option<pattern::Pat>,
+    data: Option<strider_analyze::pattern::Pat>,
     space: Option<rsleigh::VnSpace>,
     /// `.when(f)` closure storage.  Held as a raw `PyObject` because
     /// the predicate is invoked via `wrap_when_for_reference` at
@@ -68,7 +68,7 @@ struct StackStoreInner {
     /// `.capture(c)` storage.  Honoured at `finalise()` time by
     /// wrapping the assembled pattern in `Pat::capture(c)`.  The
     /// macro-generated form will emit identical wiring.
-    capture: Option<pattern::Capture>,
+    capture: Option<strider_analyze::pattern::Capture>,
 }
 
 /// Macro-emission reference for `StackStorePat`.  Hand-authored to
@@ -86,14 +86,14 @@ pub struct PyStackStorePatV2 {
 }
 
 impl PyStackStorePatV2 {
-    /// Build the underlying `pattern::Pat` from the accumulated
+    /// Build the underlying `strider_analyze::pattern::Pat` from the accumulated
     /// builder state.  Called by `.into_pat()` (Python) and by
     /// `PatLike::StackStorePatV2` (the `PatLike` enum the v1 mirror
     /// dispatches on for nested-builder arguments).  Locks the
     /// `Mutex` once and reads every field; non-set fields fall back
-    /// to the v1 default (`pattern::stack_store()` with no
+    /// to the v1 default (`strider_analyze::pattern::stack_store()` with no
     /// constraints).
-    pub(crate) fn finalise(&self) -> pattern::Pat {
+    pub(crate) fn finalise(&self) -> strider_analyze::pattern::Pat {
         // PoisonError recovery: lock could only be poisoned if a
         // previous `&self` method panicked mid-mutation, which is
         // unreachable under the current implementations (every
@@ -105,7 +105,7 @@ impl PyStackStorePatV2 {
             .inner
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        let mut b = pattern::stack_store();
+        let mut b = strider_analyze::pattern::stack_store();
         if let Some(s) = guard.space {
             b = b.space(s);
         }
@@ -121,9 +121,9 @@ impl PyStackStorePatV2 {
         if let Some(ref p) = guard.data {
             b = b.data(p.clone());
         }
-        let mut pat: pattern::Pat = b.into();
+        let mut pat: strider_analyze::pattern::Pat = b.into();
         if let Some(c) = guard.capture {
-            use pattern::IntoPat;
+            use strider_analyze::pattern::IntoPat;
             pat = pat.capture(c);
         }
         if let Some(ref f) = guard.when {
@@ -281,7 +281,7 @@ pub fn stack_store_v2(
 }
 
 /// Register the v2 reference type into the `strider.pattern`
-/// submodule.  Called from `pattern::register` once both v1 and v2
+/// submodule.  Called from `strider_analyze::pattern::register` once both v1 and v2
 /// shapes have been added.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStackStorePatV2>()?;

@@ -12,7 +12,6 @@ strider-ir.workspace = true
 cfg.workspace = true
 opt.workspace = true
 pcode-lift.workspace = true
-pattern.workspace = true
 strider-lift.workspace = true
 # Phase 3 Task 3.1c: orchestrator + Strider + indirect_resolve + rewrite
 # moved into strider-analyze.  This crate re-exports them from

@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pattern::{Matcher, call_other};
+use strider_analyze::pattern::{Matcher, call_other};
 use rsleigh::mem_readers::BufMemReader;
 
 #[test]
@@ -57,7 +57,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let mut found_node: Option<strider_ir::node::NodeId> = None;
     let mut found_name: Option<&'static str> = None;
     for n in cpuid_names {
-        let pat = pattern::Pat::from(call_other().name(n));
+        let pat = strider_analyze::pattern::Pat::from(call_other().name(n));
         let matches = Matcher::new(&outcome.graph).find_all(&pat);
         if let Some(m) = matches.first() {
             found_node = Some(m.root());
@@ -105,7 +105,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
         .expect("cfg");
     let outcome = strider_h.analyze_cfg(&cfg).expect("analyze_cfg");
 
-    let pat = pattern::Pat::from(call_other().name("UnkSytemRegRead"));
+    let pat = strider_analyze::pattern::Pat::from(call_other().name("UnkSytemRegRead"));
     let matches = Matcher::new(&outcome.graph).find_all(&pat);
     assert_eq!(
         matches.len(),

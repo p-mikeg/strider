@@ -62,7 +62,7 @@ fn fixed_point_limit_exceeded() -> opt::Result<()> {
     impl Optimizer for AlwaysChanged {
         fn optimize(
             &self,
-            _ctx: &mut pattern::RewriteCtx<'_>,
+            _ctx: &mut strider_analyze::pattern::RewriteCtx<'_>,
         ) -> opt::Result<OptimizationResult> {
             Ok(OptimizationResult::Changed)
         }

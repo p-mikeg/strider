@@ -327,7 +327,7 @@ impl PyGraph {
         let pat = pat.into_pat()?;
         let g_borrow = slf.borrow(py);
         let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = pattern::Matcher::new(&graph_guard);
+        let mut matcher = strider_analyze::pattern::Matcher::new(&graph_guard);
         if ignore_casts {
             matcher = matcher.ignore_casts();
         } else if let Some(m) = ignore_casts_mask {
@@ -395,14 +395,14 @@ impl PyGraph {
                 "find_all_requirements: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
-        let mut owned: Vec<pattern::Pat> = Vec::with_capacity(pats.len());
+        let mut owned: Vec<strider_analyze::pattern::Pat> = Vec::with_capacity(pats.len());
         for p in pats {
             owned.push(p.into_pat()?);
         }
-        let pat_refs: Vec<&pattern::Pat> = owned.iter().collect();
+        let pat_refs: Vec<&strider_analyze::pattern::Pat> = owned.iter().collect();
         let g_borrow = slf.borrow(py);
         let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = pattern::Matcher::new(&graph_guard);
+        let mut matcher = strider_analyze::pattern::Matcher::new(&graph_guard);
         if ignore_casts {
             matcher = matcher.ignore_casts();
         } else if let Some(m) = ignore_casts_mask {
@@ -445,7 +445,7 @@ impl PyGraph {
     ) -> PyResult<usize> {
         let lhs = find.into_pat()?;
         let rhs = replace.into_pat()?;
-        let rule = pattern::rewrite_rule(lhs, rhs);
+        let rule = strider_analyze::pattern::rewrite_rule(lhs, rhs);
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
         rewriter.apply_rule(rule).map_err(|e| {
@@ -462,11 +462,11 @@ impl PyGraph {
     ) -> PyResult<usize> {
         // GIL is already held by the #[pymethods] dispatch; take it via
         // the parameter rather than re-acquiring with `Python::with_gil`.
-        let mut rules: Vec<pattern::BoxedRule> = Vec::with_capacity(pairs.len());
+        let mut rules: Vec<strider_analyze::pattern::BoxedRule> = Vec::with_capacity(pairs.len());
         for (lhs, rhs) in pairs {
             let lhs_pat = (*lhs.borrow(py).as_inner()).clone();
             let rhs_pat = (*rhs.borrow(py).as_inner()).clone();
-            rules.push(pattern::boxed_rule(pattern::rewrite_rule(lhs_pat, rhs_pat)));
+            rules.push(strider_analyze::pattern::boxed_rule(strider_analyze::pattern::rewrite_rule(lhs_pat, rhs_pat)));
         }
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);

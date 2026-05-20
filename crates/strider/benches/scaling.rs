@@ -399,7 +399,7 @@ fn bench_wide_jump_table(c: &mut Criterion) {
 }
 
 fn bench_find_all_requirements_shared_capture(c: &mut Criterion) {
-    use pattern::{Capture, Matcher, add, any_int_const, var};
+    use strider_analyze::pattern::{Capture, Matcher, add, any_int_const, var};
 
     let mut group = c.benchmark_group("synthetic/find_all_requirements_shared");
     for n in [100usize, 500, 1_000] {
@@ -411,12 +411,12 @@ fn bench_find_all_requirements_shared_capture(c: &mut Criterion) {
         // matcher's bindings-equality path on every (Add, IntConst)
         // pair where they coincide.
         let x = Capture::new();
-        let pat1: pattern::Pat = add(pattern::any(), var(x)).into();
-        let pat2: pattern::Pat = any_int_const(x);
+        let pat1: strider_analyze::pattern::Pat = add(strider_analyze::pattern::any(), var(x)).into();
+        let pat2: strider_analyze::pattern::Pat = any_int_const(x);
         group.bench_function(format!("n_{n}"), |bnch| {
             bnch.iter(|| {
                 let m = Matcher::new(&fg);
-                let pat_refs: Vec<&pattern::Pat> = vec![&pat1, &pat2];
+                let pat_refs: Vec<&strider_analyze::pattern::Pat> = vec![&pat1, &pat2];
                 let result = m.find_all_requirements(&pat_refs);
                 black_box(result);
             });

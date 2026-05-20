@@ -540,7 +540,7 @@ fn build_inner_struct(def_ident: &Ident, fields: &[Field]) -> TokenStream2 {
         struct #inner_ident {
             #(#field_decls)*
             when: ::core::option::Option<::pyo3::PyObject>,
-            capture: ::core::option::Option<::pattern::Capture>,
+            capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
         }
     }
 }
@@ -680,16 +680,16 @@ fn build_finalise_impl(
             /// `into_inner()` (parity with the v1 hand-written
             /// reference's `intern_table` recovery — keeps the type
             /// usable even after a future panicking method is added).
-            pub(crate) fn finalise(&self) -> ::pattern::Pat {
+            pub(crate) fn finalise(&self) -> ::strider_analyze::pattern::Pat {
                 let guard = self
                     .inner
                     .lock()
                     .unwrap_or_else(|p| p.into_inner());
-                let mut b = ::pattern::#base_builder();
+                let mut b = ::strider_analyze::pattern::#base_builder();
                 #(#apply_fields)*
-                let mut pat: ::pattern::Pat = b.into();
+                let mut pat: ::strider_analyze::pattern::Pat = b.into();
                 if let ::core::option::Option::Some(c) = guard.capture {
-                    use ::pattern::IntoPat;
+                    use ::strider_analyze::pattern::IntoPat;
                     pat = pat.capture(c);
                 }
                 if let ::core::option::Option::Some(ref f) = guard.when {

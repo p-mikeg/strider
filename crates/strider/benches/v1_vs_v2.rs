@@ -155,7 +155,7 @@ fn run_v2_for_function(fn_name: &str) -> strider_ir::BuiltFunctionGraph {
 // ── Pattern application ──────────────────────────────────────────────────────
 //
 // Mirrors the user-workflow tail: after analysis, scan for every
-// `pattern::call()`.  Cheap relative to the lift, so the bench's cold
+// `strider_analyze::pattern::call()`.  Cheap relative to the lift, so the bench's cold
 // path is dominated by analysis; we include the pattern step so the
 // bench reflects the full user workflow.
 
