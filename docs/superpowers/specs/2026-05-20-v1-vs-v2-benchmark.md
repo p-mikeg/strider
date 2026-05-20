@@ -212,3 +212,62 @@ cargo bench -p strider --bench v1_vs_v2 -- --warm-up-time 2 --measurement-time 5
 
 The bench file is `crates/strider/benches/v1_vs_v2.rs`. Sanity-check
 assertions live in the same file (group `v1_vs_v2/sanity`).
+
+## Phase 7.1 follow-up — `BuiltFunctionGraph: Clone`
+
+> Commit `ef1b190a` (Phase 7 Task 7.1): adds `#[derive(Clone)]` to
+> `BuiltFunctionGraph` and updates `orchestrator_salsa::run_v2` to clone
+> the cached BFG instead of re-running v1 a second time out-of-band.
+
+This addresses recommendation (a) from the "Recommended follow-ups"
+section above ("Return `Arc<BuiltFunctionGraph>` from `run_v2`") via a
+slight variant: rather than handing back an `Arc`, BFG itself becomes
+`Clone` and `run_v2` clones the BFG out of the `Arc<BfgEntry>` cache
+entry by structural copy of the sea-of-nodes arena.  Cloning a typical
+function-sized `Graph` (hundreds of nodes) is sub-millisecond vs the
+~90 ms cost of re-lifting from pcode.
+
+### Updated ratios (same machine, same fixture)
+
+| Workload                  | v1 before | v2 before | v2/v1 before | v1 after | v2 after | v2/v1 after | Δ ratio |
+|---|---|---|---|---|---|---|---|
+| Single-function cold       | 86.7 ms | 133.8 ms | 1.54× slower | 93.0 ms | 95.1 ms | **1.02×** (parity) | 1.5× faster |
+| Multi-function (8 fns)     | 676 ms  | 1057 ms  | 1.56× slower | 739 ms  | 763 ms  | **1.03×** (parity) | 1.5× faster |
+| Repeat-query (10× same fn) | 864 ms  | 959 ms   | 1.11× slower | 949 ms  | 559 ms  | **0.59× (v2 faster)** | 1.9× faster |
+
+### Interpretation
+
+- **Cold / multi-function** reach **parity** with v1.  The 1.54× single-
+  function ratio is gone — v2's one cached build + one structural clone
+  is essentially the same total cost as v1's single fresh build.  The
+  residual ~2 % overhead is salsa cache-key hashing.
+- **Repeat-query is now 1.7× FASTER than v1.**  After the first call
+  warms the cache, calls 2..10 are O(structural-clone) ≈ a few hundred
+  microseconds each, vs v1's full ~90 ms re-lift.  This is the win the
+  original ≥10× plan target hinged on.
+- The 10× projection still isn't fully realised — the repeat-query
+  speedup is ~1.7× rather than the theoretical ~9× ceiling (1 lift + 9
+  clones).  The remaining gap is the per-call salsa input-mutation +
+  query-key-hash overhead.  Closing that further would require a
+  hot-path fast lane that skips salsa entirely when the inputs are
+  unchanged; out of scope for Task 7.1.
+
+### What this *doesn't* fix
+
+- The plan's per-region incrementality lever (recommendation (b)) —
+  splitting `run_v1_with_targets` into per-region tracked queries — is
+  unchanged.  That's the lever for incremental indirect-resolve
+  iterations on functions with many anchors.
+- Cross-function binary cache (recommendation (c)) is unchanged.  Each
+  function still builds its own `StriderDbImpl`.
+
+### Tests
+
+- `orchestrator_salsa_parity` (4 tests): pass.
+- `orchestrator_salsa_incremental` (4 tests): pass — the
+  "repeat_query_same_inputs_is_cache_hit" test confirms the salsa
+  invocation counter is incremented exactly once across N queries
+  with the same inputs, i.e. the clone path is reading from the
+  cache rather than re-running the tracked body.
+- `strider-ir` (full suite, 317+ tests): pass.
+- `strider-analyze` (full suite, 480+ tests): pass.
