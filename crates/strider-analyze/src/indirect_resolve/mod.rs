@@ -1,5 +1,5 @@
 //! IR-level (post-IR) resolver for `BranchIndirect` placeholders that
-//! the cfg-time mini-graph resolver (in `cfg::indirect_resolve`) couldn't
+//! the cfg-time mini-graph resolver (in `strider_lift::cfg::indirect_resolve`) couldn't
 //! classify.
 //!
 //! The IR-level indirect-branch resolver inspects the producer of each
@@ -9,7 +9,7 @@
 //! resolutions, and `KnownBits` propagation — none of which the
 //! single-region cfg-time mini-graph can see.
 
-pub use cfg::test_api::ResolvedTargets;
+pub use strider_lift::cfg::ResolvedTargets;
 
 mod classify;
 pub mod inplace;

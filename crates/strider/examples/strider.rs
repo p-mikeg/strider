@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         strider::CallingConvention::x86_cdecl(),
     )?;
 
-    let cfg_options = cfg::OptionsBuilder::new()
+    let cfg_options = strider_lift::cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
         .build();
 
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("'{symbol}' symbol not found in binary {binary_path}"))?
         .address();
 
-    let cfg = cfg::Builder::for_arch(&arch, sleigh, addr, cfg_options).build()?;
+    let cfg = strider_lift::cfg::Builder::for_arch(&arch, sleigh, addr, cfg_options).build()?;
 
     let dot = strider_ir::dot::GraphDot::new(cfg.dot_dumper(), strider_ir::dot::DotStyle::dark_cfg());
     dot.dump_as_html("cfg.html")?;

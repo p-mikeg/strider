@@ -52,7 +52,7 @@ pub(crate) fn build_switch_if_ladder(
     builder: &mut strider_ir::FunctionBuilder,
     idx: strider_ir::Value,
     targets_and_regions: &[(u64, strider_ir::RegionId)],
-    caller_region: cfg::RegionId,
+    caller_region: strider_lift::cfg::RegionId,
 ) -> Result<()> {
     let n = targets_and_regions.len();
     if n == 0 {
@@ -107,8 +107,8 @@ pub(crate) fn build_switch_if_ladder(
 impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     pub(super) fn handle_branch(
         &mut self,
-        region_id: cfg::RegionId,
-        region_lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
+        region_id: strider_lift::cfg::RegionId,
+        region_lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
         // Most unconditional p-code `Branch` ops correspond to a `Branch`
         // CFG edge, which we lower into an explicit IR branch.  The cfg
@@ -131,13 +131,13 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 
     /// Lifts a region whose CFG terminator is
-    /// [`cfg::RegionTerminator::Switch`] into an If-ladder of
+    /// [`strider_lift::cfg::RegionTerminator::Switch`] into an If-ladder of
     /// `IntCmpOp::Equal + If` nodes against each target.
     ///
     /// `region_id` is the dispatch region (the one terminated by
     /// the Switch).  For each target machine address in `targets`,
     /// the helper looks up the corresponding CFG region via
-    /// [`cfg::Cfg::region_id_at_start`] and resolves it to an IR
+    /// [`strider_lift::cfg::Cfg::region_id_at_start`] and resolves it to an IR
     /// region through `region_lookup`.
     ///
     /// # Errors
@@ -149,11 +149,11 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// `create_region`.
     pub(crate) fn handle_switch(
         &mut self,
-        region_id: cfg::RegionId,
+        region_id: strider_lift::cfg::RegionId,
         target_vn: &rsleigh::Vn,
         targets: &[u64],
         target_value: Option<strider_ir::Value>,
-        region_lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
+        region_lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
         if targets.is_empty() {
             bail!("switch terminator at region {region_id:?} has no targets");
@@ -166,7 +166,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let mut targets_and_regions: Vec<(u64, strider_ir::RegionId)> =
             Vec::with_capacity(targets.len());
         for &target in targets {
-            let machine_addr = cfg::MachineInsnAddr::new(target);
+            let machine_addr = strider_lift::cfg::MachineInsnAddr::new(target);
             let cfg_region = self
                 .cfg
                 .region_id_at_start(machine_addr)
@@ -187,9 +187,9 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     pub(super) fn handle_cond_branch(
         &mut self,
-        region_id: cfg::RegionId,
+        region_id: strider_lift::cfg::RegionId,
         insn: &rsleigh::Insn,
-        region_lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
+        region_lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
         let cond_raw = self.read_vn(&insn.inputs[1])?;
         // Most archs feed `If` a Bool-typed flag-register or compare result,
@@ -253,14 +253,14 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 
     /// Lifts a region whose CFG terminator is
-    /// [`cfg::RegionTerminator::TailCall`] as
+    /// [`strider_lift::cfg::RegionTerminator::TailCall`] as
     /// `Call(IntConst(target)) + Return`.  The per-region loop
     /// SKIPS the trailing `Opcode::Branch` insn (see
     /// `pipeline.rs::SpecialTerm::skips_opcode`); this method is the
     /// post-loop handler that emits the `Call + Return` pair.
     ///
     /// This is the lowering the
-    /// [`cfg::RegionTerminator::TailCall`] doc-comment promises: a
+    /// [`strider_lift::cfg::RegionTerminator::TailCall`] doc-comment promises: a
     /// direct branch out of the function range is semantically a
     /// tail call, so the IR carries the explicit Call (with the
     /// resolved constant target) and a Return that hands the
@@ -297,7 +297,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 
     /// Lifts a region whose CFG terminator is
-    /// [`cfg::RegionTerminator::UnresolvedIndirectBranch`] by emitting
+    /// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] by emitting
     /// an `IndirectBranch(target_value)` placeholder anchoring
     /// `target_vn`'s lifted value in the IR.  The indirect-branch
     /// resolver inspects this placeholder after the optimiser runs.
@@ -314,7 +314,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     pub(crate) fn handle_unresolved_indirect_branch(
         &mut self,
         target_vn: &rsleigh::Vn,
-        addr: cfg::PcodeInsnAddr,
+        addr: strider_lift::cfg::PcodeInsnAddr,
     ) -> Result<()> {
         // Read target_vn through pcode-lift's register-aliasing path
         // so sub-register dispatches (e.g. `jmp *eax` on x86-64) fold
@@ -385,8 +385,8 @@ mod tests {
     /// Returns the unique cfg-region-id sentinel.  The helper only
     /// uses it inside the `SwitchHasNoTargets` error payload, so any
     /// value is fine for these tests.
-    fn dummy_caller_region() -> cfg::RegionId {
-        cfg::RegionId::new(0)
+    fn dummy_caller_region() -> strider_lift::cfg::RegionId {
+        strider_lift::cfg::RegionId::new(0)
     }
 
     /// Count `If` nodes via the post-build preorder walk.

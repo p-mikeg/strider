@@ -11,10 +11,6 @@ strider-ir = { workspace = true }
 # powers the orchestrator (Task 3.1c) via the lifter/region driver
 # crates re-exported through strider-lift.
 strider-lift = { workspace = true }
-# The `cfg` shim re-exports `strider_lift::cfg` — used directly so the
-# orchestrator's `use cfg::*` imports keep their original shape after
-# the Phase 3.1c move from `strider`.
-cfg = { workspace = true }
 # Absorbed from `opt` (Phase 3 Task 3.0).
 rsleigh.workspace = true
 target.workspace = true

@@ -1,7 +1,7 @@
 //! `PySleigh` — wraps a constructed `rsleigh::Sleigh` keyed off a
 //! `PySleighArch` + a memory reader (either `PyMemoryMap` or any
 //! `MemReader` subclass).  Holds the `Sleigh` in an `Option` so it can
-//! be moved into a downstream consumer (`cfg::Builder`, which takes
+//! be moved into a downstream consumer (`strider_lift::cfg::Builder`, which takes
 //! the Sleigh by value) and then put back when the consumer hands it
 //! back via `Cfg::sleigh`.
 
@@ -14,14 +14,14 @@ use crate::reader::{AnyMemReader, ReaderInput};
 /// A constructed Sleigh keyed off a (SleighArch, reader) pair.
 ///
 /// The inner `Sleigh<AnyMemReader>` is held in an `Option` so it can be
-/// moved out (into a `cfg::Builder`, for example) and put back later
+/// moved out (into a `strider_lift::cfg::Builder`, for example) and put back later
 /// via `put_inner`.  While the inner is `None` the wrapper is "in use"
 /// by some downstream consumer; further moves fail with `LiftError`.
 #[pyclass(name = "Sleigh", module = "strider")]
 pub struct PySleigh {
     pub(crate) inner: Option<rsleigh::Sleigh<AnyMemReader>>,
     pub(crate) arch_name: &'static str,
-    /// Retained so `build_cfg` can route through `cfg::Builder::for_arch`
+    /// Retained so `build_cfg` can route through `strider_lift::cfg::Builder::for_arch`
     /// (carrying the actual arch preset, vs. the deleted `Builder::new`'s
     /// default `ArchPreset::X86_64` which used to silently mis-classify
     /// CallOther on non-x86 targets).
@@ -29,7 +29,7 @@ pub struct PySleigh {
     /// Cached register table.  `Sleigh::regs()` only requires `&self`,
     /// but we eagerly cache it at construction time so callers can read
     /// the registers after the inner Sleigh has been moved into a
-    /// downstream consumer (e.g. `cfg::Builder`).
+    /// downstream consumer (e.g. `strider_lift::cfg::Builder`).
     pub(crate) regs: rsleigh::SleighRegs,
 }
 

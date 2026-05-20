@@ -165,7 +165,7 @@ pub trait StriderDb: salsa::Database {
     ///
     /// # Errors
     ///
-    /// Surfaces any error from the underlying `cfg::Builder` or
+    /// Surfaces any error from the underlying `strider_lift::cfg::Builder` or
     /// `Sleigh` construction in the build closure.
     fn cfg_region_signatures(
         &self,
@@ -856,7 +856,7 @@ where
         &self,
         targets: &BTreeMap<u64, BTreeSet<u64>>,
     ) -> Result<Vec<(u64, u64)>> {
-        use cfg::{Builder, Cfg, OptionsBuilder};
+        use strider_lift::cfg::{Builder, Cfg, OptionsBuilder};
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -884,24 +884,24 @@ where
         }
         let cfg_opts = opts_builder.build();
 
-        let resolver: Arc<dyn cfg::IndirectTargetResolver<R>> =
+        let resolver: Arc<dyn strider_lift::cfg::IndirectTargetResolver<R>> =
             Arc::new(crate::opt::indirect_resolver::MiniIrIndirectResolver);
         // Convert BTreeMap → HashMap with PcodeInsnAddr keys for
         // `with_known_targets`.  The map shape is BTreeMap<u64,
         // BTreeSet<u64>> (anchor pcode-addr → resolved target
         // addresses); we wrap as ResolvedTargets::Single when the set
         // is a singleton, otherwise Multiple.
-        let known_targets: HashMap<cfg::PcodeInsnAddr, cfg::ResolvedTargets> = targets
+        let known_targets: HashMap<strider_lift::cfg::PcodeInsnAddr, strider_lift::cfg::ResolvedTargets> = targets
             .iter()
             .map(|(addr, set)| {
                 let resolved = if set.len() == 1 {
-                    cfg::ResolvedTargets::Single(
+                    strider_lift::cfg::ResolvedTargets::Single(
                         *set.iter().next().expect("len==1 set has one"),
                     )
                 } else {
-                    cfg::ResolvedTargets::Multiple(set.iter().copied().collect())
+                    strider_lift::cfg::ResolvedTargets::Multiple(set.iter().copied().collect())
                 };
-                (cfg::PcodeInsnAddr::at_machine_start(*addr), resolved)
+                (strider_lift::cfg::PcodeInsnAddr::at_machine_start(*addr), resolved)
             })
             .collect();
 

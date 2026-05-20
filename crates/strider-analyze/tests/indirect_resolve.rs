@@ -15,7 +15,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use cfg::{MachineInsnAddr, PcodeInsnAddr, RegionInstruction, ResolvedTargets};
+use strider_lift::cfg::{MachineInsnAddr, PcodeInsnAddr, RegionInstruction, ResolvedTargets};
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
 use strider_analyze::indirect_resolver::resolve_indirect_target;

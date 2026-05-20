@@ -4,7 +4,7 @@
 //! classifier under a stable strider path; the underlying logic
 //! lives in `opt`.
 
-use cfg::test_api::ResolvedTargets;
+use strider_lift::cfg::ResolvedTargets;
 use strider_ir::BuiltFunctionGraph;
 use strider_ir::node::NodeOutputId;
 use crate::opt::ReadOnlyMemory;
@@ -86,7 +86,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use cfg::test_api::ResolvedTargets;
+    use strider_lift::cfg::ResolvedTargets;
     use strider_ir::FunctionBuilder;
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
     use strider_ir::test_utils::{reg_vn as fake_reg_vn, SENTINEL_LIFT_ADDR};

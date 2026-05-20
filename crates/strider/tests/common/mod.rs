@@ -207,7 +207,7 @@ fn lift_for_pipeline(
     let rom_for_cfg: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
-    let mut cfg_opts_b = cfg::OptionsBuilder::new()
+    let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
         .set_read_only_memory(rom_for_cfg);
     if let Some(lr) = ana.calling_convention().link_register_vn() {
@@ -218,7 +218,7 @@ fn lift_for_pipeline(
     // from `sleigh_arch` atomically.  (The earlier `Builder::new` /
     // `Builder::with_endianness` ctors silently defaulted the preset
     // to `X86_64` and were deleted in round 12 W5c.)
-    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
+    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let graph = ana.analyze_cfg(&cfg)

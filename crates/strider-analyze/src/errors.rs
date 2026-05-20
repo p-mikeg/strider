@@ -23,7 +23,7 @@
 //! `strider.errors.*Error` subclass of `StriderError`, so Python
 //! callers get the same selectivity through `try` / `except`.
 
-use cfg::PcodeInsnAddr;
+use strider_lift::cfg::PcodeInsnAddr;
 
 /// The orchestrator's indirect-branch fixed-point loop terminated with
 /// at least one branch still unresolved.  `addr` is the program point

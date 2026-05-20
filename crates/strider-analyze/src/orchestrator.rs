@@ -43,7 +43,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{anyhow, bail, Result};
 
-use cfg::{Builder, Cfg, DecodeCache, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::cfg::{Builder, Cfg, DecodeCache, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeId, NodeOutputId};
 use crate::opt::ReadOnlyMemory;
 
@@ -65,8 +65,8 @@ where
     pub strider: &'a Strider,
     /// Function entry address.  Newtype prevents accidental swap with
     /// `fn_max_size` at struct-literal construction sites.  Construct
-    /// via `cfg::MachineInsnAddr::new(addr)` or `addr.into()`.
-    pub start_addr: cfg::MachineInsnAddr,
+    /// via `strider_lift::cfg::MachineInsnAddr::new(addr)` or `addr.into()`.
+    pub start_addr: strider_lift::cfg::MachineInsnAddr,
     /// The Sleigh context, owned and threaded through every iteration
     /// of the fixed-point loop.  Re-using one Sleigh across iterations
     /// avoids re-loading the SLA spec on every CFG rebuild.
@@ -112,7 +112,7 @@ where
 /// separately.
 struct RunOpts<'a> {
     strider: &'a Strider,
-    start_addr: cfg::MachineInsnAddr,
+    start_addr: strider_lift::cfg::MachineInsnAddr,
     rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
@@ -283,7 +283,7 @@ where
     sp_vn: Option<rsleigh::Vn>,
     /// Decode cache shared across CFG rebuilds.  The Sleigh handle
     /// persists for the whole `run`, so this cache stays valid for
-    /// every iteration; threaded into each fresh `cfg::Builder` so
+    /// every iteration; threaded into each fresh `strider_lift::cfg::Builder` so
     /// machine-instruction decodes are paid once per address per run.
     decode_cache: DecodeCache,
     // TODO: remove after incremental indirect-resolve lands —
@@ -650,10 +650,10 @@ where
 
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// function's address range `[start_addr, start_addr + fn_max_size)`.
-/// Delegates to [`cfg::is_addr_tail_call`] so the cfg-time and orchestrator
+/// Delegates to [`strider_lift::cfg::is_addr_tail_call`] so the cfg-time and orchestrator
 /// classifications stay in lockstep.
 fn is_tail_call(target: u64, opts: &RunOpts<'_>) -> bool {
-    cfg::is_addr_tail_call(
+    strider_lift::cfg::is_addr_tail_call(
         target,
         opts.start_addr.as_u64(),
         opts.fn_max_size,
@@ -962,7 +962,7 @@ where
     // stateless so a single static `Arc` would suffice; we allocate
     // per-call for clarity since CFG rebuilds are rare.
     let resolver: std::sync::Arc<
-        dyn cfg::IndirectTargetResolver<R>,
+        dyn strider_lift::cfg::IndirectTargetResolver<R>,
     > = std::sync::Arc::new(crate::opt::indirect_resolver::MiniIrIndirectResolver);
     let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.as_u64(), cfg_opts)
         .with_known_targets(known_targets.clone())
@@ -976,7 +976,7 @@ where
     // the new ones).  At iter 0, scans every region.  Region splits
     // leave the cache slightly conservative — see the field doc on
     // LoopState::vn_cache for why that's safe.
-    let regions_now: Vec<&cfg::Region> = cfg.regions().collect();
+    let regions_now: Vec<&strider_lift::cfg::Region> = cfg.regions().collect();
     for region in regions_now.iter().skip(*vn_cache_region_count) {
         for wrapped in region.insns.iter() {
             for vn in wrapped.insn.all_vns() {
@@ -1045,7 +1045,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use cfg::MachineInsnAddr;
+    use strider_lift::cfg::MachineInsnAddr;
 
     fn pcode_addr(machine: u64) -> PcodeInsnAddr {
         PcodeInsnAddr::new(MachineInsnAddr::new(machine), 0)

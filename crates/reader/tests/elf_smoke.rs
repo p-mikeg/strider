@@ -11,7 +11,7 @@
 //!     make -C fixtures
 //!
 //! Tests panic with a clear message if the binary is absent — matching
-//! the convention used by `cfg::cfg_integration` and `strider::run`.
+//! the convention used by `strider_lift::cfg::cfg_integration` and `strider::run`.
 
 use object::Object;
 use reader::{ElfFileMemReader, ReadOnlyMemory};

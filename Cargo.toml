@@ -14,7 +14,6 @@ edition = "2024"
 
 [workspace.dependencies]
 strider = { path = "crates/strider" }
-cfg = { path = "crates/cfg" }
 reader = { path = "crates/reader" }
 target = { path = "crates/target" }
 strider-ir = { path = "crates/strider-ir" }

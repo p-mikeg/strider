@@ -4,12 +4,12 @@
 //! Verifies the end-to-end fix for commit_creds, do_exit,
 //! do_task_dead, __schedule, etc. on real Linux kernels.  Both arches:
 //! a single trap insn lifts to a region whose terminator is
-//! [`cfg::RegionTerminator::NoReturn`]; no unresolved indirect
+//! [`strider_lift::cfg::RegionTerminator::NoReturn`]; no unresolved indirect
 //! branches surface.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use cfg::{Builder, OptionsBuilder, RegionTerminator};
+use strider_lift::cfg::{Builder, OptionsBuilder, RegionTerminator};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::SleighArch;

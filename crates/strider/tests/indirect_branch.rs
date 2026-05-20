@@ -82,14 +82,14 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let rom_for_cfg: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
-    let mut cfg_opts_b = cfg::OptionsBuilder::new()
+    let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
         .set_read_only_memory(rom_for_cfg);
     if let Some(lr) = ana.calling_convention().link_register_vn() {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
-    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
+    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for indirect_branch_resolved: {e:?}"));
 

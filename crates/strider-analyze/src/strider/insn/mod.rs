@@ -17,13 +17,13 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// opcodes.  Unimplemented opcodes return an error.
     pub(super) fn process_insn<F>(
         &mut self,
-        region_id: cfg::RegionId,
+        region_id: strider_lift::cfg::RegionId,
         insn: &rsleigh::Insn,
-        addr: cfg::PcodeInsnAddr,
+        addr: strider_lift::cfg::PcodeInsnAddr,
         region_lookup: F,
     ) -> Result<()>
     where
-        F: Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
+        F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     {
         // Funnel: every IR node born from this pcode insn picks up the
         // parent machine-instruction address in its asm-fingerprint
@@ -45,12 +45,12 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     fn process_insn_inner<F>(
         &mut self,
-        region_id: cfg::RegionId,
+        region_id: strider_lift::cfg::RegionId,
         insn: &rsleigh::Insn,
         region_lookup: F,
     ) -> Result<()>
     where
-        F: Fn(cfg::RegionId) -> Result<strider_ir::RegionId>,
+        F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     {
         // Try the pcode-lift value lifter first.  It returns `Ok(true)` for
         // value-producing opcodes (`Add`, `Load`, casts, …) and `Ok(false)`
@@ -64,11 +64,11 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         match insn.opcode {
             Opcode::Nop => {}
             Opcode::Branch => {
-                let lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId> = &region_lookup;
+                let lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId> = &region_lookup;
                 self.handle_branch(region_id, lookup)?
             }
             Opcode::CondBranch => {
-                let lookup: &dyn Fn(cfg::RegionId) -> Result<strider_ir::RegionId> = &region_lookup;
+                let lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId> = &region_lookup;
                 self.handle_cond_branch(region_id, insn, lookup)?
             }
             Opcode::Store => self.handle_store(insn)?,

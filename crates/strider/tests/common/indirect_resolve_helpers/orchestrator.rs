@@ -8,7 +8,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
-use cfg::{Builder, OptionsBuilder};
+use strider_lift::cfg::{Builder, OptionsBuilder};
 use strider_ir::BuiltFunctionGraph;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;

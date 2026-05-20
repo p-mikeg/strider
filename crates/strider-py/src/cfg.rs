@@ -1,7 +1,7 @@
-//! `PyCfg` — wraps `cfg::Cfg` and exposes dot rendering.
+//! `PyCfg` — wraps `strider_lift::cfg::Cfg` and exposes dot rendering.
 //!
 //! `build_cfg` consumes the inner `Sleigh` of its `PySleigh` argument
-//! (the Sleigh moves into `cfg::Builder`, then into the resulting
+//! (the Sleigh moves into `strider_lift::cfg::Builder`, then into the resulting
 //! `Cfg`).  The PySleigh wrapper is left "empty" — `inner = None` —
 //! after a successful build.  Subsequent uses of the same PySleigh as
 //! a Sleigh raise `LiftError("Sleigh already in use")`.  `Sleigh.regs`
@@ -19,7 +19,7 @@ use crate::sleigh::PySleigh;
 
 #[pyclass(name = "Cfg", module = "strider")]
 pub struct PyCfg {
-    pub(crate) inner: cfg::Cfg<AnyMemReader>,
+    pub(crate) inner: strider_lift::cfg::Cfg<AnyMemReader>,
 }
 
 #[pyfunction(signature = (sleigh, entry, allow_code_before_start_addr=false, function_max_size=None))]
@@ -37,7 +37,7 @@ pub fn build_cfg(
         .ok_or_else(|| into_lift_err(anyhow::anyhow!("Sleigh already in use")))?;
     drop(sleigh_borrow);
 
-    let mut opts_builder = cfg::OptionsBuilder::new();
+    let mut opts_builder = strider_lift::cfg::OptionsBuilder::new();
     if allow_code_before_start_addr {
         opts_builder = opts_builder.allow_code_before_start_addr();
     }
@@ -55,9 +55,9 @@ pub fn build_cfg(
     // resolver classifies `BranchIndirect` rather than deferring every
     // site via `UnresolvedIndirectBranch`.  Phase 3 Task 3.1.
     let resolver: std::sync::Arc<
-        dyn cfg::IndirectTargetResolver<AnyMemReader>,
+        dyn strider_lift::cfg::IndirectTargetResolver<AnyMemReader>,
     > = std::sync::Arc::new(strider_analyze::opt::indirect_resolver::MiniIrIndirectResolver);
-    let built = cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
+    let built = strider_lift::cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .with_indirect_resolver(resolver)
         .build()
         .map_err(into_lift_err)?;

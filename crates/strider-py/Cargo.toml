@@ -62,7 +62,7 @@ strider = { workspace = true }
 strider-analyze = { workspace = true }
 strider-pattern-macros = { workspace = true }
 strider-ir = { workspace = true }
-cfg = { workspace = true }
+strider-lift = { workspace = true }
 reader = { workspace = true }
 target = { workspace = true }
 rsleigh = { workspace = true }

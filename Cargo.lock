@@ -112,21 +112,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cfg"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "object",
- "petgraph",
- "reader",
- "rsleigh",
- "strider-analyze",
- "strider-ir",
- "strider-lift",
- "target",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1522,7 +1507,6 @@ name = "strider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cfg",
  "criterion",
  "expect-test",
  "insta",
@@ -1544,7 +1528,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags",
- "cfg",
  "cranelift-entity",
  "egg",
  "ethnum",
@@ -1607,7 +1590,6 @@ name = "strider-py"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cfg",
  "object",
  "pyo3",
  "pyo3-stub-gen",
@@ -1616,6 +1598,7 @@ dependencies = [
  "strider",
  "strider-analyze",
  "strider-ir",
+ "strider-lift",
  "strider-pattern-macros",
  "target",
 ]

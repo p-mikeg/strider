@@ -19,7 +19,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use cfg::{Builder, OptionsBuilder};
+use strider_lift::cfg::{Builder, OptionsBuilder};
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
 use strider::SleighArch;
@@ -32,7 +32,7 @@ use strider::SleighArch;
 /// constant write to RAX), so the cfg builder defers via the the cfg-time placeholder lift
 /// fall-through and we end up with the new terminator.
 fn make_unresolved_indirect_branch_cfg(
-) -> (cfg::Cfg<BufMemReader<Vec<u8>>>, SleighArch) {
+) -> (strider_lift::cfg::Cfg<BufMemReader<Vec<u8>>>, SleighArch) {
     let base = 0x1000u64;
     let bytes: Vec<u8> = vec![0xff, 0xe0];
     let arch = SleighArch::x86_64();

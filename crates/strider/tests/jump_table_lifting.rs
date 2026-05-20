@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 
-use cfg::{
+use strider_lift::cfg::{
     Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets,
 };
 use strider_ir::node::NodeKind;

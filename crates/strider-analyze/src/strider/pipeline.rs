@@ -21,7 +21,7 @@ pub(crate) static EMPTY_PER_ADDRESS_CCS: LazyLock<
 #[derive(Debug, Clone)]
 pub struct RegionLiftHandles {
     /// Region's start address.
-    pub start_addr: cfg::PcodeInsnAddr,
+    pub start_addr: strider_lift::cfg::PcodeInsnAddr,
     /// `ControlState` `NodeId` (entry-boundary).
     pub entry_control_state: strider_ir::node::NodeId,
     /// `MemPhi` `NodeId` (entry-boundary).
@@ -58,12 +58,12 @@ pub struct AnalyzeOutcome {
     /// The lifted IR ready for the optimiser pipeline.
     pub graph: strider_ir::BuiltFunctionGraph,
     /// One entry per region whose CFG terminator was
-    /// [`cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
+    /// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode
     /// address to the IR `NodeOutputId` that anchors its dispatch
     /// varnode (`target_vn`) in the placeholder Return.  Empty in
     /// the common case (no deferred branches).
-    pub unresolved_branches: Vec<(cfg::PcodeInsnAddr, strider_ir::Value)>,
+    pub unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::Value)>,
     /// Per-region IR-handle snapshots captured at lift time.  The
     /// orchestrator's per-iteration index uses these to map a
     /// placeholder's pre-edit ctrl input back to the region whose
@@ -116,7 +116,7 @@ impl Default for AnalyzeOptions<'_> {
     }
 }
 
-/// Architecture-level binary analyser that lifts a [`cfg::Cfg`] to an IR
+/// Architecture-level binary analyser that lifts a [`strider_lift::cfg::Cfg`] to an IR
 /// function graph.
 ///
 /// Holds the target architecture description and the resolved calling
@@ -277,7 +277,7 @@ impl Strider {
     /// so that downstream `VarId` numbering is stable across runs.
     pub(crate) fn find_all_unique_vns<R: rsleigh::MemReader>(
         &self,
-        cfg: &cfg::Cfg<R>,
+        cfg: &strider_lift::cfg::Cfg<R>,
     ) -> Vec<rsleigh::Vn> {
         let mut all_vns: std::collections::HashSet<rsleigh::Vn> =
             std::collections::HashSet::new();
@@ -307,7 +307,7 @@ impl Strider {
     /// unsupported opcode or varnode), or IR validation fails.
     pub fn analyze_cfg<R: rsleigh::MemReader>(
         &self,
-        cfg: &cfg::Cfg<R>,
+        cfg: &strider_lift::cfg::Cfg<R>,
     ) -> Result<AnalyzeOutcome> {
         self.analyze_cfg_with(cfg, AnalyzeOptions::default())
     }
@@ -335,7 +335,7 @@ impl Strider {
     /// `FunctionBuilder::build`'s `strider_ir::validate::validate` pass.
     pub fn analyze_cfg_with<R: rsleigh::MemReader>(
         &self,
-        cfg: &cfg::Cfg<R>,
+        cfg: &strider_lift::cfg::Cfg<R>,
         opts: AnalyzeOptions<'_>,
     ) -> Result<AnalyzeOutcome> {
         let all_vns = opts
@@ -347,13 +347,13 @@ impl Strider {
         // Map every CFG region id to its newly-allocated IR region id.
         // Indexed by `RegionId.index()` so the per-instruction loop
         // can resolve in O(1) without cloning the petgraph.
-        let cfg_region_ids: Vec<cfg::RegionId> = cfg.region_ids().collect();
+        let cfg_region_ids: Vec<strider_lift::cfg::RegionId> = cfg.region_ids().collect();
         let max_index = cfg_region_ids.iter().map(|r| r.index()).max().unwrap_or(0);
         let mut region_map: Vec<Option<strider_ir::RegionId>> = vec![None; max_index + 1];
         for cfg_rid in &cfg_region_ids {
             region_map[cfg_rid.index()] = Some(ir_strider.builder.create_region()?);
         }
-        let ir_region_of = |region_id: cfg::RegionId| -> Result<strider_ir::RegionId> {
+        let ir_region_of = |region_id: strider_lift::cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
                 .get(region_id.index())
                 .copied()
@@ -458,12 +458,12 @@ impl Strider {
                 continue;
             };
             match weight {
-                cfg::RegionEdgeKind::Fallthrough => {
+                strider_lift::cfg::RegionEdgeKind::Fallthrough => {
                     ir_strider
                         .builder
                         .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
                 }
-                cfg::RegionEdgeKind::Branch => {
+                strider_lift::cfg::RegionEdgeKind::Branch => {
                     let src_region = cfg
                         .graph()
                         .node_weight(src)
@@ -556,7 +556,7 @@ enum SpecialTerm {
     /// the trailing `BranchIndirect` p-code insn.
     PendingIndirect {
         target_vn: rsleigh::Vn,
-        addr: cfg::PcodeInsnAddr,
+        addr: strider_lift::cfg::PcodeInsnAddr,
     },
     /// Resolved jump table: lifts to an If-ladder dispatching `idx`
     /// against `targets`.  Skip the trailing `BranchIndirect`.
@@ -570,15 +570,15 @@ enum SpecialTerm {
 }
 
 impl SpecialTerm {
-    fn from_terminator(t: &cfg::RegionTerminator) -> Option<Self> {
+    fn from_terminator(t: &strider_lift::cfg::RegionTerminator) -> Option<Self> {
         match t {
-            cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
+            strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
                 Some(SpecialTerm::PendingIndirect {
                     target_vn: *target_vn,
                     addr: *addr,
                 })
             }
-            cfg::RegionTerminator::Switch {
+            strider_lift::cfg::RegionTerminator::Switch {
                 target_vn,
                 targets,
                 target_value,
@@ -587,7 +587,7 @@ impl SpecialTerm {
                 targets.clone(),
                 *target_value,
             )),
-            cfg::RegionTerminator::TailCall { target } => Some(SpecialTerm::TailCall(*target)),
+            strider_lift::cfg::RegionTerminator::TailCall { target } => Some(SpecialTerm::TailCall(*target)),
             _ => None,
         }
     }
@@ -597,7 +597,7 @@ impl SpecialTerm {
     /// dedicated handler.  `PendingIndirect`/`Switch` skip
     /// `BranchIndirect`; `TailCall` skips both `Branch` (the standard
     /// direct-tail-call case) AND `CondBranch` (the
-    /// `cfg::RegionBuilder` collapse path for a conditional jump whose
+    /// `strider_lift::cfg::RegionBuilder` collapse path for a conditional jump whose
     /// successors all leave the function).
     ///
     /// Safe by region-closure invariant: `RegionBuilder::process_new_insn`
@@ -639,7 +639,7 @@ mod tests {
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
             .expect("sleigh");
-        let cfg = cfg::Builder::for_arch(&arch, sleigh, 0x1000, cfg::OptionsBuilder::new().build())
+        let cfg = strider_lift::cfg::Builder::for_arch(&arch, sleigh, 0x1000, strider_lift::cfg::OptionsBuilder::new().build())
             .build()
             .expect("cfg");
         let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");

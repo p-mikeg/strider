@@ -27,7 +27,7 @@
 
 use std::collections::HashMap;
 
-use cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use strider_analyze::pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};

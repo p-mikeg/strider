@@ -8,7 +8,7 @@
 //!
 //! [`ResolvedTargets`] is re-exported from `cfg`, so callers can pass
 //! results from the classifier directly into
-//! `cfg::Builder::with_known_targets`.
+//! `strider_lift::cfg::Builder::with_known_targets`.
 
 use strider_ir::node::{NodeKind, NodeOutputId};
 
