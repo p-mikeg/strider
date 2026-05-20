@@ -17,7 +17,6 @@ strider = { path = "crates/strider" }
 cfg = { path = "crates/cfg" }
 reader = { path = "crates/reader" }
 target = { path = "crates/target" }
-pcode-lift = { path = "crates/pcode-lift" }
 strider-ir = { path = "crates/strider-ir" }
 strider-lift = { path = "crates/strider-lift" }
 strider-analyze = { path = "crates/strider-analyze" }

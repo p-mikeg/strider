@@ -90,7 +90,7 @@ impl<R: rsleigh::MemReader> IndirectTargetResolver<R> for MiniIrIndirectResolver
 /// `region_insns` is the *current* region's pcode instructions in
 /// program order, **including the trailing `BranchIndirect`** — the
 /// resolver naturally stops lifting at the first opcode
-/// `pcode_lift::ValueLifter::lift` returns `Ok(false)` for, which
+/// `strider_lift::pcode_lift::ValueLifter::lift` returns `Ok(false)` for, which
 /// covers every control-flow / call / store op the caller is responsible
 /// for.
 ///

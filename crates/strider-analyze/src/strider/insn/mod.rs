@@ -103,7 +103,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 
     fn handle_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let space = pcode_lift::decode_space_id(insn)?;
+        let space = strider_lift::pcode_lift::decode_space_id(insn)?;
         let addr = self.read_vn(&insn.inputs[1])?;
         let data = self.read_vn(&insn.inputs[2])?;
         self.builder.build_store(addr, data, space)?;
@@ -111,7 +111,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let id_vn = pcode_lift::first_input_or_err(insn)?;
+        let id_vn = strider_lift::pcode_lift::first_input_or_err(insn)?;
         if id_vn.addr_space != rsleigh::VnSpace::CONST {
             bail!(
                 "opcode {:?} expects a CONST input at position 0",

@@ -697,7 +697,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
     // BoolNeg(IntLess(n, idx)) — operand order is (n, idx) per the
-    // lift-time swap, mirroring `pcode_lift::handle_int_less_equal`.
+    // lift-time swap, mirroring `strider_lift::pcode_lift::handle_int_less_equal`.
     let inner = builder
         .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::U32)
         .unwrap();

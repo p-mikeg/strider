@@ -986,7 +986,7 @@ where
     }
     *vn_cache_region_count = regions_now.len();
     let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
-    all_vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
+    all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
 
     let outcome = opts.strider.analyze_cfg_with(
         &cfg,

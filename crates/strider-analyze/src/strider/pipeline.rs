@@ -90,7 +90,7 @@ impl std::fmt::Display for AnalyzeOutcome {
 pub struct AnalyzeOptions<'a> {
     /// Pre-computed varnode set.  When `None`, `Strider` calls
     /// `Strider::find_all_unique_vns` itself.  When `Some`, must be
-    /// sorted by `pcode_lift::vn_sort_key` and must include every
+    /// sorted by `strider_lift::pcode_lift::vn_sort_key` and must include every
     /// varnode any instruction in `cfg` references.  Under-tracking
     /// drops pcode reads; over-tracking is safe but allocates one
     /// extra `InitialVar` per superfluous vn.  The orchestrator passes
@@ -289,7 +289,7 @@ impl Strider {
             }
         }
         let mut vns: Vec<rsleigh::Vn> = all_vns.into_iter().collect();
-        vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
+        vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
         vns
     }
 
@@ -318,7 +318,7 @@ impl Strider {
     /// Equivalent to [`Self::analyze_cfg`] when given
     /// `AnalyzeOptions::default()`.  When [`AnalyzeOptions::all_vns`]
     /// is `Some`, the supplied `all_vns` must be sorted by
-    /// `pcode_lift::vn_sort_key` (otherwise downstream `VarId`
+    /// `strider_lift::pcode_lift::vn_sort_key` (otherwise downstream `VarId`
     /// numbering loses determinism) and must include every varnode
     /// any instruction in `cfg` references — under-tracking would
     /// drop pcode reads.  Over-tracking is safe but allocates one

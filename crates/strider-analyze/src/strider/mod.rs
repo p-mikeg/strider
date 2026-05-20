@@ -34,7 +34,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     ///
     /// Constructs the IR [`FunctionBuilder`] with the supplied
     /// `all_vns` (the set of every varnode any instruction in `cfg`
-    /// references, sorted by `pcode_lift::vn_sort_key` for stable
+    /// references, sorted by `strider_lift::pcode_lift::vn_sort_key` for stable
     /// `VarId` numbering).  `per_address_ccs` is the lift-time CC
     /// override map; pass `&EMPTY_PER_ADDRESS_CCS` (or an empty
     /// `HashMap`) when the caller has no overrides.

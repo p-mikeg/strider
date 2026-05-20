@@ -246,7 +246,7 @@ impl FunctionBuilder {
     /// `memory_edge` is true.  Similarly the strider layer is
     /// responsible for rebinding each implicit-write Vn to its
     /// corresponding clobber slot via the aliasing-aware
-    /// `pcode_lift::ValueLifter::write_vn`.
+    /// `strider_lift::pcode_lift::ValueLifter::write_vn`.
     ///
     /// Both `implicit_reads` and `implicit_write_kinds` are slices of
     /// pre-resolved values: the strider caller does the

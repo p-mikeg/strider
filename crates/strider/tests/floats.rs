@@ -73,7 +73,7 @@ fn has_two_float_cmps(g: &strider_ir::BuiltFunctionGraph) {
     // (one per `OP` in the source, regardless of whether the surrounding
     // construct lowers as If or cmov).
     // `LessEqual` and `NotEqual` are no longer primitives — they lower to
-    // compositions of `Equal` and `Less` (see `pcode_lift::value::float`).
+    // compositions of `Equal` and `Less` (see `strider_lift::pcode_lift::value::float`).
     // Either source-level `<=` becomes one `Equal` + one `Less` here.
     let total = count_float_cmp(g, FloatCmpOp::Less) + count_float_cmp(g, FloatCmpOp::Equal);
     assert!(total >= 2, "expected ≥2 FloatCmpOp, got {total}");
