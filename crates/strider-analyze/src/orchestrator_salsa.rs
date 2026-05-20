@@ -484,28 +484,47 @@ pub fn optimized_function<'db>(
     db.record_optimized_call();
     let map = targets.map(db);
 
-    // Phase 8c — per-region cache consumer.
+    // Phase 8c — two-level content-keyed BFG cache.
     //
-    // The Phase 7.2 scaffolding (`RegionKey`, `region_lift_signature`,
-    // `region_signatures_query`, `cfg_region_signatures`) was previously
-    // disabled because no consumer was reading the cached fingerprints
-    // (Phase 7.3a — pure 50ms-per-call overhead).  Phase 8c wires the
-    // consumer: we hash the per-region signature multiset into a
-    // `content_hash`, and look up an `Arc<BfgEntry>` in the db's
-    // content-keyed side-table cache.  When `IndirectTargets` mutates
-    // but the resulting region signatures are unchanged (e.g. a fake
-    // target that doesn't intersect any real anchor), the content hash
-    // matches and we return the cached BFG without re-lifting.
+    // **Level 1 (hot path, ~µs):** hash the `IndirectTargets` map
+    // contents.  Two different `IndirectTargets` salsa inputs with
+    // identical map contents share a cache entry — this is what
+    // wins the repeat-query bench case (each `run_v2(&mut db, key)`
+    // call creates a fresh `IndirectTargets` input with an empty
+    // map, but they all hash to the same value).
     //
-    // The per-region `region_lift_signature` salsa queries still fire
-    // for each region — their counter (`region_lift_invocation_count`)
-    // is what the Phase 7.2 `orchestrator_salsa_per_region` tests
-    // observe to demonstrate fine-grained invalidation.  Their value
-    // is currently a no-op `u64` (the fingerprint) but the dependency
-    // edges are set up so a future per-region IR producer can promote
-    // them to `Arc<RegionIrShard>` without changing this call site.
+    // **Level 2 (lukewarm path, ~50ms):** when the map hash misses,
+    // we enumerate the per-region signatures and hash them into a
+    // second content key.  Two different `IndirectTargets` maps that
+    // produce the same region signatures (e.g. a fake target that
+    // doesn't intersect any anchor) share this cache entry.  When
+    // hit, we *also* store under the map hash for future hot-path
+    // hits.
+    //
+    // **Level 3 (cold path, ~100ms+):** both keys miss.  Run v1's
+    // full lift, store under both keys.
+    //
+    // The Level-2 path also walks the per-region salsa cache (calls
+    // `region_lift_signature` for each region), which is what
+    // `orchestrator_salsa_per_region`'s `region_lift_invocation_count`
+    // test observes — granular per-region cache hits when
+    // `IndirectTargets` mutates with a value that doesn't change a
+    // region's bytes.
+    let map_hash = hash_targets_map(map.as_ref());
+    if let Some(cached) = db.bfg_content_cache_get(map_hash) {
+        return cached;
+    }
+
+    // ── Level 2: enumerate per-region signatures, look up by their
+    // hash, populate the per-region salsa cache. ─────────────────
+    //
+    // The current `region_lift_signature` query body is a no-op
+    // returning the fingerprint; its value is purely the
+    // dependency-edge set-up for a future per-region IR producer
+    // (which would change this query's return type to
+    // `Arc<RegionIrShard>` without changing this call site).
     let sigs_arc = region_signatures_query(db, targets).clone();
-    let content_hash: Option<u64> = match sigs_arc.as_ref() {
+    let sig_hash: Option<u64> = match sigs_arc.as_ref() {
         Ok(sigs) => {
             for (addr, fp) in sigs {
                 let key = RegionKey::new(db, *addr, *fp);
@@ -515,37 +534,72 @@ pub fn optimized_function<'db>(
         }
         Err(msg) => {
             // Signature enumeration failed — proceed without the
-            // content-cache lookup (we'll still attempt the v1 lift,
-            // which will likely surface the same error).  Don't bail
-            // here: the v1 lift's error is the authoritative one.
+            // signature-keyed cache.  v1 lift below is authoritative.
             eprintln!(
                 "salsa optimized_function: cfg_region_signatures failed; \
-                 bypassing content cache for this revision: {msg}"
+                 per-region cache not populated for this revision: {msg}"
             );
             None
         }
     };
 
-    // Content-cache lookup.  When the signatures hash matches a
-    // previously-lifted BFG (for the same db / binary), return the
-    // cached entry directly — no v1 lift fires.
-    if let Some(h) = content_hash {
-        if let Some(cached) = db.bfg_content_cache_get(h) {
+    // Level-2 lookup: keys distinct from Level-1 by namespacing
+    // (XOR with a high bit) so map-hash and sig-hash live in the
+    // same HashMap without colliding even when they happen to hash
+    // to the same u64.
+    if let Some(sh) = sig_hash {
+        let namespaced = sh ^ SIG_HASH_NAMESPACE;
+        if let Some(cached) = db.bfg_content_cache_get(namespaced) {
+            // Promote to Level-1 for future hot-path hits on this
+            // same `IndirectTargets` map content.
+            db.bfg_content_cache_insert(map_hash, Arc::clone(&cached));
             return cached;
         }
     }
 
-    // Cache miss — run the full v1 lift and store the result.
+    // ── Level 3: cold lift ────────────────────────────────────────
     db.record_bfg_content_cache_miss();
     let result = match db.run_v1_with_targets(map.as_ref()) {
         Ok(bfg) => Ok(bfg),
         Err(e) => Err(format!("{e:?}")),
     };
     let entry = Arc::new(BfgEntry { result });
-    if let Some(h) = content_hash {
-        db.bfg_content_cache_insert(h, Arc::clone(&entry));
+    // Store under BOTH keys so subsequent calls with either the same
+    // map contents or different map contents (but same signatures)
+    // hit the cache.
+    db.bfg_content_cache_insert(map_hash, Arc::clone(&entry));
+    if let Some(sh) = sig_hash {
+        db.bfg_content_cache_insert(sh ^ SIG_HASH_NAMESPACE, Arc::clone(&entry));
     }
     entry
+}
+
+/// Namespace constant XOR'd into the signature-hash key so that
+/// map-hash and signature-hash values living in the same HashMap
+/// can't collide.  Arbitrary high-entropy value; the only contract
+/// is that two distinct hashes (one map, one signature) don't map
+/// to the same key.
+const SIG_HASH_NAMESPACE: u64 = 0xa5a5_5a5a_c3c3_3c3c;
+
+/// Hash the contents of an `IndirectTargets` map into a single 64-bit
+/// content key.  Two different salsa input ids with identical map
+/// contents hash to the same value — what makes the repeat-query
+/// case a cache hit even though each `run_v2` call creates a fresh
+/// `IndirectTargets::new`.  `BTreeMap`'s iter order is deterministic,
+/// so this is stable across runs.
+fn hash_targets_map(map: &BTreeMap<u64, BTreeSet<u64>>) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    map.len().hash(&mut hasher);
+    for (anchor, targets) in map {
+        anchor.hash(&mut hasher);
+        targets.len().hash(&mut hasher);
+        for t in targets {
+            t.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 /// Hash the per-region signature multiset into a single 64-bit
@@ -558,8 +612,6 @@ fn hash_region_signatures(sigs: &[(u64, u64)]) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
-    // Hash length first so two signature vectors of different lengths
-    // can't collide on a prefix.
     sigs.len().hash(&mut hasher);
     for (addr, fp) in sigs {
         addr.hash(&mut hasher);
