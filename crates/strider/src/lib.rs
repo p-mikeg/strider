@@ -11,7 +11,7 @@
 //! Thin shim re-exporting the strider analysis facade from
 //! [`strider_analyze`].
 //!
-//! Phase 3 Task 3.1c moved the orchestrator (`run` / `RunConfig`), the
+//! Phase 3 Task 3.1c moved the orchestrator (`run` / `Config`), the
 //! IR-level indirect-branch resolver, the [`GraphRewriter`], and the
 //! [`Strider`] per-iteration handle into `strider-analyze`.  This crate
 //! keeps the well-known `strider::*` import path (`strider::run`,
@@ -29,7 +29,7 @@
 pub use strider_analyze::indirect_resolve;
 pub use strider_analyze::rewrite;
 pub use strider_analyze::{
-    AnalyzeOptions, AnalyzeOutcome, GraphRewriter, RegionLiftHandles, RunConfig, Strider,
+    AnalyzeOptions, AnalyzeOutcome, Config, GraphRewriter, RegionLiftHandles, Strider,
     UnresolvedIndirectBranch, run,
 };
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};

@@ -46,7 +46,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         reader::ElfFileMemReader::from_object(&obj).expect("rom"),
     );
 
-    let config = strider::RunConfig {
+    let config = strider::Config {
         strider: &s,
         start_addr: addr.into(),
         sleigh,

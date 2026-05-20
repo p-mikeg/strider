@@ -8,10 +8,10 @@ ready for [`pattern`](../pattern) queries.
 
 ## Public surface
 
-- `run(config: RunConfig<'_, R>) -> Result<ir::BuiltFunctionGraph>` —
+- `run(config: Config<'_, R>) -> Result<ir::BuiltFunctionGraph>` —
   the canonical top-level entry. Builds the CFG, lifts to IR, runs
   optimisation pipelines, resolves indirect branches.
-- `RunConfig<'a, R>` — input bundle: `strider: &Strider`,
+- `Config<'a, R>` — input bundle: `strider: &Strider`,
   `start_addr: cfg::MachineInsnAddr` (construct via
   `cfg::MachineInsnAddr::new(addr)` or `addr.into()`),
   owned `sleigh: rsleigh::Sleigh<R>`, optional `rom: Arc<dyn ReadOnlyMemory>`,
@@ -86,7 +86,7 @@ post-orchestrator graph-rewriter façade.
 
 ## Key invariants
 
-- **Single Sleigh per analysis**: `RunConfig::sleigh` is owned and threaded
+- **Single Sleigh per analysis**: `Config::sleigh` is owned and threaded
   through every iteration. `cfg::Cfg` retains it across rebuilds — the SLA
   spec is loaded once. See `crates/cfg/tests/sleigh_reuse.rs`.
 - **Stable vs destructive pipeline split**: destructive passes run **once**
@@ -124,7 +124,7 @@ cargo bench --package strider --bench scaling
 
 ## Gotchas
 
-- `RunConfig::sleigh` is **moved** into `run`; you can't reuse it after.
+- `Config::sleigh` is **moved** into `run`; you can't reuse it after.
   If you need it back, recover it from the returned `BuiltFunctionGraph`'s
   upstream chain or by explicit construction.
 - `compact: true` (the default) invalidates pre-call `NodeId`s. If you

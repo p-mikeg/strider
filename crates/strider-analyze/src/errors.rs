@@ -7,7 +7,7 @@
 //!
 //! ```no_run
 //! # fn example<R: rsleigh::MemReader>(
-//! #     config: strider_analyze::RunConfig<'_, R>,
+//! #     config: strider_analyze::Config<'_, R>,
 //! # ) -> Result<strider_ir::BuiltFunctionGraph, anyhow::Error> {
 //! match strider_analyze::run(config) {
 //!     Ok(graph) => Ok(graph),

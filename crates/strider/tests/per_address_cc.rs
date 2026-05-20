@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{RunConfig, SleighArch, Strider};
+use strider::{Config, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
 mod common;
@@ -41,7 +41,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let mut overrides: HashMap<u64, TargetCC> = HashMap::new();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving());
 
-    let config = RunConfig {
+    let config = Config {
         strider: &strider,
         start_addr: entry.into(),
         sleigh,
@@ -94,7 +94,7 @@ fn call_without_override_uses_function_default_clobber_set() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
-    let config = RunConfig {
+    let config = Config {
         strider: &strider,
         start_addr: entry.into(),
         sleigh,

@@ -59,7 +59,7 @@ use crate::RegionLiftHandles;
 /// Configuration for [`run`].  Held outside the function so callers
 /// can construct one and reuse the strider / sleigh / options across
 /// iterations without re-paying per-iteration setup costs.
-pub struct RunConfig<'a, R>
+pub struct Config<'a, R>
 where
     R: rsleigh::MemReader,
 {
@@ -109,7 +109,7 @@ where
     pub per_address_ccs: HashMap<u64, target::CallingConvention>,
 }
 
-/// Internal view of [`RunConfig`] without the Sleigh handle — see
+/// Internal view of [`Config`] without the Sleigh handle — see
 /// [`LoopState`] for why the orchestrator threads the Sleigh
 /// separately.
 struct RunOpts<'a> {
@@ -120,7 +120,7 @@ struct RunOpts<'a> {
     allow_code_before_start_addr: bool,
     compact: bool,
     /// Pre-resolved per-target-address CC overrides.  See the
-    /// [`RunConfig::per_address_ccs`] doc.  Resolved once at
+    /// [`Config::per_address_ccs`] doc.  Resolved once at
     /// `LoopState::new` so any unresolved register name surfaces
     /// before iteration starts.
     per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention>,
@@ -168,7 +168,7 @@ impl RegionIndex {
 /// Returns an error when the iteration cap is hit, when unresolved
 /// branches remain at fixed point, or any error propagated from
 /// strider / cfg / opt.
-pub fn run<R>(config: RunConfig<'_, R>) -> Result<strider_ir::BuiltFunctionGraph>
+pub fn run<R>(config: Config<'_, R>) -> Result<strider_ir::BuiltFunctionGraph>
 where
     R: rsleigh::MemReader,
 {
@@ -261,7 +261,7 @@ where
     /// on the next rebuild and the loop diverges.
     known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
     /// The Sleigh handle we thread through every iteration.  Initialised
-    /// from `RunConfig::sleigh` at construction; consumed by
+    /// from `Config::sleigh` at construction; consumed by
     /// `Builder::for_arch` per iteration and harvested back from the
     /// resulting `Cfg::into_sleigh()`.  `None` only momentarily inside
     /// `build_lift_stable`.
@@ -314,7 +314,7 @@ impl<'a, R> LoopState<'a, R>
 where
     R: rsleigh::MemReader,
 {
-    fn new(config: RunConfig<'a, R>) -> Result<Self> {
+    fn new(config: Config<'a, R>) -> Result<Self> {
         let lr_vn = config.strider.calling_convention().link_register_vn();
         let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn());
         // Pre-resolve per-address CC overrides against the same Sleigh

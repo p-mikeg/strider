@@ -172,7 +172,7 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     // panic or return malformed IR.
     use rsleigh::Sleigh;
     use rsleigh::mem_readers::BufMemReader;
-    use strider::{run, RunConfig, SleighArch};
+    use strider::{run, Config, SleighArch};
     let strider = common::strider_x86_64();
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();
@@ -183,7 +183,7 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     let arch_ref = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes.clone(), 0x1000);
     let sleigh = Sleigh::new(arch_ref.sla_spec(), arch_ref.pspec(), reader).expect("sleigh");
-    let config = RunConfig {
+    let config = Config {
         strider: &strider,
         start_addr: strider_lift::cfg::MachineInsnAddr::new(0x1000),
         sleigh,

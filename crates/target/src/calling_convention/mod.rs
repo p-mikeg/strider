@@ -406,7 +406,7 @@ impl CallingConvention {
     ///
     /// Pair with the per-address override map on
     /// [`crate::CallingConvention`] consumers (e.g.
-    /// `strider::RunConfig::per_address_ccs`) so the override applies
+    /// `strider::Config::per_address_ccs`) so the override applies
     /// only to specific Call sites; the function-default CC stays
     /// SystemV.
     #[must_use]

@@ -1,4 +1,4 @@
-//! End-to-end test for `RunConfig::compact`.
+//! End-to-end test for `Config::compact`.
 //!
 //! Drives `strider::run` on a small inline-byte function under both
 //! compact=true and compact=false; asserts the compact graph has no
@@ -8,7 +8,7 @@
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;
-use strider::{RunConfig, SleighArch, Strider};
+use strider::{Config, SleighArch, Strider};
 
 mod common;
 
@@ -31,7 +31,7 @@ fn run_with(compact: bool) -> strider_ir::BuiltFunctionGraph {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
-    let config = RunConfig {
+    let config = Config {
         strider: &strider,
         start_addr: entry.into(),
         sleigh,

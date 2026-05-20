@@ -52,7 +52,7 @@ Items round 9 considered and deferred (with documented rationale):
 - **V3**: `cfg::PcodeInsnAddr` / `MachineInsnAddr` field tightening.  ~30 deep-field-access sites.
 - **V5**: `IndirectBranchResolve` lockstep field refactor.  Cannot tighten because cross-crate population; needs type-level refactor.
 - **V7**: `target::SleighArch` field tightening.  Many call sites.
-- **P2**: `RunConfig::{fn_max_size, allow_code_before_start}` → `FunctionBoundary` sum type.  Subtle semantic change to OptionsBuilder ordering.
+- **P2**: `Config::{fn_max_size, allow_code_before_start}` → `FunctionBoundary` sum type.  Subtle semantic change to OptionsBuilder ordering.
 - **P3**: `AnalyzeOptions::all_vns` → `SortedVns` newtype.  No external surface today.
 
 ## Anti-patterns

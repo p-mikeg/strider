@@ -1,7 +1,7 @@
 //! `strider.run` convenience entry point.
 //!
 //! Delegates to the canonical Rust orchestrator
-//! (`strider::run(RunConfig)`) which drives the indirect-branch
+//! (`strider::run(Config)`) which drives the indirect-branch
 //! fixed-point loop, runs the stable optimiser between iterations,
 //! and finally runs the destructive subset once.  Works for both
 //! `MemoryMap` and Python-callback `MemReader` subclasses since the
@@ -153,7 +153,7 @@ fn run_via_orchestrator(
     )?;
 
     // Build the second Sleigh handle (orchestrator-owned, fresh
-    // reader).  This is consumed by RunConfig.
+    // reader).  This is consumed by Config.
     let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
         .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
@@ -175,7 +175,7 @@ fn run_via_orchestrator(
             .map(|(addr, py_cc)| (addr, py_cc.inner))
             .collect();
     let graph = py.allow_threads(|| {
-        let config = strider::RunConfig {
+        let config = strider::Config {
             strider: &strider_owned,
             start_addr: entry.into(),
             sleigh: orch_sleigh,

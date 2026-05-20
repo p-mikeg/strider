@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{RunConfig, SleighArch, Strider};
+use strider::{Config, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
 mod common;
@@ -41,7 +41,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let mut overrides: HashMap<u64, TargetCC> = HashMap::new();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving());
 
-    let config = RunConfig {
+    let config = Config {
         strider: &strider,
         start_addr: entry.into(),
         sleigh,

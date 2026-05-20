@@ -2,7 +2,7 @@
 //! ([`strider::run`]).
 //!
 //! Each test:
-//!   1. Constructs a `RunConfig` against a synthetic byte sequence +
+//!   1. Constructs a `Config` against a synthetic byte sequence +
 //!      the standard SystemV-x86_64 calling convention,
 //!   2. Calls `strider::run`,
 //!   3. Asserts the result matches the spec's per-scenario contract.
@@ -13,7 +13,7 @@ mod common;
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{run, RunConfig, SleighArch, Strider};
+use strider::{run, Config, SleighArch, Strider};
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
     let arch = SleighArch::x86_64();
@@ -25,8 +25,8 @@ fn make_config<'a>(
     strider: &'a Strider,
     bytes: Vec<u8>,
     base: u64,
-) -> RunConfig<'a, BufMemReader<Vec<u8>>> {
-    RunConfig {
+) -> Config<'a, BufMemReader<Vec<u8>>> {
+    Config {
         strider,
         start_addr: base.into(),
         sleigh: make_sleigh_value(bytes, base),

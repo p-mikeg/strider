@@ -30,7 +30,7 @@ mod common;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{run, RunConfig, SleighArch};
+use strider::{run, Config, SleighArch};
 
 const BASE: u64 = 0x1000;
 const TAIL_TARGET: u64 = 0x9000;
@@ -56,7 +56,7 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 #[test]
 fn bounded_lift_handles_tail_call_terminator() {
     let strider = common::strider_x86_64();
-    let config = RunConfig {
+    let config = Config {
         strider: &strider,
         start_addr: BASE.into(),
         sleigh: make_sleigh(),
@@ -157,7 +157,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
-    let graph = run(RunConfig {
+    let graph = run(Config {
         strider: &strider,
         start_addr: FN_START.into(),
         sleigh,
@@ -211,7 +211,7 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
-    let graph = run(RunConfig {
+    let graph = run(Config {
         strider: &strider,
         start_addr: BASE.into(),
         sleigh,
@@ -254,7 +254,7 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
-    let graph = run(RunConfig {
+    let graph = run(Config {
         strider: &strider,
         start_addr: BASE.into(),
         sleigh,
