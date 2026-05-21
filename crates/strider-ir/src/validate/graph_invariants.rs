@@ -315,7 +315,7 @@ pub(super) fn check_graph_invariants_wide_consts(
         }
         let actual = graph.wide_const(*id).byte_size();
         match wide_const_expected_bytes(graph, node, actual) {
-            Ok(None) => {}
+            Err(e) => errs.push(e),
             Ok(Some((expected, ty))) if expected != actual => {
                 errs.push(ValidationError::WideConstWidthMismatch {
                     node,
@@ -324,8 +324,7 @@ pub(super) fn check_graph_invariants_wide_consts(
                     actual_bytes: actual,
                 });
             }
-            Ok(Some(_)) => {}
-            Err(e) => errs.push(e),
+            Ok(_) => {}
         }
     }
 }

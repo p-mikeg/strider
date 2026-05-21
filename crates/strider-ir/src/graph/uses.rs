@@ -201,7 +201,6 @@ impl Graph {
     /// Each item is `(consumer_node_id, input_index)` and the iteration
     /// follows the per-output use-list's intrusive next-pointer chain.
     #[inline]
-    #[must_use]
     pub fn output_uses(&self, output_id: NodeOutputId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
         let first_use = self.outputs[output_id].first_use.expand();
         core::iter::successors(first_use, move |id| self.inputs[*id].next.expand()).map(
