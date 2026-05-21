@@ -152,22 +152,6 @@ impl BuiltFunctionGraph {
         &self.cc_metadata().variables
     }
 
-    /// Test-only setter: overwrite the `call_other_clobbered` list in
-    /// `pattern` tests that construct a synthetic `Call` / `CallOther`
-    /// node shape and need a matching function-default clobber list to
-    /// exercise the call-other clobber queries.  Production paths
-    /// should set this via [`crate::FunctionBuilder::build`].  The
-    /// `_for_test` suffix is the documented signal that the caller has
-    /// verified the slot/varnode correspondence with the synthetic
-    /// graph's `CallOther` outputs.
-    pub fn set_call_other_clobbered_for_test(&mut self, list: Box<[rsleigh::Vn]>) {
-        self.inner
-            .cc_metadata
-            .as_mut()
-            .expect("BuiltFunctionGraph invariant: cc_metadata is Some")
-            .call_other_clobbered = list;
-    }
-
     /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph` with
     /// empty CC metadata.
     ///
