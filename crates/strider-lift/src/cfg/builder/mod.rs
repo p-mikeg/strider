@@ -2,9 +2,6 @@ mod indirect_resolver;
 mod region_builder;
 mod split;
 
-#[doc(hidden)]
-pub use region_builder::test_api as region_builder_test_api;
-
 pub use indirect_resolver::{IndirectTargetResolver, ResolvedTargets};
 
 use region_builder::RegionBuilder;
@@ -315,85 +312,3 @@ impl<R: rsleigh::MemReader> Builder<R> {
     }
 }
 
-#[doc(hidden)]
-pub mod test_api {
-    //! Test-only forwarders for `Builder` internals.
-
-    use super::Builder;
-    use crate::cfg::types::{RegionEdgeKind, RegionGraph};
-    use crate::cfg::Result;
-    use petgraph::graph::NodeIndex;
-    use std::collections::BTreeMap;
-
-    pub use crate::cfg::options::Options;
-    pub use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
-
-    use strider_ir::ReadOnlyMemory;
-    use std::sync::Arc;
-
-    /// Reads back `Options::link_register_vn` so tests can pin the
-    /// `OptionsBuilder::set_link_register` round-trip.
-    #[must_use]
-    pub fn options_link_register_vn(opts: &Options) -> Option<rsleigh::Vn> {
-        opts.link_register_vn
-    }
-
-    /// Reads back `Options::read_only_memory` so tests can pin the
-    /// `OptionsBuilder::set_read_only_memory` round-trip.  Returns the
-    /// stored `Arc` by reference; comparison is by `Arc::ptr_eq`.
-    #[must_use]
-    pub fn options_read_only_memory(opts: &Options) -> Option<&Arc<dyn ReadOnlyMemory>> {
-        opts.read_only_memory.as_ref()
-    }
-
-    pub fn add_region<R: rsleigh::MemReader>(
-        b: &mut Builder<R>,
-        region: Region,
-    ) -> Result<NodeIndex> {
-        b.add_region(region)
-    }
-
-    #[must_use]
-    pub fn find_region_containing_addr<R: rsleigh::MemReader>(
-        b: &Builder<R>,
-        addr: PcodeInsnAddr,
-    ) -> Option<(NodeIndex, &Region)> {
-        b.find_region_containing_addr(addr)
-    }
-
-    pub fn split_region<R: rsleigh::MemReader>(
-        b: &mut Builder<R>,
-        region_id: NodeIndex,
-        addr: PcodeInsnAddr,
-    ) -> Result<NodeIndex> {
-        b.split_region(region_id, addr)
-    }
-
-    #[must_use]
-    pub fn graph<R: rsleigh::MemReader>(b: &Builder<R>) -> &RegionGraph {
-        &b.graph
-    }
-
-    pub fn graph_mut<R: rsleigh::MemReader>(b: &mut Builder<R>) -> &mut RegionGraph {
-        &mut b.graph
-    }
-
-    #[must_use]
-    pub fn start_addr_to_region_id<R: rsleigh::MemReader>(
-        b: &Builder<R>,
-    ) -> &BTreeMap<PcodeInsnAddr, NodeIndex> {
-        &b.start_addr_to_region_id
-    }
-
-    #[must_use]
-    pub fn work_queue<R: rsleigh::MemReader>(
-        b: &Builder<R>,
-    ) -> &[(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)] {
-        &b.work_queue
-    }
-
-    #[must_use]
-    pub fn sleigh<R: rsleigh::MemReader>(b: &Builder<R>) -> &rsleigh::Sleigh<R> {
-        &b.sleigh
-    }
-}

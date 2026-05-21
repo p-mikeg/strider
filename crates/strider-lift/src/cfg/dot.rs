@@ -16,24 +16,6 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     }
 }
 
-#[doc(hidden)]
-pub mod test_api {
-    //! Test-only forwarder for varnode-name rendering.
-
-    use super::Cfg;
-    use crate::cfg::Result;
-
-    /// # Errors
-    /// Propagates errors from the underlying renderer (invalid reg vn,
-    /// unsupported varnode space, or Sleigh lookup failure).
-    pub fn vn_to_name<R: rsleigh::MemReader>(
-        cfg: &Cfg<R>,
-        vn: &rsleigh::Vn,
-    ) -> Result<String> {
-        strider_ir::graph_dot::label::vn_to_display_name(&cfg.sleigh, vn)
-    }
-}
-
 pub struct CfgDotDumper<'a, R: rsleigh::MemReader>(&'a Cfg<R>);
 
 impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {

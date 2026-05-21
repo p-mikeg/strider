@@ -15,9 +15,3 @@
 pub mod pcode_lift;
 pub mod cfg;
 pub mod region_driver;
-
-/// Test-only re-exports for the `cfg` module, mirroring the flat
-/// `test_api` surface the standalone `cfg` crate used to expose so
-/// integration tests under `crates/cfg/tests/` keep compiling.
-#[doc(hidden)]
-pub mod cfg_test_api;
