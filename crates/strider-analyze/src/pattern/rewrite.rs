@@ -2,6 +2,7 @@
 //! [`boxed_rule`].
 
 use cranelift_entity::EntityRef;
+use entity_utils::DenseEntitySet;
 use strider_ir::Graph;
 use strider_ir::node::NodeId;
 
@@ -111,8 +112,7 @@ pub fn rewrite_rule(
                 // and absorb the contributor's history into each one.
                 // Pre-existing input nodes (id < snapshot) bound the
                 // walk: they're outside the rewrite and stay untouched.
-                let mut visited: std::collections::HashSet<NodeId> =
-                    std::collections::HashSet::new();
+                let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
                 visited.insert(new_node);
                 let mut stack: Vec<NodeId> = ctx
                     .graph
