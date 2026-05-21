@@ -1,6 +1,7 @@
 use core::{iter, ops::ControlFlow};
 
 pub use entity_utils::set::DenseEntitySet;
+use entity_utils::Worklist;
 
 use crate::{
     graph::Graph,
@@ -25,14 +26,20 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 #[must_use]
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
     let mut visited = DenseEntitySet::new();
-    let mut worklist = vec![entry];
-    while let Some(node) = worklist.pop() {
-        if visited.contains(node) {
+    let mut worklist: Worklist<NodeId> = Worklist::new();
+    worklist.enqueue(entry);
+    while let Some(node) = worklist.dequeue() {
+        // `visited.insert` doubles as the dedup gate: when `node` was
+        // already processed via another path, `insert` returns false
+        // and we skip the successor sweep.  `Worklist` only dedups
+        // while-queued (re-enqueue after dequeue is allowed), so we
+        // still need this check to avoid quadratic re-processing on
+        // CFGs whose joins fan in from multiple predecessors.
+        if !visited.insert(node) {
             continue;
         }
-        visited.insert(node);
         for succ in cfg_succs(graph, node) {
-            worklist.push(succ);
+            worklist.enqueue(succ);
         }
     }
     visited
