@@ -318,6 +318,35 @@ impl<'g> From<&'g strider_ir::BuiltFunctionGraph> for RewriteCtxView<'g> {
     }
 }
 
+/// Extension trait on [`strider_ir::BuiltFunctionGraph`] (alias for
+/// [`Graph`]) providing the `with_rewrite_ctx` callback that absorbs the
+/// `let mut ctx = RewriteCtx::for_built(&mut bfg); apply_*(&mut ctx, …)`
+/// construct-then-pass pattern into a single
+/// `bfg.with_rewrite_ctx(|ctx| apply_*(ctx, …))` call.
+///
+/// `Graph` lives in `strider-ir`, which doesn't know about `RewriteCtx`,
+/// so the helper has to ride on an extension trait defined here.
+pub trait GraphRewriteCtxExt {
+    /// Borrow `self` as a `RewriteCtx` and run `f` with mutable access.
+    ///
+    /// Mirrors `RewriteCtx::for_built(&mut self)` but folds the
+    /// construction into a callback so call sites don't have to spell
+    /// out the temporary.
+    fn with_rewrite_ctx<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut RewriteCtx<'_>) -> R;
+}
+
+impl GraphRewriteCtxExt for strider_ir::BuiltFunctionGraph {
+    fn with_rewrite_ctx<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut RewriteCtx<'_>) -> R,
+    {
+        let mut ctx = RewriteCtx::for_built(self);
+        f(&mut ctx)
+    }
+}
+
 impl<'a, 'g> From<&'a RewriteCtx<'g, Mut>> for RewriteCtxView<'a> {
     fn from(ctx: &'a RewriteCtx<'g, Mut>) -> Self {
         ctx.as_view()

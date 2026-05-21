@@ -52,6 +52,7 @@ use crate::errors::UnresolvedIndirectBranch;
 use crate::opt::indirect_branch_resolve::{
     apply_link_register, apply_tail_call, classify_anchor,
 };
+use crate::pattern::GraphRewriteCtxExt;
 use crate::strider::{RegionLiftHandles, Strider};
 
 /// Configuration for [`run`].  Held outside the function so callers
@@ -698,11 +699,9 @@ fn apply_in_place_edit(
                 None,
                 initial_var_index,
             )?;
-            apply_link_register(
-                &mut crate::pattern::RewriteCtx::for_built(graph),
-                placeholder,
-                &ctx.ret_val_outputs,
-            )?;
+            graph.with_rewrite_ctx(|rctx| {
+                apply_link_register(rctx, placeholder, &ctx.ret_val_outputs)
+            })?;
             Ok(())
         }
         ResolvedTargets::Single(target) => {
@@ -715,14 +714,16 @@ fn apply_in_place_edit(
                 override_cc,
                 initial_var_index,
             )?;
-            let new_return = apply_tail_call(
-                &mut crate::pattern::RewriteCtx::for_built(graph),
-                placeholder,
-                *target,
-                &ctx.arg_passing_outputs,
-                &ctx.clobbered_kinds,
-                &ctx.ret_val_outputs,
-            )?;
+            let new_return = graph.with_rewrite_ctx(|rctx| {
+                apply_tail_call(
+                    rctx,
+                    placeholder,
+                    *target,
+                    &ctx.arg_passing_outputs,
+                    &ctx.clobbered_kinds,
+                    &ctx.ret_val_outputs,
+                )
+            })?;
             // When an override was used, record the per-Call clobber
             // varnodes on the spliced Call so pattern queries can
             // recover the right varnode for each clobber slot.  The

@@ -142,7 +142,9 @@ mod pat;
 mod rewrite;
 mod var;
 
-pub use rewrite::{BoxedRule, RewriteCtx, RewriteCtxView, boxed_rule, rewrite_rule};
+pub use rewrite::{
+    BoxedRule, GraphRewriteCtxExt, RewriteCtx, RewriteCtxView, boxed_rule, rewrite_rule,
+};
 pub(crate) use rewrite::apply_rules_in_order;
 pub(crate) use pat::traits::BuildCtx;
 pub(crate) use pat::ctor::consts::first_value_input_type;
