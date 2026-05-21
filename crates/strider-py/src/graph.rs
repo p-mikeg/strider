@@ -445,7 +445,7 @@ impl PyGraph {
         let rhs = replace.into_pat()?;
         let rule = strider_analyze::pattern::rewrite_rule(lhs, rhs);
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
+        let mut rewriter = strider_analyze::GraphRewriter::wrap_built(&mut graph);
         rewriter.apply_rule(rule).map_err(|e| {
             crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite failed: {e:?}"))
         })
@@ -467,7 +467,7 @@ impl PyGraph {
             rules.push(strider_analyze::pattern::boxed_rule(strider_analyze::pattern::rewrite_rule(lhs_pat, rhs_pat)));
         }
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
+        let mut rewriter = strider_analyze::GraphRewriter::wrap_built(&mut graph);
         rewriter.apply_rules(&rules).map_err(|e| {
             crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))
         })

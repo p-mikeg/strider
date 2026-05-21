@@ -1,4 +1,4 @@
-//! `PyStrider` — wraps `strider::Strider`, exposes `analyze_cfg`.
+//! `PyStrider` — wraps `strider_analyze::Strider`, exposes `analyze_cfg`.
 //!
 //! Constructed with a `(SleighArch, Sleigh, CallingConvention)`
 //! triple. The Sleigh is needed so we can read the register table to
@@ -17,13 +17,13 @@ use crate::sleigh::PySleigh;
 
 #[pyclass(name = "Strider", module = "strider")]
 pub struct PyStrider {
-    pub(crate) inner: strider::Strider,
-    /// Cached arch — `strider::Strider` keeps `arch` private so we
+    pub(crate) inner: strider_analyze::Strider,
+    /// Cached arch — `strider_analyze::Strider` keeps `arch` private so we
     /// stash a copy here for pipeline-construction helpers.
     pub(crate) arch: target::SleighArch,
 }
 
-/// Mirror of `strider::AnalyzeOutcome`.
+/// Mirror of `strider_analyze::AnalyzeOutcome`.
 ///
 /// `unresolved_branches` and `region_handles` carry low-level lift
 /// state used by the indirect-branch resolver in Rust; v1 exposes
@@ -53,7 +53,7 @@ impl PyStrider {
         let regs = sleigh_borrow.regs.clone();
         drop(sleigh_borrow);
         let arch_copy = arch.inner;
-        let inner = strider::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
+        let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
         Ok(Self {
             inner,
             arch: arch_copy,
@@ -78,7 +78,7 @@ impl PyStrider {
         })
     }
 
-    /// Mirror of `strider::Strider::build_optimizer_pipeline`.  Adds
+    /// Mirror of `strider_analyze::Strider::build_optimizer_pipeline`.  Adds
     /// the convention-aware StackStoreDetect / StackLoadForward fixed-
     /// point passes plus CallStackArgCollect / FunctionArgDetect post
     /// passes on top of the default pipeline.
@@ -88,14 +88,14 @@ impl PyStrider {
         Ok(crate::opt::PyOptimizerPipeline::new_full_default(cc, arch))
     }
 
-    /// Mirror of `strider::Strider::build_stable_optimizer_pipeline`.
+    /// Mirror of `strider_analyze::Strider::build_stable_optimizer_pipeline`.
     fn build_stable_optimizer_pipeline(&self) -> PyResult<crate::opt::PyOptimizerPipeline> {
         let cc = self.inner.calling_convention().clone();
         let arch = *self.calling_convention_arch();
         Ok(crate::opt::PyOptimizerPipeline::new_stable_default(cc, arch))
     }
 
-    /// Mirror of `strider::Strider::build_destructive_optimizer_pipeline`.
+    /// Mirror of `strider_analyze::Strider::build_destructive_optimizer_pipeline`.
     fn build_destructive_optimizer_pipeline(&self) -> PyResult<crate::opt::PyOptimizerPipeline> {
         let cc = self.inner.calling_convention().clone();
         Ok(crate::opt::PyOptimizerPipeline::new_destructive_default(cc))
@@ -118,7 +118,7 @@ impl PyStrider {
         let regs = sleigh_borrow.regs.clone();
         drop(sleigh_borrow);
         let arch_copy = arch.inner;
-        let inner = strider::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
+        let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
         Ok(Self {
             inner,
             arch: arch_copy,

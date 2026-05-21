@@ -1,7 +1,7 @@
 //! `strider.run` convenience entry point.
 //!
 //! Delegates to the canonical Rust orchestrator
-//! (`strider::run(Config)`) which drives the indirect-branch
+//! (`strider_analyze::run(Config)`) which drives the indirect-branch
 //! fixed-point loop, runs the stable optimiser between iterations,
 //! and finally runs the destructive subset once.  Works for both
 //! `MemoryMap` and Python-callback `MemReader` subclasses since the
@@ -108,7 +108,7 @@ pub fn run(
     }
 }
 
-/// Orchestrator path — the canonical strider::run flow.  Drives the
+/// Orchestrator path — the canonical strider_analyze::run flow.  Drives the
 /// indirect-branch fixed-point loop and returns the final IR graph.
 #[allow(clippy::too_many_arguments)]
 fn run_via_orchestrator(
@@ -160,12 +160,12 @@ fn run_via_orchestrator(
     let rom_arc = rom.map(|r| r.into_arc());
 
     // Snapshot the Strider out of the PyRef so we can release the GIL
-    // across the long-running strider::run call.  Strider is cheap to
+    // across the long-running strider_analyze::run call.  Strider is cheap to
     // clone (three Clone fields), and detaching the borrow lets other
     // Python threads run during the lift / fixed-point loop.  Callback
     // readers (PyMemReaderAdapter::read) re-acquire the GIL via
     // Python::with_gil per-call, so Cb readers stay correct.
-    let strider_owned: strider::Strider = {
+    let strider_owned: strider_analyze::Strider = {
         let borrow = strider_obj.borrow(py);
         borrow.inner.clone()
     };
@@ -175,7 +175,7 @@ fn run_via_orchestrator(
             .map(|(addr, py_cc)| (addr, py_cc.inner))
             .collect();
     let graph = py.allow_threads(|| {
-        let config = strider::Config {
+        let config = strider_analyze::Config {
             strider: &strider_owned,
             start_addr: entry.into(),
             sleigh: orch_sleigh,
@@ -185,7 +185,7 @@ fn run_via_orchestrator(
             compact,
             per_address_ccs,
         };
-        strider::run(config)
+        strider_analyze::run(config)
     })
     .map_err(into_strider_err)?;
 
@@ -272,9 +272,9 @@ fn run_with_custom_pipeline(
         .inner
         .analyze_cfg_with(
             &cfg_obj.borrow(py).inner,
-            strider::AnalyzeOptions {
+            strider_analyze::AnalyzeOptions {
                 per_address_ccs: &per_address_built_ccs,
-                ..strider::AnalyzeOptions::default()
+                ..strider_analyze::AnalyzeOptions::default()
             },
         )
         .map_err(into_lift_err)?;

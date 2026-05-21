@@ -4,14 +4,10 @@ version = "0.1.0"
 edition = { workspace = true }
 
 [lib]
-# Phase 4 Task 4.0 — lib name flipped from `strider` to `strider_py`
-# so the rlib produced for the `stub_gen` example doesn't collide with
-# the workspace `strider` orchestrator crate's rlib (cargo can't pick
-# between two `libstrider.rlib` candidates in `target/.../deps/`).
-# Maturin re-renames the cdylib artefact at packaging time via
-# `[tool.maturin] module-name = "strider.strider"`, so the Python
-# import path stays `import strider` — the rename only affects the
-# Rust-side identifier and the on-disk `lib*.{rlib,so}` filenames.
+# The rlib is named `strider_py` (Rust-side identifier) so the Python
+# distribution name (`strider`, set by maturin's
+# `[tool.maturin] module-name = "strider.strider"`) is independent of
+# the cargo crate name.  The Python import path stays `import strider`.
 name = "strider_py"
 # `rlib` is needed so the `stub_gen` example can link the crate as a
 # regular Rust library and run `pyo3-stub-gen`'s inventory-driven
@@ -58,7 +54,6 @@ pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "a
 pyo3-stub-gen = { version = "=0.7.0", default-features = false }
 anyhow = { workspace = true }
 
-strider = { workspace = true }
 strider-analyze = { workspace = true }
 strider-pattern-macros = { workspace = true }
 strider-ir = { workspace = true }

@@ -114,7 +114,7 @@ impl PyOptimizerPipeline {
     }
 
     /// Build the convention-aware "full" pipeline mirroring
-    /// `strider::Strider::build_optimizer_pipeline`.
+    /// `strider_analyze::Strider::build_optimizer_pipeline`.
     pub(crate) fn new_full_default(
         cc: target::BuiltCallingConvention,
         arch: target::SleighArch,
@@ -136,7 +136,7 @@ impl PyOptimizerPipeline {
     }
 
     /// Build the stable-only pipeline mirroring
-    /// `strider::Strider::build_stable_optimizer_pipeline`.
+    /// `strider_analyze::Strider::build_stable_optimizer_pipeline`.
     pub(crate) fn new_stable_default(
         cc: target::BuiltCallingConvention,
         arch: target::SleighArch,
@@ -155,7 +155,7 @@ impl PyOptimizerPipeline {
     }
 
     /// Build the destructive-only pipeline mirroring
-    /// `strider::Strider::build_destructive_optimizer_pipeline`.
+    /// `strider_analyze::Strider::build_destructive_optimizer_pipeline`.
     pub(crate) fn new_destructive_default(cc: target::BuiltCallingConvention) -> Self {
         let mut state = PipelineState::from_destructive_default();
         state

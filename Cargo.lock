@@ -1306,27 +1306,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "strider"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dot",
- "expect-test",
- "insta",
- "object",
- "paste",
- "reader",
- "rsleigh",
- "serde",
- "strider-analyze",
- "strider-ir",
- "strider-ir-test-utils",
- "strider-lift",
- "target",
- "thiserror",
-]
-
-[[package]]
 name = "strider-analyze"
 version = "0.1.0"
 dependencies = [
@@ -1419,7 +1398,6 @@ dependencies = [
  "pyo3-stub-gen",
  "reader",
  "rsleigh",
- "strider",
  "strider-analyze",
  "strider-ir",
  "strider-lift",

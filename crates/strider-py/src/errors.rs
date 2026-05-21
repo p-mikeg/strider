@@ -39,14 +39,14 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     if let Some(pending) = Python::with_gil(PyErr::take) {
         return pending;
     }
-    if e.downcast_ref::<strider::UnresolvedIndirectBranch>().is_some() {
+    if e.downcast_ref::<strider_analyze::UnresolvedIndirectBranch>().is_some() {
         return UnresolvedIndirectBranchError::new_err(format!("{e:?}"));
     }
     if e.downcast_ref::<strider_ir::error::UnknownCallOtherError>().is_some() {
         return UnknownCallOtherError::new_err(format!("{e:?}"));
     }
     // String-match heuristic for lift failures.  The orchestrator path
-    // (`strider::run`) folds every error through this converter, so plain
+    // (`strider_analyze::run`) folds every error through this converter, so plain
     // pcode-lift / sleigh / cfg failures arrive as bare `anyhow::Error`
     // chains with no typed root.  Until `pcode-lift` exposes a public
     // `LiftError` type we can downcast, recognise the failure family by
