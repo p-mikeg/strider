@@ -1,7 +1,7 @@
 //! ELF-backed implementation of [`crate::MemRegion`]s and the
 //! [`rsleigh::MemReader`] trait.
 //!
-//! This module is the ELF-specific half of the `reader` crate. The generic
+//! This module is the ELF-specific half of the `strider-reader` crate. The generic
 //! region-lookup machinery (`MemRegion`, `MemRegionsLookupTable`) lives in
 //! [`crate`] so other backends (raw blobs, PE, Mach-O, …) can reuse it.
 //!

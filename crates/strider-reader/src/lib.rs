@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-/// Crate-level `Result` alias.  Every fallible function in `reader`
+/// Crate-level `Result` alias.  Every fallible function in `strider-reader`
 /// returns this type.
 pub type Result<T> = anyhow::Result<T>;
 

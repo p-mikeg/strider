@@ -1,6 +1,6 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! Integration tests for the top-level `reader::load_elf` function.
+//! Integration tests for the top-level `strider_reader::load_elf` function.
 
 #[path = "common/mod.rs"]
 mod common;
@@ -20,7 +20,7 @@ fn load_elf_parses_valid_tempfile() {
     f.write_all(&bytes).unwrap();
     f.flush().unwrap();
 
-    let obj = reader::load_elf(f.path()).unwrap();
+    let obj = strider_reader::load_elf(f.path()).unwrap();
     assert_eq!(obj.endianness(), Endianness::Little);
 
     // `.text` is present at 0x1000.
@@ -46,7 +46,7 @@ fn load_elf_rejects_garbage_bytes() {
     f.write_all(b"this is definitely not an ELF file").unwrap();
     f.flush().unwrap();
 
-    let err = reader::load_elf(f.path()).unwrap_err();
+    let err = strider_reader::load_elf(f.path()).unwrap_err();
     assert!(
         err.to_string().contains("failed to parse ELF"),
         "got: {err}",
@@ -56,7 +56,7 @@ fn load_elf_rejects_garbage_bytes() {
 /// A missing path produces an I/O error.
 #[test]
 fn load_elf_missing_path_is_io_error() {
-    let err = reader::load_elf("/definitely/not/a/real/path/for/tests").unwrap_err();
+    let err = strider_reader::load_elf("/definitely/not/a/real/path/for/tests").unwrap_err();
     assert!(
         err.to_string().contains("failed to read file"),
         "got: {err}",

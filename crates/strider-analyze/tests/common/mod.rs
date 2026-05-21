@@ -181,7 +181,7 @@ fn lift_for_pipeline(
             arch.name()
         );
     }
-    let obj = reader::load_elf(&path)
+    let obj = strider_reader::load_elf(&path)
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let sleigh_arch = arch.sleigh();
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
@@ -191,7 +191,7 @@ fn lift_for_pipeline(
         .expect("probe sleigh regs");
     let ana = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc())
         .expect("Strider::new");
-    let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
     let raw_addr = obj
@@ -207,7 +207,7 @@ fn lift_for_pipeline(
         _ => raw_addr,
     };
     let rom_for_cfg: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
+        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
     let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
@@ -227,7 +227,7 @@ fn lift_for_pipeline(
         .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"))
         .graph;
     let rom_for_opt: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),
+        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),
     );
     (graph, ana, sleigh_arch, rom_for_opt)
 }

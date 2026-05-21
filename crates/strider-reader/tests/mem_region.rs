@@ -1,9 +1,9 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 //! Integration tests for `MemRegion` and `MemRegionsLookupTable` — the
-//! backend-agnostic layer of the reader crate.
+//! backend-agnostic layer of the strider-reader crate.
 
-use reader::{MemRegion, MemRegionsLookupTable};
+use strider_reader::{MemRegion, MemRegionsLookupTable};
 
 // ── helpers ───────────────────────────────────────────────────────────────
 

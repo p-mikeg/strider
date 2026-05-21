@@ -14,7 +14,7 @@ petgraph.workspace = true
 rustc-hash = "2"
 
 [dev-dependencies]
-reader.workspace = true
+strider-reader.workspace = true
 object.workspace = true
 
 [lints]

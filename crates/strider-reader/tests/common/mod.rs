@@ -1,4 +1,4 @@
-// Shared helpers for the reader crate's integration tests.
+// Shared helpers for the strider-reader crate's integration tests.
 //
 // Included by each test file via:
 //     #[path = "common/mod.rs"]

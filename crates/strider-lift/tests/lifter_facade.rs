@@ -36,7 +36,7 @@ fn lifter_for(
     case: &str,
     fn_name: &str,
 ) -> (
-    Lifter<reader::ElfFileMemReader>,
+    Lifter<strider_reader::ElfFileMemReader>,
     u64,
 ) {
     let path = fixture_path("x86", case);
@@ -47,7 +47,7 @@ fn lifter_for(
         );
     }
     let obj =
-        reader::load_elf(&path).unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
+        strider_reader::load_elf(&path).unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let arch = SleighArch::x86();
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
     let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe)
@@ -57,7 +57,7 @@ fn lifter_for(
     let cc = CallingConvention::x86_cdecl()
         .build(&regs)
         .expect("build cc");
-    let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let addr = obj
         .symbol_by_name(fn_name)
         .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
@@ -135,7 +135,7 @@ fn lifter_returns_distinct_regions_for_distinct_addresses() {
 /// address, so two sub-regions sharing one machine addr can't be
 /// disambiguated through that API anyway.
 fn find_other_region_start(
-    lifter: &mut Lifter<reader::ElfFileMemReader>,
+    lifter: &mut Lifter<strider_reader::ElfFileMemReader>,
     entry_addr: u64,
     entry_start: strider_lift::cfg::PcodeInsnAddr,
 ) -> Option<u64> {

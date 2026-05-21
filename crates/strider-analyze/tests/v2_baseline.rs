@@ -110,10 +110,10 @@ fn exported_function_names(path: &Path) -> Vec<String> {
 fn sleigh_for(
     arch: Arch,
     path: &Path,
-) -> rsleigh::Sleigh<reader::ElfFileMemReader> {
-    let obj = reader::load_elf(path)
+) -> rsleigh::Sleigh<strider_reader::ElfFileMemReader> {
+    let obj = strider_reader::load_elf(path)
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let mem = reader::ElfFileMemReader::from_object(&obj)
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj)
         .expect("ElfFileMemReader::from_object");
     let sleigh_arch = arch.sleigh();
     rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
@@ -122,7 +122,7 @@ fn sleigh_for(
 
 fn to_dot_string(
     g: &strider_ir::BuiltFunctionGraph,
-    sleigh: &rsleigh::Sleigh<reader::ElfFileMemReader>,
+    sleigh: &rsleigh::Sleigh<strider_reader::ElfFileMemReader>,
 ) -> String {
     let dot = dot::GraphDot::new(g.dot_dumper(sleigh), dot::DotStyle::dark());
     dot.as_dot()

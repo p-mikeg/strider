@@ -20,12 +20,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use crate::errors::into_reader_err;
-use reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
+use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 
 // ── PyRelocationStats — return type for apply_elf_relocations ────────────
 
 /// Counts from a single `apply_elf_relocations` run.  Mirrors the
-/// fields of `reader::elf::RelocationStats` one-to-one.  Useful for
+/// fields of `strider_reader::elf::RelocationStats` one-to-one.  Useful for
 /// post-load diagnostics: a binary that reports `applied = 0` but
 /// `seen > 0` is signalling that every relocation kind it carries is
 /// unsupported (or every target is undefined / outside the loaded
@@ -69,8 +69,8 @@ impl PyRelocationStats {
     }
 }
 
-impl From<reader::elf::RelocationStats> for PyRelocationStats {
-    fn from(s: reader::elf::RelocationStats) -> Self {
+impl From<strider_reader::elf::RelocationStats> for PyRelocationStats {
+    fn from(s: strider_reader::elf::RelocationStats) -> Self {
         Self {
             seen: s.seen,
             applied: s.applied,
@@ -85,7 +85,7 @@ impl From<reader::elf::RelocationStats> for PyRelocationStats {
 // ── PyMemoryMap (data-only fast path) ────────────────────────────────────
 
 /// Owned-data memory map. Implements `rsleigh::MemReader` (via the
-/// internal `PyMemoryMapReader` view) and `reader::ReadOnlyMemory`
+/// internal `PyMemoryMapReader` view) and `strider_reader::ReadOnlyMemory`
 /// directly. Cheap to clone: the inner data is held behind `Arc`.
 #[pyclass(name = "MemoryMap", module = "strider")]
 #[derive(Clone)]
@@ -101,7 +101,7 @@ pub struct PyMemoryMap {
     /// Kept around so `symbol(name)` / `symbols()` can resolve names
     /// without forcing the user to re-parse the file via pyelftools.
     /// `object::File<'static>` borrows from a leaked byte slice (see
-    /// `reader::load_elf`), so storing it here is sound.
+    /// `strider_reader::load_elf`), so storing it here is sound.
     elfs: Arc<RwLock<Vec<object::File<'static>>>>,
     /// Byte order used by `ReadOnlyMemory::read` when assembling
     /// multi-byte words from the underlying buffer.  Defaults to
@@ -232,20 +232,20 @@ impl PyMemoryMap {
 
     /// Convenience: load every executable section and every non-writable
     /// section with file-backed data from an ELF file at `path` and add
-    /// them as regions.  Mirrors `reader::ElfFileMemReader::from_path`'s
+    /// them as regions.  Mirrors `strider_reader::ElfFileMemReader::from_path`'s
     /// region selection.
     ///
     /// `apply_relocations` defaults to `False`.  Set it to `True` for
     /// ET_DYN binaries (FreeBSD kernels, PIE userland) whose `.text`
     /// or function-pointer tables ship with unresolved relocations
     /// (`call rel32` placeholders, `R_*_RELATIVE` entries):
-    /// `reader::elf::apply_elf_relocations` runs over the loaded
+    /// `strider_reader::elf::apply_elf_relocations` runs over the loaded
     /// regions in-place after the section copy and patches every
     /// relocation it understands.  See the function's doc-comment
     /// for the supported kinds.
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_region_from_elf(&self, path: &str, apply_relocations: bool) -> PyResult<()> {
-        let obj = reader::load_elf(path).map_err(into_reader_err)?;
+        let obj = strider_reader::load_elf(path).map_err(into_reader_err)?;
         // Auto-set the byte order from the ELF header so subsequent
         // ReadOnlyMemory::read calls assemble multi-byte words in the
         // right order (big-endian targets like MIPS-BE / PowerPC-BE
@@ -268,10 +268,10 @@ impl PyMemoryMap {
         // function pointers should be.
         let regions = if apply_relocations {
             let (regions, _stats) =
-                reader::elf::elf_load_with_relocations(&obj).map_err(into_reader_err)?;
+                strider_reader::elf::elf_load_with_relocations(&obj).map_err(into_reader_err)?;
             regions
         } else {
-            reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
+            strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
                 .map_err(into_reader_err)?
         };
         let mut inner = self
@@ -318,12 +318,12 @@ impl PyMemoryMap {
     /// sections only — `SHT_NOBITS` like `.bss` is never
     /// autoloaded).
     fn apply_elf_relocations(&self, path: &str) -> PyResult<PyRelocationStats> {
-        let obj = reader::load_elf(path).map_err(into_reader_err)?;
+        let obj = strider_reader::load_elf(path).map_err(into_reader_err)?;
         let mut regions = self
             .inner
             .write()
             .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap regions lock poisoned")))?;
-        let stats = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj)
+        let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj)
             .map_err(into_reader_err)?;
         // Invalidate the lookup table — both the autoload step
         // (which appends new regions) and the in-place patches
@@ -490,7 +490,7 @@ pub struct PyMemReaderAdapter {
 }
 
 impl rsleigh::MemReader for PyMemReaderAdapter {
-    type Err = reader::MemReadError;
+    type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         Python::with_gil(|py| -> anyhow::Result<usize> {
@@ -525,7 +525,7 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
             out_buf[..n].copy_from_slice(&bytes[..n]);
             Ok(n)
         })
-        .map_err(reader::MemReadError::from)
+        .map_err(strider_reader::MemReadError::from)
     }
 }
 
@@ -535,7 +535,7 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 /// override `read(addr, size) -> Optional[int]` returning the
 /// little-endian-decoded value or `None` for unmapped.
 ///
-/// The Rust trait `reader::ReadOnlyMemory::read(VnSpace, addr, size)`
+/// The Rust trait `strider_reader::ReadOnlyMemory::read(VnSpace, addr, size)`
 /// takes a varnode-space because the IR's `Load` nodes carry one
 /// (`Load(VnSpace::REGISTER)` is a register read; `Load(VnSpace::RAM)`
 /// is a memory read).  In practice the `LoadReadOnly` pass only
@@ -634,7 +634,7 @@ pub enum AnyMemReader {
 }
 
 impl rsleigh::MemReader for AnyMemReader {
-    type Err = reader::MemReadError;
+    type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         match self {
@@ -654,19 +654,19 @@ pub struct PyMemoryMapReader {
 }
 
 impl rsleigh::MemReader for PyMemoryMapReader {
-    type Err = reader::MemReadError;
+    type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         self.table
             .read(addr.off, out_buf)
             .ok_or_else(|| {
-                reader::MemReadError::from(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
+                strider_reader::MemReadError::from(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
             })
     }
 }
 
 /// `ReadOnlyMemory` impl reading 1/2/4/8-byte words from any space.
-/// Mirrors `reader::ElfFileMemReader`'s endianness-aware decoding so
+/// Mirrors `strider_reader::ElfFileMemReader`'s endianness-aware decoding so
 /// big-endian targets (MIPS-BE / PowerPC-BE / AArch64-BE) get correct
 /// `LoadReadOnly` constants.  Endianness is auto-set by
 /// `add_region_from_elf` (or explicitly via `set_endianness`); defaults

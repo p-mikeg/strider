@@ -21,7 +21,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
     if !path.exists() {
         panic!("missing test binary {path:?}; run `make -C fixtures`");
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = arch.sleigh();
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
     let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
@@ -30,7 +30,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         .expect("probe sleigh regs");
     let s = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new");
 
-    let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
     let raw_addr = obj
@@ -43,7 +43,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
     };
 
     let rom: Arc<dyn strider_analyze::opt::ReadOnlyMemory> = Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom"),
+        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"),
     );
 
     let config = strider_analyze::Config {

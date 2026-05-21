@@ -1051,17 +1051,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reader"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "object",
- "rsleigh",
- "strider-ir",
- "tempfile",
-]
-
-[[package]]
 name = "regex"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1321,7 +1310,6 @@ dependencies = [
  "object",
  "paste",
  "proptest",
- "reader",
  "rsleigh",
  "rustc-hash",
  "serde",
@@ -1329,6 +1317,7 @@ dependencies = [
  "strider-ir",
  "strider-ir-test-utils",
  "strider-lift",
+ "strider-reader",
  "target",
  "thiserror",
 ]
@@ -1371,10 +1360,10 @@ dependencies = [
  "graphwalk",
  "object",
  "petgraph",
- "reader",
  "rsleigh",
  "rustc-hash",
  "strider-ir",
+ "strider-reader",
  "target",
 ]
 
@@ -1396,13 +1385,24 @@ dependencies = [
  "object",
  "pyo3",
  "pyo3-stub-gen",
- "reader",
  "rsleigh",
  "strider-analyze",
  "strider-ir",
  "strider-lift",
  "strider-pattern-macros",
+ "strider-reader",
  "target",
+]
+
+[[package]]
+name = "strider-reader"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "object",
+ "rsleigh",
+ "strider-ir",
+ "tempfile",
 ]
 
 [[package]]

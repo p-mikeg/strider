@@ -1,6 +1,6 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! Integration tests for `reader::ElfFileMemReader` and its trait impls.
+//! Integration tests for `strider_reader::ElfFileMemReader` and its trait impls.
 
 #[path = "common/mod.rs"]
 mod common;
@@ -17,7 +17,7 @@ use common::reader_contract::{
     assert_readonly_returns_none,
 };
 use object::{Endianness, File};
-use reader::{ElfFileMemReader, ReadOnlyMemory};
+use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use tempfile::NamedTempFile;
 
@@ -179,8 +179,8 @@ fn elf_exec_segments_only_yield_mapped_regions() {
         SegmentSpec { addr: 0x2000, data: vec![0xcc, 0xdd], exec: false },
     ]);
     let obj = File::parse(&bytes[..]).unwrap();
-    let regions = reader::elf::elf_get_executable_segments_as_mem_regions(&obj).unwrap();
-    let table = reader::MemRegionsLookupTable::new(regions);
+    let regions = strider_reader::elf::elf_get_executable_segments_as_mem_regions(&obj).unwrap();
+    let table = strider_reader::MemRegionsLookupTable::new(regions);
 
     let mut buf = [0u8; 2];
     assert_eq!(table.read(0x1000, &mut buf), Some(2));

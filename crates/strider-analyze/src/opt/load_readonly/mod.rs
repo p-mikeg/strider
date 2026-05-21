@@ -23,7 +23,7 @@ use crate::opt::worklist::WorkSet;
 /// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] returns a `u64`
 /// that already represents the target's *numeric* value — the impl is
 /// responsible for byte-swapping according to the target's endianness
-/// (see `reader::ElfFileMemReader`'s `read` for an LE/BE example). This
+/// (see `strider_reader::ElfFileMemReader`'s `read` for an LE/BE example). This
 /// pass then masks the result to the load's output type via
 /// [`NodeOutputType::get_unsigned_int`][strider_ir::node::NodeOutputType::get_unsigned_int].
 /// Callers must not double-swap.

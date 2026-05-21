@@ -1,7 +1,7 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 //! Integration tests for the free `elf_*_to_mem_region(s)` functions and
-//! the three filter helpers in `reader::elf`.
+//! the three filter helpers in `strider_reader::elf`.
 
 #[path = "common/mod.rs"]
 mod common;
@@ -11,7 +11,7 @@ use common::elf_fixture::{
 };
 use object::Object;
 use object::read::{ObjectSection, ObjectSegment};
-use reader::elf::{
+use strider_reader::elf::{
     elf_get_code_and_readonly_sections_as_mem_regions,
     elf_get_executable_sections_as_mem_regions,
     elf_get_executable_segments_as_mem_regions,
@@ -108,7 +108,7 @@ fn elf_sections_same_start_last_wins_via_lookup_table() {
     ]);
     let obj = parse(&bytes);
     let regions = elf_sections_to_mem_regions(&obj, |_| true).unwrap();
-    let table = reader::MemRegionsLookupTable::new(regions);
+    let table = strider_reader::MemRegionsLookupTable::new(regions);
 
     let mut buf = [0u8; 1];
     assert_eq!(table.read(0x1000, &mut buf), Some(1));

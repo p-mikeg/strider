@@ -14,9 +14,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_path = "fixtures/out/x86/arithmetic.elf";
     let symbol = "add";
 
-    let obj = reader::load_elf(binary_path)?;
-    let mem_reader = reader::ElfFileMemReader::from_object(&obj)?;
-    let rom = reader::ElfFileMemReader::from_object(&obj)?;
+    let obj = strider_reader::load_elf(binary_path)?;
+    let mem_reader = strider_reader::ElfFileMemReader::from_object(&obj)?;
+    let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;
 
     let arch = strider_analyze::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;

@@ -13,7 +13,7 @@ default-members = ["crates/*"]
 edition = "2024"
 
 [workspace.dependencies]
-reader = { path = "crates/reader" }
+strider-reader = { path = "crates/strider-reader" }
 target = { path = "crates/target" }
 dot = { path = "crates/dot" }
 entity-utils = { path = "crates/entity-utils" }

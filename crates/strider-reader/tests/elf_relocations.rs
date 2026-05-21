@@ -1,4 +1,4 @@
-//! Integration tests for `reader::elf::apply_elf_relocations`.
+//! Integration tests for `strider_reader::elf::apply_elf_relocations`.
 //!
 //! Uses the `fixtures/out/<arch>/elf_relocs.elf` shared-library
 //! fixture (built by `fixtures/Makefile` with `-shared -fPIC`).  The
@@ -20,7 +20,7 @@ fn fixture_path(arch: &str, case: &str) -> PathBuf {
 
 /// Read 8 bytes (LE) from `regions` at virtual address `addr`.
 /// Returns `None` if no region covers the range.
-fn read_u64_le(regions: &[reader::MemRegion], addr: u64) -> Option<u64> {
+fn read_u64_le(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u64> {
     for r in regions {
         if r.contains(addr) && addr + 8 <= r.end_addr() {
             let off = (addr - r.start_addr()) as usize;
@@ -44,12 +44,12 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
     if !path.exists() {
         panic!("missing {path:?}; run `make -C fixtures CASE=elf_relocs ARCH=x64`");
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
     // dispatch_table lives in `.data.rel.ro` (writable section that
     // gets relro-protected at runtime).  The default
     // code-and-readonly loader skips it; the wider loader picks it
     // up so the applier has somewhere to patch.
-    let (regions, stats) = reader::elf::elf_load_with_relocations(&obj).expect("load+apply");
+    let (regions, stats) = strider_reader::elf::elf_load_with_relocations(&obj).expect("load+apply");
 
     let table_addr = sym_addr(&obj, "dispatch_table");
     let helper_a = sym_addr(&obj, "helper_a");
@@ -115,8 +115,8 @@ fn default_loader_omits_data_rel_ro() {
     if !path.exists() {
         return;
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
-    let regions = reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let regions = strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
     let table_addr = sym_addr(&obj, "dispatch_table");
     assert!(
         read_u64_le(&regions, table_addr).is_none(),
@@ -135,10 +135,10 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
     if !path.exists() {
         return; // skip if fixture not built
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
-    let mut regions = reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let mut regions = strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
         .expect("regions");
-    let stats = reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
+    let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
     // ET_EXEC with no dynamic relocations: every counter is 0 (or a
     // small set of GLOB_DAT / JUMP_SLOT entries we deliberately skip
     // because they target undefined externs).
@@ -158,12 +158,12 @@ fn apply_elf_relocations_autoload_pulls_in_missing_site_sections() {
     if !path.exists() {
         return;
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
     let mut regions =
-        reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+        strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
     let regions_before = regions.len();
 
-    let stats = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj)
+    let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj)
         .expect("autoload apply");
 
     assert!(stats.seen > 0, "fixture should have at least one reloc; stats = {stats:?}");
@@ -185,12 +185,12 @@ fn apply_elf_relocations_idempotent() {
     if !path.exists() {
         return;
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
     let mut regions =
-        reader::elf::elf_get_allocatable_file_backed_sections_as_mem_regions(&obj).unwrap();
-    let _ = reader::elf::apply_elf_relocations(&mut regions, &obj).unwrap();
+        strider_reader::elf::elf_get_allocatable_file_backed_sections_as_mem_regions(&obj).unwrap();
+    let _ = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).unwrap();
     let snapshot: Vec<Vec<u8>> = regions.iter().map(|r| r.data().to_vec()).collect();
-    let _ = reader::elf::apply_elf_relocations(&mut regions, &obj).unwrap();
+    let _ = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).unwrap();
     let after: Vec<Vec<u8>> = regions.iter().map(|r| r.data().to_vec()).collect();
     assert_eq!(snapshot, after, "apply_elf_relocations is not idempotent");
 }
@@ -204,15 +204,15 @@ fn apply_elf_relocations_autoload_is_idempotent() {
     if !path.exists() {
         return;
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
     let mut regions =
-        reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+        strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
 
-    let _ = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
+    let _ = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
     let snapshot: Vec<(u64, Vec<u8>)> =
         regions.iter().map(|r| (r.start_addr(), r.data().to_vec())).collect();
 
-    let _ = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
+    let _ = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
     let after: Vec<(u64, Vec<u8>)> =
         regions.iter().map(|r| (r.start_addr(), r.data().to_vec())).collect();
 
@@ -234,11 +234,11 @@ fn apply_elf_relocations_autoload_does_not_fabricate_values_for_undefined_extern
     if !path.exists() {
         return;
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
     let mut regions =
-        reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+        strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
 
-    let stats = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
+    let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
 
     assert!(stats.seen > 0, "fixture should expose dynamic relocs: {stats:?}");
     assert_eq!(stats.applied, 0, "undefined externs must not be fabricated: {stats:?}");
@@ -259,12 +259,12 @@ fn apply_elf_relocations_autoload_no_op_when_no_dynamic_table() {
     if !path.exists() {
         return;
     }
-    let obj = reader::load_elf(&path).expect("load_elf");
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
     let mut regions =
-        reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+        strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
     let regions_before = regions.len();
 
-    let stats = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
+    let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
 
     // Whether the fixture has zero dyn relocs or just none of the
     // shape we autoload depends on the linker, but either way the
@@ -283,6 +283,6 @@ fn relocation_stats_default_includes_autoload_parse_failure_counter() {
     // build-level signal — programmatic callers depend on this counter
     // to detect malformed-ELF cases that would otherwise look like
     // benign `skipped_no_region` entries.
-    let stats = reader::elf::RelocationStats::default();
+    let stats = strider_reader::elf::RelocationStats::default();
     assert_eq!(stats.autoload_section_parse_failures, 0);
 }

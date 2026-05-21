@@ -14,7 +14,7 @@
 //! the convention used by `strider_lift::cfg::cfg_integration` and `strider::run`.
 
 use object::Object;
-use reader::{ElfFileMemReader, ReadOnlyMemory};
+use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
 
 fn binary_path(arch: &str) -> std::path::PathBuf {
     // The legacy single-fixture `test.elf` was split into per-category
@@ -39,7 +39,7 @@ fn assert_smoke(arch: &str) {
     );
 
     // load_elf round-trip
-    let obj = reader::load_elf(&path).unwrap();
+    let obj = strider_reader::load_elf(&path).unwrap();
     assert_eq!(
         obj.endianness(),
         object::Endianness::Little,

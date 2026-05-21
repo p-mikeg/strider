@@ -13,8 +13,8 @@ impl Endianness {
     /// `ReadOnlyMemory` adapter, and any other consumer that needs to
     /// interpret raw bytes as a multi-byte word.  Consolidates the
     /// `if le { from_le_bytes } else { from_be_bytes }` branching that
-    /// was duplicated across `reader::elf` and
-    /// `strider-py::reader::PyMemoryMap`.
+    /// was duplicated across `strider_reader::elf` and
+    /// `strider-py::strider_reader::PyMemoryMap`.
     #[must_use]
     pub fn read_u64(self, bytes: [u8; 8]) -> u64 {
         match self {

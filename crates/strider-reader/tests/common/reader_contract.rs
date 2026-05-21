@@ -1,5 +1,5 @@
 //! Backend-agnostic assertions over the `rsleigh::MemReader` and
-//! `reader::ReadOnlyMemory` traits.
+//! `strider_reader::ReadOnlyMemory` traits.
 //!
 //! When a new backend (PE, Mach-O, raw blob, …) lands, its test file
 //! builds the reader and calls these helpers in addition to its own
@@ -7,7 +7,7 @@
 
 #![allow(dead_code)]
 
-use reader::ReadOnlyMemory;
+use strider_reader::ReadOnlyMemory;
 use rsleigh::{MemReader, VnAddr, VnSpace};
 
 // ── MemReader ────────────────────────────────────────────────────────────

@@ -59,7 +59,7 @@ strider-pattern-macros = { workspace = true }
 strider-ir = { workspace = true }
 strider-lift = { workspace = true }
 dot = { workspace = true }
-reader = { workspace = true }
+strider-reader = { workspace = true }
 target = { workspace = true }
 rsleigh = { workspace = true }
 object = { workspace = true }

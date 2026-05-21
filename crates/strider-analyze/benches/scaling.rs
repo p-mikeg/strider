@@ -47,7 +47,7 @@ fn binary_path(arch_name: &str, case: &str) -> PathBuf {
 
 fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
     let path = binary_path(c.arch_name, c.case);
-    let obj = reader::load_elf(&path).expect("load_elf");
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = match c.arch_name {
         "x86" => strider_analyze::SleighArch::x86(),
         "x64" => strider_analyze::SleighArch::x86_64(),
@@ -68,7 +68,7 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
         .regs()
         .expect("probe regs");
     let ana = strider_analyze::Strider::new(sleigh_arch, regs, cc).expect("Strider::new");
-    let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
     let raw_addr = obj
@@ -77,7 +77,7 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
         .address();
     let addr = raw_addr;
     let rom_for_cfg: Arc<dyn strider_analyze::opt::ReadOnlyMemory> = Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
+        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
     let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
@@ -93,7 +93,7 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
         .build()
         .expect("Cfg build");
     let mut graph = ana.analyze_cfg(&cfg).expect("analyze_cfg").graph;
-    let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
+    let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
     let entry = graph.entry();

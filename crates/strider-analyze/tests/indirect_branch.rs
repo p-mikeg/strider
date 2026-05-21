@@ -56,7 +56,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             arch.name()
         );
     }
-    let obj = reader::load_elf(&path)
+    let obj = strider_reader::load_elf(&path)
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let sleigh_arch = arch.sleigh();
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
@@ -66,7 +66,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         .expect("probe sleigh regs");
     let ana = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc())
         .expect("Strider::new");
-    let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
     let raw_addr = obj
@@ -80,7 +80,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         _ => raw_addr,
     };
     let rom_for_cfg: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
+        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
     let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
@@ -110,7 +110,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // that promise holds vacuously.  Mirror common::analyze's
         // post-lift sanity by running the optimiser pipeline so any
         // pipeline regression on the placeholder code-path is caught.
-        let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
+        let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
         let mut p = ana.build_optimizer_pipeline();
         p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
         let entry = graph.graph.entry();
@@ -122,7 +122,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     // detect, KnownBits, and rodata-load resolutions run before
     // classification — same shape as the orchestrator's per-iteration
     // pre-classify pass.
-    let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
+    let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
     let entry = graph.graph.entry();
@@ -132,7 +132,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let lr_vn = ana.calling_convention().link_register_vn();
     let sp_vn = Some(ana.calling_convention().stack_ptr_vn());
     let rom_for_classify: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
+        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
     );
     for (anchor_addr, anchor_output) in &unresolved {
         // After the optimizer runs, the placeholder IndirectBranch's

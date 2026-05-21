@@ -22,7 +22,7 @@ thiserror.workspace = true
 bitflags = "2"
 
 [dev-dependencies]
-reader = { workspace = true }
+strider-reader = { workspace = true }
 object.workspace = true
 strider-ir-test-utils = { workspace = true }
 expect-test.workspace = true
