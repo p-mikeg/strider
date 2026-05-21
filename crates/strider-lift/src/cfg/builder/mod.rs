@@ -60,8 +60,7 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right `arch` to
     /// [`strider_target::call_other_abi::classify`].  Set atomically with
-    /// `endianness` via [`Self::for_arch`], or override individually
-    /// with [`Self::with_preset`].
+    /// `endianness` via [`Self::for_arch`].
     pub(super) preset: strider_target::ArchPreset,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
@@ -144,18 +143,6 @@ impl<R: rsleigh::MemReader> Builder<R> {
         resolver: Arc<dyn IndirectTargetResolver<R>>,
     ) -> Self {
         self.indirect_resolver = Some(resolver);
-        self
-    }
-
-    /// Sets the [`strider_target::ArchPreset`] used by the `Opcode::CallOther`
-    /// arm in `super::region_builder` when consulting
-    /// [`strider_target::call_other_abi::classify`].  Defaults to
-    /// [`strider_target::ArchPreset::X86_64`]; override for non-x86_64 targets.
-    /// Prefer [`Self::for_arch`] when an arch object is in scope —
-    /// it sets endianness AND preset atomically.
-    #[must_use]
-    pub fn with_preset(mut self, preset: strider_target::ArchPreset) -> Self {
-        self.preset = preset;
         self
     }
 
