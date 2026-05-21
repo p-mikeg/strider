@@ -1,9 +1,11 @@
 # `strider_pattern` macro emission specification
 
-Reference hand-implementation lives at
-`crates/strider-py/src/pattern_reference.rs`. The proc-macro
-(`#[strider_pattern]`) MUST emit code shape-identical to that reference.
-This document captures the contract.
+The hand-written reference implementation that the macro was modelled
+on (formerly `crates/strider-py/src/pattern_reference.rs`) was
+removed once parity was confirmed; the macro-emitted types in
+`crates/strider-py/src/pattern.rs` are now the canonical shape.
+The proc-macro (`#[strider_pattern]`) MUST emit code shape-identical
+to that established template.  This document captures the contract.
 
 ## Status
 
@@ -11,7 +13,7 @@ This document captures the contract.
 |---|---|
 | `pyo3-stub-gen` version pinned | `=0.7.0` (only line still compatible with pyo3 0.22; newer majors require pyo3 >= 0.24) |
 | `pyo3` version | `0.22.6` (`abi3-py39`) |
-| Reference type | `PyStackStorePatV2` -> exposed as `strider.pattern.StackStorePatV2` |
+| Reference type | `PyStackStorePat` -> exposed as `strider.pattern.StackStorePat` |
 | Stub generator | `crates/strider-py/examples/stub_gen.rs` (cargo example, opt-in via the `stub_gen` feature) |
 | mypy --strict | Passing (`tests/python/test_reference_pyi.py::test_reference_consumer_passes_mypy_strict`) |
 | Runtime smoke | Passing (`test_reference_consumer_runs`) |
@@ -68,17 +70,17 @@ struct FooInner {
 
 #[gen_stub_pyclass]                                  // (1) MUST be before
 #[pyclass(name = "Foo", module = "strider.pattern")] // (2) the #[pyclass]
-pub struct PyFooV2 {
+pub struct PyFoo {
     inner: Arc<Mutex<FooInner>>,
 }
 
-impl PyFooV2 {
+impl PyFoo {
     pub(crate) fn finalise(&self) -> pattern::Pat { /* assemble from fields */ }
 }
 
 #[gen_stub_pymethods]   // (3) MUST be before
 #[pymethods]            // (4) the #[pymethods]
-impl PyFooV2 {
+impl PyFoo {
     #[new]
     fn new() -> Self { Self { inner: Arc::new(Mutex::new(FooInner::default())) } }
 
@@ -191,6 +193,21 @@ Notes on `#[field(multi)]`:
   would need a separate emission path and have no in-tree call site
   today.
 
+## Crate-attribute knobs
+
+The `#[strider_pattern(...)]` outer attribute accepts the following
+`key = "value"` pairs.  All keys except `node_phrase` and
+`constructor_args` are required.
+
+| Key | Purpose |
+|---|---|
+| `rust_name = "..."` | Rust type name to emit (e.g. `"PyStackStorePat"`). |
+| `py_name = "..."` | Python class name as exposed via `#[pyclass(name = ...)]`. |
+| `py_module = "..."` | Python module path for the `#[pyclass(module = ...)]`. |
+| `base_builder = "..."` | Free function in `pattern::*` that returns the empty Rust builder (e.g. `"stack_store"`). |
+| `node_phrase = "..."` | Substituted into the generated `.capture(c)` method docstring's "matched {node_phrase}" slot.  Real callers use `"phi node"`, `"stack-store node"`, `"CallOther node"`, etc. so the `.pyi` matches the hand-written reference byte-for-byte.  Default: `"node"`. |
+| `constructor_args = "..."` | See "Field annotations — required-construction additions" below.  Enables required-construction mode for binary-op builders (`IntBinaryPat`, `BoolBinaryPat`, `FloatBinaryPat`). |
+
 ## Field annotations — required-construction additions
 
 Two macro extensions cover the migration of `PyIntBinaryPat` /
@@ -221,14 +238,15 @@ Two macro extensions cover the migration of `PyIntBinaryPat` /
 |---|---|
 | `PyFunctionArgPat` | Enum-dispatch source: `.index(u32)`, `.source_register(vn)`, `.source_stack(space, offset)` all write the same underlying `Option<FunctionArgSource>`.  Out of scope for the current `Option<T>`-per-field macro shape — adding a `#[field_setter(name = ..., variant = ..., args = ...)]` annotation that emits multiple named setters writing different enum variants into one field would gain ~30 LOC at the call site versus a chunky proc-macro change, so this type stays hand-written. |
 
-## Coexistence with the pre-existing hand-mirror
+## Coexistence with a pre-existing hand-mirror
 
-When migrating an existing hand-written pyclass, name the
-macro-generated reference type with a distinguishing suffix
-(e.g. `PyStackStorePatV2` / `StackStorePatV2`) so the
-hand-mirror keeps passing every test during migration.  The
-hand-mirror is then swapped out for the macro-generated type of
-identical shape, and the suffix is dropped in the same commit.
+When migrating an existing hand-written pyclass, temporarily name
+the macro-generated type with a distinguishing suffix (e.g.
+`PyStackStorePatV2` / `StackStorePatV2`) so the hand-mirror keeps
+passing every test during migration.  Swap the hand-mirror out for
+the macro-generated type of identical shape and drop the suffix in
+the same commit.  No suffixed types remain in-tree today — the
+macro-emitted names are the canonical `PyFooPat` / `FooPat` pair.
 
 ## Verification
 
