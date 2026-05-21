@@ -96,25 +96,44 @@ pub struct CallingConvention {
 /// [`rsleigh::Vn`] varnodes.
 ///
 /// Produced by [`CallingConvention::build`] (canonical path) or
-/// [`Self::try_from_parts`] (test/override construction).  Fields are
-/// `pub(crate)`: callers read them through the typed accessors below
-/// rather than touching the storage directly.  This keeps the type
-/// immutable post-construction (no `.callee_saved_regs.push(x)` after
-/// `build` returned) and gives the accessor return types — `&[Vn]` for
-/// slices, `Vn` / `i64` / `bool` for `Copy` scalars — a single source
-/// of truth as the storage shape evolves.
+/// [`Self::try_new`] (test/override construction).  Fields are `pub`
+/// because the type is immutable post-construction — the validating
+/// constructor [`Self::try_new`] checks every ABI invariant, and there
+/// is no mutating API.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BuiltCallingConvention {
-    pub(crate) arg_passing_regs: Vec<rsleigh::Vn>,
-    pub(crate) callee_saved_regs: Vec<rsleigh::Vn>,
-    pub(crate) ret_val_regs: Vec<rsleigh::Vn>,
-    pub(crate) ret_val_regs_float: Vec<rsleigh::Vn>,
-    pub(crate) stack_ptr_vn: rsleigh::Vn,
-    pub(crate) stack_arg_offsets: Vec<i64>,
-    pub(crate) ret_stack_pop: i64,
-    pub(crate) link_register_vn: Option<rsleigh::Vn>,
-    pub(crate) syscall_number_vn: Option<rsleigh::Vn>,
-    pub(crate) no_memory_clobber: bool,
+    /// Argument-passing register varnodes, in positional order.
+    pub arg_passing_regs: Vec<rsleigh::Vn>,
+    /// Callee-saved register varnodes.  Excludes the stack pointer; SP's
+    /// callee-side preservation is expressed through [`Self::ret_stack_pop`].
+    pub callee_saved_regs: Vec<rsleigh::Vn>,
+    /// Integer return-value register varnodes, in positional order.
+    pub ret_val_regs: Vec<rsleigh::Vn>,
+    /// Float return-value register varnodes (e.g. `[q0, q1]` on AArch64,
+    /// `[XMM0, XMM1]` on x86_64).  Tracked separately from
+    /// [`Self::ret_val_regs`] because their widths differ.
+    pub ret_val_regs_float: Vec<rsleigh::Vn>,
+    /// Hardware stack-pointer varnode.  Deliberately absent from the three
+    /// register-list fields above — SP's cross-call behaviour is expressed
+    /// through [`Self::ret_stack_pop`] instead.
+    pub stack_ptr_vn: rsleigh::Vn,
+    /// Byte offsets from the call-time SP for each positional stack arg.
+    pub stack_arg_offsets: Vec<i64>,
+    /// Net byte change the callee's `ret` inflicts on the caller's SP.
+    /// `8` on x86_64 (pops return address); `0` on link-register ISAs.
+    pub ret_stack_pop: i64,
+    /// Link-register varnode on link-register ISAs (ARM, AArch64, MIPS,
+    /// PowerPC); `None` on stack-push ISAs (x86, x86_64).  Consumed by the
+    /// indirect-branch resolver to classify return-shaped indirect branches.
+    pub link_register_vn: Option<rsleigh::Vn>,
+    /// Syscall-number register varnode for `*_linux_syscall` CCs; `None` on
+    /// userland and kernel-internal CCs.
+    pub syscall_number_vn: Option<rsleigh::Vn>,
+    /// `true` when calls under this CC preserve memory (zero-side-effect
+    /// hooks like `__fentry__` / `mcount`).  Consumed by the IR builder's
+    /// `build_call_with_cc` to suppress the Call's Memory output so
+    /// `LoadReadOnly` / `StackLoadForward` can forward across the call.
+    pub no_memory_clobber: bool,
 }
 
 impl BuiltCallingConvention {
@@ -240,79 +259,6 @@ impl BuiltCallingConvention {
         })
     }
 
-    /// Argument-passing register varnodes, in positional order.
-    #[must_use]
-    pub fn arg_passing_regs(&self) -> &[rsleigh::Vn] {
-        &self.arg_passing_regs
-    }
-
-    /// Callee-saved register varnodes.  Excludes the stack pointer;
-    /// SP's callee-side preservation is expressed through
-    /// [`Self::ret_stack_pop`].
-    #[must_use]
-    pub fn callee_saved_regs(&self) -> &[rsleigh::Vn] {
-        &self.callee_saved_regs
-    }
-
-    /// Integer return-value register varnodes, in positional order.
-    #[must_use]
-    pub fn ret_val_regs(&self) -> &[rsleigh::Vn] {
-        &self.ret_val_regs
-    }
-
-    /// Float return-value register varnodes (e.g. `[q0, q1]` on
-    /// AArch64, `[XMM0, XMM1]` on x86_64).  Tracked separately from
-    /// [`Self::ret_val_regs`] because their widths differ.
-    #[must_use]
-    pub fn ret_val_regs_float(&self) -> &[rsleigh::Vn] {
-        &self.ret_val_regs_float
-    }
-
-    /// Hardware stack-pointer varnode.  Deliberately absent from the
-    /// three register-list accessors above — SP's cross-call behaviour
-    /// is expressed through [`Self::ret_stack_pop`] instead.
-    #[must_use]
-    pub fn stack_ptr_vn(&self) -> rsleigh::Vn {
-        self.stack_ptr_vn
-    }
-
-    /// Byte offsets from the call-time SP for each positional stack arg.
-    #[must_use]
-    pub fn stack_arg_offsets(&self) -> &[i64] {
-        &self.stack_arg_offsets
-    }
-
-    /// Net byte change the callee's `ret` inflicts on the caller's SP.
-    /// `8` on x86_64 (pops return address); `0` on link-register ISAs.
-    #[must_use]
-    pub fn ret_stack_pop(&self) -> i64 {
-        self.ret_stack_pop
-    }
-
-    /// Link-register varnode on link-register ISAs (ARM, AArch64, MIPS,
-    /// PowerPC); `None` on stack-push ISAs (x86, x86_64).  Consumed by
-    /// the indirect-branch resolver to classify return-shaped indirect
-    /// branches.
-    #[must_use]
-    pub fn link_register_vn(&self) -> Option<rsleigh::Vn> {
-        self.link_register_vn
-    }
-
-    /// Syscall-number register varnode for `*_linux_syscall` CCs;
-    /// `None` on userland and kernel-internal CCs.
-    #[must_use]
-    pub fn syscall_number_vn(&self) -> Option<rsleigh::Vn> {
-        self.syscall_number_vn
-    }
-
-    /// `true` when calls under this CC preserve memory (zero-side-effect
-    /// hooks like `__fentry__` / `mcount`).  Consumed by the IR builder's
-    /// `build_call_with_cc` to suppress the Call's Memory output so
-    /// `LoadReadOnly` / `StackLoadForward` can forward across the call.
-    #[must_use]
-    pub fn no_memory_clobber(&self) -> bool {
-        self.no_memory_clobber
-    }
 }
 
 /// Downcast a rich [`BuiltCallingConvention`] to the thin

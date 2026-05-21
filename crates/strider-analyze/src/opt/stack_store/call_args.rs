@@ -293,7 +293,7 @@ impl CallStackArgCollect {
     /// stack-pointer varnode are taken from the supplied calling convention.
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        Self::new(cc.stack_arg_offsets().to_vec(), cc.stack_ptr_vn())
+        Self::new(cc.stack_arg_offsets.clone(), cc.stack_ptr_vn)
     }
 }
 
