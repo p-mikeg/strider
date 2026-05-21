@@ -302,11 +302,11 @@ impl From<&BuiltCallingConvention> for strider_ir::FunctionBuilderCC {
 /// `CallingConvention` is `Copy` (all fields are `&'static`), so each
 /// row stays on the static heap with no runtime construction cost.
 #[derive(Debug, Clone, Copy)]
-pub struct CcPresetRow {
+pub(crate) struct CcPresetRow {
     /// The Rust factory name (also the Python classmethod name).
-    pub name: &'static str,
+    pub(crate) name: &'static str,
     /// The convention itself.  `Copy` — every field is `&'static`.
-    pub cc: CallingConvention,
+    pub(crate) cc: CallingConvention,
 }
 
 /// Static data table of every supported calling convention preset.
@@ -317,7 +317,7 @@ pub struct CcPresetRow {
 ///
 /// Linear lookup is fine: ~22 rows, each `name` comparison is a string
 /// `eq` that short-circuits on length.
-pub static CC_PRESETS: &[CcPresetRow] = &[
+pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     // ── Userland presets ────────────────────────────────────────────
     //
     // x86-64 System V ABI.
@@ -896,7 +896,7 @@ pub static CC_PRESETS: &[CcPresetRow] = &[
 /// each name comparison short-circuits on length, so the lookup is
 /// cheap enough to skip a hash map.
 #[must_use]
-pub fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
+pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
     CC_PRESETS.iter().find(|row| row.name == name)
 }
 
