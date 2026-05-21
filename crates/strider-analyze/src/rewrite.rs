@@ -13,9 +13,10 @@
 //!    [`crate::pattern::rewrite_rule`] hands back).  The walk fixes the
 //!    "rule applied at node N may match at node M too" gap left by
 //!    `rewrite_rule`, which is per-root.
-//! 2. A `re_optimize` shortcut that runs an [`crate::opt::OptimizerPipeline`] on
-//!    the wrapped graph after one or more rules fired — so users can
-//!    chain "rewrite → re-optimize → rewrite again" without leaving the
+//! 2. [`GraphRewriter::graph_mut`] / [`GraphRewriter::entry`] accessors
+//!    that let callers drive an [`crate::opt::OptimizerPipeline`] on
+//!    the wrapped graph after one or more rules fired — chaining
+//!    "rewrite → re-optimize → rewrite again" without leaving the
 //!    rewriter.
 //!
 //! The rewriter API is constants + input replacement only: callers
@@ -120,10 +121,11 @@ impl<'a> GraphRewriter<'a> {
     /// # Validation
     ///
     /// `apply_rule` does **NOT** call [`strider_ir::validate::validate`] after
-    /// the rule fires.  Callers building unusual rules should run
-    /// `re_optimize` (which validates as the last step of the optimizer
-    /// pipeline) or call [`strider_ir::validate::validate`] explicitly before
-    /// relying on the graph being well-formed.
+    /// the rule fires.  Callers building unusual rules should run an
+    /// [`crate::opt::OptimizerPipeline`] (via [`Self::graph_mut`] /
+    /// [`Self::entry`]) — `OptimizerPipeline::run` validates as its
+    /// last step — or call [`strider_ir::validate::validate`] explicitly
+    /// before relying on the graph being well-formed.
     pub fn apply_rule<F>(&mut self, rule: F) -> Result<usize>
     where
         F: for<'g> Fn(&mut crate::pattern::RewriteCtx<'g>, NodeId) -> crate::pattern::Result<bool>,
@@ -164,38 +166,24 @@ impl<'a> GraphRewriter<'a> {
         self.apply_rule(composed)
     }
 
-    /// Re-runs `pipeline` on the wrapped graph.  Pairs naturally with
-    /// [`Self::apply_rule`] — the typical flow is "rewrite, then re-
-    /// optimize so the rewrite's downstream effects (constant-fold
-    /// the new const, prune the dead branches it enabled) settle".
-    ///
-    /// The pipeline is the caller's choice; for the standard collapse-
-    /// dead-branches behaviour pass [`crate::opt::default_pipeline`].
-    /// Convention-aware callers (e.g. tests that need
-    /// [`crate::opt::StackStoreDetect`]) pass [`crate::Strider::build_optimizer_pipeline`]'s
-    /// output instead.
-    ///
-    /// CORRECTNESS — idempotent: running the same pipeline twice in a
-    /// row produces the same final graph because [`crate::opt::OptimizerPipeline::run`]
-    /// itself runs to a fixed point internally.  Pinned by the
-    /// `re_optimize_is_idempotent` test below.
-    ///
-    /// # Destructive passes
-    ///
-    /// `re_optimize` runs whatever pipeline the caller passes — it does
-    /// not gate on stable-vs-destructive.  Destructive passes
-    /// (`RedundantPhis`, `DeadBranchElimination`) detach nodes and may
-    /// invalidate `NodeId`s the caller is still holding outside the
-    /// `GraphRewriter`.  Use `crate::opt::stable_default_pipeline()` (or
-    /// `Strider::build_stable_optimizer_pipeline()`) when you need to
-    /// preserve external `NodeId` references; pass the destructive
-    /// pipeline explicitly when you want the cleanup.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the first error from any pass in `pipeline`.
-    pub fn re_optimize(&mut self, pipeline: &crate::opt::OptimizerPipeline) -> Result<()> {
-        pipeline.run(&mut *self.graph, self.entry)
+    /// Mutable access to the wrapped graph.  Pairs with
+    /// [`Self::entry`] for callers that want to drive an
+    /// [`crate::opt::OptimizerPipeline`] directly after a rewrite —
+    /// typical flow: "rewrite, then re-optimize so the rewrite's
+    /// downstream effects (constant-fold the new const, prune the dead
+    /// branches it enabled) settle".  `pipeline.run` itself runs to a
+    /// fixed point internally, so re-running it on an unchanged graph
+    /// is a no-op.
+    pub fn graph_mut(&mut self) -> &mut Graph {
+        &mut *self.graph
+    }
+
+    /// The function's entry [`NodeId`].  Stable for the lifetime of
+    /// the wrapped graph; pair with [`Self::graph_mut`] when feeding a
+    /// pipeline.
+    #[must_use]
+    pub fn entry(&self) -> NodeId {
+        self.entry
     }
 }
 
