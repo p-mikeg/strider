@@ -58,25 +58,9 @@ pub enum ResolvedTargets {
     ///
     /// **Invariant:** the inner `Vec` must be **non-empty**.  An
     /// empty `Multiple` would silently advertise zero runtime targets,
-    /// making the dispatch site appear unreachable.  Use
-    /// [`Self::multiple`] for the validating constructor that
-    /// rejects empty input — the existing `Multiple(targets)`
-    /// tuple-construct form is retained for pattern-matching and
-    /// for callers that have already established non-emptiness.
+    /// making the dispatch site appear unreachable.  Callers must
+    /// establish non-emptiness before constructing this variant.
     Multiple(Vec<u64>),
-}
-
-impl ResolvedTargets {
-    /// Validating constructor for [`Self::Multiple`].  Returns `None`
-    /// for an empty `targets` slice so a future arm cannot silently
-    /// produce an unreachable dispatch site.
-    #[must_use]
-    pub fn multiple(targets: Vec<u64>) -> Option<Self> {
-        if targets.is_empty() {
-            return None;
-        }
-        Some(Self::Multiple(targets))
-    }
 }
 
 /// Callback interface invoked by [`crate::cfg::Builder`] when it
