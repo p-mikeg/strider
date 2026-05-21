@@ -1,7 +1,7 @@
-use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
+use crate::opt::peephole::{PeepholePass, run_peephole};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 
 pub(crate) mod eval_float;
@@ -57,38 +57,36 @@ fn try_lower_cast_to_float(
 /// a & (C1 & C2)`.
 pub struct ConstantFold;
 
+impl PeepholePass for ConstantFold {
+    fn name(&self) -> &'static str {
+        "ConstantFold"
+    }
+
+    /// Constant-fold rule groups cover most node kinds (int / bool / float
+    /// arithmetic + cmp, casts, truncate / extend, identity rewrites on
+    /// just about any binary op).  Seeding the worklist with every
+    /// reachable node preserves the prior behaviour of the hand-written
+    /// `optimize` impl; the per-group rules already kind-filter
+    /// internally.
+    fn matches_kind(&self, _kind: &NodeKind) -> bool {
+        true
+    }
+
+    fn try_rewrite(
+        &self,
+        ctx: &mut crate::pattern::RewriteCtx<'_>,
+        root: NodeId,
+    ) -> Result<OptimizationResult> {
+        Ok(apply_identity_rules(ctx, root)?
+            | apply_const_eval_rules(ctx, root)?
+            | apply_bool_float_rules(ctx, root)?
+            | apply_reassoc_and_mask_rules(ctx, root)?
+            | apply_bitcast_extend_rules(ctx, root)?)
+    }
+}
+
 impl Optimizer for ConstantFold {
     fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
-        let mut work: Worklist<NodeId> = ctx.preorder().collect();
-        let mut result = OptimizationResult::NoChange;
-        // Reused per iteration to snapshot consumer NodeIds BEFORE running
-        // rules. After a rule rewrites the node, `output_uses(old_out)` is
-        // empty (uses were rewired to the replacement), so we must capture
-        // consumers ahead of time to re-enqueue them.
-        //
-        // SmallVec inlines up to 8 consumers (covers ~95% of IR
-        // nodes) — saves the heap allocation on the hot worklist
-        // path; larger fan-outs spill transparently.
-        let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
-        while let Some(node_id) = work.dequeue() {
-            consumers.clear();
-            for &out in ctx.node_outputs(node_id) {
-                for (consumer, _) in ctx.output_uses(out) {
-                    consumers.push(consumer);
-                }
-            }
-            let r = apply_identity_rules(ctx, node_id)?
-                | apply_const_eval_rules(ctx, node_id)?
-                | apply_bool_float_rules(ctx, node_id)?
-                | apply_reassoc_and_mask_rules(ctx, node_id)?
-                | apply_bitcast_extend_rules(ctx, node_id)?;
-            if r.changed() {
-                result |= r;
-                for &consumer in &consumers {
-                    work.enqueue(consumer);
-                }
-            }
-        }
-        Ok(result)
+        run_peephole(self, ctx)
     }
 }

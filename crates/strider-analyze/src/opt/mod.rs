@@ -36,6 +36,7 @@
 //! (see [`indirect_branch_resolve`]); it is not a pipeline pass.
 
 pub mod error;
+pub(crate) mod peephole;
 mod pipeline;
 pub(crate) mod sp_expr;
 mod worklist;
