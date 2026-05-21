@@ -6,48 +6,6 @@ use strider_ir::ReadOnlyMemory;
 use crate::cfg::builder::ResolvedTargets;
 use crate::cfg::types::PcodeInsnAddr;
 
-/// Function-extent boundary for tail-call classification.
-///
-/// The previous `(Option<u64>, bool)` pair carried the
-/// implicit-but-unenforced rule "when `fn_max_size.is_some()`,
-/// `allow_code_before_start_addr` is ignored" — see CLAUDE.md's
-/// `is_addr_tail_call` description.  This sum type makes the rule
-/// **unrepresentable** by construction:
-///
-/// - [`Self::Unbounded`] carries the `allow_code_before_start` flag —
-///   only meaningful when there is no explicit max size to bound the
-///   function from above, so the lower-bound relaxation is the only
-///   knob.
-/// - [`Self::Bounded`] carries only the `max_size`; the lower bound is
-///   `start` exactly (no relaxation), and the function's extent is
-///   exactly `[start, start + max_size)`.
-///
-/// Construct from the existing scalar fields via
-/// [`Options::function_boundary`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FunctionBoundary {
-    /// No max-size bound; the upper limit is determined dynamically by
-    /// fall-through and branch chasing.  `allow_code_before_start`
-    /// controls whether unconditional branches to addresses below the
-    /// function start are followed (`true`) or treated as tail calls
-    /// (`false`, the default).
-    Unbounded {
-        /// When `true`, branches to addresses below the function start
-        /// are followed normally; when `false` (the default), they are
-        /// treated as tail calls.
-        allow_code_before_start: bool,
-    },
-    /// Explicit function extent `[start, start + max_size)`.  Targets
-    /// outside this range — *both* below `start` AND at/above
-    /// `start + max_size` — are treated as tail calls.  The lower-bound
-    /// relaxation that exists in the unbounded case is intentionally
-    /// not available here.
-    Bounded {
-        /// Function size in bytes; the extent is `[start, start + max_size)`.
-        max_size: u64,
-    },
-}
-
 /// Configuration that governs how [`crate::cfg::Builder`] builds the CFG.
 ///
 /// Construct via [`OptionsBuilder`].
@@ -94,26 +52,6 @@ pub struct Options {
     /// Default is empty (no known targets).  Populated by the
     /// orchestrator via [`super::Builder::with_known_targets`].
     pub(super) known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
-}
-
-impl Options {
-    /// Returns the function-extent boundary derived from
-    /// `(fn_max_size, allow_code_before_start_addr)`.
-    ///
-    /// Canonical accessor that resolves the documented "ignored when
-    /// bounded" coupling — `Some(max_size)` always produces
-    /// [`FunctionBoundary::Bounded`], regardless of the
-    /// `allow_code_before_start_addr` flag.  New consumer code should
-    /// use this instead of reading the two scalar fields separately.
-    #[must_use]
-    pub fn function_boundary(&self) -> FunctionBoundary {
-        match self.fn_max_size {
-            Some(max_size) => FunctionBoundary::Bounded { max_size },
-            None => FunctionBoundary::Unbounded {
-                allow_code_before_start: self.allow_code_before_start_addr,
-            },
-        }
-    }
 }
 
 // Manual `Debug` impl: `dyn ReadOnlyMemory` doesn't implement `Debug`,
@@ -197,39 +135,6 @@ impl OptionsBuilder {
         self
     }
 
-    /// Sets the function-extent boundary directly via the
-    /// [`FunctionBoundary`] enum.  Preferred over the
-    /// [`Self::set_function_max_size`] + [`Self::allow_code_before_start_addr`]
-    /// pair because the enum makes the two states mutually exclusive
-    /// at the type level — `Bounded` and `Unbounded` cannot both be
-    /// set, which removes the silent-precedence rule that
-    /// "`fn_max_size.is_some()` always wins".
-    ///
-    /// `FunctionBoundary::Bounded { max_size: 0 }` is **silently
-    /// coerced to `Unbounded { allow_code_before_start: false }`** —
-    /// see [`Self::set_function_max_size`] for the rationale (Python
-    /// callers should reject zero at the boundary; a zero reaching
-    /// this far is a defensive no-op).
-    #[must_use]
-    pub fn set_function_boundary(mut self, boundary: FunctionBoundary) -> Self {
-        match boundary {
-            FunctionBoundary::Bounded { max_size: 0 }
-            | FunctionBoundary::Unbounded { allow_code_before_start: false } => {
-                self.options.fn_max_size = None;
-                self.options.allow_code_before_start_addr = false;
-            }
-            FunctionBoundary::Bounded { max_size } => {
-                self.options.fn_max_size = Some(max_size);
-                self.options.allow_code_before_start_addr = false;
-            }
-            FunctionBoundary::Unbounded { allow_code_before_start } => {
-                self.options.fn_max_size = None;
-                self.options.allow_code_before_start_addr = allow_code_before_start;
-            }
-        }
-        self
-    }
-
     /// Allows the CFG builder to follow unconditional branches whose target
     /// address is below the function start address.
     ///
@@ -239,9 +144,7 @@ impl OptionsBuilder {
     ///
     /// **Note:** when paired with [`Self::set_function_max_size`], the
     /// max-size bound wins — the lower-bound relaxation is silently
-    /// ignored.  Use [`Self::set_function_boundary`] for the
-    /// mutually-exclusive shape that makes this precedence rule
-    /// unrepresentable.
+    /// ignored.
     #[must_use]
     pub fn allow_code_before_start_addr(mut self) -> Self {
         self.options.allow_code_before_start_addr = true;

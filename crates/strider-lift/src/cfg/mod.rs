@@ -27,7 +27,7 @@ pub type Result<T> = anyhow::Result<T>;
 pub use builder::Builder;
 pub use builder::{IndirectTargetResolver, ResolvedTargets};
 pub use decode_cache::DecodeCache;
-pub use options::{FunctionBoundary, OptionsBuilder};
+pub use options::OptionsBuilder;
 
 pub use query::{IfRegionState, is_addr_tail_call};
 pub use types::{
