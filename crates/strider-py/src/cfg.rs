@@ -56,7 +56,7 @@ pub fn build_cfg(
     // site via `UnresolvedIndirectBranch`.
     let resolver: std::sync::Arc<
         dyn strider_lift::cfg::IndirectTargetResolver<AnyMemReader>,
-    > = std::sync::Arc::new(strider_analyze::opt::indirect_resolver::MiniIrIndirectResolver);
+    > = std::sync::Arc::new(strider_analyze::indirect_resolver::MiniIrIndirectResolver);
     let built = strider_lift::cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .with_indirect_resolver(resolver)
         .build()

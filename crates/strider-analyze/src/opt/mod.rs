@@ -35,10 +35,6 @@
 //! Indirect-branch resolution is driven separately by the orchestrator
 //! (see [`indirect_branch_resolve`]); it is not a pipeline pass.
 
-/// Re-export of [`crate::indirect_resolver`] so callers using the
-/// `opt::indirect_resolver` path resolve to the same module.
-pub use crate::indirect_resolver;
-
 pub mod error;
 mod pipeline;
 pub(crate) mod sp_expr;
