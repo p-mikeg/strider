@@ -53,40 +53,57 @@
 
 use std::sync::LazyLock;
 
-use strider_ir::node::NodeId;
+use strider_ir::node::{NodeId, NodeKind};
 use crate::pattern::{
     BoxedRule, Capture, add, apply_rules_in_order, bool_and, bool_not, bool_or, boxed_rule,
     cast_to_int, int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var,
 };
 
 use crate::opt::error::Result;
+use crate::opt::peephole::{PeepholePass, run_peephole};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
 pub struct FlagCmpCanonicalize;
 
-impl Optimizer for FlagCmpCanonicalize {
-    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
-        // Pre-collect candidate roots: rules mutate the graph (rewire
-        // uses), so we can't walk the live iterator.  Forward preorder
-        // visits parents before children — for the larger flag-tree
-        // rules this lets the outer `BoolAnd` / `BoolOr` / `BoolNeg`
-        // rule fire before rule 1 (the ZR identity) shrinks the inner
-        // `Equal(diff, 0)` and breaks the outer match.  Same pattern as
-        // `strider::GraphRewriter::apply_rule`.
-        let candidates: Vec<NodeId> = ctx.preorder().collect();
+impl PeepholePass for FlagCmpCanonicalize {
+    fn name(&self) -> &'static str {
+        "FlagCmpCanonicalize"
+    }
+
+    /// Rules walk arbitrary boolean / arith subtrees; no useful kind
+    /// filter at the root — defer to the per-rule matcher.
+    fn matches_kind(&self, _kind: &NodeKind) -> bool {
+        true
+    }
+
+    fn try_rewrite(
+        &self,
+        ctx: &mut crate::pattern::RewriteCtx<'_>,
+        root: NodeId,
+    ) -> Result<OptimizationResult> {
         let apply = apply_rules_in_order(&RULES);
-        let mut any = false;
-        for node in candidates {
-            if apply(ctx, node)? {
-                any = true;
-            }
-        }
-        Ok(if any {
+        let fired = apply(ctx, root)?;
+        Ok(if fired {
             OptimizationResult::Changed
         } else {
             OptimizationResult::NoChange
         })
+    }
+
+    /// Flag-tree rules fire at the outermost root; once a tree
+    /// collapses to a single `IntCmpOp`, its consumers cannot match a
+    /// fresh flag-tree shape.  Skip the consumer re-enqueue — the
+    /// `ConstantFold` / `IfCondInversion` passes that run alongside in
+    /// the fixed-point loop handle any follow-on simplification.
+    fn propagate_to_consumers(&self) -> bool {
+        false
+    }
+}
+
+impl Optimizer for FlagCmpCanonicalize {
+    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+        run_peephole(self, ctx)
     }
 }
 
