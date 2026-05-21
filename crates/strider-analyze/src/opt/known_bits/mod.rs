@@ -1,11 +1,11 @@
 use cranelift_entity::SecondaryMap;
+use entity_utils::Worklist;
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use strider_ir::{ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use crate::opt::worklist::WorkSet;
 
 #[cfg(test)]
 mod tests;
@@ -423,7 +423,7 @@ pub fn node_known_bits(
 /// well-formed graphs always converge.
 pub fn analyze(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
-    // change via `output_uses`.  `WorkSet` is the shared dedup-FIFO
+    // change via `output_uses`.  `Worklist` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
     // local re-implementation.
     //
@@ -434,8 +434,9 @@ pub fn analyze(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> 
     // the validator's existing scope-of-correctness boundary
     // (the local-typing check in `strider_ir::validate`), so it's the right scope here too.
     let mut known: KnownBitsMap = SecondaryMap::new();
-    let mut work = WorkSet::seeded(strider_ir::walk::walk_graph(ctx.graph_ref(), ctx.entry()));
-    while let Some(node_id) = work.pop() {
+    let mut work: Worklist<NodeId> =
+        strider_ir::walk::walk_graph(ctx.graph_ref(), ctx.entry()).collect();
+    while let Some(node_id) = work.dequeue() {
         let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
             continue;
         };
@@ -444,7 +445,7 @@ pub fn analyze(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> 
             continue;
         }
         for (consumer, _idx) in ctx.output_uses(out) {
-            work.push(consumer);
+            work.enqueue(consumer);
         }
     }
     Ok(known)
@@ -468,10 +469,10 @@ impl Optimizer for KnownBits {
         let known = analyze(ctx.as_view())?;
 
         // Rewrite pass — replace fully-determined outputs with constants.  Drive
-        // via WorkSet so a rewritten node's consumers are re-checked in the
+        // via Worklist so a rewritten node's consumers are re-checked in the
         // same call: a freshly-introduced IntConst can let a sibling whose
         // *other* operand was previously unknown become fully-determined.
-        let mut work = WorkSet::seeded(ctx.preorder());
+        let mut work: Worklist<NodeId> = ctx.preorder().collect();
         let mut result = OptimizationResult::NoChange;
         // Inline up to 4 outputs / 8 consumers per iteration — these
         // bounds cover the vast majority of IR nodes (most ops have
@@ -480,7 +481,7 @@ impl Optimizer for KnownBits {
         // the hot rewrite path.
         let mut outputs: smallvec::SmallVec<[NodeOutputId; 4]> = smallvec::SmallVec::new();
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
-        while let Some(node_id) = work.pop() {
+        while let Some(node_id) = work.dequeue() {
             // Already-constant nodes have nothing to rewrite.
             if matches!(*ctx.node_kind(node_id), NodeKind::IntConst(_)) {
                 continue;
@@ -518,7 +519,7 @@ impl Optimizer for KnownBits {
                 if after.changed() {
                     result = OptimizationResult::Changed;
                     for &consumer in &consumers {
-                        work.push(consumer);
+                        work.enqueue(consumer);
                     }
                 }
             }

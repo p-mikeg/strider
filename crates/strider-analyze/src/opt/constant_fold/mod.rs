@@ -1,8 +1,8 @@
+use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use crate::opt::worklist::WorkSet;
 
 pub(crate) mod eval_float;
 pub(crate) mod eval_int;
@@ -59,7 +59,7 @@ pub struct ConstantFold;
 
 impl Optimizer for ConstantFold {
     fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
-        let mut work = WorkSet::seeded(ctx.preorder());
+        let mut work: Worklist<NodeId> = ctx.preorder().collect();
         let mut result = OptimizationResult::NoChange;
         // Reused per iteration to snapshot consumer NodeIds BEFORE running
         // rules. After a rule rewrites the node, `output_uses(old_out)` is
@@ -70,7 +70,7 @@ impl Optimizer for ConstantFold {
         // nodes) — saves the heap allocation on the hot worklist
         // path; larger fan-outs spill transparently.
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
-        while let Some(node_id) = work.pop() {
+        while let Some(node_id) = work.dequeue() {
             consumers.clear();
             for out in ctx.node_outputs(node_id) {
                 for (consumer, _) in ctx.output_uses(out) {
@@ -85,7 +85,7 @@ impl Optimizer for ConstantFold {
             if r.changed() {
                 result |= r;
                 for &consumer in &consumers {
-                    work.push(consumer);
+                    work.enqueue(consumer);
                 }
             }
         }

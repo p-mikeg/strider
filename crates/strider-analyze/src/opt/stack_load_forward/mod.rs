@@ -17,7 +17,7 @@ use crate::opt::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_stack_store_phi,
     step_through_store,
 };
-use crate::opt::worklist::WorkSet;
+use crate::opt::worklist::seeded_kind;
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -59,10 +59,10 @@ impl StackLoadForward {
 
 impl Optimizer for StackLoadForward {
     fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
-        let mut work = WorkSet::seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
+        let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        while let Some(load) = work.pop() {
+        while let Some(load) = work.dequeue() {
             result |= try_forward_load(ctx, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
         }
         Ok(result)

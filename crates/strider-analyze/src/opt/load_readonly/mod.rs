@@ -2,7 +2,7 @@ use strider_ir::node::NodeKind;
 use strider_ir::ReadOnlyMemory;
 
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use crate::opt::worklist::WorkSet;
+use crate::opt::worklist::seeded_kind;
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
@@ -51,10 +51,10 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
         // Only Load nodes are candidates — kind-filter at the iterator
         // level rather than collecting all N reachable nodes and
         // skipping non-Loads in the body.
-        let mut work = WorkSet::seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
+        let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut result = OptimizationResult::NoChange;
 
-        while let Some(node_id) = work.pop() {
+        while let Some(node_id) = work.dequeue() {
             let kind = *ctx.node_kind(node_id);
             let NodeKind::Load(space) = kind else {
                 continue;

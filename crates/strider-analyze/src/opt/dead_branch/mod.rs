@@ -1,9 +1,9 @@
 
+use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use crate::opt::worklist::WorkSet;
 
 #[cfg(test)]
 mod tests;
@@ -278,9 +278,9 @@ impl Optimizer for DeadBranchElimination {
         // (where one elimination exposes another) are caught by the outer
         // OptimizerPipeline fixed-point loop, which re-runs this pass until
         // it reports NoChange.
-        let mut work = WorkSet::seeded(ctx.preorder());
+        let mut work: Worklist<NodeId> = ctx.preorder().collect();
         let mut result = OptimizationResult::NoChange;
-        while let Some(node_id) = work.pop() {
+        while let Some(node_id) = work.dequeue() {
             result |= try_eliminate_dead_branch(ctx, node_id)?;
         }
         Ok(result)
