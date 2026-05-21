@@ -286,6 +286,7 @@ impl PyOptimizerPipeline {
 macro_rules! pure_pass_class {
     ($pyname:literal => $rust:ident) => {
         #[pyclass(name = $pyname, module = "strider.opt")]
+        #[derive(Clone)]
         pub struct $rust;
         #[pymethods]
         impl $rust {
@@ -408,25 +409,22 @@ impl PyLoadReadOnly {
 // ── Polymorphic enum used by add/add_post ──────────────────────────────────
 
 /// Aggregates every pass-wrapper class so `add` / `add_post` can
-/// accept any of them via PyO3's automatic enum dispatch.  The
-/// `Bound<'py, _>` payload is consumed by `FromPyObject`'s
-/// macro-generated dispatcher to pick the right variant; for the
-/// zero-sized passes we never read it back, hence the `dead_code`
-/// allow on those variants.
+/// accept any of them via PyO3's automatic enum dispatch.
+///
+/// The six zero-sized passes (no per-instance state) carry the
+/// wrapper class itself as their payload — `FromPyObject`'s
+/// derive-generated dispatcher uses the type alone to pick the
+/// variant, and the marker is then discarded by `into_erased`.
+/// The five stateful passes carry a `Bound<'py, _>` so `into_erased`
+/// can borrow and clone their inner state.
 #[derive(FromPyObject)]
 pub enum PyOptPass<'py> {
-    #[allow(dead_code)]
-    ConstantFold(Bound<'py, PyConstantFold>),
-    #[allow(dead_code)]
-    KnownBits(Bound<'py, PyKnownBits>),
-    #[allow(dead_code)]
-    RedundantPhis(Bound<'py, PyRedundantPhis>),
-    #[allow(dead_code)]
-    DeadBranchElim(Bound<'py, PyDeadBranchElim>),
-    #[allow(dead_code)]
-    FlagCmpCanonicalize(Bound<'py, PyFlagCmpCanonicalize>),
-    #[allow(dead_code)]
-    IfCondInversion(Bound<'py, PyIfCondInversion>),
+    ConstantFold(PyConstantFold),
+    KnownBits(PyKnownBits),
+    RedundantPhis(PyRedundantPhis),
+    DeadBranchElim(PyDeadBranchElim),
+    FlagCmpCanonicalize(PyFlagCmpCanonicalize),
+    IfCondInversion(PyIfCondInversion),
     StackStoreDetect(Bound<'py, PyStackStoreDetect>),
     StackLoadForward(Bound<'py, PyStackLoadForward>),
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
