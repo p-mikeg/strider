@@ -258,7 +258,7 @@ mod compact_tests {
         assert!(post_count < pre_count, "compact must shrink the graph");
         // entry was remapped; new entry id still has the Control output.
         let entry_id = bfg.entry();
-        let outs: Vec<_> = bfg.graph().node_outputs(entry_id).into_iter().collect();
+        let outs: Vec<_> = bfg.graph().node_outputs(entry_id).iter().copied().collect();
         assert_eq!(outs.len(), 1);
         assert!(bfg.graph().output_kind(outs[0]).is_control());
     }

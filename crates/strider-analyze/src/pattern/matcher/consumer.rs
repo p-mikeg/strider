@@ -52,7 +52,8 @@ mod tests {
 
     fn entry_ctrl_out(g: &strider_ir::BuiltFunctionGraph) -> NodeOutputId {
         g.node_outputs(g.entry())
-            .into_iter()
+            .iter()
+            .copied()
             .next()
             .expect("Entry has a Control output")
     }
@@ -79,7 +80,8 @@ mod tests {
         );
         let out = g
             .node_outputs(detached)
-            .into_iter()
+            .iter()
+            .copied()
             .next()
             .expect("Entry has one output");
         let m = Matcher::new(&g);
