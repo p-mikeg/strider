@@ -21,73 +21,27 @@ fn assert_preset_resolves(label: &str, arch: SleighArch) {
 }
 
 #[test]
-fn x86_64_preset_resolves() {
-    assert_preset_resolves("x86_64", SleighArch::x86_64());
-}
-
-#[test]
-fn x86_preset_resolves() {
-    assert_preset_resolves("x86", SleighArch::x86());
-}
-
-#[test]
-fn mipsbe32_preset_resolves() {
-    assert_preset_resolves("mipsbe32", SleighArch::mipsbe32());
-}
-
-#[test]
-fn mipsle32_preset_resolves() {
-    assert_preset_resolves("mipsle32", SleighArch::mipsle32());
-}
-
-#[test]
-fn arm_preset_resolves() {
-    assert_preset_resolves("arm", SleighArch::arm());
-}
-
-#[test]
-fn aarch64_preset_resolves() {
-    assert_preset_resolves("aarch64", SleighArch::aarch64());
-}
-
-#[test]
-fn aarch64be_preset_resolves() {
-    assert_preset_resolves("aarch64be", SleighArch::aarch64be());
-}
-
-#[test]
-fn mipsbe64_preset_resolves() {
-    assert_preset_resolves("mipsbe64", SleighArch::mipsbe64());
-}
-
-#[test]
-fn mipsle64_preset_resolves() {
-    assert_preset_resolves("mipsle64", SleighArch::mipsle64());
-}
-
-#[test]
-fn ppc32be_preset_resolves() {
-    assert_preset_resolves("ppc32be", SleighArch::ppc32be());
-}
-
-#[test]
-fn ppc32le_preset_resolves() {
-    assert_preset_resolves("ppc32le", SleighArch::ppc32le());
-}
-
-#[test]
-fn ppc64be_preset_resolves() {
-    assert_preset_resolves("ppc64be", SleighArch::ppc64be());
-}
-
-#[test]
-fn ppc64le_preset_resolves() {
-    assert_preset_resolves("ppc64le", SleighArch::ppc64le());
-}
-
-#[test]
-fn arm_thumb_preset_resolves() {
-    assert_preset_resolves("arm_thumb", SleighArch::arm_thumb());
+fn all_presets_resolve() {
+    let cases: &[(&str, fn() -> SleighArch)] = &[
+        ("x86_64", SleighArch::x86_64),
+        ("x86", SleighArch::x86),
+        ("mipsbe32", SleighArch::mipsbe32),
+        ("mipsle32", SleighArch::mipsle32),
+        ("arm", SleighArch::arm),
+        ("aarch64", SleighArch::aarch64),
+        ("aarch64be", SleighArch::aarch64be),
+        ("mipsbe64", SleighArch::mipsbe64),
+        ("mipsle64", SleighArch::mipsle64),
+        ("ppc32be", SleighArch::ppc32be),
+        ("ppc32le", SleighArch::ppc32le),
+        ("ppc64be", SleighArch::ppc64be),
+        ("ppc64le", SleighArch::ppc64le),
+        ("arm_thumb", SleighArch::arm_thumb),
+        ("arm_be", SleighArch::arm_be),
+    ];
+    for (label, ctor) in cases {
+        assert_preset_resolves(label, ctor());
+    }
 }
 
 /// Pins the [`strider_target::Endianness`] field of every `SleighArch` preset.
@@ -123,11 +77,6 @@ fn presets_endianness_matches_arch() {
             arch.endianness(),
         );
     }
-}
-
-#[test]
-fn arm_be_preset_resolves() {
-    assert_preset_resolves("arm_be", SleighArch::arm_be());
 }
 
 #[test]
