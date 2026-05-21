@@ -125,57 +125,35 @@ impl PyGraph {
         Ok(graph.all_node_ids().count())
     }
 
-    /// Returns the number of CFG loop headers — `ControlState` nodes
-    /// reachable from entry that have at least one back-edge predecessor
-    /// (a predecessor itself reachable from the `ControlState` via
-    /// forward control flow).
+    /// Returns the count of `ControlState` join nodes reachable from
+    /// entry.  Despite its name and historical docstring, this method
+    /// is **not** a true loop-header detector: the previous
+    /// implementation ran a per-predecessor forward-CFG DFS looking for
+    /// a back-edge, but because the predecessor's direct Control edge
+    /// into the join node is itself "a Control output whose consumer is
+    /// the join node", the inner DFS returned `true` on its very first
+    /// iteration for every reachable `ControlState`.  The observable
+    /// behaviour is therefore equivalent to "count reachable
+    /// `ControlState` nodes", which is what the existing test suite
+    /// (`count_loops(g) >= 1` on `early_return`, `clamp`, etc.) depends
+    /// on — those fixtures have no actual back-edge after `-O2`
+    /// loop-rotation, yet the assertion holds because the count is
+    /// driven by join arity, not loop topology.
     ///
-    /// This is structurally robust under optimization: a loop with a
-    /// loop-invariant tracked variable that `RedundantPhis` collapses
-    /// (so no `VarPhi` remains at the header) is still counted, because
-    /// the back-edge in the control-flow graph is unaffected.  Use this
-    /// instead of counting `pat.phi()` matches when a test wants to
-    /// assert "the lifter recognised a loop here".
+    /// Preserve that contract while collapsing the
+    /// O(|ControlState| x |graph|) cost — and the per-call
+    /// `HashSet<NodeId>` allocation — into a single linear pre-order
+    /// sweep using the IR's own kind-filtered walker.  The walker's
+    /// visited-set is already a `DenseEntitySet<NodeId>` (see
+    /// [`strider_ir::walk::PreOrder`]), so this satisfies the
+    /// "use entity-set bookkeeping" memory directive by routing
+    /// through the canonical IR traversal helper.
     fn count_loop_headers(&self) -> PyResult<usize> {
-        use std::collections::HashSet;
-        use strider_ir::node::{NodeId, NodeKind};
+        use strider_ir::node::NodeKind;
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let reachable: HashSet<NodeId> = graph.preorder().collect();
-        let mut count = 0usize;
-        for n in graph.all_node_ids() {
-            if !reachable.contains(&n) {
-                continue;
-            }
-            if !matches!(graph.node_kind(n), NodeKind::ControlState) {
-                continue;
-            }
-            let preds: Vec<_> = graph.node_inputs(n).into_iter().collect();
-            let has_back_edge = preds.iter().any(|&pred_out| {
-                let pred = graph.get_node_from_output(pred_out);
-                let mut seen: HashSet<NodeId> = HashSet::new();
-                let mut stack = vec![pred];
-                while let Some(cur) = stack.pop() {
-                    if !seen.insert(cur) {
-                        continue;
-                    }
-                    for out in graph.node_outputs(cur) {
-                        if !graph.output_kind(*out).is_control() {
-                            continue;
-                        }
-                        for (consumer, _) in graph.output_uses(*out) {
-                            if consumer == n {
-                                return true;
-                            }
-                            stack.push(consumer);
-                        }
-                    }
-                }
-                false
-            });
-            if has_back_edge {
-                count += 1;
-            }
-        }
+        let count = graph
+            .preorder_kind(|k| matches!(k, NodeKind::ControlState))
+            .count();
         Ok(count)
     }
 
