@@ -11,7 +11,7 @@ pub struct Inputs<'a> {
     pub(crate) use_list: &'a [NodeInputId],
 }
 
-impl Inputs<'_> {
+impl<'a> Inputs<'a> {
     pub fn len(&self) -> usize {
         self.use_list.len()
     }
@@ -22,6 +22,15 @@ impl Inputs<'_> {
 
     pub fn get(&self, index: usize) -> Option<&NodeOutputId> {
         Some(&self.graph.inputs[*self.use_list.get(index)?].output_id)
+    }
+
+    /// Iterator over each input slot's `NodeOutputId` value.
+    ///
+    /// Same yield as `into_iter()` but borrows `self` so callers that
+    /// only need a one-shot read don't have to move the `Inputs` value.
+    pub fn iter(&self) -> impl Iterator<Item = NodeOutputId> + Clone + 'a {
+        let graph = self.graph;
+        self.use_list.iter().map(move |id| graph.inputs[*id].output_id)
     }
 }
 
@@ -54,6 +63,11 @@ impl Index<usize> for Inputs<'_> {
     }
 }
 
+/// Concrete `IntoIter` for [`Inputs`].  Only nameable through
+/// `<Inputs<'a> as IntoIterator>::IntoIter`; callers never construct
+/// or name it directly (they get it implicitly from `for x in inputs`
+/// or `.into_iter()`).  Prefer [`Inputs::iter`] when the borrow
+/// shouldn't be consumed.
 #[derive(Clone)]
 pub struct InputIter<'a> {
     pub(crate) graph: &'a Graph,
@@ -69,22 +83,6 @@ impl Iterator for InputIter<'_> {
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
-    }
-}
-
-#[derive(Clone)]
-pub struct OutputUsageIter<'a> {
-    pub(crate) graph: &'a Graph,
-    pub(crate) cur_use: Option<NodeInputId>,
-}
-
-impl Iterator for OutputUsageIter<'_> {
-    type Item = (NodeId, u32);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let use_data = &self.graph.inputs[self.cur_use?];
-        self.cur_use = use_data.next.expand();
-        Some((use_data.node_id, use_data.input_index))
     }
 }
 

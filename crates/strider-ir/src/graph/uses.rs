@@ -198,14 +198,18 @@ impl Graph {
     }
 
     /// Returns an iterator over all inputs that consume `output_id`.
+    /// Each item is `(consumer_node_id, input_index)` and the iteration
+    /// follows the per-output use-list's intrusive next-pointer chain.
     #[inline]
     #[must_use]
-    pub fn output_uses(&self, output_id: NodeOutputId) -> crate::iterators::OutputUsageIter<'_> {
+    pub fn output_uses(&self, output_id: NodeOutputId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
         let first_use = self.outputs[output_id].first_use.expand();
-        crate::iterators::OutputUsageIter {
-            graph: self,
-            cur_use: first_use,
-        }
+        core::iter::successors(first_use, move |id| self.inputs[*id].next.expand()).map(
+            move |id| {
+                let use_data = &self.inputs[id];
+                (use_data.node_id, use_data.input_index)
+            },
+        )
     }
 
     /// Returns `true` if `value` is consumed by exactly one input.
