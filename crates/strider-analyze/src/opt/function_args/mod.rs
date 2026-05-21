@@ -34,6 +34,7 @@
 use strider_ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 use crate::opt::error::Result;
+use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, step_through_stack_store,
@@ -429,133 +430,114 @@ fn mem_chain_is_dirty(
         return Ok(cached);
     }
 
-    /// Work-stack frame.  Either a fresh `Visit` of a mem node, or a
-    /// `JoinPhi` continuation that OR-combines K already-popped
-    /// predecessor results into the phi's own result.
-    enum Frame {
-        Visit(NodeOutputId),
-        /// After visiting all `pred_count` predecessors of a MemPhi,
-        /// pop their `bool` results from `results` and OR them.
-        /// `pred_count` is the number of predecessor `Visit` frames
-        /// we pushed; results stack invariant: top `pred_count`
-        /// entries belong to this phi's preds.
-        JoinPhi { pred_count: usize },
+    struct DirtyStep<'a> {
+        offset: i64,
+        load_size: i64,
+        sp_vn: rsleigh::Vn,
+        sp_memo: &'a mut SpExprMemo,
     }
+    impl<'a> MemChainStep for DirtyStep<'a> {
+        type Verdict = bool;
 
-    let mut work: Vec<Frame> = vec![Frame::Visit(mem)];
-    let mut results: Vec<bool> = Vec::new();
-
-    while let Some(frame) = work.pop() {
-        match frame {
-            Frame::JoinPhi { pred_count } => {
-                let drain_at = results.len() - pred_count;
-                let any_dirty = results.drain(drain_at..).any(|d| d);
-                results.push(any_dirty);
-            }
-            Frame::Visit(cur_mem) => {
-                if !seen.insert(cur_mem) {
-                    // Cycle / re-visit: treat as clean for this edge.
-                    results.push(false);
-                    continue;
+        fn classify(
+            &mut self,
+            graph: &strider_ir::Graph,
+            _mem: NodeOutputId,
+            node: NodeId,
+        ) -> Result<StepResult<bool>> {
+            match *graph.node_kind(node) {
+                NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
+                NodeKind::StackStore { offset: k, .. } => Ok(
+                    match step_through_stack_store(graph, node, k, self.offset, self.load_size) {
+                        AliasStep::MayAlias => StepResult::Verdict(true),
+                        AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
+                    },
+                ),
+                NodeKind::StackStorePhi { .. } => Ok(
+                    match step_through_stack_store_phi(graph, node, self.offset, self.load_size) {
+                        AliasStep::MayAlias => StepResult::Verdict(true),
+                        AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
+                    },
+                ),
+                NodeKind::Store(_) => Ok(match step_through_store(
+                    graph,
+                    node,
+                    self.sp_vn,
+                    self.sp_memo,
+                    self.offset,
+                    self.load_size,
+                ) {
+                    AliasStep::MayAlias => StepResult::Verdict(true),
+                    AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
+                }),
+                NodeKind::MemPhi => {
+                    // Inputs: [PHI, MEM, MEM, ...].
+                    let inputs = graph.node_inputs(node);
+                    if inputs.len() < 2 {
+                        return Err(anyhow::anyhow!(
+                            "mem_chain_is_dirty: malformed MemPhi with zero predecessor inputs",
+                        ));
+                    }
+                    let phi_token = inputs[0];
+                    let preds = inputs.iter().skip(1).collect();
+                    Ok(StepResult::JoinPhi {
+                        phi_node: node,
+                        phi_token,
+                        preds,
+                    })
                 }
-                let node = ctx.get_node_from_output(cur_mem);
-                match *ctx.node_kind(node) {
-                    NodeKind::InitialMemory => {
-                        results.push(false);
+                NodeKind::Call | NodeKind::CallOther { .. } => {
+                    let inputs = graph.node_inputs(node);
+                    if inputs.len() < 2 {
+                        // A `Call` / `CallOther` with fewer than 2
+                        // inputs (control + memory) violates the
+                        // signature contract.  Surface as Err
+                        // rather than returning the unsafe "clean"
+                        // direction (which would silently forward
+                        // a stale value across the malformed call).
+                        return Err(anyhow::anyhow!(
+                            "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
+                            graph.node_kind(node),
+                        ));
                     }
-                    NodeKind::StackStore { offset: k, .. } => {
-                        match step_through_stack_store(ctx.graph_ref(), node, k, offset, load_size) {
-                            AliasStep::MayAlias => results.push(true),
-                            AliasStep::PassThrough { prev_mem } => {
-                                work.push(Frame::Visit(prev_mem));
-                            }
-                        }
-                    }
-                    NodeKind::StackStorePhi { .. } => {
-                        match step_through_stack_store_phi(ctx.graph_ref(), node, offset, load_size) {
-                            AliasStep::MayAlias => results.push(true),
-                            AliasStep::PassThrough { prev_mem } => {
-                                work.push(Frame::Visit(prev_mem));
-                            }
-                        }
-                    }
-                    NodeKind::Store(_) => {
-                        match step_through_store(ctx.graph_ref(), node, sp_vn, sp_memo, offset, load_size)
-                        {
-                            AliasStep::MayAlias => results.push(true),
-                            AliasStep::PassThrough { prev_mem } => {
-                                work.push(Frame::Visit(prev_mem));
-                            }
-                        }
-                    }
-                    NodeKind::MemPhi => {
-                        // Inputs: [PHI, MEM, MEM, ...].  Push a JoinPhi
-                        // continuation followed by every predecessor's
-                        // Visit frame.  When the LIFO worklist pops them,
-                        // each pred runs to completion (pushing one
-                        // result), and the JoinPhi at the bottom OR-combines.
-                        let inputs: Vec<NodeOutputId> =
-                            ctx.node_inputs(node).into_iter().collect();
-                        let preds: Vec<NodeOutputId> = inputs.into_iter().skip(1).collect();
-                        let pred_count = preds.len();
-                        if pred_count == 0 {
-                            // Empty phi violates the MemPhi signature
-                            // contract (variadic mem-tail must be ≥ 1).
-                            // Surface as Err rather than returning the
-                            // unsafe "clean" direction.
-                            return Err(anyhow::anyhow!(
-                                "mem_chain_is_dirty: malformed MemPhi with zero predecessor inputs",
-                            ));
-                        }
-                        work.push(Frame::JoinPhi { pred_count });
-                        for pred in preds {
-                            work.push(Frame::Visit(pred));
-                        }
-                    }
-                    NodeKind::Call | NodeKind::CallOther { .. } => {
-                        let inputs = ctx.node_inputs(node);
-                        if inputs.len() < 2 {
-                            // A `Call` / `CallOther` with fewer than 2
-                            // inputs (control + memory) violates the
-                            // signature contract.  Surface as Err
-                            // rather than returning the unsafe "clean"
-                            // direction (which would silently forward
-                            // a stale value across the malformed call).
-                            return Err(anyhow::anyhow!(
-                                "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
-                                ctx.node_kind(node),
-                            ));
-                        }
-                        work.push(Frame::Visit(inputs[1]));
-                    }
-                    _ => {
-                        // Unknown memory-producing node: be conservative.
-                        results.push(true);
-                    }
+                    Ok(StepResult::Continue(inputs[1]))
+                }
+                _ => {
+                    // Unknown memory-producing node: be conservative.
+                    Ok(StepResult::Verdict(true))
                 }
             }
         }
+
+        fn cycle_verdict(&mut self) -> bool {
+            // Cycle / re-visit: treat as clean for this edge.
+            false
+        }
+
+        fn combine_phi(
+            &mut self,
+            _phi_node: NodeId,
+            _phi_token: NodeOutputId,
+            preds: Vec<bool>,
+        ) -> bool {
+            preds.into_iter().any(|d| d)
+        }
     }
 
-    // The walk pushed exactly one final result for the original `mem`.
-    // surface the invariant violation as `Err`
-    // instead of silently assuming `true` in release builds.  Any
-    // result-stack count other than 1 is a walker bug, not a property
-    // of the input graph.
-    if results.len() != 1 {
-        return Err(anyhow::anyhow!(
-            "mem_chain_is_dirty: result-stack invariant broken — expected 1 final result, \
-             got {} (walker bug)",
-            results.len()
-        ));
-    }
-    let Some(result) = results.pop() else {
-        // unreachable: the len==1 check above already proved
-        // `results` is non-empty.
-        return Err(anyhow::anyhow!(
-            "mem_chain_is_dirty: result-stack pop failed after len==1 check (walker bug)"
-        ));
+    let mut step = DirtyStep {
+        offset,
+        load_size,
+        sp_vn,
+        sp_memo,
     };
+    let result = walk_mem_chain(
+        ctx.graph_ref(),
+        mem,
+        CyclePolicy::GuardEveryNode,
+        seen,
+        |node| matches!(ctx.node_kind(node), NodeKind::MemPhi),
+        &mut step,
+    )?;
     memo.insert(entry_key, result);
     Ok(result)
 }
