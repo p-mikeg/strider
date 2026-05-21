@@ -22,7 +22,7 @@ fn x86_64_call_then_ret_bytes() -> (Vec<u8>, u64) {
 }
 
 fn make_strider() -> Strider {
-    common::strider_builders::strider_x86_64()
+    common::strider_x86_64()
 }
 
 fn run_with(compact: bool) -> strider_ir::BuiltFunctionGraph {

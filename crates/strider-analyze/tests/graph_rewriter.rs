@@ -78,7 +78,7 @@ fn analyze_with_known_targets(
         .build()
         .expect("cfg build");
 
-    let strider = common::strider_builders::strider_x86_64();
+    let strider = common::strider_x86_64();
     let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").graph;
     (graph, strider)
 }

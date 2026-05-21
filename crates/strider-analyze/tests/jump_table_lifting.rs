@@ -79,7 +79,7 @@ fn analyze_with_known_targets(
         .build()
         .expect("cfg build with Multiple known target");
 
-    let strider = common::strider_builders::strider_x86_64();
+    let strider = common::strider_x86_64();
     strider.analyze_cfg(&cfg).expect("analyze_cfg").graph
 }
 
@@ -217,7 +217,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         .build()
         .expect("cfg build");
 
-    let strider = common::strider_builders::strider_x86_64();
+    let strider = common::strider_x86_64();
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
     let mut graph = outcome.graph;
 

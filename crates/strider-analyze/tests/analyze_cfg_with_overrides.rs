@@ -24,7 +24,7 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 }
 
 fn make_strider() -> Strider {
-    common::strider_builders::strider_x86_64()
+    common::strider_x86_64()
 }
 
 #[test]

@@ -33,11 +33,6 @@ use std::path::PathBuf;
 // unchanged.
 pub mod indirect_resolve_helpers;
 
-// Per-arch `Strider::new(...)` builders shared across the integration tests.
-// Was `strider::test_utils` (always-public `pub mod` under `src/`) before
-// production code in `src/` and test code were separated.
-pub mod strider_builders;
-
 // ── Architecture enum ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +132,14 @@ impl Arch {
 /// hand-assembled byte sequences and don't care about ELF loading.
 pub fn strider_x86_64() -> strider_analyze::Strider {
     strider_for(Arch::X64)
+}
+
+/// Construct a `Strider` for AArch64 AAPCS64.  Sibling of
+/// [`strider_x86_64`] for the handful of synthetic-fixture tests that
+/// need an LR-bearing CC (e.g. `bug_on_lifts_cleanly`'s `bx lr`
+/// regression case).
+pub fn strider_aarch64() -> strider_analyze::Strider {
+    strider_for(Arch::Aarch64)
 }
 
 /// Construct a `Strider` for `arch` using its preset calling

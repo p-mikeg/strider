@@ -18,7 +18,7 @@ mod common;
 
 #[test]
 fn x86_64_ud2_terminates_cleanly() {
-    let strider = common::strider_builders::strider_x86_64();
+    let strider = common::strider_x86_64();
     let arch = SleighArch::x86_64();
 
     let bytes = vec![0x0fu8, 0x0b]; // ud2
@@ -45,7 +45,7 @@ fn x86_64_ud2_terminates_cleanly() {
 
 #[test]
 fn aarch64_brk_terminates_cleanly() {
-    let strider = common::strider_builders::strider_aarch64();
+    let strider = common::strider_aarch64();
     let arch = SleighArch::aarch64();
 
     // brk #0x800 = 0xD4210000 (LE: 00 00 21 D4)
