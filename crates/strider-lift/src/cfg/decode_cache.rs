@@ -25,7 +25,6 @@
 //! [`crate::cfg::Builder::with_decode_cache`], and discards it when the
 //! `run` returns.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rsleigh::LiftRes;
@@ -38,14 +37,6 @@ use rustc_hash::FxHashMap;
 #[derive(Clone, Default)]
 pub struct DecodeCache {
     inner: Arc<Mutex<FxHashMap<u64, Arc<LiftRes>>>>,
-    /// Total number of `get`-or-`insert` lift-call lookups served by
-    /// this cache instance — both cache hits and cache misses count.
-    /// `RegionBuilder::lift_one_cached` calls `get` exactly once per
-    /// machine-instruction decode attempt; we increment this counter
-    /// from `get` so the metric covers every consumer.  The
-    /// `Lifter::decode_stats()` facade reads this value via
-    /// [`Self::total_lift_calls`].
-    total_lift_calls: Arc<AtomicUsize>,
 }
 
 impl DecodeCache {
@@ -54,7 +45,6 @@ impl DecodeCache {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(FxHashMap::default())),
-            total_lift_calls: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -67,9 +57,6 @@ impl DecodeCache {
     /// cache and return the same `LiftRes` or miss and recompute).
     #[must_use]
     pub fn get(&self, addr: u64) -> Option<Arc<LiftRes>> {
-        // Bump the total-lookup counter on every `get` so the Lifter
-        // facade can report `(unique_addresses, total_lift_calls)`.
-        self.total_lift_calls.fetch_add(1, Ordering::Relaxed);
         let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.get(&addr).cloned()
     }
@@ -78,21 +65,5 @@ impl DecodeCache {
     pub fn insert(&self, addr: u64, lift_res: Arc<LiftRes>) {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.insert(addr, lift_res);
-    }
-
-    /// Returns the number of unique machine addresses currently
-    /// cached.  Used by [`crate::lifter::Lifter::decode_stats`].
-    #[must_use]
-    pub fn unique_addresses(&self) -> usize {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        guard.len()
-    }
-
-    /// Returns the total number of `get` lookups served by this cache
-    /// since construction — both cache hits and cache misses.  Used by
-    /// [`crate::lifter::Lifter::decode_stats`].
-    #[must_use]
-    pub fn total_lift_calls(&self) -> usize {
-        self.total_lift_calls.load(Ordering::Relaxed)
     }
 }

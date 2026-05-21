@@ -14,7 +14,6 @@
 
 pub mod pcode_lift;
 pub mod cfg;
-pub mod lifter;
 pub mod region_driver;
 
 /// Test-only re-exports for the `cfg` module, mirroring the flat
