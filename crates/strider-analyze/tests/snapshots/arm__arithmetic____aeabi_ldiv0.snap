@@ -1,5 +1,0 @@
----
-source: crates/strider/tests/v1_baseline.rs
-expression: snapshot_body
----
-LIFT_FAILED:Cfg build for __aeabi_ldiv0: generic sleigh error Base(UnexpectedCppException("BadDataError: r0x00000c60: Unable to resolve constructor"))
