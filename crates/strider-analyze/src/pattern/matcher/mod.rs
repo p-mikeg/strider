@@ -162,28 +162,9 @@ impl<'g> Matcher<'g> {
     }
 
     /// Enables transparent walk-through of only the cast kinds present
-    /// in `mask`.  Multiple calls union (OR-combine):
-    ///
-    /// ```rust
-    /// # use strider_ir::FunctionBuilder;
-    /// # use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
-    /// # use strider_analyze::pattern::{CastMask, Matcher};
-    /// # let mut fb = FunctionBuilder::empty().unwrap();
-    /// # let r = fb.create_region().unwrap();
-    /// # fb.set_entry_region(r).unwrap();
-    /// # fb.set_region(r);
-    /// # fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    /// # fb.build_return(None, &[]).unwrap();
-    /// # fb.set_lift_addr(None);
-    /// # let g = fb.build().unwrap();
-    /// let m = Matcher::new(&g)
-    ///     .ignore_casts_mask(CastMask::TRUNCATE)
-    ///     .ignore_casts_mask(CastMask::EXTEND);
-    /// assert_eq!(
-    ///     m.options_for_test().ignore_cast_mask,
-    ///     CastMask::TRUNCATE | CastMask::EXTEND
-    /// );
-    /// ```
+    /// in `mask`.  Multiple calls union (OR-combine) — passing
+    /// `CastMask::TRUNCATE` then `CastMask::EXTEND` is equivalent to
+    /// passing `CastMask::TRUNCATE | CastMask::EXTEND` in one call.
     #[must_use]
     pub fn ignore_casts_mask(mut self, mask: CastMask) -> Self {
         self.options.ignore_cast_mask |= mask;
@@ -197,14 +178,6 @@ impl<'g> Matcher<'g> {
     pub fn ignore_control_states(mut self) -> Self {
         self.options.ignore_control_states = true;
         self
-    }
-
-    /// Returns the active matcher options.  Used by walk-through helpers
-    /// that gate their behavior on the flags, and by tests that pin the
-    /// builder-API contracts.
-    #[must_use]
-    pub fn options_for_test(&self) -> MatcherOptions {
-        self.options
     }
 
     /// Returns the lazily-built `FunctionArg` index.
