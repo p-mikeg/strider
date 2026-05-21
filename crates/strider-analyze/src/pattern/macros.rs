@@ -101,7 +101,6 @@ pub(crate) use decl_pat_unary_ops;
 // macro entry's `kind` token (e.g. `"uint"`, `"int_binary_op"`).
 
 /// Builds an `IntConst` node whose value is computed from LHS captures.
-#[macro_export]
 macro_rules! int_const_with {
     ([$($caps:tt)*] => $body:expr) => {
         $crate::pattern::int_const_with_fn(move |__strider_ctx: &$crate::pattern::BuildCtx<'_>| {
@@ -112,7 +111,6 @@ macro_rules! int_const_with {
 }
 
 /// Builds a `BoolConst` node whose value is computed from LHS captures.
-#[macro_export]
 macro_rules! bool_const_with {
     ([$($caps:tt)*] => $body:expr) => {
         $crate::pattern::bool_const_with_fn(move |__strider_ctx: &$crate::pattern::BuildCtx<'_>| {
@@ -124,7 +122,6 @@ macro_rules! bool_const_with {
 
 /// Builds a `FloatConst` node whose IEEE 754 bit pattern is computed from
 /// LHS captures.  The body must evaluate to `u64`.
-#[macro_export]
 macro_rules! float_const_with {
     ([$($caps:tt)*] => $body:expr) => {
         $crate::pattern::float_const_with_fn(move |__strider_ctx: &$crate::pattern::BuildCtx<'_>| {
@@ -249,3 +246,7 @@ macro_rules! __const_with_extract {
             .ok_or_else(|| $crate::pattern::__missing_binding("float_cmp_op"))
     };
 }
+
+pub(crate) use bool_const_with;
+pub(crate) use float_const_with;
+pub(crate) use int_const_with;

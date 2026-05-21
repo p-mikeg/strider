@@ -35,7 +35,7 @@ pub type BuildValueFn<T> = Arc<dyn Fn(&BuildCtx<'_>) -> Result<T> + Send + Sync>
 /// type (needed for signed / carry handling) differs from the root's
 /// output type (always `Bool`).
 #[must_use]
-pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
+pub(crate) fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
     let inputs = ctx.graph.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;
     match ctx.graph.output_kind(inp) {
@@ -45,7 +45,7 @@ pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
 }
 
 /// Builds an `IntConst` node whose value is computed by `f` at build time.
-pub fn int_const_with_fn<F>(f: F) -> Pat
+pub(crate) fn int_const_with_fn<F>(f: F) -> Pat
 where
     F: Fn(&BuildCtx<'_>) -> Result<u128> + Send + Sync + 'static,
 {
@@ -60,7 +60,7 @@ where
 }
 
 /// Builds a `BoolConst` node whose value is computed by `f` at build time.
-pub fn bool_const_with_fn<F>(f: F) -> Pat
+pub(crate) fn bool_const_with_fn<F>(f: F) -> Pat
 where
     F: Fn(&BuildCtx<'_>) -> Result<bool> + Send + Sync + 'static,
 {
@@ -76,7 +76,7 @@ where
 
 /// Builds a `FloatConst` node whose IEEE 754 bit pattern is computed by
 /// `f` at build time.
-pub fn float_const_with_fn<F>(f: F) -> Pat
+pub(crate) fn float_const_with_fn<F>(f: F) -> Pat
 where
     F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
 {

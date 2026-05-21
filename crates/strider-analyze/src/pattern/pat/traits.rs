@@ -115,7 +115,7 @@ pub enum BuildOutcome {
 /// by the `int_const_with!` / `bool_const_with!` / `float_const_with!`
 /// macros to expose `ty` — the root output type — and `in_ty` — the
 /// root's first value input type).
-pub struct BuildCtx<'a> {
+pub(crate) struct BuildCtx<'a> {
     pub graph: &'a mut strider_ir::Graph,
     pub bindings: &'a Bindings,
     pub root: NodeId,

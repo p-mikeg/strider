@@ -16,7 +16,7 @@ use super::try_lower_cast_to_float;
 ///
 /// Called once from [`REASSOC_AND_MASK_RULES`]'s `LazyLock` initializer.
 fn build_reassoc_and_mask_rules() -> Vec<crate::pattern::BoxedRule> {
-    use crate::int_const_with;
+    use crate::pattern::macros::int_const_with;
     use crate::pattern::{
         BoxedRule, Capture, add, and, any_int_const, boxed_rule, or,
         rewrite_rule, sub, var,
@@ -378,7 +378,7 @@ pub(super) fn apply_identity_rules(
 /// Builds the rule vec for [`apply_const_eval_rules`].
 fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
     use strider_ir::node::NodeOutputType;
-    use crate::{bool_const_with, int_const_with};
+    use crate::pattern::macros::{bool_const_with, int_const_with};
     use crate::pattern::{
         BoxedRule, Capture, any_bool_const, any_int_const, boxed_rule,
         cast_to_bool, cast_to_int, int_binary_any, int_cmp_any, int_unary_any,
@@ -595,7 +595,7 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
         bool_or, bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any,
         float_unary_any, rewrite_rule, var,
     };
-    use crate::{bool_const_with, float_const_with};
+    use crate::pattern::macros::{bool_const_with, float_const_with};
 
     let rules: Vec<BoxedRule> = vec![
         // BAnd(BoolConst(l), BoolConst(r)) => bool_const(l && r)

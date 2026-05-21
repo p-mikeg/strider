@@ -135,16 +135,16 @@ pub use error::{skip, MissingBinding, NotBuildable, Result};
 #[doc(hidden)]
 pub use error::__missing_binding;
 
-mod macros;
+pub(crate) mod macros;
 mod matcher;
 mod pat;
 mod rewrite;
 mod var;
 
 pub use rewrite::{BoxedRule, RewriteCtx, RewriteCtxView, apply_rules_in_order, boxed_rule, rewrite_rule};
-pub use pat::traits::BuildCtx;
-pub use pat::ctor::consts::first_value_input_type;
-pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};
+pub(crate) use pat::traits::BuildCtx;
+pub(crate) use pat::ctor::consts::first_value_input_type;
+pub(crate) use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};
 
 // ── Core types & entry points ────────────────────────────────────────────────
 
