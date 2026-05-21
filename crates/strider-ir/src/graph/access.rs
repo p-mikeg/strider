@@ -8,7 +8,7 @@
 
 use anyhow::anyhow;
 
-use crate::iterators::{Inputs, Outputs};
+use crate::iterators::Inputs;
 use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind};
 
 use super::Graph;
@@ -32,8 +32,8 @@ impl Graph {
     /// Returns the slice of output ids for `node_id`.
     #[inline]
     #[must_use]
-    pub fn node_outputs(&self, node_id: NodeId) -> Outputs<'_> {
-        Outputs(self.nodes[node_id].outputs.as_slice(&self.output_pool))
+    pub fn node_outputs(&self, node_id: NodeId) -> &[NodeOutputId] {
+        self.nodes[node_id].outputs.as_slice(&self.output_pool)
     }
 
     /// Returns exactly `N` output ids for `node_id`.
@@ -54,7 +54,7 @@ impl Graph {
             ));
         }
         let mut result = [NodeOutputId::default(); N];
-        for (i, v) in outputs.into_iter().enumerate() {
+        for (i, &v) in outputs.iter().enumerate() {
             result[i] = v;
         }
         Ok(result)
@@ -135,7 +135,7 @@ impl Graph {
     #[inline]
     pub fn memory_output_of(&self, node_id: NodeId) -> crate::error::Result<NodeOutputId> {
         let mut found: Option<NodeOutputId> = None;
-        for out in self.node_outputs(node_id) {
+        for &out in self.node_outputs(node_id) {
             if matches!(self.output_kind(out), NodeOutputKind::Memory) {
                 if found.is_some() {
                     return Err(anyhow!(

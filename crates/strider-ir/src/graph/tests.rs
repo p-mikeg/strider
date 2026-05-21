@@ -26,8 +26,8 @@ fn check_node_output_kinds(
     let expected: Vec<_> = expected.into_iter().collect();
     let actual: Vec<_> = graph
         .node_outputs(node_id)
-        .into_iter()
-        .map(|output_id| graph.output_kind(output_id))
+        .iter()
+        .map(|&output_id| graph.output_kind(output_id))
         .collect();
     assert_eq!(actual, expected);
 }
@@ -41,8 +41,8 @@ fn check_node_output_definitions(
     let expected: Vec<_> = expected.into_iter().collect();
     let actual: Vec<_> = graph
         .node_outputs(node_id)
-        .into_iter()
-        .map(|output_id| graph.output_definition(output_id))
+        .iter()
+        .map(|&output_id| graph.output_definition(output_id))
         .collect();
     assert_eq!(actual, expected);
 }
@@ -942,7 +942,7 @@ fn update_input_self_redirect_preserves_use_list_order() {
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let cval = graph.node_outputs(c).into_iter().next().unwrap();
+    let cval = graph.node_outputs(c).iter().copied().next().unwrap();
     // Two consumers of cval to give the use-list real ordering.
     let _a = graph.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),

@@ -6,67 +6,6 @@ use super::graph::Graph;
 use super::node::{NodeId, NodeInputId, NodeOutputId};
 
 #[derive(Clone, Copy)]
-pub struct Outputs<'a>(pub(crate) &'a [NodeOutputId]);
-
-impl Outputs<'_> {
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn get(&self, index: usize) -> Option<&NodeOutputId> {
-        self.0.get(index)
-    }
-}
-
-impl<'a> IntoIterator for Outputs<'a> {
-    type Item = NodeOutputId;
-    type IntoIter = OutputIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        OutputIter(self.0.iter())
-    }
-}
-
-impl Index<usize> for Outputs<'_> {
-    type Output = NodeOutputId;
-
-    /// Index into the output slot list by position.
-    ///
-    /// # Panics
-    ///
-    /// Panics on out-of-bounds.  For fallible access prefer `iter()`,
-    /// `node_outputs_exact::<N>(node)`, or
-    /// `Graph::node_outputs(node).into_iter().nth(idx)`.  The validator
-    /// (the local-typing check in `crate::validate`) pins the per-node-kind output
-    /// arity, so `outputs[N]` for a known kind+slot is a documented
-    /// invariant; arbitrary indices on opaque-arity nodes are not.
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
-    }
-}
-
-#[derive(Clone)]
-pub struct OutputIter<'a>(slice::Iter<'a, NodeOutputId>);
-
-impl Iterator for OutputIter<'_> {
-    type Item = NodeOutputId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().copied()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
-    }
-}
-
-// -------------------------------------------------------------------------------------
-
-#[derive(Clone, Copy)]
 pub struct Inputs<'a> {
     pub(crate) graph: &'a Graph,
     pub(crate) use_list: &'a [NodeInputId],

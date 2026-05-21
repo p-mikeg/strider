@@ -182,7 +182,7 @@ pub fn apply_tail_call(
     // Slot 0 = Control, slot 1 = Memory.  The clobbered slots beyond
     // those are produced for downstream consumers (typically empty
     // here because the only consumer is the freshly-spliced Return).
-    let call_outs: Vec<_> = graph.node_outputs(call).into_iter().collect();
+    let call_outs: Vec<_> = graph.node_outputs(call).iter().copied().collect();
     let call_ctrl_out = call_outs[0];
     let call_mem_out = call_outs[1];
 
@@ -399,7 +399,7 @@ mod tests {
         let new_return_inputs: Vec<_> =
             ctx.node_inputs(new_return).into_iter().collect();
         let (call_node, _) = ctx.output_definition(new_return_inputs[0]);
-        let call_outputs: Vec<_> = ctx.node_outputs(call_node).into_iter().collect();
+        let call_outputs: Vec<_> = ctx.node_outputs(call_node).iter().copied().collect();
         assert_eq!(
             call_outputs.len(),
             4,
@@ -442,7 +442,7 @@ mod tests {
             [NodeOutputKind::OutputType(NodeOutputType::Bool)],
         );
         ctx.set_asm_fingerprint(bool_const, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let bool_out = ctx.node_outputs(bool_const).into_iter().next().unwrap();
+        let bool_out = ctx.node_outputs(bool_const).iter().copied().next().unwrap();
         // Replace the IndirectBranch's input[2] (target_value) with the Bool output.
         let target_input_id = ctx
             .node_input_id_at(placeholder, 2)

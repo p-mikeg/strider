@@ -282,7 +282,7 @@ pub(super) fn check_graph_invariants_wide_consts(
         }
         let actual = graph.wide_const(*id).byte_size();
         let outputs = graph.node_outputs(node);
-        let Some(out) = outputs.into_iter().next() else {
+        let Some(&out) = outputs.first() else {
             continue;
         };
         let NodeOutputKind::OutputType(ty) = graph.output_kind(out) else {

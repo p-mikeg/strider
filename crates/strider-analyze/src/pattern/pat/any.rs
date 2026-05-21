@@ -91,7 +91,7 @@ impl Pattern for CapturePat {
         let outputs = ctx.graph.node_outputs(node);
         if !outputs.is_empty() {
             // Default behavior: iterate value outputs; bind both node + output.
-            for out in outputs {
+            for &out in outputs {
                 let mark = b.mark();
                 if self.try_match(ctx, out, b) {
                     return true;

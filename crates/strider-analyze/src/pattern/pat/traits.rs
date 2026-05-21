@@ -75,7 +75,7 @@ pub trait Pattern: Send + Sync {
     /// `NodePat` overrides this to handle zero-output nodes (e.g. `Return`)
     /// — the default "iterate outputs" fails for those.
     fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
-        for out in ctx.graph.node_outputs(node) {
+        for &out in ctx.graph.node_outputs(node) {
             let mark = b.mark();
             if self.try_match(ctx, out, b) {
                 return true;

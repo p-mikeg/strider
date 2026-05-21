@@ -12,7 +12,7 @@ fn default_validate_flags_missing_asm_fingerprint() {
     // Entry + InitialMemory are required by graph-invariants uniqueness checks.
     let entry = g.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let mem = g.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let mem_out = g.node_outputs(mem).into_iter().next().unwrap();
+    let mem_out = g.node_outputs(mem).iter().copied().next().unwrap();
 
     // Two constants and an Add — these are NOT structural / exempt kinds,
     // so they MUST carry a non-empty asm fingerprint to pass the graph-invariants check.
@@ -26,23 +26,23 @@ fn default_validate_flags_missing_asm_fingerprint() {
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let a_out = g.node_outputs(a).into_iter().next().unwrap();
-    let b_out = g.node_outputs(b).into_iter().next().unwrap();
+    let a_out = g.node_outputs(a).iter().copied().next().unwrap();
+    let b_out = g.node_outputs(b).iter().copied().next().unwrap();
     let add = g.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let add_out = g.node_outputs(add).into_iter().next().unwrap();
+    let add_out = g.node_outputs(add).iter().copied().next().unwrap();
 
     // Wire reachability: Entry → ControlState → Return(Add).
-    let entry_out = g.node_outputs(entry).into_iter().next().unwrap();
+    let entry_out = g.node_outputs(entry).iter().copied().next().unwrap();
     let cs = g.create_node(
         NodeKind::ControlState,
         [entry_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
-    let cs_ctrl = g.node_outputs(cs).into_iter().next().unwrap();
+    let cs_ctrl = g.node_outputs(cs).iter().copied().next().unwrap();
     let _ret = g.create_node(NodeKind::Return, [cs_ctrl, mem_out, add_out], []);
 
     let result = strider_ir::validate::validate(&g, entry);

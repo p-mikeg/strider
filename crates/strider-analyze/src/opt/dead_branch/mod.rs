@@ -228,7 +228,7 @@ fn collect_dead_subgraph(
         if !subgraph.insert(node) {
             continue;
         }
-        for output in ctx.node_outputs(node) {
+        for &output in ctx.node_outputs(node) {
             if !ctx.output_kind(output).is_control() {
                 continue;
             }
@@ -252,7 +252,7 @@ fn dead_subgraph_has_live_data_consumer(
     subgraph: &entity_utils::DenseEntitySet<NodeId>,
 ) -> bool {
     subgraph.iter().any(|node| {
-        ctx.node_outputs(node).into_iter().any(|out| {
+        ctx.node_outputs(node).iter().copied().any(|out| {
             if ctx.output_kind(out).is_control() {
                 return false;
             }

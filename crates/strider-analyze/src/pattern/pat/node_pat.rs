@@ -289,7 +289,7 @@ impl Pattern for NodePat {
             // node.
             return self.try_match_common(ctx, node, b);
         }
-        for out in outputs {
+        for &out in outputs {
             let mark = b.mark();
             if self.try_match(ctx, out, b) {
                 return true;
@@ -536,9 +536,9 @@ pub(crate) fn match_consumer_node(
         return false;
     }
     let outputs = ctx.graph.node_outputs(node);
-    let Some(ctrl_out) = outputs.into_iter().find(|out| {
+    let Some(&ctrl_out) = outputs.iter().find(|out| {
         matches!(
-            ctx.graph.output_kind(*out),
+            ctx.graph.output_kind(**out),
             strider_ir::node::NodeOutputKind::Control
         )
     }) else {

@@ -385,21 +385,21 @@ fn cast_to_int_label_reflects_actual_input_type() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
-    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
+    let mem = graph.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let c = graph.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let c_out = graph.node_outputs(c).into_iter().next().unwrap();
+    let c_out = graph.node_outputs(c).iter().copied().next().unwrap();
     let cast = graph.create_node(
         NodeKind::CastToInt,
         [c_out],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let cast_out = graph.node_outputs(cast).into_iter().next().unwrap();
+    let cast_out = graph.node_outputs(cast).iter().copied().next().unwrap();
     graph.create_node(NodeKind::Return, [entry_ctrl, mem, cast_out], []);
 
     let dot = render(&graph, entry);
@@ -415,14 +415,14 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
-    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
+    let mem = graph.node_outputs(init_mem).iter().copied().next().unwrap();
     let target = graph.create_node(
         NodeKind::IntConst(0x1000),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let target_out = graph.node_outputs(target).into_iter().next().unwrap();
+    let target_out = graph.node_outputs(target).iter().copied().next().unwrap();
     // One Bool clobbered output, but `call_clobbered` slice is empty.
     let call = graph.create_node(
         NodeKind::Call,
@@ -433,9 +433,9 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
             NodeOutputKind::OutputType(NodeOutputType::Bool),
         ],
     );
-    let call_ctrl = graph.node_outputs(call).into_iter().next().unwrap();
-    let call_mem = graph.node_outputs(call).into_iter().nth(1).unwrap();
-    let clob_out = graph.node_outputs(call).into_iter().nth(2).unwrap();
+    let call_ctrl = graph.node_outputs(call).iter().copied().next().unwrap();
+    let call_mem = graph.node_outputs(call).iter().copied().nth(1).unwrap();
+    let clob_out = graph.node_outputs(call).iter().copied().nth(2).unwrap();
     graph.create_node(NodeKind::Return, [call_ctrl, call_mem, clob_out], []);
 
     // Render must not panic.
@@ -450,16 +450,16 @@ fn call_other_label_includes_resolved_name() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
-    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
+    let mem = graph.node_outputs(init_mem).iter().copied().next().unwrap();
     let co = graph.create_node(
         NodeKind::CallOther { user_op_id: 62 },
         [entry_ctrl, mem],
         [NodeOutputKind::Control, NodeOutputKind::Memory],
     );
     graph.set_call_other_name(co, "setISAMode".to_string());
-    let co_ctrl = graph.node_outputs(co).into_iter().next().unwrap();
-    let co_mem = graph.node_outputs(co).into_iter().nth(1).unwrap();
+    let co_ctrl = graph.node_outputs(co).iter().copied().next().unwrap();
+    let co_mem = graph.node_outputs(co).iter().copied().nth(1).unwrap();
     graph.create_node(NodeKind::Return, [co_ctrl, co_mem], []);
 
     let dot = render(&graph, entry);
@@ -477,16 +477,16 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
-    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
+    let mem = graph.node_outputs(init_mem).iter().copied().next().unwrap();
     let co = graph.create_node(
         NodeKind::CallOther { user_op_id: 7 },
         [entry_ctrl, mem],
         [NodeOutputKind::Control, NodeOutputKind::Memory],
     );
     // Intentionally do NOT call `set_call_other_name`.
-    let co_ctrl = graph.node_outputs(co).into_iter().next().unwrap();
-    let co_mem = graph.node_outputs(co).into_iter().nth(1).unwrap();
+    let co_ctrl = graph.node_outputs(co).iter().copied().next().unwrap();
+    let co_mem = graph.node_outputs(co).iter().copied().nth(1).unwrap();
     graph.create_node(NodeKind::Return, [co_ctrl, co_mem], []);
 
     let dot = render(&graph, entry);

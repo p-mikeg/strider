@@ -14,8 +14,8 @@ fn try_detach_dead_inputs(
 ) -> OptimizationResult {
     let all_unused = ctx
         .node_outputs(node_id)
-        .into_iter()
-        .all(|out| ctx.output_uses(out).next().is_none());
+        .iter()
+        .all(|&out| ctx.output_uses(out).next().is_none());
 
     if all_unused && !ctx.node_inputs(node_id).is_empty() {
         ctx.detach_node_inputs(node_id);

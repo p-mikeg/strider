@@ -137,7 +137,7 @@ fn match_branch_consumer(
     b: &mut Bindings,
 ) -> bool {
     let outputs = ctx.graph.node_outputs(if_node);
-    let Some(out) = outputs.into_iter().nth(output_index) else {
+    let Some(&out) = outputs.get(output_index) else {
         return false;
     };
     let Some(consumer) = crate::pattern::matcher::consumer::next_control_node(ctx.matcher, out) else {

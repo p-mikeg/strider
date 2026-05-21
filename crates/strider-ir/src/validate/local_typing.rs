@@ -20,8 +20,8 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
         graph.node_inputs(node).into_iter().collect();
     let actual_outputs: smallvec::SmallVec<[NodeOutputKind; 4]> = graph
         .node_outputs(node)
-        .into_iter()
-        .map(|oid| graph.output_kind(oid))
+        .iter()
+        .map(|&oid| graph.output_kind(oid))
         .collect();
 
     // Arity: fixed lists demand exact length; variadic lists demand at

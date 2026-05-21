@@ -327,7 +327,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         let (call_node, _) = graph.output_definition(ret_inputs[0]);
         call_node
     };
-    let call_outputs: Vec<_> = graph.node_outputs(call_node).into_iter().collect();
+    let call_outputs: Vec<_> = graph.node_outputs(call_node).iter().copied().collect();
     assert_eq!(
         call_outputs.len(),
         2 + clob_kinds.len(),

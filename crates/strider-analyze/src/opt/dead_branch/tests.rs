@@ -201,7 +201,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
         .all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .expect("expected an If node");
-    let if_outputs: Vec<_> = fg.node_outputs(if_node).into_iter().collect();
+    let if_outputs: Vec<_> = fg.node_outputs(if_node).iter().copied().collect();
     assert_eq!(if_outputs.len(), 2, "If must have 2 control outputs");
     let ctrl_false = if_outputs[1];
 

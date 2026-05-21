@@ -84,7 +84,8 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
             let branch_labels = ["if.true", "if.false"];
             let edge_labels = ["true", "false"];
             for ((out_id, blabel), elabel) in outputs
-                .into_iter()
+                .iter()
+                .copied()
                 .zip(branch_labels.iter())
                 .zip(edge_labels.iter())
             {

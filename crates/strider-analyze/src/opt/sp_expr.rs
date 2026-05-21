@@ -952,7 +952,7 @@ mod tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
             .expect("ControlState present");
-        let cs_outs = fg.node_outputs(cs).into_iter().collect::<Vec<_>>();
+        let cs_outs = fg.node_outputs(cs).iter().copied().collect::<Vec<_>>();
         let phi_token = *cs_outs
             .iter()
             .find(|&&o| matches!(fg.output_kind(o), NodeOutputKind::PhiToken))
@@ -961,7 +961,7 @@ mod tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
             .expect("InitialMemory present");
-        let mem_out = fg.node_outputs(init_mem).into_iter().next().unwrap();
+        let mem_out = fg.node_outputs(init_mem).iter().copied().next().unwrap();
         let phi_node = fg.create_node(
             NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM },
             [phi_token, mem_out, data],

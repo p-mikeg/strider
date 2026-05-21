@@ -24,11 +24,11 @@ impl FunctionBuilder {
     /// function-default arg-passing / clobber / ret-stack-pop set
     /// from `FunctionBuilder::new`.  When `override_cc` is `Some(cc)`,
     /// `cc` fully replaces the function-default for this single Call:
-    /// `cc.arg_passing_regs()` (filtered through the function's tracked-
-    /// variable set) become the args; `cc.callee_saved_regs()` define a
+    /// `cc.arg_passing_regs` (filtered through the function's tracked-
+    /// variable set) become the args; `cc.callee_saved_regs` define a
     /// fresh `is_clobbered = !callee_saved.contains(v) && Some(*v) !=
     /// stack_ptr` filter that produces this Call's clobber list;
-    /// `cc.ret_stack_pop()` drives the post-call SP-add.  The per-Call
+    /// `cc.ret_stack_pop` drives the post-call SP-add.  The per-Call
     /// clobber list is recorded on
     /// `Graph::call_clobbered_overrides` so pattern queries
     /// can recover the right varnode for each clobber slot.
@@ -137,7 +137,7 @@ impl FunctionBuilder {
             .into_iter()
             .chain(clobbered_kinds);
         let call = self.create_node(NodeKind::Call, inputs, outputs);
-        let call_outputs: Vec<_> = self.graph().node_outputs(call).into_iter().collect();
+        let call_outputs: Vec<_> = self.graph().node_outputs(call).to_vec();
 
         self.advance_cur_region_ctrl(call_outputs[0])?;
         if !no_memory_clobber {
@@ -327,7 +327,7 @@ impl FunctionBuilder {
             output_kinds,
         );
         let outputs: SmallVec<[NodeOutputId; 8]> =
-            self.graph().node_outputs(node).into_iter().collect();
+            self.graph().node_outputs(node).iter().copied().collect();
 
         // Advance ctrl only.  Memory is the strider layer's call.
         self.advance_cur_region_ctrl(outputs[0])?;

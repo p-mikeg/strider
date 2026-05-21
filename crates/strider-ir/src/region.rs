@@ -333,7 +333,7 @@ impl FunctionBuilder {
         region: RegionId,
     ) -> Result<NodeOutputId> {
         let mut first_seen: Option<NodeOutputId> = None;
-        for out in self.graph().node_outputs(node) {
+        for &out in self.graph().node_outputs(node) {
             if first_seen.is_none() {
                 first_seen = Some(out);
             }

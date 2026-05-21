@@ -160,10 +160,10 @@ pub fn node_known_bits(
     let kind = *ctx.node_kind(node_id);
 
     // Find the first integer value output.
-    let Some(out) = ctx
+    let Some(&out) = ctx
         .node_outputs(node_id)
-        .into_iter()
-        .find(|&o| ctx.output_kind(o).is_integer())
+        .iter()
+        .find(|&&o| ctx.output_kind(o).is_integer())
     else {
         return Ok(None);
     };
@@ -487,7 +487,7 @@ impl Optimizer for KnownBits {
                 continue;
             }
             outputs.clear();
-            outputs.extend(ctx.node_outputs(node_id));
+            outputs.extend(ctx.node_outputs(node_id).iter().copied());
             for &out in &outputs {
                 let Some(ty) = ctx.output_kind(out).as_value() else {
                     continue;

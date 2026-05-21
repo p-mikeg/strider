@@ -65,8 +65,8 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     fn out_type(&self, node: NodeId) -> Option<NodeOutputType> {
         self.graph
             .node_outputs(node)
-            .into_iter()
-            .find_map(|o| self.graph.output_kind(o).as_value())
+            .iter()
+            .find_map(|&o| self.graph.output_kind(o).as_value())
     }
 
     /// Returns the [`NodeOutputType`] of the `NodeOutputId` at input index

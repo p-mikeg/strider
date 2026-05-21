@@ -1680,7 +1680,7 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     let out = b.build_int_const_wide(v, NodeOutputType::U256)?;
     b.set_lift_addr(None);
     // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
-    let entry_ctrl = b.body().graph.node_outputs(b.body().entry).into_iter().next().unwrap();
+    let entry_ctrl = b.body().graph.node_outputs(b.body().entry).iter().copied().next().unwrap();
     // Build a minimal Return — needs Memory input; pull it from InitialMemory.
     let mem_node = b
         .body()
@@ -1688,7 +1688,7 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
         .all_node_ids()
         .find(|n| matches!(b.body().graph.node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
-    let mem_out = b.body().graph.node_outputs(mem_node).into_iter().next().unwrap();
+    let mem_out = b.body().graph.node_outputs(mem_node).iter().copied().next().unwrap();
     let ret = b
         .body_mut()
         .graph
@@ -1723,14 +1723,16 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .body()
         .graph
         .node_outputs(mem_node)
-        .into_iter()
+        .iter()
+        .copied()
         .next()
         .unwrap();
     let entry_ctrl = b
         .body()
         .graph
         .node_outputs(b.body().entry)
-        .into_iter()
+        .iter()
+        .copied()
         .next()
         .unwrap();
     let ret = b

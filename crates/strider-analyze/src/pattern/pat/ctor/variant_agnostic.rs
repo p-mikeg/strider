@@ -69,7 +69,7 @@ macro_rules! impl_variant_any {
                     // Populate the value output too so callers can use
                     // both `Match::get_*_op(c, &graph)` (op-variant) AND
                     // typed extractors / `Match::output(c)` (value).
-                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                    let value_out = ctx.graph.node_outputs(node).iter().copied().find(|&o| {
                         ctx.graph.output_kind(o).is_value()
                     });
                     b.bind_capture(c, Binding::new(node, value_out))
@@ -113,7 +113,7 @@ macro_rules! impl_variant_any {
                     // Populate the value output too so callers can use
                     // both `Match::get_*_op(c, &graph)` (op-variant) AND
                     // typed extractors / `Match::output(c)` (value).
-                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                    let value_out = ctx.graph.node_outputs(node).iter().copied().find(|&o| {
                         ctx.graph.output_kind(o).is_value()
                     });
                     b.bind_capture(c, Binding::new(node, value_out))
@@ -151,7 +151,7 @@ macro_rules! impl_variant_any {
                     // Populate the value output too so callers can use
                     // both `Match::get_*_op(c, &graph)` (op-variant) AND
                     // typed extractors / `Match::output(c)` (value).
-                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                    let value_out = ctx.graph.node_outputs(node).iter().copied().find(|&o| {
                         ctx.graph.output_kind(o).is_value()
                     });
                     b.bind_capture(c, Binding::new(node, value_out))

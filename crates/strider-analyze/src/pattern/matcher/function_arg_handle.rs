@@ -30,7 +30,7 @@ impl<'g> FunctionArgHandle<'g> {
     /// correctly-constructed `FunctionArg`, but the method signature surfaces
     /// the possibility rather than panicking.
     pub fn output(&self) -> Option<NodeOutputId> {
-        self.graph.node_outputs(self.node_id).into_iter().next()
+        self.graph.node_outputs(self.node_id).iter().copied().next()
     }
 
     /// The argument's ABI source (register or stack slot).

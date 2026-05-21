@@ -94,7 +94,8 @@ pub(crate) fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Ite
 pub(crate) fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeOutputId> + '_ {
     graph
         .node_outputs(node)
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|&output| graph.output_kind(output).is_control())
 }
 

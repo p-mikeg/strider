@@ -59,8 +59,8 @@ pub fn int_const(v: impl Into<i128>) -> Pat {
         let ty = ctx
             .graph
             .node_outputs(node)
-            .into_iter()
-            .find_map(|out| ctx.graph.output_kind(out).as_value());
+            .iter()
+            .find_map(|&out| ctx.graph.output_kind(out).as_value());
         let Some(ty) = ty else { return false; };
         let mask = ty.bit_mask_u128();
         (stored & mask) == (v_unsigned & mask)
@@ -112,8 +112,8 @@ where
         let ty = ctx
             .graph
             .node_outputs(node)
-            .into_iter()
-            .find_map(|out| ctx.graph.output_kind(out).as_value());
+            .iter()
+            .find_map(|&out| ctx.graph.output_kind(out).as_value());
         let Some(ty) = ty else { return false; };
         let mask = ty.bit_mask_u128();
         let stored_masked = stored & mask;
@@ -168,8 +168,8 @@ pub fn signed_int_const(v: impl Into<i128>) -> Pat {
         let Some(ty) = ctx
             .graph
             .node_outputs(node)
-            .into_iter()
-            .find_map(|out| ctx.graph.output_kind(out).as_value())
+            .iter()
+            .find_map(|&out| ctx.graph.output_kind(out).as_value())
         else {
             return false;
         };
