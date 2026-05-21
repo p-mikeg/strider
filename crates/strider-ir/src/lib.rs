@@ -42,8 +42,6 @@
 //! - [`IntBinaryOp`], [`IntUnaryOp`], [`IntCmpOp`], [`BoolBinaryOp`],
 //!   [`BoolUnaryOp`], [`ExtendOp`] — operation enumerations used in node kinds
 
-extern crate alloc;
-
 mod builder;
 pub mod error;
 mod function;
