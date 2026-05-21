@@ -685,7 +685,7 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, strider_ir::
 /// must be a power of 2 so the `idx & (N - 1)` mask matches the
 /// stack-array classifier's `bound_via_known_bits` path.  Returns
 /// the graph, the anchor (load output), and the SP varnode the
-/// caller passes to `classify_anchor_with_rom_and_sp`.
+/// caller passes to `classify_anchor`.
 ///
 /// The fixture mirrors the existing `build_two_target_array`
 /// fixture in `crates/opt/src/indirect_branch_resolve/stack_array.rs`,

@@ -3,7 +3,7 @@
 //! Each test builds a synthetic `BuiltFunctionGraph` via the fixture
 //! helpers in `common::indirect_resolve_helpers`, runs the stable optimiser
 //! subset (matching what intermediate orchestrator iterations will
-//! see), then invokes [`classify_anchor_with_rom`] on the placeholder
+//! see), then invokes [`classify_anchor`] on the placeholder
 //! Return's value-input.  The fixtures are FunctionBuilder-driven
 //! rather than going through real arch bytes + the cfg builder
 //! because:
@@ -28,7 +28,23 @@
 mod common;
 
 use rsleigh::VnSpace;
-use strider_analyze::opt::indirect_branch_resolve::{ResolvedTargets, classify_anchor_with_rom};
+use strider_analyze::opt::indirect_branch_resolve::{ResolvedTargets, classify_anchor};
+use strider_analyze::opt::analyze_known_bits;
+use strider_analyze::pattern::RewriteCtxView;
+
+/// Test helper: recomputes `analyze_known_bits` and calls
+/// `classify_anchor` with the supplied rom and no SP varnode.  Mirrors
+/// the production single-anchor convenience these tests used to call
+/// directly.
+fn classify_anchor_with_rom(
+    view: RewriteCtxView<'_>,
+    anchor: strider_ir::node::NodeOutputId,
+    lr: Option<rsleigh::Vn>,
+    rom: Option<&dyn strider_analyze::opt::ReadOnlyMemory>,
+) -> anyhow::Result<Option<ResolvedTargets>> {
+    let known = analyze_known_bits(view)?;
+    Ok(classify_anchor(view, anchor, lr, rom, None, &known))
+}
 
 use common::indirect_resolve_helpers::{
     build_jump_table_known_bits_scenario, build_jump_table_predecessor_if_scenario,

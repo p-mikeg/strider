@@ -11,7 +11,7 @@
 //! ## Submodules
 //!
 //! - [`classify`] — producer-shape classifier returning
-//!   [`ResolvedTargets`] (`classify_anchor*` family).
+//!   [`ResolvedTargets`] ([`classify_anchor`]).
 //! - [`inplace`] — in-place IR edits for `LinkRegister` returns and
 //!   `Single` tail calls (`apply_link_register`, `apply_tail_call`).
 //! - [`jump_table`] — rodata jump-table arm.
@@ -47,9 +47,7 @@ pub mod stack_array;
 /// `UnresolvedIndirectBranch`) over the pathological enumeration cost.
 pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
-pub use classify::{
-    classify_anchor, classify_anchor_with_rom, classify_anchor_with_rom_and_sp,
-};
+pub use classify::classify_anchor;
 pub use inplace::{apply_link_register, apply_tail_call};
 pub use jump_table::classify_jump_table;
 pub use stack_array::classify_stack_array;

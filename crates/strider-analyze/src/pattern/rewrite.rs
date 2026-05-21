@@ -266,7 +266,7 @@ impl<'g, M: Mutability> RewriteCtx<'g, M> {
 
     /// Lightweight read-only `(graph, entry)` view.  Used by the
     /// public read-only opt API (`analyze_known_bits`,
-    /// `classify_anchor*`) so callers that hold either `&mut RewriteCtx`,
+    /// `classify_anchor`) so callers that hold either `&mut RewriteCtx`,
     /// `&BuiltFunctionGraph`, or a raw `(&Graph, NodeId)` pair can all
     /// pass the same `RewriteCtxView<'_>`.
     #[must_use]

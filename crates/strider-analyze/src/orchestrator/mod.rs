@@ -11,7 +11,7 @@
 //! 3. Run the **stable** optimiser subset
 //!    ([`Strider::build_stable_optimizer_pipeline`]).
 //! 4. For each unresolved anchor, run
-//!    [`crate::opt::indirect_branch_resolve::classify_anchor_with_rom_and_sp`].
+//!    [`crate::opt::indirect_branch_resolve::classify_anchor`].
 //! 5. Apply in-place IR edits for terminal classifications:
 //!    [`crate::opt::apply_link_register`] for `LinkRegister`,
 //!    [`crate::opt::apply_tail_call`] for `Single(K)` where `K` is outside
@@ -50,7 +50,7 @@ use crate::opt::ReadOnlyMemory;
 
 use crate::errors::UnresolvedIndirectBranch;
 use crate::opt::indirect_branch_resolve::{
-    apply_link_register, apply_tail_call, classify_anchor_with_rom_and_sp,
+    apply_link_register, apply_tail_call, classify_anchor,
 };
 use crate::strider::Strider;
 use crate::RegionLiftHandles;
@@ -533,7 +533,7 @@ where
         let view: crate::pattern::RewriteCtxView<'_> = graph.into();
         let known = crate::opt::analyze_known_bits(view)?;
         for (addr, anchor_output) in &self.unresolved {
-            let resolved_opt = classify_anchor_with_rom_and_sp(
+            let resolved_opt = classify_anchor(
                 view,
                 *anchor_output,
                 self.lr_vn,

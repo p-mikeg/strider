@@ -169,7 +169,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         let known = strider_analyze::opt::analyze_known_bits(view)
             .expect("analyze_known_bits");
         for live in &live_anchors {
-            let resolved = strider_analyze::opt::indirect_branch_resolve::classify_anchor_with_rom_and_sp(
+            let resolved = strider_analyze::opt::indirect_branch_resolve::classify_anchor(
                 view,
                 *live,
                 lr_vn,

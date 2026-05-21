@@ -61,8 +61,7 @@ pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use function_args::FunctionArgDetect;
 pub use if_cond_inversion::IfCondInversion;
 pub use indirect_branch_resolve::{
-    AnchorCallingContext, ResolvedTargets, apply_link_register, apply_tail_call,
-    classify_anchor, classify_anchor_with_rom, classify_anchor_with_rom_and_sp,
+    AnchorCallingContext, ResolvedTargets, apply_link_register, apply_tail_call, classify_anchor,
     find_placeholder_return_for_anchor,
 };
 pub use known_bits::{KnownBits, KnownBitsMap, Kb, analyze as analyze_known_bits};

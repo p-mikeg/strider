@@ -55,8 +55,8 @@ use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 use crate::pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var};
 
 /// Top-level classifier hook for the stack-array arm.  Called by
-/// [`super::classify::classify_anchor_with_rom_and_sp`] when the
-/// rodata jump-table arm doesn't match and an SP varnode is supplied.
+/// [`super::classify::classify_anchor`] when the rodata jump-table arm
+/// doesn't match and an SP varnode is supplied.
 ///
 /// `anchor_output` is the placeholder Return's value-input slot.
 /// `stack_ptr_vn` is the calling convention's stack-pointer varnode
@@ -123,7 +123,7 @@ pub fn classify_stack_array(
         // a not-yet-folded shape.  SOUND: both wrappers are deterministic
         // functions of the inner constant, exactly mirroring the
         // `Truncate(IntConst)` / `Extend(IntConst)` arms in
-        // `classify_anchor_with_rom_and_sp`.
+        // `classify_anchor`.
         let c = peel_to_u64_const(graph, value)?;
         targets.push(c & target_mask);
     }

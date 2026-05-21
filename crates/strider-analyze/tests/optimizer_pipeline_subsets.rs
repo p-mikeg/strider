@@ -133,14 +133,19 @@ fn ir_level_classification_robust_to_destructive_subset() {
     // classification is robust to whether the destructive subset
     // has run" guarantee.
     use strider_analyze::opt::indirect_branch_resolve::classify_anchor;
+    use strider_analyze::opt::analyze_known_bits;
 
     let (graph_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
     let (graph_full, anchor_full) = build_initial_var_target_scenario_x86_64();
 
     // x86_64: link_register_vn is None.  Classifier returns None
     // for `InitialVar(rax)` (no LR match, no IntConst, no ValuePhi).
-    let cls_stable = classify_anchor((&graph_stable).into(), anchor_stable, None).expect("classify");
-    let cls_full = classify_anchor((&graph_full).into(), anchor_full, None).expect("classify");
+    let view_stable: strider_analyze::pattern::RewriteCtxView<'_> = (&graph_stable).into();
+    let known_stable = analyze_known_bits(view_stable).expect("analyze_known_bits");
+    let cls_stable = classify_anchor(view_stable, anchor_stable, None, None, None, &known_stable);
+    let view_full: strider_analyze::pattern::RewriteCtxView<'_> = (&graph_full).into();
+    let known_full = analyze_known_bits(view_full).expect("analyze_known_bits");
+    let cls_full = classify_anchor(view_full, anchor_full, None, None, None, &known_full);
     assert_eq!(
         cls_stable, cls_full,
         "IR-level indirect-branch resolver classification must be invariant to destructive subset",
