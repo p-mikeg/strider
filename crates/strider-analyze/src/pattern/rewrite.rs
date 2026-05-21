@@ -142,15 +142,67 @@ pub fn rewrite_rule(
     }
 }
 
-/// Mutable rewrite context: a `&mut Graph` together with the function's
-/// `entry: NodeId`.  Replaces the prior "wrap into a dummy
-/// `BuiltFunctionGraph`" trick — pure-rewrite paths (constant fold,
-/// known-bits, flag-cmp canonicalisation, etc.) only ever consult graph
-/// + entry, never the CC-bearing fields of `BuiltFunctionGraph`.
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Sealed marker trait selecting whether a [`RewriteCtx`] borrows its
+/// `Graph` shared (`Shared`) or exclusively (`Mut`).  Uses a generic
+/// associated type so the same struct definition covers both cases
+/// without duplicating accessor bodies.
+pub trait Mutability: sealed::Sealed {
+    /// Reference shape for the inner `Graph` — either `&'g Graph` or
+    /// `&'g mut Graph`.
+    type Ref<'g>: GraphBorrow<'g>;
+}
+
+/// Helper trait implemented by both `&'g Graph` and `&'g mut Graph`
+/// that exposes a uniform "borrow as `&Graph`" operation.  The
+/// shared-vs-mut choice lives at the `Mutability::Ref` level; this
+/// trait is what `RewriteCtx`'s read-only accessors actually consult.
+pub trait GraphBorrow<'g> {
+    fn graph_ref(&self) -> &Graph;
+}
+
+impl<'g> GraphBorrow<'g> for &'g Graph {
+    #[inline]
+    fn graph_ref(&self) -> &Graph {
+        self
+    }
+}
+
+impl<'g> GraphBorrow<'g> for &'g mut Graph {
+    #[inline]
+    fn graph_ref(&self) -> &Graph {
+        self
+    }
+}
+
+/// Marker selecting an exclusive `&mut Graph` borrow.
+pub struct Mut;
+impl sealed::Sealed for Mut {}
+impl Mutability for Mut {
+    type Ref<'g> = &'g mut Graph;
+}
+
+/// Marker selecting a shared `&Graph` borrow.
+#[derive(Clone, Copy)]
+pub struct Shared;
+impl sealed::Sealed for Shared {}
+impl Mutability for Shared {
+    type Ref<'g> = &'g Graph;
+}
+
+/// Rewrite context: a borrowed `Graph` together with the function's
+/// `entry: NodeId`, parameterised by a mutability marker `M`.  The
+/// default `M = Mut` gives the historic mutable form used by
+/// `rewrite_rule` and the destructive passes; the [`RewriteCtxView`]
+/// alias selects the shared form used by read-only consumers.
 ///
-/// Construct via `RewriteCtx::new(graph, entry)` or
-/// `RewriteCtx::for_built(&mut bfg)`.  The matcher inside `rewrite_rule`
-/// reads `ctx.graph` + `ctx.entry`; the build path mutates `ctx.graph`.
+/// Replaces the prior "wrap into a dummy `BuiltFunctionGraph`" trick —
+/// pure-rewrite paths (constant fold, known-bits, flag-cmp
+/// canonicalisation, etc.) only ever consult graph + entry, never the
+/// CC-bearing fields of `BuiltFunctionGraph`.
 ///
 /// **Field visibility note.**  Both fields are `pub(crate)`; external
 /// opt-pass code reaches `Graph` via the
@@ -161,12 +213,70 @@ pub fn rewrite_rule(
 /// (`ctx.graph = &mut other`) at distance — the field could
 /// previously be aimed at a different graph than `entry` belongs to,
 /// silently corrupting subsequent walks.
-pub struct RewriteCtx<'g> {
-    pub(crate) graph: &'g mut Graph,
+pub struct RewriteCtx<'g, M: Mutability = Mut> {
+    pub(crate) graph: M::Ref<'g>,
     pub(crate) entry: NodeId,
 }
 
-impl<'g> RewriteCtx<'g> {
+/// Read-only `(&Graph, NodeId)` view used by opt's read-only public
+/// API.  `Copy` and cheap to pass.  Constructible from `&RewriteCtx`
+/// (via `as_view`) or `&BuiltFunctionGraph` (via
+/// `From<&BuiltFunctionGraph>`).
+pub type RewriteCtxView<'g> = RewriteCtx<'g, Shared>;
+
+impl<'g> Copy for RewriteCtx<'g, Shared> {}
+impl<'g> Clone for RewriteCtx<'g, Shared> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+// ── Shared, read-only accessors (available for any mutability) ──────────────
+impl<'g, M: Mutability> RewriteCtx<'g, M> {
+    /// pre-order graph walk starting at [`Self::entry`].  Mirrors
+    /// `BuiltFunctionGraph::preorder` so optimizer pass bodies that
+    /// call `ctx.preorder()` look the same as if they held a
+    /// `BuiltFunctionGraph` directly.
+    #[must_use]
+    pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
+        strider_ir::walk::walk_graph(self.graph.graph_ref(), self.entry)
+    }
+
+    /// kind-filtered pre-order walk.  Mirrors
+    /// `BuiltFunctionGraph::preorder_kind`.
+    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
+    where
+        P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
+    {
+        let g = self.graph.graph_ref();
+        self.preorder().filter(move |&n| pred(g.node_kind(n)))
+    }
+
+    /// Read-only access to the wrapped `Graph`.
+    #[must_use]
+    pub fn graph_ref(&self) -> &Graph {
+        self.graph.graph_ref()
+    }
+
+    /// Function-entry `NodeId` anchor.
+    #[must_use]
+    pub fn entry(&self) -> NodeId {
+        self.entry
+    }
+
+    /// Lightweight read-only `(graph, entry)` view.  Used by the
+    /// public read-only opt API (`analyze_known_bits`,
+    /// `classify_anchor*`) so callers that hold either `&mut RewriteCtx`,
+    /// `&BuiltFunctionGraph`, or a raw `(&Graph, NodeId)` pair can all
+    /// pass the same `RewriteCtxView<'_>`.
+    #[must_use]
+    pub fn as_view(&self) -> RewriteCtxView<'_> {
+        RewriteCtxView { graph: self.graph.graph_ref(), entry: self.entry }
+    }
+}
+
+// ── Mutable constructors / accessors (only for `M = Mut`) ───────────────────
+impl<'g> RewriteCtx<'g, Mut> {
     /// Constructs a `RewriteCtx` from a raw `(graph, entry)` pair —
     /// the rewrite-only path used by `opt::with_rewrite_ctx`,
     /// `strider::rewrite::GraphRewriter::apply_rule`, and similar.
@@ -186,88 +296,19 @@ impl<'g> RewriteCtx<'g> {
         }
     }
 
-    /// pre-order graph walk
-    /// starting at [`Self::entry`].  Mirrors
-    /// `BuiltFunctionGraph::preorder` so optimizer pass bodies that
-    /// call `ctx.preorder()` look the same as if they held a
-    /// `BuiltFunctionGraph` directly.
-    #[must_use] 
-    pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
-        strider_ir::walk::walk_graph(self.graph, self.entry)
-    }
-
-    /// kind-filtered pre-order
-    /// walk.  Mirrors `BuiltFunctionGraph::preorder_kind`.
-    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
-    where
-        P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
-    {
-        self.preorder()
-            .filter(move |&n| pred(self.graph.node_kind(n)))
-    }
-
-    /// Lightweight read-only `(graph, entry)` view.  Used by the
-    /// public read-only opt API (`analyze_known_bits`,
-    /// `classify_anchor*`) so callers that hold either `&mut RewriteCtx`,
-    /// `&BuiltFunctionGraph`, or a raw `(&Graph, NodeId)` pair can all
-    /// pass the same `RewriteCtxView<'_>`.
-    #[must_use]
-    pub fn as_view(&self) -> RewriteCtxView<'_> {
-        RewriteCtxView { graph: self.graph, entry: self.entry }
-    }
-
-    /// Read-only access to the wrapped `Graph`.
-    #[must_use]
-    pub fn graph_ref(&self) -> &Graph {
-        self.graph
-    }
-
     /// Mutable access to the wrapped `Graph`.
     pub fn graph_mut(&mut self) -> &mut Graph {
         self.graph
     }
-
-    /// Function-entry `NodeId` anchor.
-    #[must_use]
-    pub fn entry(&self) -> NodeId {
-        self.entry
-    }
 }
 
-/// Read-only `(&Graph, NodeId)` view used by opt's read-only public
-/// API.  `Copy` and cheap to pass.  Constructible from `&RewriteCtx`
-/// (via `as_view`) or `&BuiltFunctionGraph` (via
-/// `From<&BuiltFunctionGraph>`).
-#[derive(Clone, Copy)]
-pub struct RewriteCtxView<'g> {
-    pub(crate) graph: &'g Graph,
-    pub(crate) entry: NodeId,
-}
-
-impl<'g> RewriteCtxView<'g> {
-    #[must_use]
-    pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
-        strider_ir::walk::walk_graph(self.graph, self.entry)
-    }
-
-    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
-    where
-        P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
-    {
-        self.preorder()
-            .filter(move |&n| pred(self.graph.node_kind(n)))
-    }
-
-    /// Read-only access to the wrapped `Graph`.
-    #[must_use]
-    pub fn graph_ref(&self) -> &'g Graph {
-        self.graph
-    }
-
-    /// Function-entry `NodeId` anchor.
-    #[must_use]
-    pub fn entry(&self) -> NodeId {
-        self.entry
+// ── Shared constructors (only for `M = Shared`) ─────────────────────────────
+impl<'g> RewriteCtx<'g, Shared> {
+    /// Constructs a shared view from a `(graph, entry)` pair.  Used by
+    /// callers that hold an immutable graph reference and want to feed
+    /// a read-only opt pass.
+    pub fn new_shared(graph: &'g Graph, entry: NodeId) -> Self {
+        Self { graph, entry }
     }
 }
 
@@ -277,13 +318,13 @@ impl<'g> From<&'g strider_ir::BuiltFunctionGraph> for RewriteCtxView<'g> {
     }
 }
 
-impl<'a, 'g> From<&'a RewriteCtx<'g>> for RewriteCtxView<'a> {
-    fn from(ctx: &'a RewriteCtx<'g>) -> Self {
+impl<'a, 'g> From<&'a RewriteCtx<'g, Mut>> for RewriteCtxView<'a> {
+    fn from(ctx: &'a RewriteCtx<'g, Mut>) -> Self {
         ctx.as_view()
     }
 }
 
-impl<'g> std::ops::Deref for RewriteCtxView<'g> {
+impl<'g> std::ops::Deref for RewriteCtx<'g, Shared> {
     type Target = Graph;
     fn deref(&self) -> &Graph {
         self.graph
@@ -295,14 +336,14 @@ impl<'g> std::ops::Deref for RewriteCtxView<'g> {
 // `BuiltFunctionGraph::Deref<Target=Graph>` so optimizer pass bodies
 // using `ctx.node_kind(_)` / `ctx.create_node(_)` look the same as
 // if they held a `BuiltFunctionGraph` directly.
-impl<'g> std::ops::Deref for RewriteCtx<'g> {
+impl<'g> std::ops::Deref for RewriteCtx<'g, Mut> {
     type Target = Graph;
     fn deref(&self) -> &Graph {
         self.graph
     }
 }
 
-impl<'g> std::ops::DerefMut for RewriteCtx<'g> {
+impl<'g> std::ops::DerefMut for RewriteCtx<'g, Mut> {
     fn deref_mut(&mut self) -> &mut Graph {
         self.graph
     }
