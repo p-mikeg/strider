@@ -1,8 +1,8 @@
-use strider_ir::node::NodeKind;
+use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::ReadOnlyMemory;
 
+use crate::opt::peephole::{PeepholePass, run_peephole};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use crate::opt::worklist::seeded_kind;
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
@@ -46,53 +46,70 @@ use crate::opt::worklist::seeded_kind;
 /// ```
 pub struct LoadReadOnly<M>(pub M);
 
+impl<M: ReadOnlyMemory + 'static> PeepholePass for LoadReadOnly<M> {
+    fn name(&self) -> &'static str {
+        "LoadReadOnly"
+    }
+
+    fn matches_kind(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Load(_))
+    }
+
+    fn try_rewrite(
+        &self,
+        ctx: &mut crate::pattern::RewriteCtx<'_>,
+        root: NodeId,
+    ) -> crate::opt::Result<OptimizationResult> {
+        let kind = *ctx.node_kind(root);
+        let NodeKind::Load(space) = kind else {
+            return Ok(OptimizationResult::NoChange);
+        };
+
+        // Load inputs: [memory_token, addr].
+        let inputs = ctx.node_inputs(root);
+        if inputs.len() < 2 {
+            return Ok(OptimizationResult::NoChange);
+        }
+        let addr_input = inputs[1];
+        let Some(addr) = ctx.int_const_val(addr_input) else {
+            return Ok(OptimizationResult::NoChange);
+        };
+
+        // Load output: the single value output carries the loaded data type.
+        let [data_out] = ctx.node_outputs_exact::<1>(root)?;
+        let Some(ty) = ctx.output_kind(data_out).as_value() else {
+            return Ok(OptimizationResult::NoChange);
+        };
+        let size = ty.byte_size();
+        // `ReadOnlyMemory::read` returns `Option<u64>` — bail on
+        // wider loads (U80 / U128 / U256 / U512) rather than asking
+        // the impl to truncate silently into a u64.
+        if size > 8 {
+            return Ok(OptimizationResult::NoChange);
+        }
+        let Some(loaded) = self.0.read(space, addr, size) else {
+            return Ok(OptimizationResult::NoChange);
+        };
+
+        let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
+            return Ok(OptimizationResult::NoChange);
+        };
+        let new_out = ctx.make_int_const(masked, ty)?;
+        OptimizationResult::NoChange.after_replace(ctx, data_out, new_out)
+    }
+
+    /// Replacing a `Load` with a constant exposes its consumers to
+    /// `ConstantFold` in the next pipeline iteration — no value gained
+    /// from re-enqueuing `Load` consumers within this pass, since they
+    /// won't match `Load(_)` again.
+    fn propagate_to_consumers(&self) -> bool {
+        false
+    }
+}
+
 impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
     fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
-        // Only Load nodes are candidates — kind-filter at the iterator
-        // level rather than collecting all N reachable nodes and
-        // skipping non-Loads in the body.
-        let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
-        let mut result = OptimizationResult::NoChange;
-
-        while let Some(node_id) = work.dequeue() {
-            let kind = *ctx.node_kind(node_id);
-            let NodeKind::Load(space) = kind else {
-                continue;
-            };
-
-            // Load inputs: [memory_token, addr].
-            let inputs = ctx.node_inputs(node_id);
-            if inputs.len() < 2 {
-                continue;
-            }
-            let addr_input = inputs[1];
-            let Some(addr) = ctx.int_const_val(addr_input) else {
-                continue;
-            };
-
-            // Load output: the single value output carries the loaded data type.
-            let [data_out] = ctx.node_outputs_exact::<1>(node_id)?;
-            let Some(ty) = ctx.output_kind(data_out).as_value() else {
-                continue;
-            };
-            let size = ty.byte_size();
-            // `ReadOnlyMemory::read` returns `Option<u64>` — bail on
-            // wider loads (U80 / U128 / U256 / U512) rather than asking
-            // the impl to truncate silently into a u64.
-            if size > 8 {
-                continue;
-            }
-            let Some(loaded) = self.0.read(space, addr, size) else {
-                continue;
-            };
-
-            let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
-                continue;
-            };
-            let new_out = ctx.make_int_const(masked, ty)?;
-            result = result.after_replace(ctx, data_out, new_out)?;
-        }
-        Ok(result)
+        run_peephole(self, ctx)
     }
 }
 
