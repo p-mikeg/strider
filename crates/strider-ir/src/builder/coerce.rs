@@ -5,6 +5,21 @@ use crate::error::Result;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputType};
 use crate::ops::ExtendOp;
 
+/// Unified return shape for [`FunctionBuilder::const_value`].
+///
+/// `Int { val, ty }` carries the raw `u128` payload of an `IntConst`
+/// node alongside its declared `NodeOutputType` so callers can decide
+/// whether to view it unsigned / signed / mask / etc.  `Float` carries
+/// the raw bit pattern of a `FloatConst` — the analyzer never needs
+/// the float type for constant folding (`f32` vs `f64` is inferred
+/// from the surrounding op), so the type isn't carried here.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ConstValue {
+    Bool(bool),
+    Int { val: u128, ty: NodeOutputType },
+    Float { bits: u64 },
+}
+
 impl FunctionBuilder {
     /// Retrieves the [`NodeOutputType`] of `output_id`.
     ///
@@ -21,6 +36,26 @@ impl FunctionBuilder {
             .ok_or_else(|| anyhow!("output {output_id:?} is not a value edge (got {kind:?})"))
     }
 
+    /// Returns the constant value carried by `output_id` if its defining
+    /// node is `IntConst`, `BoolConst`, or `FloatConst`; `Ok(None)`
+    /// otherwise.  The five `get_as_*` helpers below are thin
+    /// projections off this unified shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ExpectedValue` when `output_id` is not a value edge.
+    pub(crate) fn const_value(&self, output_id: NodeOutputId) -> Result<Option<ConstValue>> {
+        let ty = self.get_output_type(output_id)?;
+        Ok(match self.graph().kind_of_output(output_id) {
+            NodeKind::IntConst(val) if ty.is_integer() => Some(ConstValue::Int { val: *val, ty }),
+            NodeKind::BoolConst(val) if ty.is_bool() => Some(ConstValue::Bool(*val)),
+            NodeKind::FloatConst(bits) if ty.is_float() => {
+                Some(ConstValue::Float { bits: *bits })
+            }
+            _ => None,
+        })
+    }
+
     /// If `output_id` is a constant node, returns its value as a `bool`.
     ///
     /// Returns `Ok(None)` for non-constant nodes.  An `IntConst` is considered
@@ -31,12 +66,11 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_bool(&self, output_id: NodeOutputId) -> Result<Option<bool>> {
-        let output_type = self.get_output_type(output_id)?;
-        match self.graph().kind_of_output(output_id) {
-            NodeKind::IntConst(val) if output_type.is_integer() => Ok(Some(*val != 0)),
-            NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(*val)),
-            _ => Ok(None),
-        }
+        Ok(self.const_value(output_id)?.and_then(|c| match c {
+            ConstValue::Bool(b) => Some(b),
+            ConstValue::Int { val, .. } => Some(val != 0),
+            ConstValue::Float { .. } => None,
+        }))
     }
 
     /// Converts `output_id` to a boolean output, inserting a `CastToBool`
@@ -75,14 +109,13 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_unsigned_int(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
-        let output_type = self.get_output_type(output_id)?;
-        match self.graph().kind_of_output(output_id) {
-            NodeKind::IntConst(val) if output_type.is_integer() => {
-                Ok(output_type.get_unsigned_int(*val).and_then(|v| u64::try_from(v).ok()))
+        Ok(self.const_value(output_id)?.and_then(|c| match c {
+            ConstValue::Int { val, ty } => {
+                ty.get_unsigned_int(val).and_then(|v| u64::try_from(v).ok())
             }
-            NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(*val as u64)),
-            _ => Ok(None),
-        }
+            ConstValue::Bool(b) => Some(b as u64),
+            ConstValue::Float { .. } => None,
+        }))
     }
 
     /// If `output_id` is an integer or bool constant, returns its value
@@ -99,14 +132,13 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_signed_int(&self, output_id: NodeOutputId) -> Result<Option<i64>> {
-        let output_type = self.get_output_type(output_id)?;
-        match self.graph().kind_of_output(output_id) {
-            NodeKind::IntConst(val) if output_type.is_integer() => {
-                Ok(output_type.get_signed_int(*val).and_then(|v| i64::try_from(v).ok()))
+        Ok(self.const_value(output_id)?.and_then(|c| match c {
+            ConstValue::Int { val, ty } => {
+                ty.get_signed_int(val).and_then(|v| i64::try_from(v).ok())
             }
-            NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(i64::from(*val))),
-            _ => Ok(None),
-        }
+            ConstValue::Bool(b) => Some(i64::from(b)),
+            ConstValue::Float { .. } => None,
+        }))
     }
 
     /// Returns both the unsigned and signed interpretations of `output_id` if
@@ -133,14 +165,10 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_float_bits(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
-        let output_type = self.get_output_type(output_id)?;
-        if !output_type.is_float() {
-            return Ok(None);
-        }
-        match self.graph().kind_of_output(output_id) {
-            NodeKind::FloatConst(bits) => Ok(Some(*bits)),
-            _ => Ok(None),
-        }
+        Ok(self.const_value(output_id)?.and_then(|c| match c {
+            ConstValue::Float { bits } => Some(bits),
+            _ => None,
+        }))
     }
 
     /// Truncates `output_id` to `output_type` if it is currently wider.
