@@ -1,8 +1,6 @@
 use std::sync::LazyLock;
 
 use anyhow::{anyhow, Result};
-use strider_lift::region_driver::RegionDriver;
-
 use super::PerRegionDriver;
 
 /// Process-wide empty `per_address_ccs` map.  Borrowed by
@@ -13,36 +11,22 @@ pub(crate) static EMPTY_PER_ADDRESS_CCS: LazyLock<
     std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
 > = LazyLock::new(std::collections::HashMap::new);
 
-/// Per-region IR-handle snapshot, captured during lift before
+/// Per-region exit-state snapshot needed by the orchestrator's
+/// indirect-branch placeholder lookup.  Captured during lift before
 /// `FunctionBuilder::build()` consumes the builder's region map.  Used
-/// by the orchestrator to build a per-iteration `NodeOutputId → region`
-/// index for the in-place editors' "find the placeholder's region"
-/// queries.
+/// by [`crate::orchestrator::RegionIndex`] to map a placeholder's
+/// pre-edit ctrl input back to the region whose exit produced it (so
+/// it can read the region's exit `vn_to_value` for in-place edit ABI
+/// threading).
 #[derive(Debug, Clone)]
 pub struct RegionLiftHandles {
-    /// Region's start address.
-    pub start_addr: strider_lift::cfg::PcodeInsnAddr,
-    /// `ControlState` `NodeId` (entry-boundary).
-    pub entry_control_state: strider_ir::node::NodeId,
-    /// `MemPhi` `NodeId` (entry-boundary).
-    pub entry_mem_phi: strider_ir::node::NodeId,
-    /// Entry control output produced by the `ControlState`.
-    pub entry_control: strider_ir::node::NodeOutputId,
-    /// Entry memory output produced by the `MemPhi`.
-    pub entry_memory: strider_ir::node::NodeOutputId,
     /// Exit control output (consumed by the region's terminator).
     pub exit_control: strider_ir::node::NodeOutputId,
-    /// Exit memory output (consumed by the region's terminator).
-    pub exit_memory: strider_ir::node::NodeOutputId,
-    /// Per-var entry-boundary `VarPhi` `NodeId`s, keyed by `Vn`.
-    pub entry_var_phis: std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeId>,
     /// Per-var exit-boundary value `NodeOutputId`s, keyed by `Vn`.
     ///
     /// Wrapped in `Arc` so the orchestrator's per-iteration
     /// `RegionIndex::from_handles` can `Arc::clone` instead of
     /// deep-cloning the map (the map is never mutated post-build).
-    // TODO: remove after incremental indirect-resolve lands —
-    // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     pub exit_vn_to_value:
         std::sync::Arc<std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeOutputId>>,
 }
@@ -381,14 +365,13 @@ impl Strider {
             let term_addr = region
                 .insns
                 .last()
-                .map(|wrapped| wrapped.addr.machine_addr_u64());
+                .map(|wrapped| wrapped.addr.machine_addr.addr);
             // Per-terminator funnel: same asm-fingerprint attribution
-            // pattern as `process_insn`, factored through
-            // `RegionDriver`.  `term_addr` may be `None` when the region
-            // has zero pcode insns (e.g. empty Branch regions produced
-            // by the bounded-lift CondBranch-OOB collapse); the funnel
-            // accepts `Option<u64>`.
-            RegionDriver::set_lift_addr(&mut per_region_driver.builder, term_addr);
+            // pattern as `process_insn`.  `term_addr` may be `None`
+            // when the region has zero pcode insns (e.g. empty Branch
+            // regions produced by the bounded-lift CondBranch-OOB
+            // collapse); set_lift_addr accepts `Option<u64>`.
+            per_region_driver.builder.set_lift_addr(term_addr);
             let term_res = (|| -> Result<()> {
                 match special_terminator {
                     Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
@@ -410,7 +393,7 @@ impl Strider {
                 }
                 Ok(())
             })();
-            RegionDriver::clear_lift_addr(&mut per_region_driver.builder);
+            per_region_driver.builder.set_lift_addr(None);
             term_res?;
         }
 
@@ -461,24 +444,6 @@ impl Strider {
         let mut region_handles: Vec<RegionLiftHandles> = Vec::new();
         for &cfg_rid in &cfg_region_ids {
             let ir_region_id = ir_region_of(cfg_rid)?;
-            let region = cfg
-                .graph()
-                .node_weight(cfg_rid)
-                .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
-
-            let mut entry_var_phis: std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeId> =
-                std::collections::HashMap::new();
-            for (var_id, phi_out) in per_region_driver.builder.region_initial_variables(ir_region_id) {
-                if let Some(vn) = per_region_driver.builder.vn_of_var(var_id) {
-                    let phi_node = per_region_driver
-                        .builder
-                        .body()
-                        .graph
-                        .output_definition(phi_out)
-                        .0;
-                    entry_var_phis.insert(vn, phi_node);
-                }
-            }
 
             let mut exit_vn_to_value: std::collections::HashMap<
                 rsleigh::Vn,
@@ -490,20 +455,10 @@ impl Strider {
                 }
             }
 
-            let entry_control = per_region_driver.builder.region_entry_control(ir_region_id)?;
-            let entry_memory = per_region_driver.builder.region_entry_memory(ir_region_id)?;
             let exit_control = per_region_driver.builder.region_cur_ctrl(ir_region_id);
-            let exit_memory = per_region_driver.builder.region_cur_memory(ir_region_id);
 
             region_handles.push(RegionLiftHandles {
-                start_addr: region.start_addr,
-                entry_control_state: per_region_driver.builder.region_control_node(ir_region_id),
-                entry_mem_phi: per_region_driver.builder.region_memory_node(ir_region_id),
-                entry_control,
-                entry_memory,
                 exit_control,
-                exit_memory,
-                entry_var_phis,
                 exit_vn_to_value: std::sync::Arc::new(exit_vn_to_value),
             });
         }

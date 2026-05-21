@@ -25,38 +25,18 @@ pub enum RegionEdgeKind {
 ///
 /// This is a newtype wrapper around `u64` that prevents accidental mixing
 /// with plain integers.  Comparison and hashing use the raw address value.
+///
+/// Construct with `addr.into()` or `MachineInsnAddr::from(addr)`; read
+/// via the `addr` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MachineInsnAddr {
     /// The raw virtual address of the machine instruction.
-    ///
-    /// Tightened to `pub(crate)` — external callers go through
-    /// [`Self::as_u64`] for reads and [`Self::new`] / [`From<u64>`]
-    /// for construction.
-    pub(crate) addr: u64,
+    pub addr: u64,
 }
 
 impl From<u64> for MachineInsnAddr {
     fn from(value: u64) -> Self {
         MachineInsnAddr { addr: value }
-    }
-}
-
-impl MachineInsnAddr {
-    /// Construct from a raw u64 address.  Equivalent to
-    /// [`From<u64>`]; provided as an inherent ctor for ergonomic
-    /// `MachineInsnAddr::new(addr)` call-sites.
-    #[must_use]
-    pub fn new(addr: u64) -> Self {
-        MachineInsnAddr { addr }
-    }
-
-    /// Read the raw u64 address.  canonical
-    /// accessor for the migration path that will eventually tighten
-    /// the `addr` field to `pub(crate)`.  New code should prefer this
-    /// over `.addr`.
-    #[must_use]
-    pub fn as_u64(self) -> u64 {
-        self.addr
     }
 }
 
@@ -72,29 +52,12 @@ impl MachineInsnAddr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PcodeInsnAddr {
     /// Virtual address of the enclosing machine instruction.
-    ///
-    /// Tightened to `pub(crate)` — external callers go through
-    /// [`Self::machine_addr`] / [`Self::machine_addr_u64`].
-    pub(crate) machine_addr: MachineInsnAddr,
+    pub machine_addr: MachineInsnAddr,
     /// Zero-based index of this pcode instruction within the machine instruction.
-    ///
-    /// Tightened to `pub(crate)` — external callers go through
-    /// [`Self::insn_index`].
-    pub(crate) insn_index: u64,
+    pub insn_index: u64,
 }
 
 impl PcodeInsnAddr {
-    /// Construct from `(machine_addr, insn_index)`.  Field ordering is
-    /// load-bearing for the derived `Ord` (machine first, index second);
-    /// the ctor preserves it.
-    #[must_use]
-    pub fn new(machine_addr: MachineInsnAddr, insn_index: u64) -> Self {
-        PcodeInsnAddr {
-            machine_addr,
-            insn_index,
-        }
-    }
-
     /// Returns the pcode address pointing at the *first* pcode op of
     /// the machine instruction at `addr` (`insn_index == 0`).
     #[must_use]
@@ -103,28 +66,6 @@ impl PcodeInsnAddr {
             machine_addr: MachineInsnAddr { addr },
             insn_index: 0,
         }
-    }
-
-    /// Read the parent machine instruction's address.
-    ///
-    /// Canonical accessor for the migration path that will eventually
-    /// tighten the field to `pub(crate)`.
-    #[must_use]
-    pub fn machine_addr(self) -> MachineInsnAddr {
-        self.machine_addr
-    }
-
-    /// Read the pcode-op index within the machine instruction.
-    #[must_use]
-    pub fn insn_index(self) -> u64 {
-        self.insn_index
-    }
-
-    /// Read the parent machine instruction's u64 address — convenience
-    /// wrapper for the common `.machine_addr.addr` triple-dot pattern.
-    #[must_use]
-    pub fn machine_addr_u64(self) -> u64 {
-        self.machine_addr.addr
     }
 }
 

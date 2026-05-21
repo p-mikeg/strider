@@ -43,7 +43,7 @@ fn const_vn(val: u64, size: u32) -> Vn {
 
 fn ri(machine: u64, insn_index: u64, insn: Insn) -> RegionInstruction {
     RegionInstruction {
-        addr: PcodeInsnAddr::new(MachineInsnAddr::new(machine), insn_index),
+        addr: PcodeInsnAddr { machine_addr: MachineInsnAddr::from(machine), insn_index },
         insn,
     }
 }

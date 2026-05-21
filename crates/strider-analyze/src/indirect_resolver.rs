@@ -277,7 +277,7 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     {
         let mut lifter = strider_lift::pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
         for ri in region_insns {
-            let machine_addr = ri.addr.machine_addr_u64();
+            let machine_addr = ri.addr.machine_addr.addr;
             lifter.builder.set_lift_addr(Some(machine_addr));
             let lifted_or_err = lifter.lift(&ri.insn);
             lifter.builder.set_lift_addr(None);
@@ -305,7 +305,7 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     let branch_indirect_addr = region_insns
         .last()
         .or_else(|| region_insns.first())
-        .map(|ri| ri.addr.machine_addr_u64())
+        .map(|ri| ri.addr.machine_addr.addr)
         .unwrap_or(0);
     builder.set_lift_addr(Some(branch_indirect_addr));
     let target_value = {

@@ -166,7 +166,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         let mut targets_and_regions: Vec<(u64, strider_ir::RegionId)> =
             Vec::with_capacity(targets.len());
         for &target in targets {
-            let machine_addr = strider_lift::cfg::MachineInsnAddr::new(target);
+            let machine_addr = strider_lift::cfg::MachineInsnAddr::from(target);
             let cfg_region = self
                 .cfg
                 .region_id_at_start(machine_addr)

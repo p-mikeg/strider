@@ -1,7 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use strider_ir::node::NodeOutputType;
 use rsleigh::Opcode;
-use strider_lift::region_driver::RegionDriver;
 
 use super::PerRegionDriver;
 
@@ -27,18 +26,14 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     {
         // Funnel: every IR node born from this pcode insn picks up the
         // parent machine-instruction address in its asm-fingerprint
-        // side-table.  The `set_lift_addr` / `clear_lift_addr` pair
-        // lives in `strider_lift::region_driver::RegionDriver` so the
-        // funnel can be reused from the per-terminator handler in
-        // `pipeline.rs` and any future incremental lift driver.  We
-        // can't use a closure-passing API directly because
-        // `process_insn_inner` also borrows `self.cfg` / `self.strider`,
-        // which sits next to `self.builder` inside `PerRegionDriver` —
-        // splitting into open-call brackets sidesteps the borrow.
-        let machine_addr = addr.machine_addr_u64();
-        RegionDriver::set_lift_addr(&mut self.builder, Some(machine_addr));
+        // side-table.  The set_lift_addr(Some)/set_lift_addr(None)
+        // bracket is the funnel.  A closure API would force a `&mut
+        // self` plus a `&mut self.builder` split the borrow checker
+        // rejects, so we use open-call brackets instead.
+        let machine_addr = addr.machine_addr.addr;
+        self.builder.set_lift_addr(Some(machine_addr));
         let res = self.process_insn_inner(region_id, insn, region_lookup);
-        RegionDriver::clear_lift_addr(&mut self.builder);
+        self.builder.set_lift_addr(None);
         res
     }
 
@@ -125,7 +120,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         })?;
 
         let class = strider_target::call_other_abi::classify(self.strider.arch.preset(), name)
-            .ok_or_else(|| strider_ir::error::UnknownCallOtherError {
+            .ok_or_else(|| crate::errors::UnknownCallOtherError {
                 name: name.to_string(),
             })?;
 

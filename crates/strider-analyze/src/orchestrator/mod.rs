@@ -66,7 +66,7 @@ where
     pub strider: &'a Strider,
     /// Function entry address.  Newtype prevents accidental swap with
     /// `fn_max_size` at struct-literal construction sites.  Construct
-    /// via `strider_lift::cfg::MachineInsnAddr::new(addr)` or `addr.into()`.
+    /// via `addr.into()` or `strider_lift::cfg::MachineInsnAddr::from(addr)`.
     pub start_addr: strider_lift::cfg::MachineInsnAddr,
     /// The Sleigh context, owned and threaded through every iteration
     /// of the fixed-point loop.  Re-using one Sleigh across iterations
@@ -664,7 +664,7 @@ where
 fn is_tail_call(target: u64, opts: &RunOpts<'_>) -> bool {
     strider_lift::cfg::is_addr_tail_call(
         target,
-        opts.start_addr.as_u64(),
+        opts.start_addr.addr,
         opts.fn_max_size,
         opts.allow_code_before_start_addr,
     )
@@ -972,8 +972,8 @@ where
     // clarity since CFG rebuilds are rare.
     let resolver: std::sync::Arc<
         dyn strider_lift::cfg::IndirectTargetResolver<R>,
-    > = std::sync::Arc::new(crate::opt::indirect_resolver::MiniIrIndirectResolver);
-    let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.as_u64(), cfg_opts)
+    > = std::sync::Arc::new(crate::indirect_resolver::MiniIrIndirectResolver);
+    let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.addr, cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())
         .with_indirect_resolver(resolver)
@@ -1058,7 +1058,7 @@ mod tests {
     use strider_lift::cfg::MachineInsnAddr;
 
     fn pcode_addr(machine: u64) -> PcodeInsnAddr {
-        PcodeInsnAddr::new(MachineInsnAddr::new(machine), 0)
+        PcodeInsnAddr { machine_addr: MachineInsnAddr::from(machine), insn_index: 0 }
     }
 
     fn make_strider_x86_64() -> Strider {

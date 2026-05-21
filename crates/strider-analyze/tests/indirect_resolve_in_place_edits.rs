@@ -186,7 +186,7 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     let sleigh = Sleigh::new(arch_ref.sla_spec(), arch_ref.pspec(), reader).expect("sleigh");
     let config = Config {
         strider: &strider,
-        start_addr: strider_lift::cfg::MachineInsnAddr::new(0x1000),
+        start_addr: strider_lift::cfg::MachineInsnAddr::from(0x1000),
         sleigh,
         rom: None,
         fn_max_size: None,

@@ -71,7 +71,7 @@ fn analyze_with_known_targets(
     // `RegionTerminator::Switch` (not `UnresolvedIndirectBranch`)
     // for the BranchIndirect at `branch_indirect_addr`.
     let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
-    let key = PcodeInsnAddr::new(MachineInsnAddr::new(branch_indirect_addr), 0);
+    let key = PcodeInsnAddr { machine_addr: MachineInsnAddr::from(branch_indirect_addr), insn_index: 0 };
     known_targets.insert(key, ResolvedTargets::Multiple(targets));
     let opts = OptionsBuilder::new().build();
     let cfg = Builder::for_arch(&arch, sleigh, base, opts)
@@ -208,7 +208,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
     let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
     known_targets.insert(
-        PcodeInsnAddr::new(MachineInsnAddr::new(branch_indirect_addr), 0),
+        PcodeInsnAddr { machine_addr: MachineInsnAddr::from(branch_indirect_addr), insn_index: 0 },
         ResolvedTargets::Multiple(target_addrs.clone()),
     );
     let opts = OptionsBuilder::new().build();
