@@ -9,8 +9,6 @@ dot.workspace = true
 graphwalk.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
-# `target` source lives in the external crate; this module re-exports it
-# (see src/target.rs).  See Phase 2 Task 2.3 cycle-break note.
 target.workspace = true
 # Absorbed from `cfg` (Phase 2 Task 2.3).
 petgraph.workspace = true

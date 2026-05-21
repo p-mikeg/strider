@@ -26,7 +26,7 @@ use strider_ir::ReadOnlyMemory;
 
 use crate::cfg::Result;
 use crate::cfg::types::RegionInstruction;
-use crate::target::Endianness;
+use target::Endianness;
 
 /// The set of statically-known targets of a single `BranchIndirect`.
 ///
