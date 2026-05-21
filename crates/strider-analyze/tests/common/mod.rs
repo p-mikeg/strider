@@ -486,418 +486,86 @@ macro_rules! per_arch_test {
 macro_rules! __one_arch_test {
     ($arch:ident, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
         paste::paste! {
-            $crate::[<__scan_ignore_ $arch:lower>]!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+            // Per-arch scanners are emitted by `__define_scan_ignore!` (a
+            // macro-generated `#[macro_export] macro_rules!`).  Rust does
+            // not allow `$crate::name` lookup for macros that are
+            // themselves the output of macro expansion (issue #52234), so
+            // we reach the scanner by its unqualified name — `#[macro_export]`
+            // hoists it to the test crate's root prelude.
+            [<__scan_ignore_ $arch:lower>]!($fn:ident, $case, $fn_name, $assert, $ignore_block);
         }
     };
 }
 
-// Per-arch scanners.  Each macro scans its `{ ... }` group for its own
-// arch key.  Arms: found (emit ignored test) | skip one entry | empty (emit
-// plain test).  Using `{ ... }` groups means the outer `,` in the list is
-// inside braces and is NOT part of the macro argument separator — so there is
-// no ambiguity for the `:` token inside each entry.
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_x86 {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { X86: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::X86, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_x86!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::X86, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-// `paste!` lower-cases `X86Kernel` to `x86kernel` (no underscore), so
-// the dispatcher's name is `__scan_ignore_x86kernel` — not
-// `__scan_ignore_x86_kernel`.  The fixture path / fn-name suffix
-// uses the underscored form (`x86_kernel`) via the `$fn` argument.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_x86kernel {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { X86Kernel: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::X86Kernel, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_x86kernel!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::X86Kernel, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_x64 {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { X64: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::X64, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_x64!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::X64, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_aarch64 {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Aarch64: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Aarch64, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_aarch64!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Aarch64, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_arm {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Arm: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Arm, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_arm!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Arm, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_mips32le {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Mips32le: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Mips32le, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_mips32le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Mips32le, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_mips32be {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Mips32be: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Mips32be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_mips32be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Mips32be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-// ── New-arch scanners (factored via `__scan_ignore_for!` for brevity) ──────
+// Per-arch scanners.  Each scanner needs three arms: match-self (head of
+// the ignore list names this arch — emit an ignored test); skip-other
+// (head names some other arch — recurse on the tail); empty (no entry —
+// emit a plain test).  The match-self arm needs its arch ident as a
+// literal token because `macro_rules!` lacks ident equality — so we
+// generate one scanner per arch.
 //
-// Each scanner needs three arms: match-self / skip-other / empty.  The
-// pattern is identical for every arch — the arch ident and the `Arch::*`
-// variant are the only differences.  Defining a helper macro that takes
-// these as arguments would deepen the macro recursion (and hit the
-// recursion limit on long-chain ignore lists).  Since the per-arch
-// pattern is mechanical, we keep it explicit per arch — same shape as
-// the existing ones.
-
+// `__define_scan_ignore!($arch_lower, $arch_camel)` stamps out one
+// scanner.  All 16 scanners are listed in the invocations below; adding
+// a new arch is a one-line addition.
+//
+// The `$d:tt` parameter is the classic "dollar token" trick for nesting
+// `macro_rules!` definitions on stable Rust: when an outer macro emits
+// an inner `macro_rules!`, we cannot write a bare `$` for the inner
+// metavariables (it would bind in the outer scope), so we accept `$` as
+// a token parameter and use `$d` wherever we need a literal `$` in the
+// emitted inner macro.
+//
+// (Earlier comments worried that adding a generator macro on top of the
+// existing per-arch scanners would deepen the recursion past the default
+// `recursion_limit`.  That concern only applied to the *runtime* dispatch
+// — the skip-other arm recurses through the ignore list once per arch.
+// `__define_scan_ignore!` runs at macro definition time and does not
+// participate in the runtime recursion chain.)
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __scan_ignore_aarch64be {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Aarch64Be: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Aarch64Be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_aarch64be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Aarch64Be, $case, $fn_name);
-            $assert(&g);
+macro_rules! __define_scan_ignore {
+    ($d:tt $arch_lower:ident, $arch_camel:ident) => {
+        paste::paste! {
+            #[doc(hidden)]
+            #[macro_export]
+            macro_rules! [<__scan_ignore_ $arch_lower>] {
+                ($d fn:ident : ident, $d case:literal, $d fn_name:literal, $d assert:ident,
+                 { $arch_camel: $d reason:literal $d(, $d($d _rest:tt)*)? }) => {
+                    #[test] #[ignore = $d reason]
+                    fn $d fn() {
+                        let g = $d crate::common::analyze($d crate::common::Arch::$arch_camel, $d case, $d fn_name);
+                        $d assert(&g);
+                    }
+                };
+                ($d fn:ident : ident, $d case:literal, $d fn_name:literal, $d assert:ident,
+                 { $d _skip:ident: $d _r:literal $d(, $d($d rest:tt)*)? }) => {
+                    [<__scan_ignore_ $arch_lower>]!($d fn:ident, $d case, $d fn_name, $d assert, { $d($d($d rest)*)? });
+                };
+                ($d fn:ident : ident, $d case:literal, $d fn_name:literal, $d assert:ident, { $d(,)? }) => {
+                    #[test]
+                    fn $d fn() {
+                        let g = $d crate::common::analyze($d crate::common::Arch::$arch_camel, $d case, $d fn_name);
+                        $d assert(&g);
+                    }
+                };
+            }
         }
     };
 }
 
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_armthumb {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { ArmThumb: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::ArmThumb, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_armthumb!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::ArmThumb, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_armbe {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { ArmBe: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::ArmBe, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_armbe!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::ArmBe, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_mips64le {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Mips64le: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Mips64le, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_mips64le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Mips64le, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_mips64be {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Mips64be: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Mips64be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_mips64be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Mips64be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_ppc32be {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Ppc32be: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Ppc32be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_ppc32be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Ppc32be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_ppc32le {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Ppc32le: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Ppc32le, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_ppc32le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    // Empty list: run normally.  The ppc32le.mk build flags work around
-    // Debian's BE-only libgcc by linking with `-nodefaultlibs
-    // --unresolved-symbols=ignore-all` so we get real LE executables
-    // (with stub relocations for libgcc helpers we never call into).
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Ppc32le, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_ppc64be {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Ppc64be: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Ppc64be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_ppc64be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    // Empty list: run normally.  The ppc64be.mk build flags switched to
-    // clang+lld which DEFAULTS to ELFv2 (no function descriptors) even
-    // for the BE target — sidesteps the gcc-side ELFv1 .opd problem.
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Ppc64be, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __scan_ignore_ppc64le {
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { Ppc64le: $reason:literal $(, $($_rest:tt)*)? }) => {
-        #[test] #[ignore = $reason]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Ppc64le, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
-     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_ppc64le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
-    };
-    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
-        #[test]
-        fn $fn() {
-            let g = $crate::common::analyze($crate::common::Arch::Ppc64le, $case, $fn_name);
-            $assert(&g);
-        }
-    };
-}
+__define_scan_ignore!($ x86,        X86);
+__define_scan_ignore!($ x86kernel,  X86Kernel);
+__define_scan_ignore!($ x64,        X64);
+__define_scan_ignore!($ aarch64,    Aarch64);
+__define_scan_ignore!($ aarch64be,  Aarch64Be);
+__define_scan_ignore!($ arm,        Arm);
+__define_scan_ignore!($ armbe,      ArmBe);
+__define_scan_ignore!($ armthumb,   ArmThumb);
+__define_scan_ignore!($ mips32le,   Mips32le);
+__define_scan_ignore!($ mips32be,   Mips32be);
+__define_scan_ignore!($ mips64le,   Mips64le);
+__define_scan_ignore!($ mips64be,   Mips64be);
+__define_scan_ignore!($ ppc32be,    Ppc32be);
+__define_scan_ignore!($ ppc32le,    Ppc32le);
+__define_scan_ignore!($ ppc64be,    Ppc64be);
+__define_scan_ignore!($ ppc64le,    Ppc64le);
