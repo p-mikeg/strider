@@ -54,23 +54,38 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 /// `BoolNeg(BoolNeg) → x` rule simplifies double-negations first.
 pub struct IfCondInversion;
 
+impl crate::opt::peephole::PeepholePass for IfCondInversion {
+    fn name(&self) -> &'static str {
+        "IfCondInversion"
+    }
+
+    fn matches_kind(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::If)
+    }
+
+    fn try_rewrite(
+        &self,
+        ctx: &mut crate::pattern::RewriteCtx<'_>,
+        root: NodeId,
+    ) -> Result<OptimizationResult> {
+        if !is_inverted_cond(ctx.graph_ref(), root) {
+            return Ok(OptimizationResult::NoChange);
+        }
+        invert(ctx.graph_mut(), root)?;
+        Ok(OptimizationResult::Changed)
+    }
+
+    /// Inverting an `If` swaps its control consumers but doesn't fold
+    /// into a constant — re-enqueueing consumers would only re-walk
+    /// joins that haven't changed shape.
+    fn propagate_to_consumers(&self) -> bool {
+        false
+    }
+}
+
 impl Optimizer for IfCondInversion {
     fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
-        // Collect candidate `If` nodes whose cond input is BoolUnaryOp::Neg.
-        // We filter here (not in `preorder_kind`) because we need to read
-        // the input chain too.
-        let graph = ctx.graph_ref();
-        let candidates: Vec<NodeId> = ctx
-            .preorder_kind(|k| matches!(k, NodeKind::If))
-            .filter(|&node| is_inverted_cond(graph, node))
-            .collect();
-
-        let mut result = OptimizationResult::NoChange;
-        for if_node in candidates {
-            invert(ctx.graph_mut(), if_node)?;
-            result = OptimizationResult::Changed;
-        }
-        Ok(result)
+        crate::opt::peephole::run_peephole(self, ctx)
     }
 }
 
