@@ -63,205 +63,287 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 }
 
 /// Arch-specific entries — names whose ABI depends on which arch
-/// emitted them.  Currently just `swi` (collides between ARM Linux
-/// SVC/SWI and x86 INT instruction).  When OS-specific syscall ABI
+/// emitted them.  Currently `swi` (collides between ARM Linux SVC/SWI
+/// and x86 INT instruction), Linux syscall ABIs, SMCCC, and the x86
+/// MSR / MONITOR-MWAIT / SWAPGS family.  When OS-specific syscall ABI
 /// distinctions surface (e.g., Linux vs FreeBSD x86_64 syscall
 /// register usage), they slot in here too.
-//
-// `match_same_arms`: each (preset, name) pair is a separate diffable
-// entry with its own justification comment — combining via `|` would
-// defeat the table's per-line property.
-#[allow(clippy::match_same_arms)]
 #[must_use]
 fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
-    match (preset, name) {
-        // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
-        // (up to 7), r0 = return value.  See `arch/arm/kernel/entry-common.S`
-        // and the EABI variant in `arch/arm/include/uapi/asm/unistd.h`.
-        // All three 32-bit ARM presets share this ABI; if Thumb ever
-        // needs a different one, split the alternation into separate arms.
-        (crate::ArchPreset::Arm | crate::ArchPreset::ArmBe | crate::ArchPreset::ArmThumb,
-         "swi") => Some(CallOtherClass::Call(CallOtherAbi {
+    ARCH_SPECIFIC_TABLE.iter().find_map(|row| {
+        if row.preset_arches.contains(&preset) && row.op_names.contains(&name) {
+            Some(row.class)
+        } else {
+            None
+        }
+    })
+}
+
+/// One row of the arch-specific CallOther dispatch table.  Each row
+/// folds a former match arm into pure data: the set of [`ArchPreset`]
+/// variants that should match this entry, the set of user-op name
+/// strings to match against, and the resulting [`CallOtherClass`].
+///
+/// `CallOtherClass` is `Copy`, so the row can be returned directly
+/// from a static-table walk without cloning.
+struct CallOtherRow {
+    /// Architectures that this entry applies to.  An entry like
+    /// `[Aarch64, Aarch64Be]` lets a single row cover the LE/BE pair;
+    /// `[X86, X86_64]` covers both x86 widths.
+    preset_arches: &'static [crate::ArchPreset],
+    /// User-op name strings this entry matches.  Lets a single row
+    /// cover related ops like `mwait` + `mwaitx` or the SMCCC pair
+    /// `CallHyperVisor` + `CallSecureMonitor`.
+    op_names: &'static [&'static str],
+    /// What `classify` returns when both `preset_arches` and `op_names`
+    /// hit.
+    class: CallOtherClass,
+}
+
+/// Arch-specific CallOther dispatch table.  Each row is a former match
+/// arm; the dispatch is a linear scan that returns the first hit.
+///
+/// Adding a new entry is one diffable row — the dispatch loop and the
+/// arch-independent fallback do not change.
+//
+// Three preset-array constants below keep the most common (`X86 +
+// X86_64`, all-AArch64, all-32-bit-ARM) row prefixes short.
+static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
+    // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
+    // (up to 7), r0 = return value.  See `arch/arm/kernel/entry-common.S`
+    // and the EABI variant in `arch/arm/include/uapi/asm/unistd.h`.
+    // All three 32-bit ARM presets share this ABI; if Thumb ever needs
+    // a different one, split the row.
+    CallOtherRow {
+        preset_arches: ARM32_ALL,
+        op_names: &["swi"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
             implicit_writes: &["r0"],
             memory_edge:     true,
-        })),
-        // x86 INT instruction also lifts to "swi" in some Sleigh contexts.
-        // Empty ABI + memory_edge for now: sound stub until a future spec
-        // models per-(arch, INT-vector, OS) syscall conventions.  Without
-        // this entry, any x86 lift containing an INT instruction would
-        // error with UnknownCallOtherError (e.g. INT3 padding bytes).
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "swi") => Some(CallOtherClass::Call(CallOtherAbi {
+        }),
+    },
+    // x86 INT instruction also lifts to "swi" in some Sleigh contexts.
+    // Empty ABI + memory_edge for now: sound stub until a future spec
+    // models per-(arch, INT-vector, OS) syscall conventions.  Without
+    // this entry, any x86 lift containing an INT instruction would
+    // error with UnknownCallOtherError (e.g. INT3 padding bytes).
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["swi"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: true,
-        })),
+        }),
+    },
 
-        // Linux x86_64 syscall ABI: RAX = syscall number, RDI/RSI/RDX/
-        // R10/R8/R9 = args, RAX = return.  RCX/R11 are clobbered by
-        // the SYSCALL instruction itself (RCX=return rip, R11=rflags).
-        // Arch-specific because the register names only resolve on
-        // x86_64's Sleigh register table.
-        (crate::ArchPreset::X86_64, "syscall") => Some(CallOtherClass::Call(CallOtherAbi {
+    // Linux x86_64 syscall ABI: RAX = syscall number, RDI/RSI/RDX/
+    // R10/R8/R9 = args, RAX = return.  RCX/R11 are clobbered by the
+    // SYSCALL instruction itself (RCX=return rip, R11=rflags).
+    // Arch-specific because the register names only resolve on
+    // x86_64's Sleigh register table.
+    CallOtherRow {
+        preset_arches: &[crate::ArchPreset::X86_64],
+        op_names: &["syscall"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
             implicit_writes: &["RAX", "RCX", "R11"],
             memory_edge:     true,
-        })),
+        }),
+    },
 
-        // ARM SMCCC for HVC (CallHyperVisor) and SMC (CallSecureMonitor):
-        // X0..X7 in, X0..X3 out.  Both little- and big-endian aarch64
-        // share the convention.  Arch-specific because `x0..x7` only
-        // resolve on aarch64's Sleigh register table (arm-32 has
-        // `r0..r12`).
-        (crate::ArchPreset::Aarch64 | crate::ArchPreset::Aarch64Be,
-         "CallHyperVisor" | "CallSecureMonitor") => Some(CallOtherClass::Call(CallOtherAbi {
+    // ARM SMCCC for HVC (CallHyperVisor) and SMC (CallSecureMonitor):
+    // X0..X7 in, X0..X3 out.  Both LE and BE aarch64 share the
+    // convention.  Arch-specific because `x0..x7` only resolve on
+    // aarch64's Sleigh register table (arm-32 has `r0..r12`).
+    CallOtherRow {
+        preset_arches: AARCH64_BOTH,
+        op_names: &["CallHyperVisor", "CallSecureMonitor"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             implicit_writes: &["x0", "x1", "x2", "x3"],
             memory_edge:     true,
-        })),
+        }),
+    },
 
-        // x86 RDPKRU: ECX must be 0 (read by the op), writes EAX,
-        // clears EDX.  Arch-specific because ECX/EAX/EDX are x86's
-        // 32-bit register names.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "rdpkru_u32") => Some(CallOtherClass::Call(CallOtherAbi {
+    // x86 RDPKRU: ECX must be 0 (read by the op), writes EAX, clears
+    // EDX.  Arch-specific because ECX/EAX/EDX are x86's 32-bit
+    // register names.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["rdpkru_u32"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["ECX"],
             implicit_writes: &["EAX", "EDX"],
             memory_edge:     false,
-        })),
+        }),
+    },
 
-        // x86 RDTSC: no inputs, writes EDX:EAX.  Arch-specific
-        // because EAX/EDX are x86 32-bit register names.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "rdtsc") => Some(CallOtherClass::Call(CallOtherAbi {
+    // x86 RDTSC: no inputs, writes EDX:EAX.  Arch-specific because
+    // EAX/EDX are x86 32-bit register names.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["rdtsc"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &["EAX", "EDX"],
             memory_edge:     false,
-        })),
+        }),
+    },
 
-        // x86 RDTSCP: like RDTSC but ALSO writes ECX (= IA32_TSC_AUX
-        // MSR's low 32 bits).  Without the ECX clobber, a pattern
-        // reading post-RDTSCP ECX would incorrectly see the pre-call
-        // value.  No memory edge: TSC reads don't observe RAM.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "rdtscp") => Some(CallOtherClass::Call(CallOtherAbi {
+    // x86 RDTSCP: like RDTSC but ALSO writes ECX (= IA32_TSC_AUX MSR's
+    // low 32 bits).  Without the ECX clobber, a pattern reading
+    // post-RDTSCP ECX would incorrectly see the pre-call value.  No
+    // memory edge: TSC reads don't observe RAM.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["rdtscp"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &["EAX", "EDX", "ECX"],
             memory_edge:     false,
-        })),
+        }),
+    },
 
-        // x86 RDMSR — read model-specific register.  Sleigh emits
-        //   `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`
-        // so ECX is an explicit pcode arg and the EDX/EAX writes are
-        // separate downstream pcode ops.  Nothing implicit; no memory
-        // edge (an MSR read doesn't observe RAM).
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "rdmsr") => PURE,
+    // x86 RDMSR — read model-specific register.  Sleigh emits
+    //   `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`
+    // so ECX is an explicit pcode arg and the EDX/EAX writes are
+    // separate downstream pcode ops.  Nothing implicit; no memory edge
+    // (an MSR read doesn't observe RAM).
+    CallOtherRow { preset_arches: X86_BOTH, op_names: &["rdmsr"], class: PURE_CLASS },
 
-        // x86 WRMSR — write model-specific register.  Sleigh emits
-        //   `tmp:8 = (zext(EDX)<<32)|zext(EAX); wrmsr(ECX, tmp);`
-        // so ECX/tmp (and transitively EDX/EAX) are all explicit pcode
-        // operands of upstream ops feeding this CALLOTHER.  Memory
-        // edge: a WRMSR can change TSC, FSBASE, etc., so subsequent
-        // loads must observe the write.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "wrmsr") => PURE_WITH_MEM_EDGE,
+    // x86 WRMSR — write model-specific register.  Sleigh emits
+    //   `tmp:8 = (zext(EDX)<<32)|zext(EAX); wrmsr(ECX, tmp);`
+    // so ECX/tmp (and transitively EDX/EAX) are all explicit pcode
+    // operands of upstream ops feeding this CALLOTHER.  Memory edge:
+    // a WRMSR can change TSC, FSBASE, etc., so subsequent loads must
+    // observe the write.
+    CallOtherRow { preset_arches: X86_BOTH, op_names: &["wrmsr"], class: PURE_WITH_MEM_EDGE_CLASS },
 
-        // x86_64 RDFSBASE / RDGSBASE — read FS/GS segment base into a
-        // GPR.  Sleigh emits `r32 = readfsbase()` / `r64 = readfsbase()`
-        // (destination is the explicit pcode output, no inputs).
-        // Nothing implicit; no memory edge.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "readfsbase" | "readgsbase") => PURE,
+    // x86_64 RDFSBASE / RDGSBASE — read FS/GS segment base into a GPR.
+    // Sleigh emits `r32 = readfsbase()` / `r64 = readfsbase()`
+    // (destination is the explicit pcode output, no inputs).  Nothing
+    // implicit; no memory edge.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["readfsbase", "readgsbase"],
+        class: PURE_CLASS,
+    },
 
-        // WRFSBASE / WRGSBASE — write FS/GS base from a GPR.  Sleigh
-        // emits `writefsbase(r64)` (or `zext(r32)`) with the source
-        // register as the explicit pcode arg.  Memory edge: subsequent
-        // FS:/GS:-based loads depend on the new base.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "writefsbase" | "writegsbase") => PURE_WITH_MEM_EDGE,
+    // WRFSBASE / WRGSBASE — write FS/GS base from a GPR.  Sleigh emits
+    // `writefsbase(r64)` (or `zext(r32)`) with the source register as
+    // the explicit pcode arg.  Memory edge: subsequent FS:/GS:-based
+    // loads depend on the new base.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["writefsbase", "writegsbase"],
+        class: PURE_WITH_MEM_EDGE_CLASS,
+    },
 
-        // x86_64 MONITOR (0F 01 C8) — sets up address-range monitor.
-        // Sleigh emits `monitor()` with zero pcode operands; the
-        // implicit register reads are not surfaced as pcode args, so
-        // they belong in `implicit_reads`.  Per Intel SDM Vol. 2B §4-39:
-        // RAX = linear address to monitor, ECX = extensions (must be 0),
-        // EDX = hints (must be 0).  Memory edge: the operation interacts
-        // with the cache subsystem and pairs with a subsequent MWAIT.
-        (crate::ArchPreset::X86_64,
-         "monitor") => Some(CallOtherClass::Call(CallOtherAbi {
+    // x86_64 MONITOR (0F 01 C8) — sets up address-range monitor.
+    // Sleigh emits `monitor()` with zero pcode operands; the implicit
+    // register reads are not surfaced as pcode args, so they belong in
+    // `implicit_reads`.  Per Intel SDM Vol. 2B §4-39: RAX = linear
+    // address to monitor, ECX = extensions (must be 0), EDX = hints
+    // (must be 0).  Memory edge: the operation interacts with the
+    // cache subsystem and pairs with a subsequent MWAIT.  AMD MONITORX
+    // (0F 01 FA) shares the same ABI per AMD64 Vol. 3.
+    CallOtherRow {
+        preset_arches: &[crate::ArchPreset::X86_64],
+        op_names: &["monitor", "monitorx"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX", "ECX", "EDX"],
             implicit_writes: &[],
             memory_edge:     true,
-        })),
-        // x86 32-bit MONITOR — same operation, EAX-relative address.
-        (crate::ArchPreset::X86,
-         "monitor") => Some(CallOtherClass::Call(CallOtherAbi {
+        }),
+    },
+    // x86 32-bit MONITOR / MONITORX — EAX-relative address.
+    CallOtherRow {
+        preset_arches: &[crate::ArchPreset::X86],
+        op_names: &["monitor", "monitorx"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX", "EDX"],
             implicit_writes: &[],
             memory_edge:     true,
-        })),
+        }),
+    },
 
-        // AMD MONITORX (0F 01 FA) — like MONITOR but available outside
-        // CPL 0 with vendor-specific cache hints.  Implicit reads match
-        // MONITOR per AMD64 Vol. 3.
-        (crate::ArchPreset::X86_64,
-         "monitorx") => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["RAX", "ECX", "EDX"],
-            implicit_writes: &[],
-            memory_edge:     true,
-        })),
-        (crate::ArchPreset::X86,
-         "monitorx") => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["EAX", "ECX", "EDX"],
-            implicit_writes: &[],
-            memory_edge:     true,
-        })),
-
-        // x86 MWAIT (0F 01 C9) / MWAITX (0F 01 FB) — entries a low-power
-        // state until the armed cache line is written.  Per Intel SDM
-        // Vol. 2B §4-44: EAX = hints, ECX = extensions (must be 0).
-        // No GPR writes.  Memory edge: serialises with the prior
-        // MONITOR's cache-line arming and acts as a memory-order point.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "mwait" | "mwaitx") => Some(CallOtherClass::Call(CallOtherAbi {
+    // x86 MWAIT (0F 01 C9) / MWAITX (0F 01 FB) — enter a low-power
+    // state until the armed cache line is written.  Per Intel SDM
+    // Vol. 2B §4-44: EAX = hints, ECX = extensions (must be 0).  No
+    // GPR writes.  Memory edge: serialises with the prior MONITOR's
+    // cache-line arming and acts as a memory-order point.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["mwait", "mwaitx"],
+        class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX"],
             implicit_writes: &[],
             memory_edge:     true,
-        })),
+        }),
+    },
 
-        // x86_64 SYSRET (0F 07) — fast return from a SYSCALL into ring 3.
-        // Sleigh defines `sysret` only on the x86 stack; arch-specific
-        // here so a hypothetical non-x86 Sleigh spec that coincidentally
-        // names a user-op `sysret` cannot silently inherit NoReturn.
-        // For kernel-internal analysis this terminates the function (the
-        // kernel-context control does not return to its kernel-context
-        // caller); a future `ReturnToUserMode` classification could
-        // differentiate user-mode trampolines.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "sysret") => NO_RETURN,
+    // x86_64 SYSRET (0F 07) — fast return from a SYSCALL into ring 3.
+    // Sleigh defines `sysret` only on the x86 stack; arch-specific
+    // here so a hypothetical non-x86 Sleigh spec that coincidentally
+    // names a user-op `sysret` cannot silently inherit NoReturn.  For
+    // kernel-internal analysis this terminates the function (the
+    // kernel-context control does not return to its kernel-context
+    // caller); a future `ReturnToUserMode` classification could
+    // differentiate user-mode trampolines.
+    CallOtherRow { preset_arches: X86_BOTH, op_names: &["sysret"], class: NO_RETURN_CLASS },
 
-        // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
-        // IA32_KERNEL_GS_BASE.  No GPR or RAM write on its own, but
-        // the MSR swap silently changes the virtual base used by
-        // every subsequent `%gs:`-relative load/store.  Without
-        // memory_edge = true, StackLoadForward / LoadReadOnly would
-        // forward `%gs:`-loads across the swap.  Analogous to
-        // wr{fs,gs}base above.  Arch-specific so it cannot misclassify
-        // a non-x86 user-op coincidentally named `swapgs`.
-        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
-         "swapgs") => PURE_WITH_MEM_EDGE,
+    // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
+    // IA32_KERNEL_GS_BASE.  No GPR or RAM write on its own, but the
+    // MSR swap silently changes the virtual base used by every
+    // subsequent `%gs:`-relative load/store.  Without memory_edge =
+    // true, StackLoadForward / LoadReadOnly would forward
+    // `%gs:`-loads across the swap.  Analogous to wr{fs,gs}base
+    // above.  Arch-specific so it cannot misclassify a non-x86
+    // user-op coincidentally named `swapgs`.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["swapgs"],
+        class: PURE_WITH_MEM_EDGE_CLASS,
+    },
 
-        // x86's INT instruction also lifts to "swi" in some Sleigh
-        // contexts.  We don't have a global model (the vector is in
-        // the pcode args; INT 0x80 is Linux 32-bit syscall, INT 3 is
-        // a debugger trap, INT 0x2E was Windows' legacy syscall, etc).
-        // No entry here = arch_independent fallback returns None for
-        // (X86, "swi") = lift errors with UnknownCallOtherError, which
-        // is the right strict behaviour until a future spec adds a
-        // (vector, OS) keyed model.
-        _ => None,
-    }
-}
+    // x86's INT instruction also lifts to "swi" in some Sleigh
+    // contexts.  We don't have a global model (the vector is in the
+    // pcode args; INT 0x80 is Linux 32-bit syscall, INT 3 is a
+    // debugger trap, INT 0x2E was Windows' legacy syscall, etc).
+    // No entry here = arch_independent fallback returns None for
+    // (X86, "swi") = lift errors with UnknownCallOtherError, which
+    // is the right strict behaviour until a future spec adds a
+    // (vector, OS) keyed model.
+];
+
+// Shared preset-slice constants — keep the rows above short and make
+// the "shared with x86_64" / "shared between LE/BE" intent explicit.
+const X86_BOTH: &[crate::ArchPreset] = &[crate::ArchPreset::X86, crate::ArchPreset::X86_64];
+const ARM32_ALL: &[crate::ArchPreset] = &[
+    crate::ArchPreset::Arm,
+    crate::ArchPreset::ArmBe,
+    crate::ArchPreset::ArmThumb,
+];
+const AARCH64_BOTH: &[crate::ArchPreset] =
+    &[crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be];
+
+// `CallOtherClass` values for the shared shapes used by table rows.
+// The `PURE` / `PURE_WITH_MEM_EDGE` / `NO_OP` / `NO_RETURN` consts below
+// are `Option<CallOtherClass>` shorthands consumed by
+// `classify_arch_independent`'s match arms; the unwrapped variants here
+// suit the data-table rows that already wrap their class in a row
+// struct.
+const PURE_CLASS: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[],
+    memory_edge: false,
+});
+const PURE_WITH_MEM_EDGE_CLASS: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[],
+    memory_edge: true,
+});
+const NO_RETURN_CLASS: CallOtherClass = CallOtherClass::NoReturn;
 
 // ── Shared classification constants ──────────────────────────────────
 //
