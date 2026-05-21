@@ -942,6 +942,12 @@ fn read_or_init_var(
 /// Build the CFG, lift to IR, run the stable optimiser subset.
 /// Returns `(graph, unresolved, region_index, sleigh)` so the caller
 /// can re-use the harvested Sleigh handle across iterations.
+///
+/// Sequencer: delegates CFG construction to [`build_cfg`], runs the
+/// IR lift via [`Strider::analyze_cfg_with`], harvests the post-lift
+/// varnode delta via [`scan_new_vns`], and finishes with the stable
+/// optimiser pipeline.  The named helpers carry the per-step
+/// commentary.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn build_lift_stable<R>(
     sleigh: rsleigh::Sleigh<R>,
@@ -964,70 +970,18 @@ fn build_lift_stable<R>(
 where
     R: rsleigh::MemReader,
 {
-    let mut opts_builder = OptionsBuilder::new();
-    if let Some(rom) = rom.clone() {
-        opts_builder = opts_builder.set_read_only_memory(rom);
-    }
-    if let Some(lr) = strider.calling_convention().link_register_vn {
-        opts_builder = opts_builder.set_link_register(lr);
-    }
-    if let Some(max) = fn_max_size {
-        opts_builder = opts_builder.set_function_max_size(max);
-    }
-    if allow_code_before_start_addr {
-        opts_builder = opts_builder.allow_code_before_start_addr();
-    }
-    let cfg_opts = opts_builder.build();
+    let cfg = build_cfg(
+        sleigh,
+        strider,
+        start_addr,
+        rom,
+        fn_max_size,
+        allow_code_before_start_addr,
+        known_targets,
+        decode_cache,
+    )?;
 
-    // Use `for_arch` so both endianness AND `ArchPreset` are derived from the
-    // arch atomically.  Earlier ctors (`Builder::new` / `with_endianness`)
-    // silently defaulted `preset = X86_64`, causing arch-specific CallOther
-    // dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the wrong
-    // preset; those ctors are no longer exposed — `for_arch` is the only
-    // public path.
-    //
-    // Install the strider-analyze mini-IR resolver: without it, the
-    // cfg builder treats every `BranchIndirect` as deferred via
-    // `UnresolvedIndirectBranch`.  The closure captures nothing
-    // (zero-state) — `resolve_indirect_target` is a free function.
-    let resolver: strider_lift::cfg::IndirectResolverFn<R> = std::sync::Arc::new(
-        |insns, target_vn, sleigh, lr_vn, rom, endianness| {
-            crate::indirect_resolver::resolve_indirect_target(
-                insns, target_vn, sleigh, lr_vn, rom, endianness,
-            )
-        },
-    );
-    // Wrap the cfg build failure as `LiftError` so the strider-py
-    // boundary can classify it via a typed downcast instead of a
-    // substring scan over the formatted error chain.  Skipping the
-    // bare `?` here would let a `Builder::build()` failure (sleigh
-    // decode, region overlap, unresolved indirect branch on the
-    // strict path, etc.) propagate as a plain `anyhow::Error` and
-    // get bucketed under the generic `StriderError` at the boundary.
-    let cfg: Cfg<R> = Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
-        .with_known_targets(known_targets.clone())
-        .with_decode_cache(decode_cache.clone())
-        .with_indirect_resolver(resolver)
-        .build()
-        .map_err(strider_lift::LiftError::wrap)?;
-
-    // Vn cache: scan only the regions added since the previous
-    // iteration (petgraph's StableDiGraph allocates monotonic
-    // NodeIndexes, so `regions().skip(prev_count)` yields exactly
-    // the new ones).  At iter 0, scans every region.  Region splits
-    // leave the cache slightly conservative — see the field doc on
-    // LoopState::vn_cache for why that's safe.
-    let regions_now: Vec<&strider_lift::cfg::Region> = cfg.regions().collect();
-    for region in regions_now.iter().skip(*vn_cache_region_count) {
-        for wrapped in region.insns.iter() {
-            for vn in wrapped.insn.all_vns() {
-                vn_cache.insert(vn);
-            }
-        }
-    }
-    *vn_cache_region_count = regions_now.len();
-    let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
-    all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
+    let all_vns = scan_new_vns(&cfg, vn_cache, vn_cache_region_count);
 
     // Wrap the IR lift step as `LiftError`.  `analyze_cfg_with`
     // surfaces sleigh decode failures, pcode-lift type errors,
@@ -1066,6 +1020,108 @@ where
     // iteration can re-use it without re-loading the SLA spec.
     let harvested = cfg.into_sleigh();
     Ok((graph, unresolved, region_index, harvested))
+}
+
+/// Build the CFG with the strider's arch + the current `known_targets`
+/// resolution map.
+///
+/// Constructs the `OptionsBuilder` from `rom` / link-register /
+/// `fn_max_size` / `allow_code_before_start_addr`, installs the
+/// strider-analyze mini-IR indirect-branch resolver, and threads the
+/// shared decode cache.  Failures wrap as [`strider_lift::LiftError`]
+/// so the strider-py boundary can classify them via typed downcast
+/// rather than substring-matching the formatted error chain.
+#[allow(clippy::too_many_arguments)]
+fn build_cfg<R>(
+    sleigh: rsleigh::Sleigh<R>,
+    strider: &Strider,
+    start_addr: strider_lift::cfg::MachineInsnAddr,
+    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    fn_max_size: Option<u64>,
+    allow_code_before_start_addr: bool,
+    known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
+    decode_cache: &DecodeCache,
+) -> Result<Cfg<R>>
+where
+    R: rsleigh::MemReader,
+{
+    let mut opts_builder = OptionsBuilder::new();
+    if let Some(rom) = rom {
+        opts_builder = opts_builder.set_read_only_memory(rom);
+    }
+    if let Some(lr) = strider.calling_convention().link_register_vn {
+        opts_builder = opts_builder.set_link_register(lr);
+    }
+    if let Some(max) = fn_max_size {
+        opts_builder = opts_builder.set_function_max_size(max);
+    }
+    if allow_code_before_start_addr {
+        opts_builder = opts_builder.allow_code_before_start_addr();
+    }
+    let cfg_opts = opts_builder.build();
+
+    // Use `for_arch` so both endianness AND `ArchPreset` are derived from the
+    // arch atomically.  Earlier ctors (`Builder::new` / `with_endianness`)
+    // silently defaulted `preset = X86_64`, causing arch-specific CallOther
+    // dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the wrong
+    // preset; those ctors are no longer exposed — `for_arch` is the only
+    // public path.
+    //
+    // Install the strider-analyze mini-IR resolver: without it, the
+    // cfg builder treats every `BranchIndirect` as deferred via
+    // `UnresolvedIndirectBranch`.  The closure captures nothing
+    // (zero-state) — `resolve_indirect_target` is a free function.
+    let resolver: strider_lift::cfg::IndirectResolverFn<R> = std::sync::Arc::new(
+        |insns, target_vn, sleigh, lr_vn, rom, endianness| {
+            crate::indirect_resolver::resolve_indirect_target(
+                insns, target_vn, sleigh, lr_vn, rom, endianness,
+            )
+        },
+    );
+    // Wrap the cfg build failure as `LiftError` so the strider-py
+    // boundary can classify it via a typed downcast instead of a
+    // substring scan over the formatted error chain.  Skipping the
+    // bare `?` here would let a `Builder::build()` failure (sleigh
+    // decode, region overlap, unresolved indirect branch on the
+    // strict path, etc.) propagate as a plain `anyhow::Error` and
+    // get bucketed under the generic `StriderError` at the boundary.
+    Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
+        .with_known_targets(known_targets.clone())
+        .with_decode_cache(decode_cache.clone())
+        .with_indirect_resolver(resolver)
+        .build()
+        .map_err(|e| strider_lift::LiftError::wrap(e).into())
+}
+
+/// Union the varnodes from any regions added since the last
+/// `scan_new_vns` call into `vn_cache`, then return the sorted set as
+/// a `Vec` ready to feed into `strider.analyze_cfg_with`.
+///
+/// petgraph's `StableDiGraph` allocates monotonic `NodeIndex`s, so
+/// `regions().skip(*vn_cache_region_count)` yields exactly the new
+/// ones; at iter 0 the cache is empty and every region is scanned.
+/// Region splits leave the cache slightly conservative — see the
+/// field doc on `LoopState::vn_cache` for why that's safe.
+fn scan_new_vns<R>(
+    cfg: &Cfg<R>,
+    vn_cache: &mut std::collections::HashSet<rsleigh::Vn>,
+    vn_cache_region_count: &mut usize,
+) -> Vec<rsleigh::Vn>
+where
+    R: rsleigh::MemReader,
+{
+    let regions_now: Vec<&strider_lift::cfg::Region> = cfg.regions().collect();
+    for region in regions_now.iter().skip(*vn_cache_region_count) {
+        for wrapped in region.insns.iter() {
+            for vn in wrapped.insn.all_vns() {
+                vn_cache.insert(vn);
+            }
+        }
+    }
+    *vn_cache_region_count = regions_now.len();
+    let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
+    all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
+    all_vns
 }
 
 /// The induced edge set of a `known_targets` map.  Used to test
