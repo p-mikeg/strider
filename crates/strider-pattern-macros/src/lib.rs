@@ -928,7 +928,7 @@ fn build_pymethods_impl(
     // macro-generated `.pyi` matches byte-for-byte when
     // `node_phrase = "stack-store node"`.
     let capture_doc_line1 = format!(" Capture the matched {node_phrase} under the given");
-    let capture_doc_line2 = " [`Capture`].  Mirrors the `pat_builder_finalise!`-emitted";
+    let capture_doc_line2 = " [`Capture`].  Mirrors the hand-written `PyFunctionArgPat`";
     let capture_doc_line3 = " `.capture(c)`.";
 
     let field_methods = fields.iter().map(|f| emit_field_method(rust_name, f));

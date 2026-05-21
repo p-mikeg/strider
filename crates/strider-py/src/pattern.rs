@@ -34,53 +34,6 @@ use strider_pattern_macros::strider_pattern;
 
 use crate::errors::into_pattern_err;
 
-// ── Pat-builder finalise macro ───────────────────────────────────────────
-//
-// Every typed pattern builder (`PyPhiPat`, `PyCallPat`, `PyLoadPat`, …)
-// finishes by reading its in-progress builder state into a `strider_analyze::pattern::Pat`
-// and wrapping it in a `PyPat`.  The four-method `capture` / `cap` /
-// `when` / `into_pat` block is identical at every site (only the
-// receiver type differs).
-//
-// `pat_builder_finalise!(BuilderTy)` emits a separate `#[pymethods] impl
-// BuilderTy { … }` block carrying those four methods.  This relies on
-// PyO3's `multiple-pymethods` feature so the same `#[pyclass]` can have
-// more than one `#[pymethods]` block.  Each builder retains its own
-// primary `#[pymethods]` block holding the builder-specific methods
-// (`for_vn`, `addr`, `arg`, `at`, …) and only declares
-// `pat_builder_finalise!(BuilderTy);` at module scope.
-
-macro_rules! pat_builder_finalise {
-    ($BuilderTy:ident) => {
-        #[pymethods]
-        impl $BuilderTy {
-            /// Capture this pattern's matched node under the given
-            /// [`Capture`].
-            fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-                use strider_analyze::pattern::IntoPat;
-                PyPat::from_pat(self.finalise().capture(c.inner))
-            }
-            /// Capture this pattern under a string name (auto-interned).
-            fn cap(&self, name: &str) -> PyResult<PyPat> {
-                use strider_analyze::pattern::IntoPat;
-                let c = intern_str(name)?;
-                Ok(PyPat::from_pat(self.finalise().capture(c)))
-            }
-            /// Attach a Python predicate that runs after the match.  See
-            /// [`PyPat::when`] for the full predicate contract.
-            fn when(&self, f: PyObject) -> PyPat {
-                PyPat::from_pat(wrap_when(self.finalise(), f))
-            }
-            /// Finalise into a [`PyPat`].  Most call sites accept a
-            /// builder directly via `PatLike`, so explicit `.into_pat()`
-            /// is rarely needed.
-            fn into_pat(&self) -> PyPat {
-                PyPat::from_pat(self.finalise())
-            }
-        }
-    };
-}
-
 // ── Capture ──────────────────────────────────────────────────────────────
 
 // `#[gen_stub_pyclass]` derives `PyStubType` for `PyCapture` so the
@@ -1961,24 +1914,37 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-// ── Pat-builder finalise impls ───────────────────────────────────────────
+// ── PyFunctionArgPat: capture/cap/when/into_pat finaliser ────────────────
 //
-// One macro invocation per typed builder.  Each emits a separate
-// `#[pymethods]` block (allowed by the `multiple-pymethods` PyO3 feature)
-// carrying the four shared `capture` / `cap` / `when` / `into_pat`
-// methods.  See `pat_builder_finalise!` (declared near the top of the
-// file) for the body.
-
-// PyPhiPat, PyMemPhiPat, PyValuePhiPat: capture/cap/when/into_pat
-// emitted by `#[strider_pattern]`.
-pat_builder_finalise!(PyFunctionArgPat);
-// PyLoadPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
-// PyStorePat, PyStackStorePat, PyStackStorePhiPat: capture/cap/when/into_pat
-// emitted by `#[strider_pattern]`.
-// PyCallPat, PyCallOtherPat, PyRetPat: capture/cap/when/into_pat
-// emitted by `#[strider_pattern]`.
-// PyIfPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
-// PyIntBinaryPat, PyBoolBinaryPat, PyFloatBinaryPat:
-// capture/cap/when/into_pat emitted by `#[strider_pattern]` via the
-// `constructor_args` (required-construction) + `#[field(terminal)]`
-// extensions.
+// `PyFunctionArgPat` is the only hand-written builder whose finaliser
+// methods aren't emitted by `#[strider_pattern]` (it stays hand-written
+// because its `source_register` / `source_stack` setters share one
+// underlying field via enum-dispatch, which the macro's per-field
+// shape doesn't model).  Every other typed builder gets these four
+// methods from the proc-macro.  This separate `#[pymethods]` block
+// relies on PyO3's `multiple-pymethods` feature.
+#[pymethods]
+impl PyFunctionArgPat {
+    /// Capture this pattern's matched node under the given [`Capture`].
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use strider_analyze::pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    /// Capture this pattern under a string name (auto-interned).
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use strider_analyze::pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    /// Attach a Python predicate that runs after the match.  See
+    /// [`PyPat::when`] for the full predicate contract.
+    fn when(&self, f: PyObject) -> PyPat {
+        PyPat::from_pat(wrap_when(self.finalise(), f))
+    }
+    /// Finalise into a [`PyPat`].  Most call sites accept a builder
+    /// directly via `PatLike`, so explicit `.into_pat()` is rarely
+    /// needed.
+    fn into_pat(&self) -> PyPat {
+        PyPat::from_pat(self.finalise())
+    }
+}
