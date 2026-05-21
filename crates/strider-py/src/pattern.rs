@@ -986,40 +986,19 @@ pub fn bool_not(operand: PatLike<'_>) -> PyResult<PyPat> {
 
 // ── Float binary ops ─────────────────────────────────────────────────────
 
-macro_rules! float_binop {
-    ($name:ident) => {
-        #[pyfunction]
-        pub fn $name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
-            let lp = l.into_pat()?;
-            let rp = r.into_pat()?;
-            Ok(PyPat::from_pat(strider_analyze::pattern::$name(lp, rp).into()))
-        }
-    };
-}
-
-float_binop!(float_add);
-float_binop!(float_sub);
-float_binop!(float_mul);
-float_binop!(float_div);
+binary!(float_add, into);
+binary!(float_sub, into);
+binary!(float_mul, into);
+binary!(float_div, into);
 
 // ── Float unary ops ──────────────────────────────────────────────────────
 
-macro_rules! float_unop {
-    ($name:ident) => {
-        #[pyfunction]
-        pub fn $name(operand: PatLike<'_>) -> PyResult<PyPat> {
-            let op = operand.into_pat()?;
-            Ok(PyPat::from_pat(strider_analyze::pattern::$name(op)))
-        }
-    };
-}
-
-float_unop!(float_neg);
-float_unop!(float_abs);
-float_unop!(float_sqrt);
-float_unop!(float_ceil);
-float_unop!(float_floor);
-float_unop!(float_round);
+unary!(float_neg);
+unary!(float_abs);
+unary!(float_sqrt);
+unary!(float_ceil);
+unary!(float_floor);
+unary!(float_round);
 
 // `float_is_nan(x)` is implemented as the IEEE 754 self-inequality
 // `x != x` — the only value that is not equal to itself is NaN.  The
@@ -1037,50 +1016,29 @@ pub fn float_is_nan(operand: PatLike<'_>) -> PyResult<PyPat> {
 
 // ── Float comparisons ────────────────────────────────────────────────────
 
-macro_rules! float_cmp_op {
-    ($name:ident) => {
-        #[pyfunction]
-        pub fn $name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
-            let lp = l.into_pat()?;
-            let rp = r.into_pat()?;
-            Ok(PyPat::from_pat(strider_analyze::pattern::$name(lp, rp)))
-        }
-    };
-}
-
-float_cmp_op!(float_eq);
-float_cmp_op!(float_ne);
-float_cmp_op!(float_lt);
-float_cmp_op!(float_le);
+binary!(float_eq);
+binary!(float_ne);
+binary!(float_lt);
+binary!(float_le);
 
 // ── Float / int conversions ──────────────────────────────────────────────
 
-macro_rules! conv_op {
-    ($name:ident) => {
-        #[pyfunction]
-        pub fn $name(operand: PatLike<'_>) -> PyResult<PyPat> {
-            let op = operand.into_pat()?;
-            Ok(PyPat::from_pat(strider_analyze::pattern::$name(op)))
-        }
-    };
-}
-
-conv_op!(int_to_float);
-conv_op!(float_to_int);
-conv_op!(float_to_float);
-conv_op!(int_bits_to_float);
-conv_op!(float_bits_to_int);
+unary!(int_to_float);
+unary!(float_to_int);
+unary!(float_to_float);
+unary!(int_bits_to_float);
+unary!(float_bits_to_int);
 
 // ── Cast / coercion / width ops ──────────────────────────────────────────
 
-conv_op!(cast_to_int);
-conv_op!(cast_to_bool);
-conv_op!(cast_to_float);
-conv_op!(truncate);
-conv_op!(popcount);
-conv_op!(lzcount);
-conv_op!(zero_extend);
-conv_op!(sign_extend);
+unary!(cast_to_int);
+unary!(cast_to_bool);
+unary!(cast_to_float);
+unary!(truncate);
+unary!(popcount);
+unary!(lzcount);
+unary!(zero_extend);
+unary!(sign_extend);
 
 /// `extend(op, operand)` where `op` is "zero" / "zero_extend" / "sign" /
 /// "sign_extend".
