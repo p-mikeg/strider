@@ -403,38 +403,6 @@ impl FunctionBuilder {
         self.lift_addr
     }
 
-    /// Run `body` with the lift-addr set to `Some(addr)` for its
-    /// duration, then restore the previous value (typically `None` or
-    /// the address of an enclosing insn).
-    ///
-    /// Panic-safe: an unwinding panic inside `body` still triggers the
-    /// restore via the inner guard's `Drop` impl.
-    pub fn lift_at<R, F>(&mut self, addr: u64, body: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        struct Guard<'a> {
-            inner: &'a mut FunctionBuilder,
-            prev: Option<u64>,
-        }
-        impl<'a> Drop for Guard<'a> {
-            fn drop(&mut self) {
-                self.inner.lift_addr = self.prev;
-            }
-        }
-        impl<'a> std::ops::Deref for Guard<'a> {
-            type Target = FunctionBuilder;
-            fn deref(&self) -> &FunctionBuilder { self.inner }
-        }
-        impl<'a> std::ops::DerefMut for Guard<'a> {
-            fn deref_mut(&mut self) -> &mut FunctionBuilder { self.inner }
-        }
-        let prev = self.lift_addr;
-        self.lift_addr = Some(addr);
-        let mut guard = Guard { inner: self, prev };
-        body(&mut guard)
-    }
-
     /// Creates a node in the graph with the given kind, inputs, and
     /// output kinds.  When [`Self::lift_addr`] is `Some(addr)`, also
     /// records `addr` in the resulting node's asm-fingerprint side-table

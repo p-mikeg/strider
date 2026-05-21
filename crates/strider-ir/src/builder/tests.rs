@@ -1531,40 +1531,42 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
 }
 
 #[test]
-fn lift_at_scopes_lift_addr_and_restores_on_exit() -> Result<()> {
-    // Pin lift_at's restore-on-exit contract.  After
-    // the closure returns, the lift_addr must be back to whatever it
-    // was before — even if the closure left it set on the way in.
+fn set_lift_addr_pair_scopes_attribution_and_restores_on_exit() -> Result<()> {
+    // The bare set_lift_addr(Some(addr)) … set_lift_addr(None) pattern
+    // is what every production site uses.  This pins that the
+    // attribution scope behaves as expected: the inner value applies
+    // while set, and after clearing the lift_addr returns to whatever
+    // it was before.
     let mut b = builder_with_region()?;
     assert_eq!(b.lift_addr(), None);
-    let inner = b.lift_at(0x100, |b| {
-        assert_eq!(b.lift_addr(), Some(0x100));
-        b.lift_addr()
-    });
-    assert_eq!(inner, Some(0x100));
-    assert_eq!(b.lift_addr(), None, "lift_at must restore prior addr");
+    b.set_lift_addr(Some(0x100));
+    assert_eq!(b.lift_addr(), Some(0x100));
+    b.set_lift_addr(None);
+    assert_eq!(b.lift_addr(), None, "manual restore returns to prior addr");
 
-    // Nested: outer lift_at(0xA), inner lift_at(0xB), closure must see
-    // both in turn and return to outer.
+    // Nested: outer 0x200, transiently override to 0xA then 0xB then
+    // back up to 0xA, finally back to 0x200.
     b.set_lift_addr(Some(0x200));
-    let mid = b.lift_at(0xA, |b| {
-        b.lift_at(0xB, |b| b.lift_addr());
-        b.lift_addr()
-    });
-    assert_eq!(mid, Some(0xA));
+    b.set_lift_addr(Some(0xA));
+    b.set_lift_addr(Some(0xB));
+    assert_eq!(b.lift_addr(), Some(0xB));
+    b.set_lift_addr(Some(0xA));
+    assert_eq!(b.lift_addr(), Some(0xA));
+    b.set_lift_addr(Some(0x200));
     assert_eq!(b.lift_addr(), Some(0x200));
     Ok(())
 }
 
 #[test]
-fn lift_at_attributes_node_to_inner_addr_only() -> Result<()> {
-    // The closure-form scope-guard's primary observable: a node
-    // created inside the closure picks up the inner addr, and a node
-    // created after the closure picks up whatever was set before.
+fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
+    // A node created while lift_addr is set picks up that addr in its
+    // asm-fingerprint side-table entry.
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(0x10));
     let outside_pre = b.build_int_const(1u64, NodeOutputType::U64)?;
-    let inside = b.lift_at(0xC0DE, |b| b.build_int_const(2u64, NodeOutputType::U64))?;
+    b.set_lift_addr(Some(0xC0DE));
+    let inside = b.build_int_const(2u64, NodeOutputType::U64)?;
+    b.set_lift_addr(Some(0x10));
     let outside_post = b.build_int_const(3u64, NodeOutputType::U64)?;
 
     let pre_node = b.body().graph.get_node_from_output(outside_pre);
