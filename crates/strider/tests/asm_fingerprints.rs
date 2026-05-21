@@ -12,9 +12,8 @@
 
 mod common;
 use common::*;
-use strider_ir::ValidateOptions;
 use strider_ir::node::NodeKind;
-use strider_ir::validate::{validate, validate_with_options};
+use strider_ir::validate::validate;
 
 /// Returns true if `kind` is documented as legitimately empty in the
 /// asm-fingerprint side-table.  Mirrors the validator's exempt list.
@@ -58,8 +57,7 @@ fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
     // Same invariant as above, but driven through the IR validator's opt-in
     // hook so we exercise the public surface end-to-end.
     let g = analyze(Arch::X86, "arithmetic", "add");
-    let opts = ValidateOptions { check_asm_fingerprints: true };
-    validate_with_options(g.graph(), g.entry(), opts)
+    validate(g.graph(), g.entry())
         .expect("every reachable non-exempt node must have a fingerprint");
 }
 
@@ -75,8 +73,7 @@ fn control_x86_clamp_validate_with_asm_fingerprint_check() {
     // Control flow with two If branches; exercises constant-fold,
     // dead-branch, redundant-phi propagation alongside lift-time.
     let g = analyze(Arch::X86, "control", "clamp");
-    let opts = ValidateOptions { check_asm_fingerprints: true };
-    validate_with_options(g.graph(), g.entry(), opts)
+    validate(g.graph(), g.entry())
         .expect("clamp pipeline preserves the fingerprint invariant");
 }
 
@@ -84,8 +81,7 @@ fn control_x86_clamp_validate_with_asm_fingerprint_check() {
 fn control_x86_count_bits_validate_with_asm_fingerprint_check() {
     // Loop body — exercises mem-phi / var-phi at the join points.
     let g = analyze(Arch::X86, "control", "count_bits");
-    let opts = ValidateOptions { check_asm_fingerprints: true };
-    validate_with_options(g.graph(), g.entry(), opts)
+    validate(g.graph(), g.entry())
         .expect("count_bits pipeline preserves the fingerprint invariant");
 }
 
@@ -95,8 +91,7 @@ fn arithmetic_x86_complex_validate_with_asm_fingerprint_check() {
     // KnownBits and the AND-mask merge.
     for fn_name in ["bit_and", "bit_or", "shl", "lshr", "bit_xor"] {
         let g = analyze(Arch::X86, "arithmetic", fn_name);
-        let opts = ValidateOptions { check_asm_fingerprints: true };
-        validate_with_options(g.graph(), g.entry(), opts)
+        validate(g.graph(), g.entry())
             .unwrap_or_else(|e| panic!("{fn_name}: {e}"));
     }
 }

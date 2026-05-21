@@ -36,25 +36,6 @@ use graph_invariants::{
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
 
-/// Optional checks the validator can opt into.
-///
-/// The previously-opt-in `check_asm_fingerprints` asm-fingerprint
-/// check is now **always-on** in plain [`validate`]; the field on this
-/// struct is kept for backwards source compatibility (so existing
-/// call-sites that write `ValidateOptions { check_asm_fingerprints:
-/// true }` keep compiling) but it is **ignored** — the check fires
-/// unconditionally regardless of its value.
-///
-/// The struct is retained as a placeholder for future opt-in checks.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ValidateOptions {
-    /// **Deprecated / no-op.** The asm-fingerprint graph-invariant check
-    /// is now always-on in [`validate`]; this field is ignored.  Kept
-    /// for backwards source compatibility with existing struct-literal
-    /// call-sites.
-    pub check_asm_fingerprints: bool,
-}
-
 /// Validates the structural invariants of `graph` starting from `entry`.
 ///
 /// Returns `Ok(())` if every checked invariant holds, or a
@@ -76,27 +57,6 @@ pub struct ValidateOptions {
 /// does not fail fast — every check runs to completion so the caller sees
 /// the full set of problems at once.
 pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
-    validate_with_options(graph, entry, ValidateOptions::default())
-}
-
-/// Like [`validate`], but with extra opt-in checks selected via
-/// [`ValidateOptions`].  Existing call-sites that pass
-/// [`ValidateOptions::default`] (or use [`validate`]) get exactly the
-/// previous behaviour.
-///
-/// # Errors
-///
-/// Same as [`validate`], plus the opt-in errors for any selected option.
-pub fn validate_with_options(
-    graph: &Graph,
-    entry: NodeId,
-    _options: ValidateOptions,
-) -> Result<(), ValidationErrors> {
-    // `ValidateOptions::check_asm_fingerprints` is no longer consulted —
-    // the asm-fingerprint graph-invariants check is always-on.
-    // `validate_with_options` is kept as a no-op alias around `validate`
-    // for backwards source compatibility.
-    //
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.

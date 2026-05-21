@@ -241,15 +241,11 @@ impl PyGraph {
     /// Re-validates the graph and returns `None` on success or a
     /// human-readable error message on failure.
     ///
-    /// `check_asm_fingerprints=True` enables the opt-in Layer-C check
-    /// that flags every reachable non-exempt node with an empty
-    /// asm-fingerprint — useful when verifying a fresh opt pass
-    /// preserves the superset contract.
-    #[pyo3(signature = (check_asm_fingerprints = false))]
-    fn validate(&self, check_asm_fingerprints: bool) -> PyResult<Option<String>> {
+    /// The asm-fingerprint Layer-C check is always-on: every reachable
+    /// non-exempt node must carry a non-empty contributor list.
+    fn validate(&self) -> PyResult<Option<String>> {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let opts = strider_ir::validate::ValidateOptions { check_asm_fingerprints };
-        match strider_ir::validate::validate_with_options(graph.graph(), graph.entry(), opts) {
+        match strider_ir::validate::validate(graph.graph(), graph.entry()) {
             Ok(()) => Ok(None),
             Err(e) => Ok(Some(format!("{e}"))),
         }

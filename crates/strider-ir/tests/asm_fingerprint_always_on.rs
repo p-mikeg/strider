@@ -1,10 +1,7 @@
-//! Layer-C asm-fingerprint check must fire on default `validate()` — not
-//! require `validate_with_options(check_asm_fingerprints: true)`.
+//! Layer-C asm-fingerprint check must fire on default `validate()`.
 //!
-//! Phase 1 Task 1.4 / Generalization Audit finding G3: the always-on Layer-C
-//! check is the highest-correctness change in the audit. Every optimization
-//! pass that forgets `extend_asm_fingerprint_from` would otherwise produce
-//! silently invalid output.
+//! Every optimization pass that forgets `extend_asm_fingerprint_from`
+//! would otherwise produce silently invalid output.
 
 use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 use strider_ir::{Graph, IntBinaryOp};

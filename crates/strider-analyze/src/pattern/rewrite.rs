@@ -92,8 +92,8 @@ pub fn rewrite_rule(
                 // ConstantFold's `rule_and_dist`:
                 // `((a&C1)|(b&C2))&C3 → (a&(C1&C3)) | (b&(C2&C3))`)
                 // build fresh interior `And` / `IntConst` nodes that
-                // would otherwise pass `validate` but fail
-                // `validate_with_options(check_asm_fingerprints: true)`.
+                // would otherwise miss their contributor's asm
+                // fingerprints and fail the always-on Layer-C check.
                 //
                 // The walk is bounded by `pre_build_node_id`: any
                 // NodeId allocated before the build is pre-existing

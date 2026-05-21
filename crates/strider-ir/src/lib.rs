@@ -73,7 +73,7 @@ pub use ops::{
     IntCmpOp, IntUnaryOp,
 };
 pub use region::RegionId;
-pub use validate::{ValidateOptions, ValidationError, ValidationErrors};
+pub use validate::{ValidationError, ValidationErrors};
 
 pub type Value = node::NodeOutputId;
 pub type ValueType = node::NodeOutputType;

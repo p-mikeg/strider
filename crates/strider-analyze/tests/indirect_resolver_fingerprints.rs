@@ -11,10 +11,9 @@
 //! side-table" contract: lifted, non-exempt nodes must have ≥1
 //! fingerprint).
 //!
-//! The contract is checked by the validator's opt-in Layer-C check via
-//! `validate_with_options(graph, entry, ValidateOptions { check_asm_fingerprints: true })`.
-//! This file pins the mini-IR to that contract: a regression that strips
-//! `set_lift_addr` from the resolver's lift loop surfaces here.
+//! The contract is checked unconditionally by `validate`.  This file pins
+//! the mini-IR to that contract: a regression that strips `set_lift_addr`
+//! from the resolver's lift loop surfaces here.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -92,13 +91,10 @@ fn resolver_mini_ir_passes_graph_invariants_asm_fingerprint_check() {
     )
     .expect("build mini-graph");
 
-    // Opt-in the graph-invariants asm-fingerprint check.  This is the contract
-    // every node born from a real pcode insn must satisfy: a non-empty
-    // contributor list naming the parent machine instruction.
-    let opts = strider_ir::validate::ValidateOptions {
-        check_asm_fingerprints: true,
-    };
-    let result = strider_ir::validate::validate_with_options(fg.graph(), fg.entry(), opts);
+    // The graph-invariants asm-fingerprint check is unconditional in
+    // `validate`.  Every node born from a real pcode insn must carry a
+    // non-empty contributor list naming the parent machine instruction.
+    let result = strider_ir::validate::validate(fg.graph(), fg.entry());
     assert!(
         result.is_ok(),
         "mini-IR violates Layer-C asm-fingerprint invariant: {:?}",

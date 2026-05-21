@@ -961,8 +961,7 @@ fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
     let const_out = graph.node_outputs(int_const).into_iter().next().unwrap();
     // Return takes [ctrl, mem, ...values].
     let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, const_out], []);
-    let opts = ValidateOptions { check_asm_fingerprints: true };
-    let errs = validate_with_options(&graph, entry, opts).unwrap_err();
+    let errs = validate(&graph, entry).unwrap_err();
     assert!(
         errs.0.iter().any(|e| matches!(
             e,
@@ -995,8 +994,7 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
     let ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, const_out], []);
     graph.set_asm_fingerprint(int_const, vec![0x1000]);
     graph.set_asm_fingerprint(ret, vec![0x1004]);
-    let opts = ValidateOptions { check_asm_fingerprints: true };
-    validate_with_options(&graph, entry, opts).expect("populated fingerprints validate");
+    validate(&graph, entry).expect("populated fingerprints validate");
 }
 
 #[test]
@@ -1015,8 +1013,7 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
     let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
     let mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
     let _ret = graph.create_node(NodeKind::Return, [cs_ctrl, mem_out], []);
-    let opts = ValidateOptions { check_asm_fingerprints: true };
-    let res = validate_with_options(&graph, entry, opts);
+    let res = validate(&graph, entry);
     // The Return is reachable and non-exempt — it must be flagged.  But
     // ControlState / Entry / InitialMemory must NOT be flagged.
     let errs = res.unwrap_err();

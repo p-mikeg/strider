@@ -201,9 +201,6 @@ fn asm_fingerprint_exempt(kind: &NodeKind) -> bool {
 /// Graph invariant: every reachable, non-exempt node must carry at
 /// least one asm-fingerprint contributor.  See
 /// [`crate::graph::Graph::asm_fingerprint`] for the full contract.
-///
-/// Always-on (previously opt-in via
-/// `ValidateOptions::check_asm_fingerprints`).
 pub(super) fn check_graph_invariants_asm_fingerprints(
     graph: &Graph,
     reachable: &NodeIdSet,
