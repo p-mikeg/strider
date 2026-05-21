@@ -421,19 +421,17 @@ pub type BoxedRule =
 ///
 /// ```rust
 /// use strider_analyze::pattern::{
-///     BoxedRule, Capture, add, apply_rules_in_order, boxed_rule, int_const,
-///     rewrite_rule, sub, var,
+///     BoxedRule, Capture, add, boxed_rule, int_const, rewrite_rule, sub, var,
 /// };
 ///
 /// let x = Capture::new();
 /// let y = Capture::new();
-/// let rules: Vec<BoxedRule> = vec![
+/// let _rules: Vec<BoxedRule> = vec![
 ///     // add(x, 0) → x
 ///     boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x))),
 ///     // sub(y, y) → 0
 ///     boxed_rule(rewrite_rule(sub(var(y), var(y)), int_const(0))),
 /// ];
-/// let _apply = apply_rules_in_order(&rules);
 /// ```
 pub fn boxed_rule<R>(r: R) -> BoxedRule
 where

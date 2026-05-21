@@ -5,7 +5,7 @@
 //! delegate to a family-level dispatcher.  For example, the wrapper generated
 //! for `IntBinaryOp::Add` is equivalent to:
 //!
-//! ```rust
+//! ```text
 //! use strider_analyze::pattern::{IntBinaryOp, IntBinaryOpPat, Pat, int_binary};
 //!
 //! fn add(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
