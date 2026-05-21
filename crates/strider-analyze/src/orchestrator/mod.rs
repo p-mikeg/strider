@@ -108,23 +108,6 @@ where
     pub per_address_ccs: HashMap<u64, strider_target::CallingConvention>,
 }
 
-/// Internal view of [`Config`] without the Sleigh handle — see
-/// [`LoopState`] for why the orchestrator threads the Sleigh
-/// separately.
-struct RunOpts<'a> {
-    strider: &'a Strider,
-    start_addr: strider_lift::cfg::MachineInsnAddr,
-    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
-    fn_max_size: Option<u64>,
-    allow_code_before_start_addr: bool,
-    compact: bool,
-    /// Pre-resolved per-target-address CC overrides.  See the
-    /// [`Config::per_address_ccs`] doc.  Resolved once at
-    /// `LoopState::new` so any unresolved register name surfaces
-    /// before iteration starts.
-    per_address_built_ccs: HashMap<u64, strider_target::BuiltCallingConvention>,
-}
-
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
 /// snapshot.  Maps a region's exit-control `NodeOutputId` to the
 /// region's exit `vn_to_value` table — what
@@ -248,7 +231,23 @@ struct LoopState<'a, R>
 where
     R: rsleigh::MemReader,
 {
-    opts: RunOpts<'a>,
+    /// The strider — stable across iterations.
+    strider: &'a Strider,
+    /// Function entry address; copied from [`Config::start_addr`].
+    start_addr: strider_lift::cfg::MachineInsnAddr,
+    /// Read-only memory image; copied from [`Config::rom`].
+    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    /// Function-size cap; copied from [`Config::fn_max_size`].
+    fn_max_size: Option<u64>,
+    /// Code-before-start permission; copied from [`Config::allow_code_before_start_addr`].
+    allow_code_before_start_addr: bool,
+    /// Compaction flag for the finalize step; copied from [`Config::compact`].
+    compact: bool,
+    /// Pre-resolved per-target-address CC overrides.  See the
+    /// [`Config::per_address_ccs`] doc.  Resolved once at
+    /// `LoopState::new` so any unresolved register name surfaces
+    /// before iteration starts.
+    per_address_built_ccs: HashMap<u64, strider_target::BuiltCallingConvention>,
     /// Accumulator of IR-level indirect-branch resolver resolutions across iterations.
     /// Monotonically grows: once an anchor's targets land here, the
     /// CFG-rebuild path keeps using them.  Per-iteration classifications
@@ -354,15 +353,13 @@ where
             decode_cache: DecodeCache::new(),
             vn_cache: std::collections::HashSet::new(),
             vn_cache_region_count: 0,
-            opts: RunOpts {
-                strider: config.strider,
-                start_addr: config.start_addr,
-                rom: config.rom,
-                fn_max_size: config.fn_max_size,
-                allow_code_before_start_addr: config.allow_code_before_start_addr,
-                compact: config.compact,
-                per_address_built_ccs,
-            },
+            strider: config.strider,
+            start_addr: config.start_addr,
+            rom: config.rom,
+            fn_max_size: config.fn_max_size,
+            allow_code_before_start_addr: config.allow_code_before_start_addr,
+            compact: config.compact,
+            per_address_built_ccs,
         })
     }
 
@@ -392,7 +389,12 @@ where
             .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at {phase}"))?;
         let (graph, unresolved, region_index, sleigh) = build_lift_stable(
             sleigh,
-            &self.opts,
+            self.strider,
+            self.start_addr,
+            self.rom.clone(),
+            self.fn_max_size,
+            self.allow_code_before_start_addr,
+            &self.per_address_built_ccs,
             &self.known_targets,
             &self.decode_cache,
             &mut self.vn_cache,
@@ -465,7 +467,7 @@ where
     /// Re-run the stable subset on the current graph (after in-place
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
-        let pipeline = self.opts.strider.build_stable_optimizer_pipeline();
+        let pipeline = self.strider.build_stable_optimizer_pipeline();
         let graph = self.graph_mut()?;
         let entry = graph.entry();
         pipeline.run(graph.graph_mut(), entry)?;
@@ -493,8 +495,8 @@ where
     /// Run the destructive subset and consume `self`, returning the
     /// final graph.
     fn finalize(mut self) -> Result<strider_ir::BuiltFunctionGraph> {
-        let pipeline = self.opts.strider.build_destructive_optimizer_pipeline();
-        let compact = self.opts.compact;
+        let pipeline = self.strider.build_destructive_optimizer_pipeline();
+        let compact = self.compact;
         let graph = self.graph_mut()?;
         let entry = graph.entry();
         pipeline.run(graph.graph_mut(), entry)?;
@@ -519,7 +521,7 @@ where
             .graph
             .as_ref()
             .ok_or_else(|| anyhow!("orchestrator classify: graph not initialised"))?;
-        let rom_ref: Option<&dyn ReadOnlyMemory> = self.opts.rom.as_deref();
+        let rom_ref: Option<&dyn ReadOnlyMemory> = self.rom.as_deref();
         // Start from the previous iteration's resolutions so anchors
         // already lowered to switch edges by an earlier Rebuild stay in
         // the known_targets map.  Wiping them would re-introduce the
@@ -548,9 +550,12 @@ where
                 crate::opt::find_placeholder_return_for_anchor(graph.graph(), *anchor_output);
             let can_inplace = match (&resolved, placeholder_return) {
                 (ResolvedTargets::LinkRegister, Some(_)) => true,
-                (ResolvedTargets::Single(target), Some(_)) => {
-                    is_tail_call(*target, &self.opts)
-                }
+                (ResolvedTargets::Single(target), Some(_)) => is_tail_call(
+                    *target,
+                    self.start_addr,
+                    self.fn_max_size,
+                    self.allow_code_before_start_addr,
+                ),
                 _ => false,
             };
             if can_inplace
@@ -568,9 +573,9 @@ where
         &mut self,
         in_place_edits: &[(NodeId, ResolvedTargets)],
     ) -> Result<()> {
-        let strider = self.opts.strider;
+        let strider = self.strider;
         let region_index = &self.region_index;
-        let per_address_built_ccs = &self.opts.per_address_built_ccs;
+        let per_address_built_ccs = &self.per_address_built_ccs;
         let graph = self
             .graph
             .as_mut()
@@ -661,12 +666,17 @@ where
 /// function's address range `[start_addr, start_addr + fn_max_size)`.
 /// Delegates to [`strider_lift::cfg::is_addr_tail_call`] so the cfg-time and orchestrator
 /// classifications stay in lockstep.
-fn is_tail_call(target: u64, opts: &RunOpts<'_>) -> bool {
+fn is_tail_call(
+    target: u64,
+    start_addr: strider_lift::cfg::MachineInsnAddr,
+    fn_max_size: Option<u64>,
+    allow_code_before_start_addr: bool,
+) -> bool {
     strider_lift::cfg::is_addr_tail_call(
         target,
-        opts.start_addr.addr,
-        opts.fn_max_size,
-        opts.allow_code_before_start_addr,
+        start_addr.addr,
+        fn_max_size,
+        allow_code_before_start_addr,
     )
 }
 
@@ -932,10 +942,15 @@ fn read_or_init_var(
 /// Build the CFG, lift to IR, run the stable optimiser subset.
 /// Returns `(graph, unresolved, region_index, sleigh)` so the caller
 /// can re-use the harvested Sleigh handle across iterations.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn build_lift_stable<R>(
     sleigh: rsleigh::Sleigh<R>,
-    opts: &RunOpts<'_>,
+    strider: &Strider,
+    start_addr: strider_lift::cfg::MachineInsnAddr,
+    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    fn_max_size: Option<u64>,
+    allow_code_before_start_addr: bool,
+    per_address_built_ccs: &HashMap<u64, strider_target::BuiltCallingConvention>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
     decode_cache: &DecodeCache,
     vn_cache: &mut std::collections::HashSet<rsleigh::Vn>,
@@ -950,16 +965,16 @@ where
     R: rsleigh::MemReader,
 {
     let mut opts_builder = OptionsBuilder::new();
-    if let Some(rom) = opts.rom.clone() {
+    if let Some(rom) = rom.clone() {
         opts_builder = opts_builder.set_read_only_memory(rom);
     }
-    if let Some(lr) = opts.strider.calling_convention().link_register_vn {
+    if let Some(lr) = strider.calling_convention().link_register_vn {
         opts_builder = opts_builder.set_link_register(lr);
     }
-    if let Some(max) = opts.fn_max_size {
+    if let Some(max) = fn_max_size {
         opts_builder = opts_builder.set_function_max_size(max);
     }
-    if opts.allow_code_before_start_addr {
+    if allow_code_before_start_addr {
         opts_builder = opts_builder.allow_code_before_start_addr();
     }
     let cfg_opts = opts_builder.build();
@@ -989,7 +1004,7 @@ where
     // decode, region overlap, unresolved indirect branch on the
     // strict path, etc.) propagate as a plain `anyhow::Error` and
     // get bucketed under the generic `StriderError` at the boundary.
-    let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.addr, cfg_opts)
+    let cfg: Cfg<R> = Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())
         .with_indirect_resolver(resolver)
@@ -1023,11 +1038,11 @@ where
     // typed root takes precedence over the `LiftError` wrapper at the
     // strider-py boundary (the downcast for `UnknownCallOtherError`
     // runs before the `LiftError` arm).
-    let outcome = opts.strider.analyze_cfg_with(
+    let outcome = strider.analyze_cfg_with(
         &cfg,
         crate::AnalyzeOptions {
             all_vns: Some(all_vns),
-            per_address_ccs: &opts.per_address_built_ccs,
+            per_address_ccs: per_address_built_ccs,
         },
     ).map_err(|e| {
         // Preserve the typed `UnknownCallOtherError` root if the lift
@@ -1043,7 +1058,7 @@ where
     let mut graph = outcome.graph;
     let unresolved = outcome.unresolved_branches;
 
-    let pipeline = opts.strider.build_stable_optimizer_pipeline();
+    let pipeline = strider.build_stable_optimizer_pipeline();
     let entry = graph.entry();
     pipeline.run(graph.graph_mut(), entry)?;
 
@@ -1103,22 +1118,6 @@ mod tests {
             .expect("strider")
     }
 
-    fn opts_for_is_tail_call_tests<'a>(
-        strider: &'a Strider,
-        start_addr: u64,
-        fn_max_size: Option<u64>,
-        allow_code_before_start_addr: bool,
-    ) -> RunOpts<'a> {
-        RunOpts {
-            strider,
-            start_addr: start_addr.into(),
-            rom: None,
-            fn_max_size,
-            allow_code_before_start_addr,
-            compact: true,
-            per_address_built_ccs: HashMap::new(),
-        }
-    }
 
     // ── apply_stall_guard tests ──────────────────────────────────
     //
@@ -1254,43 +1253,43 @@ mod tests {
 
     #[test]
     fn is_tail_call_target_below_start_addr_is_tail_call() {
-        let strider = make_strider_x86_64();
-        let opts = opts_for_is_tail_call_tests(&strider, 0x1000, None, false);
-        assert!(is_tail_call(0x0fff, &opts));
-        assert!(!is_tail_call(0x1000, &opts));
-        assert!(!is_tail_call(0x1001, &opts));
+        let _strider = make_strider_x86_64();
+        assert!(is_tail_call(0x0fff, 0x1000u64.into(), None, false));
+        assert!(!is_tail_call(0x1000, 0x1000u64.into(), None, false));
+        assert!(!is_tail_call(0x1001, 0x1000u64.into(), None, false));
     }
 
     #[test]
     fn is_tail_call_allow_code_before_start_addr_disables_below_check() {
-        let strider = make_strider_x86_64();
-        let opts = opts_for_is_tail_call_tests(&strider, 0x1000, None, true);
-        assert!(!is_tail_call(0x0fff, &opts));
+        let _strider = make_strider_x86_64();
+        assert!(!is_tail_call(0x0fff, 0x1000u64.into(), None, true));
     }
 
     #[test]
     fn is_tail_call_above_fn_max_size_is_tail_call() {
-        let strider = make_strider_x86_64();
-        let opts = opts_for_is_tail_call_tests(&strider, 0x1000, Some(0x100), false);
+        let _strider = make_strider_x86_64();
         // `[start_addr, start_addr + fn_max_size)` is the in-function
         // half-open range: target == end_exclusive is a tail call.
-        assert!(is_tail_call(0x1100, &opts));
-        assert!(!is_tail_call(0x10ff, &opts));
-        assert!(is_tail_call(0x2000, &opts));
+        assert!(is_tail_call(0x1100, 0x1000u64.into(), Some(0x100), false));
+        assert!(!is_tail_call(0x10ff, 0x1000u64.into(), Some(0x100), false));
+        assert!(is_tail_call(0x2000, 0x1000u64.into(), Some(0x100), false));
     }
 
     #[test]
     fn is_tail_call_no_fn_max_size_means_above_is_intra_fn() {
-        let strider = make_strider_x86_64();
-        let opts = opts_for_is_tail_call_tests(&strider, 0x1000, None, false);
-        assert!(!is_tail_call(0xffff_ffff_ffff_ffff, &opts));
+        let _strider = make_strider_x86_64();
+        assert!(!is_tail_call(0xffff_ffff_ffff_ffff, 0x1000u64.into(), None, false));
     }
 
     #[test]
     fn is_tail_call_fn_max_size_saturates_on_overflow() {
-        let strider = make_strider_x86_64();
-        let opts = opts_for_is_tail_call_tests(&strider, u64::MAX - 5, Some(0x100), false);
-        assert!(is_tail_call(u64::MAX, &opts));
+        let _strider = make_strider_x86_64();
+        assert!(is_tail_call(
+            u64::MAX,
+            (u64::MAX - 5).into(),
+            Some(0x100),
+            false,
+        ));
     }
 
     #[test]
