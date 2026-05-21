@@ -461,7 +461,6 @@ fn build_returns_error_for_unknown_register_name() {
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         };
         let result = cc.build(&regs);
@@ -488,7 +487,6 @@ fn build_returns_error_even_when_some_names_are_valid() {
         stack_arg_offsets: &[],
         ret_stack_pop: 0,
         link_register_reg_name: None,
-        syscall_number_reg_name: None,
         no_memory_clobber: false,
     };
     assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
@@ -723,7 +721,6 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         stack_arg_offsets: &[],
         ret_stack_pop: 0,
         link_register_reg_name: None,
-        syscall_number_reg_name: None,
         no_memory_clobber: false,
     };
     let result = cc.build(&regs);

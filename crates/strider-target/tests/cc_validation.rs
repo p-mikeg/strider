@@ -25,7 +25,6 @@ fn try_new_rejects_sp_in_arg_passing_regs() {
         vec![],
         0,
         None,
-        None,
         false,
     );
     assert!(res.is_err(), "SP listed in arg_passing_regs must be rejected");
@@ -48,7 +47,6 @@ fn try_new_rejects_arg_overlapping_callee_saved() {
         vec![],
         0,
         None,
-        None,
         false,
     );
     assert!(res.is_err());
@@ -69,7 +67,6 @@ fn try_new_accepts_clean_layout() {
         vn(0x40),
         vec![],
         0,
-        None,
         None,
         false,
     )

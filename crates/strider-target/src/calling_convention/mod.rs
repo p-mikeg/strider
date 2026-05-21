@@ -71,13 +71,6 @@ pub struct CallingConvention {
     /// Used by the indirect-branch resolver to recognise `bx lr` /
     /// `pop {pc}` / `jr ra` shapes as `Return`.
     link_register_reg_name: Option<&'static str>,
-    /// The Sleigh register name of the convention's syscall-number
-    /// register (the register that carries the syscall index on entry
-    /// to a kernel from a user-mode `syscall` / `svc` / `int 0x80`
-    /// instruction), or `None` on userland and kernel-internal CCs.
-    /// Resolved into [`BuiltCallingConvention::syscall_number_vn`] by
-    /// [`Self::build`].  Set on the `*_linux_syscall` presets only.
-    syscall_number_reg_name: Option<&'static str>,
     /// `true` if calls under this convention preserve **all** observable
     /// state, including memory.  When set, [`build_call_with_cc`](
     /// `strider_ir::FunctionBuilder::build_call_with_cc`) skips emitting a Memory
@@ -126,9 +119,6 @@ pub struct BuiltCallingConvention {
     /// PowerPC); `None` on stack-push ISAs (x86, x86_64).  Consumed by the
     /// indirect-branch resolver to classify return-shaped indirect branches.
     pub link_register_vn: Option<rsleigh::Vn>,
-    /// Syscall-number register varnode for `*_linux_syscall` CCs; `None` on
-    /// userland and kernel-internal CCs.
-    pub syscall_number_vn: Option<rsleigh::Vn>,
     /// `true` when calls under this CC preserve memory (zero-side-effect
     /// hooks like `__fentry__` / `mcount`).  Consumed by the IR builder's
     /// `build_call_with_cc` to suppress the Call's Memory output so
@@ -168,7 +158,6 @@ impl BuiltCallingConvention {
         stack_arg_offsets: Vec<i64>,
         ret_stack_pop: i64,
         link_register_vn: Option<rsleigh::Vn>,
-        syscall_number_vn: Option<rsleigh::Vn>,
         no_memory_clobber: bool,
     ) -> std::result::Result<Self, anyhow::Error> {
         // Disjointness: arg-passing must not overlap callee-saved.
@@ -254,7 +243,6 @@ impl BuiltCallingConvention {
             stack_arg_offsets,
             ret_stack_pop,
             link_register_vn,
-            syscall_number_vn,
             no_memory_clobber,
         })
     }
@@ -340,7 +328,6 @@ impl CallingConvention {
             // x86-64 `call` pushes the return address on the stack; there
             // is no architectural link register.
             link_register_reg_name: None,
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -373,7 +360,6 @@ impl CallingConvention {
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            syscall_number_reg_name: None,
             // The defining property of "all-preserving": memory is also
             // preserved.  build_call_with_cc skips the Memory output so
             // LoadReadOnly / StackLoadForward forward across the call.
@@ -413,7 +399,6 @@ impl CallingConvention {
             // AArch64's `lr` is an alias for `x30`; Sleigh's aarch64
             // register table only registers `x30`.
             link_register_reg_name: Some("x30"),
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -451,7 +436,6 @@ impl CallingConvention {
             // ARM's `bl` writes the return address to `lr` (= `r14`);
             // Sleigh registers it under the lowercase `lr` name.
             link_register_reg_name: Some("lr"),
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -491,7 +475,6 @@ impl CallingConvention {
             // MIPS `jal`/`jalr` writes the return address to `$ra`
             // (`$31`); Sleigh's mips32 register table uses lowercase `ra`.
             link_register_reg_name: Some("ra"),
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -521,7 +504,6 @@ impl CallingConvention {
             ret_stack_pop: 0,
             // Same as O32: the return address lives in `$ra`.
             link_register_reg_name: Some("ra"),
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -553,7 +535,6 @@ impl CallingConvention {
             // PowerPC `bl` writes the return address to the `LR` SPR;
             // Sleigh's PPC register table uses uppercase `LR`.
             link_register_reg_name: Some("LR"),
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -599,7 +580,6 @@ impl CallingConvention {
             ret_stack_pop: 0,
             // Same as 32-bit PPC SysV: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -636,7 +616,6 @@ impl CallingConvention {
             ret_stack_pop: 0,
             // Same as ELFv1: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -676,7 +655,6 @@ impl CallingConvention {
             // x86 `call` pushes the return address on the stack; there
             // is no architectural link register.
             link_register_reg_name: None,
-            syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
     }
@@ -706,13 +684,6 @@ impl CallingConvention {
             Some(name) => Some(vn_for_name(sleigh_regs, name)?),
             None => None,
         };
-        // Same propagation rule for the syscall-number register: a
-        // typo in a `*_linux_syscall` preset surfaces here rather than
-        // silently dropping the field at the analysis layer.
-        let syscall_number_vn = match self.syscall_number_reg_name {
-            Some(name) => Some(vn_for_name(sleigh_regs, name)?),
-            None => None,
-        };
         // Route through `try_new` so the disjointness invariants
         // (SP not in any reg list, arg/callee-saved disjoint, no
         // duplicates within a list, link-reg in callee-saved when set,
@@ -730,7 +701,6 @@ impl CallingConvention {
             self.stack_arg_offsets.to_vec(),
             self.ret_stack_pop,
             link_register_vn,
-            syscall_number_vn,
             self.no_memory_clobber,
         )
     }
@@ -818,7 +788,6 @@ impl CallingConvention {
         cc.stack_arg_offsets = &[];
         cc.ret_stack_pop = 0;
         cc.link_register_reg_name = None;
-        cc.syscall_number_reg_name = Some("EAX");
         cc
     }
 
@@ -835,7 +804,6 @@ impl CallingConvention {
         cc.stack_arg_offsets = &[];
         cc.ret_stack_pop = 0;
         cc.link_register_reg_name = None;
-        cc.syscall_number_reg_name = Some("RAX");
         cc
     }
 
@@ -851,7 +819,6 @@ impl CallingConvention {
         cc.stack_arg_offsets = &[];
         cc.ret_stack_pop = 0;
         cc.link_register_reg_name = None;
-        cc.syscall_number_reg_name = Some("x8");
         cc
     }
 
@@ -873,7 +840,6 @@ impl CallingConvention {
         cc.stack_arg_offsets = &[];
         cc.ret_stack_pop = 0;
         cc.link_register_reg_name = None;
-        cc.syscall_number_reg_name = Some("r7");
         cc
     }
 
@@ -888,7 +854,6 @@ impl CallingConvention {
         cc.stack_arg_offsets = &[];
         cc.ret_stack_pop = 0;
         cc.link_register_reg_name = None;
-        cc.syscall_number_reg_name = Some("v0");
         cc
     }
 
@@ -903,7 +868,6 @@ impl CallingConvention {
         cc.stack_arg_offsets = &[];
         cc.ret_stack_pop = 0;
         cc.link_register_reg_name = None;
-        cc.syscall_number_reg_name = Some("v0");
         cc
     }
 }
