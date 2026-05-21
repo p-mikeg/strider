@@ -51,10 +51,11 @@ mod function;
 mod function_builder_cc;
 pub use function_builder_cc::FunctionBuilderCC;
 pub mod graph;
-pub use graph::{CcMetadata, Graph};
+pub use graph::Graph;
 /// IR-specific Graphviz/dot rendering (implements the [`dot::GraphDotDumper`]
-/// trait for the IR [`Graph`]).
-pub mod graph_dot;
+/// trait for the IR [`Graph`]).  Internal: external callers should use
+/// [`Graph::dot_dumper`] instead of naming this module directly.
+pub(crate) mod graph_dot;
 pub mod node;
 mod iterators;
 mod node_signature;
@@ -65,16 +66,14 @@ pub use read_only_memory::ReadOnlyMemory;
 pub mod validate;
 pub mod walk;
 pub mod wide_const;
-pub use wide_const::{WideConstId, WideConstStorage};
 
 pub use crate::error::Result;
-pub use builder::{FunctionBuilder, VarId};
+pub use builder::FunctionBuilder;
 pub use ops::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
 };
 pub use region::RegionId;
-pub use validate::{ValidationError, ValidationErrors};
 
 pub type Value = node::NodeOutputId;
 pub type ValueType = node::NodeOutputType;

@@ -44,7 +44,7 @@ mod tests;
 /// clobber slot.
 #[derive(Clone, Debug)]
 pub struct CcMetadata {
-    /// Map from [`crate::VarId`] to the corresponding [`rsleigh::Vn`]
+    /// Map from [`crate::builder::VarId`] to the corresponding [`rsleigh::Vn`]
     /// varnode.  Indexed by the same `VarId` keys the builder used.
     pub variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn>,
     /// Ordered list of varnodes clobbered by every `Call` node.  The
