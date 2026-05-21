@@ -52,8 +52,7 @@ use crate::errors::UnresolvedIndirectBranch;
 use crate::opt::indirect_branch_resolve::{
     apply_link_register, apply_tail_call, classify_anchor,
 };
-use crate::strider::Strider;
-use crate::RegionLiftHandles;
+use crate::strider::{RegionLiftHandles, Strider};
 
 /// Configuration for [`run`].  Held outside the function so callers
 /// can construct one and reuse the strider / sleigh / options across

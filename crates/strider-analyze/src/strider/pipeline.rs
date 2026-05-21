@@ -19,15 +19,15 @@ pub(crate) static EMPTY_PER_ADDRESS_CCS: LazyLock<
 /// it can read the region's exit `vn_to_value` for in-place edit ABI
 /// threading).
 #[derive(Debug, Clone)]
-pub struct RegionLiftHandles {
+pub(crate) struct RegionLiftHandles {
     /// Exit control output (consumed by the region's terminator).
-    pub exit_control: strider_ir::node::NodeOutputId,
+    pub(crate) exit_control: strider_ir::node::NodeOutputId,
     /// Per-var exit-boundary value `NodeOutputId`s, keyed by `Vn`.
     ///
     /// Wrapped in `Arc` so the orchestrator's per-iteration
     /// `RegionIndex::from_handles` can `Arc::clone` instead of
     /// deep-cloning the map (the map is never mutated post-build).
-    pub exit_vn_to_value:
+    pub(crate) exit_vn_to_value:
         std::sync::Arc<std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeOutputId>>,
 }
 
@@ -53,7 +53,16 @@ pub struct AnalyzeOutcome {
     /// placeholder's pre-edit ctrl input back to the region whose
     /// exit produced it (so it can read the region's exit
     /// `vn_to_value` for the in-place edit's ABI threading).
-    pub region_handles: Vec<RegionLiftHandles>,
+    pub(crate) region_handles: Vec<RegionLiftHandles>,
+}
+
+impl AnalyzeOutcome {
+    /// Returns the number of per-region lift-handle snapshots
+    /// captured at lift time.  Equivalent to the count of regions
+    /// the orchestrator's indirect-branch resolver tracks.
+    pub fn region_count(&self) -> usize {
+        self.region_handles.len()
+    }
 }
 
 impl std::fmt::Display for AnalyzeOutcome {

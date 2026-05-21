@@ -67,7 +67,7 @@ impl PyStrider {
             .analyze_cfg(&cfg_borrow.inner)
             .map_err(into_lift_err)?;
         let unresolved_branch_count = outcome.unresolved_branches.len();
-        let region_count = outcome.region_handles.len();
+        let region_count = outcome.region_count();
         let graph = outcome.graph;
         drop(cfg_borrow);
         let py_graph = Py::new(py, PyGraph::new(graph, cfg))?;

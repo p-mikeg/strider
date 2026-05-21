@@ -59,7 +59,7 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     // and one extra allocation per validate call.
     let mut walk = walk_graph(graph, entry);
     walk.by_ref().for_each(|_| {});
-    let reachable: NodeIdSet = walk.visited;
+    let reachable: NodeIdSet = walk.into_visited();
     let mut errs: Vec<ValidationError> = Vec::new();
 
     for node in graph.nodes.keys() {

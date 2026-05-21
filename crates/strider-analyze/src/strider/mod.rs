@@ -4,7 +4,8 @@ mod insn;
 mod pipeline;
 mod vn_io;
 
-pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, RegionLiftHandles, Strider};
+pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, Strider};
+pub(crate) use pipeline::RegionLiftHandles;
 
 /// Per-function translation context that converts a [`strider_lift::cfg::Cfg`] into an IR
 /// graph region by region.
