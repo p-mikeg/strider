@@ -954,17 +954,17 @@ where
     let cfg_opts = opts_builder.build();
 
     // Use `for_arch` so both endianness AND `ArchPreset` are derived from the
-    // arch atomically.  Earlier `Builder::new` / `Builder::with_endianness`
-    // ctors silently defaulted `preset = X86_64`, which caused arch-specific
-    // CallOther dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the
-    // wrong preset and silently misclassified or rejected; those ctors were
-    // deleted in round 12 W5c — `for_arch` is now the only public path.
+    // arch atomically.  Earlier ctors (`Builder::new` / `with_endianness`)
+    // silently defaulted `preset = X86_64`, causing arch-specific CallOther
+    // dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the wrong
+    // preset; those ctors are no longer exposed — `for_arch` is the only
+    // public path.
     //
-    // Install the strider-analyze mini-IR resolver (Phase 3 Task 3.1):
-    // without it, the cfg builder treats every `BranchIndirect` as
-    // deferred via `UnresolvedIndirectBranch`.  The resolver is
-    // stateless so a single static `Arc` would suffice; we allocate
-    // per-call for clarity since CFG rebuilds are rare.
+    // Install the strider-analyze mini-IR resolver: without it, the
+    // cfg builder treats every `BranchIndirect` as deferred via
+    // `UnresolvedIndirectBranch`.  The resolver is stateless so a
+    // single static `Arc` would suffice; we allocate per-call for
+    // clarity since CFG rebuilds are rare.
     let resolver: std::sync::Arc<
         dyn strider_lift::cfg::IndirectTargetResolver<R>,
     > = std::sync::Arc::new(crate::opt::indirect_resolver::MiniIrIndirectResolver);

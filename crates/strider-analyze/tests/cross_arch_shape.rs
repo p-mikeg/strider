@@ -11,7 +11,7 @@
 //! node count + region count + per-phi-kind counts) is captured.  This lets
 //! the same source on x86 and arm64 collapse to a comparable fingerprint
 //! whose drift between arches is itself information worth pinning: any
-//! later v2 work that breaks the "same source ↦ structurally equivalent IR
+//! later work that breaks the "same source ↦ structurally equivalent IR
 //! across arches" invariant will move at least one arch's bucket.
 //!
 //! Function selected: `sum_to_n` — exercises a loop + arithmetic + return
@@ -21,8 +21,6 @@
 //! `LIFT_FAILED` fingerprint rather than silently dropped — drift in the
 //! failure set is itself part of the contract.
 //!
-//! Phase 0, Task 0.2 of the strider v2 rewrite plan
-//! (`docs/superpowers/plans/2026-05-17-strider-v2-rewrite.md`).
 
 #![allow(
     clippy::panic,
@@ -40,9 +38,8 @@ use std::collections::BTreeMap;
 /// All architectures with a fixture directory under `fixtures/out/`.
 /// Kept in sync with the `Arch` enum + the `per_arch_test!` macro.
 /// Mirrors the list in `v1_baseline.rs` — keeping a copy here (rather than
-/// promoting to `common/`) is intentional: a v2 work item may want to scope
-/// the cross-arch test to a smaller arch set without touching the v1
-/// baseline.
+/// promoting to `common/`) is intentional: this test may want to scope to
+/// a smaller arch set without touching the baseline.
 const ALL_ARCHES: &[Arch] = &[
     Arch::X86,
     Arch::X86Kernel,

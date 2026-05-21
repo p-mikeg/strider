@@ -36,8 +36,7 @@
 //! (see [`indirect_branch_resolve`]); it is not a pipeline pass.
 
 /// Re-export of [`crate::indirect_resolver`] so callers using the
-/// pre-existing `opt::indirect_resolver` path keep working through the
-/// `opt` shim after Phase 3 Task 3.1's reorganisation.
+/// `opt::indirect_resolver` path resolve to the same module.
 pub use crate::indirect_resolver;
 
 pub mod error;

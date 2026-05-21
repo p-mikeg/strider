@@ -6,13 +6,11 @@ edition.workspace = true
 [dependencies]
 strider-ir = { workspace = true }
 entity-utils = { workspace = true }
-# strider-lift forward dep (Phase 3 Task 3.1): the cfg-time mini-IR
-# indirect-resolver implementation lives here as a concrete
-# `IndirectTargetResolver` impl (see src/indirect_resolver.rs).  Also
-# powers the orchestrator (Task 3.1c) via the lifter/region driver
-# crates re-exported through strider-lift.
+# strider-lift forward dep: the cfg-time mini-IR indirect-resolver
+# implementation lives here as a concrete `IndirectTargetResolver` impl
+# (see src/indirect_resolver.rs).  Also powers the orchestrator via the
+# lifter/region driver crates re-exported through strider-lift.
 strider-lift = { workspace = true }
-# Absorbed from `opt` (Phase 3 Task 3.0).
 rsleigh.workspace = true
 target.workspace = true
 anyhow.workspace = true
@@ -20,7 +18,6 @@ cranelift-entity.workspace = true
 ethnum.workspace = true
 rustc-hash = "2"
 smallvec.workspace = true
-# Absorbed from `pattern` (Phase 3 Task 3.0).
 thiserror.workspace = true
 bitflags = "2"
 

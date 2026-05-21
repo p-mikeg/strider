@@ -432,9 +432,9 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
 // `extend_if_needed` folds an `IntConst` input at builder level (coerce.rs:185),
 // so to exercise the KnownBits SignExtend path we feed it a non-IntConst Or-of-
 // constants whose result is fully known but whose node kind isn't IntConst.
-// KnownBits Phase 2 first folds the Or to IntConst; the surrounding `while
-// changed` loop then re-runs `analyze`, and only then does the SignExtend node's
-// arm fire (or fail to fire, before the fix).
+// KnownBits's rewrite pass first folds the Or to IntConst; the surrounding
+// `while changed` loop then re-runs `analyze`, and only then does the
+// SignExtend node's arm fire (or fail to fire, before the fix).
 
 /// `SignExtend((0u8 | 0x7Fu8) : U8 → U64)` — MSB of the inner Or is known 0,
 /// so the upper 56 bits of the SignExtend result must be zero.  Without the

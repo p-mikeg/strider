@@ -319,9 +319,9 @@ impl BuiltCallingConvention {
 /// [`strider_ir::FunctionBuilderCC`] slice the IR builder consumes.
 ///
 /// Defined here (in `target`) rather than in `strider-ir` so the IR crate
-/// doesn't need to depend on `target` — under v2's layer order `target`
-/// lives in `strider-lift`, which sits above `strider-ir`.  This is V6's
-/// fix for the ir → target back-edge (Phase 1 Task 1.3c).
+/// doesn't need to depend on `target` — `target` sits above `strider-ir`
+/// in the crate-dependency order, so having the `From` impl here keeps
+/// the direction forward.
 ///
 /// The conversion is a straight field copy: every field of
 /// `FunctionBuilderCC` has a same-named accessor (or field) on

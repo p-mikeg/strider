@@ -2,11 +2,10 @@
 //! per-site mini IR and runs the strider-analyze opt pipeline to
 //! classify a `BranchIndirect`'s target.
 //!
-//! Moved out of `strider-lift::cfg::builder::indirect_resolve` in
-//! Phase 3 Task 3.1 to invert the dep direction (cfg → analyze): the
-//! cfg-time mini-IR resolver had to call into `opt::OptimizerPipeline`
-//! and friends, but that direction is the v2 wrong direction.  The cfg
-//! builder now hands every unresolved `BranchIndirect` to the installed
+//! Lives in `strider-analyze` (not `strider-lift::cfg`) to keep the dep
+//! direction forward: the cfg-time mini-IR resolver calls into the
+//! optimizer pipeline, so it sits in the analyze layer.  The cfg builder
+//! hands every unresolved `BranchIndirect` to the installed
 //! [`IndirectTargetResolver`] callback (see
 //! [`strider_lift::cfg::Builder::with_indirect_resolver`]); the canonical
 //! implementation is [`MiniIrIndirectResolver`] below.
@@ -197,7 +196,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
 /// so the dispatch target is reachable from the entry.  Hoisted out of
 /// [`resolve_indirect_target`] so the test API can drive it and inspect
 /// the resulting [`strider_ir::BuiltFunctionGraph`] (e.g. for asm-fingerprint
-/// validation under Phase 1 Task 1.4 / G3).
+/// validation in tests).
 ///
 /// Each pcode insn is lifted under a
 /// [`strider_ir::FunctionBuilder::set_lift_addr`] context naming the insn's

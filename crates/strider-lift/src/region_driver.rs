@@ -2,8 +2,6 @@
 //! funnel that wraps every per-instruction lift so asm-fingerprints stamp
 //! correctly.
 //!
-//! Phase 2 Task 2.5 of the strider v2 rewrite.
-//!
 //! # Why this lives here
 //!
 //! Every IR node born from a pcode insn must carry the parent
@@ -41,10 +39,10 @@
 //! res?
 //! ```
 //!
-//! which is identical in semantics to the v1 inlined version but
+//! which is identical in semantics to the previous inlined version but
 //! routes the `set_lift_addr` calls through a documented funnel in
-//! strider-lift so Phase 3's Salsa lift driver can adopt the same
-//! pattern without forking the comment block.
+//! strider-lift so any future incremental lift driver can adopt the
+//! same pattern without forking the comment block.
 //!
 //! # Stateless by construction
 //!

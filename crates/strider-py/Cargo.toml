@@ -67,17 +67,16 @@ object = { workspace = true }
 [lints]
 workspace = true
 
-# Phase 4 Task 4.0 — opt-in feature for the `stub_gen` example.
+# Opt-in feature for the `stub_gen` example.
 #
 # `extension-module` (the pyo3 feature that tells the linker NOT to
 # pull libpython into the cdylib) is on by default so `maturin
-# develop` works the same way it did pre-Phase-4.  When building the
-# `stub_gen` example we need a real Rust binary that actually links
-# libpython (so `pyo3::Python::with_gil` works) — toggling
-# `stub_gen` does that by switching pyo3 from `extension-module` to
-# `auto-initialize`.  `maturin build/develop` MUST be invoked without
-# the `stub_gen` feature; `cargo run --example stub_gen` MUST be
-# invoked with it.
+# develop` works the standard way.  When building the `stub_gen`
+# example we need a real Rust binary that actually links libpython
+# (so `pyo3::Python::with_gil` works) — toggling `stub_gen` does that
+# by switching pyo3 from `extension-module` to `auto-initialize`.
+# `maturin build/develop` MUST be invoked without the `stub_gen`
+# feature; `cargo run --example stub_gen` MUST be invoked with it.
 [features]
 default = ["pyo3/extension-module"]
 stub_gen = ["pyo3/auto-initialize"]

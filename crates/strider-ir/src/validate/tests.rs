@@ -2,7 +2,7 @@ use super::*;
 use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
 /// Sentinel asm-fingerprint base used by [`stamp`] below — distinct from
-/// any real machine address.  Phase 1 Task 1.4c.
+/// any real machine address.
 const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
 
 /// Stamp a sentinel asm-fingerprint on `id` so the always-on Layer-C

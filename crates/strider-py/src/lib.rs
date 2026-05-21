@@ -74,8 +74,8 @@ fn force_anyhow_backtrace_capture() {
     }
 }
 
-// Phase 4 Task 4.0 — register the stub-info-gathering function used
-// by the `examples/stub_gen.rs` binary to emit `.pyi` files for every
+// Register the stub-info-gathering function used by the
+// `examples/stub_gen.rs` binary to emit `.pyi` files for every
 // `#[gen_stub_*]`-annotated type in the crate.  Lives next to the
 // pyclass definitions per pyo3-stub-gen's documentation: the
 // `inventory::submit!` calls the proc-macros emit are statically

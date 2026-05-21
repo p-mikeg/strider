@@ -9,16 +9,16 @@
 )]
 
 //! Strider lift: target descriptions, sleigh integration, CFG construction,
-//! and IR lifting. v2 rewrite consolidation crate for `target`, `pcode-lift`,
-//! and `cfg`. See `docs/superpowers/plans/2026-05-17-strider-v2-rewrite.md`.
+//! and IR lifting.  Consolidation crate for what previously lived in
+//! standalone `target`, `pcode-lift`, and `cfg` crates.
 
 pub mod pcode_lift;
 pub mod cfg;
 pub mod lifter;
 pub mod region_driver;
 
-/// Test-only re-exports for the absorbed `cfg` module, mirroring the
-/// original `cfg` crate's `test_api` flat surface so integration tests
-/// under `crates/cfg/tests/` continue to compile after Phase 2 Task 2.3.
+/// Test-only re-exports for the `cfg` module, mirroring the flat
+/// `test_api` surface the standalone `cfg` crate used to expose so
+/// integration tests under `crates/cfg/tests/` keep compiling.
 #[doc(hidden)]
 pub mod cfg_test_api;

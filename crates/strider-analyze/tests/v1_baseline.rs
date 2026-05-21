@@ -20,8 +20,6 @@
 //! crate; case discovery reads `fixtures/cases/*.c`.  Neither list is
 //! hard-coded.
 //!
-//! Phase 0, Task 0.1 of the strider v2 rewrite plan
-//! (`docs/superpowers/plans/2026-05-17-strider-v2-rewrite.md`).
 
 #![allow(
     clippy::panic,

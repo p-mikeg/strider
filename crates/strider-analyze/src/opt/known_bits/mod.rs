@@ -462,12 +462,12 @@ pub struct KnownBits;
 
 impl Optimizer for KnownBits {
     fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
-        // Phase 1 — propagate known bits to fixed point.  Read-only;
+        // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).
         let known = analyze(ctx.as_view())?;
 
-        // Phase 2 — replace fully-determined outputs with constants.  Drive
+        // Rewrite pass — replace fully-determined outputs with constants.  Drive
         // via WorkSet so a rewritten node's consumers are re-checked in the
         // same call: a freshly-introduced IntConst can let a sibling whose
         // *other* operand was previously unknown become fully-determined.

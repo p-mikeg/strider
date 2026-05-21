@@ -1,15 +1,14 @@
 //! `FunctionBuilderCC` — the thin calling-convention slice that
 //! `FunctionBuilder` actually consumes.  Defined in `strider-ir` so the
-//! IR crate doesn't pull a back-edge dep on `target` (V6 verification fix
-//! for Phase 1 Task 1.3c).
+//! IR crate doesn't pull a back-edge dep on `target`.
 //!
-//! Under v2's layer order `target` lives in `strider-lift`, which sits
-//! **above** `strider-ir`.  Importing `target::BuiltCallingConvention`
-//! from `strider-ir` would invert that ordering.  `FunctionBuilderCC`
-//! exposes only the fields `FunctionBuilder::new` /
-//! `FunctionBuilder::build_call_with_cc` actually read; `target` provides
-//! `impl From<BuiltCallingConvention> for FunctionBuilderCC` at the layer
-//! boundary so the richer ABI type stays in its home crate.
+//! `target` lives above `strider-ir` in the crate-dependency order, so
+//! importing `target::BuiltCallingConvention` from `strider-ir` would
+//! invert that ordering.  `FunctionBuilderCC` exposes only the fields
+//! `FunctionBuilder::new` / `FunctionBuilder::build_call_with_cc`
+//! actually read; `target` provides `impl From<BuiltCallingConvention>
+//! for FunctionBuilderCC` at the layer boundary so the richer ABI type
+//! stays in its home crate.
 //!
 //! # Field set
 //!

@@ -159,7 +159,7 @@ mod synthetic {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let sp_val = b.read_variable(&sp).unwrap();
-        // Step 1: N stores at distinct SP offsets.
+        // Build N stores at distinct SP offsets.
         let mut load_addrs: Vec<strider_ir::Value> = Vec::with_capacity(n);
         for i in 0..n {
             let off = -((i as i64 + 1) * 8) as u64;
@@ -171,7 +171,7 @@ mod synthetic {
             b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
             load_addrs.push(addr);
         }
-        // Step 2: N loads at the same offsets.  Combine via a left-
+        // Build N loads at the same offsets.  Combine via a left-
         // folding chain of Adds so every loaded value reaches the
         // return.
         let mut acc = b.build_int_const(0u64, NodeOutputType::U64).unwrap();

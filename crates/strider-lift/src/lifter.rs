@@ -1,20 +1,18 @@
-//! Salsa-friendly facade over the v1 CFG builder + DecodeCache.
+//! Incremental-friendly facade over the CFG builder + DecodeCache.
 //!
-//! Phase 2 Task 2.4 of the strider v2 rewrite.  This is a thin
-//! wrapper — v1 already does on-demand-reachable-cached lifting per
-//! Section C of the rewrite plan.  The Lifter just exposes a cleaner
-//! per-region API surface that Phase 3's Salsa orchestrator will
-//! query.
+//! Thin wrapper: the underlying CFG builder already does on-demand
+//! reachable-cached lifting.  The Lifter exposes a cleaner per-region
+//! API surface for callers that want to drive lifting region-by-region
+//! without owning the full Builder.
 //!
 //! # Design
 //!
 //! The Lifter owns a `Sleigh` handle, a [`DecodeCache`], and a lazily
-//! built [`Cfg`].  The first call to [`Lifter::region`] triggers the
-//! full BFS-from-entry CFG build (same semantics as v1); subsequent
-//! calls return a memoized `Arc<Region>` for the region containing
-//! the requested address.  The `Arc::ptr_eq` invariant lets
-//! downstream Salsa queries cheaply detect "this region is the same
-//! one I saw last query".
+//! built [`Cfg`].  The first call to [`Lifter::region`] triggers a
+//! full BFS-from-entry CFG build; subsequent calls return a memoized
+//! `Arc<Region>` for the region containing the requested address.  The
+//! `Arc::ptr_eq` invariant lets downstream incremental queries cheaply
+//! detect "this region is the same one I saw last query".
 //!
 //! Per-instruction decode work is paid at most once thanks to the
 //! `DecodeCache` plumbed into [`crate::cfg::Builder::with_decode_cache`].
@@ -47,7 +45,7 @@ pub struct DecodeStats {
     pub total_lift_calls: usize,
 }
 
-/// Salsa-friendly per-region facade over the v1 CFG builder.
+/// Incremental-friendly per-region facade over the CFG builder.
 ///
 /// Construction wires the Sleigh handle, calling convention, and
 /// entry address but does not yet build the CFG.  The first call to
@@ -114,11 +112,10 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
     /// Returns the [`Region`] containing `addr`, lifting on demand.
     ///
-    /// The first call builds the full CFG (BFS-from-entry,
-    /// matching v1's semantics).  Subsequent calls return the
-    /// memoized `Arc<Region>` for the region containing `addr`;
-    /// `Arc::ptr_eq` holds across repeated queries for the same
-    /// address.
+    /// The first call builds the full CFG (BFS-from-entry).
+    /// Subsequent calls return the memoized `Arc<Region>` for the
+    /// region containing `addr`; `Arc::ptr_eq` holds across repeated
+    /// queries for the same address.
     ///
     /// # Errors
     /// Returns an error if the CFG build fails, or if `addr` does

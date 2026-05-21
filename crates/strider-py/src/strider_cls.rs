@@ -26,10 +26,10 @@ pub struct PyStrider {
 /// Mirror of `strider_analyze::AnalyzeOutcome`.
 ///
 /// `unresolved_branches` and `region_handles` carry low-level lift
-/// state used by the indirect-branch resolver in Rust; v1 exposes
-/// only their counts so Python users can detect "did we have any
-/// indirect branches?" without dragging the full payload across the
-/// boundary.
+/// state used by the indirect-branch resolver in Rust; this binding
+/// exposes only their counts so Python users can detect "did we have
+/// any indirect branches?" without dragging the full payload across
+/// the boundary.
 #[pyclass(name = "AnalyzeOutcome", module = "strider")]
 pub struct PyAnalyzeOutcome {
     #[pyo3(get)]

@@ -1,6 +1,6 @@
 //! Sleigh user-op (CallOther) classification table.  See
 //! `docs/superpowers/specs/2026-05-06-callother-precise-abi-design.md`
-//! (and the v1 spec `2026-05-05-callother-classification-design.md`
+//! (and the predecessor spec `2026-05-05-callother-classification-design.md`
 //! for the original cfg/ir consumer split).
 
 /// Per-user-op ABI describing register and memory effects beyond

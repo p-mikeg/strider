@@ -198,10 +198,10 @@ fn run_via_orchestrator(
     })
 }
 
-/// Custom-pipeline path — preserves the v1 contract: lift once via
-/// `analyze_cfg_with`, then apply the user's pipeline.  Indirect
-/// branches are not resolved on this path.  `per_address_ccs` is
-/// honoured at lift time the same way as on the orchestrator path.
+/// Custom-pipeline path — lift once via `analyze_cfg_with`, then apply
+/// the user's pipeline.  Indirect branches are not resolved on this
+/// path.  `per_address_ccs` is honoured at lift time the same way as
+/// on the orchestrator path.
 #[allow(clippy::too_many_arguments)]
 fn run_with_custom_pipeline(
     py: Python<'_>,

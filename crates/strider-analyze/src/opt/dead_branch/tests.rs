@@ -290,11 +290,11 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
         b.build_if(cond, true_r, false_r)?;
 
         b.set_region(true_r);
-        // v2's build_call_other_modeled does NOT advance the memory
-        // token (caller decides via memory_edge).  The original test
-        // exercised v1's conservative-clobber CallOther which DID
-        // advance memory, so the join's MemPhi needs a non-trivial
-        // mem-input shape.  Advance memory manually here.
+        // `build_call_other_modeled` does NOT advance the memory token
+        // (caller decides via `memory_edge`).  An earlier conservative-
+        // clobber CallOther variant DID advance memory, so the join's
+        // MemPhi needs a non-trivial mem-input shape.  Advance memory
+        // manually here.
         let (call_node, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
         let mem_out = b.body().graph.node_outputs(call_node)[1];
         b.advance_cur_region_memory(mem_out)?;

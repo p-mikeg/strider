@@ -2,10 +2,8 @@
 //! memory (typically a binary's `.rodata` or `.text` section).
 //!
 //! Defined here rather than in `reader` so optimizer passes can depend on
-//! the trait without back-edging through `strider-binary` in the v2 layer
-//! order (V6 fix — see `docs/superpowers/plans/2026-05-17-strider-v2-rewrite.md`
-//! Phase 1 Task 1.3b).  Concrete impls (e.g. `reader::ElfFileMemReader`)
-//! live in the `reader` crate.
+//! the trait without back-edging through `strider-binary`.  Concrete impls
+//! (e.g. `reader::ElfFileMemReader`) live in the `reader` crate.
 
 /// Provides read access to a statically-known region of memory (e.g. a
 /// binary's `.rodata` or `.text` section).

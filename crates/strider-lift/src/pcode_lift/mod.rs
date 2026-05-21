@@ -1,8 +1,4 @@
-//! Pure value-producing pcode → IR lifter, factored out of `strider`.
-//!
-//! Absorbed from the standalone `pcode-lift` crate. See
-//! `docs/superpowers/plans/2026-05-17-strider-v2-rewrite.md` Phase 2
-//! Task 2.2.
+//! Pure value-producing pcode → IR lifter.
 //!
 //! The [`ValueLifter`] owns the per-opcode handlers for every pcode opcode
 //! that produces a value (arithmetic, integer, float, boolean, casts,

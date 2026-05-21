@@ -1,5 +1,4 @@
-//! Layer-C asm-fingerprint invariant for the indirect-resolver
-//! mini-IR (Phase 1 Task 1.4a / Generalization Audit finding G3).
+//! Layer-C asm-fingerprint invariant for the indirect-resolver mini-IR.
 //!
 //! The indirect-resolver in
 //! `crates/strider-analyze/src/indirect_resolver.rs` builds a per-site

@@ -217,9 +217,9 @@ fn lift_for_pipeline(
     }
     let cfg_opts = cfg_opts_b.build();
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
-    // from `sleigh_arch` atomically.  (The earlier `Builder::new` /
+    // from `sleigh_arch` atomically.  (Earlier `Builder::new` /
     // `Builder::with_endianness` ctors silently defaulted the preset
-    // to `X86_64` and were deleted in round 12 W5c.)
+    // to `X86_64`; they are no longer exposed.)
     let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));

@@ -1,9 +1,9 @@
 # `strider_pattern` macro emission specification
 
-**Phase 4 Task 4.0 — V4 prerequisite.** Reference hand-implementation
-lives at `crates/strider-py/src/pattern_reference.rs`. The Task 4.1
-proc-macro (`#[strider_pattern]`) MUST emit code shape-identical to
-that reference. This document captures the contract.
+Reference hand-implementation lives at
+`crates/strider-py/src/pattern_reference.rs`. The proc-macro
+(`#[strider_pattern]`) MUST emit code shape-identical to that reference.
+This document captures the contract.
 
 ## Status
 
@@ -104,7 +104,7 @@ impl PyFooV2 {
 }
 ```
 
-## Attribute-order rules (V4 verification, confirmed by 4.0)
+## Attribute-order rules
 
 1. `#[gen_stub_pyclass]` MUST come BEFORE `#[pyclass]`.  The proc-
    macro walks the inner `#[pyclass]` attribute to discover the
@@ -136,10 +136,10 @@ impl PyFooV2 {
 - Closure-typed args (`.when(f: PyObject)`) translate to
   `typing.Any` in the generated stub.  The hand-written
   `pattern.pyi` overrides this to
-  `Callable[[PartialMatch], bool]` for ergonomics.  Task 4.1's
-  macro MUST emit `PyObject` (not a typed closure) on the Rust
-  side; the `.pyi` override is a separate concern handled by
-  Task 4.3 (hand-written aliases module).
+  `Callable[[PartialMatch], bool]` for ergonomics.  The macro
+  MUST emit `PyObject` (not a typed closure) on the Rust side;
+  the `.pyi` override is a separate concern handled by the
+  hand-written aliases module.
 
 - Heterogeneous-enum args like `PatLike<'_>` need a manual
   `impl pyo3_stub_gen::PyStubType for PatLike<'_>` returning
@@ -160,16 +160,16 @@ The cargo example at `crates/strider-py/examples/stub_gen.rs`:
    editing a `#[strider_pattern]` struct and diffs the result
    against the hand-written `pattern.pyi`.
 
-Phase 4 Task 4.2 flips the dependency direction: the generated
+A future iteration will flip the dependency direction: the generated
 stubs become canonical, and `pattern.pyi` is auto-rewritten from
 them (a small `cargo xtask sync-stubs` script will land then).
 
-## Field annotations — extended set (Task 4.2b)
+## Field annotations — extended set
 
-The base spec (Task 4.1) covers four field shapes: `#[field]` for
-primitives, `#[field(accepts = "Pat")]` for `PatLike` operands, and
-`#[field(accepts = "VnSpace")]` for `rsleigh::VnSpace`.  Task 4.2b
-adds:
+The base spec covers four field shapes: `#[field]` for primitives,
+`#[field(accepts = "Pat")]` for `PatLike` operands, and
+`#[field(accepts = "VnSpace")]` for `rsleigh::VnSpace`.  The extended
+set adds:
 
 | Annotation | Field type | Setter signature | Used by |
 |---|---|---|---|
@@ -191,10 +191,10 @@ Notes on `#[field(multi)]`:
   would need a separate emission path and have no in-tree call site
   today.
 
-## Field annotations — Phase 4 Task 4.3 additions
+## Field annotations — required-construction additions
 
-Two macro extensions were added in Phase 4 Task 4.3 to migrate
-`PyIntBinaryPat` / `PyBoolBinaryPat` / `PyFloatBinaryPat`:
+Two macro extensions cover the migration of `PyIntBinaryPat` /
+`PyBoolBinaryPat` / `PyFloatBinaryPat`, which require ctor args:
 
 - **Crate attribute `constructor_args = "name: Ty, name: Ty, ..."`**
   enables required-construction.  When set, the macro stores those
@@ -212,23 +212,23 @@ Two macro extensions were added in Phase 4 Task 4.3 to migrate
   builder method takes no args (`b.ordered()`, not
   `b.ordered(true)`).  Used by `.ordered()` on the binary-op
   builders so it remains a terminal operation that finalises to
-  `Pat` (matches v1 behaviour).  Mutually exclusive with
-  `#[field(multi)]` and `#[field(accepts = ...)]`.
+  `Pat`.  Mutually exclusive with `#[field(multi)]` and
+  `#[field(accepts = ...)]`.
 
 ## Patterns that intentionally stay hand-written
 
 | Pattern | Reason |
 |---|---|
-| `PyFunctionArgPat` | Enum-dispatch source: `.index(u32)`, `.source_register(vn)`, `.source_stack(space, offset)` all write the same underlying `Option<FunctionArgSource>`.  Out of scope for the current `Option<T>`-per-field macro shape — adding a `#[field_setter(name = ..., variant = ..., args = ...)]` annotation that emits multiple named setters writing different enum variants into one field would gain ~30 LOC at the call site versus a chunky proc-macro change, so this is the one type left hand-written after Phase 4.3. |
+| `PyFunctionArgPat` | Enum-dispatch source: `.index(u32)`, `.source_register(vn)`, `.source_stack(space, offset)` all write the same underlying `Option<FunctionArgSource>`.  Out of scope for the current `Option<T>`-per-field macro shape — adding a `#[field_setter(name = ..., variant = ..., args = ...)]` annotation that emits multiple named setters writing different enum variants into one field would gain ~30 LOC at the call site versus a chunky proc-macro change, so this type stays hand-written. |
 
-## Coexistence with v1
+## Coexistence with the pre-existing hand-mirror
 
-The reference type is named `PyStackStorePatV2` (Rust) /
-`StackStorePatV2` (Python) so the v1 hand-mirror
-`PyStackStorePat` / `StackStorePat` continues to pass every existing
-test during the migration.  Phase 4 Task 4.2 swaps the v1 type
-out for a macro-generated one of identical shape; the `V2` suffix
-disappears in the same commit.
+When migrating an existing hand-written pyclass, name the
+macro-generated reference type with a distinguishing suffix
+(e.g. `PyStackStorePatV2` / `StackStorePatV2`) so the
+hand-mirror keeps passing every test during migration.  The
+hand-mirror is then swapped out for the macro-generated type of
+identical shape, and the suffix is dropped in the same commit.
 
 ## Verification
 
@@ -236,7 +236,7 @@ disappears in the same commit.
 # Build the rlib + cdylib (default flow used by maturin)
 cargo build -p strider-py
 
-# Generate the .pyi files for the V2 reference
+# Generate the .pyi files for the macro-emitted reference
 cargo run -p strider-py --example stub_gen --features stub_gen --no-default-features
 
 # Rebuild + install the Python extension via maturin
@@ -249,4 +249,5 @@ cargo run -p strider-py --example stub_gen --features stub_gen --no-default-feat
 ( cd crates/strider-py && uv run --with mypy pytest tests/python/test_reference_pyi.py )
 ```
 
-All five commands MUST exit 0 before Task 4.1 can begin.
+All five commands MUST exit 0 before the macro is consumed as the
+canonical emission path.

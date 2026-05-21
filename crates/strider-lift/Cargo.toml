@@ -10,7 +10,6 @@ graphwalk.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
 target.workspace = true
-# Absorbed from `cfg` (Phase 2 Task 2.3).
 petgraph.workspace = true
 rustc-hash = "2"
 

@@ -137,10 +137,10 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///     .build()?;
     /// ```
     ///
-    /// Inverts the dep direction: the resolver implementation lives
-    /// **above** strider-lift in the v2 layer order, so strider-lift no
-    /// longer needs the `strider-analyze` back-edge that the cfg-time
-    /// mini-IR resolver used to require.
+    /// Keeps the dep direction forward: the resolver implementation
+    /// lives **above** strider-lift in the crate-dependency order, so
+    /// strider-lift doesn't need a `strider-analyze` back-edge for the
+    /// cfg-time mini-IR resolver.
     #[must_use]
     pub fn with_indirect_resolver(
         mut self,

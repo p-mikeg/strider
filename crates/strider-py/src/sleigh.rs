@@ -170,12 +170,12 @@ impl PyVnSpace {
 ///   register name; returns `None` when the name isn't a register.
 /// * `Vn(space, off, size)` — direct construction (for stack
 ///   varnodes, custom spaces).
-// Phase 4 Task 4.2b — `#[gen_stub_pyclass]` derives `PyStubType` for
-// `PyVn` so the `#[strider_pattern]`-emitted setter `for_vn(vn: PyVn)`
-// (on `PyPhiPat`) type-checks under `#[gen_stub_pymethods]`.  Per
-// EMISSION_SPEC Task 4.0 "type-info rules", every PyClass referenced
-// as a method-argument type from a stub-gen-instrumented impl needs
-// the derive even if its surface is hand-written in `pattern.pyi`.
+// `#[gen_stub_pyclass]` derives `PyStubType` for `PyVn` so the
+// `#[strider_pattern]`-emitted setter `for_vn(vn: PyVn)` (on
+// `PyPhiPat`) type-checks under `#[gen_stub_pymethods]`.  Per
+// EMISSION_SPEC's "type-info rules", every PyClass referenced as a
+// method-argument type from a stub-gen-instrumented impl needs the
+// derive even if its surface is hand-written in `pattern.pyi`.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Vn", module = "strider", frozen)]
 #[derive(Clone, Copy)]

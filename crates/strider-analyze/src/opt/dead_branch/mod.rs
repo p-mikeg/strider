@@ -103,7 +103,7 @@ fn try_eliminate_dead_branch(
         return Ok(OptimizationResult::NoChange);
     }
 
-    // ── Step 1: replace live ctrl with ctrl_in (bypass the If) ───────────────
+    // ── Replace live ctrl with ctrl_in (bypass the If) ──────────────────────
     // Absorb the If's asm-fingerprint into the surviving control producer
     // (typically a ControlState — exempt from the non-empty check, but
     // unioning the address there preserves the contributing-asm-instruction

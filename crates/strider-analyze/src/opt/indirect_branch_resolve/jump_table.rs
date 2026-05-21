@@ -64,14 +64,13 @@ pub fn classify_jump_table(
     rom: Option<&dyn ReadOnlyMemory>,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    // Step 1: structural shape match.  `match_jump_table_shape`
-    // returns the `idx` value and the `(base, stride, entry_size)`
-    // triple — everything we need to enumerate entries.  Falls
-    // through to None for every shape that isn't an honest
-    // jump-table dispatch.
+    // Structural shape match.  `match_jump_table_shape` returns the
+    // `idx` value and the `(base, stride, entry_size)` triple —
+    // everything we need to enumerate entries.  Falls through to None
+    // for every shape that isn't an honest jump-table dispatch.
     let shape = match_jump_table_shape(ctx, anchor_output)?;
 
-    // Step 2: bound the index.  Two strategies, tried in order:
+    // Bound the index.  Two strategies, tried in order:
     //   (a) KnownBits — purely structural inspection of the IR;
     //       cheap; works whenever the shape contains an explicit
     //       AND-mask (`idx & 0x7` etc.).
@@ -82,18 +81,18 @@ pub fn classify_jump_table(
     let bound = bound_via_known_bits(ctx, shape.idx_output, known)
         .or_else(|| bound_via_predecessor_if(ctx, anchor_output, shape.idx_output))?;
 
-    // Step 3: enforce the per-call enumeration cap.  Returning None
-    // here is sound: the orchestrator will defer; if a future
-    // iteration tightens the bound (e.g. RedundantPhis exposes a
-    // narrower KnownBits result) the table will resolve.
+    // Enforce the per-call enumeration cap.  Returning None here is
+    // sound: the orchestrator will defer; if a future iteration
+    // tightens the bound (e.g. RedundantPhis exposes a narrower
+    // KnownBits result) the table will resolve.
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
     }
 
-    // Step 4: read the table.  Failing closed (None on partial read)
-    // is the soundness guard: a partial Multiple would omit valid
-    // runtime targets and the orchestrator would wire a CFG missing
-    // those edges.  See `read_table_entries` for the full rule.
+    // Read the table.  Failing closed (None on partial read) is the
+    // soundness guard: a partial Multiple would omit valid runtime
+    // targets and the orchestrator would wire a CFG missing those
+    // edges.  See `read_table_entries` for the full rule.
     let rom = rom?;
     let targets = read_table_entries(rom, shape.base, shape.stride, bound, shape.entry_size)?;
 

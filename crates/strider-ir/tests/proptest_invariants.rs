@@ -1,8 +1,7 @@
-//! Property-based invariants for the value-only IR (Phase 6 Task 6.3, V5
-//! verification scope).
+//! Property-based invariants for the value-only IR.
 //!
-//! **Scope (per V5 verification block in the Phase 6 plan).** Value-only DAG
-//! generation via a sequence of [`FunctionBuilder`] actions, mirroring
+//! **Scope.** Value-only DAG generation via a sequence of
+//! [`FunctionBuilder`] actions, mirroring
 //! `cranelift-fuzzgen`'s imperative-action pattern with type-tag operand
 //! buckets.  Control-flow invariants (`RedundantPhis`,
 //! `DeadBranchElimination`, indirect-resolver) stay in hand-authored

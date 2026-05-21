@@ -3,12 +3,11 @@ name = "strider-pattern-macros"
 version = "0.1.0"
 edition = { workspace = true }
 
-# Phase 4 Task 4.1 — proc-macro crate emitting Rust + PyO3 pattern
-# builders from a single annotated struct definition.  See
-# `EMISSION_SPEC.md` for the exact emission contract and
-# `crates/strider-py/src/pattern_reference.rs` for the hand-written
-# `PyStackStorePatV2` shape this macro must replicate byte-for-byte
-# at the `.pyi` level.
+# Proc-macro crate emitting Rust + PyO3 pattern builders from a single
+# annotated struct definition.  See `EMISSION_SPEC.md` for the exact
+# emission contract and `crates/strider-py/src/pattern_reference.rs`
+# for the hand-written reference shape this macro replicates
+# byte-for-byte at the `.pyi` level.
 [lib]
 proc-macro = true
 # Doctests for proc-macros require setting up a full pyo3 + pattern

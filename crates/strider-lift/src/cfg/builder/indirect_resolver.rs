@@ -3,7 +3,7 @@
 //! [`crate::cfg::Builder`] does not itself know how to classify a
 //! `BranchIndirect`'s target — that requires running a mini IR + the
 //! `strider-analyze` optimizer pipeline, which sits *above* strider-lift
-//! in the v2 dep order.  Instead, the builder accepts an installed
+//! in the crate-dependency order.  Instead, the builder accepts an installed
 //! [`IndirectTargetResolver`] callback (via
 //! [`crate::cfg::Builder::with_indirect_resolver`]) and delegates target
 //! classification to it.  The concrete implementation lives in

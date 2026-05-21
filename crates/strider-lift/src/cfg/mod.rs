@@ -4,9 +4,6 @@
 //! GHIDRA's Sleigh p-code lifter ([`rsleigh`]).  Each basic block (region) in
 //! the CFG contains a sequence of p-code instructions ([`rsleigh::Insn`]).
 //!
-//! Absorbed from the standalone `cfg` crate (v2 Phase 2 Task 2.3); the
-//! original `cfg` crate is now a one-line shim re-exporting this module.
-//!
 //! # Key types
 //!
 //! - [`Cfg`] — a control-flow graph parameterized over an arbitrary memory

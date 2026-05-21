@@ -91,7 +91,7 @@ fn is_inverted_cond(graph: &strider_ir::Graph, if_node: NodeId) -> bool {
 ///   1. Re-points the `If`'s cond input from `BoolNeg(X)` to `X`.
 ///   2. Swaps the consumers of the two control outputs.
 fn invert(graph: &mut strider_ir::Graph, if_node: NodeId) -> Result<()> {
-    // Step 1: redirect cond input.
+    // Redirect cond input.
     //
     // Read the BoolNeg node's input first, then call `update_input` on the
     // If's cond slot to consume it directly.  After this step the BoolNeg
@@ -111,7 +111,7 @@ fn invert(graph: &mut strider_ir::Graph, if_node: NodeId) -> Result<()> {
     graph.extend_asm_fingerprint_from(inner_node, bool_neg_node);
     graph.update_input(cond_input_id, inner);
 
-    // Step 2: swap consumers between output[0] (true) and output[1] (false).
+    // Swap consumers between output[0] (true) and output[1] (false).
     //
     // Both outputs share the same producer node (`if_node`), and each output
     // has its own use-list.  `output_uses` yields `(consumer_node, input_idx)`

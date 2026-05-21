@@ -83,12 +83,12 @@ macro_rules! pat_builder_finalise {
 
 // ── Capture ──────────────────────────────────────────────────────────────
 
-// Phase 4 Task 4.0 — `#[gen_stub_pyclass]` derives `PyStubType` for
-// `PyCapture` so the V2 reference type's `.capture(c: PyRef<'_,
-// PyCapture>)` signature compiles under `#[gen_stub_pymethods]`.  This
-// only adds the type-info impl; the existing `#[pymethods]` block
-// below is unchanged (no `#[gen_stub_pymethods]` here — the v1
-// hand-written `pattern.pyi` already covers PyCapture's surface).
+// `#[gen_stub_pyclass]` derives `PyStubType` for `PyCapture` so the
+// macro-emitted reference type's `.capture(c: PyRef<'_, PyCapture>)`
+// signature compiles under `#[gen_stub_pymethods]`.  This only adds
+// the type-info impl; the existing `#[pymethods]` block below is
+// unchanged (no `#[gen_stub_pymethods]` here — the hand-written
+// `pattern.pyi` already covers PyCapture's surface).
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Capture", module = "strider.pattern", frozen)]
 #[derive(Clone)]
@@ -273,17 +273,17 @@ pub enum PatLike<'py> {
     FloatBinaryPat(Bound<'py, PyFloatBinaryPat>),
 }
 
-// Phase 4 Task 4.0 — manual `PyStubType` impl so `pyo3-stub-gen`'s
-// proc-macros translate `PatLike` parameters to the canonical
-// `PatLike` Python type alias defined by hand in `strider/pattern.pyi`
-// (line 34: `PatLike = Union[str, Capture, Pat, ...]`).  Without this
-// impl, the type would be elided as `Any` in the generated stub and
-// fail `mypy --strict` on callers that pass a typed builder directly.
+// Manual `PyStubType` impl so `pyo3-stub-gen`'s proc-macros translate
+// `PatLike` parameters to the canonical `PatLike` Python type alias
+// defined by hand in `strider/pattern.pyi` (line 34: `PatLike =
+// Union[str, Capture, Pat, ...]`).  Without this impl, the type would
+// be elided as `Any` in the generated stub and fail `mypy --strict`
+// on callers that pass a typed builder directly.
 //
-// EMISSION_SPEC implication: when Task 4.1's proc-macro encounters a
+// EMISSION_SPEC implication: when the proc-macro encounters a
 // `PatLike<'_>` argument, it must NOT attempt to auto-derive the
 // PyStubType; the macro-generated emission relies on this hand-written
-// impl staying valid across the migration.
+// impl.
 impl pyo3_stub_gen::PyStubType for PatLike<'_> {
     fn type_output() -> pyo3_stub_gen::TypeInfo {
         // Resolve to `strider.pattern.PatLike`, the typed Union alias
@@ -805,7 +805,7 @@ pub fn value_phi() -> PyValuePhiPat { PyValuePhiPat::new() }
 /// `FunctionArgSource::Register` / `FunctionArgSource::Stack`
 /// variants of the IR enum).
 //
-// Phase 4 Task 4.2c — intentionally hand-written, not migrated to
+// Intentionally hand-written, not migrated to
 // `#[strider_pattern]`.  Reason: `.source_register(vn)` and
 // `.source_stack(space, offset)` are two Python methods that write
 // the SAME underlying `Option<FunctionArgSource>` field via
@@ -1370,9 +1370,9 @@ pub struct CallPatDef {
     ret_output: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
 }
 
-// Phase 4 Task 4.2c — `at` / `at_any` are special transformations on
-// the same `target` field (constructing an `int_const` /
-// `int_const_any_of` Pat from a literal address).  They don't fit the
+// `at` / `at_any` are special transformations on the same `target`
+// field (constructing an `int_const` / `int_const_any_of` Pat from a
+// literal address).  They don't fit the
 // macro's `Option<T>`-per-field shape, so we expose them via a
 // secondary `#[pymethods]` block (allowed by `multiple-pymethods`).
 // `#[gen_stub_pymethods]` is required on the secondary block too so
@@ -1463,8 +1463,8 @@ pub struct CallOtherPatDef {
     next_mem: Option<strider_analyze::pattern::Pat>,
 }
 
-// Phase 4 Task 4.2c — `ctrl` / `mem` / `ctrl_out` / `mem_out` are
-// convenience aliases that delegate to `arg(0/1, p)` / `ret(0/1, p)`.
+// `ctrl` / `mem` / `ctrl_out` / `mem_out` are convenience aliases that
+// delegate to `arg(0/1, p)` / `ret(0/1, p)`.
 // They drive the inner Mutex directly here rather than reusing the
 // emitted `arg` / `ret` methods, because `multiple-pymethods` can't
 // borrow `PyRef<Self>` recursively in a single chain.
@@ -1669,8 +1669,8 @@ fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
 /// `.capture(c)` / `.cap(name)` / `.when(f)` before finalising as a
 /// `Pat`.
 //
-// Phase 4 Task 4.3 — migrated to `#[strider_pattern]` using the
-// macro's `constructor_args` (required-construction) and
+// Emitted by `#[strider_pattern]` using the macro's
+// `constructor_args` (required-construction) and
 // `#[field(terminal)]` (no-arg setter that finalises to `PyPat`)
 // extensions.  See `crates/strider-pattern-macros/EMISSION_SPEC.md`.
 #[strider_pattern(
@@ -1970,15 +1970,15 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
 // file) for the body.
 
 // PyPhiPat, PyMemPhiPat, PyValuePhiPat: capture/cap/when/into_pat
-// emitted by `#[strider_pattern]` (Phase 4 Task 4.2b).
+// emitted by `#[strider_pattern]`.
 pat_builder_finalise!(PyFunctionArgPat);
 // PyLoadPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
 // PyStorePat, PyStackStorePat, PyStackStorePhiPat: capture/cap/when/into_pat
 // emitted by `#[strider_pattern]`.
 // PyCallPat, PyCallOtherPat, PyRetPat: capture/cap/when/into_pat
-// emitted by `#[strider_pattern]` (Phase 4 Task 4.2c).
+// emitted by `#[strider_pattern]`.
 // PyIfPat: capture/cap/when/into_pat emitted by `#[strider_pattern]`.
 // PyIntBinaryPat, PyBoolBinaryPat, PyFloatBinaryPat:
 // capture/cap/when/into_pat emitted by `#[strider_pattern]` via the
 // `constructor_args` (required-construction) + `#[field(terminal)]`
-// extensions (Phase 4 Task 4.3).
+// extensions.

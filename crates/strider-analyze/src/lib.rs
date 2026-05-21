@@ -9,9 +9,8 @@
 )]
 
 //! Strider analyze: optimization passes, pattern matching, indirect-branch
-//! resolution, and the orchestrator. v2 consolidation of opt + pattern
-//! (Phase 3.0) and the strider orchestrator + per-region driver +
-//! `Strider` (Phase 3.1c).
+//! resolution, and the orchestrator.  Consolidates the optimizer, pattern
+//! matcher, per-region driver, and `Strider` entry point into one crate.
 
 mod errors;
 pub mod orchestrator;

@@ -384,10 +384,10 @@ impl Strider {
                 .map(|wrapped| wrapped.addr.machine_addr_u64());
             // Per-terminator funnel: same asm-fingerprint attribution
             // pattern as `process_insn`, factored through
-            // `RegionDriver` (Phase 2 Task 2.5).  `term_addr` may be
-            // `None` when the region has zero pcode insns (e.g. empty
-            // Branch regions produced by the bounded-lift
-            // CondBranch-OOB collapse); the funnel accepts `Option<u64>`.
+            // `RegionDriver`.  `term_addr` may be `None` when the region
+            // has zero pcode insns (e.g. empty Branch regions produced
+            // by the bounded-lift CondBranch-OOB collapse); the funnel
+            // accepts `Option<u64>`.
             RegionDriver::set_lift_addr(&mut per_region_driver.builder, term_addr);
             let term_res = (|| -> Result<()> {
                 match special_terminator {

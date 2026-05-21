@@ -1,11 +1,10 @@
-//! Phase 2 Task 2.4 — Lifter facade tests.
+//! Lifter facade tests.
 //!
-//! These verify the Salsa-friendly Lifter API wraps v1's
+//! These verify the per-region Lifter API wraps the underlying
 //! `cfg::Builder` + `DecodeCache` without changing behavior.  The
-//! Lifter is a thin per-region facade that Phase 3's Salsa
-//! orchestrator queries; the actual on-demand-reachable-cached
-//! decoding behavior is already correct in v1 (Section C of the
-//! rewrite plan documents this).
+//! Lifter is a thin per-region facade callers can query when they want
+//! lifting driven region-by-region; the on-demand-reachable-cached
+//! decoding behavior comes from the underlying CFG builder.
 
 #![allow(
     clippy::panic,

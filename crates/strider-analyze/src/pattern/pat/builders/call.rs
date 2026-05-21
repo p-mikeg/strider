@@ -93,7 +93,7 @@ impl From<CallPat> for Pat {
 
 /// Builder for `CallOther` node patterns.  Created by [`crate::pattern::pat::call_other`].
 ///
-/// Slot conventions (post v2 precise-ABI lifting):
+/// Slot conventions (precise-ABI lifting):
 ///
 /// **Inputs** — addressed by [`Self::arg`] using the raw `inputs[i]` index:
 ///   * `arg(0, p)` → control predecessor

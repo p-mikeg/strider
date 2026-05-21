@@ -1,4 +1,4 @@
-//! Integration tests for v2's precise per-op ABI lifting.
+//! Integration tests for precise per-op CallOther ABI lifting.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

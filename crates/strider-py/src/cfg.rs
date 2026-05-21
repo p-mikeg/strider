@@ -47,13 +47,13 @@ pub fn build_cfg(
     let opts = opts_builder.build();
 
     // Use `for_arch` so the CallOther classifier sees the actual arch
-    // preset.  (`Builder::new` was deleted in round 12 W5c — it used
-    // to default to `X86_64` and silently mis-classified arch-specific
-    // user-ops on non-x86 targets.)
+    // preset.  (Earlier `Builder::new` ctors silently defaulted to
+    // `X86_64` and mis-classified arch-specific user-ops on non-x86
+    // targets; that ctor is no longer exposed.)
     //
     // Install the strider-analyze mini-IR resolver so the cfg-time
     // resolver classifies `BranchIndirect` rather than deferring every
-    // site via `UnresolvedIndirectBranch`.  Phase 3 Task 3.1.
+    // site via `UnresolvedIndirectBranch`.
     let resolver: std::sync::Arc<
         dyn strider_lift::cfg::IndirectTargetResolver<AnyMemReader>,
     > = std::sync::Arc::new(strider_analyze::opt::indirect_resolver::MiniIrIndirectResolver);

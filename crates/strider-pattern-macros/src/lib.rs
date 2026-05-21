@@ -54,14 +54,14 @@
 //!   `Option<Vec<(u32, T)>>`).  The generated `finalise()` walks the
 //!   vec and applies `.<py_name>(idx, value)` in insertion order.
 //!
-//! - `#[field(terminal)]` (Phase 4 Task 4.3) — for an `Option<bool>`
-//!   field, the macro emits a no-arg setter that toggles the field
-//!   to `Some(true)` and immediately returns `PyPat` via
-//!   `self.finalise()`.  The underlying `pattern::*` builder is
-//!   expected to expose a no-arg method with the same name (e.g.
-//!   `b.ordered()`).  Used by `.ordered()` on the binary-op builders
-//!   so the call remains a terminal operation that returns `Pat`,
-//!   matching the v1 hand-written `PyIntBinaryPat::ordered` shape.
+//! - `#[field(terminal)]` — for an `Option<bool>` field, the macro
+//!   emits a no-arg setter that toggles the field to `Some(true)` and
+//!   immediately returns `PyPat` via `self.finalise()`.  The
+//!   underlying `pattern::*` builder is expected to expose a no-arg
+//!   method with the same name (e.g. `b.ordered()`).  Used by
+//!   `.ordered()` on the binary-op builders so the call remains a
+//!   terminal operation that returns `Pat`, matching the
+//!   `PyIntBinaryPat::ordered` shape.
 //!   Mutually exclusive with `multi` and `accepts`.
 //!
 //! - `#[field(alias = "py_name")]` — overrides the Python method name
@@ -328,7 +328,7 @@ enum FieldKind {
     /// `#[field(terminal)]` — a no-arg terminal setter that toggles
     /// the underlying `Option<bool>` to `Some(true)` and immediately
     /// returns the finalised `PyPat`.  Used by `.ordered()` on the
-    /// binary-op builders; matches the v1 `PyIntBinaryPat::ordered`
+    /// binary-op builders; matches the `PyIntBinaryPat::ordered`
     /// shape that early-finalises instead of chaining.  Finalise
     /// applies via `b.<py_name>()` (the underlying builder's method
     /// takes no args).
@@ -737,12 +737,12 @@ fn build_finalise_impl(
         match &f.kind {
             FieldKind::Primitive => {
                 // BTreeSet fields need `.iter().copied().collect()`
-                // so the v1 builder's `Vec<T>` API takes them by
-                // value.  We detect this purely from the *Python*
-                // method name: by convention every BTreeSet field
-                // is exposed as `*_any` and the v1 builder method
-                // matches that name.  Plain primitives forward by
-                // value.
+                // so the underlying builder's `Vec<T>` API takes
+                // them by value.  We detect this purely from the
+                // *Python* method name: by convention every BTreeSet
+                // field is exposed as `*_any` and the underlying
+                // builder method matches that name.  Plain primitives
+                // forward by value.
                 if is_btreeset(&f.inner_ty) {
                     let inner_t = btreeset_inner(&f.inner_ty);
                     quote! {
@@ -840,9 +840,9 @@ fn build_finalise_impl(
             /// Build the underlying [`pattern::Pat`] from the
             /// accumulated builder state.  Locks the inner `Mutex`
             /// once; recovers from a poisoned lock via
-            /// `into_inner()` (parity with the v1 hand-written
-            /// reference's `intern_table` recovery — keeps the type
-            /// usable even after a future panicking method is added).
+            /// `into_inner()` (parity with the hand-written reference's
+            /// `intern_table` recovery — keeps the type usable even
+            /// after a future panicking method is added).
             pub(crate) fn finalise(&self) -> ::strider_analyze::pattern::Pat {
                 let guard = self
                     .inner
@@ -924,11 +924,11 @@ fn build_pymethods_impl(
     let node_phrase = &attrs.node_phrase;
 
     // Build the capture-method docstring with the node-phrase
-    // substituted in.  Mirrors the V2 reference's verbose form so
-    // the macro-generated `.pyi` matches byte-for-byte when
+    // substituted in.  Mirrors the reference's verbose form so the
+    // macro-generated `.pyi` matches byte-for-byte when
     // `node_phrase = "stack-store node"`.
     let capture_doc_line1 = format!(" Capture the matched {node_phrase} under the given");
-    let capture_doc_line2 = " [`Capture`].  Mirrors the v1 `pat_builder_finalise!`-emitted";
+    let capture_doc_line2 = " [`Capture`].  Mirrors the `pat_builder_finalise!`-emitted";
     let capture_doc_line3 = " `.capture(c)`.";
 
     let field_methods = fields.iter().map(|f| emit_field_method(rust_name, f));
@@ -945,7 +945,7 @@ fn build_pymethods_impl(
     //   NOT `#[new]`-annotated, so the type isn't Python-constructable
     //   without going through the wrapper pyfunction.  Required
     //   fields are stored explicitly; every optional field starts as
-    //   `None`.  Matches the v1 hand-written `PyIntBinaryPat` shape.
+    //   `None`.  Matches the hand-written `PyIntBinaryPat` shape.
     let (constructor, ctor_is_pyo3) = if attrs.required_args.is_empty() {
         let ctor = quote! {
             /// Construct an empty builder.  All fields default to
@@ -1004,7 +1004,7 @@ fn build_pymethods_impl(
     // mode), it lives in a separate `impl` block so it's not picked
     // up by `#[pymethods]`.  `#[gen_stub_pymethods]` only walks
     // method signatures it owns; emitting `new` outside the pymethods
-    // block keeps it out of the generated `.pyi`, matching the v1
+    // block keeps it out of the generated `.pyi`, matching the
     // hand-written `IntBinaryPat` surface that has no `__new__`.
     let constructor_outer = if ctor_is_pyo3 {
         quote! {}
@@ -1218,7 +1218,7 @@ fn emit_field_method(_rust_name: &Ident, field: &Field) -> TokenStream2 {
         FieldKind::TerminalBool => {
             // No-arg terminal setter: toggle the inner Option<bool>
             // to `Some(true)` and immediately finalise into a PyPat.
-            // Mirrors the v1 hand-written `PyIntBinaryPat::ordered`
+            // Mirrors the hand-written `PyIntBinaryPat::ordered`
             // shape that doesn't chain (no further builder methods are
             // available after `.ordered()` because the return type is
             // `PyPat`, not `PyRef<Self>`).

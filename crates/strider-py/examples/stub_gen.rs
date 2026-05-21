@@ -1,5 +1,4 @@
-//! Phase 4 Task 4.0 — `.pyi` generator for the V2 reference pattern
-//! type.
+//! `.pyi` generator for the macro-emitted reference pattern types.
 //!
 //! Run with:
 //!
@@ -17,9 +16,9 @@
 //! Output goes to `crates/strider-py/strider/_generated/`, which is
 //! gitignored.  The hand-written `strider/pattern.pyi` ships with the
 //! wheel; the generated `.pyi` is the **test oracle** consumed by
-//! `tests/python/test_reference_pyi.py` (mypy --strict).  Task 4.2
-//! will swap the hand-written stub for the generated one once the
-//! macro covers every pattern type.
+//! `tests/python/test_reference_pyi.py` (mypy --strict).  A future
+//! iteration will swap the hand-written stub for the generated one
+//! once the macro covers every pattern type.
 //!
 //! ## Why an `[example]` and not a `[bin]`
 //!
@@ -36,10 +35,10 @@ use std::path::PathBuf;
 
 use pyo3_stub_gen::Result;
 
-/// Subdirectory under `python-source` that holds the generated stubs
-/// for Phase 4.  Kept separate from the hand-written `pattern.pyi`
-/// (which ships with the wheel) so re-running `stub_gen` is a pure
-/// dev tool — no risk of overwriting the v1 ABI surface.
+/// Subdirectory under `python-source` that holds the generated stubs.
+/// Kept separate from the hand-written `pattern.pyi` (which ships with
+/// the wheel) so re-running `stub_gen` is a pure dev tool — no risk
+/// of overwriting the shipped ABI surface.
 const OUT_DIR: &str = "strider/_generated";
 
 fn main() -> Result<()> {
@@ -74,7 +73,7 @@ fn main() -> Result<()> {
         println!("wrote {}", dest.display());
     }
     println!(
-        "Phase 4 Task 4.0 reference stubs generated under {}",
+        "Reference stubs generated under {}",
         out_root.display(),
     );
     Ok(())

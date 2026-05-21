@@ -28,14 +28,13 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // Funnel: every IR node born from this pcode insn picks up the
         // parent machine-instruction address in its asm-fingerprint
         // side-table.  The `set_lift_addr` / `clear_lift_addr` pair
-        // lives in `strider_lift::region_driver::RegionDriver` (Phase 2
-        // Task 2.5 of the v2 rewrite) so the funnel can be reused from
-        // the per-terminator handler in `pipeline.rs` and any future
-        // Salsa-side lift driver.  We can't use a closure-passing API
-        // directly because `process_insn_inner` also borrows `self.cfg`
-        // / `self.strider`, which sits next to `self.builder` inside
-        // `PerRegionDriver` — splitting into open-call brackets sidesteps the
-        // borrow.
+        // lives in `strider_lift::region_driver::RegionDriver` so the
+        // funnel can be reused from the per-terminator handler in
+        // `pipeline.rs` and any future incremental lift driver.  We
+        // can't use a closure-passing API directly because
+        // `process_insn_inner` also borrows `self.cfg` / `self.strider`,
+        // which sits next to `self.builder` inside `PerRegionDriver` —
+        // splitting into open-call brackets sidesteps the borrow.
         let machine_addr = addr.machine_addr_u64();
         RegionDriver::set_lift_addr(&mut self.builder, Some(machine_addr));
         let res = self.process_insn_inner(region_id, insn, region_lookup);
