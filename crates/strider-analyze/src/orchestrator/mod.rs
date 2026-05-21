@@ -39,8 +39,6 @@
 //! edit.  Inside-the-function `Single(K)` requires a CFG rebuild
 //! because new code becomes reachable.
 
-pub mod cache;
-
 use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{anyhow, bail, Result};
