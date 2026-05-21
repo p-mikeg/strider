@@ -24,7 +24,7 @@
 //!
 //! `examples/foo.rs` is built only on demand (`cargo run --example
 //! foo`), so adding this target doesn't change the default
-//! `cargo build` / `cargo test` flow that v1_baseline depends on.
+//! `cargo build` / `cargo test` flow the snapshot baselines depend on.
 //! Adding a `[bin]` target would have unconditional implications
 //! (manifest dependency reachability, dead-code lints, default
 //! `cargo build --workspace` triggering binary linkage) we don't

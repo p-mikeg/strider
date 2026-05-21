@@ -1,9 +1,8 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! Pins the exact DOT string `DotEmitter` produces for representative inputs.
-//! These tests double as regression coverage for Tasks 5–7 of the dot-crate
-//! review (digraph-name quoting, push_str-vs-format!, and the `extra` attr
-//! interface contract).
+//! Pins the exact DOT string `DotEmitter` produces for representative inputs:
+//! digraph-name quoting, push_str-vs-format! output, and the `extra` attr
+//! interface contract.
 
 use dot::{DotEmitter, DotStyle};
 

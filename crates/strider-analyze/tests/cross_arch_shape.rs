@@ -37,9 +37,9 @@ use std::collections::BTreeMap;
 
 /// All architectures with a fixture directory under `fixtures/out/`.
 /// Kept in sync with the `Arch` enum + the `per_arch_test!` macro.
-/// Mirrors the list in `v1_baseline.rs` — keeping a copy here (rather than
-/// promoting to `common/`) is intentional: this test may want to scope to
-/// a smaller arch set without touching the baseline.
+/// Mirrors the list in the production baseline — keeping a local copy
+/// (rather than promoting to `common/`) is intentional: this test may
+/// want to scope to a smaller arch set without touching that baseline.
 const ALL_ARCHES: &[Arch] = &[
     Arch::X86,
     Arch::X86Kernel,

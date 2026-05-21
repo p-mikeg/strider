@@ -7,10 +7,9 @@
 //! change to the lifter, the optimizer, or the IR layout that moves these
 //! snapshots must go through explicit review.
 //!
-//! Companion to `v1_baseline.rs` and `v2_baseline.rs`.  All three now point
-//! at the imperative pipeline; the multi-file structure is preserved so
-//! that a future refactor must reproduce the same IR shape under each
-//! entry point.
+//! This is the production IR-shape contract.  Any later refactor of the
+//! lifter or optimizer must reproduce these snapshots; regenerate with
+//! `cargo insta review` only after deliberate review.
 //!
 //! Lift failures (panics from `common::analyze`) are themselves part of
 //! the contract — they are captured as `LIFT_FAILED:<message>` snapshots
