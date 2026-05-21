@@ -39,8 +39,6 @@ mod graph;
 mod matcher;
 mod opt;
 mod pattern;
-mod pattern_macro_v2;
-mod pattern_reference;
 mod reader;
 mod run;
 mod sleigh;

@@ -102,11 +102,11 @@ impl PySleigh {
 /// Strider exposes the four standard Sleigh spaces; binaries that
 /// reference an exotic custom space can construct one via the
 /// `VnSpace.from_id(u32)` escape hatch.
-// Phase 4 Task 4.0 — `#[gen_stub_pyclass]` derives `PyStubType` for
-// `PyVnSpace` so the V2 reference `StackStorePatV2.space(s: PyVnSpace)`
-// signature compiles under `#[gen_stub_pymethods]`.  Existing
-// `#[pymethods]` block below is unchanged — the hand-written
-// `pattern.pyi` already documents the surface.
+// `#[gen_stub_pyclass]` derives `PyStubType` for `PyVnSpace` so the
+// macro-emitted `.space(s: PyVnSpace)` signatures compile under
+// `#[gen_stub_pymethods]`.  The existing `#[pymethods]` block below is
+// unchanged — the hand-written `pattern.pyi` already documents the
+// surface.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "VnSpace", module = "strider", frozen)]
 #[derive(Clone, Copy)]
