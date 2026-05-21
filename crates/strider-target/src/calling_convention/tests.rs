@@ -492,23 +492,9 @@ fn build_returns_error_even_when_some_names_are_valid() {
     assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
 }
 
-#[test]
-#[ignore = "diagnostic — uncomment locally to print MIPS register names"]
-fn dump_mips_register_names() {
-    let arch = crate::arch::SleighArch::mipsle32();
-    let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-        .unwrap().regs().unwrap();
-    let candidates = ["a0", "a1", "a2", "a3", "v0", "v1", "sp", "ra",
-                      "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
-                      "s8", "fp", "gp",
-                      "A0", "V0", "SP", "RA", "S0", "FP", "GP",
-                      "r4", "r16", "r28", "r29", "r30", "r31"];
-    for n in candidates {
-        let v = regs.name_to_vn(n);
-        println!("name {n:?} -> {v:?}");
-    }
-}
+// To inspect Sleigh register names for an arch during development, build a
+// `rsleigh::Sleigh` from the arch's `.sla` + `.pspec`, call `regs()`, and probe
+// `name_to_vn(...)` for each candidate name.
 
 /// One row per calling-convention preset, recording the expected
 /// link-register Sleigh name (or `None` for stack-push ISAs that hold
@@ -730,38 +716,6 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         msg.contains("unknown sleigh register name") && msg.contains("NOT_A_SP"),
         "expected UnknownRegName(\"NOT_A_SP\"), got {err}"
     );
-}
-#[test]
-#[ignore = "probe float registers to verify names across architectures — uncomment locally to print results"]
-fn probe_float_regs() {
-fn try_resolve(arch: crate::arch::SleighArch, names: &[&str]) {
-    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe).unwrap().regs().unwrap();
-    for n in names {
-        let v = regs.name_to_vn(n);
-        println!("  {n:?} -> {v:?}");
-    }
-}
-println!("=== aarch64 ===");
-try_resolve(crate::arch::SleighArch::aarch64(), &[
-    "q0", "q1", "v0", "v1", "d0", "d1", "s0", "s1", "Q0", "V0", "D0", "S0",
-]);
-println!("=== x86_64 ===");
-try_resolve(crate::arch::SleighArch::x86_64(), &[
-    "XMM0", "XMM1", "xmm0", "xmm1", "ST0", "ST1", "st0",
-]);
-println!("=== arm ===");
-try_resolve(crate::arch::SleighArch::arm(), &[
-    "s0", "s1", "d0", "d1", "S0", "D0",
-]);
-println!("=== x86 ===");
-try_resolve(crate::arch::SleighArch::x86(), &[
-    "XMM0", "ST0", "st0",
-]);
-println!("=== mips32le ===");
-try_resolve(crate::arch::SleighArch::mipsle32(), &[
-    "f0", "f1", "f2", "f3", "f12", "F0", "F12",
-]);
 }
 
 // ── no_memory_clobber field ──────────────────────────────────────────────────
