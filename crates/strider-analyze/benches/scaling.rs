@@ -49,13 +49,13 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
     let path = binary_path(c.arch_name, c.case);
     let obj = reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = match c.arch_name {
-        "x86" => strider::SleighArch::x86(),
-        "x64" => strider::SleighArch::x86_64(),
+        "x86" => strider_analyze::SleighArch::x86(),
+        "x64" => strider_analyze::SleighArch::x86_64(),
         _ => panic!("unsupported arch {}", c.arch_name),
     };
     let cc = match c.arch_name {
-        "x86" => strider::CallingConvention::x86_cdecl(),
-        "x64" => strider::CallingConvention::x86_64_systemv(),
+        "x86" => strider_analyze::CallingConvention::x86_cdecl(),
+        "x64" => strider_analyze::CallingConvention::x86_64_systemv(),
         // The earlier `match c.arch_name` guards this — we only
         // reach this point on supported arches.  Use `panic!`
         // (the bench's `clippy::panic` is allow-listed) rather
@@ -67,7 +67,7 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
         .expect("probe sleigh")
         .regs()
         .expect("probe regs");
-    let ana = strider::Strider::new(sleigh_arch, regs, cc).expect("Strider::new");
+    let ana = strider_analyze::Strider::new(sleigh_arch, regs, cc).expect("Strider::new");
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");

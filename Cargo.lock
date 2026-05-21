@@ -1310,7 +1310,6 @@ name = "strider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "criterion",
  "dot",
  "expect-test",
  "insta",
@@ -1334,6 +1333,7 @@ dependencies = [
  "anyhow",
  "bitflags",
  "cranelift-entity",
+ "criterion",
  "dot",
  "entity-utils",
  "ethnum",

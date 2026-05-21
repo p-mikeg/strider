@@ -25,10 +25,5 @@ expect-test.workspace = true
 paste = "1"
 dot.workspace = true
 strider-ir-test-utils = { workspace = true }
-criterion = { version = "0.7", features = ["html_reports"] }
 insta = { version = "1.40", features = ["yaml"] }
 serde = { version = "1", features = ["derive"] }
-
-[[bench]]
-name = "scaling"
-harness = false

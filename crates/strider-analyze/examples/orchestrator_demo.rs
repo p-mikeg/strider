@@ -18,12 +18,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mem_reader = reader::ElfFileMemReader::from_object(&obj)?;
     let rom = reader::ElfFileMemReader::from_object(&obj)?;
 
-    let arch = strider::SleighArch::x86();
+    let arch = strider_analyze::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
-    let strider = strider::Strider::new(
+    let strider = strider_analyze::Strider::new(
         arch,
         sleigh.regs()?,
-        strider::CallingConvention::x86_cdecl(),
+        strider_analyze::CallingConvention::x86_cdecl(),
     )?;
 
     let cfg_options = strider_lift::cfg::OptionsBuilder::new()

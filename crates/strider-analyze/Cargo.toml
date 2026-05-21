@@ -33,9 +33,14 @@ paste = "1"
 dot.workspace = true
 insta = { version = "1.40", features = ["yaml"] }
 serde = { version = "1", features = ["derive"] }
+criterion = { version = "0.7", features = ["html_reports"] }
 # Property-based testing for value-only IR invariants
 # under the optimizer (see tests/proptest_optimizer.rs).
 proptest = "1"
+
+[[bench]]
+name = "scaling"
+harness = false
 
 [lints]
 workspace = true
