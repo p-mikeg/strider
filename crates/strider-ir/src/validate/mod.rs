@@ -24,16 +24,13 @@ use crate::walk::{NodeIdSet, walk_graph};
 
 mod graph_invariants;
 mod local_typing;
+mod pass;
 mod use_list_consistency;
 #[cfg(test)]
 mod tests;
 
-use graph_invariants::{
-    check_graph_invariants_asm_fingerprints, check_graph_invariants_control_state,
-    check_graph_invariants_function_arg_uniqueness, check_graph_invariants_phis,
-    check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
-};
 use local_typing::check_local_typing;
+use pass::GRAPH_INVARIANT_PASSES;
 use use_list_consistency::check_use_list_consistency;
 
 /// Validates the structural invariants of `graph` starting from `entry`.
@@ -74,17 +71,9 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 
     check_use_list_consistency(graph, &reachable, &mut errs);
 
-    check_graph_invariants_uniqueness(graph, &mut errs);
-
-    check_graph_invariants_control_state(graph, &reachable, &mut errs);
-
-    check_graph_invariants_phis(graph, &reachable, &mut errs);
-
-    check_graph_invariants_function_arg_uniqueness(graph, &reachable, &mut errs);
-
-    check_graph_invariants_wide_consts(graph, &reachable, &mut errs);
-
-    check_graph_invariants_asm_fingerprints(graph, &reachable, &mut errs);
+    for pass in GRAPH_INVARIANT_PASSES {
+        pass.check(graph, &reachable, &mut errs);
+    }
 
     if errs.is_empty() {
         Ok(())
