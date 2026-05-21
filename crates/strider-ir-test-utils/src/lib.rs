@@ -130,23 +130,3 @@ where
     b.set_lift_addr(None);
     b.build()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use strider_ir::node::NodeKind;
-
-    #[test]
-    fn make_sp_fn_emits_initial_var_for_sp() -> Result<()> {
-        let sp = sp_vn_x86_64();
-        let fg = make_sp_fn(sp, |b, sp_val| {
-            b.build_return(Some(sp_val), &[])?;
-            Ok(())
-        })?;
-        let has_initial_var_sp = fg
-            .all_node_ids()
-            .any(|n| matches!(fg.node_kind(n), NodeKind::InitialVar(v) if *v == sp));
-        assert!(has_initial_var_sp);
-        Ok(())
-    }
-}

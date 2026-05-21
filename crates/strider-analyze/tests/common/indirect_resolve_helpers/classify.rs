@@ -862,7 +862,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, strider_ir::Value, rsleigh
         .expect("Strider::new");
     let lr_vn = strider
         .calling_convention()
-        .link_register_vn()
+        .link_register_vn
         .expect("AArch64 AAPCS has a link register");
 
     // Note: we deliberately omit `set_link_register` on the cfg

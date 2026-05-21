@@ -840,10 +840,23 @@ pub fn predicate(f: PyObject) -> PyPat {
     PyPat::from_pat(wrap_when(strider_analyze::pattern::any(), f))
 }
 
-// ── Binary integer ops ───────────────────────────────────────────────────
+// Two unified macros for the binop / unop / conv builder family.  Each
+// emits a `#[pyfunction]` that wraps the same-named constructor in
+// `strider_analyze::pattern`.  Pass `, into` when the underlying
+// constructor returns a typed `*BinaryOpPat` / `*UnaryOpPat` wrapper
+// that needs `.into()` to widen to `Pat`; omit it when the constructor
+// already returns `Pat`.
 
-macro_rules! int_binop {
+macro_rules! binary {
     ($name:ident) => {
+        #[pyfunction]
+        pub fn $name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
+            let lp = l.into_pat()?;
+            let rp = r.into_pat()?;
+            Ok(PyPat::from_pat(strider_analyze::pattern::$name(lp, rp)))
+        }
+    };
+    ($name:ident, into) => {
         #[pyfunction]
         pub fn $name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
             let lp = l.into_pat()?;
@@ -853,16 +866,35 @@ macro_rules! int_binop {
     };
 }
 
-int_binop!(add);
-int_binop!(sub);
-int_binop!(mul);
-int_binop!(div);
-int_binop!(sdiv);
-int_binop!(rem);
-int_binop!(srem);
-int_binop!(shl);
-int_binop!(shr);
-int_binop!(sshr);
+macro_rules! unary {
+    ($name:ident) => {
+        #[pyfunction]
+        pub fn $name(operand: PatLike<'_>) -> PyResult<PyPat> {
+            let op = operand.into_pat()?;
+            Ok(PyPat::from_pat(strider_analyze::pattern::$name(op)))
+        }
+    };
+    ($name:ident, into) => {
+        #[pyfunction]
+        pub fn $name(operand: PatLike<'_>) -> PyResult<PyPat> {
+            let op = operand.into_pat()?;
+            Ok(PyPat::from_pat(strider_analyze::pattern::$name(op).into()))
+        }
+    };
+}
+
+// ── Binary integer ops ───────────────────────────────────────────────────
+
+binary!(add, into);
+binary!(sub, into);
+binary!(mul, into);
+binary!(div, into);
+binary!(sdiv, into);
+binary!(rem, into);
+binary!(srem, into);
+binary!(shl, into);
+binary!(shr, into);
+binary!(sshr, into);
 // `and` / `or` are Python keywords; expose as `and_` / `or_`.
 #[pyfunction(name = "and_")]
 pub fn and_(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
@@ -876,15 +908,15 @@ pub fn or_(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let rp = r.into_pat()?;
     Ok(PyPat::from_pat(strider_analyze::pattern::or(lp, rp).into()))
 }
-int_binop!(xor);
-int_binop!(int_eq);
-int_binop!(int_lt);
-int_binop!(int_le);
-int_binop!(int_slt);
-int_binop!(int_sle);
-int_binop!(int_carry);
-int_binop!(int_scarry);
-int_binop!(int_sborrow);
+binary!(xor, into);
+binary!(int_eq, into);
+binary!(int_lt, into);
+binary!(int_le, into);
+binary!(int_slt, into);
+binary!(int_sle, into);
+binary!(int_carry, into);
+binary!(int_scarry, into);
+binary!(int_sborrow, into);
 
 /// Match a specific `IntCmpOp` variant.  Op names: "Equal",
 /// "Less" / "lt", "LessEqual" / "le", "Sless" / "slt",
@@ -924,20 +956,10 @@ fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
 
 // ── Integer unary ops ────────────────────────────────────────────────────
 
-macro_rules! int_unop {
-    ($name:ident) => {
-        #[pyfunction]
-        pub fn $name(operand: PatLike<'_>) -> PyResult<PyPat> {
-            let op = operand.into_pat()?;
-            Ok(PyPat::from_pat(strider_analyze::pattern::$name(op)))
-        }
-    };
-}
-
 // `pattern.neg(x)` matches two's-complement negation (`-x`).
-int_unop!(neg);
+unary!(neg);
 // `pattern.bit_not(x)` matches bitwise complement (`~x`).
-int_unop!(bit_not);
+unary!(bit_not);
 // `pattern.not_(x)` is the keyword-collision-renamed alias for
 // `bit_not` — the Rust pattern crate keeps `not` since it's not a Rust
 // keyword, but `not` is a Python keyword so the Python surface uses
@@ -950,20 +972,9 @@ pub fn not_(operand: PatLike<'_>) -> PyResult<PyPat> {
 
 // ── Bool binary ops ──────────────────────────────────────────────────────
 
-macro_rules! bool_binop {
-    ($name:ident) => {
-        #[pyfunction]
-        pub fn $name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
-            let lp = l.into_pat()?;
-            let rp = r.into_pat()?;
-            Ok(PyPat::from_pat(strider_analyze::pattern::$name(lp, rp).into()))
-        }
-    };
-}
-
-bool_binop!(bool_and);
-bool_binop!(bool_or);
-bool_binop!(bool_xor);
+binary!(bool_and, into);
+binary!(bool_or, into);
+binary!(bool_xor, into);
 
 // ── Bool unary ops ───────────────────────────────────────────────────────
 

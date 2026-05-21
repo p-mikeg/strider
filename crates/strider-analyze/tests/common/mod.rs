@@ -212,7 +212,7 @@ fn lift_for_pipeline(
     let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
         .set_read_only_memory(rom_for_cfg);
-    if let Some(lr) = ana.calling_convention().link_register_vn() {
+    if let Some(lr) = ana.calling_convention().link_register_vn {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
@@ -364,7 +364,7 @@ pub fn count_loops(g: &strider_ir::BuiltFunctionGraph) -> usize {
                 if !seen.insert(cur) {
                     continue;
                 }
-                for out in g.node_outputs(cur) {
+                for &out in g.node_outputs(cur) {
                     if !g.output_kind(out).is_control() {
                         continue;
                     }
