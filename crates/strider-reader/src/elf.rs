@@ -5,21 +5,17 @@
 //! region-lookup machinery (`MemRegion`, `MemRegionsLookupTable`) lives in
 //! [`crate`] so other backends (raw blobs, PE, Mach-O, …) can reuse it.
 //!
-//! # Converter API
+//! # Region collectors
 //!
-//! Single-item converters (take one segment/section, return one region):
-//! - [`elf_segment_to_mem_region`]
-//! - [`elf_section_to_mem_region`]
-//!
-//! Batch converters (iterate all segments/sections, return matching regions):
-//! - [`elf_segments_to_mem_regions`] (filter by any predicate)
-//! - [`elf_sections_to_mem_regions`] (filter by any predicate)
-//!
-//! Filter presets (batch converters wired to common predicates):
-//! - [`elf_get_executable_segments_as_mem_regions`] — `PF_X`
-//! - [`elf_get_executable_sections_as_mem_regions`] — `SHF_EXECINSTR`
+//! Section-driven presets that walk an [`object::File`] and return the
+//! matching set of [`MemRegion`]s:
 //! - [`elf_get_code_and_readonly_sections_as_mem_regions`] — `SHF_ALLOC &&
 //!   (SHF_EXECINSTR || !SHF_WRITE)`; the preset used by [`ElfFileMemReader`].
+//! - [`elf_get_allocatable_file_backed_sections_as_mem_regions`] — every
+//!   `SHF_ALLOC` section with file-backed bytes; the wider preset used by
+//!   [`apply_elf_relocations_autoload`] so dynamic relocs targeting
+//!   writable sections (`.got.plt`, `.data.rel.ro`, …) have something to
+//!   patch.
 //!
 //! Top-level helpers:
 //! - [`ElfFileMemReader`] — owns its regions; implements both
@@ -29,7 +25,7 @@
 
 use anyhow::Context as _;
 use object::{
-    Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable,
+    Object, ObjectSection, ObjectSymbol, ObjectSymbolTable,
     RelocationFlags, RelocationKind, RelocationTarget,
 };
 
@@ -37,85 +33,18 @@ use crate::{MemRegion, MemRegionsLookupTable, Result};
 
 // ── ELF → MemRegion converters ────────────────────────────────────────────────
 
-/// Converts a single ELF segment into a [`MemRegion`].
+/// Walks every section of `obj` and returns a [`MemRegion`] for each one
+/// that matches `filter` and has file-backed data.  Centralises the
+/// `section.data() + MemRegion::new` plumbing the two surviving presets
+/// share so neither has to repeat the empty-data skip + overflow handling.
 ///
-/// # Errors
-///
-/// Returns an error when the segment's file-backed data cannot be
-/// read, or when `segment.address() + data.len()` would exceed
-/// `u64::MAX`.
-pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Result<MemRegion> {
-    let data = segment.data().context("failed to parse ELF")?;
-    MemRegion::new(segment.address(), data.to_vec())
-}
-
-/// Converts a single ELF section into a [`MemRegion`].
-///
-/// # Errors
-///
-/// Returns an error when the section's file-backed data cannot be
-/// read, or when `section.address() + data.len()` would exceed
-/// `u64::MAX`.
-pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Result<MemRegion> {
-    let data = section.data().context("failed to parse ELF")?;
-    MemRegion::new(section.address(), data.to_vec())
-}
-
-/// Collects ELF segments into [`MemRegion`]s, keeping only those for which
-/// `filter` returns `true`.
-///
-/// Segments with empty data (e.g. `PT_LOAD` with `p_filesz == 0`, where
-/// `data()` returns `Ok(&[])`) are skipped. Preserves iteration order;
-/// duplicate `start_addr`s are resolved later by [`MemRegionsLookupTable`]
-/// under its "last one inserted wins" rule.
-///
-/// # Errors
-///
-/// Returns an error when a segment accepted by `filter` has
-/// file-backed data that cannot be read (segments rejected by
-/// `filter` are never read, so malformed rejected segments do not
-/// surface), or when an accepted segment's `address() + data.len()`
-/// would exceed `u64::MAX`.
-///
-/// Accepted empty-data segments (e.g. `p_filesz == 0`) are skipped rather
-/// than reported.
-pub fn elf_segments_to_mem_regions(
-    obj: &object::File<'_>,
-    filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
-) -> Result<Vec<MemRegion>> {
-    let mut out = Vec::new();
-    for seg in obj.segments() {
-        if !filter(&seg) {
-            continue;
-        }
-        let data = seg.data().context("failed to parse ELF")?;
-        if data.is_empty() {
-            continue;
-        }
-        out.push(MemRegion::new(seg.address(), data.to_vec())?);
-    }
-    Ok(out)
-}
-
-/// Collects ELF sections into [`MemRegion`]s, keeping only those for which
-/// `filter` returns `true`.
-///
-/// Sections whose `data()` returns empty bytes (e.g. `SHT_NOBITS` like
-/// `.bss`) are skipped. Preserves iteration order; duplicate `start_addr`s
-/// are resolved later by [`MemRegionsLookupTable`] under its "last one
-/// inserted wins" rule.
-///
-/// # Errors
-///
-/// Returns an error when a section accepted by `filter` has
-/// file-backed data that cannot be read (sections rejected by
-/// `filter` are never read, so malformed rejected sections do not
-/// surface), or when an accepted section's `address() + data.len()`
-/// would exceed `u64::MAX`.
-///
-/// Accepted empty-data sections (e.g. `SHT_NOBITS`-equivalents) are
-/// skipped rather than reported.
-pub fn elf_sections_to_mem_regions(
+/// `filter`-rejected sections are never read, so a malformed rejected
+/// section cannot spuriously surface as a parse error.  Accepted sections
+/// whose `data()` returns empty bytes (e.g. `SHT_NOBITS` like `.bss`) are
+/// silently skipped — there's nothing to load.  Iteration order is
+/// preserved; duplicate `start_addr`s are resolved later by
+/// [`MemRegionsLookupTable`] under its "last insert wins" rule.
+fn collect_sections_as_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Section<'_, '_>) -> bool,
 ) -> Result<Vec<MemRegion>> {
@@ -133,24 +62,6 @@ pub fn elf_sections_to_mem_regions(
     Ok(out)
 }
 
-// ── Executable-only helpers ───────────────────────────────────────────────────
-
-fn segment_is_executable(seg: &object::read::Segment<'_, '_>) -> bool {
-    matches!(
-        seg.flags(),
-        object::read::SegmentFlags::Elf { p_flags }
-            if p_flags & object::elf::PF_X != 0
-    )
-}
-
-fn section_is_executable(sec: &object::read::Section<'_, '_>) -> bool {
-    matches!(
-        sec.flags(),
-        object::read::SectionFlags::Elf { sh_flags }
-            if sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0
-    )
-}
-
 fn section_is_code_or_readonly(sec: &object::read::Section<'_, '_>) -> bool {
     let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
         return false;
@@ -159,34 +70,6 @@ fn section_is_code_or_readonly(sec: &object::read::Section<'_, '_>) -> bool {
     let is_exec     = sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0;
     let is_writable = sh_flags & u64::from(object::elf::SHF_WRITE)     != 0;
     is_alloc && (is_exec || !is_writable)
-}
-
-/// Returns all executable ELF segments (i.e. those with the `PF_X` flag set)
-/// as [`MemRegion`]s.
-///
-/// # Errors
-///
-/// Propagates any error from the underlying segment iteration; see
-/// [`elf_segments_to_mem_regions`] for the full error set
-/// (`Object` + `RegionOverflow`).
-pub fn elf_get_executable_segments_as_mem_regions(
-    obj: &object::File<'_>,
-) -> Result<Vec<MemRegion>> {
-    elf_segments_to_mem_regions(obj, segment_is_executable)
-}
-
-/// Returns all executable ELF sections (i.e. those with `SHF_EXECINSTR` set)
-/// as [`MemRegion`]s.
-///
-/// # Errors
-///
-/// Propagates any error from the underlying section iteration; see
-/// [`elf_sections_to_mem_regions`] for the full error set
-/// (`Object` + `RegionOverflow`).
-pub fn elf_get_executable_sections_as_mem_regions(
-    obj: &object::File<'_>,
-) -> Result<Vec<MemRegion>> {
-    elf_sections_to_mem_regions(obj, section_is_executable)
 }
 
 /// Returns all sections an executed instruction or a compile-time-constant
@@ -201,13 +84,13 @@ pub fn elf_get_executable_sections_as_mem_regions(
 ///
 /// # Errors
 ///
-/// Propagates any error from the underlying section iteration; see
-/// [`elf_sections_to_mem_regions`] for the full error set
-/// (`Object` + `RegionOverflow`).
+/// Returns an `object::Error` if an accepted section's `data()` can't be
+/// read, or a `RegionOverflow` if `address() + data.len()` would exceed
+/// `u64::MAX`.
 pub fn elf_get_code_and_readonly_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
-    elf_sections_to_mem_regions(obj, section_is_code_or_readonly)
+    collect_sections_as_mem_regions(obj, section_is_code_or_readonly)
 }
 
 /// Returns every allocatable file-backed section as a [`MemRegion`].
@@ -230,11 +113,13 @@ pub fn elf_get_code_and_readonly_sections_as_mem_regions(
 ///
 /// # Errors
 ///
-/// Propagates any error from [`elf_sections_to_mem_regions`].
+/// Returns an `object::Error` if an accepted section's `data()` can't be
+/// read, or a `RegionOverflow` if `address() + data.len()` would exceed
+/// `u64::MAX`.
 pub fn elf_get_allocatable_file_backed_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
-    elf_sections_to_mem_regions(obj, |sec| {
+    collect_sections_as_mem_regions(obj, |sec| {
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
             return false;
         };
@@ -679,7 +564,7 @@ pub fn apply_elf_relocations(
 /// matters when an extender materialises a region we then fail to
 /// patch.  Callers needing strict atomicity should re-load the binary
 /// from disk on `Err`.
-pub fn apply_elf_relocations_with_extender<F>(
+pub(crate) fn apply_elf_relocations_with_extender<F>(
     regions: &mut Vec<MemRegion>,
     obj: &object::File<'_>,
     mut extender: F,
