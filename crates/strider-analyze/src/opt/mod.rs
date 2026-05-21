@@ -66,7 +66,6 @@ pub(crate) use known_bits::KnownBitsMap;
 pub use load_readonly::LoadReadOnly;
 pub use strider_ir::ReadOnlyMemory;
 pub use pipeline::{OptimizationResult, OptimizerPipeline, OptimizerRaw};
-pub(crate) use pipeline::Optimizer;
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};
