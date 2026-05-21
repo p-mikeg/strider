@@ -813,12 +813,18 @@ fn build_anchor_calling_context(
     // the shared [`override_clobber_vars`] helper, which is also reused
     // by `apply_in_place_edit` after splicing); without, use the
     // precomputed `BuiltFunctionGraph::call_clobbered` shape.
+    //
+    // The two branches type-unify via a `SmallVec<[&Vn; 16]>` — stack
+    // allocation covers the common case (typical clobber lists are well
+    // under 16 entries) and the value only spills to heap on outliers,
+    // sparing a `Box<dyn Iterator>` allocation per call on a hot path
+    // of the indirect-branch resolution loop.
     let override_clobbers: Vec<rsleigh::Vn>;
-    let clobber_iter: Box<dyn Iterator<Item = &rsleigh::Vn>> = if let Some(cc) = override_cc {
+    let clobber_iter: smallvec::SmallVec<[&rsleigh::Vn; 16]> = if let Some(cc) = override_cc {
         override_clobbers = override_clobber_vars(graph, cc, strider).collect();
-        Box::new(override_clobbers.iter())
+        override_clobbers.iter().collect()
     } else {
-        Box::new(graph.call_clobbered_regs().iter())
+        graph.call_clobbered_regs().iter().collect()
     };
     for vn in clobber_iter {
         // surface unsupported clobber-reg sizes as Err rather than
