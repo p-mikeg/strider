@@ -81,8 +81,10 @@ fn discover_cases() -> Vec<String> {
 
 /// Iterate the ELF symbol table at `path` and return every named global
 /// text symbol (i.e. function entry points exposed in the symbol table).
-/// Sorted for determinism.  Symbols starting with `_` (compiler runtime
-/// helpers) are kept — the lift contract applies to them too.
+/// Sorted for determinism.  Symbols whose name starts with `__` are
+/// skipped: those are compiler-runtime helpers (e.g. `__aeabi_ldiv0`,
+/// `__divsi3`, `__udivsi3`, `__popcountdi2`) pulled in by libgcc /
+/// compiler_builtins, not the user code under test.
 fn exported_function_names(path: &Path) -> Vec<String> {
     let bytes = std::fs::read(path)
         .unwrap_or_else(|e| panic!("read({path:?}) failed: {e:?}"));
@@ -103,6 +105,13 @@ fn exported_function_names(path: &Path) -> Vec<String> {
         }
         let Ok(name) = sym.name() else { continue };
         if name.is_empty() {
+            continue;
+        }
+        // Skip compiler-runtime helpers — these aren't user code under
+        // test.  `__`-prefixed names are the libgcc / compiler_builtins
+        // convention (e.g. `__aeabi_ldiv0`, `__divsi3`, `__udivsi3`,
+        // `__popcountdi2`).
+        if name.starts_with("__") {
             continue;
         }
         out.insert(name.to_string());
