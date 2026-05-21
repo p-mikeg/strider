@@ -157,9 +157,15 @@ pub use pat::{IntoPat, Pat};
 pub use var::Capture;
 
 // ── Builder structs ──────────────────────────────────────────────────────────
+//
+// Re-exported as `pub(crate)` for parity with the rest of the module surface;
+// nothing in the crate actually names them via this path (call sites use the
+// free functions like `load()` / `phi()`), so the imports are inert.  Kept
+// available for in-crate consumers that may want to spell the type explicitly.
 
 #[rustfmt::skip]
-pub use pat::{
+#[allow(unused_imports)]
+pub(crate) use pat::{
     BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat,
     IfPat, IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StackStorePat,
     StackStorePhiPat, StorePat, ValuePhiPat,
