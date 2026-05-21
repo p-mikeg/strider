@@ -1,4 +1,5 @@
-//! Integration tests for [`strider_analyze::indirect_resolve::inplace`].
+//! Integration tests for
+//! [`strider_analyze::opt::indirect_branch_resolve::inplace`].
 //!
 //! Drives the in-place editors against full strider lifts (not the
 //! unit-test scaffold in `inplace.rs::tests`).  Asserts that the
@@ -15,7 +16,7 @@ mod common;
 use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
 use strider_ir::node::{NodeId, NodeKind};
-use strider_analyze::indirect_resolve::{apply_link_register, apply_tail_call};
+use strider_analyze::opt::indirect_branch_resolve::{apply_link_register, apply_tail_call};
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.

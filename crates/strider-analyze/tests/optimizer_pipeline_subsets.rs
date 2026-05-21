@@ -132,15 +132,15 @@ fn ir_level_classification_robust_to_destructive_subset() {
     // same `Option<ResolvedTargets>` — the spec's "the IR-level orchestrator resolver's
     // classification is robust to whether the destructive subset
     // has run" guarantee.
-    use strider_analyze::indirect_resolve::classify_anchor;
+    use strider_analyze::opt::indirect_branch_resolve::classify_anchor;
 
     let (graph_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
     let (graph_full, anchor_full) = build_initial_var_target_scenario_x86_64();
 
     // x86_64: link_register_vn is None.  Classifier returns None
     // for `InitialVar(rax)` (no LR match, no IntConst, no ValuePhi).
-    let cls_stable = classify_anchor(&graph_stable, anchor_stable, None).expect("classify");
-    let cls_full = classify_anchor(&graph_full, anchor_full, None).expect("classify");
+    let cls_stable = classify_anchor((&graph_stable).into(), anchor_stable, None).expect("classify");
+    let cls_full = classify_anchor((&graph_full).into(), anchor_full, None).expect("classify");
     assert_eq!(
         cls_stable, cls_full,
         "IR-level indirect-branch resolver classification must be invariant to destructive subset",

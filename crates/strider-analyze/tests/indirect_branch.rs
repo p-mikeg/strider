@@ -85,7 +85,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
         .set_read_only_memory(rom_for_cfg);
-    if let Some(lr) = ana.calling_convention().link_register_vn() {
+    if let Some(lr) = ana.calling_convention().link_register_vn {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
@@ -129,8 +129,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     p.run(graph.graph.graph_mut(), entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
-    let lr_vn = ana.calling_convention().link_register_vn();
-    let sp_vn = Some(ana.calling_convention().stack_ptr_vn());
+    let lr_vn = ana.calling_convention().link_register_vn;
+    let sp_vn = Some(ana.calling_convention().stack_ptr_vn);
     let rom_for_classify: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
     );
@@ -165,15 +165,18 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             live_anchors.push(*anchor_output);
         }
         let mut any_resolved = false;
+        let view: strider_analyze::pattern::RewriteCtxView<'_> = (&graph.graph).into();
+        let known = strider_analyze::opt::analyze_known_bits(view)
+            .expect("analyze_known_bits");
         for live in &live_anchors {
-            let resolved = strider_analyze::indirect_resolve::classify_anchor_with_rom_and_sp(
-                &graph.graph,
+            let resolved = strider_analyze::opt::indirect_branch_resolve::classify_anchor_with_rom_and_sp(
+                view,
                 *live,
                 lr_vn,
                 Some(rom_for_classify.as_ref()),
                 sp_vn,
-            )
-            .expect("classify_anchor_with_rom_and_sp ok in test");
+                &known,
+            );
             if resolved.is_some() {
                 any_resolved = true;
                 break;

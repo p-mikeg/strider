@@ -17,7 +17,6 @@ pub mod orchestrator;
 pub mod rewrite;
 mod strider;
 
-pub mod indirect_resolve;
 pub mod indirect_resolver;
 pub mod opt;
 pub mod pattern;

@@ -6,35 +6,24 @@
 //! # Rendering pipeline
 //!
 //! ```text
-//! GraphDotDumper::dump_as_dot() ──► DotEmitter ──► .dot string
-//!                                                       │
-//!                                          ┌────────────┴────────────┐
-//!                                          ▼                         ▼
-//!                                   dot(1) → SVG              embedded DOT
-//!                                       │                           │
-//!                                       ▼                           ▼
-//!                               as_html_from_svg             as_html_from_dot
+//! GraphDotDumper::dump_as_dot() ──► DotEmitter ──► .dot string ──► as_html_from_dot
 //! ```
 //!
 //! [`GraphDot::as_html_from_dot`] embeds the raw DOT source in an HTML page
 //! that renders it client-side via Graphviz WASM ([`@viz-js/viz`]).  No local
 //! `dot` install is required.  This is what [`GraphDot::dump_as_html`] uses.
 //!
-//! [`GraphDot::as_html_from_svg`] calls the system `dot` binary and inlines
-//! the resulting SVG.  Useful for offline / headless export.
-//!
 //! [`DotStyle`] provides pre-built dark and empty visual themes.
 //! [`DotEmitter`] is a low-level string builder for Graphviz DOT syntax.
 //!
 //! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
 
-use std::{fmt::Debug, io::Write, path::Path};
+use std::{fmt::Debug, path::Path};
 
 /// Crate-level `Result` alias.  Every fallible function in `dot` returns
 /// this type.
 pub type Result<T> = anyhow::Result<T>;
 
-const HTML_SVG_TEMPLATE: &str = include_str!("../assets/graph_template_svg.html");
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
 
 /// A graph type that can be serialised to Graphviz DOT format node by node.
@@ -330,12 +319,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
         }
     }
 
-    /// Overrides the digraph name (default: `"G"`).
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
-    }
-
     fn build_dot(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
@@ -355,78 +338,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// [`GraphDotDumper::dump_as_dot`] for any node.
     pub fn as_dot(&self) -> anyhow::Result<String> {
         self.build_dot()
-    }
-
-    /// Calls the system `dot` binary to render SVG from the DOT source.
-    ///
-    /// Returns an error if `dot` is not installed or the conversion fails.
-    ///
-    /// # Errors
-    /// - dot dump error propagated from the dumper.
-    /// - svg conversion error if the system `dot` binary cannot
-    ///   be spawned, returns a non-zero exit status, or its stdin/stdout
-    ///   pipes cannot be opened.
-    pub fn as_svg(&self) -> anyhow::Result<String> {
-        let dot_src = self.as_dot()?;
-
-        let svg_err = |msg: String| -> anyhow::Error { anyhow::anyhow!("svg conversion error {msg:?}") };
-
-        let mut child = std::process::Command::new("dot")
-            .arg("-Tsvg")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| svg_err(e.to_string()))?;
-
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| svg_err("failed to open dot stdin".to_owned()))?;
-        stdin
-            .write_all(dot_src.as_bytes())
-            .map_err(|e| svg_err(e.to_string()))?;
-        // Closing stdin signals EOF to `dot` so it produces SVG and exits.
-        // `wait_with_output` would also drop it on our behalf, but doing it
-        // here makes the lifecycle obvious at the call site.
-        drop(stdin);
-
-        let output = child
-            .wait_with_output()
-            .map_err(|e| svg_err(e.to_string()))?;
-
-        if !output.status.success() {
-            // Embed the ExitStatus so a non-zero exit with empty stderr (e.g.
-            // dot killed by signal) still surfaces a useful diagnostic.
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(svg_err(format!(
-                "`dot -Tsvg` failed ({}): {}",
-                output.status,
-                stderr.trim()
-            )));
-        }
-
-        // SVG output from `dot -Tsvg` is always UTF-8; treat any deviation
-        // as a real error rather than silently substituting U+FFFD.
-        String::from_utf8(output.stdout)
-            .map_err(|e| svg_err(format!("dot -Tsvg stdout was not UTF-8: {e}")))
-    }
-
-    /// Produces an HTML page that inlines a pre-rendered SVG with pan/zoom.
-    ///
-    /// Requires the system `dot` binary.  For a browser-rendered interactive
-    /// viewer that works without `dot`, use [`Self::as_html_from_dot`] instead.
-    ///
-    /// # Errors
-    /// Same as [`Self::as_svg`].
-    pub fn as_html_from_svg(&self) -> anyhow::Result<String> {
-        let mut svg = self.as_svg()?;
-        // Strip the XML declaration and DOCTYPE that `dot` emits — they can
-        // confuse HTML parsers when the SVG is inlined in a <body>.
-        if let Some(pos) = svg.find("<svg") {
-            svg.drain(..pos);
-        }
-        Ok(HTML_SVG_TEMPLATE.replace("__SVG__", &svg))
     }
 
     /// Produces an interactive HTML page that renders the DOT source

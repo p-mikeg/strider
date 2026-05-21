@@ -10,7 +10,8 @@
 //! 2. Lift the CFG to IR via [`Strider::analyze_cfg`].
 //! 3. Run the **stable** optimiser subset
 //!    ([`Strider::build_stable_optimizer_pipeline`]).
-//! 4. For each unresolved anchor, run [`indirect_resolve::classify_anchor_with_rom_and_sp`].
+//! 4. For each unresolved anchor, run
+//!    [`crate::opt::indirect_branch_resolve::classify_anchor_with_rom_and_sp`].
 //! 5. Apply in-place IR edits for terminal classifications:
 //!    [`crate::opt::apply_link_register`] for `LinkRegister`,
 //!    [`crate::opt::apply_tail_call`] for `Single(K)` where `K` is outside
@@ -48,7 +49,7 @@ use strider_ir::node::{NodeId, NodeOutputId};
 use crate::opt::ReadOnlyMemory;
 
 use crate::errors::UnresolvedIndirectBranch;
-use crate::indirect_resolve::{
+use crate::opt::indirect_branch_resolve::{
     apply_link_register, apply_tail_call, classify_anchor_with_rom_and_sp,
 };
 use crate::strider::Strider;
@@ -313,8 +314,8 @@ where
     R: rsleigh::MemReader,
 {
     fn new(config: Config<'a, R>) -> Result<Self> {
-        let lr_vn = config.strider.calling_convention().link_register_vn();
-        let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn());
+        let lr_vn = config.strider.calling_convention().link_register_vn;
+        let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
         // Pre-resolve per-address CC overrides against the same Sleigh
         // register table the function-default CC was built against.
         let per_address_built_ccs: HashMap<u64, strider_target::BuiltCallingConvention> =
@@ -526,14 +527,20 @@ where
         // oscillate between resolved and unresolved.
         let mut next_known: HashMap<PcodeInsnAddr, ResolvedTargets> = self.known_targets.clone();
         let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
+        // Compute known-bits once across all anchors: the graph doesn't
+        // change between iterations of this loop, so a single pass
+        // suffices for every anchor we classify.
+        let view: crate::pattern::RewriteCtxView<'_> = graph.into();
+        let known = crate::opt::analyze_known_bits(view)?;
         for (addr, anchor_output) in &self.unresolved {
             let resolved_opt = classify_anchor_with_rom_and_sp(
-                graph,
+                view,
                 *anchor_output,
                 self.lr_vn,
                 rom_ref,
                 self.sp_vn,
-            )?;
+                &known,
+            );
             let Some(resolved) = resolved_opt else {
                 continue;
             };
@@ -794,7 +801,7 @@ fn build_anchor_calling_context(
     // `apply_in_place_edits`) and threaded through.  Per-edit cost is
     // O(arg_count) instead of the previous O(N) arena scan.
 
-    for vn in cc.arg_passing_regs() {
+    for vn in &cc.arg_passing_regs {
         // surface unsupported reg sizes as Err instead
         // of silently dropping the slot (which under-models the Call
         // and can cause downstream pattern queries to miss args).
@@ -821,7 +828,7 @@ fn build_anchor_calling_context(
         ctx.clobbered_kinds
             .push(strider_ir::node::NodeOutputKind::OutputType(ty));
     }
-    for vn in cc.ret_val_regs() {
+    for vn in &cc.ret_val_regs {
         let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
         ctx.ret_val_outputs.push(out);
     }
@@ -866,12 +873,12 @@ fn override_clobber_vars<'a>(
     cc: &'a strider_target::BuiltCallingConvention,
     strider: &'a Strider,
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
-    let stack_ptr_vn = strider.calling_convention().stack_ptr_vn();
+    let stack_ptr_vn = strider.calling_convention().stack_ptr_vn;
     graph
         .variables_map()
         .values()
         .copied()
-        .filter(move |v| !cc.callee_saved_regs().contains(v) && *v != stack_ptr_vn)
+        .filter(move |v| !cc.callee_saved_regs.contains(v) && *v != stack_ptr_vn)
 }
 
 /// Resolve a varnode to its IR value at the placeholder site.
@@ -940,7 +947,7 @@ where
     if let Some(rom) = opts.rom.clone() {
         opts_builder = opts_builder.set_read_only_memory(rom);
     }
-    if let Some(lr) = opts.strider.calling_convention().link_register_vn() {
+    if let Some(lr) = opts.strider.calling_convention().link_register_vn {
         opts_builder = opts_builder.set_link_register(lr);
     }
     if let Some(max) = opts.fn_max_size {
