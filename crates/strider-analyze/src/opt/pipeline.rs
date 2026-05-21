@@ -146,7 +146,7 @@ pub trait OptimizerRaw: Send + Sync {
 /// Passes that need direct `&mut Graph` access without the wrapper
 /// (rare — typically external bindings holding type-erased boxes) can
 /// implement [`OptimizerRaw`] instead.
-pub trait Optimizer: Send + Sync {
+pub(crate) trait Optimizer: Send + Sync {
     /// Run one sweep of this pass over the function graph.  See
     /// [`OptimizationResult`] for the `Changed`/`NoChange` contract.
     ///
