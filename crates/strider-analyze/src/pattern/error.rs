@@ -25,7 +25,7 @@ pub struct RewriteSkip;
 /// build semantics (wildcards, guards, control patterns).
 #[derive(Debug, thiserror::Error)]
 #[error("pattern {0} is not buildable (match-only)")]
-pub struct NotBuildable(pub &'static str);
+pub(crate) struct NotBuildable(pub &'static str);
 
 /// A capture variable referenced by a builder is not bound by the LHS
 /// match. Carries the capture **kind name** (e.g. `"uint"`,
@@ -33,14 +33,14 @@ pub struct NotBuildable(pub &'static str);
 /// site of the bug is obvious from the error message.
 #[derive(Debug, thiserror::Error)]
 #[error("missing binding for capture of kind {0}")]
-pub struct MissingBinding(pub &'static str);
+pub(crate) struct MissingBinding(pub &'static str);
 
 /// Returns an [`anyhow::Error`] carrying the [`RewriteSkip`] sentinel.
 /// The `rewrite_rule` interpreter converts this back to "no change"
 /// rather than treating it as a hard failure.
 #[track_caller]
 #[must_use]
-pub fn skip() -> anyhow::Error {
+pub(crate) fn skip() -> anyhow::Error {
     anyhow::Error::new(RewriteSkip)
 }
 

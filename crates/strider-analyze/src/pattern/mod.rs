@@ -131,7 +131,8 @@
 //! ```
 
 pub mod error;
-pub use error::{skip, MissingBinding, NotBuildable, Result};
+pub use error::Result;
+pub(crate) use error::skip;
 #[doc(hidden)]
 pub use error::__missing_binding;
 
@@ -141,15 +142,15 @@ mod pat;
 mod rewrite;
 mod var;
 
-pub use rewrite::{BoxedRule, RewriteCtx, RewriteCtxView, apply_rules_in_order, boxed_rule, rewrite_rule};
+pub use rewrite::{BoxedRule, RewriteCtx, RewriteCtxView, boxed_rule, rewrite_rule};
+pub(crate) use rewrite::apply_rules_in_order;
 pub(crate) use pat::traits::BuildCtx;
 pub(crate) use pat::ctor::consts::first_value_input_type;
 pub(crate) use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};
 
 // ── Core types & entry points ────────────────────────────────────────────────
 
-pub use matcher::bindings::Binding;
-pub use matcher::{Bindings, CastMask, Match, Matcher, MatcherOptions};
+pub use matcher::{Bindings, CastMask, Match, Matcher};
 pub use pat::{IntoPat, Pat};
 
 // ── Capture variable ─────────────────────────────────────────────────────────

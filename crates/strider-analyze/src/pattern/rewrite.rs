@@ -360,7 +360,7 @@ impl<'g> std::ops::DerefMut for RewriteCtx<'g, Mut> {
 /// Borrows `rules` as a slice and returns a closure bound to that borrow's
 /// lifetime, so callers can hoist the rule vec into a `LazyLock` (or any
 /// other long-lived storage) and compose the per-call closure cheaply.
-pub fn apply_rules_in_order<R>(
+pub(crate) fn apply_rules_in_order<R>(
     rules: &[R],
 ) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync + '_
 where

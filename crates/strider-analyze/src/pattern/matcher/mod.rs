@@ -39,7 +39,7 @@ struct FunctionArgIndex(HashMap<u32, NodeId>);
 /// [`Matcher::ignore_casts`], and control-state walk-through via
 /// [`Matcher::ignore_control_states`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MatcherOptions {
+pub(crate) struct MatcherOptions {
     /// Mask of value-passthrough cast `NodeKind`s the matcher walks
     /// through transparently when matching value inputs.  Default:
     /// [`CastMask::empty()`] (no walk-through — strict semantics).

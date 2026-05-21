@@ -14,11 +14,12 @@ use crate::pattern::var::Capture;
 /// value-producing.  Control-flow patterns (`Call`, `If`, `Return`,
 /// `CallOther`) bind only the `NodeId` and leave `output = None`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Binding {
+pub(crate) struct Binding {
     pub(crate) node: NodeId,
     pub(crate) output: Option<NodeOutputId>,
 }
 
+#[allow(dead_code)]
 impl Binding {
     /// Constructs a `Binding` from a `(node, output)` pair.  The only
     /// public construction path — the fields are `pub(crate)` so
@@ -120,14 +121,15 @@ impl Bindings {
     /// signals that the caller is hand-building a `Bindings` for use
     /// with [`crate::pattern::Match::new_for_test`] rather than going through
     /// [`crate::pattern::Matcher::find_all`].
-    pub fn bind_capture_for_test(&mut self, c: Capture, binding: Binding) -> bool {
+    #[allow(dead_code)]
+    pub(crate) fn bind_capture_for_test(&mut self, c: Capture, binding: Binding) -> bool {
         self.bind_capture(c, binding)
     }
 
     /// Returns the [`Binding`] (node + optional value output) bound to
     /// `c`, or `None` if `c` was not captured in this match.
     #[must_use]
-    pub fn get_binding(&self, c: Capture) -> Option<Binding> {
+    pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
         self.entries
             .iter()
             .find(|(k, _)| *k == c)
@@ -160,7 +162,7 @@ impl Bindings {
     /// Used by [`crate::pattern::Matcher::find_all_requirements`] to compute cross-pattern
     /// shared-capture agreement.  Order is the order bindings were
     /// appended during matching (preorder of the pattern tree).
-    pub fn iter(&self) -> impl Iterator<Item = (Capture, Binding)> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (Capture, Binding)> + '_ {
         self.entries.iter().map(|(c, b)| (*c, *b))
     }
 
