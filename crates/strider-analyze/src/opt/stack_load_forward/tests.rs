@@ -4,7 +4,7 @@ use crate::opt::pipeline::OptimizerRaw;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_ir::{FunctionBuilder, IntBinaryOp};
-use target::Endianness;
+use strider_target::Endianness;
 
 /// Fake 4-byte SP varnode (x86-cdecl-like).
 fn sp32_vn() -> rsleigh::Vn {

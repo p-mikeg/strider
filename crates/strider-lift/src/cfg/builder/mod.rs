@@ -32,7 +32,7 @@ use crate::cfg::Result;
 /// # Usage
 /// ```no_run
 /// use strider_lift::cfg::{Builder, OptionsBuilder};
-/// use target::SleighArch;
+/// use strider_target::SleighArch;
 /// use rsleigh::mem_readers::BufMemReader;
 ///
 /// let fn_addr: u64 = 0x1000;
@@ -58,14 +58,14 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// [`super::indirect_resolve::resolve_indirect_target`] which
     /// builds a mini IR via `crate::pcode_lift::ValueLifter::new`.  Set
     /// atomically with `preset` via [`Self::for_arch`].
-    pub(super) endianness: target::Endianness,
+    pub(super) endianness: strider_target::Endianness,
     /// Coarse architecture family.  Consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right `arch` to
-    /// [`target::call_other_abi::classify`].  Set atomically with
+    /// [`strider_target::call_other_abi::classify`].  Set atomically with
     /// `endianness` via [`Self::for_arch`], or override individually
     /// with [`Self::with_preset`].
-    pub(super) preset: target::ArchPreset,
+    pub(super) preset: strider_target::ArchPreset,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
     /// Maps each region's `start_addr` to its [`NodeIndex`].
@@ -98,7 +98,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// decoded as LE, or AArch64 `brk` classified as the x86 stub).
     #[must_use]
     pub fn for_arch(
-        arch: &target::SleighArch,
+        arch: &strider_target::SleighArch,
         sleigh: rsleigh::Sleigh<R>,
         start_addr: u64,
         options: Options,
@@ -150,14 +150,14 @@ impl<R: rsleigh::MemReader> Builder<R> {
         self
     }
 
-    /// Sets the [`target::ArchPreset`] used by the `Opcode::CallOther`
+    /// Sets the [`strider_target::ArchPreset`] used by the `Opcode::CallOther`
     /// arm in `super::region_builder` when consulting
-    /// [`target::call_other_abi::classify`].  Defaults to
-    /// [`target::ArchPreset::X86_64`]; override for non-x86_64 targets.
+    /// [`strider_target::call_other_abi::classify`].  Defaults to
+    /// [`strider_target::ArchPreset::X86_64`]; override for non-x86_64 targets.
     /// Prefer [`Self::for_arch`] when an arch object is in scope —
     /// it sets endianness AND preset atomically.
     #[must_use]
-    pub fn with_preset(mut self, preset: target::ArchPreset) -> Self {
+    pub fn with_preset(mut self, preset: strider_target::ArchPreset) -> Self {
         self.preset = preset;
         self
     }

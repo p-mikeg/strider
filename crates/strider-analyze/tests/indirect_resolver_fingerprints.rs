@@ -86,7 +86,7 @@ fn resolver_mini_ir_passes_graph_invariants_asm_fingerprint_check() {
         target,
         &sleigh,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("build mini-graph");
 

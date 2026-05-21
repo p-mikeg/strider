@@ -10,7 +10,7 @@
 
 //! Strider lift: target descriptions, sleigh integration, CFG construction,
 //! and IR lifting.  Consolidation crate for what previously lived in
-//! standalone `target`, `pcode-lift`, and `cfg` crates.
+//! standalone `strider-target`, `pcode-lift`, and `cfg` crates.
 
 pub mod pcode_lift;
 pub mod cfg;

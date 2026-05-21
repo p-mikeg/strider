@@ -1,4 +1,4 @@
-//! Smoke tests: every [`target::SleighArch`] preset must successfully feed
+//! Smoke tests: every [`strider_target::SleighArch`] preset must successfully feed
 //! into `rsleigh::Sleigh::new` and produce a usable register table.  Without
 //! this, presets that nothing else exercises (e.g. `mipsbe32`, `mipsle32`,
 //! `aarch64be`) could silently rot if an upstream constant were renamed.
@@ -9,7 +9,7 @@
 
 #![allow(clippy::panic, clippy::unwrap_used)]
 
-use target::SleighArch;
+use strider_target::SleighArch;
 
 fn assert_preset_resolves(label: &str, arch: SleighArch) {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
@@ -90,7 +90,7 @@ fn arm_thumb_preset_resolves() {
     assert_preset_resolves("arm_thumb", SleighArch::arm_thumb());
 }
 
-/// Pins the [`target::Endianness`] field of every `SleighArch` preset.
+/// Pins the [`strider_target::Endianness`] field of every `SleighArch` preset.
 ///
 /// `Endianness` is consumed by `strider::register_aliasing` to decide the
 /// shift direction when extracting a sub-register from its container; a
@@ -99,7 +99,7 @@ fn arm_thumb_preset_resolves() {
 /// here so a typo in `arch.rs` is caught at unit-test time.
 #[test]
 fn presets_endianness_matches_arch() {
-    use target::Endianness;
+    use strider_target::Endianness;
     let cases: &[(&str, SleighArch, Endianness)] = &[
         ("x86_64", SleighArch::x86_64(), Endianness::Little),
         ("x86", SleighArch::x86(), Endianness::Little),
@@ -132,13 +132,13 @@ fn arm_be_preset_resolves() {
 
 #[test]
 fn arm_be_endianness_is_big() {
-    use target::Endianness;
+    use strider_target::Endianness;
     assert_eq!(SleighArch::arm_be().endianness(), Endianness::Big);
 }
 
 #[test]
 fn arch_preset_variant_casing_compiles() {
-    use target::ArchPreset;
+    use strider_target::ArchPreset;
     let _v: &[ArchPreset] = &[
         ArchPreset::X86_64, ArchPreset::X86,
         ArchPreset::Arm, ArchPreset::ArmBe, ArchPreset::ArmThumb,

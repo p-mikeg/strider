@@ -101,7 +101,7 @@ impl StackStoreDetect {
     /// Creates a new pass whose stack-pointer varnode is taken from the
     /// supplied calling convention.
     #[must_use]
-    pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
+    pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self::new(cc.stack_ptr_vn())
     }
 }

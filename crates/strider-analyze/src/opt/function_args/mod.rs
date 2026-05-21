@@ -79,7 +79,7 @@ impl FunctionArgDetect {
     /// Creates a new pass whose parameters are taken from the supplied
     /// calling convention.
     #[must_use]
-    pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
+    pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self::new(
             cc.arg_passing_regs().to_vec(),
             cc.stack_ptr_vn(),

@@ -1318,7 +1318,7 @@ dependencies = [
  "strider-ir-test-utils",
  "strider-lift",
  "strider-reader",
- "target",
+ "strider-target",
  "thiserror",
 ]
 
@@ -1364,7 +1364,7 @@ dependencies = [
  "rustc-hash",
  "strider-ir",
  "strider-reader",
- "target",
+ "strider-target",
 ]
 
 [[package]]
@@ -1391,7 +1391,7 @@ dependencies = [
  "strider-lift",
  "strider-pattern-macros",
  "strider-reader",
- "target",
+ "strider-target",
 ]
 
 [[package]]
@@ -1406,6 +1406,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "strider-target"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rsleigh",
+ "strider-ir",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1414,15 +1423,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "target"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rsleigh",
- "strider-ir",
 ]
 
 [[package]]

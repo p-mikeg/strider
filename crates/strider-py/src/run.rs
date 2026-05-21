@@ -169,7 +169,7 @@ fn run_via_orchestrator(
         let borrow = strider_obj.borrow(py);
         borrow.inner.clone()
     };
-    let per_address_ccs: std::collections::HashMap<u64, target::CallingConvention> =
+    let per_address_ccs: std::collections::HashMap<u64, strider_target::CallingConvention> =
         per_address_ccs_py
             .into_iter()
             .map(|(addr, py_cc)| (addr, py_cc.inner))
@@ -246,7 +246,7 @@ fn run_with_custom_pipeline(
     // the function-default CC was built against — mirrors the
     // orchestrator's `LoopState::new` behaviour so both pipeline paths
     // honour `per_address_ccs` identically.
-    let per_address_built_ccs: std::collections::HashMap<u64, target::BuiltCallingConvention> =
+    let per_address_built_ccs: std::collections::HashMap<u64, strider_target::BuiltCallingConvention> =
         if per_address_ccs_py.is_empty() {
             std::collections::HashMap::new()
         } else {

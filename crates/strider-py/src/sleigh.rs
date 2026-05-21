@@ -25,7 +25,7 @@ pub struct PySleigh {
     /// (carrying the actual arch preset, vs. the deleted `Builder::new`'s
     /// default `ArchPreset::X86_64` which used to silently mis-classify
     /// CallOther on non-x86 targets).
-    pub(crate) arch: target::SleighArch,
+    pub(crate) arch: strider_target::SleighArch,
     /// Cached register table.  `Sleigh::regs()` only requires `&self`,
     /// but we eagerly cache it at construction time so callers can read
     /// the registers after the inner Sleigh has been moved into a

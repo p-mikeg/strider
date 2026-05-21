@@ -42,7 +42,7 @@ pub struct ValueLifter<'a, R: rsleigh::MemReader> {
     pub sleigh: &'a rsleigh::Sleigh<R>,
     /// Target endianness — drives the bit-shift formula used when
     /// reading or writing a sub-register inside a wider container.
-    pub endianness: target::Endianness,
+    pub endianness: strider_target::Endianness,
 }
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
@@ -51,7 +51,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub fn new(
         builder: &'a mut strider_ir::FunctionBuilder,
         sleigh: &'a rsleigh::Sleigh<R>,
-        endianness: target::Endianness,
+        endianness: strider_target::Endianness,
     ) -> Self {
         Self {
             builder,

@@ -242,7 +242,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // Per-address CC override: when the call target matches a
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.  Convert the rich
-        // `target::BuiltCallingConvention` to the thin
+        // `strider_target::BuiltCallingConvention` to the thin
         // `strider_ir::FunctionBuilderCC` slice the builder consumes
         // (keeps the ir → target dependency direction forward).
         let override_cc = self.per_address_ccs.get(&target_addr).map(strider_ir::FunctionBuilderCC::from);

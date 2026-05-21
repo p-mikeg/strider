@@ -20,7 +20,7 @@ pub struct PyStrider {
     pub(crate) inner: strider_analyze::Strider,
     /// Cached arch — `strider_analyze::Strider` keeps `arch` private so we
     /// stash a copy here for pipeline-construction helpers.
-    pub(crate) arch: target::SleighArch,
+    pub(crate) arch: strider_target::SleighArch,
 }
 
 /// Mirror of `strider_analyze::AnalyzeOutcome`.
@@ -103,7 +103,7 @@ impl PyStrider {
 }
 
 impl PyStrider {
-    fn calling_convention_arch(&self) -> &target::SleighArch {
+    fn calling_convention_arch(&self) -> &strider_target::SleighArch {
         &self.arch
     }
 

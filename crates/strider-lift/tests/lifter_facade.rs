@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use strider_lift::cfg::Region;
 use strider_lift::lifter::Lifter;
-use target::{CallingConvention, SleighArch};
+use strider_target::{CallingConvention, SleighArch};
 
 /// Resolve a fixture binary's path.  Mirrors
 /// `crates/strider/tests/common/mod.rs::binary_path`.

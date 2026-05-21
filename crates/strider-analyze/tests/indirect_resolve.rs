@@ -117,7 +117,7 @@ fn resolves_direct_const_to_single() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("resolver");
     assert_eq!(res, Some(ResolvedTargets::Single(0xdead_beef)));
@@ -156,7 +156,7 @@ fn resolves_arithmetic_chain_to_single() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("resolver");
     assert_eq!(res, Some(ResolvedTargets::Single(0x133)));
@@ -217,7 +217,7 @@ fn resolves_sub_register_aliasing_to_single() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("resolver");
     assert_eq!(res, Some(ResolvedTargets::Single(0xdead_beef)));
@@ -251,7 +251,7 @@ fn resolves_link_register_to_link_register() {
         &sleigh,
         Some(lr_like),
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("resolver");
     assert_eq!(res, Some(ResolvedTargets::LinkRegister));
@@ -303,7 +303,7 @@ fn resolves_rodata_load_to_single() {
         &sleigh,
         None,
         Some(&rom),
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("resolver");
     assert_eq!(res, Some(ResolvedTargets::Single(0xcafe_babe)));
@@ -331,7 +331,7 @@ fn unknown_memory_returns_ok_none() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("soft contract: cfg-time resolver returns Ok rather than Err on unresolved");
     assert!(res.is_none(), "got {res:?}");
@@ -393,7 +393,7 @@ fn runtime_input_returns_ok_none() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("soft contract: Ok(None) on unresolved");
     assert!(res.is_none(), "got {res:?}");
@@ -413,7 +413,7 @@ fn empty_region_returns_ok_none() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("soft contract: Ok(None) on unresolved");
     assert!(res.is_none(), "got {res:?}");
@@ -451,7 +451,7 @@ fn malformed_branch_indirect_returns_ok_none() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("soft contract: Ok(None) on unresolved");
     assert!(res.is_none(), "got {res:?}");
@@ -475,7 +475,7 @@ fn cfg_time_unresolved_returns_ok_none() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("soft contract: cfg-time resolver returns Ok rather than Err on unresolved");
     assert!(
@@ -508,7 +508,7 @@ fn cfg_time_resolved_const_returns_ok_some_single() {
         &sleigh,
         None,
         None,
-        target::Endianness::Little,
+        strider_target::Endianness::Little,
     )
     .expect("resolver");
     assert_eq!(res, Some(ResolvedTargets::Single(0xdead_beef)));

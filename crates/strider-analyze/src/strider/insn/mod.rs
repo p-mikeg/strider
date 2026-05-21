@@ -124,20 +124,20 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
         })?;
 
-        let class = target::call_other_abi::classify(self.strider.arch.preset(), name)
+        let class = strider_target::call_other_abi::classify(self.strider.arch.preset(), name)
             .ok_or_else(|| strider_ir::error::UnknownCallOtherError {
                 name: name.to_string(),
             })?;
 
         match class {
-            target::call_other_abi::CallOtherClass::NoOp => Ok(()),
+            strider_target::call_other_abi::CallOtherClass::NoOp => Ok(()),
 
-            target::call_other_abi::CallOtherClass::NoReturn => {
+            strider_target::call_other_abi::CallOtherClass::NoReturn => {
                 let _ = self.builder.build_call_other_terminal(user_op_id, name)?;
                 Ok(())
             }
 
-            target::call_other_abi::CallOtherClass::Call(abi) => {
+            strider_target::call_other_abi::CallOtherClass::Call(abi) => {
                 // 1. Resolve pcode-explicit inputs (args) via the
                 //    aliasing-aware value lifter.
                 let args: Vec<strider_ir::Value> = if insn.inputs.len() > 1 {

@@ -9,7 +9,7 @@
 //! varnode and the target's endianness (see [`StackLoadForward::new`]).
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use target::Endianness;
+use strider_target::Endianness;
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -50,8 +50,8 @@ impl StackLoadForward {
     /// whose endianness is taken from `arch`.
     #[must_use]
     pub fn from_convention(
-        cc: &target::BuiltCallingConvention,
-        arch: &target::SleighArch,
+        cc: &strider_target::BuiltCallingConvention,
+        arch: &strider_target::SleighArch,
     ) -> Self {
         Self::new(cc.stack_ptr_vn(), arch.endianness())
     }

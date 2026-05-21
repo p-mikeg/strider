@@ -193,8 +193,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         container_reg: &rsleigh::Vn,
     ) -> u64 {
         match self.endianness {
-            target::Endianness::Little => 8 * (reg.addr_off - container_reg.addr_off),
-            target::Endianness::Big => {
+            strider_target::Endianness::Little => 8 * (reg.addr_off - container_reg.addr_off),
+            strider_target::Endianness::Big => {
                 8 * (container_reg.size as u64
                     - reg.size as u64
                     - (reg.addr_off - container_reg.addr_off))

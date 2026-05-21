@@ -12,7 +12,7 @@ entity-utils = { workspace = true }
 # lifter/region driver crates re-exported through strider-lift.
 strider-lift = { workspace = true }
 rsleigh.workspace = true
-target.workspace = true
+strider-target.workspace = true
 anyhow.workspace = true
 cranelift-entity.workspace = true
 ethnum.workspace = true

@@ -147,7 +147,7 @@ pub fn build_value_phi_target_scenario(
     use strider_ir::node::NodeOutputType;
     use strider_ir::{FunctionBuilder, IntBinaryOp};
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
-    use target::Endianness;
+    use strider_target::Endianness;
 
     assert!(
         !per_pred.is_empty(),
@@ -266,7 +266,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     use strider_ir::node::NodeOutputType;
     use strider_ir::FunctionBuilder;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
-    use target::Endianness;
+    use strider_target::Endianness;
 
     let sp = rsleigh::Vn {
         addr_off: 0x20,
@@ -366,7 +366,7 @@ pub fn build_push_target_pop_pc_scenario(
     use strider_ir::node::NodeOutputType;
     use strider_ir::FunctionBuilder;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
-    use target::Endianness;
+    use strider_target::Endianness;
 
     let sp = rsleigh::Vn {
         addr_off: 0x20,

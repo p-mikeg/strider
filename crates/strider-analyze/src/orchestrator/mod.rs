@@ -103,10 +103,10 @@ where
     ///
     /// Driver: Linux-kernel `__fentry__` / `mcount` hooks that preserve
     /// every register and observe no arguments — express via
-    /// [`target::CallingConvention::x86_64_all_preserving`] (and the
+    /// [`strider_target::CallingConvention::x86_64_all_preserving`] (and the
     /// per-arch siblings).  The user supplies raw addresses; symbol
     /// resolution is the caller's responsibility.
-    pub per_address_ccs: HashMap<u64, target::CallingConvention>,
+    pub per_address_ccs: HashMap<u64, strider_target::CallingConvention>,
 }
 
 /// Internal view of [`Config`] without the Sleigh handle — see
@@ -123,7 +123,7 @@ struct RunOpts<'a> {
     /// [`Config::per_address_ccs`] doc.  Resolved once at
     /// `LoopState::new` so any unresolved register name surfaces
     /// before iteration starts.
-    per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention>,
+    per_address_built_ccs: HashMap<u64, strider_target::BuiltCallingConvention>,
 }
 
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
@@ -319,7 +319,7 @@ where
         let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn());
         // Pre-resolve per-address CC overrides against the same Sleigh
         // register table the function-default CC was built against.
-        let per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention> =
+        let per_address_built_ccs: HashMap<u64, strider_target::BuiltCallingConvention> =
             if config.per_address_ccs.is_empty() {
                 HashMap::new()
             } else {
@@ -671,7 +671,7 @@ fn apply_in_place_edit(
     region_index: &RegionIndex,
     placeholder: NodeId,
     resolved: &ResolvedTargets,
-    per_address_built_ccs: &HashMap<u64, target::BuiltCallingConvention>,
+    per_address_built_ccs: &HashMap<u64, strider_target::BuiltCallingConvention>,
     initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
 ) -> Result<()> {
     match resolved {
@@ -781,13 +781,13 @@ fn build_anchor_calling_context(
     placeholder: NodeId,
     strider: &Strider,
     region_index: &RegionIndex,
-    override_cc: Option<&target::BuiltCallingConvention>,
+    override_cc: Option<&strider_target::BuiltCallingConvention>,
     initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
 ) -> Result<crate::opt::AnchorCallingContext> {
     // When an override is supplied, route arg-passing / ret-val /
     // clobber computation through the override CC instead of the
     // function-default.
-    let cc: &target::BuiltCallingConvention = override_cc
+    let cc: &strider_target::BuiltCallingConvention = override_cc
         .unwrap_or_else(|| strider.calling_convention());
     let region = region_index.region_for_placeholder(graph, placeholder);
     let mut ctx = crate::opt::AnchorCallingContext::default();
@@ -865,7 +865,7 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Nod
 /// `clobbered_kinds`).
 fn override_clobber_vars<'a>(
     graph: &'a strider_ir::BuiltFunctionGraph,
-    cc: &'a target::BuiltCallingConvention,
+    cc: &'a strider_target::BuiltCallingConvention,
     strider: &'a Strider,
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
     let stack_ptr_vn = strider.calling_convention().stack_ptr_vn();
@@ -1057,9 +1057,9 @@ mod tests {
     }
 
     fn make_strider_x86_64() -> Strider {
-        let arch = target::SleighArch::x86_64();
+        let arch = strider_target::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
-        Strider::new(arch, regs, target::CallingConvention::x86_64_systemv())
+        Strider::new(arch, regs, strider_target::CallingConvention::x86_64_systemv())
             .expect("strider")
     }
 

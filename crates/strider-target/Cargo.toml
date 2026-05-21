@@ -1,5 +1,5 @@
 [package]
-name = "target"
+name = "strider-target"
 version = "0.1.0"
 edition.workspace = true
 

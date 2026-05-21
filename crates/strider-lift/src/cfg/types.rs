@@ -167,7 +167,7 @@ pub enum RegionTerminator {
     Return,
     /// Region terminates with no successor.  Emitted by
     /// `cfg::region_builder::process_new_insn` when a CallOther's
-    /// `target::call_other_abi::classify` result is `NoReturn` (Linux
+    /// `strider_target::call_other_abi::classify` result is `NoReturn` (Linux
     /// `BUG()` / `BUG_ON()`-class traps: x86 `ud2`, aarch64
     /// `brk #imm`).  See
     /// `docs/superpowers/specs/2026-05-05-callother-classification-design.md`.

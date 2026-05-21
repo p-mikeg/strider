@@ -26,7 +26,7 @@ use std::sync::Arc;
 use crate::cfg::{
     Builder, Cfg, DecodeCache, FunctionBoundary, OptionsBuilder, PcodeInsnAddr, Region,
 };
-use target::{BuiltCallingConvention, SleighArch};
+use strider_target::{BuiltCallingConvention, SleighArch};
 
 /// Diagnostic snapshot of the underlying [`DecodeCache`].
 ///

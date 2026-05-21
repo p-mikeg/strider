@@ -7,7 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rsleigh::{Vn, VnSpace};
-use target::{BuiltCallingConvention, CallingConvention, SleighArch};
+use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
 
 fn vn(off: u64) -> Vn {
     Vn { addr_space: VnSpace::REGISTER, addr_off: off, size: 8 }

@@ -17,7 +17,7 @@
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-use target::{CallingConvention, SleighArch};
+use strider_target::{CallingConvention, SleighArch};
 
 /// Probe the arch's Sleigh against an empty memory reader to extract
 /// the register table.  No real binary is needed — the register table

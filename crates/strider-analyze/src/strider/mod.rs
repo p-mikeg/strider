@@ -26,7 +26,7 @@ pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     /// at constructor time when the caller has overrides.  Lookup is a
     /// single `HashMap::get` regardless.
     pub(crate) per_address_ccs:
-        &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
+        &'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
 }
 
 impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
@@ -42,7 +42,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         strider: &'a Strider,
         cfg: &'a strider_lift::cfg::Cfg<R>,
         all_vns: Vec<rsleigh::Vn>,
-        per_address_ccs: &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
+        per_address_ccs: &'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
         let builder = strider_ir::FunctionBuilder::new(
             all_vns,

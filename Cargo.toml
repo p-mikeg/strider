@@ -14,7 +14,7 @@ edition = "2024"
 
 [workspace.dependencies]
 strider-reader = { path = "crates/strider-reader" }
-target = { path = "crates/target" }
+strider-target = { path = "crates/strider-target" }
 dot = { path = "crates/dot" }
 entity-utils = { path = "crates/entity-utils" }
 graphwalk = { path = "crates/graphwalk" }

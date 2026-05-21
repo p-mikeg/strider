@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
 use strider_analyze::{AnalyzeOptions, SleighArch, Strider};
-use target::CallingConvention as TargetCC;
+use strider_target::CallingConvention as TargetCC;
 
 mod common;
 
@@ -41,7 +41,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     // Build the override map against the same Sleigh register table the
     // function-default CC was built against.
     let regs = arch.probe_regs().unwrap();
-    let mut built: HashMap<u64, target::BuiltCallingConvention> = HashMap::new();
+    let mut built: HashMap<u64, strider_target::BuiltCallingConvention> = HashMap::new();
     built.insert(call_target, TargetCC::x86_64_all_preserving().build(&regs).unwrap());
 
     let outcome = strider

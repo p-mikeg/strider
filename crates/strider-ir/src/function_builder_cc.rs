@@ -1,18 +1,18 @@
 //! `FunctionBuilderCC` — the thin calling-convention slice that
 //! `FunctionBuilder` actually consumes.  Defined in `strider-ir` so the
-//! IR crate doesn't pull a back-edge dep on `target`.
+//! IR crate doesn't pull a back-edge dep on `strider-target`.
 //!
-//! `target` lives above `strider-ir` in the crate-dependency order, so
-//! importing `target::BuiltCallingConvention` from `strider-ir` would
+//! `strider-target` lives above `strider-ir` in the crate-dependency order, so
+//! importing `strider_target::BuiltCallingConvention` from `strider-ir` would
 //! invert that ordering.  `FunctionBuilderCC` exposes only the fields
 //! `FunctionBuilder::new` / `FunctionBuilder::build_call_with_cc`
-//! actually read; `target` provides `impl From<BuiltCallingConvention>
+//! actually read; `strider-target` provides `impl From<BuiltCallingConvention>
 //! for FunctionBuilderCC` at the layer boundary so the richer ABI type
 //! stays in its home crate.
 //!
 //! # Field set
 //!
-//! Mirrors `target::BuiltCallingConvention`'s public accessors that the
+//! Mirrors `strider_target::BuiltCallingConvention`'s public accessors that the
 //! IR builder reads.  Field names match the source type one-to-one so
 //! the `From` impl is a straight field copy:
 //!
@@ -38,7 +38,7 @@ use rsleigh::Vn;
 /// Plain-data calling-convention slice for [`crate::FunctionBuilder`].
 ///
 /// Construct directly for synthetic/test use, or via
-/// `impl From<target::BuiltCallingConvention> for FunctionBuilderCC`
+/// `impl From<strider_target::BuiltCallingConvention> for FunctionBuilderCC`
 /// in production code.  See the module docs for the field-by-field
 /// usage contract.
 #[derive(Debug, Clone)]

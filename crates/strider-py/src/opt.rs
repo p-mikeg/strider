@@ -116,8 +116,8 @@ impl PyOptimizerPipeline {
     /// Build the convention-aware "full" pipeline mirroring
     /// `strider_analyze::Strider::build_optimizer_pipeline`.
     pub(crate) fn new_full_default(
-        cc: target::BuiltCallingConvention,
-        arch: target::SleighArch,
+        cc: strider_target::BuiltCallingConvention,
+        arch: strider_target::SleighArch,
     ) -> Self {
         let mut state = PipelineState::from_default();
         state
@@ -138,8 +138,8 @@ impl PyOptimizerPipeline {
     /// Build the stable-only pipeline mirroring
     /// `strider_analyze::Strider::build_stable_optimizer_pipeline`.
     pub(crate) fn new_stable_default(
-        cc: target::BuiltCallingConvention,
-        arch: target::SleighArch,
+        cc: strider_target::BuiltCallingConvention,
+        arch: strider_target::SleighArch,
     ) -> Self {
         let mut state = PipelineState::from_stable_default();
         state
@@ -156,7 +156,7 @@ impl PyOptimizerPipeline {
 
     /// Build the destructive-only pipeline mirroring
     /// `strider_analyze::Strider::build_destructive_optimizer_pipeline`.
-    pub(crate) fn new_destructive_default(cc: target::BuiltCallingConvention) -> Self {
+    pub(crate) fn new_destructive_default(cc: strider_target::BuiltCallingConvention) -> Self {
         let mut state = PipelineState::from_destructive_default();
         state
             .post_passes
@@ -305,7 +305,7 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion);
 // ── CC/arch-aware passes ──────────────────────────────────────────────────
 //
 // Each takes (sleigh, cc) — or (sleigh, cc, arch) — at construction
-// time, builds a target::BuiltCallingConvention against the Sleigh's
+// time, builds a strider_target::BuiltCallingConvention against the Sleigh's
 // register table, and stores the concrete pre-configured pass.
 
 /// `StackStoreDetect(sleigh, cc)`

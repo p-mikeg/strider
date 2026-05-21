@@ -43,7 +43,7 @@ use strider_ir::ReadOnlyMemory;
 use strider_lift::cfg::{
     IndirectTargetResolver, RegionInstruction, ResolvedTargets, Result,
 };
-use target::Endianness;
+use strider_target::Endianness;
 
 use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
 

@@ -105,11 +105,11 @@ pub struct PyMemoryMap {
     elfs: Arc<RwLock<Vec<object::File<'static>>>>,
     /// Byte order used by `ReadOnlyMemory::read` when assembling
     /// multi-byte words from the underlying buffer.  Defaults to
-    /// [`target::Endianness::Little`]; auto-set from the ELF header in
+    /// [`strider_target::Endianness::Little`]; auto-set from the ELF header in
     /// `add_region_from_elf`, or set explicitly via
     /// [`Self::set_endianness`].  Stored behind an Arc/RwLock so a
     /// `PyMemoryMap` clone shares the same setting.
-    endianness: Arc<RwLock<target::Endianness>>,
+    endianness: Arc<RwLock<strider_target::Endianness>>,
 }
 
 impl PyMemoryMap {
@@ -159,7 +159,7 @@ impl PyMemoryMap {
             elfs: Arc::new(RwLock::new(Vec::new())),
             // Default to LE; overridden by add_region_from_elf or
             // set_endianness once the user supplies a real arch.
-            endianness: Arc::new(RwLock::new(target::Endianness::Little)),
+            endianness: Arc::new(RwLock::new(strider_target::Endianness::Little)),
         }
     }
 
@@ -174,8 +174,8 @@ impl PyMemoryMap {
     /// Raises `ReaderError` for unrecognised endianness strings.
     fn set_endianness(&self, endianness: &str) -> PyResult<()> {
         let parsed = match endianness.to_ascii_lowercase().as_str() {
-            "little" | "le" => target::Endianness::Little,
-            "big" | "be" => target::Endianness::Big,
+            "little" | "le" => strider_target::Endianness::Little,
+            "big" | "be" => strider_target::Endianness::Big,
             other => {
                 return Err(into_reader_err(anyhow::anyhow!(
                     "unknown endianness {other:?}; use \"little\" or \"big\""
@@ -251,8 +251,8 @@ impl PyMemoryMap {
         // right order (big-endian targets like MIPS-BE / PowerPC-BE
         // would otherwise byte-swap their LoadReadOnly constants).
         let elf_endian = match object::Object::endianness(&obj) {
-            object::Endianness::Little => target::Endianness::Little,
-            object::Endianness::Big => target::Endianness::Big,
+            object::Endianness::Little => strider_target::Endianness::Little,
+            object::Endianness::Big => strider_target::Endianness::Big,
         };
         {
             let mut slot = self.endianness.write().map_err(|_| {
@@ -697,13 +697,13 @@ impl ReadOnlyMemory for PyMemoryMap {
         // payload as a widened N-byte BE word.
         //
         // Recover from poisoning rather than silently failing — the inner
-        // is `target::Endianness` (Copy), and `*guard = new_endianness`
+        // is `strider_target::Endianness` (Copy), and `*guard = new_endianness`
         // is atomic, so a partial-write panic cannot leave the slot
         // half-initialised.
         let endianness = *self.endianness.read().unwrap_or_else(|p| p.into_inner());
         let layout = match endianness {
-            target::Endianness::Little => buf,
-            target::Endianness::Big => {
+            strider_target::Endianness::Little => buf,
+            strider_target::Endianness::Big => {
                 let mut be_buf = [0u8; 8];
                 be_buf[8 - size..].copy_from_slice(&buf[..size]);
                 be_buf

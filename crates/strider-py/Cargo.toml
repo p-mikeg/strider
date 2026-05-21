@@ -60,7 +60,7 @@ strider-ir = { workspace = true }
 strider-lift = { workspace = true }
 dot = { workspace = true }
 strider-reader = { workspace = true }
-target = { workspace = true }
+strider-target = { workspace = true }
 rsleigh = { workspace = true }
 object = { workspace = true }
 

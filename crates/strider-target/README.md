@@ -1,4 +1,4 @@
-# `target` — architecture descriptors and calling conventions
+# `strider-target` — architecture descriptors and calling conventions
 
 Pure target-description data. Sits below [`ir`](../ir), [`opt`](../opt), and
 [`strider`](../strider) so every layer that needs ABI information names the

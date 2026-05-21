@@ -10,7 +10,7 @@ use super::PerRegionDriver;
 /// `&'static` reference (not `Option`) and the per-call lookup site
 /// stays a single `HashMap::get` with no `Option`-dance.
 pub(crate) static EMPTY_PER_ADDRESS_CCS: LazyLock<
-    std::collections::HashMap<u64, target::BuiltCallingConvention>,
+    std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
 > = LazyLock::new(std::collections::HashMap::new);
 
 /// Per-region IR-handle snapshot, captured during lift before
@@ -104,7 +104,7 @@ pub struct AnalyzeOptions<'a> {
     /// same Sleigh register table the function-default CC was built
     /// against.  Empty by default — every direct `Call` uses the
     /// function-default CC.
-    pub per_address_ccs: &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
+    pub per_address_ccs: &'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
 }
 
 impl Default for AnalyzeOptions<'_> {
@@ -130,8 +130,8 @@ impl Default for AnalyzeOptions<'_> {
 /// runs).
 #[derive(Clone)]
 pub struct Strider {
-    pub(super) calling_convention: target::BuiltCallingConvention,
-    pub(crate) arch: target::SleighArch,
+    pub(super) calling_convention: strider_target::BuiltCallingConvention,
+    pub(crate) arch: strider_target::SleighArch,
     /// Cached `SleighRegs` table from Strider construction.  Used by the
     /// CallOther per-op-ABI dispatch in `PerRegionDriver::handle_call_other`
     /// to resolve `CallOtherAbi::implicit_reads`/`implicit_writes` register
@@ -153,9 +153,9 @@ impl Strider {
     /// `calling_convention` (including the stack pointer) does not resolve
     /// against `sleigh_regs`.
     pub fn new(
-        arch: target::SleighArch,
+        arch: strider_target::SleighArch,
         sleigh_regs: rsleigh::SleighRegs,
-        calling_convention: target::CallingConvention,
+        calling_convention: strider_target::CallingConvention,
     ) -> Result<Self> {
         let built_calling_convention = calling_convention.build(&sleigh_regs)?;
         Ok(Self {
@@ -167,7 +167,7 @@ impl Strider {
 
     /// Returns the resolved calling convention this Strider was built with.
     #[must_use]
-    pub fn calling_convention(&self) -> &target::BuiltCallingConvention {
+    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
         &self.calling_convention
     }
 
@@ -236,7 +236,7 @@ impl Strider {
     /// Composed of node-removal passes safe to run only after the IR
     /// shape is final: `RedundantPhis`, `DeadBranchElimination`, plus
     /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
-    /// is now done at construction time in `target::call_other_abi::classify`.
+    /// is now done at construction time in `strider_target::call_other_abi::classify`.
     #[must_use]
     pub fn build_destructive_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::destructive_default_pipeline();
@@ -604,12 +604,12 @@ mod tests {
     fn display_summarises_unresolved_branches_and_region_count() {
         // Standard x86_64 `ret` byte sequence.  No `BranchIndirect`, so
         // `unresolved_branches.len() == 0`.
-        let arch = target::SleighArch::x86_64();
+        let arch = strider_target::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
         let strider = crate::Strider::new(
             arch,
             regs,
-            target::CallingConvention::x86_64_systemv(),
+            strider_target::CallingConvention::x86_64_systemv(),
         )
         .expect("strider");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);

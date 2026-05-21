@@ -23,7 +23,7 @@ use crate::opt::sp_expr::{SpExprMemo, decompose_sp};
 /// offsets than the outgoing-args window, so the relative offsets land
 /// outside `stack_arg_offsets`.  A pathological convention table that
 /// includes offsets coinciding with the local region would break this
-/// guarantee — none of the built-in `target::CallingConvention` presets do.
+/// guarantee — none of the built-in `strider_target::CallingConvention` presets do.
 ///
 /// **Prefix monotonicity.** Once a contiguous slot prefix `[0..=k]` has
 /// formed, any further fill must land in `[0, k+1]`.  A new fill at slot
@@ -292,7 +292,7 @@ impl CallStackArgCollect {
     /// Creates a new pass whose positional stack-arg offset table and
     /// stack-pointer varnode are taken from the supplied calling convention.
     #[must_use]
-    pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
+    pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self::new(cc.stack_arg_offsets().to_vec(), cc.stack_ptr_vn())
     }
 }

@@ -1,4 +1,4 @@
-//! `PyCallingConvention` — opaque wrapper over `target::CallingConvention`
+//! `PyCallingConvention` — opaque wrapper over `strider_target::CallingConvention`
 //! with one Python classmethod per Rust preset.
 
 use pyo3::prelude::*;
@@ -7,7 +7,7 @@ use pyo3::types::PyType;
 #[pyclass(name = "CallingConvention", module = "strider", frozen)]
 #[derive(Clone)]
 pub struct PyCallingConvention {
-    pub(crate) inner: target::CallingConvention,
+    pub(crate) inner: strider_target::CallingConvention,
     pub(crate) preset_name: &'static str,
 }
 
@@ -16,63 +16,63 @@ impl PyCallingConvention {
     #[classmethod]
     fn x86_64_systemv(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::x86_64_systemv(),
+            inner: strider_target::CallingConvention::x86_64_systemv(),
             preset_name: "x86_64_systemv",
         }
     }
     #[classmethod]
     fn aarch64_aapcs64(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::aarch64_aapcs64(),
+            inner: strider_target::CallingConvention::aarch64_aapcs64(),
             preset_name: "aarch64_aapcs64",
         }
     }
     #[classmethod]
     fn arm_aapcs(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::arm_aapcs(),
+            inner: strider_target::CallingConvention::arm_aapcs(),
             preset_name: "arm_aapcs",
         }
     }
     #[classmethod]
     fn mips_o32(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::mips_o32(),
+            inner: strider_target::CallingConvention::mips_o32(),
             preset_name: "mips_o32",
         }
     }
     #[classmethod]
     fn mips_n64(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::mips_n64(),
+            inner: strider_target::CallingConvention::mips_n64(),
             preset_name: "mips_n64",
         }
     }
     #[classmethod]
     fn powerpc_sysv32(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::powerpc_sysv32(),
+            inner: strider_target::CallingConvention::powerpc_sysv32(),
             preset_name: "powerpc_sysv32",
         }
     }
     #[classmethod]
     fn powerpc64_elf_v1(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::powerpc64_elf_v1(),
+            inner: strider_target::CallingConvention::powerpc64_elf_v1(),
             preset_name: "powerpc64_elf_v1",
         }
     }
     #[classmethod]
     fn powerpc64_elf_v2(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::powerpc64_elf_v2(),
+            inner: strider_target::CallingConvention::powerpc64_elf_v2(),
             preset_name: "powerpc64_elf_v2",
         }
     }
     #[classmethod]
     fn x86_cdecl(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::x86_cdecl(),
+            inner: strider_target::CallingConvention::x86_cdecl(),
             preset_name: "x86_cdecl",
         }
     }
@@ -83,7 +83,7 @@ impl PyCallingConvention {
     #[classmethod]
     fn x86_64_all_preserving(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::x86_64_all_preserving(),
+            inner: strider_target::CallingConvention::x86_64_all_preserving(),
             preset_name: "x86_64_all_preserving",
         }
     }
@@ -91,49 +91,49 @@ impl PyCallingConvention {
     // ── Linux kernel + syscall presets ───────────────────────────────────
     //
     // One classmethod per (arch, role) pair, one-to-one with the
-    // factory methods on `target::CallingConvention`.  See
+    // factory methods on `strider_target::CallingConvention`.  See
     // `docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md`
     // for the full list and rationale.
 
     #[classmethod]
     fn x86_linux_kernel(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::x86_linux_kernel(),
+            inner: strider_target::CallingConvention::x86_linux_kernel(),
             preset_name: "x86_linux_kernel",
         }
     }
     #[classmethod]
     fn x86_64_linux_kernel(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::x86_64_linux_kernel(),
+            inner: strider_target::CallingConvention::x86_64_linux_kernel(),
             preset_name: "x86_64_linux_kernel",
         }
     }
     #[classmethod]
     fn aarch64_linux_kernel(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::aarch64_linux_kernel(),
+            inner: strider_target::CallingConvention::aarch64_linux_kernel(),
             preset_name: "aarch64_linux_kernel",
         }
     }
     #[classmethod]
     fn arm_linux_kernel(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::arm_linux_kernel(),
+            inner: strider_target::CallingConvention::arm_linux_kernel(),
             preset_name: "arm_linux_kernel",
         }
     }
     #[classmethod]
     fn mips_linux_kernel_o32(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::mips_linux_kernel_o32(),
+            inner: strider_target::CallingConvention::mips_linux_kernel_o32(),
             preset_name: "mips_linux_kernel_o32",
         }
     }
     #[classmethod]
     fn mips_linux_kernel_n64(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::mips_linux_kernel_n64(),
+            inner: strider_target::CallingConvention::mips_linux_kernel_n64(),
             preset_name: "mips_linux_kernel_n64",
         }
     }
@@ -141,42 +141,42 @@ impl PyCallingConvention {
     #[classmethod]
     fn x86_linux_syscall(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::x86_linux_syscall(),
+            inner: strider_target::CallingConvention::x86_linux_syscall(),
             preset_name: "x86_linux_syscall",
         }
     }
     #[classmethod]
     fn x86_64_linux_syscall(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::x86_64_linux_syscall(),
+            inner: strider_target::CallingConvention::x86_64_linux_syscall(),
             preset_name: "x86_64_linux_syscall",
         }
     }
     #[classmethod]
     fn aarch64_linux_syscall(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::aarch64_linux_syscall(),
+            inner: strider_target::CallingConvention::aarch64_linux_syscall(),
             preset_name: "aarch64_linux_syscall",
         }
     }
     #[classmethod]
     fn arm_linux_syscall(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::arm_linux_syscall(),
+            inner: strider_target::CallingConvention::arm_linux_syscall(),
             preset_name: "arm_linux_syscall",
         }
     }
     #[classmethod]
     fn mips_linux_syscall_o32(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::mips_linux_syscall_o32(),
+            inner: strider_target::CallingConvention::mips_linux_syscall_o32(),
             preset_name: "mips_linux_syscall_o32",
         }
     }
     #[classmethod]
     fn mips_linux_syscall_n64(_cls: &Bound<'_, PyType>) -> Self {
         Self {
-            inner: target::CallingConvention::mips_linux_syscall_n64(),
+            inner: strider_target::CallingConvention::mips_linux_syscall_n64(),
             preset_name: "mips_linux_syscall_n64",
         }
     }
@@ -195,7 +195,7 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 /// Resolve the calling-convention preset's static-string register names
-/// against `sleigh`'s register table to produce a [`target::BuiltCallingConvention`].
+/// against `sleigh`'s register table to produce a [`strider_target::BuiltCallingConvention`].
 ///
 /// Centralises the pattern that the strider-py FFI layer used to repeat
 /// at every constructor that needs a built CC (StackStoreDetect,
@@ -206,7 +206,7 @@ pub(crate) fn build_cc_for_sleigh(
     py: Python<'_>,
     sleigh: &Py<crate::sleigh::PySleigh>,
     cc: &PyCallingConvention,
-) -> PyResult<target::BuiltCallingConvention> {
+) -> PyResult<strider_target::BuiltCallingConvention> {
     let sleigh_borrow = sleigh.borrow(py);
     let regs = sleigh_borrow.regs.clone();
     drop(sleigh_borrow);

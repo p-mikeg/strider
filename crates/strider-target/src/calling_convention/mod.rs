@@ -318,8 +318,9 @@ impl BuiltCallingConvention {
 /// Downcast a rich [`BuiltCallingConvention`] to the thin
 /// [`strider_ir::FunctionBuilderCC`] slice the IR builder consumes.
 ///
-/// Defined here (in `target`) rather than in `strider-ir` so the IR crate
-/// doesn't need to depend on `target` — `target` sits above `strider-ir`
+/// Defined here (in `strider-target`) rather than in `strider-ir` so the IR
+/// crate doesn't need to depend on `strider-target` — `strider-target` sits
+/// above `strider-ir`
 /// in the crate-dependency order, so having the `From` impl here keeps
 /// the direction forward.
 ///

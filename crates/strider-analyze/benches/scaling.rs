@@ -365,7 +365,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
             b.iter_batched(
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
-                    let pass = StackLoadForward::new(sp, target::Endianness::Little);
+                    let pass = StackLoadForward::new(sp, strider_target::Endianness::Little);
                     let entry = fg.entry();
                     let _ = pass.optimize_raw(fg.graph_mut(), entry);
                     black_box(fg);
