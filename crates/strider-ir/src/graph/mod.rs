@@ -46,21 +46,21 @@ mod tests;
 pub struct CcMetadata {
     /// Map from [`crate::builder::VarId`] to the corresponding [`rsleigh::Vn`]
     /// varnode.  Indexed by the same `VarId` keys the builder used.
-    pub variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn>,
+    pub(crate) variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn>,
     /// Ordered list of varnodes clobbered by every `Call` node.  The
     /// `i`-th clobbered output (slot `i + 2`) corresponds to
     /// `call_clobbered[i]`.
-    pub call_clobbered: Box<[rsleigh::Vn]>,
+    pub(crate) call_clobbered: Box<[rsleigh::Vn]>,
     /// The calling convention's return-value registers, in ABI order.
-    pub ret_val_regs: Box<[rsleigh::Vn]>,
+    pub(crate) ret_val_regs: Box<[rsleigh::Vn]>,
     /// Function-default clobber list for every `CallOther` node:
     /// every tracked variable except the stack pointer.
-    pub call_other_clobbered: Box<[rsleigh::Vn]>,
+    pub(crate) call_other_clobbered: Box<[rsleigh::Vn]>,
     /// Function-default `no_memory_clobber` flag — whether calls under
     /// this convention preserve the memory chain.  `true` for
     /// zero-side-effect hooks (`__fentry__` / `mcount` /
     /// `x86_64_all_preserving`).
-    pub no_memory_clobber: bool,
+    pub(crate) no_memory_clobber: bool,
 }
 
 /// The core IR graph structure.
