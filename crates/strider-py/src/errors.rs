@@ -45,24 +45,17 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     if e.downcast_ref::<strider_analyze::UnknownCallOtherError>().is_some() {
         return UnknownCallOtherError::new_err(format!("{e:?}"));
     }
-    // String-match heuristic for lift failures.  The orchestrator path
-    // (`strider_analyze::run`) folds every error through this converter, so plain
-    // pcode-lift / sleigh / cfg failures arrive as bare `anyhow::Error`
-    // chains with no typed root.  Until `pcode-lift` exposes a public
-    // `LiftError` type we can downcast, recognise the failure family by
-    // scanning the formatted chain for canonical lift-stage substrings
-    // and route to `LiftError`.  Keep the substring set narrow so an
-    // unrelated `StriderError` whose message happens to contain "lift"
-    // doesn't get mis-classified.
-    let chain = format!("{e:?}").to_lowercase();
-    const LIFT_MARKERS: &[&str] = &[
-        "lift",
-        "sleigh",
-        "decode",
-        "pcode",
-        "unsupported instruction",
-    ];
-    if LIFT_MARKERS.iter().any(|m| chain.contains(m)) {
+    // Typed-downcast for lift failures.  The orchestrator's
+    // `build_lift_stable` wraps every cfg-build and IR-lift failure
+    // in `strider_lift::LiftError` before propagation; recovering it
+    // here keeps the classification precise.  The previous
+    // implementation scanned the formatted anyhow chain for
+    // substrings ("lift", "sleigh", "decode", "pcode",
+    // "unsupported instruction") and misclassified unrelated errors
+    // whose message happened to contain one of those tokens (e.g. a
+    // `ReaderError` reporting `"failed to decode section .got.plt"`
+    // matched `"decode"` and surfaced as `LiftError`).
+    if e.downcast_ref::<strider_lift::LiftError>().is_some() {
         return LiftError::new_err(format!("{e:?}"));
     }
     StriderError::new_err(format!("{e:?}"))

@@ -9,6 +9,7 @@ dot.workspace = true
 graphwalk.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 strider-target.workspace = true
 petgraph.workspace = true
 rustc-hash = "2"

@@ -15,3 +15,6 @@
 pub mod pcode_lift;
 pub mod cfg;
 pub mod region_driver;
+pub mod errors;
+
+pub use errors::LiftError;

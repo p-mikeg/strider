@@ -1365,6 +1365,7 @@ dependencies = [
  "strider-ir",
  "strider-reader",
  "strider-target",
+ "thiserror",
 ]
 
 [[package]]
