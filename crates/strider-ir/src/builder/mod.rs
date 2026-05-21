@@ -92,6 +92,63 @@ fn upgrade_to_tracked_for(
         .copied()
 }
 
+/// Filters `all_used_variables` down to the largest enclosing tracked
+/// variable in each fixed-offset (REGISTER/UNIQUE) space.  E.g. if both
+/// `rdi` and `edi` are touched, the `edi` entry is dropped.  CONST and
+/// code-space varnodes are kept verbatim — containment-by-offset is
+/// meaningless there.
+///
+/// MIPS-style example: Sleigh's MIPS lifter writes a 64-bit IntMul
+/// result to a unique varnode then Copies a 4-byte slice to a register;
+/// without this filter the 4-byte and 8-byte unique varnodes look like
+/// independent SSA variables.  Keeping the wider varnode preserves the
+/// data dependency.
+fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
+    all_used_variables
+        .iter()
+        .filter(|v| {
+            if !is_aliasable_space(v.addr_space) {
+                return true;
+            }
+            !all_used_variables.iter().any(|other| {
+                other != *v
+                    && other.addr_space == v.addr_space
+                    && other.addr_off <= v.addr_off
+                    && other.addr_off + other.size as u64 >= v.addr_off + v.size as u64
+                    && other.size > v.size
+            })
+        })
+        .copied()
+        .collect()
+}
+
+/// Builds the call-clobbered variable list emitted as a `Call` node's
+/// value outputs (slot `i + 2` ↔ `call_clobbered_variables[i]`).
+///
+/// Front-loads the calling convention's return registers so
+/// `.ret_output(0)` indexes into ABI ret slot 0 (e.g. rax on x86_64),
+/// then appends the remaining caller-clobbered registers.  The stack
+/// pointer (rebound separately via `ret_stack_pop`) and callee-saved
+/// registers are excluded.
+fn build_call_clobbered_list(
+    callee_saved_vars: &[rsleigh::Vn],
+    stack_ptr_vn: Option<rsleigh::Vn>,
+    ret_vars: &[rsleigh::Vn],
+    all_variables: &[rsleigh::Vn],
+) -> Vec<rsleigh::Vn> {
+    let is_clobbered =
+        |v: &rsleigh::Vn| !callee_saved_vars.contains(v) && Some(*v) != stack_ptr_vn;
+    let ret_prefix = ret_vars
+        .iter()
+        .copied()
+        .filter(|v| all_variables.contains(v) && is_clobbered(v));
+    let rest = all_variables
+        .iter()
+        .filter(|v| is_clobbered(v) && !ret_vars.contains(v))
+        .copied();
+    ret_prefix.chain(rest).collect()
+}
+
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
@@ -282,63 +339,22 @@ impl FunctionBuilder {
         stack_ptr_vn: Option<rsleigh::Vn>,
         ret_stack_pop: i64,
     ) -> Result<Self> {
-        // For overlapping varnodes in the same fixed-offset space, keep only
-        // the largest enclosing one.  E.g. if both `rdi` and `edi` are
-        // touched, drop `edi`.  Same applies to UNIQUE space — Sleigh's
-        // MIPS lifter writes a 64-bit IntMul result to a unique varnode
-        // and Copies a 4-byte slice of it to a register; without the filter
-        // the 4-byte and 8-byte unique varnodes are treated as independent
-        // SSA variables (MIPS MULT writes a 64-bit unique then a Copy
-        // reads a narrow slice; the overlap filter keeps the wider
-        // varnode).
-        //
-        // CONST and code-space varnodes don't behave like fixed-offset
-        // registers — they're addressed by literal value or runtime address,
-        // so containment-by-offset is meaningless there.
-        let all_variables: Vec<_> = all_used_variables
-            .iter()
-            .filter(|v| {
-                if !is_aliasable_space(v.addr_space) {
-                    return true;
-                }
-                !all_used_variables.iter().any(|other| {
-                    other != *v
-                        && other.addr_space == v.addr_space
-                        && other.addr_off <= v.addr_off
-                        && other.addr_off + other.size as u64 >= v.addr_off + v.size as u64
-                        && other.size > v.size
-                })
-            })
-            .copied()
-            .collect();
-        // `call_clobbered_variables` is emitted as the Call node's value
-        // outputs in order (slot `i + 2` ↔ `call_clobbered_variables[i]`).
-        // Front-load it with the calling convention's return registers so
-        // `.ret_output(0)` indexes into ABI ret slot 0 (e.g. rax on x86_64),
-        // then append the remaining caller-clobbered registers.
-        let call_clobbered_variables: Vec<_> = {
-            let is_clobbered = |v: &rsleigh::Vn| {
-                !callee_saved_vars.contains(v) && Some(*v) != stack_ptr_vn
-            };
-            let ret_prefix = ret_vars
-                .iter()
-                .copied()
-                .filter(|v| all_variables.contains(v) && is_clobbered(v));
-            let rest = all_variables
-                .iter()
-                .filter(|v| is_clobbered(v) && !ret_vars.contains(v))
-                .copied();
-            ret_prefix.chain(rest).collect()
-        };
+        let all_variables = dedup_overlapping_largest(&all_used_variables);
+        let call_clobbered_variables = build_call_clobbered_list(
+            callee_saved_vars,
+            stack_ptr_vn,
+            ret_vars,
+            &all_variables,
+        );
         let mut variables = PrimaryMap::new();
         let mut variable_to_id = HashMap::new();
         for variable in all_variables {
             let var_id = variables.push(variable);
             variable_to_id.insert(variable, var_id);
         }
-        // For arg-passing and ret-val regs that the overlap filter dropped
-        // (because the function uses a different-width view of the same
-        // physical register), `upgrade_to_tracked_for` rewires the
+        // For arg-passing and ret-val regs that `dedup_overlapping_largest`
+        // dropped (because the function uses a different-width view of the
+        // same physical register), `upgrade_to_tracked_for` rewires the
         // convention's varnode to the closest tracked variable in two
         // directions:
         //
