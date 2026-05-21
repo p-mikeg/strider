@@ -254,6 +254,43 @@ pub(super) fn check_graph_invariants_function_arg_uniqueness(
     }
 }
 
+/// Returns the `(expected_byte_size, output_type)` pair that the
+/// declared `NodeOutputType` of a wide-const node prescribes, or
+/// `None` when the node lacks a value-typed output (skip — let
+/// Layer A handle the structural error).
+///
+/// Emits a `WideConstWidthMismatch { expected_bytes: 0, actual_bytes
+/// = actual }` sentinel when the declared output type isn't U256 or
+/// U512: IntConstWide's local-typing signature accepts any `INT_VAL`
+/// slot kind, but only U256/U512 are semantically valid storage
+/// widths.  `expected_bytes = 0` flags the violation as "no valid
+/// width" so callers can distinguish it from a genuine width
+/// mismatch.
+fn wide_const_expected_bytes(
+    graph: &Graph,
+    node: NodeId,
+    actual: usize,
+) -> Result<Option<(usize, crate::node::NodeOutputType)>, ValidationError> {
+    use crate::node::NodeOutputType;
+    let outputs = graph.node_outputs(node);
+    let Some(&out) = outputs.first() else {
+        return Ok(None);
+    };
+    let NodeOutputKind::OutputType(ty) = graph.output_kind(out) else {
+        return Ok(None);
+    };
+    match ty {
+        NodeOutputType::U256 => Ok(Some((32, ty))),
+        NodeOutputType::U512 => Ok(Some((64, ty))),
+        _ => Err(ValidationError::WideConstWidthMismatch {
+            node,
+            output_type: ty,
+            expected_bytes: 0,
+            actual_bytes: actual,
+        }),
+    }
+}
+
 /// Graph invariant: verify every reachable `IntConstWide(id)` node
 /// references a live entry in `Graph::wide_consts` and that the stored
 /// value's byte size matches the node's declared output type.
@@ -268,52 +305,27 @@ pub(super) fn check_graph_invariants_wide_consts(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    use crate::node::NodeOutputType;
     for (node, kind) in reachable_nodes(graph, reachable) {
         let NodeKind::IntConstWide(id) = kind else {
             continue;
         };
         if graph.wide_consts.get(*id).is_none() {
-            errs.push(ValidationError::DanglingWideConstId {
-                node,
-                id: *id,
-            });
+            errs.push(ValidationError::DanglingWideConstId { node, id: *id });
             continue;
         }
         let actual = graph.wide_const(*id).byte_size();
-        let outputs = graph.node_outputs(node);
-        let Some(&out) = outputs.first() else {
-            continue;
-        };
-        let NodeOutputKind::OutputType(ty) = graph.output_kind(out) else {
-            continue;
-        };
-        let expected = match ty {
-            NodeOutputType::U256 => 32,
-            NodeOutputType::U512 => 64,
-            _ => {
-                // Output type isn't U256/U512 — this is a local-typing
-                // signature mismatch (IntConstWide's signature is
-                // `outputs: [INT_VAL]`, any int passes local-typing but only
-                // U256/U512 are semantically valid).  Surface as a width
-                // mismatch for the rare case where a synthetic graph
-                // produces, say, IntConstWide on a U64 output.
+        match wide_const_expected_bytes(graph, node, actual) {
+            Ok(None) => {}
+            Ok(Some((expected, ty))) if expected != actual => {
                 errs.push(ValidationError::WideConstWidthMismatch {
                     node,
                     output_type: ty,
-                    expected_bytes: 0,
+                    expected_bytes: expected,
                     actual_bytes: actual,
                 });
-                continue;
             }
-        };
-        if expected != actual {
-            errs.push(ValidationError::WideConstWidthMismatch {
-                node,
-                output_type: ty,
-                expected_bytes: expected,
-                actual_bytes: actual,
-            });
+            Ok(Some(_)) => {}
+            Err(e) => errs.push(e),
         }
     }
 }
