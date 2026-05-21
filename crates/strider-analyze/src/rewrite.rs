@@ -131,7 +131,7 @@ impl<'a> GraphRewriter<'a> {
         let mut applied: usize = 0;
         // Pre-collect candidate roots before mutating; the walk's
         // iterator borrows the graph immutably.
-        let candidates: Vec<NodeId> = self.graph.preorder(self.entry).collect();
+        let candidates: Vec<NodeId> = self.graph.walk_from(self.entry).collect();
         for node in candidates {
             let mut ctx = crate::pattern::RewriteCtx::new(&mut *self.graph, self.entry);
             // `cranelift_entity::PrimaryMap` doesn't reuse keys, so

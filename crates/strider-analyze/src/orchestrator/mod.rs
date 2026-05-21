@@ -590,7 +590,7 @@ where
         // `FunctionArgDetect`'s post-detection invariant that all
         // argument-register reads flow through `FunctionArg` nodes.
         let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
-        for nid in graph.graph().preorder(graph.entry()) {
+        for nid in graph.preorder() {
             if let strider_ir::node::NodeKind::InitialVar(existing) = graph.node_kind(nid) {
                 // InitialVar's signature is `[]; outputs: [Value]` —
                 // exactly one output.  A non-1 count is a graph-shape

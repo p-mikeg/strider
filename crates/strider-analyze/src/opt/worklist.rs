@@ -48,7 +48,7 @@ pub(crate) fn detach_unreachable_nodes(
     // FxHashSet — same constant-time membership semantics with better
     // cache behaviour at 10k+ nodes.
     let mut reachable: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    for n in graph.preorder(entry) {
+    for n in graph.walk_from(entry) {
         reachable.insert(n);
     }
     // Two-phase: gather the targets up-front (releases the borrow on `graph`

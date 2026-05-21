@@ -1,5 +1,5 @@
 //! Operation kinds used by IR nodes, plus helper methods on
-//! [`crate::function::BuiltFunctionGraph`] grouped by purpose:
+//! [`crate::graph::Graph`] grouped by purpose:
 //!
 //! - [`consts`] — constant-output inspection & creation.
 //! - [`rewrite`] — graph-mutation helpers like `replace_all_uses`.

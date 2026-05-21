@@ -32,15 +32,16 @@ mod tests;
 ///
 /// `None` on a `Graph` while it is being constructed by
 /// [`crate::FunctionBuilder`]; populated to `Some(_)` by
-/// [`crate::FunctionBuilder::build`] before the graph is wrapped in a
-/// [`crate::BuiltFunctionGraph`].  The wrapper guarantees the
-/// `Some(_)` invariant at the type level.
+/// [`crate::FunctionBuilder::build`] before the graph is returned to
+/// consumers.  After build, [`Graph::cc_metadata`] unwraps the option;
+/// pre-build code paths must use the field directly.
 ///
-/// All four `Box<[rsleigh::Vn]>` lists' element-ordering invariants are
-/// the same as the fields they were lifted from on the old
-/// [`crate::BuiltFunctionGraph`] struct — see the field docs there for
-/// the slot-to-varnode correspondence each list maintains with the
-/// graph's `Call` / `CallOther` / `Return` nodes.
+/// The four `Box<[rsleigh::Vn]>` lists' element-ordering invariants
+/// correspond to slot positions on `Call` / `CallOther` / `Return`
+/// nodes — `call_clobbered[i]` is the varnode for the `i`-th clobbered
+/// output slot (slot `i + 2`); `ret_val_regs[i]` is the i-th ABI
+/// return register; `call_other_clobbered[i]` is the i-th CallOther
+/// clobber slot.
 #[derive(Clone, Debug)]
 pub struct CcMetadata {
     /// Map from [`crate::VarId`] to the corresponding [`rsleigh::Vn`]
@@ -136,7 +137,7 @@ pub struct Graph {
     /// Per-Call clobber-list override.
     ///
     /// `None` (the default) means the Call uses the function-default
-    /// clobber list at [`crate::function::BuiltFunctionGraph::call_clobbered`];
+    /// clobber list at [`CcMetadata::call_clobbered`];
     /// `Some(list)` shadows the function-default for this one Call —
     /// the i-th value-typed output (slot `i + 2`) corresponds to
     /// `list[i]` instead of the function-default.  Populated by
@@ -171,9 +172,8 @@ pub struct Graph {
     >,
     /// The `Entry` node of the function, once
     /// [`crate::FunctionBuilder::build`] has finalised the graph.
-    /// `None` during build; `Some(_)` after.  The
-    /// [`crate::BuiltFunctionGraph`] wrapper guarantees the `Some(_)`
-    /// invariant at the type level.
+    /// `None` during build; `Some(_)` after.  Consumers go through
+    /// [`Self::entry`], which unwraps and panics on the un-built case.
     pub(crate) entry: Option<NodeId>,
     /// Calling-convention metadata captured at build time.  `None`
     /// during build; `Some(_)` after.  See [`CcMetadata`].
@@ -236,14 +236,98 @@ impl Graph {
         &self.wide_consts[id]
     }
 
-    /// Returns an iterator that visits all reachable nodes in pre-order,
-    /// starting from `entry`.  Callers that hold a `BuiltFunctionGraph`
-    /// can use the wrapping [`crate::function::BuiltFunctionGraph::preorder`]
-    /// shortcut instead; opt passes that take `(graph, entry)` directly use
-    /// this method to walk reachable nodes without needing a wrapper.
+    /// Returns the `Entry` node id of the function.
+    ///
+    /// Available only after [`crate::FunctionBuilder::build`] has
+    /// finalised the graph (which populates `self.entry`).  Panics on a
+    /// graph that has not been built — opt passes and analyses run only
+    /// against built graphs, so this is the boundary where the
+    /// "fully-built" invariant is enforced.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self.entry` is `None`, i.e. the graph has not been
+    /// finalised by `FunctionBuilder::build`.
     #[must_use]
-    pub fn preorder(&self, entry: crate::node::NodeId) -> crate::walk::GraphWalk<'_> {
+    pub fn entry(&self) -> crate::node::NodeId {
+        self.entry
+            .expect("Graph::entry called on an un-built graph (FunctionBuilder::build was not called)")
+    }
+
+    /// Read-only access to the calling-convention metadata captured at
+    /// build time.  See [`CcMetadata`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self.cc_metadata` is `None`, i.e. the graph has not
+    /// been finalised by `FunctionBuilder::build`.
+    #[must_use]
+    pub fn cc_metadata(&self) -> &CcMetadata {
+        self.cc_metadata
+            .as_ref()
+            .expect("Graph::cc_metadata called on an un-built graph (FunctionBuilder::build was not called)")
+    }
+
+    /// Read the calling convention's call-clobbered varnode list.
+    /// Convenience for `graph.cc_metadata().call_clobbered`.
+    #[must_use]
+    pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
+        &self.cc_metadata().call_clobbered
+    }
+
+    /// Function-default `no_memory_clobber` flag — whether calls under
+    /// this convention preserve memory (zero-side-effect hooks like
+    /// `__fentry__` / `mcount`).  When `true`, `LoadReadOnly` and
+    /// `StackLoadForward` may forward across calls.
+    #[must_use]
+    pub fn no_memory_clobber(&self) -> bool {
+        self.cc_metadata().no_memory_clobber
+    }
+
+    /// Read the function-default CallOther clobber list.
+    /// Convenience for `graph.cc_metadata().call_other_clobbered`.
+    #[must_use]
+    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
+        &self.cc_metadata().call_other_clobbered
+    }
+
+    /// Read the `VarId → Vn` map for tracked variables.
+    /// Convenience for `graph.cc_metadata().variables`.
+    #[must_use]
+    pub fn variables_map(&self) -> &PrimaryMap<crate::builder::VarId, rsleigh::Vn> {
+        &self.cc_metadata().variables
+    }
+
+    /// Returns an iterator that visits all reachable nodes in pre-order,
+    /// starting from [`Self::entry`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph has not been built (see [`Self::entry`]).
+    #[must_use]
+    pub fn preorder(&self) -> crate::walk::GraphWalk<'_> {
+        crate::walk::walk_graph(self, self.entry())
+    }
+
+    /// Returns an iterator that visits all reachable nodes in pre-order,
+    /// starting from the given `entry` (which need not be `self.entry`).
+    /// Used by opt passes that take `(graph, entry)` explicitly.
+    #[must_use]
+    pub fn walk_from(&self, entry: crate::node::NodeId) -> crate::walk::GraphWalk<'_> {
         crate::walk::walk_graph(self, entry)
+    }
+
+    /// Reachable preorder filtered by a predicate over the node's
+    /// [`crate::node::NodeKind`].  Convenience for the common
+    /// `.preorder().filter(|n| matches!(graph.node_kind(n), …))` pattern.
+    pub fn preorder_kind<'a, P>(
+        &'a self,
+        mut pred: P,
+    ) -> impl Iterator<Item = crate::node::NodeId> + 'a
+    where
+        P: FnMut(&crate::node::NodeKind) -> bool + 'a,
+    {
+        self.preorder().filter(move |&n| pred(self.node_kind(n)))
     }
 
     /// Iterates over **every** node id in the graph, including nodes that are
@@ -253,4 +337,74 @@ impl Graph {
         self.nodes.keys()
     }
 
+    /// Rebuilds the graph to retain only nodes reachable from
+    /// [`Self::entry`] via [`crate::walk::walk_graph`].  The entry node
+    /// id is remapped; CC metadata is vn-keyed and stays valid as-is.
+    ///
+    /// External callers that hold any pre-compaction `NodeId` /
+    /// `NodeOutputId` / `NodeInputId` MUST rewrite them through the
+    /// returned remap (or drop them).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `retain_reachable`'s remap doesn't contain
+    /// the entry node.  By construction this can never fire —
+    /// `retain_reachable` walks forward from `entry`, so the entry is
+    /// always reachable from itself — but propagating as `Err` rather
+    /// than panicking keeps every error path typed so Python users see
+    /// a clean exception.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph has not been built (see [`Self::entry`]).
+    pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
+        let entry = self.entry();
+        let remap = self.retain_reachable(entry)?;
+        let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Graph::compact: entry {:?} missing from retain_reachable remap (invariant violation)",
+                entry
+            )
+        })?;
+        self.entry = Some(new_entry);
+        Ok(remap)
+    }
+
+    /// Returns a [`crate::graph_dot::GraphDotDumper`] that can render
+    /// this function graph to a `.dot` / `.html` file.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph has not been built.
+    #[must_use]
+    pub fn dot_dumper<'a, R: rsleigh::MemReader>(
+        &'a self,
+        sleigh: &'a rsleigh::Sleigh<R>,
+    ) -> crate::graph_dot::GraphDotDumper<'a, R> {
+        let cc = self.cc_metadata();
+        crate::graph_dot::GraphDotDumper {
+            entry: self.entry(),
+            graph: self,
+            sleigh,
+            call_clobbered: &cc.call_clobbered,
+            ret_val_regs: &cc.ret_val_regs,
+        }
+    }
+
+    /// Identity self-reference — no-op now that the
+    /// `BuiltFunctionGraph` wrapper was collapsed into `Graph`.  Kept
+    /// so call sites that were written against the wrapper continue to
+    /// compile.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn graph(&self) -> &Graph {
+        self
+    }
+
+    /// Identity self-reference (mut).  See [`Self::graph`].
+    #[doc(hidden)]
+    #[must_use]
+    pub fn graph_mut(&mut self) -> &mut Graph {
+        self
+    }
 }
