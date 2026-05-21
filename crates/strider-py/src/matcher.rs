@@ -133,59 +133,45 @@ impl PyMatch {
     /// Recover the matched `IntBinaryOp` variant name from `c`,
     /// e.g. `"Add"`, `"Sub"`, `"And"`.
     fn int_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| {
-            self.inner.get_int_binary_op(c, g).map(int_binary_op_name)
-        })
+        self.with_graph(py, key, |c, g| self.inner.get_int_binary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `IntUnaryOp` variant name from `c`.
     fn int_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| {
-            self.inner.get_int_unary_op(c, g).map(int_unary_op_name)
-        })
+        self.with_graph(py, key, |c, g| self.inner.get_int_unary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `IntCmpOp` variant name from `c`,
     /// e.g. `"Less"`, `"Equal"`, `"Sless"`.
     fn int_cmp_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| {
-            self.inner.get_int_cmp_op(c, g).map(int_cmp_op_name)
-        })
+        self.with_graph(py, key, |c, g| self.inner.get_int_cmp_op(c, g).map(op_name))
     }
 
     /// Recover the matched `BoolBinaryOp` variant name from `c`.
     fn bool_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| {
-            self.inner.get_bool_binary_op(c, g).map(bool_binary_op_name)
-        })
+        self.with_graph(py, key, |c, g| self.inner.get_bool_binary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `BoolUnaryOp` variant name from `c`.
     fn bool_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| {
-            self.inner.get_bool_unary_op(c, g).map(bool_unary_op_name)
-        })
+        self.with_graph(py, key, |c, g| self.inner.get_bool_unary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `FloatBinaryOp` variant name from `c`.
     fn float_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
         self.with_graph(py, key, |c, g| {
-            self.inner.get_float_binary_op(c, g).map(float_binary_op_name)
+            self.inner.get_float_binary_op(c, g).map(op_name)
         })
     }
 
     /// Recover the matched `FloatUnaryOp` variant name from `c`.
     fn float_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| {
-            self.inner.get_float_unary_op(c, g).map(float_unary_op_name)
-        })
+        self.with_graph(py, key, |c, g| self.inner.get_float_unary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `FloatCmpOp` variant name from `c`.
     fn float_cmp_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| {
-            self.inner.get_float_cmp_op(c, g).map(float_cmp_op_name)
-        })
+        self.with_graph(py, key, |c, g| self.inner.get_float_cmp_op(c, g).map(op_name))
     }
 
     /// Recover the matched varnode from `c`.  Returns the `Vn`
@@ -246,102 +232,19 @@ impl PyMatch {
     }
 }
 
-// ── Op-variant name helpers ──────────────────────────────────────────────
+// ── Op-variant name helper ──────────────────────────────────────────────
 //
 // Mirror the Sleigh-style spelling used by the `int_binary("Add",
-// ...)` / `parse_int_cmp_op` constructors: every op_name returns
-// the same string the constructor accepts, so a `find_all → recover
-// op → reconstruct pattern` round-trip stays consistent.
+// ...)` / `parse_int_cmp_op` constructors: `op_name` returns the
+// `Debug`-formatted variant name, which matches the string the
+// constructor accepts, so a `find_all → recover op → reconstruct
+// pattern` round-trip stays consistent.  Every op enum (IntBinaryOp,
+// IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, FloatBinaryOp,
+// FloatUnaryOp, FloatCmpOp) derives `Debug` whose output is exactly
+// the variant identifier.
 
-fn int_binary_op_name(op: strider_ir::IntBinaryOp) -> String {
-    use strider_ir::IntBinaryOp::*;
-    match op {
-        Add => "Add",
-        Mul => "Mul",
-        Div => "Div",
-        Sdiv => "Sdiv",
-        Rem => "Rem",
-        Srem => "Srem",
-        And => "And",
-        Or => "Or",
-        Xor => "Xor",
-        ShiftLeft => "ShiftLeft",
-        ShiftRight => "ShiftRight",
-        SShiftRight => "SShiftRight",
-    }
-    .to_string()
-}
-
-fn int_unary_op_name(op: strider_ir::IntUnaryOp) -> String {
-    use strider_ir::IntUnaryOp::*;
-    match op {
-        BitNot => "BitNot",
-        Neg => "Neg",
-    }
-    .to_string()
-}
-
-fn int_cmp_op_name(op: strider_ir::IntCmpOp) -> String {
-    use strider_ir::IntCmpOp::*;
-    match op {
-        Equal => "Equal",
-        Less => "Less",
-        Sless => "Sless",
-        Carry => "Carry",
-        Scarry => "Scarry",
-        Sborrow => "Sborrow",
-    }
-    .to_string()
-}
-
-fn bool_binary_op_name(op: strider_ir::BoolBinaryOp) -> String {
-    use strider_ir::BoolBinaryOp::*;
-    match op {
-        And => "And",
-        Or => "Or",
-        Xor => "Xor",
-    }
-    .to_string()
-}
-
-fn bool_unary_op_name(op: strider_ir::BoolUnaryOp) -> String {
-    use strider_ir::BoolUnaryOp::*;
-    match op {
-        Neg => "Neg",
-    }
-    .to_string()
-}
-
-fn float_binary_op_name(op: strider_ir::FloatBinaryOp) -> String {
-    use strider_ir::FloatBinaryOp::*;
-    match op {
-        Add => "Add",
-        Mul => "Mul",
-        Div => "Div",
-    }
-    .to_string()
-}
-
-fn float_unary_op_name(op: strider_ir::FloatUnaryOp) -> String {
-    use strider_ir::FloatUnaryOp::*;
-    match op {
-        Neg => "Neg",
-        Abs => "Abs",
-        Sqrt => "Sqrt",
-        Ceil => "Ceil",
-        Floor => "Floor",
-        Round => "Round",
-    }
-    .to_string()
-}
-
-fn float_cmp_op_name(op: strider_ir::FloatCmpOp) -> String {
-    use strider_ir::FloatCmpOp::*;
-    match op {
-        Equal => "Equal",
-        Less => "Less",
-    }
-    .to_string()
+fn op_name<T: std::fmt::Debug>(op: T) -> String {
+    format!("{op:?}")
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
