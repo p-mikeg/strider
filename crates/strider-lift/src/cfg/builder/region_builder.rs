@@ -475,7 +475,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         {
             Some(cached)
         } else if let Some(resolver) = self.builder.indirect_resolver.as_ref() {
-            resolver.resolve(
+            resolver(
                 &self.insns,
                 target_vn,
                 &self.builder.sleigh,
@@ -487,8 +487,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             // No resolver installed → treat every unresolved
             // `BranchIndirect` as deferred.  Callers (the strider
             // orchestrator, the example binary) that need indirect
-            // resolution must install
-            // `strider_analyze::indirect_resolver::MiniIrIndirectResolver`
+            // resolution must install a closure wrapping
+            // `strider_analyze::indirect_resolver::resolve_indirect_target`
             // via [`crate::cfg::Builder::with_indirect_resolver`].
             None
         };

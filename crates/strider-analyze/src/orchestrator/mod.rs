@@ -973,12 +973,15 @@ where
     //
     // Install the strider-analyze mini-IR resolver: without it, the
     // cfg builder treats every `BranchIndirect` as deferred via
-    // `UnresolvedIndirectBranch`.  The resolver is stateless so a
-    // single static `Arc` would suffice; we allocate per-call for
-    // clarity since CFG rebuilds are rare.
-    let resolver: std::sync::Arc<
-        dyn strider_lift::cfg::IndirectTargetResolver<R>,
-    > = std::sync::Arc::new(crate::indirect_resolver::MiniIrIndirectResolver);
+    // `UnresolvedIndirectBranch`.  The closure captures nothing
+    // (zero-state) — `resolve_indirect_target` is a free function.
+    let resolver: strider_lift::cfg::IndirectResolverFn<R> = std::sync::Arc::new(
+        |insns, target_vn, sleigh, lr_vn, rom, endianness| {
+            crate::indirect_resolver::resolve_indirect_target(
+                insns, target_vn, sleigh, lr_vn, rom, endianness,
+            )
+        },
+    );
     let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.addr, cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())

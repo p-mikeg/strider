@@ -21,10 +21,9 @@
 //!
 //! Defined in `strider_lift::cfg::builder::indirect_resolver` (the
 //! lowest layer that needs the enum: it's the return type of the
-//! [`strider_lift::cfg::IndirectTargetResolver`] callback the cfg
-//! builder hands to its installed resolver).  Re-exported here so
-//! pre-existing call sites that import `opt::ResolvedTargets` keep
-//! working.
+//! [`strider_lift::cfg::IndirectResolverFn`] callback the cfg builder
+//! hands to its installed resolver).  Re-exported here so pre-existing
+//! call sites that import `opt::ResolvedTargets` keep working.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -57,7 +56,7 @@ pub use stack_array::classify_stack_array;
 
 /// Re-export of the canonical [`ResolvedTargets`] enum, which now lives
 /// in `strider-lift` so the cfg builder's
-/// [`strider_lift::cfg::IndirectTargetResolver`] callback can return it
+/// [`strider_lift::cfg::IndirectResolverFn`] callback can return it
 /// without forming a dep cycle.
 pub use strider_lift::cfg::ResolvedTargets;
 

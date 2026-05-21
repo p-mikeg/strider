@@ -54,9 +54,12 @@ pub fn build_cfg(
     // Install the strider-analyze mini-IR resolver so the cfg-time
     // resolver classifies `BranchIndirect` rather than deferring every
     // site via `UnresolvedIndirectBranch`.
-    let resolver: std::sync::Arc<
-        dyn strider_lift::cfg::IndirectTargetResolver<AnyMemReader>,
-    > = std::sync::Arc::new(strider_analyze::indirect_resolver::MiniIrIndirectResolver);
+    let resolver: strider_lift::cfg::IndirectResolverFn<AnyMemReader> =
+        std::sync::Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
+            strider_analyze::indirect_resolver::resolve_indirect_target(
+                insns, target_vn, sleigh, lr_vn, rom, endianness,
+            )
+        });
     let built = strider_lift::cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .with_indirect_resolver(resolver)
         .build()

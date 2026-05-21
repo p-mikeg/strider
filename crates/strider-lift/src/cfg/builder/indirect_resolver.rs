@@ -3,18 +3,19 @@
 //! [`crate::cfg::Builder`] does not itself know how to classify a
 //! `BranchIndirect`'s target — that requires running a mini IR + the
 //! `strider-analyze` optimizer pipeline, which sits *above* strider-lift
-//! in the crate-dependency order.  Instead, the builder accepts an installed
-//! [`IndirectTargetResolver`] callback (via
+//! in the crate-dependency order.  Instead, the builder accepts an
+//! installed [`IndirectResolverFn`] callback (via
 //! [`crate::cfg::Builder::with_indirect_resolver`]) and delegates target
 //! classification to it.  The concrete implementation lives in
-//! `strider_analyze::indirect_resolver`.
+//! `strider_analyze::indirect_resolver::resolve_indirect_target`.
 //!
 //! When no resolver is installed, the cfg builder treats every
 //! `BranchIndirect` as unresolvable and defers the site via
 //! [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].  Callers
 //! that want indirect-branch resolution must construct + install a
-//! resolver (the canonical one is
-//! `strider_analyze::indirect_resolver::MiniIrIndirectResolver`).
+//! resolver closure that wraps the canonical
+//! `strider_analyze::indirect_resolver::resolve_indirect_target` free
+//! function.
 //!
 //! This module also owns the [`ResolvedTargets`] result enum that both
 //! the cfg-time mini-IR resolver and the IR-level resolver in
@@ -63,22 +64,44 @@ pub enum ResolvedTargets {
     Multiple(Vec<u64>),
 }
 
-/// Callback interface invoked by [`crate::cfg::Builder`] when it
-/// encounters a `BranchIndirect` whose target is not pre-classified
-/// (via `with_known_targets`).  The cfg builder hands the resolver the
+/// Callback invoked by [`crate::cfg::Builder`] when it encounters a
+/// `BranchIndirect` whose target is not pre-classified (via
+/// `with_known_targets`).  The cfg builder hands the callback the
 /// region's accumulated pcode plus the dispatch varnode and lets it
 /// decide whether the target is a constant, a link-register read, or
 /// unresolvable.
 ///
+/// `region_insns` is the current region's pcode instructions in
+/// program order, **including the trailing `BranchIndirect`**.
+/// `target_vn` is the dispatch varnode (`BranchIndirect`'s
+/// `inputs[0]`).  `sleigh` is the active Sleigh context used to drive
+/// any IR lifting the resolver needs.  `cc_link_register_vn` is the
+/// calling convention's link-register varnode (`Some` on link-register
+/// ISAs, `None` on stack-push ISAs like x86/x86_64).  `rom` is the
+/// binary's read-only memory image consulted when folding
+/// constant-address loads (e.g. rodata-resident jump tables).
+/// `endianness` drives byte-order for the resolver's internal lifter.
+///
+/// Returns `Ok(Some(targets))` on a successful classification,
+/// `Ok(None)` when the target is not statically recoverable from the
+/// region's pcode alone (the caller defers via
+/// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`]), and
+/// `Err` on internal errors (malformed pcode, opt failures).
+///
 /// The canonical implementation lives in
-/// `strider_analyze::indirect_resolver` — it builds a mini IR and runs
-/// the opt pipeline.  An installation pattern looks like:
+/// `strider_analyze::indirect_resolver::resolve_indirect_target` — it
+/// builds a mini IR and runs the opt pipeline.  An installation
+/// pattern looks like:
 ///
 /// ```ignore
+/// use std::sync::Arc;
 /// use strider_lift::cfg::Builder;
-/// use strider_analyze::indirect_resolver::MiniIrIndirectResolver;
+/// use strider_analyze::indirect_resolver::resolve_indirect_target;
 ///
-/// let resolver = std::sync::Arc::new(MiniIrIndirectResolver);
+/// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
+///     Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
+///         resolve_indirect_target(insns, target_vn, sleigh, lr_vn, rom, endianness)
+///     });
 /// let cfg = Builder::for_arch(&arch, sleigh, addr, opts)
 ///     .with_indirect_resolver(resolver)
 ///     .build()?;
@@ -86,36 +109,15 @@ pub enum ResolvedTargets {
 ///
 /// `Send + Sync` is required because resolvers may be shared across
 /// builders in multi-threaded analysis pipelines.
-pub trait IndirectTargetResolver<R: rsleigh::MemReader>: Send + Sync {
-    /// Resolve the `BranchIndirect`'s target.
-    ///
-    /// `region_insns` is the current region's pcode instructions in
-    /// program order, **including the trailing `BranchIndirect`**.
-    /// `target_vn` is the dispatch varnode (`BranchIndirect`'s
-    /// `inputs[0]`).  `sleigh` is the active Sleigh context used to
-    /// drive any IR lifting the resolver needs.
-    /// `cc_link_register_vn` is the calling convention's link-register
-    /// varnode (`Some` on link-register ISAs, `None` on stack-push
-    /// ISAs like x86/x86_64).  `rom` is the binary's read-only memory
-    /// image consulted when folding constant-address loads (e.g.
-    /// rodata-resident jump tables).  `endianness` drives byte-order
-    /// for the resolver's internal lifter.
-    ///
-    /// Returns `Ok(Some(targets))` on a successful classification,
-    /// `Ok(None)` when the target is not statically recoverable from
-    /// the region's pcode alone (the caller defers via
-    /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`]),
-    /// and `Err` on internal errors (malformed pcode, opt failures).
-    ///
-    /// # Errors
-    /// Propagates internal IR-build / opt-pipeline failures.
-    fn resolve(
-        &self,
-        region_insns: &[RegionInstruction],
-        target_vn: rsleigh::Vn,
-        sleigh: &rsleigh::Sleigh<R>,
-        cc_link_register_vn: Option<rsleigh::Vn>,
-        rom: Option<&dyn ReadOnlyMemory>,
-        endianness: Endianness,
-    ) -> Result<Option<ResolvedTargets>>;
-}
+pub type IndirectResolverFn<R> = std::sync::Arc<
+    dyn Fn(
+            &[RegionInstruction],
+            rsleigh::Vn,
+            &rsleigh::Sleigh<R>,
+            Option<rsleigh::Vn>,
+            Option<&dyn ReadOnlyMemory>,
+            Endianness,
+        ) -> Result<Option<ResolvedTargets>>
+        + Send
+        + Sync,
+>;

@@ -25,7 +25,7 @@ mod types;
 pub type Result<T> = anyhow::Result<T>;
 
 pub use builder::Builder;
-pub use builder::{IndirectTargetResolver, ResolvedTargets};
+pub use builder::{IndirectResolverFn, ResolvedTargets};
 pub use decode_cache::DecodeCache;
 pub use options::OptionsBuilder;
 

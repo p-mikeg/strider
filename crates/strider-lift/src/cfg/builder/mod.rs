@@ -2,12 +2,11 @@ mod indirect_resolver;
 mod region_builder;
 mod split;
 
-pub use indirect_resolver::{IndirectTargetResolver, ResolvedTargets};
+pub use indirect_resolver::{IndirectResolverFn, ResolvedTargets};
 
 use region_builder::RegionBuilder;
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 
 use petgraph::graph::NodeIndex;
 
@@ -81,8 +80,10 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// as deferred via
     /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
     /// Install one with [`Self::with_indirect_resolver`] — the canonical
-    /// implementation is `strider_analyze::indirect_resolver::MiniIrIndirectResolver`.
-    pub(super) indirect_resolver: Option<Arc<dyn IndirectTargetResolver<R>>>,
+    /// implementation is the
+    /// `strider_analyze::indirect_resolver::resolve_indirect_target`
+    /// free function, wrapped in an [`IndirectResolverFn`] closure.
+    pub(super) indirect_resolver: Option<IndirectResolverFn<R>>,
 }
 
 impl<R: rsleigh::MemReader> Builder<R> {
@@ -113,7 +114,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
     }
 
-    /// Installs the [`IndirectTargetResolver`] callback used when the
+    /// Installs the [`IndirectResolverFn`] callback used when the
     /// builder encounters a `BranchIndirect` that's not pre-classified
     /// in `options.known_targets`.  Without a resolver, every
     /// unresolved `BranchIndirect` is deferred via
@@ -125,9 +126,12 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// ```ignore
     /// use std::sync::Arc;
     /// use strider_lift::cfg::Builder;
-    /// use strider_analyze::indirect_resolver::MiniIrIndirectResolver;
+    /// use strider_analyze::indirect_resolver::resolve_indirect_target;
     ///
-    /// let resolver = Arc::new(MiniIrIndirectResolver);
+    /// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
+    ///     Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
+    ///         resolve_indirect_target(insns, target_vn, sleigh, lr_vn, rom, endianness)
+    ///     });
     /// let cfg = Builder::for_arch(&arch, sleigh, addr, opts)
     ///     .with_indirect_resolver(resolver)
     ///     .build()?;
@@ -140,7 +144,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     #[must_use]
     pub fn with_indirect_resolver(
         mut self,
-        resolver: Arc<dyn IndirectTargetResolver<R>>,
+        resolver: IndirectResolverFn<R>,
     ) -> Self {
         self.indirect_resolver = Some(resolver);
         self

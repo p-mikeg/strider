@@ -1,14 +1,15 @@
-//! Concrete [`IndirectTargetResolver`] implementation that builds a
-//! per-site mini IR and runs the strider-analyze opt pipeline to
-//! classify a `BranchIndirect`'s target.
+//! Concrete indirect-branch resolver that builds a per-site mini IR
+//! and runs the strider-analyze opt pipeline to classify a
+//! `BranchIndirect`'s target.
 //!
 //! Lives in `strider-analyze` (not `strider-lift::cfg`) to keep the dep
 //! direction forward: the cfg-time mini-IR resolver calls into the
 //! optimizer pipeline, so it sits in the analyze layer.  The cfg builder
 //! hands every unresolved `BranchIndirect` to the installed
-//! [`IndirectTargetResolver`] callback (see
+//! [`strider_lift::cfg::IndirectResolverFn`] closure (see
 //! [`strider_lift::cfg::Builder::with_indirect_resolver`]); the canonical
-//! implementation is [`MiniIrIndirectResolver`] below.
+//! implementation is the [`resolve_indirect_target`] free function
+//! below, which callers wrap in a closure.
 //!
 //! ## Algorithm
 //!
@@ -40,49 +41,10 @@
 //! optimiser pipeline runs.
 
 use strider_ir::ReadOnlyMemory;
-use strider_lift::cfg::{
-    IndirectTargetResolver, RegionInstruction, ResolvedTargets, Result,
-};
+use strider_lift::cfg::{RegionInstruction, ResolvedTargets, Result};
 use strider_target::Endianness;
 
 use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
-
-/// The canonical [`IndirectTargetResolver`] used by the strider
-/// orchestrator and the example binary.  Zero-state: every call to
-/// [`Self::resolve`] builds a fresh mini-IR per site.  Construct via
-/// `MiniIrIndirectResolver::new()` (or the unit-struct literal — `Self`
-/// has no fields).
-#[derive(Debug, Default, Clone, Copy)]
-pub struct MiniIrIndirectResolver;
-
-impl MiniIrIndirectResolver {
-    /// Constructs a fresh resolver.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-impl<R: rsleigh::MemReader> IndirectTargetResolver<R> for MiniIrIndirectResolver {
-    fn resolve(
-        &self,
-        region_insns: &[RegionInstruction],
-        target_vn: rsleigh::Vn,
-        sleigh: &rsleigh::Sleigh<R>,
-        cc_link_register_vn: Option<rsleigh::Vn>,
-        rom: Option<&dyn ReadOnlyMemory>,
-        endianness: Endianness,
-    ) -> Result<Option<ResolvedTargets>> {
-        resolve_indirect_target(
-            region_insns,
-            target_vn,
-            sleigh,
-            cc_link_register_vn,
-            rom,
-            endianness,
-        )
-    }
-}
 
 /// Resolves the target of a `BranchIndirect` against `region_insns`.
 ///
