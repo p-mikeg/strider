@@ -159,10 +159,10 @@ impl PyGraph {
                         continue;
                     }
                     for out in graph.node_outputs(cur) {
-                        if !graph.output_kind(out).is_control() {
+                        if !graph.output_kind(*out).is_control() {
                             continue;
                         }
-                        for (consumer, _) in graph.output_uses(out) {
+                        for (consumer, _) in graph.output_uses(*out) {
                             if consumer == n {
                                 return true;
                             }
