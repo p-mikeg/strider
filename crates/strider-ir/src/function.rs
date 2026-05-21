@@ -76,8 +76,7 @@ impl BuiltFunctionGraph {
     /// Wraps a `Graph` whose `entry` and `cc_metadata` fields have been
     /// populated by [`crate::FunctionBuilder::build`].  Asserts the
     /// `Some(_)` invariant in debug builds; release builds trust the
-    /// caller (only `FunctionBuilder::build` and
-    /// [`Self::from_graph_and_entry_for_rewrite`] construct wrappers).
+    /// caller (only `FunctionBuilder::build` constructs wrappers).
     pub(crate) fn from_graph(graph: Graph) -> Self {
         debug_assert!(
             graph.entry.is_some(),
@@ -150,40 +149,6 @@ impl BuiltFunctionGraph {
     #[must_use]
     pub fn variables_map(&self) -> &PrimaryMap<VarId, rsleigh::Vn> {
         &self.cc_metadata().variables
-    }
-
-    /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph` with
-    /// empty CC metadata.
-    ///
-    /// **Construct a rewrite-only `BuiltFunctionGraph` with empty CC
-    /// fields.**  Used by `compact`'s test fixture and a few pattern test
-    /// scaffolds that intentionally bypass the build path.  Production
-    /// opt-side rewrite paths use `pattern::RewriteCtx::new(&mut graph,
-    /// entry)` instead — that path doesn't need a `BuiltFunctionGraph`
-    /// at all.
-    ///
-    /// # Contract — caller responsibility
-    ///
-    /// The returned `BuiltFunctionGraph` has **empty** CC metadata.
-    /// Callers MUST pass it only to consumers that touch `graph` and
-    /// `entry`; consulting any CC accessor returns a meaningless empty
-    /// value silently.  The `pattern::rewrite_rule` machinery and the
-    /// `opt::Optimizer` trait are vetted to honour this contract.
-    /// Bespoke callers must verify by inspection.
-    ///
-    /// For real CC metadata use [`crate::FunctionBuilder::build`].
-    #[doc(hidden)]
-    #[must_use]
-    pub fn from_graph_and_entry_for_rewrite(mut graph: Graph, entry: NodeId) -> Self {
-        graph.entry = Some(entry);
-        graph.cc_metadata = Some(CcMetadata {
-            variables: PrimaryMap::new(),
-            call_clobbered: Box::new([]),
-            ret_val_regs: Box::new([]),
-            call_other_clobbered: Box::new([]),
-            no_memory_clobber: false,
-        });
-        Self::from_graph(graph)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
@@ -276,7 +241,15 @@ mod compact_tests {
             [],
             [NodeOutputKind::OutputType(crate::node::NodeOutputType::U64)],
         );
-        let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
+        graph.entry = Some(entry);
+        graph.cc_metadata = Some(CcMetadata {
+            variables: PrimaryMap::new(),
+            call_clobbered: Box::new([]),
+            ret_val_regs: Box::new([]),
+            call_other_clobbered: Box::new([]),
+            no_memory_clobber: false,
+        });
+        let mut bfg = BuiltFunctionGraph::from_graph(graph);
         let pre_count = bfg.graph().all_node_ids().count();
 
         let _remap = bfg.compact().expect("compact succeeds on a valid graph");
