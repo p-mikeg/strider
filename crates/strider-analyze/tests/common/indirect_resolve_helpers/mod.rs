@@ -30,11 +30,11 @@ pub mod orchestrator;
 #[allow(unused_imports)]
 pub use classify::{
     build_bx_lr_scenario, build_initial_var_target_scenario_x86_64,
-    build_int_const_target_scenario, build_int_const_target_scenario_via_stack,
-    build_jump_table_known_bits_scenario, build_jump_table_predecessor_if_scenario,
-    build_jump_table_unbounded_scenario, build_non_jump_table_load_scenario,
-    build_pop_pc_via_stack_load_forward_scenario, build_push_target_pop_pc_scenario,
-    build_stack_array_dispatch_scenario, build_value_phi_target_scenario,
+    build_int_const_target_scenario_via_stack, build_jump_table_known_bits_scenario,
+    build_jump_table_predecessor_if_scenario, build_jump_table_unbounded_scenario,
+    build_non_jump_table_load_scenario, build_pop_pc_via_stack_load_forward_scenario,
+    build_push_target_pop_pc_scenario, build_stack_array_dispatch_scenario,
+    build_value_phi_target_scenario,
 };
 #[allow(unused_imports)]
 pub use orchestrator::{anchor_value_input, run_pipeline_x86_64};

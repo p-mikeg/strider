@@ -31,35 +31,13 @@ use strider_analyze::{CallingConvention, SleighArch, Strider};
 
 use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 
-/// Build a function whose only indirect branch is `mov rax, K; jmp *rax`.
-/// After `ConstantFold` runs, the placeholder Return's value-input
-/// folds to `IntConst(K)`.
-///
-/// **K must be < the function start address (0x1000)** so the cfg
-/// builder's cfg-time resolver classifies the branch as a tail call —
-/// otherwise it enqueues exploration of `K`, the buffered memory
-/// reader's range doesn't cover that, and Sleigh's `lift_one(K)`
-/// trips DataUnavailErr.  When `K` is a tail call we get
-/// `RegionTerminator::TailCall { target: K }`, NOT
-/// `UnresolvedIndirectBranch` — i.e. cfg-time resolver resolves it before
-/// IR-level indirect-branch resolver ever sees it.  That defeats this fixture's purpose.
-///
-/// To force the branch into the IR-level path we therefore use a
-/// **runtime-computed** target: `mov rax, [rsp+8]; jmp rax`.  The
-/// rsp-relative read prevents cfg-time resolver's mini-graph from folding the
-/// target to a constant (no constant write to rax in the region),
-/// so the branch defers to `UnresolvedIndirectBranch`.  Then
-/// classify_anchor only sees an InitialVar / Load shape — NOT
-/// IntConst — so this helper is no longer suitable for the
-/// `IntConst → Single` test.  Use
-/// [`build_int_const_target_scenario_via_lr`] instead.
-#[allow(dead_code)]
-pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, strider_ir::Value) {
-    unimplemented!(
-        "cfg-time always classifies a constant target — use \
-         build_int_const_target_scenario_phi_merge for the IntConst arm"
-    )
-}
+// NOTE: there is no `build_int_const_target_scenario(K)` because cfg-time
+// always classifies a literal constant target — the synthetic shape
+// `mov rax, K; jmp *rax` resolves at cfg-build time before
+// `classify_anchor` ever sees it.  Tests that want the
+// IntConst-classifier arm route through a runtime-computed target that
+// folds to `IntConst(K)` only after the IR-level optimiser runs; see
+// [`build_int_const_target_scenario_via_stack`] below.
 
 /// Build a function whose only indirect branch resolves to a
 /// constant `k` *only after* the optimiser has run on the lifted IR
