@@ -99,6 +99,35 @@ impl Graph {
         Ok(())
     }
 
+    /// Returns the [`NodeId`] of the `InitialVar(vn)` node registered
+    /// for `vn`, or `None` if none has been registered on this graph.
+    ///
+    /// O(1) hash lookup.  Callers that want to skip detached zombie
+    /// `InitialVar` nodes (e.g. ones left behind by `FunctionArgDetect`
+    /// after it rewires the original consumer to a `FunctionArg`) must
+    /// validate the returned id themselves — typically by checking the
+    /// node's single output's use-list via [`Self::output_uses`].
+    ///
+    /// Maintained at every canonical `InitialVar` creation site (the
+    /// lift-time `FunctionBuilder::set_entry_region` path and the
+    /// orchestrator's lazy `read_or_init_var` fallback).
+    #[inline]
+    #[must_use]
+    pub fn initial_var_for(&self, vn: rsleigh::Vn) -> Option<NodeId> {
+        self.initial_var_index.get(&vn).copied()
+    }
+
+    /// Registers `(vn, node_id)` in the `InitialVar` index.  Replaces
+    /// any prior entry for `vn`.  See [`Self::initial_var_for`].
+    ///
+    /// Callers must guarantee that `node_id`'s kind is
+    /// [`NodeKind::InitialVar(vn)`] — the index is advisory and the
+    /// graph does not re-check the kind on lookup.
+    #[inline]
+    pub fn register_initial_var(&mut self, vn: rsleigh::Vn, node_id: NodeId) {
+        self.initial_var_index.insert(vn, node_id);
+    }
+
     /// Returns the per-predecessor SP-relative offsets associated with a
     /// [`NodeKind::StackStorePhi`] node, or an empty slice if none are set.
     #[inline]

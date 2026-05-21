@@ -80,8 +80,15 @@ impl FunctionBuilder {
         for var_id in var_ids {
             let var = self.variables[var_id];
             let output_type = var.size.try_into()?;
-            initial_variables[var_id] =
+            let out =
                 self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
+            initial_variables[var_id] = out;
+            // Register the InitialVar in the graph's O(1) Vn→NodeId
+            // index so downstream consumers (the orchestrator's
+            // `read_or_init_var` fallback) don't re-scan `preorder()`
+            // to locate it.
+            let (node_id, _slot) = self.graph().output_definition(out);
+            self.graph_mut().register_initial_var(var, node_id);
         }
         self.link_region_variables(region_id, &initial_variables)
     }

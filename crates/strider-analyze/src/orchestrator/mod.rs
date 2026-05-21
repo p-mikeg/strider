@@ -578,37 +578,14 @@ where
         let region_index = &self.region_index;
         let per_address_built_ccs = &self.per_address_built_ccs;
         let graph = &mut self.graph;
-        // Build the InitialVar lookup ONCE per iteration and pass it
-        // through to every apply_in_place_edit so per-edit cost drops
-        // from O(N) (a full all_node_ids scan inside
-        // AnchorCallingContext::for_anchor) to O(1) per varnode read.
-        // read_or_init_var inserts new entries as it creates fresh
-        // InitialVar nodes, so the index stays consistent across edits.
-        //
-        // Use `preorder` (reachable-only) rather than `all_node_ids` so
-        // zombie `InitialVar` nodes left detached by a previous
-        // `FunctionArgDetect` don't get re-indexed and resurrected:
-        // `read_or_init_var` would return a zombie's output and wire it
-        // straight into a fresh Call's input list, breaking
-        // `FunctionArgDetect`'s post-detection invariant that all
-        // argument-register reads flow through `FunctionArg` nodes.
-        let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
-        for nid in graph.preorder() {
-            if let strider_ir::node::NodeKind::InitialVar(existing) = graph.node_kind(nid) {
-                // InitialVar's signature is `[]; outputs: [Value]` —
-                // exactly one output.  A non-1 count is a graph-shape
-                // bug (zombie or malformed); surfacing it as Err
-                // prevents `read_or_init_var` from later resurrecting
-                // the malformed node and silently producing wrong IR.
-                let [out] = graph.node_outputs_exact::<1>(nid).map_err(|e| {
-                    anyhow!(
-                        "apply_in_place_edits: InitialVar({existing:?}) has wrong output \
-                         arity (expected 1): {e}"
-                    )
-                })?;
-                initial_var_index.insert(*existing, out);
-            }
-        }
+        // `Graph::initial_var_for` is maintained on the graph itself
+        // (populated by `FunctionBuilder::set_entry_region` at lift
+        // time and by `read_or_init_var` for lazily-minted nodes), so
+        // there's no longer a per-iteration `preorder()` rebuild here —
+        // `read_or_init_var` does an O(1) lookup against the side-table
+        // and validates the returned NodeId's use-list to skip zombie
+        // `InitialVar` nodes left detached by a previous
+        // `FunctionArgDetect`.
         for (placeholder, resolved) in in_place_edits {
             apply_in_place_edit(
                 graph,
@@ -617,7 +594,6 @@ where
                 *placeholder,
                 resolved,
                 per_address_built_ccs,
-                &mut initial_var_index,
             )?;
         }
         Ok(())
@@ -668,7 +644,6 @@ fn apply_in_place_edit(
     placeholder: NodeId,
     resolved: &ResolvedTargets,
     per_address_built_ccs: &HashMap<u64, strider_target::BuiltCallingConvention>,
-    initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
 ) -> Result<()> {
     match resolved {
         ResolvedTargets::LinkRegister => {
@@ -678,7 +653,6 @@ fn apply_in_place_edit(
                 strider,
                 region_index,
                 None,
-                initial_var_index,
             )?;
             graph.with_rewrite_ctx(|rctx| {
                 apply_link_register(rctx, placeholder, &ctx.ret_val_outputs)
@@ -693,7 +667,6 @@ fn apply_in_place_edit(
                 strider,
                 region_index,
                 override_cc,
-                initial_var_index,
             )?;
             let new_return = graph.with_rewrite_ctx(|rctx| {
                 apply_tail_call(
@@ -784,7 +757,6 @@ impl crate::opt::AnchorCallingContext {
         strider: &Strider,
         region_index: &RegionIndex,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
-        initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
     ) -> Result<Self> {
         // When an override is supplied, route arg-passing / ret-val /
         // clobber computation through the override CC instead of the
@@ -794,15 +766,15 @@ impl crate::opt::AnchorCallingContext {
         let region = region_index.region_for_placeholder(graph, placeholder);
         let mut ctx = Self::default();
 
-        // `initial_var_index` is built once per orchestrator iteration (in
-        // `apply_in_place_edits`) and threaded through.  Per-edit cost is
-        // O(arg_count) instead of the previous O(N) arena scan.
+        // Each `read_or_init_var` call is O(1) against the graph's
+        // maintained `Graph::initial_var_for` index — no per-iteration
+        // arena scan, no per-edit threading.
 
         for vn in &cc.arg_passing_regs {
             // surface unsupported reg sizes as Err instead
             // of silently dropping the slot (which under-models the Call
             // and can cause downstream pattern queries to miss args).
-            let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
+            let out = read_or_init_var(graph, region, *vn)?;
             ctx.arg_passing_outputs.push(out);
         }
         // Clobber list: with an override, recompute from the override's
@@ -832,7 +804,7 @@ impl crate::opt::AnchorCallingContext {
                 .push(strider_ir::node::NodeOutputKind::OutputType(ty));
         }
         for vn in &cc.ret_val_regs {
-            let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
+            let out = read_or_init_var(graph, region, *vn)?;
             ctx.ret_val_outputs.push(out);
         }
         Ok(ctx)
@@ -905,7 +877,6 @@ fn override_clobber_vars<'a>(
 fn read_or_init_var(
     graph: &mut strider_ir::BuiltFunctionGraph,
     region: Option<&ExitVnToValue>,
-    initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
     vn: rsleigh::Vn,
 ) -> Result<NodeOutputId> {
     if let Some(r) = region
@@ -913,8 +884,23 @@ fn read_or_init_var(
     {
         return Ok(out);
     }
-    if let Some(&out) = initial_var_index.get(&vn) {
-        return Ok(out);
+    // Consult the graph's maintained `InitialVar` index.  Skip detached
+    // zombies (e.g. `InitialVar(rdi)` left behind by a prior
+    // `FunctionArgDetect` after it rewired the original consumer to a
+    // `FunctionArg`) by validating that the registered node's single
+    // output still has live uses — a zero-use entry indicates the
+    // index points at a detached node, so we fall through and mint a
+    // fresh `InitialVar` instead of resurrecting the zombie.
+    if let Some(nid) = graph.graph().initial_var_for(vn) {
+        let [out] = graph.node_outputs_exact::<1>(nid).map_err(|e| {
+            anyhow!(
+                "read_or_init_var: InitialVar({vn:?}) at {nid:?} has wrong output \
+                 arity (expected 1): {e}"
+            )
+        })?;
+        if graph.graph().output_uses(out).next().is_some() {
+            return Ok(out);
+        }
     }
     let ty = vn_size_to_node_output_type(&vn)?;
     let nid = graph.graph_mut().create_node(
@@ -923,7 +909,7 @@ fn read_or_init_var(
         [strider_ir::node::NodeOutputKind::OutputType(ty)],
     );
     let [out] = graph.node_outputs_exact::<1>(nid)?;
-    initial_var_index.insert(vn, out);
+    graph.graph_mut().register_initial_var(vn, nid);
     Ok(out)
 }
 

@@ -240,6 +240,23 @@ impl Graph {
         self.call_clobbered_overrides =
             remap_side_table(&mut self.call_clobbered_overrides, &old_to_new_pairs);
 
+        // Remap the InitialVar Vn→NodeId index.  Entries whose NodeId
+        // didn't survive compaction (i.e. the InitialVar became
+        // unreachable and was dropped) are silently elided — the
+        // orchestrator's `read_or_init_var` fallback will lazily
+        // re-create them as needed.
+        let mut new_initial_var_index: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(
+                self.initial_var_index.len(),
+                Default::default(),
+            );
+        for (vn, old_id) in self.initial_var_index.drain() {
+            if let Some(&new_id) = old_to_new_pairs.get(&old_id) {
+                new_initial_var_index.insert(vn, new_id);
+            }
+        }
+        self.initial_var_index = new_initial_var_index;
+
         Ok(remap)
     }
 
