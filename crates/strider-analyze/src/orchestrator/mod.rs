@@ -111,7 +111,7 @@ where
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
 /// snapshot.  Maps a region's exit-control `NodeOutputId` to the
 /// region's exit `vn_to_value` table — what
-/// [`build_anchor_calling_context`] needs to thread ABI varnodes
+/// [`AnchorCallingContext::for_anchor`] needs to thread ABI varnodes
 /// through an in-place edit.
 /// Maps a region's exit-control `NodeOutputId` to the region's exit
 /// `vn_to_value` table.  The map is `Arc`-shared with each
@@ -583,7 +583,7 @@ where
         // Build the InitialVar lookup ONCE per iteration and pass it
         // through to every apply_in_place_edit so per-edit cost drops
         // from O(N) (a full all_node_ids scan inside
-        // build_anchor_calling_context) to O(1) per varnode read.
+        // AnchorCallingContext::for_anchor) to O(1) per varnode read.
         // read_or_init_var inserts new entries as it creates fresh
         // InitialVar nodes, so the index stays consistent across edits.
         //
@@ -691,7 +691,7 @@ fn apply_in_place_edit(
 ) -> Result<()> {
     match resolved {
         ResolvedTargets::LinkRegister => {
-            let ctx = build_anchor_calling_context(
+            let ctx = crate::opt::AnchorCallingContext::for_anchor(
                 graph,
                 placeholder,
                 strider,
@@ -706,7 +706,7 @@ fn apply_in_place_edit(
         }
         ResolvedTargets::Single(target) => {
             let override_cc = per_address_built_ccs.get(target);
-            let ctx = build_anchor_calling_context(
+            let ctx = crate::opt::AnchorCallingContext::for_anchor(
                 graph,
                 placeholder,
                 strider,
@@ -730,7 +730,7 @@ fn apply_in_place_edit(
             // spliced node is the freshly-created Call adjacent to
             // `new_return`'s ctrl predecessor.  Reuses
             // [`override_clobber_vars`] (also called from
-            // [`build_anchor_calling_context`]) so the projection over
+            // [`AnchorCallingContext::for_anchor`]) so the projection over
             // `graph.variables` is defined once.
             if let Some(cc) = override_cc
                 && let Some(call_id) = locate_spliced_call(graph, new_return)
@@ -781,80 +781,87 @@ fn locate_spliced_call(graph: &strider_ir::BuiltFunctionGraph, ret: NodeId) -> O
     None
 }
 
-/// Build the calling-convention context for the placeholder's
-/// dispatch site.
-///
-/// Reads the convention's `arg_passing_regs` / `ret_val_regs` from the
-/// region whose `exit_control` matches the placeholder's pre-edit
-/// control input, falling back to a fresh `InitialVar(vn)` when a
-/// varnode isn't tracked in the region.  The `clobbered_kinds` slot
-/// mirrors `BuiltFunctionGraph::call_clobbered` so the resulting Call
-/// node's outputs match the canonical
-/// `FunctionBuilder::build_call`-shape.
-fn build_anchor_calling_context(
-    graph: &mut strider_ir::BuiltFunctionGraph,
-    placeholder: NodeId,
-    strider: &Strider,
-    region_index: &RegionIndex,
-    override_cc: Option<&strider_target::BuiltCallingConvention>,
-    initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
-) -> Result<crate::opt::AnchorCallingContext> {
-    // When an override is supplied, route arg-passing / ret-val /
-    // clobber computation through the override CC instead of the
-    // function-default.
-    let cc: &strider_target::BuiltCallingConvention = override_cc
-        .unwrap_or_else(|| strider.calling_convention());
-    let region = region_index.region_for_placeholder(graph, placeholder);
-    let mut ctx = crate::opt::AnchorCallingContext::default();
+impl crate::opt::AnchorCallingContext {
+    /// Build the calling-convention context for an indirect-branch
+    /// placeholder's dispatch site.
+    ///
+    /// Reads the convention's `arg_passing_regs` / `ret_val_regs` from
+    /// the region whose `exit_control` matches the placeholder's
+    /// pre-edit control input, falling back to a fresh
+    /// `InitialVar(vn)` when a varnode isn't tracked in the region.
+    /// The `clobbered_kinds` slot mirrors
+    /// `BuiltFunctionGraph::call_clobbered` so the resulting Call
+    /// node's outputs match the canonical
+    /// `FunctionBuilder::build_call`-shape.
+    ///
+    /// `override_cc = Some(cc)` routes arg-passing / ret-val / clobber
+    /// computation through `cc` (per-target-address override);
+    /// `None` uses the strider's function-default convention.
+    fn for_anchor(
+        graph: &mut strider_ir::BuiltFunctionGraph,
+        placeholder: NodeId,
+        strider: &Strider,
+        region_index: &RegionIndex,
+        override_cc: Option<&strider_target::BuiltCallingConvention>,
+        initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
+    ) -> Result<Self> {
+        // When an override is supplied, route arg-passing / ret-val /
+        // clobber computation through the override CC instead of the
+        // function-default.
+        let cc: &strider_target::BuiltCallingConvention = override_cc
+            .unwrap_or_else(|| strider.calling_convention());
+        let region = region_index.region_for_placeholder(graph, placeholder);
+        let mut ctx = Self::default();
 
-    // `initial_var_index` is built once per orchestrator iteration (in
-    // `apply_in_place_edits`) and threaded through.  Per-edit cost is
-    // O(arg_count) instead of the previous O(N) arena scan.
+        // `initial_var_index` is built once per orchestrator iteration (in
+        // `apply_in_place_edits`) and threaded through.  Per-edit cost is
+        // O(arg_count) instead of the previous O(N) arena scan.
 
-    for vn in &cc.arg_passing_regs {
-        // surface unsupported reg sizes as Err instead
-        // of silently dropping the slot (which under-models the Call
-        // and can cause downstream pattern queries to miss args).
-        let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
-        ctx.arg_passing_outputs.push(out);
+        for vn in &cc.arg_passing_regs {
+            // surface unsupported reg sizes as Err instead
+            // of silently dropping the slot (which under-models the Call
+            // and can cause downstream pattern queries to miss args).
+            let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
+            ctx.arg_passing_outputs.push(out);
+        }
+        // Clobber list: with an override, recompute from the override's
+        // callee_saved set against the function's tracked variables (via
+        // the shared [`override_clobber_vars`] helper, which is also reused
+        // by `apply_in_place_edit` after splicing); without, use the
+        // precomputed `BuiltFunctionGraph::call_clobbered` shape.
+        //
+        // The two branches type-unify via a `SmallVec<[&Vn; 16]>` — stack
+        // allocation covers the common case (typical clobber lists are well
+        // under 16 entries) and the value only spills to heap on outliers,
+        // sparing a `Box<dyn Iterator>` allocation per call on a hot path
+        // of the indirect-branch resolution loop.
+        let override_clobbers: Vec<rsleigh::Vn>;
+        let clobber_iter: smallvec::SmallVec<[&rsleigh::Vn; 16]> = if let Some(cc) = override_cc {
+            override_clobbers = override_clobber_vars(graph, cc, strider).collect();
+            override_clobbers.iter().collect()
+        } else {
+            graph.call_clobbered_regs().iter().collect()
+        };
+        for vn in clobber_iter {
+            // surface unsupported clobber-reg sizes as Err rather than
+            // silently defaulting — a size we don't know how to lower
+            // would otherwise produce a malformed Call output kind.
+            let ty = vn_size_to_node_output_type(vn)?;
+            ctx.clobbered_kinds
+                .push(strider_ir::node::NodeOutputKind::OutputType(ty));
+        }
+        for vn in &cc.ret_val_regs {
+            let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
+            ctx.ret_val_outputs.push(out);
+        }
+        Ok(ctx)
     }
-    // Clobber list: with an override, recompute from the override's
-    // callee_saved set against the function's tracked variables (via
-    // the shared [`override_clobber_vars`] helper, which is also reused
-    // by `apply_in_place_edit` after splicing); without, use the
-    // precomputed `BuiltFunctionGraph::call_clobbered` shape.
-    //
-    // The two branches type-unify via a `SmallVec<[&Vn; 16]>` — stack
-    // allocation covers the common case (typical clobber lists are well
-    // under 16 entries) and the value only spills to heap on outliers,
-    // sparing a `Box<dyn Iterator>` allocation per call on a hot path
-    // of the indirect-branch resolution loop.
-    let override_clobbers: Vec<rsleigh::Vn>;
-    let clobber_iter: smallvec::SmallVec<[&rsleigh::Vn; 16]> = if let Some(cc) = override_cc {
-        override_clobbers = override_clobber_vars(graph, cc, strider).collect();
-        override_clobbers.iter().collect()
-    } else {
-        graph.call_clobbered_regs().iter().collect()
-    };
-    for vn in clobber_iter {
-        // surface unsupported clobber-reg sizes as Err rather than
-        // silently defaulting — a size we don't know how to lower
-        // would otherwise produce a malformed Call output kind.
-        let ty = vn_size_to_node_output_type(vn)?;
-        ctx.clobbered_kinds
-            .push(strider_ir::node::NodeOutputKind::OutputType(ty));
-    }
-    for vn in &cc.ret_val_regs {
-        let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
-        ctx.ret_val_outputs.push(out);
-    }
-    Ok(ctx)
 }
 
 /// Map a varnode's byte width to the matching [`strider_ir::node::NodeOutputType`].
 ///
 /// Used by the orchestrator's anchor-calling-context plumbing
-/// (`build_anchor_calling_context` for clobber outputs,
+/// (`AnchorCallingContext::for_anchor` for clobber outputs,
 /// `read_or_init_var` for freshly-created `InitialVar` nodes) to surface
 /// unsupported sizes as a typed error rather than silently dropping the
 /// slot.  Every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10, 16,
@@ -876,7 +883,7 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Nod
 /// per-address override calling convention `cc`.
 ///
 /// Mirrors the body of the `override_cc.is_some()` arm of
-/// [`build_anchor_calling_context`]'s clobber computation and the
+/// [`AnchorCallingContext::for_anchor`]'s clobber computation and the
 /// post-splice clobber rebuild in [`apply_in_place_edit`] — extracted so
 /// the same projection (`!callee_saved && != stack_ptr`) is defined in
 /// exactly one place.
