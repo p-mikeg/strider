@@ -264,8 +264,14 @@ where
     /// resulting `Cfg::into_sleigh()`.  `None` only momentarily inside
     /// `build_lift_stable`.
     sleigh: Option<rsleigh::Sleigh<R>>,
-    /// The current optimised IR graph.
-    graph: Option<strider_ir::BuiltFunctionGraph>,
+    /// The current optimised IR graph.  Initialised to an empty
+    /// placeholder by [`LoopState::new`] and overwritten with the real
+    /// lift result by [`LoopState::build_initial_iteration`] before any
+    /// consumer reads it; the empty placeholder is never observed past
+    /// construction.  No `Option` wrapper because the post-init
+    /// invariant is "always populated" — paying `as_ref().ok_or_else`
+    /// on every read for an unreachable `None` branch is pure cost.
+    graph: strider_ir::BuiltFunctionGraph,
     /// Pending placeholder anchors for the current iteration.
     unresolved: Vec<(PcodeInsnAddr, strider_ir::Value)>,
     /// Pending count at iter 0; sets the cap.
@@ -341,7 +347,9 @@ where
         Ok(Self {
             sleigh: Some(config.sleigh),
             known_targets: HashMap::new(),
-            graph: None,
+            // Empty placeholder; overwritten by `build_initial_iteration`
+            // before any consumer reads it.
+            graph: strider_ir::Graph::new(),
             unresolved: Vec::new(),
             pending_at_iter_0: 0,
             stall_budget: 0,
@@ -402,7 +410,7 @@ where
         )?;
         self.sleigh = Some(sleigh);
         self.region_index = region_index;
-        self.graph = Some(graph);
+        self.graph = graph;
         self.unresolved = unresolved;
         Ok(())
     }
@@ -468,9 +476,8 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.strider.build_stable_optimizer_pipeline();
-        let graph = self.graph_mut()?;
-        let entry = graph.entry();
-        pipeline.run(graph.graph_mut(), entry)?;
+        let entry = self.graph.entry();
+        pipeline.run(self.graph.graph_mut(), entry)?;
         Ok(())
     }
 
@@ -497,15 +504,12 @@ where
     fn finalize(mut self) -> Result<strider_ir::BuiltFunctionGraph> {
         let pipeline = self.strider.build_destructive_optimizer_pipeline();
         let compact = self.compact;
-        let graph = self.graph_mut()?;
-        let entry = graph.entry();
-        pipeline.run(graph.graph_mut(), entry)?;
+        let entry = self.graph.entry();
+        pipeline.run(self.graph.graph_mut(), entry)?;
         if compact {
-            graph.compact()?;
+            self.graph.compact()?;
         }
-        self.graph
-            .take()
-            .ok_or_else(|| anyhow!("orchestrator finalize: graph already consumed"))
+        Ok(self.graph)
     }
 
     /// Classify every unresolved anchor; partition into
@@ -517,10 +521,7 @@ where
         HashMap<PcodeInsnAddr, ResolvedTargets>,
         Vec<(NodeId, ResolvedTargets)>,
     )> {
-        let graph = self
-            .graph
-            .as_ref()
-            .ok_or_else(|| anyhow!("orchestrator classify: graph not initialised"))?;
+        let graph = &self.graph;
         let rom_ref: Option<&dyn ReadOnlyMemory> = self.rom.as_deref();
         // Start from the previous iteration's resolutions so anchors
         // already lowered to switch edges by an earlier Rebuild stay in
@@ -576,10 +577,7 @@ where
         let strider = self.strider;
         let region_index = &self.region_index;
         let per_address_built_ccs = &self.per_address_built_ccs;
-        let graph = self
-            .graph
-            .as_mut()
-            .ok_or_else(|| anyhow!("orchestrator: graph not initialised"))?;
+        let graph = &mut self.graph;
         // Build the InitialVar lookup ONCE per iteration and pass it
         // through to every apply_in_place_edit so per-edit cost drops
         // from O(N) (a full all_node_ids scan inside
@@ -628,11 +626,6 @@ where
     /// Filter `self.unresolved` against the post-edit graph: drop
     /// entries whose placeholder Return was detached by an in-place
     /// edit.  No-op when no edits fired (returns the unmodified vec).
-    ///
-    /// Returns `Err` when the loop's graph has somehow been cleared while
-    /// in-place edits are pending — that's a state-machine bug in the
-    /// orchestrator (the graph must be populated before edits can fire),
-    /// and silently returning an empty vec would mask it.
     fn recompute_unresolved(
         &mut self,
         in_place_edits: &[(NodeId, ResolvedTargets)],
@@ -641,24 +634,12 @@ where
         if in_place_edits.is_empty() {
             return Ok(unresolved);
         }
-        let graph = self.graph.as_ref().ok_or_else(|| {
-            anyhow!(
-                "LoopState::recompute_unresolved: in_place_edits is non-empty but \
-                 self.graph is None — orchestrator state machine invariant broken"
-            )
-        })?;
         Ok(unresolved
             .into_iter()
             .filter(|(_, anchor)| {
-                crate::opt::find_placeholder_return_for_anchor(graph.graph(), *anchor).is_some()
+                crate::opt::find_placeholder_return_for_anchor(self.graph.graph(), *anchor).is_some()
             })
             .collect())
-    }
-
-    fn graph_mut(&mut self) -> Result<&mut strider_ir::BuiltFunctionGraph> {
-        self.graph
-            .as_mut()
-            .ok_or_else(|| anyhow!("orchestrator: graph not initialised"))
     }
 }
 
