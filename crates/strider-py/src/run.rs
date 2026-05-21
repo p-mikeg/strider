@@ -19,7 +19,7 @@ use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
 use crate::errors::{into_lift_err, into_strider_err};
 use crate::graph::PyGraph;
-use crate::reader::{AnyMemReader, ReaderInput, ReaderInputClone, RomInput};
+use crate::reader::{AnyMemReader, MemInput};
 use crate::sleigh::PySleigh;
 use crate::strider_cls::PyStrider;
 
@@ -58,9 +58,9 @@ pub fn run(
     py: Python<'_>,
     arch: PySleighArch,
     cc: PyCallingConvention,
-    mem: ReaderInput,
+    mem: MemInput,
     entry: u64,
-    rom: Option<RomInput>,
+    rom: Option<MemInput>,
     pipeline: Option<&crate::opt::PyOptimizerPipeline>,
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
@@ -115,9 +115,9 @@ fn run_via_orchestrator(
     py: Python<'_>,
     arch: PySleighArch,
     cc: PyCallingConvention,
-    mem: ReaderInput,
+    mem: MemInput,
     entry: u64,
-    rom: Option<RomInput>,
+    rom: Option<MemInput>,
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
     compact: bool,
@@ -125,9 +125,8 @@ fn run_via_orchestrator(
 ) -> PyResult<PyRunResult> {
     // Snapshot the reader so we can hand a fresh AnyMemReader to both
     // the orchestrator (consumed) and the snapshot CFG (consumed).
-    let reader_clone: ReaderInputClone = mem.into_clone()?;
-    let reader_for_orch = reader_clone.materialise().map_err(into_lift_err)?;
-    let reader_for_cfg = reader_clone.materialise().map_err(into_lift_err)?;
+    let reader_for_cfg = mem.clone_one()?.into_any().map_err(into_lift_err)?;
+    let reader_for_orch = mem.into_any().map_err(into_lift_err)?;
 
     // Build a Sleigh handle the user can keep (its inner is consumed
     // by the snapshot CFG below; Sleigh.regs remains accessible).
@@ -207,9 +206,9 @@ fn run_with_custom_pipeline(
     py: Python<'_>,
     arch: PySleighArch,
     cc: PyCallingConvention,
-    mem: ReaderInput,
+    mem: MemInput,
     entry: u64,
-    rom: Option<RomInput>,
+    rom: Option<MemInput>,
     pipeline: &crate::opt::PyOptimizerPipeline,
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,

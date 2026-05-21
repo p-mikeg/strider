@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use crate::arch::PySleighArch;
 use crate::errors::into_lift_err;
-use crate::reader::{AnyMemReader, ReaderInput};
+use crate::reader::{AnyMemReader, MemInput};
 
 /// A constructed Sleigh keyed off a (SleighArch, reader) pair.
 ///
@@ -68,7 +68,7 @@ impl PySleigh {
 #[pymethods]
 impl PySleigh {
     #[new]
-    fn new(arch: PySleighArch, mem: ReaderInput) -> PyResult<Self> {
+    fn new(arch: PySleighArch, mem: MemInput) -> PyResult<Self> {
         let reader = mem.into_any().map_err(into_lift_err)?;
         Self::new_internal(arch, reader)
     }

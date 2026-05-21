@@ -400,7 +400,7 @@ pub struct PyLoadReadOnly {
 #[pymethods]
 impl PyLoadReadOnly {
     #[new]
-    fn new(rom: crate::reader::RomInput) -> Self {
+    fn new(rom: crate::reader::MemInput) -> Self {
         Self { rom: rom.into_arc() }
     }
 }

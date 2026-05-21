@@ -713,106 +713,67 @@ impl ReadOnlyMemory for PyMemoryMap {
     }
 }
 
-// ── Polymorphic ROM input ────────────────────────────────────────────────
+// ── Polymorphic memory input ─────────────────────────────────────────────
 
-/// Polymorphic argument for callers that accept a ROM: either a
-/// `MemoryMap` (fast path) or any subclass of `ReadOnlyMemory`.  The
-/// pipeline wraps both in `Arc<dyn ReadOnlyMemory>`.
-pub enum RomInput {
+/// Polymorphic memory argument used by every Python entry point that
+/// accepts either a `MemoryMap` (fast owned-data path) or a Python
+/// subclass implementing `read(...)` (the callback path).
+///
+/// Consumed in three modes:
+/// - [`into_arc`](Self::into_arc) — lift to `Arc<dyn ReadOnlyMemory>`
+///   for the ROM-style pipeline pass.
+/// - [`into_any`](Self::into_any) — materialise into the unified
+///   `AnyMemReader` (used to build a `Sleigh`).
+/// - [`clone_one`](Self::clone_one) — produce an independent copy so a
+///   single user-facing input can feed multiple `Sleigh` instances
+///   (the orchestrator + the snapshot CFG each want their own reader).
+pub enum MemInput {
     Map(PyMemoryMap),
     Cb(Py<PyAny>),
 }
 
-impl<'py> FromPyObject<'py> for RomInput {
+impl<'py> FromPyObject<'py> for MemInput {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
         if let Ok(m) = ob.extract::<PyMemoryMap>() {
-            return Ok(RomInput::Map(m));
+            return Ok(MemInput::Map(m));
         }
-        // Otherwise treat as a Python subclass implementing read(space_id, addr, size).
-        // Validate it has a read method.
         if ob.hasattr("read")? {
-            return Ok(RomInput::Cb(ob.clone().unbind()));
+            return Ok(MemInput::Cb(ob.clone().unbind()));
         }
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "rom must be a MemoryMap or an object with a `read(space_id, addr, size)` method",
+            "expected a MemoryMap or an object with a `read(...)` method",
         ))
     }
 }
 
-impl RomInput {
-    /// Lift this ROM input to an `Arc<dyn ReadOnlyMemory>`.
+impl MemInput {
+    /// Lift this input to an `Arc<dyn ReadOnlyMemory>` (ROM role).
     pub fn into_arc(self) -> Arc<dyn ReadOnlyMemory> {
         match self {
-            RomInput::Map(m) => Arc::new(m),
-            RomInput::Cb(obj) => Arc::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
+            MemInput::Map(m) => Arc::new(m),
+            MemInput::Cb(obj) => Arc::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
         }
     }
-}
 
-// ── ReaderInput — polymorphic reader for Sleigh construction ─────────────
-
-/// Polymorphic input for `Sleigh.__init__` / `strider.run(mem=...)`:
-/// either a `MemoryMap` or a `MemReader` subclass.
-pub enum ReaderInput {
-    Map(PyMemoryMap),
-    Cb(Py<PyAny>),
-}
-
-impl<'py> FromPyObject<'py> for ReaderInput {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(m) = ob.extract::<PyMemoryMap>() {
-            return Ok(ReaderInput::Map(m));
-        }
-        if ob.hasattr("read")? {
-            return Ok(ReaderInput::Cb(ob.clone().unbind()));
-        }
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "mem must be a MemoryMap or an object with a `read(addr, size)` method",
-        ))
-    }
-}
-
-impl ReaderInput {
-    /// Materialise into the unified `AnyMemReader`.
+    /// Materialise into the unified `AnyMemReader` (Sleigh-reader role).
     pub fn into_any(self) -> anyhow::Result<AnyMemReader> {
         match self {
-            ReaderInput::Map(m) => Ok(AnyMemReader::Map(PyMemoryMapReader {
+            MemInput::Map(m) => Ok(AnyMemReader::Map(PyMemoryMapReader {
                 table: m.lookup_table()?,
             })),
-            ReaderInput::Cb(obj) => Ok(AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj })),
+            MemInput::Cb(obj) => Ok(AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj })),
         }
     }
 
-    /// Convert to a `ReaderInputClone` which can produce multiple
-    /// independent `AnyMemReader` instances (each Sleigh call wants
-    /// its own).  For PyMemoryMap this is a cheap Arc bump; for the
-    /// callback path we clone the `Py<PyAny>` ref-count.
-    pub fn into_clone(self) -> PyResult<ReaderInputClone> {
+    /// Produce an independent `MemInput` referring to the same
+    /// underlying source.  For `PyMemoryMap` this is a cheap `Arc`
+    /// bump; for the callback path we bump the `Py<PyAny>` refcount.
+    pub fn clone_one(&self) -> PyResult<MemInput> {
         match self {
-            ReaderInput::Map(m) => Ok(ReaderInputClone::Map(m)),
-            ReaderInput::Cb(obj) => Ok(ReaderInputClone::Cb(obj)),
-        }
-    }
-}
-
-/// A clone-able reader input — produces fresh `AnyMemReader` instances
-/// on demand via `materialise`.
-pub enum ReaderInputClone {
-    Map(PyMemoryMap),
-    Cb(Py<PyAny>),
-}
-
-impl ReaderInputClone {
-    pub fn materialise(&self) -> anyhow::Result<AnyMemReader> {
-        match self {
-            ReaderInputClone::Map(m) => Ok(AnyMemReader::Map(PyMemoryMapReader {
-                table: m.lookup_table()?,
-            })),
-            ReaderInputClone::Cb(obj) => Python::with_gil(|py| {
-                Ok(AnyMemReader::Cb(PyMemReaderAdapter {
-                    py_obj: obj.clone_ref(py),
-                }))
-            }),
+            MemInput::Map(m) => Ok(MemInput::Map(m.clone())),
+            MemInput::Cb(obj) => {
+                Python::with_gil(|py| Ok(MemInput::Cb(obj.clone_ref(py))))
+            }
         }
     }
 }
