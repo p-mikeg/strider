@@ -21,7 +21,7 @@ pub mod indirect_resolver;
 pub mod opt;
 pub mod pattern;
 
-pub use errors::UnresolvedIndirectBranch;
+pub use errors::{UnknownCallOtherError, UnresolvedIndirectBranch};
 pub use orchestrator::{run, Config};
 pub use rewrite::GraphRewriter;
 pub use strider::{AnalyzeOptions, AnalyzeOutcome, RegionLiftHandles, Strider};
