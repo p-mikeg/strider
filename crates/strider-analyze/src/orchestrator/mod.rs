@@ -124,10 +124,10 @@ struct RegionIndex {
 }
 
 impl RegionIndex {
-    fn from_handles(handles: &[RegionLiftHandles]) -> Self {
+    fn from_handles(handles: Vec<RegionLiftHandles>) -> Self {
         let mut by_exit_control = HashMap::with_capacity(handles.len());
-        for h in handles {
-            by_exit_control.insert(h.exit_control, std::sync::Arc::clone(&h.exit_vn_to_value));
+        for h in handles.into_iter() {
+            by_exit_control.insert(h.exit_control, h.exit_vn_to_value);
         }
         Self { by_exit_control }
     }
@@ -996,7 +996,7 @@ where
             strider_lift::LiftError::wrap(e)
         }
     })?;
-    let region_index = RegionIndex::from_handles(&outcome.region_handles);
+    let region_index = RegionIndex::from_handles(outcome.region_handles);
     let mut graph = outcome.graph;
     let unresolved = outcome.unresolved_branches;
 
