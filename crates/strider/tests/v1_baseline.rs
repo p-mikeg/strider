@@ -8,11 +8,10 @@
 //! later change to the lifter, the optimizer, or the IR layout must NOT
 //! change these snapshots without explicit review.
 //!
-//! Pinned to the imperative pipeline explicitly via [`common::analyze_v1`]
-//! so the historical contract stays frozen even if the production-default
-//! entry [`common::analyze`] later changes.
+//! Pinned to the production pipeline via [`common::analyze`] so the
+//! historical contract stays frozen.
 //!
-//! Lift failures (panics from `common::analyze_v1`) are themselves part of
+//! Lift failures (panics from `common::analyze`) are themselves part of
 //! the contract — they are captured as `LIFT_FAILED:<message>` snapshots
 //! rather than silently skipped, so that future rewrites must reproduce
 //! the same failures unless explicitly fixed.
@@ -115,7 +114,7 @@ fn exported_function_names(path: &Path) -> Vec<String> {
 }
 
 /// Build the sleigh handle for `(arch, path)`.  Used only for the dot
-/// dumper — `common::analyze_v1` builds its own internal sleigh.
+/// dumper — `common::analyze` builds its own internal sleigh.
 fn sleigh_for(
     arch: Arch,
     path: &Path,
@@ -173,9 +172,7 @@ fn v1_baseline_snapshots() {
                 let case_copy = case.clone();
                 let func_copy = func_name.clone();
                 let result = std::panic::catch_unwind(move || {
-                    // Pin to v1 explicitly so the production-default
-                    // flip (Phase 8.5c) does not move these snapshots.
-                    common::analyze_v1(arch_copy, &case_copy, &func_copy)
+                    common::analyze(arch_copy, &case_copy, &func_copy)
                 });
                 let snapshot_body = match result {
                     Ok(g) => to_dot_string(&g, &sleigh),
