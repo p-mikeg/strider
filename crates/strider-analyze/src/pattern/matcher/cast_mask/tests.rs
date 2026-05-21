@@ -183,3 +183,68 @@ fn cast_mask_of_non_cast_kinds_is_empty() {
         );
     }
 }
+
+/// All eight value-passthrough cast kinds must yield a non-empty mask.
+#[test]
+fn cast_mask_of_returns_non_empty_for_all_cast_kinds() {
+    let casts = [
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        NodeKind::Extend(ExtendOp::SignExtend),
+        NodeKind::Truncate,
+        NodeKind::CastToInt,
+        NodeKind::CastToFloat,
+        NodeKind::CastToBool,
+        NodeKind::IntBitsToFloat,
+        NodeKind::FloatBitsToInt,
+    ];
+    for k in casts {
+        assert!(
+            !cast_mask_of(&k).is_empty(),
+            "expected cast_mask_of({k:?}) to be non-empty"
+        );
+    }
+}
+
+/// A broader representative selection of non-cast kinds must yield
+/// empty.  Complements `cast_mask_of_non_cast_kinds_is_empty` above
+/// by covering more node families (unary/binary ops, bools, floats,
+/// memory, region/control, call).
+#[test]
+fn cast_mask_of_returns_empty_for_non_cast_kinds() {
+    let non_casts = [
+        NodeKind::Entry,
+        NodeKind::IntConst(0),
+        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add),
+        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Mul),
+        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot),
+        NodeKind::BoolConst(true),
+        NodeKind::FloatBinaryOp(strider_ir::FloatBinaryOp::Add),
+        NodeKind::FloatToFloat,
+        NodeKind::FloatToInt,
+        NodeKind::IntToFloat,
+        NodeKind::Return,
+        NodeKind::ControlState,
+        NodeKind::MemPhi,
+        NodeKind::If,
+        NodeKind::Call,
+    ];
+    for k in non_casts {
+        assert_eq!(
+            cast_mask_of(&k),
+            CastMask::empty(),
+            "expected cast_mask_of({k:?}) = empty"
+        );
+    }
+}
+
+/// Sanity check on FloatToFloat / FloatToInt / IntToFloat — these
+/// are float **conversions** (semantic value change), not bit-level
+/// casts.  They must NOT be in the walk-through set: a pattern
+/// looking for a Mul should not silently match through a
+/// FloatToInt that semantically changed the value.
+#[test]
+fn cast_mask_of_excludes_float_conversions() {
+    assert_eq!(cast_mask_of(&NodeKind::FloatToFloat), CastMask::empty());
+    assert_eq!(cast_mask_of(&NodeKind::FloatToInt), CastMask::empty());
+    assert_eq!(cast_mask_of(&NodeKind::IntToFloat), CastMask::empty());
+}
