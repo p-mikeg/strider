@@ -132,7 +132,7 @@ fn ir_level_classification_robust_to_destructive_subset() {
     // same `Option<ResolvedTargets>` — the spec's "the IR-level orchestrator resolver's
     // classification is robust to whether the destructive subset
     // has run" guarantee.
-    use strider::indirect_resolve::classify_anchor;
+    use strider_analyze::indirect_resolve::classify_anchor;
 
     let (graph_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
     let (graph_full, anchor_full) = build_initial_var_target_scenario_x86_64();

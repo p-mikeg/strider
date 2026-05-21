@@ -85,48 +85,48 @@ impl Arch {
             Arch::Ppc64le => "ppc64le",
         }
     }
-    pub fn sleigh(self) -> strider::SleighArch {
+    pub fn sleigh(self) -> strider_analyze::SleighArch {
         match self {
             // x86_kernel uses the same Sleigh spec as x86 — only the
             // calling convention differs.
-            Arch::X86 | Arch::X86Kernel => strider::SleighArch::x86(),
-            Arch::X64 => strider::SleighArch::x86_64(),
-            Arch::Aarch64 => strider::SleighArch::aarch64(),
-            Arch::Aarch64Be => strider::SleighArch::aarch64be(),
-            Arch::Arm => strider::SleighArch::arm(),
-            Arch::ArmBe => strider::SleighArch::arm_be(),
-            Arch::ArmThumb => strider::SleighArch::arm_thumb(),
-            Arch::Mips32le => strider::SleighArch::mipsle32(),
-            Arch::Mips32be => strider::SleighArch::mipsbe32(),
-            Arch::Mips64le => strider::SleighArch::mipsle64(),
-            Arch::Mips64be => strider::SleighArch::mipsbe64(),
-            Arch::Ppc32be => strider::SleighArch::ppc32be(),
-            Arch::Ppc32le => strider::SleighArch::ppc32le(),
-            Arch::Ppc64be => strider::SleighArch::ppc64be(),
-            Arch::Ppc64le => strider::SleighArch::ppc64le(),
+            Arch::X86 | Arch::X86Kernel => strider_analyze::SleighArch::x86(),
+            Arch::X64 => strider_analyze::SleighArch::x86_64(),
+            Arch::Aarch64 => strider_analyze::SleighArch::aarch64(),
+            Arch::Aarch64Be => strider_analyze::SleighArch::aarch64be(),
+            Arch::Arm => strider_analyze::SleighArch::arm(),
+            Arch::ArmBe => strider_analyze::SleighArch::arm_be(),
+            Arch::ArmThumb => strider_analyze::SleighArch::arm_thumb(),
+            Arch::Mips32le => strider_analyze::SleighArch::mipsle32(),
+            Arch::Mips32be => strider_analyze::SleighArch::mipsbe32(),
+            Arch::Mips64le => strider_analyze::SleighArch::mipsle64(),
+            Arch::Mips64be => strider_analyze::SleighArch::mipsbe64(),
+            Arch::Ppc32be => strider_analyze::SleighArch::ppc32be(),
+            Arch::Ppc32le => strider_analyze::SleighArch::ppc32le(),
+            Arch::Ppc64be => strider_analyze::SleighArch::ppc64be(),
+            Arch::Ppc64le => strider_analyze::SleighArch::ppc64le(),
         }
     }
-    pub fn cc(self) -> strider::CallingConvention {
+    pub fn cc(self) -> strider_analyze::CallingConvention {
         match self {
-            Arch::X86 => strider::CallingConvention::x86_cdecl(),
-            Arch::X86Kernel => strider::CallingConvention::x86_linux_kernel(),
-            Arch::X64 => strider::CallingConvention::x86_64_systemv(),
+            Arch::X86 => strider_analyze::CallingConvention::x86_cdecl(),
+            Arch::X86Kernel => strider_analyze::CallingConvention::x86_linux_kernel(),
+            Arch::X64 => strider_analyze::CallingConvention::x86_64_systemv(),
             // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
-            Arch::Aarch64 | Arch::Aarch64Be => strider::CallingConvention::aarch64_aapcs64(),
+            Arch::Aarch64 | Arch::Aarch64Be => strider_analyze::CallingConvention::aarch64_aapcs64(),
             // AAPCS32 is byte-order- and mode-independent — same CC for
             // ARM (LE), ARM-BE, and Thumb.
-            Arch::Arm | Arch::ArmBe | Arch::ArmThumb => strider::CallingConvention::arm_aapcs(),
+            Arch::Arm | Arch::ArmBe | Arch::ArmThumb => strider_analyze::CallingConvention::arm_aapcs(),
             // O32 ABI is the same on LE and BE 32-bit MIPS Linux.
-            Arch::Mips32le | Arch::Mips32be => strider::CallingConvention::mips_o32(),
+            Arch::Mips32le | Arch::Mips32be => strider_analyze::CallingConvention::mips_o32(),
             // N64 ABI is the same on LE and BE 64-bit MIPS Linux.
-            Arch::Mips64le | Arch::Mips64be => strider::CallingConvention::mips_n64(),
+            Arch::Mips64le | Arch::Mips64be => strider_analyze::CallingConvention::mips_n64(),
             // PowerPC SysV 32-bit is byte-order independent.
-            Arch::Ppc32be | Arch::Ppc32le => strider::CallingConvention::powerpc_sysv32(),
+            Arch::Ppc32be | Arch::Ppc32le => strider_analyze::CallingConvention::powerpc_sysv32(),
             // PPC64: clang+lld defaults to ELFv2 for both BE and LE targets
             // (no function descriptors), so both paths use the v2 CC.  Use
             // the v1 preset only for explicit gcc-built ELFv1 binaries
             // (function-descriptor handling is a future strider feature).
-            Arch::Ppc64be | Arch::Ppc64le => strider::CallingConvention::powerpc64_elf_v2(),
+            Arch::Ppc64be | Arch::Ppc64le => strider_analyze::CallingConvention::powerpc64_elf_v2(),
         }
     }
 }
@@ -135,17 +135,17 @@ impl Arch {
 
 /// Construct a `Strider` for x86_64 SystemV.  Used by tests that build
 /// hand-assembled byte sequences and don't care about ELF loading.
-pub fn strider_x86_64() -> strider::Strider {
+pub fn strider_x86_64() -> strider_analyze::Strider {
     strider_for(Arch::X64)
 }
 
 /// Construct a `Strider` for `arch` using its preset calling
 /// convention.  Probes Sleigh against an empty memory reader to
 /// extract the register list.
-pub fn strider_for(arch: Arch) -> strider::Strider {
+pub fn strider_for(arch: Arch) -> strider_analyze::Strider {
     let sleigh_arch = arch.sleigh();
     let regs = sleigh_arch.probe_regs().expect("probe sleigh regs");
-    strider::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new")
+    strider_analyze::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new")
 }
 
 // ── Binary path resolution ───────────────────────────────────────────────────
@@ -169,8 +169,8 @@ fn lift_for_pipeline(
     fn_name: &str,
 ) -> (
     strider_ir::BuiltFunctionGraph,
-    strider::Strider,
-    strider::SleighArch,
+    strider_analyze::Strider,
+    strider_analyze::SleighArch,
     std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
 ) {
     let path = binary_path(arch, case);
@@ -189,7 +189,7 @@ fn lift_for_pipeline(
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
-    let ana = strider::Strider::new(sleigh_arch, regs, arch.cc())
+    let ana = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc())
         .expect("Strider::new");
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)

@@ -28,7 +28,7 @@
 mod common;
 
 use rsleigh::VnSpace;
-use strider::indirect_resolve::{ResolvedTargets, classify_anchor_with_rom};
+use strider_analyze::indirect_resolve::{ResolvedTargets, classify_anchor_with_rom};
 
 use common::indirect_resolve_helpers::{
     build_jump_table_known_bits_scenario, build_jump_table_predecessor_if_scenario,

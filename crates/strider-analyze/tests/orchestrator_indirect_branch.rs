@@ -1,10 +1,10 @@
-//! Probe: does `strider::run` (the orchestrator) resolve the
+//! Probe: does `strider_analyze::run` (the orchestrator) resolve the
 //! `indirect_branch_resolved` fixture end-to-end?
 //!
 //! The existing `indirect_branch.rs` test bypasses the orchestrator and
 //! calls `analyze_cfg` + the classifier directly.  This file fills the
 //! "Multiple-resolution → CFG-rebuild → Multiple-disappears" gap by
-//! driving `strider::run` against the real ELF — the same path the
+//! driving `strider_analyze::run` against the real ELF — the same path the
 //! Python `strider.run(...)` binding takes.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
@@ -28,7 +28,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
-    let s = strider::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new");
+    let s = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new");
 
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
@@ -46,7 +46,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         reader::ElfFileMemReader::from_object(&obj).expect("rom"),
     );
 
-    let config = strider::Config {
+    let config = strider_analyze::Config {
         strider: &s,
         start_addr: addr.into(),
         sleigh,
@@ -56,7 +56,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         compact: true,
         per_address_ccs: std::collections::HashMap::new(),
     };
-    strider::run(config)
+    strider_analyze::run(config)
 }
 
 #[test]

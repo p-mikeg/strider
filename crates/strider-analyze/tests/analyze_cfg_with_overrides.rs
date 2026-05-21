@@ -1,6 +1,6 @@
 //! Per-call test: `Strider::analyze_cfg_with` applies the
 //! per-address-cc override at lift time without going through
-//! `strider::run`.  Mirrors `tests/per_address_cc.rs` but exercises the
+//! `strider_analyze::run`.  Mirrors `tests/per_address_cc.rs` but exercises the
 //! new options-bag API directly so a strider-py custom pipeline
 //! (which calls `analyze_cfg_with` instead of running the orchestrator)
 //! gets the same override behaviour.
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{AnalyzeOptions, SleighArch, Strider};
+use strider_analyze::{AnalyzeOptions, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
 mod common;

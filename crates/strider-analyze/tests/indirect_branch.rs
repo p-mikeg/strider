@@ -64,7 +64,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
-    let ana = strider::Strider::new(sleigh_arch, regs, arch.cc())
+    let ana = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc())
         .expect("Strider::new");
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
@@ -166,7 +166,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         }
         let mut any_resolved = false;
         for live in &live_anchors {
-            let resolved = strider::indirect_resolve::classify_anchor_with_rom_and_sp(
+            let resolved = strider_analyze::indirect_resolve::classify_anchor_with_rom_and_sp(
                 &graph.graph,
                 *live,
                 lr_vn,

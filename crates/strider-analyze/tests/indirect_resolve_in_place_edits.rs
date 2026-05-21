@@ -1,4 +1,4 @@
-//! Integration tests for [`strider::indirect_resolve::inplace`].
+//! Integration tests for [`strider_analyze::indirect_resolve::inplace`].
 //!
 //! Drives the in-place editors against full strider lifts (not the
 //! unit-test scaffold in `inplace.rs::tests`).  Asserts that the
@@ -15,7 +15,7 @@ mod common;
 use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
 use strider_ir::node::{NodeId, NodeKind};
-use strider::indirect_resolve::{apply_link_register, apply_tail_call};
+use strider_analyze::indirect_resolve::{apply_link_register, apply_tail_call};
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.
@@ -172,7 +172,7 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     // panic or return malformed IR.
     use rsleigh::Sleigh;
     use rsleigh::mem_readers::BufMemReader;
-    use strider::{run, Config, SleighArch};
+    use strider_analyze::{run, Config, SleighArch};
     let strider = common::strider_x86_64();
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();

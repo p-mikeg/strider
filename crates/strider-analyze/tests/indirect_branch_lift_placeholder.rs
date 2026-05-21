@@ -22,7 +22,7 @@
 use strider_lift::cfg::{Builder, OptionsBuilder};
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
-use strider::SleighArch;
+use strider_analyze::SleighArch;
 
 mod common;
 

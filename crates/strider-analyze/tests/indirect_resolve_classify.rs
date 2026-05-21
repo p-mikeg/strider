@@ -1,4 +1,4 @@
-//! Integration tests for [`strider::indirect_resolve::classify_anchor`].
+//! Integration tests for [`strider_analyze::indirect_resolve::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
 //! to IR via `Strider::analyze_cfg` (which returns an `AnalyzeOutcome`
@@ -15,7 +15,7 @@
 
 mod common;
 
-use strider::indirect_resolve::{ResolvedTargets, classify_anchor, classify_anchor_with_rom_and_sp};
+use strider_analyze::indirect_resolve::{ResolvedTargets, classify_anchor, classify_anchor_with_rom_and_sp};
 
 use common::indirect_resolve_helpers::{
     build_bx_lr_scenario, build_initial_var_target_scenario_x86_64,

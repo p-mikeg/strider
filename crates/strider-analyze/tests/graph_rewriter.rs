@@ -1,4 +1,4 @@
-//! Integration tests for [`strider::GraphRewriter`].
+//! Integration tests for [`strider_analyze::GraphRewriter`].
 //!
 //! Each test exercises the `apply_rule` / `apply_rules` / `re_optimize`
 //! flow against a real Sleigh-lifted function (or a hand-built one),
@@ -33,7 +33,7 @@ use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use strider_analyze::pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{GraphRewriter, SleighArch, Strider};
+use strider_analyze::{GraphRewriter, SleighArch, Strider};
 
 mod common;
 

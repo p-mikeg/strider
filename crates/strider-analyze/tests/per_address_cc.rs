@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{Config, SleighArch, Strider};
+use strider_analyze::{Config, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
 mod common;
@@ -51,7 +51,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         compact: true,
         per_address_ccs: overrides,
     };
-    let bfg = strider::run(config).unwrap();
+    let bfg = strider_analyze::run(config).unwrap();
 
     let call_id = bfg
                 .all_node_ids()
@@ -104,7 +104,7 @@ fn call_without_override_uses_function_default_clobber_set() {
         compact: true,
         per_address_ccs: HashMap::new(),
     };
-    let bfg = strider::run(config).unwrap();
+    let bfg = strider_analyze::run(config).unwrap();
 
     let call_id = bfg
                 .all_node_ids()

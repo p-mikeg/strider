@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d5517b52e084ff05803da7fe5327c5dc1fc94f75e6dc8a976487c21882cd97d0 # shrinks to steps = [EmitIntConst { width: U64, value: 64, lift_off: 0 }, EmitBinaryOp { width: U64, op: Xor, lhs_idx: 0, rhs_idx: 0, lift_off: 0 }, EmitIntConst { width: U64, value: 11487179670810879052, lift_off: 0 }, EmitIntConst { width: U64, value: 6959564402898672565, lift_off: 0 }, EmitBinaryOp { width: U64, op: Add, lhs_idx: 201, rhs_idx: 118, lift_off: 0 }, EmitBinaryOp { width: U64, op: Add, lhs_idx: 192, rhs_idx: 14, lift_off: 0 }]

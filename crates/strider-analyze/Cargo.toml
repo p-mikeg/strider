@@ -28,7 +28,12 @@ bitflags = "2"
 reader = { workspace = true }
 object.workspace = true
 strider-ir-test-utils = { workspace = true }
-# Phase 6 Task 6.3 — property-based testing for value-only IR invariants
+expect-test.workspace = true
+paste = "1"
+dot.workspace = true
+insta = { version = "1.40", features = ["yaml"] }
+serde = { version = "1", features = ["derive"] }
+# Property-based testing for value-only IR invariants
 # under the optimizer (see tests/proptest_optimizer.rs).
 proptest = "1"
 

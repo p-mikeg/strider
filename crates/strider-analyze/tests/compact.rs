@@ -1,6 +1,6 @@
 //! End-to-end test for `Config::compact`.
 //!
-//! Drives `strider::run` on a small inline-byte function under both
+//! Drives `strider_analyze::run` on a small inline-byte function under both
 //! compact=true and compact=false; asserts the compact graph has no
 //! more node ids than the non-compact graph AND identical
 //! pattern-match counts on a representative query.
@@ -8,7 +8,7 @@
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;
-use strider::{Config, SleighArch, Strider};
+use strider_analyze::{Config, SleighArch, Strider};
 
 mod common;
 
@@ -41,7 +41,7 @@ fn run_with(compact: bool) -> strider_ir::BuiltFunctionGraph {
         compact,
         per_address_ccs: std::collections::HashMap::new(),
     };
-    strider::run(config).unwrap()
+    strider_analyze::run(config).unwrap()
 }
 
 #[test]

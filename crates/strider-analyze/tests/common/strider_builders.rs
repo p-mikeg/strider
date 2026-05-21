@@ -16,7 +16,7 @@
 // forbids `expect`, so allow it explicitly for this test-only module.
 #![allow(clippy::expect_used, clippy::panic)]
 
-use strider::{CallingConvention, SleighArch, Strider};
+use strider_analyze::{CallingConvention, SleighArch, Strider};
 
 /// Construct a `Strider` for the given `arch` + `cc` pair, probing
 /// Sleigh against an empty memory reader for the register table.

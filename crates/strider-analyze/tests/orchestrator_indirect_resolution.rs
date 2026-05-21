@@ -1,10 +1,10 @@
 //! Integration tests for the strider top-level orchestrator
-//! ([`strider::run`]).
+//! ([`strider_analyze::run`]).
 //!
 //! Each test:
 //!   1. Constructs a `Config` against a synthetic byte sequence +
 //!      the standard SystemV-x86_64 calling convention,
-//!   2. Calls `strider::run`,
+//!   2. Calls `strider_analyze::run`,
 //!   3. Asserts the result matches the spec's per-scenario contract.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -13,7 +13,7 @@ mod common;
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{run, Config, SleighArch, Strider};
+use strider_analyze::{run, Config, SleighArch, Strider};
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
     let arch = SleighArch::x86_64();
@@ -77,7 +77,7 @@ fn outer_loop_unresolved_at_fixed_point_returns_typed_error() {
                 "expected unresolved-at-fixed-point message, got: {msg}"
             );
             assert!(
-                e.downcast_ref::<strider::UnresolvedIndirectBranch>().is_some(),
+                e.downcast_ref::<strider_analyze::UnresolvedIndirectBranch>().is_some(),
                 "expected `UnresolvedIndirectBranch` typed error in the anyhow chain, got: {e:?}"
             );
         }

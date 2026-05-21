@@ -7,16 +7,16 @@ use rsleigh::mem_readers::BufMemReader;
 
 #[test]
 fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
-    let arch = strider::SleighArch::x86_64();
+    let arch = strider_analyze::SleighArch::x86_64();
     let probe = BufMemReader::new(vec![], 0);
     let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe)
         .expect("probe sleigh new")
         .regs()
         .expect("probe regs");
-    let strider_h = strider::Strider::new(
+    let strider_h = strider_analyze::Strider::new(
         arch,
         regs,
-        strider::CallingConvention::x86_64_systemv(),
+        strider_analyze::CallingConvention::x86_64_systemv(),
     )
     .expect("strider");
 
@@ -80,16 +80,16 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
 
 #[test]
 fn unmodelled_sysreg_read_clobbers_only_destination() {
-    let arch = strider::SleighArch::aarch64();
+    let arch = strider_analyze::SleighArch::aarch64();
     let probe = BufMemReader::new(vec![], 0);
     let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe)
         .expect("probe sleigh new")
         .regs()
         .expect("probe regs");
-    let strider_h = strider::Strider::new(
+    let strider_h = strider_analyze::Strider::new(
         arch,
         regs,
-        strider::CallingConvention::aarch64_aapcs64(),
+        strider_analyze::CallingConvention::aarch64_aapcs64(),
     )
     .expect("strider");
 
