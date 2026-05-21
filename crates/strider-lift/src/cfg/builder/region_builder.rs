@@ -230,11 +230,10 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
 
     /// Processes `insn` as a fresh instruction (not already in any region).
     ///
-    /// Appends the instruction to the current region, then acts on the opcode:
-    /// - `Branch`: classifies as tail call or enqueues the jump target.
-    /// - `CondBranch`: enqueues both the taken and not-taken successors.
-    /// - `Return`: ends the region.
-    /// - Everything else: returns [`ProcessInsnRes::DidntFinishProcessing`].
+    /// Appends the instruction to the current region, then dispatches on the
+    /// opcode to a per-opcode helper.  Anything not listed below returns
+    /// [`ProcessInsnRes::DidntFinishProcessing`] so the outer decode loop
+    /// keeps lifting.
     fn process_new_insn(
         &mut self,
         insn: &rsleigh::Insn,
@@ -247,177 +246,200 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         });
 
         match insn.opcode {
-            rsleigh::Opcode::Branch => {
-                let target_var = *insn
-                    .inputs
-                    .first()
-                    .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
-                let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
-                let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
-                if is_tail_call && branch_target_addr.insn_index != 0 {
-                    bail!("invalid tail call at opcode {branch_target_addr:?}");
-                }
-                // clang at -O0 (used for the aarch64be / ppc32le
-                // fixtures, where no Debian gcc cross exists) emits
-                // explicit unconditional `b <next-instr>` between
-                // adjacent basic blocks instead of letting control
-                // fall through.  Without normalisation every such
-                // transition shows up as a `Branch` edge and the CFG
-                // never has any `Fallthrough` edges, breaking
-                // downstream passes / queries that distinguish the
-                // two.  When the branch target is exactly the address
-                // that decoding would naturally advance to next AND
-                // is the start of a machine instruction (`insn_index
-                // == 0`), classify the edge as `Fallthrough`.
-                // Restricting to machine-instruction boundaries
-                // avoids reclassifying any intra-machine-instruction
-                // p-code `Branch` whose target happens to be the
-                // next p-code op in the same insn.  This is an
-                // edge-classification change only — the target is
-                // still enqueued for exploration the same way.
-                let edge_kind = if !is_tail_call
-                    && branch_target_addr.insn_index == 0
-                    && next_pcode_addr(addr, lift_res)
-                        .is_ok_and(|next| next == branch_target_addr)
-                {
-                    RegionEdgeKind::Fallthrough
-                } else {
-                    RegionEdgeKind::Branch
-                };
-                let terminator = if is_tail_call {
-                    RegionTerminator::TailCall {
-                        target: branch_target_addr.machine_addr.addr,
-                    }
-                } else {
-                    RegionTerminator::Branch
-                };
-                let region = self.finish_current_region(terminator)?;
-                if !is_tail_call {
-                    // Not a tail call — enqueue the target so the builder explores it next.
-                    self.builder
-                        .work_queue
-                        .push((Some((region, edge_kind)), branch_target_addr));
-                }
-                Ok(ProcessInsnRes::FinishedProcessing)
-            }
-            rsleigh::Opcode::CondBranch => {
-                let target_var = *insn
-                    .inputs
-                    .first()
-                    .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
-                let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
-                let next_insn_addr = next_pcode_addr(addr, lift_res)?;
-
-                // Pre-classify both successors against the function bounds.
-                // Lifting an OOB successor address would otherwise read past
-                // `start + fn_max_size`, and on architectures where the OOB
-                // bytes happen to be zero-pcode-op insns (e.g. NOP padding)
-                // the inner lift loop never appends to `self.insns`, so the
-                // upper-bound truncation in `build()` never fires.
-                let true_oob = self.is_branch_tail_call_nocheck(target_addr);
-                if true_oob && target_addr.insn_index != 0 {
-                    bail!("invalid tail call at opcode {target_addr:?}");
-                }
-                let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
-
-                match (true_oob, false_oob) {
-                    (false, false) => {
-                        // Both in-range — original CondBranch behaviour.
-                        let region =
-                            self.finish_current_region(RegionTerminator::CondBranch)?;
-                        self.builder.work_queue.push((
-                            Some((region, RegionEdgeKind::IfCaseTrue)),
-                            target_addr,
-                        ));
-                        self.builder.work_queue.push((
-                            Some((region, RegionEdgeKind::IfCaseFalse)),
-                            next_insn_addr,
-                        ));
-                    }
-                    (true, true) => {
-                        // Both successors leave the function — collapse to a
-                        // single TailCall to the taken target.  The IR layer
-                        // lifts this as `Call(IntConst(target)) + Return`,
-                        // and `SpecialTerm::TailCall::skips_opcode` is
-                        // extended to also skip the trailing `CondBranch`
-                        // insn that lives in `self.insns`.
-                        self.finish_current_region(RegionTerminator::TailCall {
-                            target: target_addr.machine_addr.addr,
-                        })?;
-                    }
-                    (true, false) | (false, true) => {
-                        // Exactly one successor leaves the function.  Pop
-                        // the trailing `CondBranch` insn from `self.insns`
-                        // so the IR's per-region loop does not re-route it
-                        // through `handle_cond_branch` (which would fail
-                        // looking up the missing OOB edge), and emit
-                        // `RegionTerminator::Branch` to the in-range
-                        // successor.  The conditional is lost, but the
-                        // lift completes.  The in-range successor is
-                        // preserved as a regular intra-function branch
-                        // via `add_region`'s relaxed empty-Branch
-                        // invariant — `add_region` accepts empty regions
-                        // terminated with Branch (the degenerate
-                        // single-instruction case is sound by the same
-                        // path).
-                        let in_range = if true_oob { next_insn_addr } else { target_addr };
-                        // Pop the trailing CondBranch from `self.insns`
-                        // so the IR's per-region loop does not re-route
-                        // it through `handle_cond_branch` (which would
-                        // fail looking up the missing OOB edge).  Even
-                        // when this leaves the region empty
-                        // (single-instruction case), `add_region` now
-                        // accepts empty regions terminated with Branch.
-                        // The IR-layer per-region driver iterates
-                        // `region.insns` (a no-op for empty insns) and
-                        // handles the Branch terminator + outgoing edge
-                        // separately, so the in-range successor is
-                        // preserved as a regular intra-function branch.
-                        self.insns.pop();
-                        let region = self.finish_current_region(RegionTerminator::Branch)?;
-                        self.builder
-                            .work_queue
-                            .push((Some((region, RegionEdgeKind::Branch)), in_range));
-                    }
-                }
-                Ok(ProcessInsnRes::FinishedProcessing)
-            }
+            rsleigh::Opcode::Branch => self.process_branch(insn, addr, lift_res),
+            rsleigh::Opcode::CondBranch => self.process_cond_branch(insn, addr, lift_res),
             rsleigh::Opcode::Return => {
                 self.finish_current_region(RegionTerminator::Return)?;
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::BranchIndirect => self.process_branch_indirect(insn, addr),
-            rsleigh::Opcode::CallOther => {
-                // Resolve the user-op id from the CONST input at
-                // position 0.  Fall through to today's behaviour if
-                // the input shape is unexpected — the IR layer's
-                // strict-on-emission check will surface any real
-                // problem with full context.
-                let id_vn = match insn.inputs.first() {
-                    Some(v) => v,
-                    None => return Ok(ProcessInsnRes::DidntFinishProcessing),
-                };
-                if id_vn.addr_space != rsleigh::VnSpace::CONST {
-                    return Ok(ProcessInsnRes::DidntFinishProcessing);
-                }
-                let id_u32 = match u32::try_from(id_vn.addr_off) {
-                    Ok(v) => v,
-                    Err(_) => return Ok(ProcessInsnRes::DidntFinishProcessing),
-                };
-                let name = self.builder.sleigh.user_op_name(id_u32);
-                let preset = self.builder.preset;
-                let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
-                if matches!(class, Some(strider_target::call_other_abi::CallOtherClass::NoReturn)) {
-                    // CallOther is already in self.insns from the
-                    // process_new_insn prologue push; finish_current_region
-                    // carries it.  Trailing BranchIndirect is never decoded.
-                    self.finish_current_region(RegionTerminator::NoReturn)?;
-                    return Ok(ProcessInsnRes::FinishedProcessing);
-                }
-                Ok(ProcessInsnRes::DidntFinishProcessing)
-            }
+            rsleigh::Opcode::CallOther => self.process_call_other(insn),
             _ => Ok(ProcessInsnRes::DidntFinishProcessing),
         }
+    }
+
+    /// Handles a `Branch` opcode: decode the target, classify as tail-call
+    /// vs intra-function branch (with the clang-`b <next>` fall-through
+    /// normalisation), finalise the region, and enqueue the successor when
+    /// it's not a tail call.
+    fn process_branch(
+        &mut self,
+        insn: &rsleigh::Insn,
+        addr: PcodeInsnAddr,
+        lift_res: &rsleigh::LiftRes,
+    ) -> Result<ProcessInsnRes> {
+        let target_var = *insn
+            .inputs
+            .first()
+            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
+        let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
+        if is_tail_call && branch_target_addr.insn_index != 0 {
+            bail!("invalid tail call at opcode {branch_target_addr:?}");
+        }
+        // clang at -O0 (used for the aarch64be / ppc32le
+        // fixtures, where no Debian gcc cross exists) emits
+        // explicit unconditional `b <next-instr>` between
+        // adjacent basic blocks instead of letting control
+        // fall through.  Without normalisation every such
+        // transition shows up as a `Branch` edge and the CFG
+        // never has any `Fallthrough` edges, breaking
+        // downstream passes / queries that distinguish the
+        // two.  When the branch target is exactly the address
+        // that decoding would naturally advance to next AND
+        // is the start of a machine instruction (`insn_index
+        // == 0`), classify the edge as `Fallthrough`.
+        // Restricting to machine-instruction boundaries
+        // avoids reclassifying any intra-machine-instruction
+        // p-code `Branch` whose target happens to be the
+        // next p-code op in the same insn.  This is an
+        // edge-classification change only — the target is
+        // still enqueued for exploration the same way.
+        let edge_kind = if !is_tail_call
+            && branch_target_addr.insn_index == 0
+            && next_pcode_addr(addr, lift_res)
+                .is_ok_and(|next| next == branch_target_addr)
+        {
+            RegionEdgeKind::Fallthrough
+        } else {
+            RegionEdgeKind::Branch
+        };
+        let terminator = if is_tail_call {
+            RegionTerminator::TailCall {
+                target: branch_target_addr.machine_addr.addr,
+            }
+        } else {
+            RegionTerminator::Branch
+        };
+        let region = self.finish_current_region(terminator)?;
+        if !is_tail_call {
+            // Not a tail call — enqueue the target so the builder explores it next.
+            self.builder
+                .work_queue
+                .push((Some((region, edge_kind)), branch_target_addr));
+        }
+        Ok(ProcessInsnRes::FinishedProcessing)
+    }
+
+    /// Handles a `CondBranch` opcode: decode the taken/not-taken successors,
+    /// pre-classify each against the function bounds, then finalise the
+    /// region with the matching terminator.  See the per-arm comments below
+    /// for the four cases (both in-range / both OOB / one-OOB).
+    fn process_cond_branch(
+        &mut self,
+        insn: &rsleigh::Insn,
+        addr: PcodeInsnAddr,
+        lift_res: &rsleigh::LiftRes,
+    ) -> Result<ProcessInsnRes> {
+        let target_var = *insn
+            .inputs
+            .first()
+            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
+        let next_insn_addr = next_pcode_addr(addr, lift_res)?;
+
+        // Pre-classify both successors against the function bounds.
+        // Lifting an OOB successor address would otherwise read past
+        // `start + fn_max_size`, and on architectures where the OOB
+        // bytes happen to be zero-pcode-op insns (e.g. NOP padding)
+        // the inner lift loop never appends to `self.insns`, so the
+        // upper-bound truncation in `build()` never fires.
+        let true_oob = self.is_branch_tail_call_nocheck(target_addr);
+        if true_oob && target_addr.insn_index != 0 {
+            bail!("invalid tail call at opcode {target_addr:?}");
+        }
+        let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
+
+        match (true_oob, false_oob) {
+            (false, false) => {
+                // Both in-range — original CondBranch behaviour.
+                let region = self.finish_current_region(RegionTerminator::CondBranch)?;
+                self.builder.work_queue.push((
+                    Some((region, RegionEdgeKind::IfCaseTrue)),
+                    target_addr,
+                ));
+                self.builder.work_queue.push((
+                    Some((region, RegionEdgeKind::IfCaseFalse)),
+                    next_insn_addr,
+                ));
+            }
+            (true, true) => {
+                // Both successors leave the function — collapse to a
+                // single TailCall to the taken target.  The IR layer
+                // lifts this as `Call(IntConst(target)) + Return`,
+                // and `SpecialTerm::TailCall::skips_opcode` is
+                // extended to also skip the trailing `CondBranch`
+                // insn that lives in `self.insns`.
+                self.finish_current_region(RegionTerminator::TailCall {
+                    target: target_addr.machine_addr.addr,
+                })?;
+            }
+            (true, false) | (false, true) => {
+                // Exactly one successor leaves the function.  Pop
+                // the trailing `CondBranch` insn from `self.insns`
+                // so the IR's per-region loop does not re-route it
+                // through `handle_cond_branch` (which would fail
+                // looking up the missing OOB edge), and emit
+                // `RegionTerminator::Branch` to the in-range
+                // successor.  The conditional is lost, but the
+                // lift completes.  The in-range successor is
+                // preserved as a regular intra-function branch
+                // via `add_region`'s relaxed empty-Branch
+                // invariant — `add_region` accepts empty regions
+                // terminated with Branch (the degenerate
+                // single-instruction case is sound by the same
+                // path).
+                let in_range = if true_oob { next_insn_addr } else { target_addr };
+                // Pop the trailing CondBranch from `self.insns`
+                // so the IR's per-region loop does not re-route
+                // it through `handle_cond_branch` (which would
+                // fail looking up the missing OOB edge).  Even
+                // when this leaves the region empty
+                // (single-instruction case), `add_region` now
+                // accepts empty regions terminated with Branch.
+                // The IR-layer per-region driver iterates
+                // `region.insns` (a no-op for empty insns) and
+                // handles the Branch terminator + outgoing edge
+                // separately, so the in-range successor is
+                // preserved as a regular intra-function branch.
+                self.insns.pop();
+                let region = self.finish_current_region(RegionTerminator::Branch)?;
+                self.builder
+                    .work_queue
+                    .push((Some((region, RegionEdgeKind::Branch)), in_range));
+            }
+        }
+        Ok(ProcessInsnRes::FinishedProcessing)
+    }
+
+    /// Handles a `CallOther` opcode: resolve the user-op id from the
+    /// CONST input at position 0, classify via the target ABI table, and
+    /// finalise the region with `NoReturn` for the noreturn family.
+    /// Unexpected input shapes and all other classifications fall through
+    /// to today's behaviour ([`ProcessInsnRes::DidntFinishProcessing`]) —
+    /// the IR layer's strict-on-emission check will surface any real
+    /// problem with full context.
+    fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<ProcessInsnRes> {
+        let Some(id_vn) = insn.inputs.first() else {
+            return Ok(ProcessInsnRes::DidntFinishProcessing);
+        };
+        if id_vn.addr_space != rsleigh::VnSpace::CONST {
+            return Ok(ProcessInsnRes::DidntFinishProcessing);
+        }
+        let Ok(id_u32) = u32::try_from(id_vn.addr_off) else {
+            return Ok(ProcessInsnRes::DidntFinishProcessing);
+        };
+        let name = self.builder.sleigh.user_op_name(id_u32);
+        let preset = self.builder.preset;
+        let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
+        if matches!(class, Some(strider_target::call_other_abi::CallOtherClass::NoReturn)) {
+            // CallOther is already in self.insns from the
+            // process_new_insn prologue push; finish_current_region
+            // carries it.  Trailing BranchIndirect is never decoded.
+            self.finish_current_region(RegionTerminator::NoReturn)?;
+            return Ok(ProcessInsnRes::FinishedProcessing);
+        }
+        Ok(ProcessInsnRes::DidntFinishProcessing)
     }
 
     /// Handles a `BranchIndirect` opcode by classifying its target via
