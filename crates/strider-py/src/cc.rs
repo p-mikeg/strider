@@ -11,71 +11,70 @@ pub struct PyCallingConvention {
     pub(crate) preset_name: &'static str,
 }
 
+// Stamp out one `#[classmethod] fn $name(_cls) -> Self` per preset
+// name in its own `#[pymethods]` block.  Each classmethod has the
+// same shape — name appears three times (Python method name, Rust
+// factory call, stored `preset_name` static-string).  Driving the
+// list once eliminates the repetition while preserving the Python
+// API (`CallingConvention.x86_64_systemv()` etc.) byte-for-byte.
+// Relies on PyO3's `multiple-pymethods` feature.
+//
+// `x86_64_all_preserving` stays hand-written below because it carries
+// a Python docstring that the macro form cannot reproduce.  Linux
+// kernel + syscall presets fit the same zero-arg shape and run
+// through the macro — see
+// `docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md`
+// for the full list and rationale.
+macro_rules! forall_preset {
+    ($self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
+        #[pymethods]
+        impl $self_ty {
+            $(
+                #[classmethod]
+                fn $name(_cls: &Bound<'_, PyType>) -> Self {
+                    Self {
+                        inner: <$inner_ty>::$name(),
+                        preset_name: stringify!($name),
+                    }
+                }
+            )*
+        }
+    };
+}
+
+forall_preset!(
+    PyCallingConvention,
+    strider_target::CallingConvention,
+    [
+        // Userland presets
+        x86_64_systemv,
+        aarch64_aapcs64,
+        arm_aapcs,
+        mips_o32,
+        mips_n64,
+        powerpc_sysv32,
+        powerpc64_elf_v1,
+        powerpc64_elf_v2,
+        x86_cdecl,
+        // Linux kernel presets
+        x86_linux_kernel,
+        x86_64_linux_kernel,
+        aarch64_linux_kernel,
+        arm_linux_kernel,
+        mips_linux_kernel_o32,
+        mips_linux_kernel_n64,
+        // Linux syscall presets
+        x86_linux_syscall,
+        x86_64_linux_syscall,
+        aarch64_linux_syscall,
+        arm_linux_syscall,
+        mips_linux_syscall_o32,
+        mips_linux_syscall_n64,
+    ]
+);
+
 #[pymethods]
 impl PyCallingConvention {
-    #[classmethod]
-    fn x86_64_systemv(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::x86_64_systemv(),
-            preset_name: "x86_64_systemv",
-        }
-    }
-    #[classmethod]
-    fn aarch64_aapcs64(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::aarch64_aapcs64(),
-            preset_name: "aarch64_aapcs64",
-        }
-    }
-    #[classmethod]
-    fn arm_aapcs(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::arm_aapcs(),
-            preset_name: "arm_aapcs",
-        }
-    }
-    #[classmethod]
-    fn mips_o32(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::mips_o32(),
-            preset_name: "mips_o32",
-        }
-    }
-    #[classmethod]
-    fn mips_n64(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::mips_n64(),
-            preset_name: "mips_n64",
-        }
-    }
-    #[classmethod]
-    fn powerpc_sysv32(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::powerpc_sysv32(),
-            preset_name: "powerpc_sysv32",
-        }
-    }
-    #[classmethod]
-    fn powerpc64_elf_v1(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::powerpc64_elf_v1(),
-            preset_name: "powerpc64_elf_v1",
-        }
-    }
-    #[classmethod]
-    fn powerpc64_elf_v2(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::powerpc64_elf_v2(),
-            preset_name: "powerpc64_elf_v2",
-        }
-    }
-    #[classmethod]
-    fn x86_cdecl(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::x86_cdecl(),
-            preset_name: "x86_cdecl",
-        }
-    }
     /// "All-preserving" x86_64 calling convention: every userland
     /// caller-clobbered register is listed as callee-saved.  Use as a
     /// per-address CC override for sites that observe no caller state
@@ -85,99 +84,6 @@ impl PyCallingConvention {
         Self {
             inner: strider_target::CallingConvention::x86_64_all_preserving(),
             preset_name: "x86_64_all_preserving",
-        }
-    }
-
-    // ── Linux kernel + syscall presets ───────────────────────────────────
-    //
-    // One classmethod per (arch, role) pair, one-to-one with the
-    // factory methods on `strider_target::CallingConvention`.  See
-    // `docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md`
-    // for the full list and rationale.
-
-    #[classmethod]
-    fn x86_linux_kernel(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::x86_linux_kernel(),
-            preset_name: "x86_linux_kernel",
-        }
-    }
-    #[classmethod]
-    fn x86_64_linux_kernel(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::x86_64_linux_kernel(),
-            preset_name: "x86_64_linux_kernel",
-        }
-    }
-    #[classmethod]
-    fn aarch64_linux_kernel(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::aarch64_linux_kernel(),
-            preset_name: "aarch64_linux_kernel",
-        }
-    }
-    #[classmethod]
-    fn arm_linux_kernel(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::arm_linux_kernel(),
-            preset_name: "arm_linux_kernel",
-        }
-    }
-    #[classmethod]
-    fn mips_linux_kernel_o32(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::mips_linux_kernel_o32(),
-            preset_name: "mips_linux_kernel_o32",
-        }
-    }
-    #[classmethod]
-    fn mips_linux_kernel_n64(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::mips_linux_kernel_n64(),
-            preset_name: "mips_linux_kernel_n64",
-        }
-    }
-
-    #[classmethod]
-    fn x86_linux_syscall(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::x86_linux_syscall(),
-            preset_name: "x86_linux_syscall",
-        }
-    }
-    #[classmethod]
-    fn x86_64_linux_syscall(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::x86_64_linux_syscall(),
-            preset_name: "x86_64_linux_syscall",
-        }
-    }
-    #[classmethod]
-    fn aarch64_linux_syscall(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::aarch64_linux_syscall(),
-            preset_name: "aarch64_linux_syscall",
-        }
-    }
-    #[classmethod]
-    fn arm_linux_syscall(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::arm_linux_syscall(),
-            preset_name: "arm_linux_syscall",
-        }
-    }
-    #[classmethod]
-    fn mips_linux_syscall_o32(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::mips_linux_syscall_o32(),
-            preset_name: "mips_linux_syscall_o32",
-        }
-    }
-    #[classmethod]
-    fn mips_linux_syscall_n64(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::mips_linux_syscall_n64(),
-            preset_name: "mips_linux_syscall_n64",
         }
     }
 
