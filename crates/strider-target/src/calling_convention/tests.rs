@@ -801,3 +801,53 @@ fn standard_presets_have_no_memory_clobber_false() {
         );
     }
 }
+
+#[test]
+fn every_preset_factory_resolves() {
+    // Sanity guard for the data-table layout: every named factory's
+    // expected lookup string must be present in `CC_PRESETS`.  If a
+    // future edit appends a wrapper without appending a row (or
+    // misspells the name), this test catches it before the production
+    // panic at `cc_from_table` fires.
+    let factories: &[(&str, fn() -> CallingConvention)] = &[
+        ("x86_64_systemv",         CallingConvention::x86_64_systemv),
+        ("x86_64_all_preserving",  CallingConvention::x86_64_all_preserving),
+        ("aarch64_aapcs64",        CallingConvention::aarch64_aapcs64),
+        ("arm_aapcs",              CallingConvention::arm_aapcs),
+        ("mips_o32",               CallingConvention::mips_o32),
+        ("mips_n64",               CallingConvention::mips_n64),
+        ("powerpc_sysv32",         CallingConvention::powerpc_sysv32),
+        ("powerpc64_elf_v1",       CallingConvention::powerpc64_elf_v1),
+        ("powerpc64_elf_v2",       CallingConvention::powerpc64_elf_v2),
+        ("x86_cdecl",              CallingConvention::x86_cdecl),
+        ("x86_linux_kernel",       CallingConvention::x86_linux_kernel),
+        ("x86_64_linux_kernel",    CallingConvention::x86_64_linux_kernel),
+        ("aarch64_linux_kernel",   CallingConvention::aarch64_linux_kernel),
+        ("arm_linux_kernel",       CallingConvention::arm_linux_kernel),
+        ("mips_linux_kernel_o32",  CallingConvention::mips_linux_kernel_o32),
+        ("mips_linux_kernel_n64",  CallingConvention::mips_linux_kernel_n64),
+        ("x86_linux_syscall",      CallingConvention::x86_linux_syscall),
+        ("x86_64_linux_syscall",   CallingConvention::x86_64_linux_syscall),
+        ("aarch64_linux_syscall",  CallingConvention::aarch64_linux_syscall),
+        ("arm_linux_syscall",      CallingConvention::arm_linux_syscall),
+        ("mips_linux_syscall_o32", CallingConvention::mips_linux_syscall_o32),
+        ("mips_linux_syscall_n64", CallingConvention::mips_linux_syscall_n64),
+    ];
+    for (name, factory) in factories {
+        let row = lookup_preset(name)
+            .unwrap_or_else(|| panic!("preset {name:?} missing from CC_PRESETS"));
+        assert_eq!(
+            row.cc,
+            factory(),
+            "preset {name:?}: CC_PRESETS row does not match factory output",
+        );
+    }
+    // And the table itself must contain exactly the factories we list.
+    assert_eq!(
+        CC_PRESETS.len(),
+        factories.len(),
+        "CC_PRESETS has {} rows but every_preset_factory_resolves lists {} factories",
+        CC_PRESETS.len(),
+        factories.len(),
+    );
+}

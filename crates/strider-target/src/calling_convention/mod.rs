@@ -293,27 +293,43 @@ impl From<&BuiltCallingConvention> for strider_ir::FunctionBuilderCC {
     }
 }
 
-impl CallingConvention {
-    /// Returns `true` if calls under this convention preserve memory
-    /// across the call (i.e. the IR's Call node should NOT advance the
-    /// memory chain).  See the `Self::no_memory_clobber` field docs.
-    #[must_use]
-    pub fn no_memory_clobber(&self) -> bool {
-        self.no_memory_clobber
-    }
+/// One row of the calling-convention preset table.  Carries the
+/// preset's lookup name alongside the `CallingConvention` itself —
+/// the entire data surface lives in the `CC_PRESETS` table below, and
+/// the named factory functions (`x86_64_systemv`, `x86_cdecl`, ...)
+/// are thin wrappers that perform a name lookup.
+///
+/// `CallingConvention` is `Copy` (all fields are `&'static`), so each
+/// row stays on the static heap with no runtime construction cost.
+#[derive(Debug, Clone, Copy)]
+pub struct CcPresetRow {
+    /// The Rust factory name (also the Python classmethod name).
+    pub name: &'static str,
+    /// The convention itself.  `Copy` — every field is `&'static`.
+    pub cc: CallingConvention,
+}
 
-    /// Returns the x86-64 System V ABI calling convention.
-    ///
-    /// Argument registers: RDI, RSI, RDX, RCX, R8, R9
-    /// Callee-saved: RBX, RBP, R12–R15
-    /// Return value: RAX, RDX
-    ///
-    /// RSP is the stack pointer (see `stack_ptr_reg_name`) and is not listed
-    /// as callee-saved — `ret` pops the return address, so the caller observes
-    /// SP shifted by `ret_stack_pop` across the call.
-    #[must_use]
-    pub fn x86_64_systemv() -> CallingConvention {
-        CallingConvention {
+/// Static data table of every supported calling convention preset.
+///
+/// Adding a new preset means appending one [`CcPresetRow`] entry — the
+/// dispatch scaffolding (named factory wrappers + `lookup_preset`) does
+/// not need changes.
+///
+/// Linear lookup is fine: ~22 rows, each `name` comparison is a string
+/// `eq` that short-circuits on length.
+pub static CC_PRESETS: &[CcPresetRow] = &[
+    // ── Userland presets ────────────────────────────────────────────
+    //
+    // x86-64 System V ABI.
+    //   Argument registers: RDI, RSI, RDX, RCX, R8, R9
+    //   Callee-saved: RBX, RBP, R12–R15
+    //   Return value: RAX, RDX
+    //   RSP is the stack pointer and is not listed as callee-saved —
+    //   `ret` pops the return address, so the caller observes SP shifted
+    //   by `ret_stack_pop` across the call.
+    CcPresetRow {
+        name: "x86_64_systemv",
+        cc: CallingConvention {
             stack_ptr_reg_name: "RSP",
             arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
             callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
@@ -329,23 +345,18 @@ impl CallingConvention {
             // is no architectural link register.
             link_register_reg_name: None,
             no_memory_clobber: false,
-        }
-    }
+        },
+    },
 
-    /// "All-preserving" x86_64 calling convention: every userland
-    /// caller-clobbered register is listed as callee-saved.  Empty
-    /// arg-passing list, empty ret-val list.  Used for sites like
-    /// Linux-kernel `__fentry__` / `mcount` callbacks that preserve
-    /// all caller state.
-    ///
-    /// Pair with the per-address override map on
-    /// [`crate::CallingConvention`] consumers (e.g.
-    /// `strider::Config::per_address_ccs`) so the override applies
-    /// only to specific Call sites; the function-default CC stays
-    /// SystemV.
-    #[must_use]
-    pub fn x86_64_all_preserving() -> CallingConvention {
-        CallingConvention {
+    // "All-preserving" x86_64: every userland caller-clobbered register is
+    // listed as callee-saved.  Empty arg-passing list, empty ret-val list.
+    // Used for sites like Linux-kernel `__fentry__` / `mcount` callbacks
+    // that preserve all caller state.  Pair with the per-address override
+    // map on `CallingConvention` consumers so the override applies only
+    // to specific Call sites; the function-default CC stays SystemV.
+    CcPresetRow {
+        name: "x86_64_all_preserving",
+        cc: CallingConvention {
             stack_ptr_reg_name: "RSP",
             arg_passing_regs: &[],
             callee_saved_regs: &[
@@ -364,25 +375,22 @@ impl CallingConvention {
             // preserved.  build_call_with_cc skips the Memory output so
             // LoadReadOnly / StackLoadForward forward across the call.
             no_memory_clobber: true,
-        }
-    }
+        },
+    },
 
-    /// Returns the AArch64 AAPCS64 calling convention.
-    ///
-    /// Argument registers: x0–x7
-    /// Callee-saved: x19–x28, x29 (frame pointer), x30 (link register)
-    /// Return value: x0, x1
-    ///
-    /// `sp` is the stack pointer (see `stack_ptr_reg_name`) and is not listed
-    /// as callee-saved — `ret_stack_pop` is `0` on AAPCS64 because `bl` writes
-    /// the return address to `lr` rather than pushing it.
-    ///
-    /// AAPCS64 register conventions are independent of byte order, so this
-    /// preset pairs equally with [`crate::SleighArch::aarch64`] (LE) and
-    /// [`crate::SleighArch::aarch64be`] (BE).
-    #[must_use]
-    pub fn aarch64_aapcs64() -> CallingConvention {
-        CallingConvention {
+    // AArch64 AAPCS64.
+    //   Argument registers: x0–x7
+    //   Callee-saved: x19–x28, x29 (frame pointer), x30 (link register)
+    //   Return value: x0, x1
+    //   `sp` is the stack pointer and is not listed as callee-saved —
+    //   `ret_stack_pop` is 0 on AAPCS64 because `bl` writes the return
+    //   address to `lr` rather than pushing it.
+    //   AAPCS64 register conventions are independent of byte order, so
+    //   this preset pairs equally with `SleighArch::aarch64` (LE) and
+    //   `SleighArch::aarch64be` (BE).
+    CcPresetRow {
+        name: "aarch64_aapcs64",
+        cc: CallingConvention {
             stack_ptr_reg_name: "sp",
             arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             callee_saved_regs: &[
@@ -400,28 +408,23 @@ impl CallingConvention {
             // register table only registers `x30`.
             link_register_reg_name: Some("x30"),
             no_memory_clobber: false,
-        }
-    }
+        },
+    },
 
-    /// Returns the ARM 32-bit AAPCS calling convention.
-    ///
-    /// Argument registers: r0–r3
-    /// Callee-saved: r4–r11, lr
-    /// Return value: r0, r1  (r0/r1 pair is used for 64-bit return values)
-    ///
-    /// `sp` is the stack pointer (see `stack_ptr_reg_name`) and is not listed
-    /// as callee-saved.  Unlike x86, the ARM `bl` instruction stores the
-    /// return address in the link register `lr` rather than pushing it on the
-    /// stack, so the first stack-passed arg sits at SP + 0 and `ret_stack_pop`
-    /// is `0`.
-    ///
-    /// AAPCS register conventions are independent of byte order, so this
-    /// preset pairs equally with [`crate::SleighArch::arm`] (LE),
-    /// [`crate::SleighArch::arm_be`] (BE), and
-    /// [`crate::SleighArch::arm_thumb`] (Thumb-2).
-    #[must_use]
-    pub fn arm_aapcs() -> CallingConvention {
-        CallingConvention {
+    // ARM 32-bit AAPCS.
+    //   Argument registers: r0–r3
+    //   Callee-saved: r4–r11, lr
+    //   Return value: r0, r1  (r0/r1 pair used for 64-bit return values)
+    //   `sp` is the stack pointer and is not listed as callee-saved.
+    //   Unlike x86, ARM `bl` stores the return address in `lr` rather
+    //   than pushing it, so the first stack-passed arg sits at SP + 0 and
+    //   `ret_stack_pop` is 0.
+    //   AAPCS register conventions are independent of byte order, so this
+    //   preset pairs equally with `SleighArch::arm` (LE), `arm_be` (BE),
+    //   and `arm_thumb` (Thumb-2).
+    CcPresetRow {
+        name: "arm_aapcs",
+        cc: CallingConvention {
             stack_ptr_reg_name: "sp",
             arg_passing_regs: &["r0", "r1", "r2", "r3"],
             callee_saved_regs: &["r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr"],
@@ -437,31 +440,27 @@ impl CallingConvention {
             // Sleigh registers it under the lowercase `lr` name.
             link_register_reg_name: Some("lr"),
             no_memory_clobber: false,
-        }
-    }
+        },
+    },
 
-    /// Returns the MIPS O32 calling convention.
-    ///
-    /// Used by 32-bit MIPS Linux binaries on both LE and BE targets — the ABI
-    /// is identical regardless of byte order.  Pairs equally with
-    /// [`crate::SleighArch::mipsle32`] and [`crate::SleighArch::mipsbe32`].
-    ///
-    /// Argument registers: a0, a1, a2, a3 (= r4–r7)
-    /// Callee-saved:       s0–s7, s8 (= fp), gp, ra (= r16–r23, r30, r28, r31)
-    /// Return value:       v0, v1 (= r2, r3)
-    ///
-    /// `sp` (= r29) is the stack pointer.  `ret_stack_pop` is `0` because
-    /// MIPS `jal`/`jalr` writes the return address to `$ra` rather than
-    /// pushing it on the stack.  The first 16 bytes of stack-arg space
-    /// (offsets 0..16) are MIPS's reserved "shadow space" for the four
-    /// register args; positional stack args start at offset 16.
-    ///
-    /// Note: Sleigh's MIPS spec uses lowercase names (`a0`, `s0`, `sp`, `ra`,
-    /// `gp`) and `s8` for the frame pointer register (not `fp`, which does not
-    /// resolve in the Sleigh register table).
-    #[must_use]
-    pub fn mips_o32() -> CallingConvention {
-        CallingConvention {
+    // MIPS O32.
+    //   Used by 32-bit MIPS Linux binaries on both LE and BE targets —
+    //   the ABI is identical regardless of byte order.  Pairs equally with
+    //   `SleighArch::mipsle32` and `mipsbe32`.
+    //   Argument registers: a0, a1, a2, a3 (= r4–r7)
+    //   Callee-saved:       s0–s7, s8 (= fp), gp, ra
+    //   Return value:       v0, v1 (= r2, r3)
+    //   `sp` (= r29) is the stack pointer.  `ret_stack_pop` is 0 because
+    //   MIPS `jal`/`jalr` writes the return address to `$ra` rather than
+    //   pushing it.  The first 16 bytes of stack-arg space (offsets 0..16)
+    //   are MIPS's reserved "shadow space" for the four register args;
+    //   positional stack args start at offset 16.
+    //   Note: Sleigh's MIPS spec uses lowercase names (`a0`, `s0`, `sp`,
+    //   `ra`, `gp`) and `s8` for the frame pointer register (not `fp`,
+    //   which does not resolve in the Sleigh register table).
+    CcPresetRow {
+        name: "mips_o32",
+        cc: CallingConvention {
             stack_ptr_reg_name: "sp",
             arg_passing_regs: &["a0", "a1", "a2", "a3"],
             callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
@@ -472,29 +471,27 @@ impl CallingConvention {
             ret_val_regs_float: &["f0", "f2"],
             stack_arg_offsets: &[16, 20, 24, 28],
             ret_stack_pop: 0,
-            // MIPS `jal`/`jalr` writes the return address to `$ra`
-            // (`$31`); Sleigh's mips32 register table uses lowercase `ra`.
+            // MIPS `jal`/`jalr` writes the return address to `$ra` (`$31`);
+            // Sleigh's mips32 register table uses lowercase `ra`.
             link_register_reg_name: Some("ra"),
             no_memory_clobber: false,
-        }
-    }
+        },
+    },
 
-    /// Returns the MIPS N64 calling convention (used by 64-bit MIPS Linux
-    /// binaries on both LE and BE — `mips64-linux-gnuabi64-gcc`).
-    ///
-    /// The N64 ABI extends O32's 4 register args to 8 register args
-    /// (`$4`–`$11`).  Sleigh's `mips64` spec uses the older naming where
-    /// `$4`–`$7` are `a0`–`a3` and `$8`–`$11` are `t0`–`t3`, so the arg-
-    /// passing list lists the latter under their Sleigh names.
-    ///
-    /// Argument registers: a0–a3 (`$4`–`$7`), t0–t3 (`$8`–`$11`)
-    /// Callee-saved:       s0–s7, s8 (= fp), gp, ra
-    /// Return value:       v0, v1
-    /// Float return:       f0, f2
-    /// Stack args start at offset 0 from SP (no O32-style shadow space).
-    #[must_use]
-    pub fn mips_n64() -> CallingConvention {
-        CallingConvention {
+    // MIPS N64 (used by 64-bit MIPS Linux binaries on both LE and BE —
+    // `mips64-linux-gnuabi64-gcc`).
+    //   The N64 ABI extends O32's 4 register args to 8 register args
+    //   (`$4`–`$11`).  Sleigh's `mips64` spec uses the older naming where
+    //   `$4`–`$7` are `a0`–`a3` and `$8`–`$11` are `t0`–`t3`, so the
+    //   arg-passing list lists the latter under their Sleigh names.
+    //   Argument registers: a0–a3 (`$4`–`$7`), t0–t3 (`$8`–`$11`)
+    //   Callee-saved:       s0–s7, s8 (= fp), gp, ra
+    //   Return value:       v0, v1
+    //   Float return:       f0, f2
+    //   Stack args start at offset 0 from SP (no O32-style shadow space).
+    CcPresetRow {
+        name: "mips_n64",
+        cc: CallingConvention {
             stack_ptr_reg_name: "sp",
             arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
             callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
@@ -505,22 +502,21 @@ impl CallingConvention {
             // Same as O32: the return address lives in `$ra`.
             link_register_reg_name: Some("ra"),
             no_memory_clobber: false,
-        }
-    }
+        },
+    },
 
-    /// Returns the PowerPC 32-bit System V ABI calling convention.
-    /// Used by `powerpc-linux-gnu-gcc` (with both `-mbig-endian` and
-    /// `-mlittle-endian` — the ABI is byte-order independent).
-    ///
-    /// Argument registers: r3–r10 (8 GPRs)
-    /// Callee-saved:       r14–r31, LR
-    /// Return value:       r3, r4 (r3:r4 pair for 64-bit returns)
-    /// Float return:       f1
-    /// Stack args start at offset 8 (4-byte back-chain + 4-byte LR save).
-    /// `r1` is the stack pointer in PowerPC convention.
-    #[must_use]
-    pub fn powerpc_sysv32() -> CallingConvention {
-        CallingConvention {
+    // PowerPC 32-bit System V ABI.  Used by `powerpc-linux-gnu-gcc` (with
+    // both `-mbig-endian` and `-mlittle-endian` — the ABI is byte-order
+    // independent).
+    //   Argument registers: r3–r10 (8 GPRs)
+    //   Callee-saved:       r14–r31, LR
+    //   Return value:       r3, r4 (r3:r4 pair for 64-bit returns)
+    //   Float return:       f1
+    //   Stack args start at offset 8 (4-byte back-chain + 4-byte LR save).
+    //   `r1` is the stack pointer in PowerPC convention.
+    CcPresetRow {
+        name: "powerpc_sysv32",
+        cc: CallingConvention {
             stack_ptr_reg_name: "r1",
             arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
             callee_saved_regs: &[
@@ -536,27 +532,26 @@ impl CallingConvention {
             // Sleigh's PPC register table uses uppercase `LR`.
             link_register_reg_name: Some("LR"),
             no_memory_clobber: false,
-        }
-    }
+        },
+    },
 
-    /// Returns the PowerPC 64-bit ELFv1 calling convention (BE — used by
-    /// `powerpc64-linux-gnu-gcc`).
-    ///
-    /// ELFv1 has function descriptors: an external function symbol resolves
-    /// to a 3-pointer descriptor (entry, TOC, env) rather than the entry
-    /// directly.  The analyzer treats indirect calls in ELFv1 binaries as
-    /// pointer-to-descriptor; pattern queries that need the entry address
-    /// must follow the descriptor convention.  For now we register the
-    /// register-level ABI; descriptor-aware lifting is a follow-up.
-    ///
-    /// Argument registers: r3–r10 (8 GPRs)
-    /// Callee-saved:       r2 (TOC), r14–r31
-    /// Return value:       r3
-    /// Float return:       f1
-    /// Stack args start at offset 48 (ELFv1 linkage area is 48 bytes).
-    #[must_use]
-    pub fn powerpc64_elf_v1() -> CallingConvention {
-        CallingConvention {
+    // PowerPC 64-bit ELFv1 calling convention (BE — used by
+    // `powerpc64-linux-gnu-gcc`).
+    //   ELFv1 has function descriptors: an external function symbol
+    //   resolves to a 3-pointer descriptor (entry, TOC, env) rather than
+    //   the entry directly.  The analyzer treats indirect calls in ELFv1
+    //   binaries as pointer-to-descriptor; pattern queries that need the
+    //   entry address must follow the descriptor convention.  For now we
+    //   register the register-level ABI; descriptor-aware lifting is a
+    //   follow-up.
+    //   Argument registers: r3–r10 (8 GPRs)
+    //   Callee-saved:       r2 (TOC), r14–r31
+    //   Return value:       r3
+    //   Float return:       f1
+    //   Stack args start at offset 48 (ELFv1 linkage area is 48 bytes).
+    CcPresetRow {
+        name: "powerpc64_elf_v1",
+        cc: CallingConvention {
             stack_ptr_reg_name: "r1",
             arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
             callee_saved_regs: &[
@@ -581,24 +576,22 @@ impl CallingConvention {
             // Same as 32-bit PPC SysV: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
             no_memory_clobber: false,
-        }
-    }
+        },
+    },
 
-    /// Returns the PowerPC 64-bit ELFv2 calling convention (LE — used by
-    /// `powerpc64le-linux-gnu-gcc`).
-    ///
-    /// ELFv2 drops function descriptors — symbols point directly to the
-    /// entry point.  Linkage area shrinks from 48 to 32 bytes.  Otherwise
-    /// register usage matches ELFv1.
-    ///
-    /// Argument registers: r3–r10 (8 GPRs)
-    /// Callee-saved:       r2 (TOC), r14–r31
-    /// Return value:       r3
-    /// Float return:       f1
-    /// Stack args start at offset 32 (ELFv2 linkage area is 32 bytes).
-    #[must_use]
-    pub fn powerpc64_elf_v2() -> CallingConvention {
-        CallingConvention {
+    // PowerPC 64-bit ELFv2 calling convention (LE — used by
+    // `powerpc64le-linux-gnu-gcc`).
+    //   ELFv2 drops function descriptors — symbols point directly to the
+    //   entry point.  Linkage area shrinks from 48 to 32 bytes.  Otherwise
+    //   register usage matches ELFv1.
+    //   Argument registers: r3–r10 (8 GPRs)
+    //   Callee-saved:       r2 (TOC), r14–r31
+    //   Return value:       r3
+    //   Float return:       f1
+    //   Stack args start at offset 32 (ELFv2 linkage area is 32 bytes).
+    CcPresetRow {
+        name: "powerpc64_elf_v2",
+        cc: CallingConvention {
             stack_ptr_reg_name: "r1",
             arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
             callee_saved_regs: &[
@@ -606,8 +599,8 @@ impl CallingConvention {
                 "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
                 "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",
                 "r30", "r31",
-                // see powerpc64_elf_v1 above for
-                // the CLAUDE.md deliberate-tradeoff rationale.
+                // see powerpc64_elf_v1 above for the CLAUDE.md
+                // deliberate-tradeoff rationale.
                 "LR",
             ],
             ret_val_regs: &["r3", "r4"],
@@ -617,21 +610,19 @@ impl CallingConvention {
             // Same as ELFv1: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
             no_memory_clobber: false,
-        }
-    }
+        },
+    },
 
-    /// Returns the x86 cdecl calling convention.
-    ///
-    /// Arguments are passed on the stack, so `arg_passing_regs` is empty.
-    /// Callee-saved: EBX, ESI, EDI, EBP
-    /// Return value: EAX, EDX
-    ///
-    /// ESP is the stack pointer (see `stack_ptr_reg_name`) and is not listed
-    /// as callee-saved — `ret` pops the 4-byte return address, so the caller
-    /// observes SP shifted by `ret_stack_pop` across the call.
-    #[must_use]
-    pub fn x86_cdecl() -> CallingConvention {
-        CallingConvention {
+    // x86 cdecl.  Arguments passed on the stack, so `arg_passing_regs` is
+    // empty.
+    //   Callee-saved: EBX, ESI, EDI, EBP
+    //   Return value: EAX, EDX
+    //   ESP is the stack pointer and is not listed as callee-saved —
+    //   `ret` pops the 4-byte return address, so the caller observes SP
+    //   shifted by `ret_stack_pop` across the call.
+    CcPresetRow {
+        name: "x86_cdecl",
+        cc: CallingConvention {
             stack_ptr_reg_name: "ESP",
             arg_passing_regs: &[],
             callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
@@ -644,19 +635,364 @@ impl CallingConvention {
             //
             // XMM0 is also listed as a fallback for SSE-default builds
             // (`-mfpmath=sse2`).  When neither is referenced by the
-            // function, `FunctionBuilder::new_raw`'s upgrade-to-
-            // container logic skips them harmlessly.
+            // function, `FunctionBuilder::new_raw`'s upgrade-to-container
+            // logic skips them harmlessly.
             ret_val_regs_float: &["ST0", "XMM0"],
             // Offsets start at +4: the `call` instruction pushes a 4-byte
-            // return address, so SP-at-call points to the return address and
-            // arg 0 lives one slot above it.
+            // return address, so SP-at-call points to the return address
+            // and arg 0 lives one slot above it.
             stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
             ret_stack_pop: 4,
-            // x86 `call` pushes the return address on the stack; there
-            // is no architectural link register.
+            // x86 `call` pushes the return address on the stack; there is
+            // no architectural link register.
             link_register_reg_name: None,
             no_memory_clobber: false,
-        }
+        },
+    },
+
+    // ── Linux kernel-internal presets ───────────────────────────────
+    //
+    // One row per (arch, role) pair.  Where the kernel-internal CC is
+    // identical to the userland one (every supported arch except x86
+    // 32-bit), the kernel row carries the same fields rather than
+    // delegating at runtime — encoding it as data keeps the dispatch
+    // table flat and makes "kernel CC = userland CC" obvious in one
+    // place (see the comment block per row).
+    //
+    // For details see
+    // docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md.
+
+    // x86 32-bit Linux kernel-internal CC (`-mregparm=3`): the first
+    // three integer args go in EAX, EDX, ECX; remaining args sit on the
+    // stack at the same cdecl offsets.  Differs from `x86_cdecl` only in
+    // `arg_passing_regs`.
+    CcPresetRow {
+        name: "x86_linux_kernel",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "ESP",
+            arg_passing_regs: &["EAX", "EDX", "ECX"],
+            callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
+            ret_val_regs: &["EAX", "EDX"],
+            ret_val_regs_float: &["ST0", "XMM0"],
+            stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
+            ret_stack_pop: 4,
+            link_register_reg_name: None,
+            no_memory_clobber: false,
+        },
+    },
+
+    // x86_64 Linux kernel-internal CC.  Identical to x86_64_systemv —
+    // the kernel writes its C in SystemV (the syscall-entry assembly
+    // does the `r10`→`rcx` shuffle before calling C handlers, so by the
+    // time any kernel function is entered its args are already in their
+    // SystemV slots).  Provided as a self-documenting alias so "this is
+    // kernel code" is explicit at the call site.
+    CcPresetRow {
+        name: "x86_64_linux_kernel",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "RSP",
+            arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
+            callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
+            ret_val_regs: &["RAX", "RDX"],
+            ret_val_regs_float: &["XMM0", "XMM1"],
+            stack_arg_offsets: &[8, 16, 24, 32, 40, 48],
+            ret_stack_pop: 8,
+            link_register_reg_name: None,
+            no_memory_clobber: false,
+        },
+    },
+
+    // AArch64 Linux kernel-internal CC.  Identical to aarch64_aapcs64.
+    CcPresetRow {
+        name: "aarch64_linux_kernel",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
+            callee_saved_regs: &[
+                "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
+            ],
+            ret_val_regs: &["x0", "x1"],
+            ret_val_regs_float: &["q0", "q1"],
+            stack_arg_offsets: &[0, 8, 16, 24],
+            ret_stack_pop: 0,
+            link_register_reg_name: Some("x30"),
+            no_memory_clobber: false,
+        },
+    },
+
+    // ARM Linux kernel-internal CC.  Identical to arm_aapcs.
+    CcPresetRow {
+        name: "arm_linux_kernel",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["r0", "r1", "r2", "r3"],
+            callee_saved_regs: &["r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr"],
+            ret_val_regs: &["r0", "r1"],
+            ret_val_regs_float: &["d0", "d1"],
+            stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
+            ret_stack_pop: 0,
+            link_register_reg_name: Some("lr"),
+            no_memory_clobber: false,
+        },
+    },
+
+    // MIPS O32 Linux kernel-internal CC.  Identical to mips_o32.
+    CcPresetRow {
+        name: "mips_linux_kernel_o32",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["a0", "a1", "a2", "a3"],
+            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
+            ret_val_regs: &["v0", "v1"],
+            ret_val_regs_float: &["f0", "f2"],
+            stack_arg_offsets: &[16, 20, 24, 28],
+            ret_stack_pop: 0,
+            link_register_reg_name: Some("ra"),
+            no_memory_clobber: false,
+        },
+    },
+
+    // MIPS N64 Linux kernel-internal CC.  Identical to mips_n64.
+    CcPresetRow {
+        name: "mips_linux_kernel_n64",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
+            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
+            ret_val_regs: &["v0", "v1"],
+            ret_val_regs_float: &["f0", "f2"],
+            stack_arg_offsets: &[0, 8, 16, 24],
+            ret_stack_pop: 0,
+            link_register_reg_name: Some("ra"),
+            no_memory_clobber: false,
+        },
+    },
+
+    // ── Linux syscall presets ───────────────────────────────────────
+    //
+    // One row per arch.  The trap ABI strips most callee-saved state
+    // (the kernel preserves only what the trap path actually saves), so
+    // each row is encoded directly rather than derived from the userland
+    // preset.
+
+    // x86 32-bit Linux syscall ABI (`int 0x80`).  Args in EBX, ECX, EDX,
+    // ESI, EDI, EBP; syscall number in EAX; return in EAX.  No link
+    // register; no stack args (the `int 0x80` ABI is register-only).
+    // `callee_saved_regs` is empty: every cdecl-callee-saved register
+    // (EBX, ESI, EDI, EBP) is consumed as an argument here, so none of
+    // them remain in the callee-saved set.
+    CcPresetRow {
+        name: "x86_linux_syscall",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "ESP",
+            arg_passing_regs: &["EBX", "ECX", "EDX", "ESI", "EDI", "EBP"],
+            callee_saved_regs: &[],
+            ret_val_regs: &["EAX"],
+            ret_val_regs_float: &[],
+            stack_arg_offsets: &[],
+            ret_stack_pop: 0,
+            link_register_reg_name: None,
+            no_memory_clobber: false,
+        },
+    },
+
+    // x86_64 Linux syscall ABI (`syscall`).  Args in RDI, RSI, RDX, R10,
+    // R8, R9 — note R10 not RCX because the `syscall` instruction
+    // clobbers RCX with the return RIP.  Syscall number in RAX; return
+    // in RAX.
+    CcPresetRow {
+        name: "x86_64_linux_syscall",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "RSP",
+            arg_passing_regs: &["RDI", "RSI", "RDX", "R10", "R8", "R9"],
+            callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
+            ret_val_regs: &["RAX"],
+            ret_val_regs_float: &[],
+            stack_arg_offsets: &[],
+            ret_stack_pop: 0,
+            link_register_reg_name: None,
+            no_memory_clobber: false,
+        },
+    },
+
+    // AArch64 Linux syscall ABI (`svc #0`).  Args in x0..x5; syscall
+    // number in x8; return in x0.  No link register: `svc` returns via
+    // `eret` reading `ELR_EL1`, not `lr`.
+    CcPresetRow {
+        name: "aarch64_linux_syscall",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5"],
+            callee_saved_regs: &[
+                "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
+            ],
+            ret_val_regs: &["x0"],
+            ret_val_regs_float: &[],
+            stack_arg_offsets: &[],
+            ret_stack_pop: 0,
+            link_register_reg_name: None,
+            no_memory_clobber: false,
+        },
+    },
+
+    // ARM 32-bit Linux syscall ABI (`svc 0`).  Args in r0..r6; syscall
+    // number in r7; return in r0.  Same on Thumb.  `callee_saved_regs`
+    // strips r4..r7 (consumed as args plus the syscall number) from the
+    // AAPCS callee-saved set; r8..r11 and lr remain — the kernel
+    // preserves them across the trap.
+    CcPresetRow {
+        name: "arm_linux_syscall",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["r0", "r1", "r2", "r3", "r4", "r5", "r6"],
+            callee_saved_regs: &["r8", "r9", "r10", "r11", "lr"],
+            ret_val_regs: &["r0"],
+            ret_val_regs_float: &[],
+            stack_arg_offsets: &[],
+            ret_stack_pop: 0,
+            link_register_reg_name: None,
+            no_memory_clobber: false,
+        },
+    },
+
+    // MIPS O32 Linux syscall ABI (`syscall`).  Args in a0..a3; syscall
+    // number in v0; return in v0.
+    CcPresetRow {
+        name: "mips_linux_syscall_o32",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["a0", "a1", "a2", "a3"],
+            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
+            ret_val_regs: &["v0"],
+            ret_val_regs_float: &[],
+            stack_arg_offsets: &[],
+            ret_stack_pop: 0,
+            link_register_reg_name: None,
+            no_memory_clobber: false,
+        },
+    },
+
+    // MIPS N64 Linux syscall ABI (`syscall`).  Args in a0..a5; syscall
+    // number in v0; return in v0.
+    CcPresetRow {
+        name: "mips_linux_syscall_n64",
+        cc: CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1"],
+            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
+            ret_val_regs: &["v0"],
+            ret_val_regs_float: &[],
+            stack_arg_offsets: &[],
+            ret_stack_pop: 0,
+            link_register_reg_name: None,
+            no_memory_clobber: false,
+        },
+    },
+];
+
+/// Look up a calling-convention preset by its factory name.
+///
+/// Linear scan over [`CC_PRESETS`] — the table holds ~22 rows, and
+/// each name comparison short-circuits on length, so the lookup is
+/// cheap enough to skip a hash map.
+#[must_use]
+pub fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
+    CC_PRESETS.iter().find(|row| row.name == name)
+}
+
+/// Internal helper used by every named factory wrapper below — looks up
+/// the row and returns its `CallingConvention`.  Panics with a clear
+/// message if the lookup ever fails (which would mean the source file
+/// is internally inconsistent; the unit test
+/// `every_preset_factory_resolves` guards against that).
+fn cc_from_table(name: &'static str) -> CallingConvention {
+    lookup_preset(name)
+        .unwrap_or_else(|| panic!("calling-convention preset {name:?} missing from CC_PRESETS table"))
+        .cc
+}
+
+impl CallingConvention {
+    /// Returns `true` if calls under this convention preserve memory
+    /// across the call (i.e. the IR's Call node should NOT advance the
+    /// memory chain).  See the `Self::no_memory_clobber` field docs.
+    #[must_use]
+    pub fn no_memory_clobber(&self) -> bool {
+        self.no_memory_clobber
+    }
+
+    /// Returns the x86-64 System V ABI calling convention.  See
+    /// [`CC_PRESETS`] for the full field table.
+    #[must_use]
+    pub fn x86_64_systemv() -> CallingConvention {
+        cc_from_table("x86_64_systemv")
+    }
+
+    /// "All-preserving" x86_64 calling convention: every userland
+    /// caller-clobbered register is listed as callee-saved.  Used for
+    /// sites like Linux-kernel `__fentry__` / `mcount` callbacks that
+    /// preserve all caller state.  Pair with the per-address override
+    /// map on [`crate::CallingConvention`] consumers (e.g.
+    /// `strider::Config::per_address_ccs`) so the override applies only
+    /// to specific Call sites; the function-default CC stays SystemV.
+    #[must_use]
+    pub fn x86_64_all_preserving() -> CallingConvention {
+        cc_from_table("x86_64_all_preserving")
+    }
+
+    /// Returns the AArch64 AAPCS64 calling convention.  See
+    /// [`CC_PRESETS`] for the full field table.
+    #[must_use]
+    pub fn aarch64_aapcs64() -> CallingConvention {
+        cc_from_table("aarch64_aapcs64")
+    }
+
+    /// Returns the ARM 32-bit AAPCS calling convention.  See
+    /// [`CC_PRESETS`] for the full field table.
+    #[must_use]
+    pub fn arm_aapcs() -> CallingConvention {
+        cc_from_table("arm_aapcs")
+    }
+
+    /// Returns the MIPS O32 calling convention.  See [`CC_PRESETS`] for
+    /// the full field table.
+    #[must_use]
+    pub fn mips_o32() -> CallingConvention {
+        cc_from_table("mips_o32")
+    }
+
+    /// Returns the MIPS N64 calling convention.  See [`CC_PRESETS`] for
+    /// the full field table.
+    #[must_use]
+    pub fn mips_n64() -> CallingConvention {
+        cc_from_table("mips_n64")
+    }
+
+    /// Returns the PowerPC 32-bit System V ABI calling convention.  See
+    /// [`CC_PRESETS`] for the full field table.
+    #[must_use]
+    pub fn powerpc_sysv32() -> CallingConvention {
+        cc_from_table("powerpc_sysv32")
+    }
+
+    /// Returns the PowerPC 64-bit ELFv1 calling convention.  See
+    /// [`CC_PRESETS`] for the full field table.
+    #[must_use]
+    pub fn powerpc64_elf_v1() -> CallingConvention {
+        cc_from_table("powerpc64_elf_v1")
+    }
+
+    /// Returns the PowerPC 64-bit ELFv2 calling convention.  See
+    /// [`CC_PRESETS`] for the full field table.
+    #[must_use]
+    pub fn powerpc64_elf_v2() -> CallingConvention {
+        cc_from_table("powerpc64_elf_v2")
+    }
+
+    /// Returns the x86 cdecl calling convention.  See [`CC_PRESETS`] for
+    /// the full field table.
+    #[must_use]
+    pub fn x86_cdecl() -> CallingConvention {
+        cc_from_table("x86_cdecl")
     }
 
     /// Resolves all register name strings in this calling convention to their
@@ -706,169 +1042,99 @@ impl CallingConvention {
     }
 }
 
-// ── Linux kernel + syscall presets ───────────────────────────────────────────
+// ── Linux kernel + syscall preset wrappers ───────────────────────────────────
 //
-// One factory per (arch, role) pair.  Where the kernel-internal CC is
-// identical to the userland one (every supported arch except x86 32-bit),
-// the kernel factory delegates to the userland preset rather than
-// duplicating the field list — keeps a single source of truth and makes
-// "kernel CC = userland CC" obvious by inspection.  For details see
+// Each named factory is a one-line lookup into [`CC_PRESETS`].  The
+// per-row table above carries the full ABI data; documentation comments
+// on each row describe the convention.
+//
+// Adding a new (arch, role) preset is a single-source edit: append one
+// `CcPresetRow` to `CC_PRESETS` and a matching wrapper here.  For details
+// on the kernel + syscall ABIs see
 // docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md.
 impl CallingConvention {
     /// Returns the Linux kernel-internal CC for x86 32-bit
-    /// (`-mregparm=3`): the first three integer args go in
-    /// `EAX, EDX, ECX`; remaining args sit on the stack at the same
-    /// cdecl offsets.  Differs from [`Self::x86_cdecl`] only in
-    /// `arg_passing_regs`.
+    /// (`-mregparm=3`).  See [`CC_PRESETS`] for the full field table.
     #[must_use]
     pub fn x86_linux_kernel() -> CallingConvention {
-        let mut cc = Self::x86_cdecl();
-        cc.arg_passing_regs = &["EAX", "EDX", "ECX"];
-        cc
+        cc_from_table("x86_linux_kernel")
     }
 
     /// Returns the Linux kernel-internal CC for x86_64.  Identical to
-    /// [`Self::x86_64_systemv`] — the kernel writes its C in
-    /// SystemV (the syscall-entry assembly does the
-    /// `r10`→`rcx` shuffle before calling C handlers, so by the time
-    /// any kernel function is entered its args are already in their
-    /// SystemV slots).  Provided as a self-documenting alias so
-    /// "this is kernel code" is explicit at the call site.
+    /// [`Self::x86_64_systemv`] — provided as a self-documenting alias.
     #[must_use]
     pub fn x86_64_linux_kernel() -> CallingConvention {
-        Self::x86_64_systemv()
+        cc_from_table("x86_64_linux_kernel")
     }
 
-    /// Returns the Linux kernel-internal CC for AArch64.  Identical
-    /// to [`Self::aarch64_aapcs64`].  See [`Self::x86_64_linux_kernel`]
-    /// for the rationale on aliases.
+    /// Returns the Linux kernel-internal CC for AArch64.  Identical to
+    /// [`Self::aarch64_aapcs64`].
     #[must_use]
     pub fn aarch64_linux_kernel() -> CallingConvention {
-        Self::aarch64_aapcs64()
+        cc_from_table("aarch64_linux_kernel")
     }
 
     /// Returns the Linux kernel-internal CC for ARM.  Identical to
     /// [`Self::arm_aapcs`].
     #[must_use]
     pub fn arm_linux_kernel() -> CallingConvention {
-        Self::arm_aapcs()
+        cc_from_table("arm_linux_kernel")
     }
 
-    /// Returns the Linux kernel-internal CC for MIPS O32.  Identical
-    /// to [`Self::mips_o32`].
+    /// Returns the Linux kernel-internal CC for MIPS O32.  Identical to
+    /// [`Self::mips_o32`].
     #[must_use]
     pub fn mips_linux_kernel_o32() -> CallingConvention {
-        Self::mips_o32()
+        cc_from_table("mips_linux_kernel_o32")
     }
 
-    /// Returns the Linux kernel-internal CC for MIPS N64.  Identical
-    /// to [`Self::mips_n64`].
+    /// Returns the Linux kernel-internal CC for MIPS N64.  Identical to
+    /// [`Self::mips_n64`].
     #[must_use]
     pub fn mips_linux_kernel_n64() -> CallingConvention {
-        Self::mips_n64()
+        cc_from_table("mips_linux_kernel_n64")
     }
 
-    /// Returns the Linux syscall ABI for x86 32-bit (`int 0x80`).
-    /// Args in `EBX, ECX, EDX, ESI, EDI, EBP`; syscall number in
-    /// `EAX`; return in `EAX`.  No link register; no stack args (the
-    /// `int 0x80` ABI is register-only).  `callee_saved_regs` is
-    /// empty: every cdecl-callee-saved register (`EBX, ESI, EDI,
-    /// EBP`) is consumed as an argument here, so none of them
-    /// remain in the callee-saved set.  Disjointness between
-    /// `arg_passing_regs` and `callee_saved_regs` is an architectural
-    /// invariant of `BuiltCallingConvention` — see the
-    /// `assert_disjoint` checks in the unit tests.
+    /// Returns the Linux syscall ABI for x86 32-bit (`int 0x80`).  See
+    /// [`CC_PRESETS`] for the full field table.
     #[must_use]
     pub fn x86_linux_syscall() -> CallingConvention {
-        let mut cc = Self::x86_cdecl();
-        cc.arg_passing_regs = &["EBX", "ECX", "EDX", "ESI", "EDI", "EBP"];
-        cc.callee_saved_regs = &[];
-        cc.ret_val_regs = &["EAX"];
-        cc.ret_val_regs_float = &[];
-        cc.stack_arg_offsets = &[];
-        cc.ret_stack_pop = 0;
-        cc.link_register_reg_name = None;
-        cc
+        cc_from_table("x86_linux_syscall")
     }
 
-    /// Returns the Linux syscall ABI for x86_64 (`syscall`).  Args in
-    /// `RDI, RSI, RDX, R10, R8, R9` — note `R10` not `RCX` because
-    /// the `syscall` instruction clobbers `RCX` with the return RIP.
-    /// Syscall number in `RAX`; return in `RAX`.
+    /// Returns the Linux syscall ABI for x86_64 (`syscall`).  See
+    /// [`CC_PRESETS`] for the full field table.
     #[must_use]
     pub fn x86_64_linux_syscall() -> CallingConvention {
-        let mut cc = Self::x86_64_systemv();
-        cc.arg_passing_regs = &["RDI", "RSI", "RDX", "R10", "R8", "R9"];
-        cc.ret_val_regs = &["RAX"];
-        cc.ret_val_regs_float = &[];
-        cc.stack_arg_offsets = &[];
-        cc.ret_stack_pop = 0;
-        cc.link_register_reg_name = None;
-        cc
+        cc_from_table("x86_64_linux_syscall")
     }
 
-    /// Returns the Linux syscall ABI for AArch64 (`svc #0`).  Args in
-    /// `x0..x5`; syscall number in `x8`; return in `x0`.  No link
-    /// register: `svc` returns via `eret` reading `ELR_EL1`, not `lr`.
+    /// Returns the Linux syscall ABI for AArch64 (`svc #0`).  See
+    /// [`CC_PRESETS`] for the full field table.
     #[must_use]
     pub fn aarch64_linux_syscall() -> CallingConvention {
-        let mut cc = Self::aarch64_aapcs64();
-        cc.arg_passing_regs = &["x0", "x1", "x2", "x3", "x4", "x5"];
-        cc.ret_val_regs = &["x0"];
-        cc.ret_val_regs_float = &[];
-        cc.stack_arg_offsets = &[];
-        cc.ret_stack_pop = 0;
-        cc.link_register_reg_name = None;
-        cc
+        cc_from_table("aarch64_linux_syscall")
     }
 
-    /// Returns the Linux syscall ABI for ARM 32-bit (`svc 0`).  Args
-    /// in `r0..r6`; syscall number in `r7`; return in `r0`.  Same on
-    /// Thumb.  `callee_saved_regs` strips `r4..r7` (consumed as args
-    /// plus the syscall number) from the AAPCS callee-saved set;
-    /// `r8..r11` and `lr` remain — the kernel preserves them across
-    /// the trap.  Disjointness between `arg_passing_regs`, the
-    /// syscall-number register, and `callee_saved_regs` is an
-    /// architectural invariant of `BuiltCallingConvention`.
+    /// Returns the Linux syscall ABI for ARM 32-bit (`svc 0`).  See
+    /// [`CC_PRESETS`] for the full field table.
     #[must_use]
     pub fn arm_linux_syscall() -> CallingConvention {
-        let mut cc = Self::arm_aapcs();
-        cc.arg_passing_regs = &["r0", "r1", "r2", "r3", "r4", "r5", "r6"];
-        cc.callee_saved_regs = &["r8", "r9", "r10", "r11", "lr"];
-        cc.ret_val_regs = &["r0"];
-        cc.ret_val_regs_float = &[];
-        cc.stack_arg_offsets = &[];
-        cc.ret_stack_pop = 0;
-        cc.link_register_reg_name = None;
-        cc
+        cc_from_table("arm_linux_syscall")
     }
 
-    /// Returns the Linux syscall ABI for MIPS O32 (`syscall`).  Args
-    /// in `a0..a3`; syscall number in `v0`; return in `v0`.
+    /// Returns the Linux syscall ABI for MIPS O32 (`syscall`).  See
+    /// [`CC_PRESETS`] for the full field table.
     #[must_use]
     pub fn mips_linux_syscall_o32() -> CallingConvention {
-        let mut cc = Self::mips_o32();
-        cc.arg_passing_regs = &["a0", "a1", "a2", "a3"];
-        cc.ret_val_regs = &["v0"];
-        cc.ret_val_regs_float = &[];
-        cc.stack_arg_offsets = &[];
-        cc.ret_stack_pop = 0;
-        cc.link_register_reg_name = None;
-        cc
+        cc_from_table("mips_linux_syscall_o32")
     }
 
-    /// Returns the Linux syscall ABI for MIPS N64 (`syscall`).  Args
-    /// in `a0..a5`; syscall number in `v0`; return in `v0`.
+    /// Returns the Linux syscall ABI for MIPS N64 (`syscall`).  See
+    /// [`CC_PRESETS`] for the full field table.
     #[must_use]
     pub fn mips_linux_syscall_n64() -> CallingConvention {
-        let mut cc = Self::mips_n64();
-        cc.arg_passing_regs = &["a0", "a1", "a2", "a3", "t0", "t1"];
-        cc.ret_val_regs = &["v0"];
-        cc.ret_val_regs_float = &[];
-        cc.stack_arg_offsets = &[];
-        cc.ret_stack_pop = 0;
-        cc.link_register_reg_name = None;
-        cc
+        cc_from_table("mips_linux_syscall_n64")
     }
 }
 
