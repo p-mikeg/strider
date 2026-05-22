@@ -61,6 +61,30 @@ pub enum Arch {
     Ppc64le,
 }
 
+/// Every supported `Arch` variant in the same order they appear in
+/// `per_arch_test!`.  Use this from any test that wants to iterate the
+/// full arch matrix (e.g. cross-arch shape baselines, the v3-baseline
+/// dump).  Keeping a single canonical list here prevents drift between
+/// callers and the `Arch` enum.
+pub const ALL_ARCHES: &[Arch] = &[
+    Arch::X86,
+    Arch::X86Kernel,
+    Arch::X64,
+    Arch::Aarch64,
+    Arch::Aarch64Be,
+    Arch::Arm,
+    Arch::ArmBe,
+    Arch::ArmThumb,
+    Arch::Mips32le,
+    Arch::Mips32be,
+    Arch::Mips64le,
+    Arch::Mips64be,
+    Arch::Ppc32be,
+    Arch::Ppc32le,
+    Arch::Ppc64be,
+    Arch::Ppc64le,
+];
+
 impl Arch {
     pub fn name(self) -> &'static str {
         match self {

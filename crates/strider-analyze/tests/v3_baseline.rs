@@ -29,31 +29,10 @@
 
 mod common;
 
-use common::Arch;
+use common::{Arch, ALL_ARCHES};
 use object::{Object, ObjectSymbol, SymbolKind};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-
-/// All architectures with a fixture directory under `fixtures/out/`.
-/// Kept in sync with the `Arch` enum + the `per_arch_test!` macro.
-const ALL_ARCHES: &[Arch] = &[
-    Arch::X86,
-    Arch::X86Kernel,
-    Arch::X64,
-    Arch::Aarch64,
-    Arch::Aarch64Be,
-    Arch::Arm,
-    Arch::ArmBe,
-    Arch::ArmThumb,
-    Arch::Mips32le,
-    Arch::Mips32be,
-    Arch::Mips64le,
-    Arch::Mips64be,
-    Arch::Ppc32be,
-    Arch::Ppc32le,
-    Arch::Ppc64be,
-    Arch::Ppc64le,
-];
 
 fn fixtures_cases_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/cases")
