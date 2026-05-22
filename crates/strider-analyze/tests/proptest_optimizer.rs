@@ -333,7 +333,7 @@ proptest! {
         let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(fg.graph());
 
         let pipeline: OptimizerPipeline = default_pipeline();
-        let entry = fg.entry();
+        let entry = fg.entry().unwrap();
         let run_res = pipeline.run(fg.graph_mut(), entry);
         prop_assert!(
             run_res.is_ok(),

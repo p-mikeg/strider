@@ -170,7 +170,7 @@ fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
     let (mut fg, if_node, a, b) =
         build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the EQ flag tree");
 
@@ -185,7 +185,7 @@ fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
         fb.build_boolean_unary_operation(zr, strider_ir::BoolUnaryOp::Neg)
     })?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the NE flag tree");
 
@@ -203,7 +203,7 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
         fb.build_boolean_operation(cy, neg_zr, strider_ir::BoolBinaryOp::And)
     })?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the HI flag tree");
 
@@ -229,9 +229,9 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
         fb.build_boolean_operation(cy, neg_zr, strider_ir::BoolBinaryOp::And)
     })?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     crate::opt::ConstantFold.optimize_raw(fg.graph_mut(), entry)?;
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "HI rewrite must survive a prior ConstantFold pass");
     assert_if_cond_is_intcmp((&fg).into(), if_node, IntCmpOp::Less, b, a);
@@ -251,9 +251,9 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
     })?;
 
     // Run ConstantFold first to collapse `BoolNeg(BoolNeg(IntLess(a, b))) → IntLess(a, b)`.
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     crate::opt::ConstantFold.optimize_raw(fg.graph_mut(), entry)?;
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the LS flag tree");
 
@@ -272,7 +272,7 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
         fb.build_boolean_unary_operation(eq, strider_ir::BoolUnaryOp::Neg)
     })?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the LT flag tree");
 
@@ -287,7 +287,7 @@ fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
         fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::U8)
     })?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the GE flag tree");
 
@@ -304,7 +304,7 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
         fb.build_boolean_operation(neg_zr, eq, strider_ir::BoolBinaryOp::And)
     })?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the GT flag tree");
 
@@ -321,7 +321,7 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
         fb.build_boolean_operation(zr, neg_eq, strider_ir::BoolBinaryOp::Or)
     })?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the LE flag tree");
 
@@ -338,7 +338,7 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
     let (mut fg, if_node, _a, _b) =
         build_if_with_flag_cond(|_fb, _zr, _ng, cy, _ov| Ok(cy))?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(!r.changed(), "CS already canonical; pass must not fire");
 
@@ -357,7 +357,7 @@ fn flag_cmp_mi_is_left_alone_as_int_sless_diff() -> Result<()> {
     let (mut fg, if_node, _a, _b) =
         build_if_with_flag_cond(|_fb, _zr, ng, _cy, _ov| Ok(ng))?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(!r.changed(), "MI is not algebraically reducible; pass must not fire");
 
@@ -387,9 +387,9 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     // Run my pass twice (or run it once via the pipeline's fixed-point loop).
     // Two iterations let rule 9 fire on the outer BoolNeg(IntEqual(CastToInt(ZR), 0))
     // first, then rule 1 simplify the inner Equal(diff, 0).
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let _ = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let _ = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
 
     assert_if_cond_is_intcmp((&fg).into(), if_node, IntCmpOp::Equal, a, b);
@@ -403,7 +403,7 @@ fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
     let (mut fg, if_node, _a, _b) =
         build_if_with_flag_cond(|_fb, _zr, _ng, _cy, ov| Ok(ov))?;
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize_raw(fg.graph_mut(), entry)?;
     assert!(!r.changed(), "VS already canonical; pass must not fire");
 

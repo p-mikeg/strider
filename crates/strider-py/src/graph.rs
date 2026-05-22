@@ -94,7 +94,9 @@ impl PyGraph {
         let style = style.unwrap_or("dark");
         let cfg_borrow = self.cfg.borrow(py);
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
+        let dumper = graph
+            .dot_dumper(cfg_borrow.inner.sleigh())
+            .map_err(crate::errors::into_strider_err)?;
         let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
         d.dump_as_html(Path::new(path))
             .map_err(crate::errors::into_strider_err)
@@ -104,7 +106,9 @@ impl PyGraph {
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
         let cfg_borrow = self.cfg.borrow(py);
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
+        let dumper = graph
+            .dot_dumper(cfg_borrow.inner.sleigh())
+            .map_err(crate::errors::into_strider_err)?;
         let d = dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
         d.dump_as_dot(Path::new(path))
             .map_err(crate::errors::into_strider_err)
@@ -115,7 +119,9 @@ impl PyGraph {
         let style = style.unwrap_or("dark");
         let cfg_borrow = self.cfg.borrow(py);
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
+        let dumper = graph
+            .dot_dumper(cfg_borrow.inner.sleigh())
+            .map_err(crate::errors::into_strider_err)?;
         let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
         d.as_html_from_dot().map_err(crate::errors::into_strider_err)
     }
@@ -223,7 +229,12 @@ impl PyGraph {
     /// non-exempt node must carry a non-empty contributor list.
     fn validate(&self) -> PyResult<Option<String>> {
         let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        match strider_ir::validate::validate(graph.graph(), graph.entry()) {
+        let entry = graph.entry().ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "Graph.validate: graph has not been built (entry is None)"
+            ))
+        })?;
+        match strider_ir::validate::validate(graph.graph(), entry) {
             Ok(()) => Ok(None),
             Err(e) => Ok(Some(format!("{e}"))),
         }
@@ -245,7 +256,11 @@ impl PyGraph {
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let entry = graph.entry();
+        let entry = graph.entry().ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "Graph.optimize: graph has not been built (entry is None)"
+            ))
+        })?;
         real_pipeline
             .run(graph.graph_mut(), entry)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
@@ -263,7 +278,11 @@ impl PyGraph {
             pipe.add(strider_analyze::opt::DeadBranchElimination);
         }
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let entry = graph.entry();
+        let entry = graph.entry().ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "Graph.reoptimize: graph has not been built (entry is None)"
+            ))
+        })?;
         pipe.run(graph.graph_mut(), entry).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
@@ -423,7 +442,8 @@ impl PyGraph {
         let rhs = replace.into_pat()?;
         let rule = strider_analyze::pattern::rewrite_rule(lhs, rhs);
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let mut rewriter = strider_analyze::GraphRewriter::wrap_built(&mut graph);
+        let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut graph)
+            .map_err(crate::errors::into_strider_err)?;
         rewriter.apply_rule(rule).map_err(|e| {
             crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite failed: {e:?}"))
         })
@@ -445,7 +465,8 @@ impl PyGraph {
             rules.push(strider_analyze::pattern::boxed_rule(strider_analyze::pattern::rewrite_rule(lhs_pat, rhs_pat)));
         }
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let mut rewriter = strider_analyze::GraphRewriter::wrap_built(&mut graph);
+        let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut graph)
+            .map_err(crate::errors::into_strider_err)?;
         rewriter.apply_rules(&rules).map_err(|e| {
             crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))
         })

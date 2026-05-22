@@ -608,7 +608,7 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
-        let entry = fg.entry();
+        let entry = fg.entry().unwrap();
         p.run(fg.graph_mut(), entry).unwrap();
         let load = fg
             .all_node_ids()
@@ -653,7 +653,7 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
-        let entry = fg.entry();
+        let entry = fg.entry().unwrap();
         p.run(fg.graph_mut(), entry).unwrap();
         let load = fg
             .all_node_ids()
@@ -707,7 +707,7 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
-        let entry = fg.entry();
+        let entry = fg.entry().unwrap();
         p.run(fg.graph_mut(), entry).unwrap();
         let load = fg
             .all_node_ids()

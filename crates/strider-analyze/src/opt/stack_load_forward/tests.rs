@@ -85,7 +85,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -117,7 +117,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -156,7 +156,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -192,7 +192,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -224,7 +224,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -268,7 +268,7 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -317,7 +317,7 @@ fn bail_on_call_between() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -390,7 +390,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -474,7 +474,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -557,7 +557,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -600,7 +600,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -651,7 +651,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -702,7 +702,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -754,7 +754,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Big));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
@@ -855,7 +855,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     prep.add(ConstantFold);
     prep.add(RedundantPhis);
     prep.add(StackStoreDetect::new(sp));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     prep.run(fg.graph_mut(), entry)?;
 
     let total_truncate_before = fg
@@ -870,7 +870,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // Run StackLoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     StackLoadForward::new(sp, Endianness::Little).optimize_raw(fg.graph_mut(), entry)?;
 
     // The load must NOT have been forwarded (one branch has no matching
@@ -935,7 +935,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     // Reach the surviving Load and use its memory-input as the chain root.
@@ -991,7 +991,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let load = fg
@@ -1052,7 +1052,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let load = fg
@@ -1102,7 +1102,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let load = fg
@@ -1152,7 +1152,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let load = fg
@@ -1211,7 +1211,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     let load = fg

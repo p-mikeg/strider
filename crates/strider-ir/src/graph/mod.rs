@@ -244,77 +244,95 @@ impl Graph {
         &self.wide_consts[id]
     }
 
-    /// Returns the `Entry` node id of the function.
+    /// Returns the `Entry` node id of the function, or `None` if the
+    /// graph has not yet been finalised by
+    /// [`crate::FunctionBuilder::build`].
     ///
-    /// Available only after [`crate::FunctionBuilder::build`] has
-    /// finalised the graph (which populates `self.entry`).  Panics on a
-    /// graph that has not been built — opt passes and analyses run only
-    /// against built graphs, so this is the boundary where the
-    /// "fully-built" invariant is enforced.
+    /// Callers in `Result`-returning code typically bubble via `?`:
+    /// ```ignore
+    /// let entry = graph.entry().ok_or_else(|| anyhow::anyhow!(
+    ///     "Graph is not fully built: entry node missing"
+    /// ))?;
+    /// ```
     ///
-    /// # Panics
-    ///
-    /// Panics if `self.entry` is `None`, i.e. the graph has not been
-    /// finalised by `FunctionBuilder::build`.
+    /// Opt passes and analyses run only against built graphs, so the
+    /// `None` arm represents an invariant violation at their boundary;
+    /// returning `Option` (instead of panicking) keeps the failure mode
+    /// honest and typed.
+    #[inline]
     #[must_use]
-    pub fn entry(&self) -> crate::node::NodeId {
+    pub fn entry(&self) -> Option<crate::node::NodeId> {
         self.entry
-            .expect("Graph::entry called on an un-built graph (FunctionBuilder::build was not called)")
     }
 
     /// Read-only access to the calling-convention metadata captured at
-    /// build time.  See [`CcMetadata`].
+    /// build time, or `None` if the graph has not yet been finalised by
+    /// [`crate::FunctionBuilder::build`].  See [`CcMetadata`].
     ///
-    /// # Panics
-    ///
-    /// Panics if `self.cc_metadata` is `None`, i.e. the graph has not
-    /// been finalised by `FunctionBuilder::build`.
+    /// Callers in `Result`-returning code typically bubble via `?`:
+    /// ```ignore
+    /// let cc = graph.cc_metadata().ok_or_else(|| anyhow::anyhow!(
+    ///     "Graph is not fully built: cc_metadata missing"
+    /// ))?;
+    /// ```
+    #[inline]
     #[must_use]
-    pub fn cc_metadata(&self) -> &CcMetadata {
-        self.cc_metadata
-            .as_ref()
-            .expect("Graph::cc_metadata called on an un-built graph (FunctionBuilder::build was not called)")
+    pub fn cc_metadata(&self) -> Option<&CcMetadata> {
+        self.cc_metadata.as_ref()
     }
 
     /// Read the calling convention's call-clobbered varnode list.
-    /// Convenience for `graph.cc_metadata().call_clobbered`.
+    /// Convenience for `graph.cc_metadata().call_clobbered`.  Returns
+    /// an empty slice on a pre-build graph (when `cc_metadata` is
+    /// `None`); callers needing to distinguish should use
+    /// [`Self::cc_metadata`] directly.
     #[must_use]
     pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.cc_metadata().call_clobbered
+        self.cc_metadata
+            .as_ref()
+            .map_or(&[], |cc| &cc.call_clobbered)
     }
 
     /// Function-default `no_memory_clobber` flag — whether calls under
     /// this convention preserve memory (zero-side-effect hooks like
     /// `__fentry__` / `mcount`).  When `true`, `LoadReadOnly` and
-    /// `StackLoadForward` may forward across calls.
+    /// `StackLoadForward` may forward across calls.  Returns `false`
+    /// on a pre-build graph (the safe, memory-clobbering default).
     #[must_use]
     pub fn no_memory_clobber(&self) -> bool {
-        self.cc_metadata().no_memory_clobber
+        self.cc_metadata
+            .as_ref()
+            .is_some_and(|cc| cc.no_memory_clobber)
     }
 
     /// Read the function-default CallOther clobber list.
     /// Convenience for `graph.cc_metadata().call_other_clobbered`.
+    /// Returns an empty slice on a pre-build graph.
     #[must_use]
     pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.cc_metadata().call_other_clobbered
+        self.cc_metadata
+            .as_ref()
+            .map_or(&[], |cc| &cc.call_other_clobbered)
     }
 
     /// Read the `VarId → Vn` map for tracked variables.
-    /// Convenience for `graph.cc_metadata().variables`.
+    /// Convenience for `graph.cc_metadata().variables`.  Returns a
+    /// reference to a shared empty map on a pre-build graph.
     #[must_use]
     pub fn variables_map(&self) -> &PrimaryMap<crate::builder::VarId, rsleigh::Vn> {
-        &self.cc_metadata().variables
+        use std::sync::OnceLock;
+        static EMPTY: OnceLock<PrimaryMap<crate::builder::VarId, rsleigh::Vn>> = OnceLock::new();
+        self.cc_metadata
+            .as_ref()
+            .map_or_else(|| EMPTY.get_or_init(PrimaryMap::new), |cc| &cc.variables)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
-    /// starting from [`Self::entry`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if the graph has not been built (see [`Self::entry`]).
+    /// starting from [`Self::entry`].  Yields an empty walk on a graph
+    /// that has not yet been built (i.e. `entry` is `None`).
     #[must_use]
     pub fn preorder(&self) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph(self, self.entry())
+        crate::walk::walk_graph_opt(self, self.entry)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
@@ -355,18 +373,17 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns an error if `retain_reachable`'s remap doesn't contain
-    /// the entry node.  By construction this can never fire —
+    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// is `None`), or if `retain_reachable`'s remap doesn't contain
+    /// the entry node.  The latter can never fire by construction —
     /// `retain_reachable` walks forward from `entry`, so the entry is
     /// always reachable from itself — but propagating as `Err` rather
     /// than panicking keeps every error path typed so Python users see
     /// a clean exception.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the graph has not been built (see [`Self::entry`]).
     pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
-        let entry = self.entry();
+        let entry = self.entry.ok_or_else(|| {
+            anyhow::anyhow!("Graph::compact: graph has not been built (entry is None)")
+        })?;
         let remap = self.retain_reachable(entry)?;
         let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
             anyhow::anyhow!(
@@ -381,22 +398,27 @@ impl Graph {
     /// Returns a [`crate::graph_dot::GraphDotDumper`] that can render
     /// this function graph to a `.dot` / `.html` file.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the graph has not been built.
-    #[must_use]
+    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// or `cc_metadata` is `None`).
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
-    ) -> crate::graph_dot::GraphDotDumper<'a, R> {
-        let cc = self.cc_metadata();
-        crate::graph_dot::GraphDotDumper {
-            entry: self.entry(),
+    ) -> crate::Result<crate::graph_dot::GraphDotDumper<'a, R>> {
+        let entry = self.entry.ok_or_else(|| {
+            anyhow::anyhow!("Graph::dot_dumper: graph has not been built (entry is None)")
+        })?;
+        let cc = self.cc_metadata.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Graph::dot_dumper: graph has not been built (cc_metadata is None)")
+        })?;
+        Ok(crate::graph_dot::GraphDotDumper {
+            entry,
             graph: self,
             sleigh,
             call_clobbered: &cc.call_clobbered,
             ret_val_regs: &cc.ret_val_regs,
-        }
+        })
     }
 
     /// Identity self-reference — no-op now that the

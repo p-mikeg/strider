@@ -71,13 +71,46 @@ pub struct GraphRewriter<'a> {
 }
 
 impl<'a> GraphRewriter<'a> {
-    /// Wraps a [`BuiltFunctionGraph`].
+    /// Wraps a [`BuiltFunctionGraph`].  Infallible legacy entry point;
+    /// new `Result`-returning code paths should prefer
+    /// [`Self::try_wrap_built`] which surfaces the un-built case as a
+    /// typed error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph has not been built (i.e. `entry` is
+    /// `None`).  Pre-condition: `built` must have been built via
+    /// [`strider_ir::FunctionBuilder::build`].
+    #[must_use]
+    #[allow(clippy::expect_used)]
     pub fn wrap_built(built: &'a mut BuiltFunctionGraph) -> Self {
-        let entry = built.entry();
+        let entry = built.entry().expect(
+            "GraphRewriter::wrap_built: pre-condition violated — \
+             graph has not been built (entry is None); use \
+             GraphRewriter::try_wrap_built for the typed-error path",
+        );
         Self {
             graph: built.graph_mut(),
             entry,
         }
+    }
+
+    /// Fallible companion to [`Self::wrap_built`].  Returns an error
+    /// if the graph has not been built; preferred for `Result`-
+    /// returning code paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// is `None`).
+    pub fn try_wrap_built(built: &'a mut BuiltFunctionGraph) -> Result<Self> {
+        let entry = built.entry().ok_or_else(|| {
+            anyhow::anyhow!("GraphRewriter::try_wrap_built: graph has not been built (entry is None)")
+        })?;
+        Ok(Self {
+            graph: built.graph_mut(),
+            entry,
+        })
     }
 
     /// Walks every reachable node in the graph and invokes `rule` once

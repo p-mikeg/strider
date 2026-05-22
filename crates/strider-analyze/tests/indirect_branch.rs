@@ -113,7 +113,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
         let mut p = ana.build_optimizer_pipeline();
         p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
-        let entry = graph.graph.entry();
+        let entry = graph.graph.entry().unwrap();
         p.run(graph.graph.graph_mut(), entry)
             .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
         return;
@@ -125,7 +125,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
-    let entry = graph.graph.entry();
+    let entry = graph.graph.entry().unwrap();
     p.run(graph.graph.graph_mut(), entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 

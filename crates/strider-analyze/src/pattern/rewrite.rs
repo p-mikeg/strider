@@ -287,13 +287,45 @@ impl<'g> RewriteCtx<'g, Mut> {
     /// Constructs a `RewriteCtx` borrowing from a `BuiltFunctionGraph`'s
     /// inner `graph` + `entry`.  Used by callers that already hold a
     /// fully-built form and want to drive the rewrite engine without
-    /// surrendering the wrapper.
+    /// surrendering the wrapper.  Infallible legacy entry point; new
+    /// `Result`-returning code paths should prefer
+    /// [`Self::try_for_built`] which surfaces the un-built case as a
+    /// typed error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph has not been built (i.e. `entry` is
+    /// `None`).  Pre-condition: `bfg` must have been built via
+    /// [`strider_ir::FunctionBuilder::build`].
+    #[allow(clippy::expect_used)]
     pub fn for_built(bfg: &'g mut strider_ir::BuiltFunctionGraph) -> Self {
-        let entry = bfg.entry();
+        let entry = bfg.entry().expect(
+            "RewriteCtx::for_built: pre-condition violated — \
+             graph has not been built (entry is None); use \
+             RewriteCtx::try_for_built for the typed-error path",
+        );
         Self {
             graph: bfg.graph_mut(),
             entry,
         }
+    }
+
+    /// Fallible companion to [`Self::for_built`].  Returns an error if
+    /// the graph has not been built; preferred for `Result`-returning
+    /// code paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// is `None`).
+    pub fn try_for_built(bfg: &'g mut strider_ir::BuiltFunctionGraph) -> anyhow::Result<Self> {
+        let entry = bfg.entry().ok_or_else(|| {
+            anyhow::anyhow!("RewriteCtx::try_for_built: graph has not been built (entry is None)")
+        })?;
+        Ok(Self {
+            graph: bfg.graph_mut(),
+            entry,
+        })
     }
 
     /// Mutable access to the wrapped `Graph`.
@@ -312,9 +344,41 @@ impl<'g> RewriteCtx<'g, Shared> {
     }
 }
 
+impl<'g> RewriteCtxView<'g> {
+    /// Borrows a built [`strider_ir::BuiltFunctionGraph`] as a shared
+    /// rewrite-context view.  Fallible companion to the legacy
+    /// `From<&BFG>` impl now that [`strider_ir::Graph::entry`] returns
+    /// `Option`.  New code should prefer this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// is `None`).
+    pub fn from_built(bfg: &'g strider_ir::BuiltFunctionGraph) -> anyhow::Result<Self> {
+        let entry = bfg.entry().ok_or_else(|| {
+            anyhow::anyhow!("RewriteCtxView::from_built: graph has not been built (entry is None)")
+        })?;
+        Ok(Self { graph: bfg.graph(), entry })
+    }
+}
+
+/// Legacy infallible conversion from a `BuiltFunctionGraph`.  Retained
+/// for compatibility with the wide test surface (~200 call sites) that
+/// uses `(&fg).into()`.  Now that [`strider_ir::Graph::entry`] returns
+/// `Option`, this `From` impl can only honour the trait's infallible
+/// shape by panicking when the pre-condition is violated — hence the
+/// localised `expect_used` allow.  New code should prefer
+/// [`RewriteCtxView::from_built`], which surfaces the `None` arm as a
+/// typed error.
+#[allow(clippy::expect_used)]
 impl<'g> From<&'g strider_ir::BuiltFunctionGraph> for RewriteCtxView<'g> {
     fn from(bfg: &'g strider_ir::BuiltFunctionGraph) -> Self {
-        Self { graph: bfg.graph(), entry: bfg.entry() }
+        let entry = bfg.entry().expect(
+            "RewriteCtxView::<From<&BFG>>: pre-condition violated — \
+             graph has not been built (entry is None); use \
+             RewriteCtxView::from_built for the typed-error path",
+        );
+        Self { graph: bfg.graph(), entry }
     }
 }
 

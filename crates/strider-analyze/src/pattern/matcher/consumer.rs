@@ -51,7 +51,7 @@ mod tests {
     }
 
     fn entry_ctrl_out(g: &strider_ir::BuiltFunctionGraph) -> NodeOutputId {
-        g.node_outputs(g.entry())
+        g.node_outputs(g.entry().expect("test fixture must be built"))
             .iter()
             .copied()
             .next()

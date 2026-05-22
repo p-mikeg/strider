@@ -127,9 +127,17 @@ pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 ///
 /// `entry` is guaranteed to be the last node returned if it has no inputs (as should be the case
 /// with every well-formed graph).
-#[must_use] 
+#[must_use]
 pub fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
+}
+
+/// Like [`walk_graph`] but accepts an optional entry: returns an
+/// empty walk when `entry` is `None`.  Used by [`Graph::preorder`] so
+/// pre-build graphs yield no nodes instead of panicking.
+#[must_use]
+pub fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<'_> {
+    PreOrder::new(GraphWalkSuccs::new(graph), entry)
 }
 
 #[cfg(test)]

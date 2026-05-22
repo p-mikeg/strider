@@ -367,7 +367,7 @@ proptest! {
             // violation.
             return Ok(());
         };
-        let res = strider_ir::validate::validate(fg.graph(), fg.entry());
+        let res = strider_ir::validate::validate(fg.graph(), fg.entry().unwrap());
         prop_assert!(
             res.is_ok(),
             "validate failed on a strategy-generated graph: {:?}",

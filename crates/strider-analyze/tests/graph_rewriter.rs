@@ -311,7 +311,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
     rewriter.apply_rule(rule)?;
 
-    strider_ir::validate::validate(g.graph(), g.entry())
+    strider_ir::validate::validate(g.graph(), g.entry().unwrap())
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
     Ok(())
 }

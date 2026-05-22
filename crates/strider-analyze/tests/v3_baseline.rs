@@ -138,7 +138,8 @@ fn to_dot_string(
     g: &strider_ir::BuiltFunctionGraph,
     sleigh: &rsleigh::Sleigh<strider_reader::ElfFileMemReader>,
 ) -> String {
-    let dot = dot::GraphDot::new(g.dot_dumper(sleigh), dot::DotStyle::dark());
+    let dumper = g.dot_dumper(sleigh).expect("v3_baseline: dot_dumper on built graph");
+    let dot = dot::GraphDot::new(dumper, dot::DotStyle::dark());
     dot.as_dot()
         .unwrap_or_else(|e| panic!("GraphDot::as_dot failed: {e:?}"))
 }

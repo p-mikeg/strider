@@ -476,7 +476,9 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.strider.build_stable_optimizer_pipeline();
-        let entry = self.graph.entry();
+        let entry = self.graph.entry().ok_or_else(|| {
+            anyhow::anyhow!("run_stable_only: graph has not been built (entry is None)")
+        })?;
         pipeline.run(self.graph.graph_mut(), entry)?;
         Ok(())
     }
@@ -504,7 +506,9 @@ where
     fn finalize(mut self) -> Result<strider_ir::BuiltFunctionGraph> {
         let pipeline = self.strider.build_destructive_optimizer_pipeline();
         let compact = self.compact;
-        let entry = self.graph.entry();
+        let entry = self.graph.entry().ok_or_else(|| {
+            anyhow::anyhow!("finalize: graph has not been built (entry is None)")
+        })?;
         pipeline.run(self.graph.graph_mut(), entry)?;
         if compact {
             self.graph.compact()?;
@@ -533,7 +537,7 @@ where
         // Compute known-bits once across all anchors: the graph doesn't
         // change between iterations of this loop, so a single pass
         // suffices for every anchor we classify.
-        let view: crate::pattern::RewriteCtxView<'_> = graph.into();
+        let view = crate::pattern::RewriteCtxView::from_built(graph)?;
         let known = crate::opt::analyze_known_bits(view)?;
         for (addr, anchor_output) in &self.unresolved {
             let resolved_opt = classify_anchor(
@@ -987,7 +991,9 @@ where
     let unresolved = outcome.unresolved_branches;
 
     let pipeline = strider.build_stable_optimizer_pipeline();
-    let entry = graph.entry();
+    let entry = graph.entry().ok_or_else(|| {
+        anyhow::anyhow!("seat: graph has not been built (entry is None)")
+    })?;
     pipeline.run(graph.graph_mut(), entry)?;
 
     // Harvest the Sleigh handle out of the consumed Cfg so the next

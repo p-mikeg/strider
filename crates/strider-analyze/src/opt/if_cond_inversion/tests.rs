@@ -58,7 +58,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
         NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)
     ));
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed());
 
@@ -75,10 +75,10 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
 #[test]
 fn idempotent_after_one_application() -> Result<()> {
     let (mut fg, _if_node) = build_if_with_neg_cond()?;
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let first = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(first.changed());
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let second = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(!second.changed(), "second pass must be a no-op");
     Ok(())
@@ -116,12 +116,12 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     // ConstantFold first: collapses `!!x → x`.
     let mut changed = true;
     while changed {
-        let entry = fg.entry();
+        let entry = fg.entry().unwrap();
         changed = ConstantFold.optimize_raw(fg.graph_mut(), entry)?.changed();
     }
     // After ConstantFold the cond is no longer `BoolNeg`, so
     // IfCondInversion must NOT fire.  Even-parity → no branch swap.
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(
         !r.changed(),
@@ -152,7 +152,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
         "pre-pass consumers must be distinct ControlState nodes"
     );
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
 
     let [out0_post, out1_post] = fg.node_outputs_exact::<2>(if_node)?;
@@ -215,7 +215,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)))
         .expect("BoolUnaryOp::Neg present pre-pass");
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let r = IfCondInversion.optimize_raw(fg.graph_mut(), entry)?;
     assert!(r.changed());
 

@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut pipeline = strider.build_optimizer_pipeline();
     pipeline.add(strider_analyze::opt::LoadReadOnly(rom));
-    let entry = function.entry();
+    let entry = function.entry().unwrap();
     pipeline.run(function.graph_mut(), entry)?;
     println!("dumping opt IR graph...");
 

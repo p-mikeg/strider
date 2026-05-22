@@ -290,7 +290,7 @@ mod tests {
     fn pipeline_run_validates_final_graph_on_clean_input() -> crate::opt::Result<()> {
         let mut g = one_const_fn(3);
         let pipeline = crate::opt::default_pipeline();
-        let entry = g.entry();
+        let entry = g.entry().unwrap();
         let before = g.preorder().count();
         pipeline.run(g.graph_mut(), entry)?;
         let after = g.preorder().count();

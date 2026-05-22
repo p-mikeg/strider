@@ -35,10 +35,10 @@ fn stable_subset_is_idempotent_on_optimised_graph() {
     // OptimizerPipeline::run cannot change anything if the first
     // already converged.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let entry = graph.entry();
+    let entry = graph.entry().unwrap();
     stable_default_pipeline().run(graph.graph_mut(), entry).expect("run 1");
     let snapshot_node_count = graph.all_node_ids().count();
-    let entry = graph.entry();
+    let entry = graph.entry().unwrap();
     stable_default_pipeline().run(graph.graph_mut(), entry).expect("run 2");
     let after_node_count = graph.all_node_ids().count();
     assert_eq!(
@@ -55,11 +55,11 @@ fn stable_then_destructive_equals_full_default_pipeline_node_count() {
     // the orchestrator relies on at fixed point.
     let (mut g_full, _) = build_initial_var_target_scenario_x86_64();
     let (mut g_split, _) = build_initial_var_target_scenario_x86_64();
-    let entry = g_full.entry();
+    let entry = g_full.entry().unwrap();
     strider_analyze::opt::default_pipeline().run(g_full.graph_mut(), entry).expect("full");
-    let entry = g_split.entry();
+    let entry = g_split.entry().unwrap();
     stable_default_pipeline().run(g_split.graph_mut(), entry).expect("stable");
-    let entry = g_split.entry();
+    let entry = g_split.entry().unwrap();
     destructive_default_pipeline()
         .run(g_split.graph_mut(), entry)
         .expect("destructive");
@@ -74,10 +74,10 @@ fn destructive_subset_reduces_or_preserves_node_count() {
     // already optimised must NOT INCREASE the node count — every
     // pass in the destructive subset is a node-removal pass.
     let (mut graph, _) = build_initial_var_target_scenario_x86_64();
-    let entry = graph.entry();
+    let entry = graph.entry().unwrap();
     stable_default_pipeline().run(graph.graph_mut(), entry).expect("stable");
     let before = graph.all_node_ids().count();
-    let entry = graph.entry();
+    let entry = graph.entry().unwrap();
     destructive_default_pipeline()
         .run(graph.graph_mut(), entry)
         .expect("destructive");
@@ -108,7 +108,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
             )
         })
         .count();
-    let entry = graph.entry();
+    let entry = graph.entry().unwrap();
     stable_default_pipeline().run(graph.graph_mut(), entry).expect("stable");
     let phi_count_after = graph
         .preorder()

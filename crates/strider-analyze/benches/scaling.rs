@@ -96,7 +96,7 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
     let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
-    let entry = graph.entry();
+    let entry = graph.entry().unwrap();
     p.run(graph.graph_mut(), entry).expect("optimizer pipeline");
     graph
 }
@@ -192,7 +192,7 @@ mod synthetic {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(StackStoreDetect::new(sp));
-        let entry = fg.entry();
+        let entry = fg.entry().unwrap();
         p.run(fg.graph_mut(), entry).unwrap();
         fg
     }
@@ -255,7 +255,7 @@ mod synthetic {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(RedundantPhis);
-        let entry = fg.entry();
+        let entry = fg.entry().unwrap();
         p.run(fg.graph_mut(), entry).unwrap();
         fg
     }
@@ -329,7 +329,7 @@ mod synthetic {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(StackStoreDetect::new(sp));
-        let entry = fg.entry();
+        let entry = fg.entry().unwrap();
         p.run(fg.graph_mut(), entry).unwrap();
         fg
     }
@@ -366,7 +366,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
                     let pass = StackLoadForward::new(sp, strider_target::Endianness::Little);
-                    let entry = fg.entry();
+                    let entry = fg.entry().unwrap();
                     let _ = pass.optimize_raw(fg.graph_mut(), entry);
                     black_box(fg);
                 },

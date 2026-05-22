@@ -95,7 +95,9 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
         cc_link_register_vn,
         endianness,
     )?;
-    let entry = fg.entry();
+    let entry = fg.entry().ok_or_else(|| {
+        anyhow::anyhow!("resolver mini-graph has not been built (entry is None)")
+    })?;
     make_resolver_pipeline().run(fg.graph_mut(), entry)?;
 
     // If the caller supplied a ReadOnlyMemory, resolve constant-address

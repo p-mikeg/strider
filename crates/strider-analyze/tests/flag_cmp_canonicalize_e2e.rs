@@ -37,7 +37,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> BuiltFunctio
     let mut graph = outcome.graph;
 
     let p = strider.build_optimizer_pipeline();
-    let entry = graph.entry();
+    let entry = graph.entry().unwrap();
     p.run(graph.graph_mut(), entry).expect("optimizer pipeline");
     graph
 }

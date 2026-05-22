@@ -56,7 +56,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
@@ -94,7 +94,7 @@ fn mem_phi_single_pred_eliminated() -> crate::opt::Result<()> {
     b.set_lift_addr(None);
 
     let mut fg = b.build()?;
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     RedundantPhis.optimize_raw(fg.graph_mut(), entry)?;
 
     // Surviving (reachable) MemPhis with at most 1+1 inputs (token + 1 value)
@@ -127,7 +127,7 @@ fn control_state_single_pred_collapses() -> crate::opt::Result<()> {
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     assert!(
         RedundantPhis.optimize_raw(fg.graph_mut(), entry)?.changed(),
         "single-pred CS must be simplified"
@@ -163,7 +163,7 @@ fn unreachable_store_inputs_detached() -> crate::opt::Result<()> {
     pipeline.add(crate::opt::ConstantFold);
     pipeline.add(crate::opt::DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
     // Validation runs at the end of `pipeline.run`, so reaching here means
     // the unreachable store didn't leave an invalid graph.
@@ -198,9 +198,9 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
     // Settle the graph by running RedundantPhis to fixed point first.  After
     // this, any further RedundantPhis invocation on the unmodified graph
     // returns NoChange; that's our baseline.
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     while RedundantPhis.optimize_raw(fg.graph_mut(), entry)?.changed() {}
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let baseline = RedundantPhis.optimize_raw(fg.graph_mut(), entry)?;
     assert_eq!(
         baseline,
@@ -220,7 +220,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
 
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     let res = RedundantPhis.optimize_raw(fg.graph_mut(), entry)?;
     assert_eq!(
         res,
@@ -304,7 +304,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     );
 
     // Run the pass under test.
-    let entry = fg.entry();
+    let entry = fg.entry().unwrap();
     RedundantPhis.optimize_raw(fg.graph_mut(), entry)?;
 
     // After collapse, the Return's value input must reference the

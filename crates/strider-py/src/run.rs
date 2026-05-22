@@ -285,7 +285,11 @@ fn run_with_custom_pipeline(
     {
         let py_graph_borrow = py_graph.borrow(py);
         let mut graph = py_graph_borrow.write_inner().map_err(into_strider_err)?;
-        let entry = graph.entry();
+        let entry = graph.entry().ok_or_else(|| {
+            into_strider_err(anyhow::anyhow!(
+                "strider.run: graph has not been built (entry is None)"
+            ))
+        })?;
         actual_pipeline
             .run(graph.graph_mut(), entry)
             .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
