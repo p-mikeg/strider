@@ -18,9 +18,6 @@ use crate::sleigh::PySleigh;
 #[pyclass(name = "Strider", module = "strider")]
 pub struct PyStrider {
     pub(crate) inner: strider_analyze::Strider,
-    /// Cached arch — `strider_analyze::Strider` keeps `arch` private so we
-    /// stash a copy here for pipeline-construction helpers.
-    pub(crate) arch: strider_target::SleighArch,
 }
 
 /// Mirror of `strider_analyze::AnalyzeOutcome`.
@@ -52,12 +49,8 @@ impl PyStrider {
         let sleigh_borrow = sleigh.borrow(py);
         let regs = sleigh_borrow.regs.clone();
         drop(sleigh_borrow);
-        let arch_copy = arch.inner;
         let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
-        Ok(Self {
-            inner,
-            arch: arch_copy,
-        })
+        Ok(Self { inner })
     }
 
     fn analyze_cfg(&self, py: Python<'_>, cfg: Py<PyCfg>) -> PyResult<PyAnalyzeOutcome> {
@@ -83,30 +76,21 @@ impl PyStrider {
     /// point passes plus CallStackArgCollect / FunctionArgDetect post
     /// passes on top of the default pipeline.
     fn build_optimizer_pipeline(&self) -> PyResult<crate::opt::PyOptimizerPipeline> {
-        let cc = self.inner.calling_convention().clone();
-        let arch = *self.calling_convention_arch();
-        Ok(crate::opt::PyOptimizerPipeline::new_full_default(cc, arch))
+        Ok(crate::opt::PyOptimizerPipeline::new_full_default(&self.inner))
     }
 
     /// Mirror of `strider_analyze::Strider::build_stable_optimizer_pipeline`.
     fn build_stable_optimizer_pipeline(&self) -> PyResult<crate::opt::PyOptimizerPipeline> {
-        let cc = self.inner.calling_convention().clone();
-        let arch = *self.calling_convention_arch();
-        Ok(crate::opt::PyOptimizerPipeline::new_stable_default(cc, arch))
+        Ok(crate::opt::PyOptimizerPipeline::new_stable_default(&self.inner))
     }
 
     /// Mirror of `strider_analyze::Strider::build_destructive_optimizer_pipeline`.
     fn build_destructive_optimizer_pipeline(&self) -> PyResult<crate::opt::PyOptimizerPipeline> {
-        let cc = self.inner.calling_convention().clone();
-        Ok(crate::opt::PyOptimizerPipeline::new_destructive_default(cc))
+        Ok(crate::opt::PyOptimizerPipeline::new_destructive_default(&self.inner))
     }
 }
 
 impl PyStrider {
-    fn calling_convention_arch(&self) -> &strider_target::SleighArch {
-        &self.arch
-    }
-
     /// Internal constructor used by `strider.run`.
     pub(crate) fn new_internal(
         py: Python<'_>,
@@ -117,12 +101,8 @@ impl PyStrider {
         let sleigh_borrow = sleigh.borrow(py);
         let regs = sleigh_borrow.regs.clone();
         drop(sleigh_borrow);
-        let arch_copy = arch.inner;
         let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
-        Ok(Self {
-            inner,
-            arch: arch_copy,
-        })
+        Ok(Self { inner })
     }
 }
 

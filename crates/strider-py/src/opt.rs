@@ -63,9 +63,12 @@ impl PipelineState {
     /// internal representation by `clone_box`-ing each pass.
     ///
     /// Iterating the canonical pipeline rather than hand-mirroring it
-    /// makes drift between the Python wrapper and `default_pipeline()` /
+    /// makes drift between the Python wrapper and every Rust-side
+    /// pipeline factory — `default_pipeline()` /
     /// `stable_default_pipeline()` / `destructive_default_pipeline()`
-    /// structurally impossible.
+    /// and the CC-aware `Strider::build_optimizer_pipeline` /
+    /// `build_stable_optimizer_pipeline` /
+    /// `build_destructive_optimizer_pipeline` — structurally impossible.
     fn snapshot_from(pipeline: &strider_analyze::opt::OptimizerPipeline) -> Self {
         let mut s = Self::new();
         for pass in pipeline.iter() {
@@ -116,55 +119,30 @@ impl PyOptimizerPipeline {
             .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))
     }
 
-    /// Build the convention-aware "full" pipeline mirroring
-    /// `strider_analyze::Strider::build_optimizer_pipeline`.
-    pub(crate) fn new_full_default(
-        cc: strider_target::BuiltCallingConvention,
-        arch: strider_target::SleighArch,
-    ) -> Self {
-        let mut state = PipelineState::from_default();
-        state
-            .passes
-            .push(Box::new(strider_analyze::opt::StackStoreDetect::from_convention(&cc)));
-        state
-            .passes
-            .push(Box::new(strider_analyze::opt::StackLoadForward::from_convention(&cc, &arch)));
-        state
-            .post_passes
-            .push(Box::new(strider_analyze::opt::CallStackArgCollect::from_convention(&cc)));
-        state
-            .post_passes
-            .push(Box::new(strider_analyze::opt::FunctionArgDetect::from_convention(&cc)));
-        Self::new_with(state)
+    /// Build the convention-aware "full" pipeline by delegating to
+    /// `strider_analyze::Strider::build_optimizer_pipeline` and snapshotting
+    /// its passes.  Iterating the canonical Rust pipeline rather than
+    /// hand-mirroring it makes drift between the Python wrapper and
+    /// `Strider::build_optimizer_pipeline` structurally impossible.
+    pub(crate) fn new_full_default(strider: &strider_analyze::Strider) -> Self {
+        let pipeline = strider.build_optimizer_pipeline();
+        Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
-    /// Build the stable-only pipeline mirroring
-    /// `strider_analyze::Strider::build_stable_optimizer_pipeline`.
-    pub(crate) fn new_stable_default(
-        cc: strider_target::BuiltCallingConvention,
-        arch: strider_target::SleighArch,
-    ) -> Self {
-        let mut state = PipelineState::from_stable_default();
-        state
-            .passes
-            .push(Box::new(strider_analyze::opt::StackStoreDetect::from_convention(&cc)));
-        state
-            .passes
-            .push(Box::new(strider_analyze::opt::StackLoadForward::from_convention(&cc, &arch)));
-        state
-            .post_passes
-            .push(Box::new(strider_analyze::opt::FunctionArgDetect::from_convention(&cc)));
-        Self::new_with(state)
+    /// Build the stable-only pipeline by delegating to
+    /// `strider_analyze::Strider::build_stable_optimizer_pipeline` and
+    /// snapshotting its passes.
+    pub(crate) fn new_stable_default(strider: &strider_analyze::Strider) -> Self {
+        let pipeline = strider.build_stable_optimizer_pipeline();
+        Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
-    /// Build the destructive-only pipeline mirroring
-    /// `strider_analyze::Strider::build_destructive_optimizer_pipeline`.
-    pub(crate) fn new_destructive_default(cc: strider_target::BuiltCallingConvention) -> Self {
-        let mut state = PipelineState::from_destructive_default();
-        state
-            .post_passes
-            .push(Box::new(strider_analyze::opt::CallStackArgCollect::from_convention(&cc)));
-        Self::new_with(state)
+    /// Build the destructive-only pipeline by delegating to
+    /// `strider_analyze::Strider::build_destructive_optimizer_pipeline` and
+    /// snapshotting its passes.
+    pub(crate) fn new_destructive_default(strider: &strider_analyze::Strider) -> Self {
+        let pipeline = strider.build_destructive_optimizer_pipeline();
+        Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
     /// Materialise a real `strider_analyze::opt::OptimizerPipeline` from the current
