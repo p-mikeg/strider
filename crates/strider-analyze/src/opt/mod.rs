@@ -41,6 +41,7 @@ pub(crate) mod mem_walk;
 pub(crate) mod peephole;
 mod pipeline;
 pub(crate) mod sp_expr;
+pub(crate) mod sp_pass_cc;
 mod worklist;
 pub use error::Result;
 pub(crate) mod constant_fold;

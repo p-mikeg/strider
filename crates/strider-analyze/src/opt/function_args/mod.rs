@@ -49,43 +49,48 @@ use crate::opt::worklist::seeded_kind;
 /// after the fixed-point loop has converged.
 #[derive(Clone)]
 pub struct FunctionArgDetect {
-    /// Varnodes (in positional order) used by the calling convention to pass
-    /// integer arguments in registers.  Entry `i` is arg `i`.
-    pub arg_passing_regs: Vec<rsleigh::Vn>,
-    /// Varnode of the stack pointer register (used to recognise SP-relative
-    /// stack-arg loads).
-    pub stack_ptr_vn: rsleigh::Vn,
-    /// Positional byte offsets of stack-passed arguments from the entry-time
-    /// stack pointer.  Entry `j` is the offset of stack-arg `j`, which has
-    /// overall argument index `arg_passing_regs.len() + j`.
-    pub stack_arg_offsets: Vec<i64>,
+    /// Calling convention this pass was built from.  See the comment
+    /// on `StackStoreDetect::cc` for the per-pass-shared-Arc rationale.
+    /// Consults `cc.arg_passing_regs`, `cc.stack_ptr_vn`, and
+    /// `cc.stack_arg_offsets` indirectly through [`Self::layout`].
+    cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
+    /// Cached positional-arg layout derived from `cc` at construction
+    /// time.  The pass reads `layout.first_stack_index()` to compute
+    /// the register-vs-stack boundary instead of the
+    /// `arg_passing_regs.len()` derivation that used to live inline
+    /// here — single source of truth for "what is positional arg `i`?".
+    layout: strider_target::PositionalArgLayout,
 }
 
 impl FunctionArgDetect {
     /// Creates a new pass with an explicit register list, stack-pointer
-    /// varnode, and stack-arg offset table.
+    /// varnode, and stack-arg offset table.  Convenience constructor;
+    /// production paths prefer [`Self::from_convention`].
     #[must_use]
     pub fn new(
         arg_passing_regs: Vec<rsleigh::Vn>,
         stack_ptr_vn: rsleigh::Vn,
         stack_arg_offsets: Vec<i64>,
     ) -> Self {
-        Self {
-            arg_passing_regs,
-            stack_ptr_vn,
-            stack_arg_offsets,
-        }
+        let cc = crate::opt::sp_pass_cc::minimal_cc(stack_ptr_vn, arg_passing_regs, stack_arg_offsets);
+        Self::from_convention(&cc)
     }
 
     /// Creates a new pass whose parameters are taken from the supplied
     /// calling convention.
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        Self::new(
-            cc.arg_passing_regs.clone(),
-            cc.stack_ptr_vn,
-            cc.stack_arg_offsets.clone(),
-        )
+        let layout = crate::opt::sp_pass_cc::layout_of(cc);
+        Self {
+            cc: std::sync::Arc::new(cc.clone()),
+            layout,
+        }
+    }
+
+    /// Convention this pass was built with.
+    #[must_use]
+    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
+        &self.cc
     }
 }
 
@@ -97,12 +102,20 @@ impl Optimizer for FunctionArgDetect {
     ) -> Result<OptimizationResult> {
         let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
         let mut changed = OptimizationResult::NoChange;
-        changed |= detect_register_args(&mut ctx, &self.arg_passing_regs)?;
+        // `layout.register_args()` yields slots in ABI order, with
+        // canonical positional indices stamped at layout-construction
+        // time.  `layout.first_stack_index()` replaces the local
+        // `arg_passing_regs.len()` derivation that used to live here.
+        let arg_passing_regs: Vec<rsleigh::Vn> =
+            self.layout.register_args().map(|(_, vn)| vn).collect();
+        let stack_arg_offsets: Vec<i64> =
+            self.layout.stack_args().map(|(_, o)| o).collect();
+        changed |= detect_register_args(&mut ctx, &arg_passing_regs)?;
         changed |= detect_stack_args(
             &mut ctx,
-            self.stack_ptr_vn,
-            &self.stack_arg_offsets,
-            self.arg_passing_regs.len(),
+            self.cc.stack_ptr_vn,
+            &stack_arg_offsets,
+            self.layout.first_stack_index() as usize,
         )?;
         // Replacing `Load[sp+K]` with `FunctionArg` orphans the address-
         // computation chain (`Add(sp, K)` and friends).  Those nodes remain in

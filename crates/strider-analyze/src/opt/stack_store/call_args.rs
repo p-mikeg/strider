@@ -268,31 +268,42 @@ fn try_collect_stack_args(
 /// address; SP-rooted stores remain chain-terminating.
 #[derive(Clone)]
 pub struct CallStackArgCollect {
-    /// Positional byte offsets of stack-passed arguments from call-time SP.
-    /// Entry `i` is the offset of the `i`-th stack arg.
-    pub stack_arg_offsets: Vec<i64>,
-    /// Varnode for the stack-pointer register (matches the calling
-    /// convention's `stack_ptr_vn`).  Used by the alias-discrimination
-    /// branch when the walker encounters a plain `Store`.
-    pub stack_ptr_vn: rsleigh::Vn,
+    /// Calling convention this pass was built from.  See the comment
+    /// on `StackStoreDetect::cc` for the per-pass-shared-Arc rationale.
+    /// Consults `cc.stack_arg_offsets` and `cc.stack_ptr_vn`.
+    cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
+    /// Cached positional-arg layout derived from `cc` at construction
+    /// time.  Single source of truth for "what is positional arg `i`?";
+    /// keeps the pass's stack-arg-offsets read aligned with the
+    /// canonical layout shared by [`crate::opt::FunctionArgDetect`].
+    layout: strider_target::PositionalArgLayout,
 }
 
 impl CallStackArgCollect {
     /// Creates a new pass for the given positional stack-arg offset table
-    /// and stack-pointer varnode.
+    /// and stack-pointer varnode.  Convenience constructor; production
+    /// paths prefer [`Self::from_convention`].
     #[must_use]
     pub fn new(stack_arg_offsets: Vec<i64>, stack_ptr_vn: rsleigh::Vn) -> Self {
-        Self {
-            stack_arg_offsets,
-            stack_ptr_vn,
-        }
+        let cc = crate::opt::sp_pass_cc::minimal_cc(stack_ptr_vn, Vec::new(), stack_arg_offsets);
+        Self::from_convention(&cc)
     }
 
     /// Creates a new pass whose positional stack-arg offset table and
     /// stack-pointer varnode are taken from the supplied calling convention.
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        Self::new(cc.stack_arg_offsets.clone(), cc.stack_ptr_vn)
+        let layout = crate::opt::sp_pass_cc::layout_of(cc);
+        Self {
+            cc: std::sync::Arc::new(cc.clone()),
+            layout,
+        }
+    }
+
+    /// Convention this pass was built with.
+    #[must_use]
+    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
+        &self.cc
     }
 }
 
@@ -313,12 +324,14 @@ impl Optimizer for CallStackArgCollect {
         // when the function has many calls or many stack args.
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
+        let stack_arg_offsets = self.layout.stack_arg_offsets();
+        let stack_ptr_vn = self.cc.stack_ptr_vn;
         for call_id in calls {
             result |= try_collect_stack_args(
                 &mut ctx,
                 call_id,
-                &self.stack_arg_offsets,
-                self.stack_ptr_vn,
+                &stack_arg_offsets,
+                stack_ptr_vn,
                 &mut sp_memo,
             )?;
         }

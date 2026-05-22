@@ -808,3 +808,66 @@ fn every_preset_factory_resolves() {
         factories.len(),
     );
 }
+
+/// `PositionalArgLayout` enumerates the argument slots in ABI order and
+/// stamps each with its canonical positional index.  Verify on
+/// x86_64 SysV (register-only, 6 register args + 6 stack-offset slots)
+/// and x86 cdecl (stack-only, 0 register args + 8 stack-offset slots)
+/// — between them they exercise every layout path.
+#[test]
+fn positional_arg_layout_x86_64_systemv() {
+    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let cc = CallingConvention::x86_64_systemv().unwrap().build(&regs).unwrap();
+    let layout = PositionalArgLayout::from_convention(&cc);
+
+    assert_eq!(layout.stack_ptr_vn, cc.stack_ptr_vn);
+    // 6 reg args + 6 stack args = 12 entries.
+    assert_eq!(layout.entries.len(), 12);
+    assert_eq!(layout.first_stack_index(), 6);
+    // First stack arg has index 6 and offset 8 (the call-pushed retaddr).
+    assert_eq!(
+        layout.entries[6],
+        PositionalArg::Stack { index: 6, offset: 8 },
+    );
+    // Register arg 0 is RDI.
+    let rdi = regs.name_to_vn("RDI").unwrap();
+    assert_eq!(
+        layout.entries[0],
+        PositionalArg::Register { index: 0, vn: rdi },
+    );
+    // register_args() / stack_args() reproduce the underlying lists.
+    let reg_vns: Vec<_> = layout.register_args().map(|(_, vn)| vn).collect();
+    assert_eq!(reg_vns, cc.arg_passing_regs);
+    let stack_offs: Vec<_> = layout.stack_args().map(|(_, o)| o).collect();
+    assert_eq!(stack_offs, cc.stack_arg_offsets);
+    // Indices on stack_args() start at first_stack_index().
+    let stack_indices: Vec<_> = layout.stack_args().map(|(i, _)| i).collect();
+    assert_eq!(stack_indices, vec![6, 7, 8, 9, 10, 11]);
+}
+
+#[test]
+fn positional_arg_layout_x86_cdecl_stack_only() {
+    let regs = regs_for(crate::arch::SleighArch::x86());
+    let cc = CallingConvention::x86_cdecl().unwrap().build(&regs).unwrap();
+    let layout = PositionalArgLayout::from_convention(&cc);
+
+    // No register args; 8 stack slots numbered 0..8.
+    assert_eq!(layout.first_stack_index(), 0);
+    assert_eq!(layout.entries.len(), 8);
+    let stack_indices: Vec<_> = layout.stack_args().map(|(i, _)| i).collect();
+    assert_eq!(stack_indices, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(layout.register_args().count(), 0);
+}
+
+/// Layout with no positional args at all: `first_stack_index() == 0`
+/// and the helpers degrade gracefully.
+#[test]
+fn positional_arg_layout_empty() {
+    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let cc = CallingConvention::x86_64_all_preserving().unwrap().build(&regs).unwrap();
+    let layout = PositionalArgLayout::from_convention(&cc);
+    assert!(layout.entries.is_empty());
+    assert_eq!(layout.first_stack_index(), 0);
+    assert_eq!(layout.register_args().count(), 0);
+    assert_eq!(layout.stack_args().count(), 0);
+}

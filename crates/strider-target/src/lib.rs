@@ -23,7 +23,10 @@ pub mod calling_convention;
 pub mod call_other_abi;
 
 pub use arch::{ArchPreset, Endianness, SleighArch};
-pub use calling_convention::{BuiltCallingConvention, CallingConvention, MissingPresetError};
+pub use calling_convention::{
+    BuiltCallingConvention, CallingConvention, MissingPresetError, PositionalArg,
+    PositionalArgLayout,
+};
 
 /// Crate-level `Result` alias.  Every fallible function in `strider-target`
 /// returns this type.

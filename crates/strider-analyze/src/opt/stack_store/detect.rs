@@ -86,22 +86,44 @@ fn try_detect_stack_store(
 /// detections on each iteration.
 #[derive(Clone)]
 pub struct StackStoreDetect {
-    /// Varnode for the stack pointer register (e.g. `ESP`, `RSP`, `sp`).
-    pub stack_ptr_vn: rsleigh::Vn,
+    /// Calling convention this pass was built from.  Stored as `Arc` so
+    /// the four SP-aware passes share one heap allocation (see
+    /// `crate::sp_pass_cc` helpers in the parent module for the
+    /// construction path).  `StackStoreDetect` only consults
+    /// `cc.stack_ptr_vn`, but carrying the full CC keeps the
+    /// constructor surface uniform across the four passes and removes
+    /// the per-pass field-projection drift surface.
+    cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
 }
 
 impl StackStoreDetect {
     /// Creates a new pass for the given stack-pointer varnode.
+    ///
+    /// Convenience constructor that synthesises a minimal
+    /// [`strider_target::BuiltCallingConvention`] around `stack_ptr_vn`
+    /// (every other CC field defaulted to empty).  Production paths
+    /// prefer [`Self::from_convention`] so the same CC instance is
+    /// shared across the four SP-aware passes.
     #[must_use]
     pub fn new(stack_ptr_vn: rsleigh::Vn) -> Self {
-        Self { stack_ptr_vn }
+        Self::from_convention(&crate::opt::sp_pass_cc::minimal_cc_for_sp(stack_ptr_vn))
     }
 
     /// Creates a new pass whose stack-pointer varnode is taken from the
     /// supplied calling convention.
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        Self::new(cc.stack_ptr_vn)
+        Self {
+            cc: std::sync::Arc::new(cc.clone()),
+        }
+    }
+
+    /// Convention this pass was built with.  The pass consults only
+    /// `cc.stack_ptr_vn`; the full CC is retained for uniform
+    /// construction across the SP-aware passes.
+    #[must_use]
+    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
+        &self.cc
     }
 }
 
@@ -119,8 +141,9 @@ impl Optimizer for StackStoreDetect {
         let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Store(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
+        let sp_vn = self.cc.stack_ptr_vn;
         while let Some(node_id) = work.dequeue() {
-            result |= try_detect_stack_store(&mut ctx, node_id, self.stack_ptr_vn, &mut memo)?;
+            result |= try_detect_stack_store(&mut ctx, node_id, sp_vn, &mut memo)?;
         }
         Ok(result)
     }

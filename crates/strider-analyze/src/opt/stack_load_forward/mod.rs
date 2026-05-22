@@ -28,21 +28,29 @@ use crate::opt::worklist::seeded_kind;
 /// simplified by `ConstantFold` / `KnownBits`.
 #[derive(Clone)]
 pub struct StackLoadForward {
-    /// Varnode for the stack pointer register (e.g. `ESP`, `RSP`, `sp`).
-    pub stack_ptr_vn: rsleigh::Vn,
+    /// Calling convention this pass was built from.  See the comment
+    /// on `StackStoreDetect::cc` for the per-pass-shared-Arc rationale.
+    /// This pass consults only `cc.stack_ptr_vn`.
+    cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
     /// Target endianness — controls how a narrow load from a wider store is
     /// synthesised (LE: low bytes via `Truncate`; BE: high bytes via
     /// `Truncate(ShiftRight(data, (store_size - load_size) * 8))`).
-    pub endianness: Endianness,
+    ///
+    /// Carried separately from the CC because endianness is a
+    /// per-arch property (lives on [`strider_target::SleighArch`])
+    /// rather than a per-CC property.
+    endianness: Endianness,
 }
 
 impl StackLoadForward {
     /// Creates a new pass for the given stack-pointer varnode and target
-    /// endianness.
+    /// endianness.  Convenience constructor; production paths prefer
+    /// [`Self::from_convention`] so the same CC is shared with the
+    /// other SP-aware passes.
     #[must_use]
     pub fn new(stack_ptr_vn: rsleigh::Vn, endianness: Endianness) -> Self {
         Self {
-            stack_ptr_vn,
+            cc: std::sync::Arc::new(crate::opt::sp_pass_cc::minimal_cc_for_sp(stack_ptr_vn)),
             endianness,
         }
     }
@@ -54,7 +62,22 @@ impl StackLoadForward {
         cc: &strider_target::BuiltCallingConvention,
         arch: &strider_target::SleighArch,
     ) -> Self {
-        Self::new(cc.stack_ptr_vn, arch.endianness())
+        Self {
+            cc: std::sync::Arc::new(cc.clone()),
+            endianness: arch.endianness(),
+        }
+    }
+
+    /// Convention this pass was built with.
+    #[must_use]
+    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
+        &self.cc
+    }
+
+    /// Target endianness this pass was built with.
+    #[must_use]
+    pub fn endianness(&self) -> Endianness {
+        self.endianness
     }
 }
 
@@ -68,8 +91,9 @@ impl Optimizer for StackLoadForward {
         let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
+        let sp_vn = self.cc.stack_ptr_vn;
         while let Some(load) = work.dequeue() {
-            result |= try_forward_load(&mut ctx, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
+            result |= try_forward_load(&mut ctx, load, sp_vn, self.endianness, &mut memo)?;
         }
         Ok(result)
     }
