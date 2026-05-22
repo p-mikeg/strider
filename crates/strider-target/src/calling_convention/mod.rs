@@ -181,7 +181,8 @@ impl BuiltCallingConvention {
                 ));
             }
         }
-        // Stack-pointer must not be in any reg-list.
+        // Per-list checks: SP-not-present + within-list uniqueness.
+        // Walked in one pass over the four named lists.
         for (list_name, list) in [
             ("arg_passing_regs", &arg_passing_regs),
             ("callee_saved_regs", &callee_saved_regs),
@@ -196,14 +197,6 @@ impl BuiltCallingConvention {
                     list_name,
                 ));
             }
-        }
-        // No duplicates within a list.
-        for (list_name, list) in [
-            ("arg_passing_regs", &arg_passing_regs),
-            ("callee_saved_regs", &callee_saved_regs),
-            ("ret_val_regs", &ret_val_regs),
-            ("ret_val_regs_float", &ret_val_regs_float),
-        ] {
             for (i, vn) in list.iter().enumerate() {
                 if list[i + 1..].contains(vn) {
                     return Err(anyhow::anyhow!(
