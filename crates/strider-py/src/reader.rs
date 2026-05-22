@@ -84,9 +84,11 @@ impl From<strider_reader::elf::RelocationStats> for PyRelocationStats {
 
 // ── PyMemoryMap (data-only fast path) ────────────────────────────────────
 
-/// Owned-data memory map. Implements `rsleigh::MemReader` (via the
-/// internal `PyMemoryMapReader` view) and `strider_reader::ReadOnlyMemory`
-/// directly. Cheap to clone: the inner data is held behind `Arc`.
+/// Owned-data memory map. Implements `rsleigh::MemReader` and
+/// `strider_reader::ReadOnlyMemory` indirectly through the
+/// internal `PyMemoryMapReader` view (`MemInput::into_arc` /
+/// `MemInput::into_any` mint the view on demand). Cheap to clone:
+/// the inner data is held behind `Arc`.
 #[pyclass(name = "MemoryMap", module = "strider")]
 #[derive(Clone)]
 pub struct PyMemoryMap {
@@ -146,6 +148,18 @@ impl PyMemoryMap {
         }
         drop(slot);
         self.rebuild_table()
+    }
+
+    /// Mint a `PyMemoryMapReader` snapshot of the current state — the
+    /// lookup table is built on demand (or returned from the cache) and
+    /// the endianness is copied out.  The view is `Send + Sync` and
+    /// implements both `rsleigh::MemReader` and `ReadOnlyMemory`, so
+    /// downstream consumers that need either trait can take the view
+    /// without forcing the surface `PyMemoryMap` to be thread-safe.
+    pub(crate) fn reader_view(&self) -> anyhow::Result<PyMemoryMapReader> {
+        let table = self.lookup_table()?;
+        let endianness = *self.endianness.read().unwrap_or_else(|p| p.into_inner());
+        Ok(PyMemoryMapReader { table, endianness })
     }
 }
 
@@ -638,19 +652,26 @@ impl rsleigh::MemReader for AnyMemReader {
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         match self {
-            AnyMemReader::Map(m) => m.read(addr, out_buf),
-            AnyMemReader::Cb(c) => c.read(addr, out_buf),
+            AnyMemReader::Map(m) => rsleigh::MemReader::read(m, addr, out_buf),
+            AnyMemReader::Cb(c) => rsleigh::MemReader::read(c, addr, out_buf),
         }
     }
 }
 
-/// Internal view over a `PyMemoryMap` snapshot used by AnyMemReader::Map.
+/// Internal view over a `PyMemoryMap` snapshot used by AnyMemReader::Map
+/// and by `MemInput::into_arc`'s `Arc<dyn ReadOnlyMemory>` lift.
 /// Decoupling the trait impl from the Python class keeps the rsleigh
-/// dependency local and lets us hand a *snapshot* to Sleigh — Sleigh
+/// dependency local, lets us hand a *snapshot* to Sleigh (Sleigh
 /// consumes its reader by value, so a snapshot avoids observing later
-/// `add_region` calls in flight.
+/// `add_region` calls in flight), and naturally satisfies `Send + Sync`
+/// — the lookup table is an `Arc<...>` and the endianness is `Copy` —
+/// without forcing the surface `PyMemoryMap` pyclass to be thread-safe.
 pub struct PyMemoryMapReader {
     pub table: Arc<MemRegionsLookupTable>,
+    /// Snapshot of the source `PyMemoryMap`'s endianness at the moment
+    /// the view was minted.  Used by the `ReadOnlyMemory::read` impl to
+    /// decode multi-byte words for big-endian targets.
+    pub endianness: strider_target::Endianness,
 }
 
 impl rsleigh::MemReader for PyMemoryMapReader {
@@ -668,10 +689,12 @@ impl rsleigh::MemReader for PyMemoryMapReader {
 /// `ReadOnlyMemory` impl reading 1/2/4/8-byte words from any space.
 /// Mirrors `strider_reader::ElfFileMemReader`'s endianness-aware decoding so
 /// big-endian targets (MIPS-BE / PowerPC-BE / AArch64-BE) get correct
-/// `LoadReadOnly` constants.  Endianness is auto-set by
-/// `add_region_from_elf` (or explicitly via `set_endianness`); defaults
-/// to little for raw-bytes-only construction.
-impl ReadOnlyMemory for PyMemoryMap {
+/// `LoadReadOnly` constants.  Endianness is captured by
+/// `PyMemoryMap::reader_view` at the moment the view is minted (the
+/// surface `PyMemoryMap` is auto-set by `add_region_from_elf`, or set
+/// explicitly via `set_endianness`); defaults to little for
+/// raw-bytes-only construction.
+impl ReadOnlyMemory for PyMemoryMapReader {
     fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
         // PyMemoryMap models RAM only — it has no backing for REGISTER /
         // CONST / UNIQUE / OTHER spaces.  Reject non-RAM reads up front
@@ -685,9 +708,8 @@ impl ReadOnlyMemory for PyMemoryMap {
         if size == 0 || size > 8 {
             return None;
         }
-        let table = self.lookup_table().ok()?;
         let mut buf = [0u8; 8];
-        let n = table.read(addr, &mut buf[..size])?;
+        let n = self.table.read(addr, &mut buf[..size])?;
         if n != size {
             return None;
         }
@@ -695,13 +717,7 @@ impl ReadOnlyMemory for PyMemoryMap {
         // size-byte payload correctly.  LE: bytes already in low slots.
         // BE: shift bytes to the high end so from_be_bytes treats the
         // payload as a widened N-byte BE word.
-        //
-        // Recover from poisoning rather than silently failing — the inner
-        // is `strider_target::Endianness` (Copy), and `*guard = new_endianness`
-        // is atomic, so a partial-write panic cannot leave the slot
-        // half-initialised.
-        let endianness = *self.endianness.read().unwrap_or_else(|p| p.into_inner());
-        let layout = match endianness {
+        let layout = match self.endianness {
             strider_target::Endianness::Little => buf,
             strider_target::Endianness::Big => {
                 let mut be_buf = [0u8; 8];
@@ -709,7 +725,7 @@ impl ReadOnlyMemory for PyMemoryMap {
                 be_buf
             }
         };
-        Some(endianness.read_u64(layout))
+        Some(self.endianness.read_u64(layout))
     }
 }
 
@@ -748,19 +764,21 @@ impl<'py> FromPyObject<'py> for MemInput {
 
 impl MemInput {
     /// Lift this input to an `Arc<dyn ReadOnlyMemory>` (ROM role).
-    pub fn into_arc(self) -> Arc<dyn ReadOnlyMemory> {
+    /// For `PyMemoryMap` this mints a `PyMemoryMapReader` snapshot —
+    /// the surface pyclass no longer implements `ReadOnlyMemory` so
+    /// callers can't accidentally observe later `add_region` calls in
+    /// flight (the snapshot semantics match the Sleigh-reader path).
+    pub fn into_arc(self) -> anyhow::Result<Arc<dyn ReadOnlyMemory>> {
         match self {
-            MemInput::Map(m) => Arc::new(m),
-            MemInput::Cb(obj) => Arc::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
+            MemInput::Map(m) => Ok(Arc::new(m.reader_view()?)),
+            MemInput::Cb(obj) => Ok(Arc::new(PyReadOnlyMemoryAdapter { py_obj: obj })),
         }
     }
 
     /// Materialise into the unified `AnyMemReader` (Sleigh-reader role).
     pub fn into_any(self) -> anyhow::Result<AnyMemReader> {
         match self {
-            MemInput::Map(m) => Ok(AnyMemReader::Map(PyMemoryMapReader {
-                table: m.lookup_table()?,
-            })),
+            MemInput::Map(m) => Ok(AnyMemReader::Map(m.reader_view()?)),
             MemInput::Cb(obj) => Ok(AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj })),
         }
     }

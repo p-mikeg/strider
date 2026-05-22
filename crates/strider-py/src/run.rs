@@ -156,7 +156,7 @@ fn run_via_orchestrator(
     let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
         .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
-    let rom_arc = rom.map(|r| r.into_arc());
+    let rom_arc = rom.map(|r| r.into_arc()).transpose().map_err(into_lift_err)?;
 
     // Snapshot the Strider out of the PyRef so we can release the GIL
     // across the long-running strider_analyze::run call.  Strider is cheap to
@@ -221,7 +221,7 @@ fn run_with_custom_pipeline(
     // expecting LoadReadOnly to fold loads got no folding at all.
     // Pass `rom=None` to opt out.
     if let Some(rom_input) = rom {
-        let rom_arc = rom_input.into_arc();
+        let rom_arc = rom_input.into_arc().map_err(into_lift_err)?;
         pipeline.prepend_load_read_only(rom_arc)?;
     }
     let reader: AnyMemReader = mem.into_any().map_err(into_lift_err)?;

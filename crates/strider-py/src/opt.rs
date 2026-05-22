@@ -401,8 +401,9 @@ pub struct PyLoadReadOnly {
 #[pymethods]
 impl PyLoadReadOnly {
     #[new]
-    fn new(rom: crate::reader::MemInput) -> Self {
-        Self { rom: rom.into_arc() }
+    fn new(rom: crate::reader::MemInput) -> PyResult<Self> {
+        let rom = rom.into_arc().map_err(crate::errors::into_lift_err)?;
+        Ok(Self { rom })
     }
 }
 
