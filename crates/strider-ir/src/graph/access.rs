@@ -198,4 +198,23 @@ impl Graph {
     pub fn input_output_id(&self, input: NodeInputId) -> NodeOutputId {
         self.inputs[input].output_id
     }
+
+    /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id
+    /// is in `reachable`.  The single source of truth for the
+    /// reachability-scoped iteration policy shared by the validator's
+    /// per-node graph-invariants checks.
+    ///
+    /// Callers that need to detect detached zombies (e.g. the
+    /// `Entry`/`InitialMemory` uniqueness check) must iterate
+    /// [`Graph::nodes`] directly instead — this helper deliberately
+    /// excludes them.
+    pub fn reachable_kind_iter<'a>(
+        &'a self,
+        reachable: &'a crate::walk::NodeIdSet,
+    ) -> impl Iterator<Item = (NodeId, &'a NodeKind)> + 'a {
+        self.nodes
+            .keys()
+            .filter(move |&n| reachable.contains(n))
+            .map(move |n| (n, self.node_kind(n)))
+    }
 }

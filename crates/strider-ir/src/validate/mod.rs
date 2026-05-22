@@ -65,10 +65,7 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     let reachable: NodeIdSet = walk.into_visited();
     let mut errs: Vec<ValidationError> = Vec::new();
 
-    for node in graph.nodes.keys() {
-        if !reachable.contains(node) {
-            continue;
-        }
+    for (node, _kind) in graph.reachable_kind_iter(&reachable) {
         check_local_typing(graph, node, &mut errs);
     }
 

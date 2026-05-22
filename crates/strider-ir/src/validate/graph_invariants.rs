@@ -4,22 +4,6 @@ use crate::walk::NodeIdSet;
 
 use super::ValidationError;
 
-/// Yields `(NodeId, &NodeKind)` for every node in the arena that is
-/// reachable from entry, paired with its kind.  Used by every
-/// per-node graph-invariants check that needs reachability scoping;
-/// the uniqueness check intentionally bypasses this helper because it
-/// also wants to flag detached zombies of `Entry`/`InitialMemory`.
-fn reachable_nodes<'a>(
-    graph: &'a Graph,
-    reachable: &'a NodeIdSet,
-) -> impl Iterator<Item = (NodeId, &'a NodeKind)> + 'a {
-    graph
-        .nodes
-        .keys()
-        .filter(move |&n| reachable.contains(n))
-        .map(move |n| (n, graph.node_kind(n)))
-}
-
 /// Shape check: enforce that the graph has exactly one
 /// [`NodeKind::Entry`] node and exactly one [`NodeKind::InitialMemory`] node.
 ///
@@ -75,10 +59,11 @@ pub(super) fn check_graph_invariants_control_state(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    // Reachability is gated by `reachable_nodes` (see its doc for why
-    // we skip detached `ControlState` zombies — they may carry stale
-    // non-Control inputs left by an unscrubbed surgical edit).
-    for (node, kind) in reachable_nodes(graph, reachable) {
+    // Reachability is gated by `Graph::reachable_kind_iter` (see its
+    // doc for why we skip detached `ControlState` zombies — they may
+    // carry stale non-Control inputs left by an unscrubbed surgical
+    // edit).
+    for (node, kind) in graph.reachable_kind_iter(reachable) {
         if !matches!(kind, NodeKind::ControlState) {
             continue;
         }
@@ -119,11 +104,11 @@ pub(super) fn check_graph_invariants_phis(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    // Reachability is gated by `reachable_nodes`. `RedundantPhis` and
-    // `DeadBranchElimination` leave zero-input phi zombies in the
-    // arena; reaching one here would falsely trip
+    // Reachability is gated by `Graph::reachable_kind_iter`.
+    // `RedundantPhis` and `DeadBranchElimination` leave zero-input phi
+    // zombies in the arena; reaching one here would falsely trip
     // `PhiTokenNotFromControlState` (input[0] is gone).
-    for (node, kind) in reachable_nodes(graph, reachable) {
+    for (node, kind) in graph.reachable_kind_iter(reachable) {
         let is_phi = matches!(
             kind,
             NodeKind::Phi | NodeKind::MemPhi | NodeKind::StackStorePhi { .. }
@@ -202,7 +187,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    for (node, kind) in reachable_nodes(graph, reachable) {
+    for (node, kind) in graph.reachable_kind_iter(reachable) {
         if asm_fingerprint_exempt(kind) {
             continue;
         }
@@ -233,7 +218,7 @@ pub(super) fn check_graph_invariants_function_arg_uniqueness(
     use std::collections::HashMap;
 
     let mut by_index: HashMap<u32, NodeId> = HashMap::new();
-    for (node, kind) in reachable_nodes(graph, reachable) {
+    for (node, kind) in graph.reachable_kind_iter(reachable) {
         let index = match *kind {
             NodeKind::FunctionArg { index, .. } => index,
             _ => continue,
@@ -301,7 +286,7 @@ pub(super) fn check_graph_invariants_wide_consts(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    for (node, kind) in reachable_nodes(graph, reachable) {
+    for (node, kind) in graph.reachable_kind_iter(reachable) {
         let NodeKind::IntConstWide(id) = kind else {
             continue;
         };
