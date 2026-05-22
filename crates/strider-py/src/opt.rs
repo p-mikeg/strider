@@ -10,7 +10,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyType;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::errors::into_strider_err;
 
@@ -107,6 +107,15 @@ impl PyOptimizerPipeline {
         }
     }
 
+    /// Acquire the internal `PipelineState` lock, converting a
+    /// poisoned-lock error into the standard `StriderError` so every
+    /// pyclass method can `?` it uniformly.
+    fn lock_state(&self) -> PyResult<MutexGuard<'_, PipelineState>> {
+        self.state
+            .lock()
+            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))
+    }
+
     /// Build the convention-aware "full" pipeline mirroring
     /// `strider_analyze::Strider::build_optimizer_pipeline`.
     pub(crate) fn new_full_default(
@@ -170,10 +179,7 @@ impl PyOptimizerPipeline {
     /// caller bugs where the same wrapper is reused after a previous
     /// `optimize` / `strider.run` consumed it.
     pub(crate) fn drain_into_pipeline(&self) -> PyResult<strider_analyze::opt::OptimizerPipeline> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        let mut state = self.lock_state()?;
         if state.passes.is_empty() && state.post_passes.is_empty() {
             return Err(into_strider_err(anyhow::anyhow!(
                 "OptimizerPipeline is empty — already drained by a prior \
@@ -200,10 +206,7 @@ impl PyOptimizerPipeline {
         &self,
         rom: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
     ) -> PyResult<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        let mut state = self.lock_state()?;
         let pass: ErasedPass = Box::new(strider_analyze::opt::LoadReadOnly(rom));
         state.passes.insert(0, pass);
         Ok(())
@@ -233,36 +236,24 @@ impl PyOptimizerPipeline {
     }
 
     fn add(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        let mut state = self.lock_state()?;
         state.passes.push(pass_obj.into_erased());
         Ok(())
     }
 
     fn add_post(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        let mut state = self.lock_state()?;
         state.post_passes.push(pass_obj.into_erased());
         Ok(())
     }
 
     fn pass_count(&self) -> PyResult<usize> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        let state = self.lock_state()?;
         Ok(state.passes.len())
     }
 
     fn post_pass_count(&self) -> PyResult<usize> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        let state = self.lock_state()?;
         Ok(state.post_passes.len())
     }
 }
