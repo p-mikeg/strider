@@ -11,7 +11,6 @@ pub use function_arg_handle::FunctionArgHandle;
 
 pub(crate) mod bindings;
 pub(crate) mod cast_mask;
-pub(crate) mod commutativity;
 mod match_result;
 pub(crate) mod consumer;
 pub(crate) mod walk_through;

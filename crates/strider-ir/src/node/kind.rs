@@ -285,4 +285,46 @@ impl NodeKind {
         )
     }
 
+    /// Returns `true` if this node kind is commutative under operand swap.
+    ///
+    /// A binary operator `op(a, b)` is commutative iff `op(a, b) == op(b, a)`
+    /// always holds.  Patterns matching commutative nodes can match both
+    /// operand orderings; non-commutative nodes match only the declared order.
+    ///
+    /// Float operators that ignore NaN ordering (`FloatAdd`, `FloatMul`) are
+    /// commutative per the IEEE-754 commutativity-up-to-NaN convention used
+    /// throughout the IR.  Comparison ops are commutative only when symmetric
+    /// (`IntCmpOp::Equal` yes; `IntCmpOp::Less` no, etc.).  `Carry(l, r)` and
+    /// `Scarry(l, r)` ask whether `l + r` overflows (unsigned / signed
+    /// respectively); since addition commutes, so do these comparisons.
+    /// `FloatCmpOp::Equal` is symmetric for IEEE 754 (yields the same result
+    /// regardless of operand order, including for NaN inputs).
+    ///
+    /// All other kinds (non-binary ops, calls, loads, phis, …) return `false`.
+    /// This method is the single source of truth — replaces the per-op-enum
+    /// helpers that previously lived under `pattern::matcher::commutativity`.
+    #[inline]
+    #[must_use]
+    pub fn is_commutative(&self) -> bool {
+        use crate::ops::{BoolBinaryOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+        match self {
+            Self::IntBinaryOp(op) => matches!(
+                op,
+                IntBinaryOp::Add
+                    | IntBinaryOp::Mul
+                    | IntBinaryOp::And
+                    | IntBinaryOp::Or
+                    | IntBinaryOp::Xor
+            ),
+            Self::BoolBinaryOp(op) => {
+                matches!(op, BoolBinaryOp::And | BoolBinaryOp::Or | BoolBinaryOp::Xor)
+            }
+            Self::FloatBinaryOp(op) => matches!(op, FloatBinaryOp::Add | FloatBinaryOp::Mul),
+            Self::IntCmpOp(op) => {
+                matches!(op, IntCmpOp::Equal | IntCmpOp::Carry | IntCmpOp::Scarry)
+            }
+            Self::FloatCmpOp(op) => matches!(op, FloatCmpOp::Equal),
+            _ => false,
+        }
+    }
 }

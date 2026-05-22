@@ -16,9 +16,6 @@
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
 
-use crate::pattern::matcher::commutativity::{
-    is_commutative_bool_op, is_commutative_float_op, is_commutative_int_op,
-};
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 
@@ -28,28 +25,27 @@ use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 /// ([`IntBinaryOp`] / [`BoolBinaryOp`] / [`FloatBinaryOp`]).  Crate-
 /// private because `build_ty` returns the crate-private [`BuildTy`]
 /// and the public surface only needs the three concrete alias types.
+///
+/// Commutativity is read off the resulting `NodeKind` via
+/// [`NodeKind::is_commutative`] — no per-family helper is needed.
 pub(crate) trait BinaryOpKind: Copy + 'static {
     fn node_kind(self) -> NodeKind;
     fn build_ty(self) -> BuildTy;
-    fn is_commutative(self) -> bool;
 }
 
 impl BinaryOpKind for IntBinaryOp {
     fn node_kind(self) -> NodeKind { NodeKind::IntBinaryOp(self) }
     fn build_ty(self) -> BuildTy { BuildTy::InheritRoot }
-    fn is_commutative(self) -> bool { is_commutative_int_op(self) }
 }
 
 impl BinaryOpKind for BoolBinaryOp {
     fn node_kind(self) -> NodeKind { NodeKind::BoolBinaryOp(self) }
     fn build_ty(self) -> BuildTy { BuildTy::Fixed(NodeOutputType::Bool) }
-    fn is_commutative(self) -> bool { is_commutative_bool_op(self) }
 }
 
 impl BinaryOpKind for FloatBinaryOp {
     fn node_kind(self) -> NodeKind { NodeKind::FloatBinaryOp(self) }
     fn build_ty(self) -> BuildTy { BuildTy::InheritRoot }
-    fn is_commutative(self) -> bool { is_commutative_float_op(self) }
 }
 
 /// Builder for a typed binary-op pattern over any `Op: BinaryOpKind`.
@@ -92,12 +88,12 @@ impl<Op: BinaryOpKind> BinaryOpPat<Op> {
 impl<Op: BinaryOpKind> From<BinaryOpPat<Op>> for Pat {
     fn from(b: BinaryOpPat<Op>) -> Pat {
         let op = b.op;
-        let inputs = if !b.ordered && op.is_commutative() {
+        let kind = op.node_kind();
+        let inputs = if !b.ordered && kind.is_commutative() {
             InputsSpec::fixed_commutative(b.lhs, b.rhs)
         } else {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
-        let kind = op.node_kind();
         NodePat::matcher(KindSpec::Exact(kind), inputs)
             .with_build_exact(kind, op.build_ty())
             .into_pat()

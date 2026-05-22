@@ -14,10 +14,6 @@ use std::sync::Arc;
 use strider_ir::node::NodeKind;
 
 use crate::pattern::matcher::bindings::Binding;
-use crate::pattern::matcher::commutativity::{
-    is_commutative_bool_op, is_commutative_float_cmp_op, is_commutative_float_op,
-    is_commutative_int_cmp_op, is_commutative_int_op,
-};
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 use crate::pattern::var::Capture;
@@ -38,14 +34,12 @@ use crate::pattern::var::Capture;
 macro_rules! impl_variant_any {
     // Binary-arity with a runtime commutativity decider.
     (binary, $fn_name:ident, $op_enum:ident, $sample_op:expr,
-     $commutative:path, $build_ty:expr, $missing:literal, $doc:literal) => {
+     $build_ty:expr, $missing:literal, $doc:literal) => {
         #[doc = $doc]
         pub fn $fn_name(c: Capture, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-                match ctx.graph.node_kind(node) {
-                    NodeKind::$op_enum(op) => $commutative(*op),
-                    _ => false,
-                }
+                let kind = ctx.graph.node_kind(node);
+                matches!(kind, NodeKind::$op_enum(_)) && kind.is_commutative()
             });
             NodePat::matcher(
                 KindSpec::variant(&NodeKind::$op_enum($sample_op)),
@@ -82,14 +76,12 @@ macro_rules! impl_variant_any {
     };
     // Cmp-arity with a runtime commutativity decider (shape mirrors `binary`).
     (cmp, $fn_name:ident, $op_enum:ident, $sample_op:expr,
-     $commutative:path, $build_ty:expr, $missing:literal, $doc:literal) => {
+     $build_ty:expr, $missing:literal, $doc:literal) => {
         #[doc = $doc]
         pub fn $fn_name(c: Capture, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-                match ctx.graph.node_kind(node) {
-                    NodeKind::$op_enum(op) => $commutative(*op),
-                    _ => false,
-                }
+                let kind = ctx.graph.node_kind(node);
+                matches!(kind, NodeKind::$op_enum(_)) && kind.is_commutative()
             });
             NodePat::matcher(
                 KindSpec::variant(&NodeKind::$op_enum($sample_op)),
@@ -169,7 +161,7 @@ fn bool_ty() -> BuildTy { BuildTy::Fixed(strider_ir::node::NodeOutputType::Bool)
 
 impl_variant_any!(
     binary, int_binary_any, IntBinaryOp, strider_ir::IntBinaryOp::Add,
-    is_commutative_int_op, BuildTy::InheritRoot, "int_binary_any",
+    BuildTy::InheritRoot, "int_binary_any",
     "Matches **any** integer binary operation and binds the matched node to `c`.\n\nCommutative ops (`Add`, `Mul`, `And`, `Or`, `Xor`) will try both operand orderings automatically.  Recover the op via `Match::get_int_binary_op(c, &graph)`."
 );
 
@@ -181,13 +173,13 @@ impl_variant_any!(
 
 impl_variant_any!(
     cmp, int_cmp_any, IntCmpOp, strider_ir::IntCmpOp::Equal,
-    is_commutative_int_cmp_op, bool_ty(), "int_cmp_any",
+    bool_ty(), "int_cmp_any",
     "Matches **any** integer comparison and binds the matched node to `c`.\n\nCommutative comparisons (`Equal`, `Carry`, `Scarry`) try both operand orderings automatically.  Recover the op via `Match::get_int_cmp_op(c, &graph)`."
 );
 
 impl_variant_any!(
     binary, bool_binary_any, BoolBinaryOp, strider_ir::BoolBinaryOp::And,
-    is_commutative_bool_op, bool_ty(), "bool_binary_any",
+    bool_ty(), "bool_binary_any",
     "Matches **any** boolean binary operation and binds the matched node to `c`.\n\nCommutative ops (`And`, `Or`, `Xor`) try both operand orderings automatically.  Recover the op via `Match::get_bool_binary_op(c, &graph)`."
 );
 
@@ -199,7 +191,7 @@ impl_variant_any!(
 
 impl_variant_any!(
     binary, float_binary_any, FloatBinaryOp, strider_ir::FloatBinaryOp::Add,
-    is_commutative_float_op, BuildTy::InheritRoot, "float_binary_any",
+    BuildTy::InheritRoot, "float_binary_any",
     "Matches **any** float binary operation and binds the matched node to `c`.\n\nCommutative ops (`Add`, `Mul`) try both operand orderings automatically.  Recover the op via `Match::get_float_binary_op(c, &graph)`."
 );
 
@@ -211,6 +203,6 @@ impl_variant_any!(
 
 impl_variant_any!(
     cmp, float_cmp_any, FloatCmpOp, strider_ir::FloatCmpOp::Equal,
-    is_commutative_float_cmp_op, bool_ty(), "float_cmp_any",
+    bool_ty(), "float_cmp_any",
     "Matches **any** float comparison and binds the matched node to `c`.\n\n`Equal` is commutative and tries both operand orderings automatically.  `NotEqual` and `LessEqual` are not IR primitives — they are lowered at lift time; use the `float_ne` / `float_le` aliases to match those shapes.  Recover the op via `Match::get_float_cmp_op(c, &graph)`."
 );
