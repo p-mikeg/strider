@@ -876,6 +876,27 @@ fn cc_from_table(name: &'static str) -> std::result::Result<CallingConvention, M
         .ok_or(MissingPresetError(name))
 }
 
+/// Emits a named factory wrapper around [`cc_from_table`] with the
+/// canonical `# Errors` doc block.  `$desc` is the per-preset
+/// description that becomes the first paragraph of the rustdoc.
+///
+/// `#[doc = concat!(...)]` is used because rustdoc's `///` form
+/// doesn't accept macro variables — the macro emits `#[doc = "..."]`
+/// directly with the computed string.
+macro_rules! cc_factory {
+    ($name:ident, $desc:expr) => {
+        #[doc = concat!($desc, "  See `CC_PRESETS` for the full field table.")]
+        ///
+        /// # Errors
+        ///
+        /// Returns [`MissingPresetError`] if this factory's preset name is
+        /// not registered in `CC_PRESETS` (an internal-consistency failure).
+        pub fn $name() -> std::result::Result<CallingConvention, MissingPresetError> {
+            cc_from_table(stringify!($name))
+        }
+    };
+}
+
 impl CallingConvention {
     /// Returns `true` if calls under this convention preserve memory
     /// across the call (i.e. the IR's Call node should NOT advance the
@@ -885,120 +906,25 @@ impl CallingConvention {
         self.no_memory_clobber
     }
 
-    /// Returns the x86-64 System V ABI calling convention.  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn x86_64_systemv() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("x86_64_systemv")
-    }
-
-    /// "All-preserving" x86_64 calling convention: every userland
-    /// caller-clobbered register is listed as callee-saved.  Used for
-    /// sites like Linux-kernel `__fentry__` / `mcount` callbacks that
-    /// preserve all caller state.  Pair with the per-address override
-    /// map on [`crate::CallingConvention`] consumers (e.g.
-    /// `strider::Config::per_address_ccs`) so the override applies only
-    /// to specific Call sites; the function-default CC stays SystemV.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn x86_64_all_preserving() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("x86_64_all_preserving")
-    }
-
-    /// Returns the AArch64 AAPCS64 calling convention.  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn aarch64_aapcs64() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("aarch64_aapcs64")
-    }
-
-    /// Returns the ARM 32-bit AAPCS calling convention.  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn arm_aapcs() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("arm_aapcs")
-    }
-
-    /// Returns the MIPS O32 calling convention.  See `CC_PRESETS` for
-    /// the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn mips_o32() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("mips_o32")
-    }
-
-    /// Returns the MIPS N64 calling convention.  See `CC_PRESETS` for
-    /// the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn mips_n64() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("mips_n64")
-    }
-
-    /// Returns the PowerPC 32-bit System V ABI calling convention.  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn powerpc_sysv32() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("powerpc_sysv32")
-    }
-
-    /// Returns the PowerPC 64-bit ELFv1 calling convention.  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn powerpc64_elf_v1() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("powerpc64_elf_v1")
-    }
-
-    /// Returns the PowerPC 64-bit ELFv2 calling convention.  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn powerpc64_elf_v2() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("powerpc64_elf_v2")
-    }
-
-    /// Returns the x86 cdecl calling convention.  See `CC_PRESETS` for
-    /// the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn x86_cdecl() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("x86_cdecl")
-    }
+    cc_factory!(x86_64_systemv, "Returns the x86-64 System V ABI calling convention.");
+    cc_factory!(
+        x86_64_all_preserving,
+        "\"All-preserving\" x86_64 calling convention: every userland \
+         caller-clobbered register is listed as callee-saved.  Used for \
+         sites like Linux-kernel `__fentry__` / `mcount` callbacks that \
+         preserve all caller state.  Pair with the per-address override \
+         map on [`crate::CallingConvention`] consumers (e.g. \
+         `strider::Config::per_address_ccs`) so the override applies only \
+         to specific Call sites; the function-default CC stays SystemV."
+    );
+    cc_factory!(aarch64_aapcs64, "Returns the AArch64 AAPCS64 calling convention.");
+    cc_factory!(arm_aapcs, "Returns the ARM 32-bit AAPCS calling convention.");
+    cc_factory!(mips_o32, "Returns the MIPS O32 calling convention.");
+    cc_factory!(mips_n64, "Returns the MIPS N64 calling convention.");
+    cc_factory!(powerpc_sysv32, "Returns the PowerPC 32-bit System V ABI calling convention.");
+    cc_factory!(powerpc64_elf_v1, "Returns the PowerPC 64-bit ELFv1 calling convention.");
+    cc_factory!(powerpc64_elf_v2, "Returns the PowerPC 64-bit ELFv2 calling convention.");
+    cc_factory!(x86_cdecl, "Returns the x86 cdecl calling convention.");
 
     /// Resolves all register name strings in this calling convention to their
     /// concrete [`rsleigh::Vn`] varnodes using `sleigh_regs`.
@@ -1058,137 +984,50 @@ impl CallingConvention {
 // on the kernel + syscall ABIs see
 // docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md.
 impl CallingConvention {
-    /// Returns the Linux kernel-internal CC for x86 32-bit
-    /// (`-mregparm=3`).  See `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn x86_linux_kernel() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("x86_linux_kernel")
-    }
-
-    /// Returns the Linux kernel-internal CC for x86_64.  Identical to
-    /// [`Self::x86_64_systemv`] — provided as a self-documenting alias.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn x86_64_linux_kernel() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("x86_64_linux_kernel")
-    }
-
-    /// Returns the Linux kernel-internal CC for AArch64.  Identical to
-    /// [`Self::aarch64_aapcs64`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn aarch64_linux_kernel() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("aarch64_linux_kernel")
-    }
-
-    /// Returns the Linux kernel-internal CC for ARM.  Identical to
-    /// [`Self::arm_aapcs`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn arm_linux_kernel() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("arm_linux_kernel")
-    }
-
-    /// Returns the Linux kernel-internal CC for MIPS O32.  Identical to
-    /// [`Self::mips_o32`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn mips_linux_kernel_o32() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("mips_linux_kernel_o32")
-    }
-
-    /// Returns the Linux kernel-internal CC for MIPS N64.  Identical to
-    /// [`Self::mips_n64`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn mips_linux_kernel_n64() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("mips_linux_kernel_n64")
-    }
-
-    /// Returns the Linux syscall ABI for x86 32-bit (`int 0x80`).  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn x86_linux_syscall() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("x86_linux_syscall")
-    }
-
-    /// Returns the Linux syscall ABI for x86_64 (`syscall`).  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn x86_64_linux_syscall() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("x86_64_linux_syscall")
-    }
-
-    /// Returns the Linux syscall ABI for AArch64 (`svc #0`).  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn aarch64_linux_syscall() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("aarch64_linux_syscall")
-    }
-
-    /// Returns the Linux syscall ABI for ARM 32-bit (`svc 0`).  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn arm_linux_syscall() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("arm_linux_syscall")
-    }
-
-    /// Returns the Linux syscall ABI for MIPS O32 (`syscall`).  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn mips_linux_syscall_o32() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("mips_linux_syscall_o32")
-    }
-
-    /// Returns the Linux syscall ABI for MIPS N64 (`syscall`).  See
-    /// `CC_PRESETS` for the full field table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingPresetError`] if this factory's preset name is
-    /// not registered in `CC_PRESETS` (an internal-consistency failure).
-    pub fn mips_linux_syscall_n64() -> std::result::Result<CallingConvention, MissingPresetError> {
-        cc_from_table("mips_linux_syscall_n64")
-    }
+    cc_factory!(
+        x86_linux_kernel,
+        "Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`)."
+    );
+    cc_factory!(
+        x86_64_linux_kernel,
+        "Returns the Linux kernel-internal CC for x86_64.  Identical to \
+         [`Self::x86_64_systemv`] \u{2014} provided as a self-documenting alias."
+    );
+    cc_factory!(
+        aarch64_linux_kernel,
+        "Returns the Linux kernel-internal CC for AArch64.  Identical to \
+         [`Self::aarch64_aapcs64`]."
+    );
+    cc_factory!(
+        arm_linux_kernel,
+        "Returns the Linux kernel-internal CC for ARM.  Identical to \
+         [`Self::arm_aapcs`]."
+    );
+    cc_factory!(
+        mips_linux_kernel_o32,
+        "Returns the Linux kernel-internal CC for MIPS O32.  Identical to \
+         [`Self::mips_o32`]."
+    );
+    cc_factory!(
+        mips_linux_kernel_n64,
+        "Returns the Linux kernel-internal CC for MIPS N64.  Identical to \
+         [`Self::mips_n64`]."
+    );
+    cc_factory!(x86_linux_syscall, "Returns the Linux syscall ABI for x86 32-bit (`int 0x80`).");
+    cc_factory!(x86_64_linux_syscall, "Returns the Linux syscall ABI for x86_64 (`syscall`).");
+    cc_factory!(
+        aarch64_linux_syscall,
+        "Returns the Linux syscall ABI for AArch64 (`svc #0`)."
+    );
+    cc_factory!(arm_linux_syscall, "Returns the Linux syscall ABI for ARM 32-bit (`svc 0`).");
+    cc_factory!(
+        mips_linux_syscall_o32,
+        "Returns the Linux syscall ABI for MIPS O32 (`syscall`)."
+    );
+    cc_factory!(
+        mips_linux_syscall_n64,
+        "Returns the Linux syscall ABI for MIPS N64 (`syscall`)."
+    );
 }
 
 
