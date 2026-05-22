@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_dot("graph.dot")?;
 
     let mut pipeline = strider.build_optimizer_pipeline();
-    pipeline.add(strider_analyze::opt::LoadReadOnly(rom));
+    pipeline.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom)));
     let entry = function
         .entry()
         .ok_or("orchestrator_demo: built function missing entry")?;

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::ReadOnlyMemory;
 
@@ -30,6 +32,7 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 /// Wrap a concrete memory implementation and add this optimizer to the pipeline:
 ///
 /// ```rust
+/// use std::sync::Arc;
 /// use strider_analyze::opt::{LoadReadOnly, OptimizerPipeline};
 /// use strider_ir::ReadOnlyMemory;
 ///
@@ -41,11 +44,24 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 /// }
 ///
 /// let mut pipeline = OptimizerPipeline::new();
-/// pipeline.add(LoadReadOnly(MyRom));
+/// pipeline.add(LoadReadOnly::new(Arc::new(MyRom)));
 /// ```
-pub struct LoadReadOnly<M>(pub M);
+pub struct LoadReadOnly {
+    rom: Arc<dyn ReadOnlyMemory>,
+}
 
-impl<M: ReadOnlyMemory + 'static> PeepholePass for LoadReadOnly<M> {
+impl LoadReadOnly {
+    /// Construct a `LoadReadOnly` pass over an `Arc`-shared rom.  The
+    /// pipeline holds `Box<dyn Optimizer>` and the production callers
+    /// (orchestrator, cfg::options) already carry the rom as
+    /// `Arc<dyn ReadOnlyMemory>`, so taking an `Arc` here makes the
+    /// construction a no-op clone rather than a deep copy.
+    pub fn new(rom: Arc<dyn ReadOnlyMemory>) -> Self {
+        Self { rom }
+    }
+}
+
+impl PeepholePass for LoadReadOnly {
     fn name(&self) -> &'static str {
         "LoadReadOnly"
     }
@@ -94,7 +110,7 @@ impl<M: ReadOnlyMemory + 'static> PeepholePass for LoadReadOnly<M> {
         if size > 8 {
             return Ok(OptimizationResult::NoChange);
         }
-        let Some(loaded) = self.0.read(addr, size) else {
+        let Some(loaded) = self.rom.read(addr, size) else {
             return Ok(OptimizationResult::NoChange);
         };
 
@@ -114,7 +130,7 @@ impl<M: ReadOnlyMemory + 'static> PeepholePass for LoadReadOnly<M> {
     }
 }
 
-impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
+impl Optimizer for LoadReadOnly {
     fn optimize(
         &self,
         graph: &mut strider_ir::Graph,

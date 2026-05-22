@@ -207,7 +207,7 @@ impl PyOptimizerPipeline {
         rom: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
     ) -> PyResult<()> {
         let mut state = self.lock_state()?;
-        let pass: ErasedPass = Box::new(strider_analyze::opt::LoadReadOnly(rom));
+        let pass: ErasedPass = Box::new(strider_analyze::opt::LoadReadOnly::new(rom));
         state.passes.insert(0, pass);
         Ok(())
     }
@@ -431,7 +431,7 @@ impl PyOptPass<'_> {
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::LoadReadOnly(b) => {
-                Box::new(strider_analyze::opt::LoadReadOnly(std::sync::Arc::clone(&b.borrow().rom)))
+                Box::new(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::clone(&b.borrow().rom)))
             }
         }
     }

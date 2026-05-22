@@ -250,10 +250,10 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFuncti
     let (mut graph, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, case, fn_name);
     let mut p = ana.build_optimizer_pipeline();
-    // `LoadReadOnly` requires an owned concrete reader (`M: 'static`).
-    // Re-borrow from the Arc — every test crate's analyze runs in a
-    // fresh process so Arc ref-counting cost is negligible.
-    p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
+    // `LoadReadOnly` stores its rom as `Arc<dyn ReadOnlyMemory>`; the
+    // `rom_for_opt` carry type already matches, so this is a no-op
+    // clone.
+    p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
     let entry = graph.entry().unwrap();
     p.run(graph.graph_mut(), entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));

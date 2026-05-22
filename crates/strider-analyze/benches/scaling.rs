@@ -97,7 +97,7 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
     let mut graph = ana.analyze_cfg(&cfg).expect("analyze_cfg").graph;
     let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
-    p.add(strider_analyze::opt::LoadReadOnly(rom_for_opt));
+    p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));
     let entry = graph.entry().unwrap();
     p.run(graph.graph_mut(), entry).expect("optimizer pipeline");
     graph

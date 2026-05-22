@@ -27,7 +27,7 @@ fn load_from_rom_const_addr() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly(TestRom).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
     assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(42));
     Ok(())
 }
@@ -39,7 +39,7 @@ fn load_non_rom_addr_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly(TestRom).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
     // Load node should still be present.
     assert!(
         fg.all_node_ids()
@@ -61,7 +61,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
     })?;
     // addr is an Add node, not a const → LoadReadOnly must not fire.
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly(TestRom).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
     Ok(())
 }
 
@@ -88,7 +88,7 @@ fn load_oversize_read_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly(Limited).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(Limited)).optimize(fg.graph_mut(), entry)?.changed());
     Ok(())
 }
 
@@ -108,7 +108,7 @@ fn load_other_space_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::REGISTER, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly(AlwaysAnswer).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(AlwaysAnswer)).optimize(fg.graph_mut(), entry)?.changed());
     Ok(())
 }
 
@@ -121,7 +121,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly(TestRom).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
     assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
@@ -137,7 +137,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
         b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly(TestRom).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
     // Both loads must have folded out of the reachable subgraph.
     let remaining_loads =
         crate::opt::test_support::count_reachable((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
