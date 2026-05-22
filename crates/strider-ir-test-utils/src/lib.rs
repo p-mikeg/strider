@@ -22,6 +22,131 @@ use strider_ir::{BuiltFunctionGraph, FunctionBuilder, Result, Value};
 /// node leaks into a production code path.
 pub const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
+/// Fluent builder for the 7-positional-arg `FunctionBuilder::new_raw`
+/// signature used by mock-IR tests across the workspace.
+///
+/// The builder defers to `FunctionBuilder::new_raw` and then stamps
+/// [`SENTINEL_LIFT_ADDR`] as the active lift address so every node
+/// the test subsequently creates carries a non-empty asm-fingerprint
+/// (Layer-C contract).  Test sites no longer repeat the
+/// `new_raw + set_lift_addr` dance.
+///
+/// The constructed `FunctionBuilder` has the sentinel lift_addr set
+/// but no region created yet — callers that want a single entry
+/// region can use [`RegisterSet::build_fn_single_region`] instead.
+#[derive(Default, Clone)]
+pub struct RegisterSet {
+    tracked: Vec<rsleigh::Vn>,
+    arg_passing: Vec<rsleigh::Vn>,
+    callee_saved: Vec<rsleigh::Vn>,
+    ret_val: Vec<rsleigh::Vn>,
+    sp: Option<rsleigh::Vn>,
+    ret_stack_pop: i64,
+}
+
+impl RegisterSet {
+    /// Construct an empty register set.  All vectors start empty and
+    /// `sp` / `ret_stack_pop` default to `None` / `0`.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append `vn` to the tracked-variables list.  Equivalent to the
+    /// first positional argument of `FunctionBuilder::new_raw`.
+    #[must_use]
+    pub fn tracked(mut self, vn: rsleigh::Vn) -> Self {
+        self.tracked.push(vn);
+        self
+    }
+
+    /// Append `vn` to the arg-passing list (second positional arg of
+    /// `FunctionBuilder::new_raw`).
+    #[must_use]
+    pub fn arg(mut self, vn: rsleigh::Vn) -> Self {
+        self.arg_passing.push(vn);
+        self
+    }
+
+    /// Append `vn` to the callee-saved list (third positional arg of
+    /// `FunctionBuilder::new_raw`).
+    #[must_use]
+    pub fn callee_saved(mut self, vn: rsleigh::Vn) -> Self {
+        self.callee_saved.push(vn);
+        self
+    }
+
+    /// Append `vn` to the ret-val list (fourth positional arg of
+    /// `FunctionBuilder::new_raw`).
+    #[must_use]
+    pub fn ret(mut self, vn: rsleigh::Vn) -> Self {
+        self.ret_val.push(vn);
+        self
+    }
+
+    /// Set the stack-pointer varnode (fifth positional arg of
+    /// `FunctionBuilder::new_raw`).
+    #[must_use]
+    pub fn sp(mut self, vn: rsleigh::Vn) -> Self {
+        self.sp = Some(vn);
+        self
+    }
+
+    /// Set the `ret_stack_pop` value (sixth positional arg of
+    /// `FunctionBuilder::new_raw`).
+    #[must_use]
+    pub fn ret_stack_pop(mut self, n: i64) -> Self {
+        self.ret_stack_pop = n;
+        self
+    }
+
+    /// Construct a `FunctionBuilder` with this register set and stamp
+    /// [`SENTINEL_LIFT_ADDR`] as the active lift address.  No region
+    /// is created — callers that need multiple regions can drive
+    /// `create_region` / `set_entry_region` / `set_region` themselves.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from `FunctionBuilder::new_raw`.
+    pub fn build_fn(self) -> Result<FunctionBuilder> {
+        let mut b = FunctionBuilder::new_raw(
+            self.tracked,
+            &self.arg_passing,
+            &self.callee_saved,
+            &self.ret_val,
+            self.sp,
+            self.ret_stack_pop,
+        )?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        Ok(b)
+    }
+
+    /// Construct a `FunctionBuilder` with this register set and a
+    /// single entry region.  Equivalent to `build_fn` followed by
+    /// `create_region` + `set_entry_region` + `set_region`.
+    /// [`SENTINEL_LIFT_ADDR`] is stamped as the active lift address.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from `FunctionBuilder::new_raw`,
+    /// `create_region`, or `set_entry_region`.
+    pub fn build_fn_single_region(self) -> Result<FunctionBuilder> {
+        let mut b = FunctionBuilder::new_raw(
+            self.tracked,
+            &self.arg_passing,
+            &self.callee_saved,
+            &self.ret_val,
+            self.sp,
+            self.ret_stack_pop,
+        )?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        Ok(b)
+    }
+}
+
 /// Builds a single-region function whose return value is what `f` produces.
 ///
 /// Sets [`SENTINEL_LIFT_ADDR`] as the active lift address for the
@@ -70,11 +195,10 @@ pub fn make_fn_with_var<F>(
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<Value>,
 {
-    let mut b = FunctionBuilder::new_raw(vec![vn], &[vn], &[], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(vn)
+        .arg(vn)
+        .build_fn_single_region()?;
     let x = b.read_variable(&vn)?;
     let val = f(&mut b, x)?;
     // Re-stamp the sentinel after the closure (see `make_empty_fn`).
@@ -120,11 +244,10 @@ pub fn make_sp_fn<F>(sp_vn: rsleigh::Vn, f: F) -> Result<BuiltFunctionGraph>
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<()>,
 {
-    let mut b = FunctionBuilder::new_raw(vec![sp_vn], &[], &[sp_vn], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(sp_vn)
+        .callee_saved(sp_vn)
+        .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp_vn)?;
     f(&mut b, sp_val)?;
     b.set_lift_addr(None);
