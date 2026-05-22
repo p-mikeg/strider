@@ -104,3 +104,30 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     }
     Ok(overall)
 }
+
+/// Emit a thin [`crate::opt::pipeline::Optimizer`] impl for a
+/// [`PeepholePass`] type whose `Optimizer::optimize` body would be the
+/// verbatim two-liner: build a `RewriteCtx`, hand it to
+/// [`run_peephole`].
+///
+/// Use from a pass module after the `PeepholePass` impl block:
+///
+/// ```ignore
+/// impl_optimizer_from_peephole!(MyPass);
+/// ```
+macro_rules! impl_optimizer_from_peephole {
+    ($t:ty) => {
+        impl $crate::opt::pipeline::Optimizer for $t {
+            fn optimize(
+                &self,
+                graph: &mut strider_ir::Graph,
+                entry: strider_ir::node::NodeId,
+            ) -> $crate::opt::error::Result<$crate::opt::pipeline::OptimizationResult> {
+                let mut ctx = $crate::pattern::RewriteCtx::new(graph, entry);
+                $crate::opt::peephole::run_peephole(self, &mut ctx)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_optimizer_from_peephole;

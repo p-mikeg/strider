@@ -46,7 +46,8 @@
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
-use crate::opt::pipeline::{OptimizationResult, Optimizer};
+use crate::opt::peephole::impl_optimizer_from_peephole;
+use crate::opt::pipeline::OptimizationResult;
 
 /// Pass that rewrites `If(BoolNeg(C))` into `If(C)` with branches swapped.
 ///
@@ -83,16 +84,7 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
     }
 }
 
-impl Optimizer for IfCondInversion {
-    fn optimize(
-        &self,
-        graph: &mut strider_ir::Graph,
-        entry: strider_ir::node::NodeId,
-    ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
-        crate::opt::peephole::run_peephole(self, &mut ctx)
-    }
-}
+impl_optimizer_from_peephole!(IfCondInversion);
 
 /// Returns `true` when the `If` node's cond input (slot 1) consumes the
 /// output of a `BoolUnaryOp::Neg` node.

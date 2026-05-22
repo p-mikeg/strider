@@ -60,8 +60,8 @@ use crate::pattern::{
 };
 
 use crate::opt::error::Result;
-use crate::opt::peephole::{PeepholePass, run_peephole};
-use crate::opt::pipeline::{OptimizationResult, Optimizer};
+use crate::opt::peephole::{PeepholePass, impl_optimizer_from_peephole};
+use crate::opt::pipeline::OptimizationResult;
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
 pub struct FlagCmpCanonicalize;
@@ -101,16 +101,7 @@ impl PeepholePass for FlagCmpCanonicalize {
     }
 }
 
-impl Optimizer for FlagCmpCanonicalize {
-    fn optimize(
-        &self,
-        graph: &mut strider_ir::Graph,
-        entry: strider_ir::node::NodeId,
-    ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
-        run_peephole(self, &mut ctx)
-    }
-}
+impl_optimizer_from_peephole!(FlagCmpCanonicalize);
 
 // ── Rule table ────────────────────────────────────────────────────────────
 //

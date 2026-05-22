@@ -3,8 +3,8 @@ use std::sync::Arc;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::ReadOnlyMemory;
 
-use crate::opt::peephole::{PeepholePass, run_peephole};
-use crate::opt::pipeline::{OptimizationResult, Optimizer};
+use crate::opt::peephole::{PeepholePass, impl_optimizer_from_peephole};
+use crate::opt::pipeline::OptimizationResult;
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
@@ -130,16 +130,7 @@ impl PeepholePass for LoadReadOnly {
     }
 }
 
-impl Optimizer for LoadReadOnly {
-    fn optimize(
-        &self,
-        graph: &mut strider_ir::Graph,
-        entry: strider_ir::node::NodeId,
-    ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
-        run_peephole(self, &mut ctx)
-    }
-}
+impl_optimizer_from_peephole!(LoadReadOnly);
 
 #[cfg(test)]
 mod tests;

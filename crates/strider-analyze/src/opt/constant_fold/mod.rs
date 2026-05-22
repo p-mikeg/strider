@@ -1,8 +1,8 @@
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
-use crate::opt::peephole::{PeepholePass, run_peephole};
-use crate::opt::pipeline::{OptimizationResult, Optimizer};
+use crate::opt::peephole::{PeepholePass, impl_optimizer_from_peephole};
+use crate::opt::pipeline::OptimizationResult;
 
 pub(crate) mod eval_float;
 pub(crate) mod eval_int;
@@ -85,13 +85,4 @@ impl PeepholePass for ConstantFold {
     }
 }
 
-impl Optimizer for ConstantFold {
-    fn optimize(
-        &self,
-        graph: &mut strider_ir::Graph,
-        entry: NodeId,
-    ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
-        run_peephole(self, &mut ctx)
-    }
-}
+impl_optimizer_from_peephole!(ConstantFold);
