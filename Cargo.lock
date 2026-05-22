@@ -1326,7 +1326,6 @@ dependencies = [
  "entity-utils",
  "graphwalk",
  "hashbrown 0.16.1",
- "itertools 0.13.0",
  "proptest",
  "rsleigh",
  "rustc-hash",
