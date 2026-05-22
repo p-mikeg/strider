@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let strider = strider_analyze::Strider::new(
         arch,
         sleigh.regs()?,
-        strider_analyze::CallingConvention::x86_cdecl(),
+        strider_analyze::CallingConvention::x86_cdecl()?,
     )?;
 
     let cfg_options = strider_lift::cfg::OptionsBuilder::new()

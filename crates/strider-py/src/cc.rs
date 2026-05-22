@@ -31,11 +31,13 @@ macro_rules! forall_preset {
         impl $self_ty {
             $(
                 #[classmethod]
-                fn $name(_cls: &Bound<'_, PyType>) -> Self {
-                    Self {
-                        inner: <$inner_ty>::$name(),
+                fn $name(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
+                    let inner = <$inner_ty>::$name()
+                        .map_err(|e| crate::errors::into_lift_err(e.into()))?;
+                    Ok(Self {
+                        inner,
                         preset_name: stringify!($name),
-                    }
+                    })
                 }
             )*
         }
@@ -80,11 +82,13 @@ impl PyCallingConvention {
     /// per-address CC override for sites that observe no caller state
     /// changes (e.g. Linux-kernel `__fentry__` / `mcount`).
     #[classmethod]
-    fn x86_64_all_preserving(_cls: &Bound<'_, PyType>) -> Self {
-        Self {
-            inner: strider_target::CallingConvention::x86_64_all_preserving(),
+    fn x86_64_all_preserving(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
+        let inner = strider_target::CallingConvention::x86_64_all_preserving()
+            .map_err(|e| crate::errors::into_lift_err(e.into()))?;
+        Ok(Self {
+            inner,
             preset_name: "x86_64_all_preserving",
-        }
+        })
     }
 
     fn name(&self) -> &'static str {

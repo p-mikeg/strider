@@ -79,6 +79,7 @@ fn build_routes_through_validator_no_false_positives() {
         .probe_regs()
         .expect("probe regs");
     CallingConvention::x86_64_systemv()
+        .expect("x86_64_systemv preset must be registered")
         .build(&regs)
         .expect("x86_64_systemv must build cleanly (build routes through try_new)");
 }

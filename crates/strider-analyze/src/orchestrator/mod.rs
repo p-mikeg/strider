@@ -1150,8 +1150,9 @@ mod tests {
     fn make_strider_x86_64() -> Strider {
         let arch = strider_target::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
-        Strider::new(arch, regs, strider_target::CallingConvention::x86_64_systemv())
-            .expect("strider")
+        let cc = strider_target::CallingConvention::x86_64_systemv()
+            .expect("x86_64_systemv preset must be registered");
+        Strider::new(arch, regs, cc).expect("strider")
     }
 
 

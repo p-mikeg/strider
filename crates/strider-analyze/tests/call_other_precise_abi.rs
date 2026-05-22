@@ -16,7 +16,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let strider_h = strider_analyze::Strider::new(
         arch,
         regs,
-        strider_analyze::CallingConvention::x86_64_systemv(),
+        strider_analyze::CallingConvention::x86_64_systemv().unwrap(),
     )
     .expect("strider");
 
@@ -89,7 +89,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let strider_h = strider_analyze::Strider::new(
         arch,
         regs,
-        strider_analyze::CallingConvention::aarch64_aapcs64(),
+        strider_analyze::CallingConvention::aarch64_aapcs64().unwrap(),
     )
     .expect("strider");
 

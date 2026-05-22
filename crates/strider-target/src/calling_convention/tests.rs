@@ -13,7 +13,7 @@ fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
 /// adding one entry here — every invariant test picks it up.
 struct Case {
     name: &'static str,
-    cc: fn() -> CallingConvention,
+    cc: fn() -> std::result::Result<CallingConvention, MissingPresetError>,
     arch: fn() -> crate::arch::SleighArch,
     arg_count: usize,
     callee_saved_count: usize,
@@ -306,7 +306,7 @@ fn cases() -> Vec<Case> {
 
 fn build_case(case: &Case) -> (BuiltCallingConvention, rsleigh::SleighRegs) {
     let regs = regs_for((case.arch)());
-    let built = (case.cc)()
+    let built = (case.cc)().unwrap()
         .build(&regs)
         .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", case.name));
     (built, regs)
@@ -503,7 +503,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
 /// and every test picks it up.
 struct LinkRegCase {
     name: &'static str,
-    cc: fn() -> CallingConvention,
+    cc: fn() -> std::result::Result<CallingConvention, MissingPresetError>,
     arch: fn() -> crate::arch::SleighArch,
     expected_lr_name: Option<&'static str>,
 }
@@ -615,7 +615,7 @@ fn link_register_vn_set_for_link_register_presets() {
             continue;
         };
         let regs = regs_for((c.arch)());
-        let built = (c.cc)()
+        let built = (c.cc)().unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         let expected_vn = regs.name_to_vn(expected_name).unwrap_or_else(|| {
@@ -644,7 +644,7 @@ fn link_register_vn_none_for_stack_push_presets() {
             continue;
         }
         let regs = regs_for((c.arch)());
-        let built = (c.cc)()
+        let built = (c.cc)().unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         assert!(
@@ -675,7 +675,7 @@ fn link_register_vn_resolves_to_callee_saved_lr() {
             continue;
         };
         let regs = regs_for((c.arch)());
-        let built = (c.cc)()
+        let built = (c.cc)().unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         let lr_vn = built
@@ -727,7 +727,7 @@ fn x86_64_all_preserving_has_no_memory_clobber_true() {
     // be suppressible at IR-build time so LoadReadOnly / StackLoadForward
     // can forward across these calls.
     assert!(
-        CallingConvention::x86_64_all_preserving().no_memory_clobber(),
+        CallingConvention::x86_64_all_preserving().unwrap().no_memory_clobber(),
         "x86_64_all_preserving must declare no_memory_clobber = true"
     );
 }
@@ -738,15 +738,15 @@ fn standard_presets_have_no_memory_clobber_false() {
     // so its Call nodes correctly clobber memory.  Only x86_64_all_preserving
     // opts out.
     let presets: &[(&str, CallingConvention)] = &[
-        ("x86_64_systemv", CallingConvention::x86_64_systemv()),
-        ("x86_cdecl", CallingConvention::x86_cdecl()),
-        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64()),
-        ("arm_aapcs", CallingConvention::arm_aapcs()),
-        ("mips_o32", CallingConvention::mips_o32()),
-        ("mips_n64", CallingConvention::mips_n64()),
-        ("powerpc_sysv32", CallingConvention::powerpc_sysv32()),
-        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1()),
-        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2()),
+        ("x86_64_systemv", CallingConvention::x86_64_systemv().unwrap()),
+        ("x86_cdecl", CallingConvention::x86_cdecl().unwrap()),
+        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64().unwrap()),
+        ("arm_aapcs", CallingConvention::arm_aapcs().unwrap()),
+        ("mips_o32", CallingConvention::mips_o32().unwrap()),
+        ("mips_n64", CallingConvention::mips_n64().unwrap()),
+        ("powerpc_sysv32", CallingConvention::powerpc_sysv32().unwrap()),
+        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1().unwrap()),
+        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2().unwrap()),
     ];
     for (name, cc) in presets {
         assert!(
@@ -763,7 +763,10 @@ fn every_preset_factory_resolves() {
     // future edit appends a wrapper without appending a row (or
     // misspells the name), this test catches it before the production
     // panic at `cc_from_table` fires.
-    let factories: &[(&str, fn() -> CallingConvention)] = &[
+    let factories: &[(
+        &str,
+        fn() -> std::result::Result<CallingConvention, MissingPresetError>,
+    )] = &[
         ("x86_64_systemv",         CallingConvention::x86_64_systemv),
         ("x86_64_all_preserving",  CallingConvention::x86_64_all_preserving),
         ("aarch64_aapcs64",        CallingConvention::aarch64_aapcs64),
@@ -792,7 +795,7 @@ fn every_preset_factory_resolves() {
             .unwrap_or_else(|| panic!("preset {name:?} missing from CC_PRESETS"));
         assert_eq!(
             row.cc,
-            factory(),
+            factory().unwrap(),
             "preset {name:?}: CC_PRESETS row does not match factory output",
         );
     }

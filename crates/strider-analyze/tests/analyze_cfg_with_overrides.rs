@@ -42,7 +42,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     // function-default CC was built against.
     let regs = arch.probe_regs().unwrap();
     let mut built: HashMap<u64, strider_target::BuiltCallingConvention> = HashMap::new();
-    built.insert(call_target, TargetCC::x86_64_all_preserving().build(&regs).unwrap());
+    built.insert(call_target, TargetCC::x86_64_all_preserving().unwrap().build(&regs).unwrap());
 
     let outcome = strider
         .analyze_cfg_with(

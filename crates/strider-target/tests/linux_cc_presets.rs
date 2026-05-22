@@ -17,7 +17,7 @@
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-use strider_target::{CallingConvention, SleighArch};
+use strider_target::{CallingConvention, MissingPresetError, SleighArch};
 
 /// Probe the arch's Sleigh against an empty memory reader to extract
 /// the register table.  No real binary is needed — the register table
@@ -57,7 +57,7 @@ fn arg_reg_names(cc: CallingConvention, regs: &rsleigh::SleighRegs) -> Vec<Strin
 /// register).
 struct Case {
     name: &'static str,
-    ctor: fn() -> CallingConvention,
+    ctor: fn() -> std::result::Result<CallingConvention, MissingPresetError>,
     arch: fn() -> SleighArch,
     expected: &'static [&'static str],
     is_syscall: bool,
@@ -113,7 +113,7 @@ fn arg_passing_regs_match_per_preset() {
     let mut failures = Vec::new();
     for case in CASES {
         let regs = regs_for((case.arch)());
-        let cc = (case.ctor)();
+        let cc = (case.ctor)().expect("preset must be registered");
         let names = arg_reg_names(cc, &regs);
         let expected: Vec<String> = case.expected.iter().map(|s| s.to_string()).collect();
         if names != expected {
@@ -143,8 +143,8 @@ fn arg_passing_regs_match_per_preset() {
 fn x86_64_linux_kernel_aliases_systemv() {
     let regs = regs_for(SleighArch::x86_64());
     assert_eq!(
-        arg_reg_names(CallingConvention::x86_64_linux_kernel(), &regs),
-        arg_reg_names(CallingConvention::x86_64_systemv(), &regs),
+        arg_reg_names(CallingConvention::x86_64_linux_kernel().unwrap(), &regs),
+        arg_reg_names(CallingConvention::x86_64_systemv().unwrap(), &regs),
         "x86_64 kernel-internal CC is identical to SystemV"
     );
 }
@@ -153,8 +153,8 @@ fn x86_64_linux_kernel_aliases_systemv() {
 fn aarch64_linux_kernel_aliases_aapcs64() {
     let regs = regs_for(SleighArch::aarch64());
     assert_eq!(
-        arg_reg_names(CallingConvention::aarch64_linux_kernel(), &regs),
-        arg_reg_names(CallingConvention::aarch64_aapcs64(), &regs),
+        arg_reg_names(CallingConvention::aarch64_linux_kernel().unwrap(), &regs),
+        arg_reg_names(CallingConvention::aarch64_aapcs64().unwrap(), &regs),
     );
 }
 
@@ -162,8 +162,8 @@ fn aarch64_linux_kernel_aliases_aapcs64() {
 fn arm_linux_kernel_aliases_aapcs() {
     let regs = regs_for(SleighArch::arm());
     assert_eq!(
-        arg_reg_names(CallingConvention::arm_linux_kernel(), &regs),
-        arg_reg_names(CallingConvention::arm_aapcs(), &regs),
+        arg_reg_names(CallingConvention::arm_linux_kernel().unwrap(), &regs),
+        arg_reg_names(CallingConvention::arm_aapcs().unwrap(), &regs),
     );
 }
 
@@ -171,8 +171,8 @@ fn arm_linux_kernel_aliases_aapcs() {
 fn mips_linux_kernel_o32_aliases_o32() {
     let regs = regs_for(SleighArch::mipsle32());
     assert_eq!(
-        arg_reg_names(CallingConvention::mips_linux_kernel_o32(), &regs),
-        arg_reg_names(CallingConvention::mips_o32(), &regs),
+        arg_reg_names(CallingConvention::mips_linux_kernel_o32().unwrap(), &regs),
+        arg_reg_names(CallingConvention::mips_o32().unwrap(), &regs),
     );
 }
 
@@ -180,8 +180,8 @@ fn mips_linux_kernel_o32_aliases_o32() {
 fn mips_linux_kernel_n64_aliases_n64() {
     let regs = regs_for(SleighArch::mipsle64());
     assert_eq!(
-        arg_reg_names(CallingConvention::mips_linux_kernel_n64(), &regs),
-        arg_reg_names(CallingConvention::mips_n64(), &regs),
+        arg_reg_names(CallingConvention::mips_linux_kernel_n64().unwrap(), &regs),
+        arg_reg_names(CallingConvention::mips_n64().unwrap(), &regs),
     );
 }
 
@@ -191,14 +191,14 @@ fn mips_linux_kernel_n64_aliases_n64() {
 #[test]
 fn x86_linux_syscall_ret_stack_pop_is_zero() {
     let regs = regs_for(SleighArch::x86());
-    let built = CallingConvention::x86_linux_syscall().build(&regs).unwrap();
+    let built = CallingConvention::x86_linux_syscall().unwrap().build(&regs).unwrap();
     assert_eq!(built.ret_stack_pop, 0);
 }
 
 #[test]
 fn x86_64_linux_syscall_uses_r10_not_rcx() {
     let regs = regs_for(SleighArch::x86_64());
-    let names = arg_reg_names(CallingConvention::x86_64_linux_syscall(), &regs);
+    let names = arg_reg_names(CallingConvention::x86_64_linux_syscall().unwrap(), &regs);
     assert!(
         !names.iter().any(|n| n == "RCX"),
         "syscall ABI must replace RCX with R10 (RCX is clobbered by `syscall`)"
@@ -208,7 +208,7 @@ fn x86_64_linux_syscall_uses_r10_not_rcx() {
 #[test]
 fn mips_linux_syscall_n64_extends_args_to_six() {
     let regs = regs_for(SleighArch::mipsle64());
-    let names = arg_reg_names(CallingConvention::mips_linux_syscall_n64(), &regs);
+    let names = arg_reg_names(CallingConvention::mips_linux_syscall_n64().unwrap(), &regs);
     // N64 syscall extends to 6 regs (a0..a5) — Sleigh's mips64 spec
     // names $4..$7 as a0..a3 and $8..$9 as t0..t1, so the assertion
     // checks that 6-arg shape under those names.

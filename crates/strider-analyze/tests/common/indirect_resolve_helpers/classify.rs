@@ -836,7 +836,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, strider_ir::Value, rsleigh
         .expect("create aarch64 sleigh");
 
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::aarch64_aapcs64())
+    let strider = Strider::new(arch, regs, CallingConvention::aarch64_aapcs64().unwrap())
         .expect("Strider::new");
     let lr_vn = strider
         .calling_convention()

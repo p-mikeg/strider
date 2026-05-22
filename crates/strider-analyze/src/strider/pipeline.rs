@@ -571,12 +571,9 @@ mod tests {
         // `unresolved_branches.len() == 0`.
         let arch = strider_target::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
-        let strider = crate::Strider::new(
-            arch,
-            regs,
-            strider_target::CallingConvention::x86_64_systemv(),
-        )
-        .expect("strider");
+        let cc = strider_target::CallingConvention::x86_64_systemv()
+            .expect("x86_64_systemv preset must be registered");
+        let strider = crate::Strider::new(arch, regs, cc).expect("strider");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
             .expect("sleigh");

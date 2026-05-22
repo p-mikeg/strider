@@ -54,8 +54,10 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
         _ => panic!("unsupported arch {}", c.arch_name),
     };
     let cc = match c.arch_name {
-        "x86" => strider_analyze::CallingConvention::x86_cdecl(),
-        "x64" => strider_analyze::CallingConvention::x86_64_systemv(),
+        "x86" => strider_analyze::CallingConvention::x86_cdecl()
+            .expect("x86_cdecl preset must be registered"),
+        "x64" => strider_analyze::CallingConvention::x86_64_systemv()
+            .expect("x86_64_systemv preset must be registered"),
         // The earlier `match c.arch_name` guards this — we only
         // reach this point on supported arches.  Use `panic!`
         // (the bench's `clippy::panic` is allow-listed) rather
