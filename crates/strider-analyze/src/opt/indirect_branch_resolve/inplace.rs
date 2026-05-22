@@ -21,6 +21,60 @@ use anyhow::anyhow;
 
 use crate::opt::error::Result;
 
+/// Per-placeholder data extracted by [`detach_placeholder`] — the three
+/// inputs of the pre-edit `IndirectBranch [control, memory, target_value]`
+/// plus the placeholder's snapshotted asm-fingerprint.  Returned to
+/// each rewriter so it can build the splice tail without re-querying
+/// the (now-detached) placeholder.
+struct PlaceholderEdit {
+    control_in: NodeOutputId,
+    memory_in: NodeOutputId,
+    target_value: NodeOutputId,
+    fingerprint: Vec<u64>,
+}
+
+/// Validates that `placeholder` is a `NodeKind::IndirectBranch` with the
+/// expected `[control, memory, target_value]` shape, snapshots its
+/// asm-fingerprint, and detaches its inputs so the caller can build a
+/// fresh replacement chain on top of the same control / memory edges.
+///
+/// Shared prelude for [`apply_link_register`] and [`apply_tail_call`].
+///
+/// # Errors
+///
+/// Returns an error when `placeholder` is not a
+/// [`NodeKind::IndirectBranch`] node, or when its input arity isn't the
+/// expected 3.
+fn detach_placeholder(
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    placeholder: NodeId,
+) -> Result<PlaceholderEdit> {
+    let graph = ctx.graph_mut();
+    let kind = *graph.node_kind(placeholder);
+    if !matches!(kind, NodeKind::IndirectBranch) {
+        return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
+    }
+    let [control_in, memory_in, target_value] =
+        graph.node_inputs_exact::<3>(placeholder).map_err(|_| {
+            anyhow!(
+                "expected IndirectBranch with [control, memory, target_value] (3 inputs) node, \
+                 got {kind:?}"
+            )
+        })?;
+
+    // Snapshot the placeholder's asm-fingerprint BEFORE detaching it;
+    // every freshly-spliced node absorbs it so the placeholder's
+    // contributing-asm-instruction history survives the rewrite.
+    let fingerprint: Vec<u64> = graph.asm_fingerprint(placeholder).to_vec();
+
+    // Detach BEFORE creating new nodes: removes the placeholder's three
+    // inputs from their use-lists so fresh nodes cleanly take ownership
+    // of the control / memory edges.
+    graph.detach_node_inputs(placeholder);
+
+    Ok(PlaceholderEdit { control_in, memory_in, target_value, fingerprint })
+}
+
 /// Applies the `LinkRegister` resolution to a placeholder
 /// `IndirectBranch(control, memory, target_value)` node, replacing it
 /// with a real `Return [control, memory, ret_val_0, …]`.  The
@@ -44,35 +98,16 @@ pub fn apply_link_register(
     placeholder: NodeId,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
+    let PlaceholderEdit { control_in, memory_in, target_value: _, fingerprint } =
+        detach_placeholder(ctx, placeholder)?;
     let graph = ctx.graph_mut();
-    let kind = *graph.node_kind(placeholder);
-    if !matches!(kind, NodeKind::IndirectBranch) {
-        return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
-    }
-    let [control_in, memory_in, _target_value] =
-        graph.node_inputs_exact::<3>(placeholder).map_err(|_| {
-            anyhow!(
-                "apply_link_register: expected IndirectBranch with [control, memory, \
-                 target_value] (3 inputs) node, got {kind:?}"
-            )
-        })?;
-
-    // Snapshot the placeholder's asm-fingerprint BEFORE detaching it;
-    // we absorb it into the new Return so the placeholder's
-    // contributing-asm-instruction history survives the rewrite.
-    let placeholder_fingerprint: Vec<u64> = graph.asm_fingerprint(placeholder).to_vec();
-
-    // Detach BEFORE creating the new node: removes the placeholder's
-    // three inputs from their use-lists so the new Return cleanly
-    // takes ownership of the control / memory edges.
-    graph.detach_node_inputs(placeholder);
 
     let mut return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
     return_inputs.push(control_in);
     return_inputs.push(memory_in);
     return_inputs.extend_from_slice(ret_val_outputs);
     let new_return = graph.create_node(NodeKind::Return, return_inputs, []);
-    graph.extend_asm_fingerprint(new_return, &placeholder_fingerprint);
+    graph.extend_asm_fingerprint(new_return, &fingerprint);
     Ok(new_return)
 }
 
@@ -113,19 +148,9 @@ pub fn apply_tail_call(
     clobbered_kinds: &[NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
+    let PlaceholderEdit { control_in, memory_in, target_value, fingerprint } =
+        detach_placeholder(ctx, placeholder)?;
     let graph = ctx.graph_mut();
-    let kind = *graph.node_kind(placeholder);
-    if !matches!(kind, NodeKind::IndirectBranch) {
-        return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
-    }
-    let [control_in, memory_in, target_value] =
-        graph.node_inputs_exact::<3>(placeholder).map_err(|_| {
-            // Not a placeholder shape.  Surface as a typed error so
-            // callers don't silently mis-apply.
-            anyhow!(
-                "expected IndirectBranch with [control, memory, target_value] (3 inputs) node, got {kind:?}"
-            )
-        })?;
 
     // Surface a non-integer target type as a typed error — silently
     // defaulting to U64 would mask an upstream invariant break (every
@@ -141,22 +166,13 @@ pub fn apply_tail_call(
             placeholder
         ))?;
 
-    // Snapshot the placeholder's asm-fingerprint BEFORE detaching it; we
-    // absorb it into every new node spliced in below so the placeholder's
-    // contributing-asm-instruction history survives the rewrite.
-    let placeholder_fingerprint: Vec<u64> = graph.asm_fingerprint(placeholder).to_vec();
-
-    // CORRECTNESS — detach BEFORE creating the new chain: removes the
-    // placeholder's three inputs from their use-lists.
-    graph.detach_node_inputs(placeholder);
-
     let masked_target = u128::from(target) & target_int_ty.bit_mask_u128();
     let int_const = graph.create_node(
         NodeKind::IntConst(masked_target),
         [],
         [NodeOutputKind::OutputType(target_int_ty)],
     );
-    graph.extend_asm_fingerprint(int_const, &placeholder_fingerprint);
+    graph.extend_asm_fingerprint(int_const, &fingerprint);
     let int_const_out = graph.node_outputs_exact::<1>(int_const)?[0];
 
     // Create the Call node.  Inputs: [control, memory, target,
@@ -173,7 +189,7 @@ pub fn apply_tail_call(
     call_outputs.push(NodeOutputKind::Memory);
     call_outputs.extend_from_slice(clobbered_kinds);
     let call = graph.create_node(NodeKind::Call, call_inputs, call_outputs);
-    graph.extend_asm_fingerprint(call, &placeholder_fingerprint);
+    graph.extend_asm_fingerprint(call, &fingerprint);
     // Slot 0 = Control, slot 1 = Memory.  The clobbered slots beyond
     // those are produced for downstream consumers (typically empty
     // here because the only consumer is the freshly-spliced Return).
@@ -186,7 +202,7 @@ pub fn apply_tail_call(
     new_return_inputs.push(call_mem_out);
     new_return_inputs.extend_from_slice(ret_val_outputs);
     let new_return = graph.create_node(NodeKind::Return, new_return_inputs, []);
-    graph.extend_asm_fingerprint(new_return, &placeholder_fingerprint);
+    graph.extend_asm_fingerprint(new_return, &fingerprint);
 
     Ok(new_return)
 }
