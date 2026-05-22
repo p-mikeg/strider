@@ -657,7 +657,7 @@ fn apply_in_place_edit(
                 region_index,
                 None,
             )?;
-            graph.with_rewrite_ctx(|rctx| {
+            let _new_return = graph.with_rewrite_ctx(|rctx| {
                 apply_link_register(rctx, placeholder, &ctx.ret_val_outputs)
             })?;
             Ok(())

@@ -397,43 +397,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
     }
 }
 
-/// Returns `true` if the input and output slot counts on `node_id`'s
-/// current state are consistent with the expected signature of `kind`.
-///
-/// Used by [`crate::graph::Graph::set_node_kind`] as a debug-mode
-/// signature check: a node-kind mutation must leave the existing edges
-/// well-typed, which (at minimum) requires that the slot counts match
-/// the new kind's signature.  Counts are compared as follows:
-///
-/// - Fixed-arity slot list (no `tail`): exact equality with `head_len()`.
-/// - Variadic slot list (`tail` present): at least `head_len()` slots
-///   present; the extra slots are assumed to repeat the tail.
-///
-/// Kind-level typing of each slot's [`ExpectedOutputKind`] is checked
-/// by the full [`crate::validate::validate`] pass — this helper only
-/// covers the count/arity invariant that's cheap to verify in the
-/// hot path of an in-place node mutation.
-pub(crate) fn slot_counts_match_kind(
-    graph: &crate::graph::Graph,
-    node_id: crate::node::NodeId,
-    kind: &NodeKind,
-) -> bool {
-    let sig = expected_signature(kind);
-    let input_count = graph.node_inputs(node_id).len();
-    let output_count = graph.node_outputs(node_id).len();
-    let inputs_ok = if sig.inputs.is_variadic() {
-        input_count >= sig.inputs.head_len()
-    } else {
-        input_count == sig.inputs.head_len()
-    };
-    let outputs_ok = if sig.outputs.is_variadic() {
-        output_count >= sig.outputs.head_len()
-    } else {
-        output_count == sig.outputs.head_len()
-    };
-    inputs_ok && outputs_ok
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

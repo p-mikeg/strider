@@ -47,59 +47,7 @@ impl Graph {
         &self.nodes[node_id].kind
     }
 
-    /// Replaces the [`NodeKind`] of `node_id`.  Only valid when the
-    /// post-edit kind's input/output signature matches the node's
-    /// CURRENT slot shape (so the existing edges remain well-typed
-    /// post-mutation) and BOTH kinds are non-cacheable (so the dedup
-    /// cache stays consistent — cacheable kinds key on `(kind, inputs,
-    /// outputs)` so a kind mutation could orphan or collide cache
-    /// entries).
-    ///
-    /// Used by the indirect-branch resolver to rewrite an
-    /// `IndirectBranch` placeholder into a real `Return` in place,
-    /// keeping the same `NodeId` so cached `exit_control` handles stay
-    /// valid.  Callers that change slot arity (e.g. `IndirectBranch
-    /// [ctrl, mem, target] → Return [ctrl, mem, ret*]`) must call
-    /// [`Self::add_node_input`] / [`Self::remove_node_input`] first so
-    /// the inputs match the new kind's signature **before** invoking
-    /// `set_node_kind`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when either the old or the new kind is
-    /// cacheable, or when the node's current slot shape does not match
-    /// the new kind's expected
-    /// `crate::node_signature::expected_signature` (a mismatch
-    /// indicates the caller forgot to reshape the inputs before
-    /// mutating the kind).  Previously a `debug_assert!`; promoted to a
-    /// runtime error so Python users see a clean typed exception
-    /// instead of a release-mode misshape or a debug-mode crash
-    ///.
-    pub fn set_node_kind(&mut self, node_id: NodeId, kind: NodeKind) -> crate::Result<()> {
-        let old_kind = self.nodes[node_id].kind;
-        if old_kind.is_cacheable() || kind.is_cacheable() {
-            return Err(anyhow::anyhow!(
-                "set_node_kind requires both kinds non-cacheable: old={old_kind:?}, new={kind:?}"
-            ));
-        }
-        // The node's current slot count must match the new kind's
-        // expected signature so the edges remain well-typed
-        // post-mutation.  Producers (e.g. `apply_link_register`)
-        // reshape inputs via `add_node_input` / `remove_node_input`
-        // before calling here, so a mismatch is a caller bug — surface
-        // it as a typed error.
-        if !crate::node_signature::slot_counts_match_kind(self, node_id, &kind) {
-            return Err(anyhow::anyhow!(
-                "set_node_kind: node {node_id:?} (old={old_kind:?}) slot shape does \
-                 not match new kind {kind:?}'s expected signature — call \
-                 add_node_input/remove_node_input first to reshape inputs"
-            ));
-        }
-        self.nodes[node_id].kind = kind;
-        Ok(())
-    }
-
-    /// Returns the [`NodeId`] of the `InitialVar(vn)` node registered
+/// Returns the [`NodeId`] of the `InitialVar(vn)` node registered
     /// for `vn`, or `None` if none has been registered on this graph.
     ///
     /// O(1) hash lookup.  Callers that want to skip detached zombie

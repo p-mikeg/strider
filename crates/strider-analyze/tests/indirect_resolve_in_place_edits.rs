@@ -35,17 +35,37 @@ fn locate_placeholder_return(graph: &strider_ir::BuiltFunctionGraph) -> NodeId {
     found.expect("no IndirectBranch placeholder found")
 }
 
+/// Locate the (unique) freshly-created Return — the one that's NOT the
+/// placeholder.  The placeholder has been detached so finding the
+/// reachable Return is sufficient.
+fn locate_fresh_return(graph: &strider_ir::BuiltFunctionGraph) -> NodeId {
+    let mut found: Option<NodeId> = None;
+    for nid in graph.preorder() {
+        if !matches!(graph.node_kind(nid), NodeKind::Return) {
+            continue;
+        }
+        assert!(
+            found.is_none(),
+            "fixture must have exactly one reachable Return post-edit"
+        );
+        found = Some(nid);
+    }
+    found.expect("no reachable Return found")
+}
+
 #[test]
 fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
-    // A live x86_64 lift of `jmp rax`: the placeholder Return has 3
-    // inputs ([ctrl, mem, InitialVar(rax)] after optimisation).
-    // apply_link_register drops the placeholder `target_value` slot,
-    // so with zero ret_vals the resulting Return is `[ctrl, mem]`.
+    // A live x86_64 lift of `jmp rax`: the placeholder IndirectBranch
+    // has 3 inputs ([ctrl, mem, InitialVar(rax)] after optimisation).
+    // apply_link_register replaces it with a fresh Return whose
+    // `target_value` slot is dropped, so with zero ret_vals the
+    // resulting Return is `[ctrl, mem]`.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
     apply_link_register(&mut strider_analyze::pattern::RewriteCtx::for_built(&mut graph), return_id, &[]).expect("apply");
-    let inputs_after: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
+    let new_return = locate_fresh_return(&graph);
+    let inputs_after: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     assert_eq!(inputs_after.len(), 2, "target_value dropped, no ret_vals appended");
     assert_eq!(inputs_after[0], inputs_before[0], "ctrl preserved");
     assert_eq!(inputs_after[1], inputs_before[1], "mem preserved");
@@ -64,7 +84,8 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
     apply_link_register(&mut strider_analyze::pattern::RewriteCtx::for_built(&mut graph), return_id, &[anchor]).expect("apply");
-    let inputs_after: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
+    let new_return = locate_fresh_return(&graph);
+    let inputs_after: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     assert_eq!(inputs_after.len(), inputs_before.len(), "[ctrl, mem, ret_val_0]");
     assert_eq!(*inputs_after.last().expect("non-empty"), anchor);
     strider_ir::validate::validate(graph.graph(), graph.entry().unwrap()).expect("validate after edit");
@@ -141,23 +162,27 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
 }
 
 #[test]
-fn apply_link_register_does_not_change_return_node_id() {
-    // Pin: apply_link_register keeps the placeholder Return's NodeId
-    // — it appends ret-val regs in place.  The cache's `exit_control`
-    // therefore stays valid without any patching.  This is the
-    // soundness guarantee the orchestrator relies on for the
-    // LinkRegister arm of `apply_in_place_edit`.
+fn apply_link_register_emits_fresh_return_and_detaches_placeholder() {
+    // Pin: apply_link_register replaces the IndirectBranch placeholder
+    // with a freshly-built Return whose control + memory inputs are
+    // re-wired from the placeholder.  The placeholder is detached
+    // (zero inputs, no longer reachable via the exit-control walk).
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     apply_link_register(&mut strider_analyze::pattern::RewriteCtx::for_built(&mut graph), return_id, &[]).expect("apply");
-    // Same NodeId, same NodeKind.
-    assert!(matches!(graph.node_kind(return_id), NodeKind::Return));
-    // The control input chain is unchanged: input #0 still flows
-    // from the same producer it did pre-edit.
-    let inputs: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
+    // Placeholder is detached: zero inputs.  Kind remains
+    // IndirectBranch (the orchestrator filters by kind via
+    // find_placeholder_return_for_anchor, but the anchor's use-list
+    // no longer points at it, so it's effectively retired).
+    assert_eq!(graph.node_inputs(return_id).len(), 0,
+        "detached placeholder must have zero inputs");
+    // A fresh, reachable Return materialises with ctrl + memory inputs.
+    let new_return = locate_fresh_return(&graph);
+    assert_ne!(new_return, return_id);
+    let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     assert!(
         inputs.len() >= 2,
-        "Return must still have control + memory inputs",
+        "fresh Return must have control + memory inputs",
     );
 }
 

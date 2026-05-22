@@ -3,11 +3,10 @@
 //! Two variants are supported:
 //!
 //!   * **`LinkRegister`**: the placeholder `IndirectBranch(target_value)`
-//!     is rewritten in place into a real `Return [ctrl, mem,
-//!     ret_val_*]`.  The placeholder's `target_value` slot is dropped
-//!     and the convention's `ret_val_regs` are appended.  The node
-//!     `NodeKind` is mutated from `IndirectBranch` to `Return` so the
-//!     same `NodeId` flows through.
+//!     is replaced with a real `Return [ctrl, mem, ret_val_*]`.  A
+//!     fresh `Return` node is created on the same control and memory
+//!     inputs, with the convention's `ret_val_regs` appended.  The
+//!     placeholder is detached and becomes a zombie unreachable node.
 //!   * **`Single` tail call**: replace the placeholder
 //!     `IndirectBranch(target_value)` with `Call(IntConst(target)) →
 //!     Return(ret_vars)`.  The placeholder is detached (becoming a
@@ -23,13 +22,15 @@ use anyhow::anyhow;
 use crate::opt::error::Result;
 
 /// Applies the `LinkRegister` resolution to a placeholder
-/// `IndirectBranch(control, memory, target_value)` node, mutating it
-/// into a real `Return [control, memory, ret_val_0, …]` in place.
-/// The placeholder's `target_value` slot is dropped (no longer
-/// meaningful — the LR-targeted branch IS the return) and
-/// `ret_val_outputs` are appended as the actual return values.  The
-/// node's `NodeId` is preserved so any cached handle (e.g. the
-/// orchestrator's `exit_control`) remains valid.
+/// `IndirectBranch(control, memory, target_value)` node, replacing it
+/// with a real `Return [control, memory, ret_val_0, …]`.  The
+/// placeholder's `target_value` slot is dropped (no longer meaningful
+/// — the LR-targeted branch IS the return) and `ret_val_outputs`
+/// are appended as the actual return values.  The placeholder is
+/// detached (becomes a zombie unreachable from `entry`); the new
+/// Return is wired on the placeholder's pre-edit control and memory
+/// inputs.  The orchestrator's next region-walk picks up the new
+/// terminator via the freshly-computed exit-control mapping.
 ///
 /// Pre-edit: `IndirectBranch [control, memory, target_value]`
 /// Post-edit: `Return [control, memory, ret_val_0, …]`
@@ -37,44 +38,42 @@ use crate::opt::error::Result;
 /// # Errors
 ///
 /// Returns an error when `placeholder` is not a
-/// [`NodeKind::IndirectBranch`], or when the IR mutation calls
-/// (`Graph::add_node_input` / `Graph::remove_node_input` /
-/// `Graph::set_node_kind`) fail.
+/// [`NodeKind::IndirectBranch`], or when the IR mutation fails.
 pub fn apply_link_register(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     placeholder: NodeId,
     ret_val_outputs: &[NodeOutputId],
-) -> Result<()> {
+) -> Result<NodeId> {
     let graph = ctx.graph_mut();
     let kind = *graph.node_kind(placeholder);
     if !matches!(kind, NodeKind::IndirectBranch) {
         return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
     }
-    for &ret in ret_val_outputs {
-        graph.add_node_input(placeholder, ret)?;
-    }
-    // Drop the placeholder `target_value` at slot 2 (after [control, memory]).
-    // Done after `add_node_input` above so the appended ret_vals shift down
-    // from slot 3+ to slot 2+ post-removal.  Removal is unconditional under
-    // the contract: the matches!-guard above already pinned this as a
-    // 3-input IndirectBranch [control, memory, target_value], and the loop
-    // only appends, so slot 2 should always be present.  Surface a
-    // violation as a typed error rather than a debug-mode panic so Python
-    // users see a clean exception.
-    let arity = graph.node_inputs(placeholder).len();
-    if arity < 3 {
-        return Err(anyhow!(
-            "apply_link_register: IndirectBranch placeholder {placeholder:?} has \
-             {arity} inputs, expected ≥3 (control, memory, target_value); invariant \
-             violation"
-        ));
-    }
-    graph.remove_node_input(placeholder, 2)?;
-    // Mutate the kind: IndirectBranch → Return.  Same input/output
-    // signature shape (control + memory + variadic value tail; no
-    // outputs); both kinds are non-cacheable.
-    graph.set_node_kind(placeholder, NodeKind::Return)?;
-    Ok(())
+    let [control_in, memory_in, _target_value] =
+        graph.node_inputs_exact::<3>(placeholder).map_err(|_| {
+            anyhow!(
+                "apply_link_register: expected IndirectBranch with [control, memory, \
+                 target_value] (3 inputs) node, got {kind:?}"
+            )
+        })?;
+
+    // Snapshot the placeholder's asm-fingerprint BEFORE detaching it;
+    // we absorb it into the new Return so the placeholder's
+    // contributing-asm-instruction history survives the rewrite.
+    let placeholder_fingerprint: Vec<u64> = graph.asm_fingerprint(placeholder).to_vec();
+
+    // Detach BEFORE creating the new node: removes the placeholder's
+    // three inputs from their use-lists so the new Return cleanly
+    // takes ownership of the control / memory edges.
+    graph.detach_node_inputs(placeholder);
+
+    let mut return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
+    return_inputs.push(control_in);
+    return_inputs.push(memory_in);
+    return_inputs.extend_from_slice(ret_val_outputs);
+    let new_return = graph.create_node(NodeKind::Return, return_inputs, []);
+    graph.extend_asm_fingerprint(new_return, &placeholder_fingerprint);
+    Ok(new_return)
 }
 
 /// Applies the `Single`-tail-call resolution by replacing the
@@ -228,13 +227,29 @@ mod tests {
     }
 
     #[test]
-    fn apply_link_register_keeps_return_node_id() {
+    fn apply_link_register_emits_return_and_detaches_placeholder() {
         // Pre-edit: IndirectBranch [ctrl, mem, target_value].  Post-edit:
-        // Return [ctrl, mem] — same NodeId, kind mutated in place.
+        // a freshly-created Return [ctrl, mem] node materialises; the
+        // placeholder is detached (zero inputs, still reachable by id
+        // but no longer wired into the graph).
         let (mut ctx, placeholder) = build_placeholder_graph();
         assert_eq!(ctx.node_inputs(placeholder).len(), 3);
         ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[])).expect("apply");
-        assert!(matches!(ctx.node_kind(placeholder), NodeKind::Return));
+        // Placeholder is detached: its inputs are gone, and its kind
+        // remains IndirectBranch (the orchestrator filters by kind
+        // via find_placeholder_return_for_anchor, so leaving the kind
+        // as IndirectBranch is fine — what matters is detachment so
+        // it's no longer reachable via the use-list walk).
+        assert_eq!(ctx.node_inputs(placeholder).len(), 0);
+        // A fresh Return materialised.
+        let mut had_return = false;
+        for nid in ctx.all_node_ids() {
+            if matches!(ctx.node_kind(nid), NodeKind::Return) && !ctx.node_inputs(nid).is_empty() {
+                had_return = true;
+                break;
+            }
+        }
+        assert!(had_return, "Return node must materialise");
     }
 
     #[test]
@@ -332,14 +347,17 @@ mod tests {
         assert_eq!(ctx.node_inputs(placeholder).len(), 3);
         let r0 = synth_value_output(ctx.graph_mut(), 0x42, NodeOutputType::U64);
         let r1 = synth_value_output(ctx.graph_mut(), 0x43, NodeOutputType::U64);
-        ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[r0, r1])).expect("apply");
+        let new_return = ctx
+            .with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[r0, r1]))
+            .expect("apply");
+        assert!(matches!(ctx.node_kind(new_return), NodeKind::Return));
         assert_eq!(
-            ctx.node_inputs(placeholder).len(),
+            ctx.node_inputs(new_return).len(),
             2 + 2,
             "Return inputs are [ctrl, mem, ret_val_0, ret_val_1] after target_value removal",
         );
-        assert_eq!(ctx.nth_input(placeholder, 2), Some(r0));
-        assert_eq!(ctx.nth_input(placeholder, 3), Some(r1));
+        assert_eq!(ctx.nth_input(new_return, 2), Some(r0));
+        assert_eq!(ctx.nth_input(new_return, 3), Some(r1));
     }
 
     #[test]
