@@ -853,8 +853,8 @@ fn override_clobber_vars<'a>(
     let stack_ptr_vn = strider.calling_convention().stack_ptr_vn;
     graph
         .variables_map()
-        .values()
-        .copied()
+        .into_iter()
+        .flat_map(|m| m.values().copied())
         .filter(move |v| !cc.callee_saved_regs.contains(v) && *v != stack_ptr_vn)
 }
 

@@ -330,15 +330,11 @@ impl Graph {
     }
 
     /// Read the `VarId → Vn` map for tracked variables.
-    /// Convenience for `graph.cc_metadata().variables`.  Returns a
-    /// reference to a shared empty map on a pre-build graph.
+    /// Convenience for `graph.cc_metadata().variables`.  Returns
+    /// `None` on a pre-build graph (when `cc_metadata` is `None`).
     #[must_use]
-    pub fn variables_map(&self) -> &PrimaryMap<crate::builder::VarId, rsleigh::Vn> {
-        use std::sync::OnceLock;
-        static EMPTY: OnceLock<PrimaryMap<crate::builder::VarId, rsleigh::Vn>> = OnceLock::new();
-        self.cc_metadata
-            .as_ref()
-            .map_or_else(|| EMPTY.get_or_init(PrimaryMap::new), |cc| &cc.variables)
+    pub fn variables_map(&self) -> Option<&PrimaryMap<crate::builder::VarId, rsleigh::Vn>> {
+        self.cc_metadata.as_ref().map(|cc| &cc.variables)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
