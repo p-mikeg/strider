@@ -8,7 +8,8 @@
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{Config, SleighArch, Strider};
+use strider_analyze::{Config, Strider};
+use strider_target::SleighArch;
 
 mod common;
 

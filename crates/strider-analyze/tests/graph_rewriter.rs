@@ -33,7 +33,8 @@ use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use strider_analyze::pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{GraphRewriter, SleighArch, Strider};
+use strider_analyze::{GraphRewriter, Strider};
+use strider_target::SleighArch;
 
 mod common;
 

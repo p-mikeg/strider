@@ -17,7 +17,8 @@ use strider_ir::BuiltFunctionGraph;
 use strider_ir::node::{NodeId, NodeKind};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{CallingConvention, SleighArch, Strider};
+use strider_analyze::Strider;
+use strider_target::{CallingConvention, SleighArch};
 
 /// Lift the supplied bytes starting at `0x1000` and run the full
 /// strider optimiser pipeline (which now includes

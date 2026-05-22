@@ -13,7 +13,8 @@ use strider_ir::BuiltFunctionGraph;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{CallingConvention, SleighArch, Strider};
+use strider_analyze::Strider;
+use strider_target::{CallingConvention, SleighArch};
 
 /// Walk every reachable `IndirectBranch` node and return the value-
 /// input (slot 2) of the unique placeholder.  Returns `None` if none

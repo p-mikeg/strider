@@ -28,7 +28,7 @@ use strider_ir::node::NodeKind;
 use strider_ir::BuiltFunctionGraph;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::SleighArch;
+use strider_target::SleighArch;
 
 mod common;
 

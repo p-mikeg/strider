@@ -49,14 +49,14 @@ fn analyze_case(c: Case) -> strider_ir::BuiltFunctionGraph {
     let path = binary_path(c.arch_name, c.case);
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = match c.arch_name {
-        "x86" => strider_analyze::SleighArch::x86(),
-        "x64" => strider_analyze::SleighArch::x86_64(),
+        "x86" => strider_target::SleighArch::x86(),
+        "x64" => strider_target::SleighArch::x86_64(),
         _ => panic!("unsupported arch {}", c.arch_name),
     };
     let cc = match c.arch_name {
-        "x86" => strider_analyze::CallingConvention::x86_cdecl()
+        "x86" => strider_target::CallingConvention::x86_cdecl()
             .expect("x86_cdecl preset must be registered"),
-        "x64" => strider_analyze::CallingConvention::x86_64_systemv()
+        "x64" => strider_target::CallingConvention::x86_64_systemv()
             .expect("x86_64_systemv preset must be registered"),
         // The earlier `match c.arch_name` guards this — we only
         // reach this point on supported arches.  Use `panic!`

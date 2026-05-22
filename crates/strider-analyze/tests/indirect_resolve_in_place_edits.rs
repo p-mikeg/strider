@@ -173,7 +173,8 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     // panic or return malformed IR.
     use rsleigh::Sleigh;
     use rsleigh::mem_readers::BufMemReader;
-    use strider_analyze::{run, Config, SleighArch};
+    use strider_analyze::{run, Config};
+    use strider_target::SleighArch;
     let strider = common::strider_x86_64();
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();

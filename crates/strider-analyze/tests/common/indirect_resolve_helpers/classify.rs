@@ -27,7 +27,8 @@ use strider_ir::BuiltFunctionGraph;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{CallingConvention, SleighArch, Strider};
+use strider_analyze::Strider;
+use strider_target::{CallingConvention, SleighArch};
 
 use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 

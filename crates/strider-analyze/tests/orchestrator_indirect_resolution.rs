@@ -13,7 +13,8 @@ mod common;
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{run, Config, SleighArch, Strider};
+use strider_analyze::{run, Config, Strider};
+use strider_target::SleighArch;
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
     let arch = SleighArch::x86_64();

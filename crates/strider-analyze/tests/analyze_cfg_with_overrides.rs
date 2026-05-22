@@ -11,8 +11,8 @@ use std::collections::HashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{AnalyzeOptions, SleighArch, Strider};
-use strider_target::CallingConvention as TargetCC;
+use strider_analyze::{AnalyzeOptions, Strider};
+use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
 

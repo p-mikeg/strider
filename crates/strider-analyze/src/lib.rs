@@ -25,4 +25,3 @@ pub use errors::{UnknownCallOtherError, UnresolvedIndirectBranch};
 pub use orchestrator::{run, Config};
 pub use rewrite::GraphRewriter;
 pub use strider::{AnalyzeOptions, AnalyzeOutcome, Strider};
-pub use strider_target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};

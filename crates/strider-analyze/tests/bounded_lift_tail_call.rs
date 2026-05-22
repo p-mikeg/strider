@@ -30,7 +30,8 @@ mod common;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{run, Config, SleighArch};
+use strider_analyze::{run, Config};
+use strider_target::SleighArch;
 
 const BASE: u64 = 0x1000;
 const TAIL_TARGET: u64 = 0x9000;

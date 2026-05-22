@@ -12,7 +12,7 @@
 use strider_lift::cfg::{Builder, OptionsBuilder, RegionTerminator};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::SleighArch;
+use strider_target::SleighArch;
 
 mod common;
 
