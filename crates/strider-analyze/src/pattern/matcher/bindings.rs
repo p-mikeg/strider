@@ -14,36 +14,7 @@ use crate::pattern::var::Capture;
 /// value-producing.  Control-flow patterns (`Call`, `If`, `Return`,
 /// `CallOther`) bind only the `NodeId` and leave `output = None`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Binding {
-    pub(crate) node: NodeId,
-    pub(crate) output: Option<NodeOutputId>,
-}
-
-#[allow(dead_code)]
-impl Binding {
-    /// Constructs a `Binding` from a `(node, output)` pair.  The only
-    /// public construction path — the fields are `pub(crate)` so
-    /// external callers cannot bypass the cross-field invariant
-    /// ("when `output` is `Some(o)`, `graph.output_definition(o).0 ==
-    /// node`").
-    #[must_use]
-    pub fn new(node: NodeId, output: Option<NodeOutputId>) -> Self {
-        Self { node, output }
-    }
-
-    /// Read-only access to the bound `NodeId`.
-    #[must_use]
-    pub fn node(&self) -> NodeId {
-        self.node
-    }
-
-    /// Read-only access to the optional value-output binding.  `None`
-    /// for control-flow captures (`If`, `Call`, `Return`, `CallOther`).
-    #[must_use]
-    pub fn output(&self) -> Option<NodeOutputId> {
-        self.output
-    }
-}
+pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
 
 /// A set of capture-variable bindings accumulated during a single
 /// match attempt.
@@ -140,7 +111,7 @@ impl Bindings {
     /// `None` if `c` was not captured or the binding was control-flow.
     #[must_use]
     pub fn get_output(&self, c: Capture) -> Option<NodeOutputId> {
-        self.get_binding(c).and_then(|b| b.output)
+        self.get_binding(c).and_then(|b| b.1)
     }
 
     /// Alias for [`Self::get_output`] — kept short because it is the
@@ -155,7 +126,7 @@ impl Bindings {
     /// was not captured.
     #[must_use]
     pub fn get_node(&self, c: Capture) -> Option<NodeId> {
-        self.get_binding(c).map(|b| b.node)
+        self.get_binding(c).map(|b| b.0)
     }
 
     /// Iterates over every `(Capture, Binding)` recorded by this match.

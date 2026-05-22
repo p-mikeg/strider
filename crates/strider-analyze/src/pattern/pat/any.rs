@@ -31,13 +31,7 @@ impl Pattern for VarPat {
             return false;
         }
         let node = ctx.graph.get_node_from_output(target);
-        b.bind_capture(
-            self.capture,
-            Binding {
-                node,
-                output: Some(target),
-            },
-        )
+        b.bind_capture(self.capture, Binding(node, Some(target)))
     }
 
     fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
@@ -79,7 +73,7 @@ impl Pattern for CapturePat {
         }
         let node = ctx.graph.get_node_from_output(target);
         let output = ctx.require_value_output(target).map(|_| target);
-        if b.bind_capture(self.capture, Binding { node, output }) {
+        if b.bind_capture(self.capture, Binding(node, output)) {
             true
         } else {
             b.restore(mark);
@@ -107,7 +101,7 @@ impl Pattern for CapturePat {
             b.restore(mark);
             return false;
         }
-        if b.bind_capture(self.capture, Binding { node, output: None }) {
+        if b.bind_capture(self.capture, Binding(node, None)) {
             true
         } else {
             b.restore(mark);

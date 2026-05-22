@@ -186,7 +186,7 @@ impl Match {
     #[must_use]
     pub fn get_vn(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
-        if let Some(out) = binding.output {
+        if let Some(out) = binding.1 {
             let (node, slot) = graph.output_definition(out);
             let kind = graph.node_kind(node);
             // Call: clobber slots start at index 2.
@@ -238,7 +238,7 @@ impl Match {
                 return graph.call_other_clobbered_regs().get(idx).copied();
             }
         }
-        match graph.node_kind(binding.node) {
+        match graph.node_kind(binding.0) {
             NodeKind::InitialVar(vn) => Some(*vn),
             _ => None,
         }

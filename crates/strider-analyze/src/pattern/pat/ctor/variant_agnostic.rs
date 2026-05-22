@@ -66,7 +66,7 @@ macro_rules! impl_variant_any {
                     let value_out = ctx.graph.node_outputs(node).iter().copied().find(|&o| {
                         ctx.graph.output_kind(o).is_value()
                     });
-                    b.bind_capture(c, Binding::new(node, value_out))
+                    b.bind_capture(c, Binding(node, value_out))
                 } else {
                     false
                 }
@@ -108,7 +108,7 @@ macro_rules! impl_variant_any {
                     let value_out = ctx.graph.node_outputs(node).iter().copied().find(|&o| {
                         ctx.graph.output_kind(o).is_value()
                     });
-                    b.bind_capture(c, Binding::new(node, value_out))
+                    b.bind_capture(c, Binding(node, value_out))
                 } else {
                     false
                 }
@@ -146,7 +146,7 @@ macro_rules! impl_variant_any {
                     let value_out = ctx.graph.node_outputs(node).iter().copied().find(|&o| {
                         ctx.graph.output_kind(o).is_value()
                     });
-                    b.bind_capture(c, Binding::new(node, value_out))
+                    b.bind_capture(c, Binding(node, value_out))
                 } else {
                     false
                 }
