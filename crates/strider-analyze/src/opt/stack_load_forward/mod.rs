@@ -92,9 +92,8 @@ fn try_forward_load(
         return Ok(OptimizationResult::NoChange);
     };
 
-    let mut visiting: entity_utils::DenseEntitySet<strider_ir::node::NodeId> = entity_utils::DenseEntitySet::new();
     let Some(SpExpr::Terminal { base: _, offset }) =
-        decompose_sp(ctx.graph_ref(), addr, sp_vn, memo, &mut visiting)
+        decompose_sp(ctx.graph_ref(), addr, sp_vn, memo)
     else {
         return Ok(OptimizationResult::NoChange);
     };

@@ -96,8 +96,7 @@ pub(crate) fn step_through_store(
     if inputs.len() < 3 {
         return AliasStep::MayAlias;
     }
-    let mut sp_visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-    match decompose_sp(graph, inputs[1], sp_vn, sp_memo, &mut sp_visiting) {
+    match decompose_sp(graph, inputs[1], sp_vn, sp_memo) {
         // Non-SP-rooted address provably cannot alias the stack-arg byte
         // range — walk through.
         None => AliasStep::PassThrough { prev_mem: inputs[0] },

@@ -133,8 +133,7 @@ fn collect_stack_args_in_chain_order(
                 }
                 let addr = inputs[1];
                 let prev = inputs[0];
-                let mut visiting: entity_utils::DenseEntitySet<strider_ir::node::NodeId> = entity_utils::DenseEntitySet::new();
-                match decompose_sp(ctx.graph_ref(), addr, stack_ptr_vn, sp_memo, &mut visiting) {
+                match decompose_sp(ctx.graph_ref(), addr, stack_ptr_vn, sp_memo) {
                     None => {
                         // Non-aliasing — pass through.
                         cur = prev;

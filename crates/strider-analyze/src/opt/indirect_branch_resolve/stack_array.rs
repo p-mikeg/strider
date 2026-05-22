@@ -348,8 +348,7 @@ fn match_stack_array_shape(
         if i == idx_pos {
             continue;
         }
-        let mut visiting: entity_utils::DenseEntitySet<strider_ir::node::NodeId> = entity_utils::DenseEntitySet::new();
-        match decompose_sp(graph, *t, stack_ptr_vn, &mut sp_memo, &mut visiting) {
+        match decompose_sp(graph, *t, stack_ptr_vn, &mut sp_memo) {
             Some(SpExpr::Terminal { base: _, offset }) => {
                 if found_sp {
                     // Two SP-rooted terms summed together (`sp+sp+...`)
