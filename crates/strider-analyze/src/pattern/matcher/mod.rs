@@ -158,7 +158,7 @@ impl<'g> Matcher<'g> {
     /// it on first call.
     fn preorder_cached(&self) -> &[NodeId] {
         self.preorder
-            .get_or_init(|| strider_ir::walk::walk_graph(self.graph, self.entry).collect())
+            .get_or_init(|| self.graph.walk_from(self.entry).collect())
             .as_slice()
     }
 
@@ -214,7 +214,7 @@ impl<'g> Matcher<'g> {
     fn function_arg_index(&self) -> &FunctionArgIndex {
         self.function_arg_index.get_or_init(|| {
             let mut map: HashMap<u32, NodeId> = HashMap::new();
-            for node in strider_ir::walk::walk_graph(self.graph, self.entry) {
+            for node in self.graph.walk_from(self.entry) {
                 if let NodeKind::FunctionArg { index, .. } =
                     self.graph.node_kind(node)
                 {

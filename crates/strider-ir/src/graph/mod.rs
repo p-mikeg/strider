@@ -374,7 +374,7 @@ impl Graph {
     }
 
     /// Rebuilds the graph to retain only nodes reachable from
-    /// [`Self::entry`] via [`crate::walk::walk_graph`].  The entry node
+    /// [`Self::entry`] via [`Self::walk_from`].  The entry node
     /// id is remapped; CC metadata is vn-keyed and stays valid as-is.
     ///
     /// External callers that hold any pre-compaction `NodeId` /

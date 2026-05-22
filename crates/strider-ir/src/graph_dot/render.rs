@@ -39,7 +39,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
     }
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        crate::walk::walk_graph(self.graph, self.entry)
+        self.graph.walk_from(self.entry)
     }
 
     fn dump_as_dot(

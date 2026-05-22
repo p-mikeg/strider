@@ -271,7 +271,7 @@ impl PyGraph {
     }
 
     /// Compact the graph arena: drop every node not reachable from
-    /// `entry` via [`strider_ir::walk::walk_graph`].  Mutates in place.
+    /// `entry` via [`strider_ir::graph::Graph::walk_from`].  Mutates in place.
     /// Pre-compaction node ids become invalid across this call.
     fn compact(&self) -> PyResult<()> {
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;

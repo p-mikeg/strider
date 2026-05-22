@@ -118,7 +118,7 @@ impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
     }
 }
 
-/// The concrete pre-order walk type used by [`walk_graph`].
+/// The concrete pre-order walk type used by [`Graph::walk_from`].
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
 /// Walks all nodes reachable in `graph` from `entry` in an unspecified order.
@@ -127,16 +127,21 @@ pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 ///
 /// `entry` is guaranteed to be the last node returned if it has no inputs (as should be the case
 /// with every well-formed graph).
+///
+/// Crate-private: external callers must route through [`Graph::walk_from`]
+/// so the `Graph` methods stay the single public entry-point surface.
 #[must_use]
-pub fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
+pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
 }
 
 /// Like [`walk_graph`] but accepts an optional entry: returns an
 /// empty walk when `entry` is `None`.  Used by [`Graph::preorder`] so
 /// pre-build graphs yield no nodes instead of panicking.
+///
+/// Crate-private: external callers must route through [`Graph::preorder`].
 #[must_use]
-pub fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<'_> {
+pub(crate) fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), entry)
 }
 

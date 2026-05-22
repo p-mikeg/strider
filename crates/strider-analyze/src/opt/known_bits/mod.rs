@@ -434,8 +434,7 @@ pub fn analyze(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> 
     // the validator's existing scope-of-correctness boundary
     // (the local-typing check in `strider_ir::validate`), so it's the right scope here too.
     let mut known: KnownBitsMap = SecondaryMap::new();
-    let mut work: Worklist<NodeId> =
-        strider_ir::walk::walk_graph(ctx.graph_ref(), ctx.entry()).collect();
+    let mut work: Worklist<NodeId> = ctx.graph_ref().walk_from(ctx.entry()).collect();
     while let Some(node_id) = work.dequeue() {
         let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
             continue;

@@ -20,7 +20,7 @@
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::node_signature::ExpectedOutputKind;
-use crate::walk::{NodeIdSet, walk_graph};
+use crate::walk::NodeIdSet;
 
 mod graph_invariants;
 mod local_typing;
@@ -60,7 +60,7 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.
-    let mut walk = walk_graph(graph, entry);
+    let mut walk = graph.walk_from(entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();
     let mut errs: Vec<ValidationError> = Vec::new();

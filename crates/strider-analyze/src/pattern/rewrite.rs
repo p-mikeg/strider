@@ -233,7 +233,7 @@ impl<'g> RewriteCtx<'g> {
     /// `BuiltFunctionGraph` directly.
     #[must_use]
     pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
-        strider_ir::walk::walk_graph(self.graph, self.entry)
+        self.graph.walk_from(self.entry)
     }
 
     /// kind-filtered pre-order walk.  Mirrors
@@ -297,7 +297,7 @@ impl<'g> RewriteCtxView<'g> {
     /// `BuiltFunctionGraph` directly.
     #[must_use]
     pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
-        strider_ir::walk::walk_graph(self.graph, self.entry)
+        self.graph.walk_from(self.entry)
     }
 
     /// kind-filtered pre-order walk.  Mirrors

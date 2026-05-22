@@ -1,5 +1,5 @@
 //! `Graph::retain_reachable` — compact the IR arena down to nodes
-//! reachable from `entry` via [`crate::walk::walk_graph`] (control-out +
+//! reachable from `entry` via [`Graph::walk_from`] (control-out +
 //! data-in), returning the old→new id translation table so external
 //! callers can fix up any ids they hold.
 
@@ -10,8 +10,6 @@ use crate::node::{
     Node, NodeId, NodeInput, NodeInputId, NodeInputIdList, NodeOutput, NodeOutputId,
     NodeOutputIdList, NodeOutputKind,
 };
-use crate::walk::walk_graph;
-
 use super::Graph;
 
 /// Remap-in-place trait for `SecondaryMap<NodeId, _>`-shaped side-tables.
@@ -95,7 +93,7 @@ impl Graph {
     }
 
     /// Rebuilds the arena to retain only nodes reachable from `entry`
-    /// via [`crate::walk::walk_graph`] (control-out forward + data-in
+    /// via [`Graph::walk_from`] (control-out forward + data-in
     /// backward).  Returns the old→new id translation table.
     ///
     /// Pre-compaction `NodeId` / `NodeOutputId` / `NodeInputId` values
@@ -118,7 +116,7 @@ impl Graph {
     /// clean exception.
     pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
         // 1. Compute reachable set.
-        let reachable: Vec<NodeId> = walk_graph(self, entry).collect();
+        let reachable: Vec<NodeId> = self.walk_from(entry).collect();
 
         // 2. Build fresh arenas.
         let mut new_nodes: PrimaryMap<NodeId, Node> = PrimaryMap::new();
