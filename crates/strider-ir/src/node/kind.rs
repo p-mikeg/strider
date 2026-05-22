@@ -22,6 +22,41 @@ pub enum FunctionArgSource {
     },
 }
 
+/// Structural classification of a [`NodeKind`].  Single source of truth
+/// for "structural / region / initial-state" predicates that several
+/// passes need (cacheability, asm-fingerprint exemption, …).
+///
+/// Adding a new [`NodeKind`] variant requires extending the exhaustive
+/// match in [`NodeKind::category`], which forces an explicit decision
+/// about which structural bucket the new variant lives in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NodeCategory {
+    /// Region header (`ControlState`).  Inputs grow dynamically as
+    /// CFG predecessors are wired in, so identity must be preserved.
+    Region,
+    /// Initial-state nodes synthesised at function entry: `Entry`,
+    /// `InitialMemory`, `InitialVar(_)`, `FunctionArg { .. }`.
+    /// `FunctionArg` carries a per-index uniqueness invariant.
+    InitialState,
+    /// SSA / memory / stack phis whose inputs are wired in alongside
+    /// region predecessors: `Phi`, `MemPhi`, `StackStorePhi`.
+    Phi,
+    /// Control-flow terminators and call-shaped nodes whose identity
+    /// must stay distinct: `Return`, `IndirectBranch`, `Call`,
+    /// `CallOther`.
+    Terminator,
+    /// Sleigh user-ops with opaque side effects: `CPoolRef`, `New`.
+    /// (Note: `CallOther` and `SegmentOp` are Sleigh user-ops too, but
+    /// `CallOther` is a terminator-shaped call and `SegmentOp` is pure;
+    /// only `CPoolRef` and `New` need a fresh identity per occurrence.)
+    OpaqueCall,
+    /// Pure value-producing computation: constants, arithmetic,
+    /// comparisons, conversions, plain `Load` / `Store` / `StackStore`,
+    /// `SegmentOp`, `If`, etc.  Cacheable; deduplicated by
+    /// `(kind, inputs, output_kinds)`.
+    PureValue,
+}
+
 /// The operation or role of a node in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
@@ -258,32 +293,86 @@ impl NodeKind {
         )
     }
 
+    /// Returns the structural [`NodeCategory`] of this kind.
+    ///
+    /// This is the single source of truth for "structural / region /
+    /// initial-state" predicates (cacheability, asm-fingerprint
+    /// exemption, …).  The match is exhaustive on purpose: adding a
+    /// new [`NodeKind`] variant forces an explicit decision about its
+    /// category here, and the derived predicates ([`Self::is_cacheable`],
+    /// the validator's `asm_fingerprint_exempt`) update automatically.
+    #[inline]
+    #[must_use]
+    pub fn category(&self) -> NodeCategory {
+        match self {
+            // Region header.
+            Self::ControlState => NodeCategory::Region,
+
+            // Initial state at function entry.
+            Self::Entry
+            | Self::InitialMemory
+            | Self::InitialVar(..)
+            | Self::FunctionArg { .. } => NodeCategory::InitialState,
+
+            // Phis (SSA / memory / stack).
+            Self::Phi | Self::MemPhi | Self::StackStorePhi { .. } => NodeCategory::Phi,
+
+            // Control-flow terminators / call-shaped nodes.
+            Self::Return | Self::IndirectBranch | Self::Call | Self::CallOther { .. } => {
+                NodeCategory::Terminator
+            }
+
+            // Sleigh user-ops with opaque side effects (each occurrence
+            // is distinct).  `CallOther` is also a Sleigh user-op but
+            // lives in the `Terminator` bucket above because of its
+            // control/memory shape; `SegmentOp` is pure and falls into
+            // `PureValue`.
+            Self::CPoolRef | Self::New => NodeCategory::OpaqueCall,
+
+            // Everything else: pure value-producing computation.
+            Self::If
+            | Self::Load(..)
+            | Self::Store(..)
+            | Self::StackStore { .. }
+            | Self::IntConst(..)
+            | Self::IntConstWide(..)
+            | Self::IntUnaryOp(..)
+            | Self::IntBinaryOp(..)
+            | Self::IntCmpOp(..)
+            | Self::CastToInt
+            | Self::Truncate
+            | Self::Popcount
+            | Self::Lzcount
+            | Self::Extend(..)
+            | Self::BoolConst(..)
+            | Self::BoolUnaryOp(..)
+            | Self::BoolBinaryOp(..)
+            | Self::CastToBool
+            | Self::FloatConst(..)
+            | Self::FloatBinaryOp(..)
+            | Self::FloatUnaryOp(..)
+            | Self::FloatCmpOp(..)
+            | Self::IntToFloat
+            | Self::FloatToInt
+            | Self::FloatToFloat
+            | Self::IntBitsToFloat
+            | Self::FloatBitsToInt
+            | Self::CastToFloat
+            | Self::SegmentOp { .. } => NodeCategory::PureValue,
+        }
+    }
+
     /// Returns `true` if nodes of this kind may be deduplicated in the graph
     /// cache.
     ///
     /// Nodes whose inputs are added incrementally after construction (e.g.
     /// `ControlState`, `Phi`) or that must always produce a fresh node
-    /// (e.g. `Return`) are not cacheable.
+    /// (e.g. `Return`) are not cacheable.  Derived from [`Self::category`]:
+    /// only [`NodeCategory::PureValue`] nodes are cacheable.
     #[inline]
     #[must_use]
     pub fn is_cacheable(&self) -> bool {
-        !matches!(
-            self,
-            Self::Entry
-                | Self::InitialMemory
-                | Self::InitialVar(..)
-                | Self::FunctionArg { .. }
-                | Self::Return
-                | Self::IndirectBranch
-                | Self::ControlState
-                | Self::MemPhi
-                | Self::Phi
-                | Self::Call
-                | Self::CallOther { .. }
-                | Self::CPoolRef
-                | Self::New
-                | Self::StackStorePhi { .. }
-        )
+        matches!(self.category(), NodeCategory::PureValue)
     }
 
     /// Returns `true` if this node kind is commutative under operand swap.

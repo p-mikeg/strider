@@ -346,3 +346,153 @@ fn try_from_u32_size_to_node_output_type() {
         );
     }
 }
+
+// ── NodeCategory ─────────────────────────────────────────────────────────
+
+/// Returns one constructor for every [`NodeKind`] variant.  Hand-maintained;
+/// adding a new variant requires appending it here so the equivalence test
+/// continues to cover every kind.  The `category()` match is exhaustive at
+/// compile time, but a forgotten append here would silently shrink coverage.
+fn every_node_kind_smoke() -> Vec<NodeKind> {
+    use crate::node::FunctionArgSource;
+    use crate::ops::{
+        BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+        IntBinaryOp, IntCmpOp, IntUnaryOp,
+    };
+    use cranelift_entity::EntityRef;
+    let space = rsleigh::VnSpace::RAM;
+    let vn = rsleigh::Vn {
+        addr_off: 0,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    vec![
+        // InitialState
+        NodeKind::Entry,
+        NodeKind::InitialMemory,
+        NodeKind::InitialVar(vn),
+        NodeKind::FunctionArg {
+            source: FunctionArgSource::Register(vn),
+            index: 0,
+        },
+        // Region
+        NodeKind::ControlState,
+        // Phi
+        NodeKind::MemPhi,
+        NodeKind::Phi,
+        NodeKind::StackStorePhi { space },
+        // Terminator
+        NodeKind::If,
+        NodeKind::Call,
+        NodeKind::Return,
+        NodeKind::IndirectBranch,
+        NodeKind::CallOther { user_op_id: 0 },
+        // PureValue: memory
+        NodeKind::Load(space),
+        NodeKind::Store(space),
+        NodeKind::StackStore { space, offset: 0 },
+        // PureValue: integer
+        NodeKind::IntConst(0),
+        NodeKind::IntConstWide(crate::wide_const::WideConstId::new(0)),
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        NodeKind::IntCmpOp(IntCmpOp::Equal),
+        NodeKind::Truncate,
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        NodeKind::Popcount,
+        NodeKind::Lzcount,
+        NodeKind::CastToInt,
+        // PureValue: bool
+        NodeKind::BoolConst(false),
+        NodeKind::BoolUnaryOp(BoolUnaryOp::Neg),
+        NodeKind::BoolBinaryOp(BoolBinaryOp::And),
+        NodeKind::CastToBool,
+        // PureValue: float
+        NodeKind::FloatConst(0),
+        NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
+        NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
+        NodeKind::FloatCmpOp(FloatCmpOp::Equal),
+        // PureValue: conversions
+        NodeKind::IntToFloat,
+        NodeKind::IntBitsToFloat,
+        NodeKind::FloatToInt,
+        NodeKind::FloatBitsToInt,
+        NodeKind::FloatToFloat,
+        NodeKind::CastToFloat,
+        // PureValue: Sleigh pure user-op
+        NodeKind::SegmentOp { op_id: 0 },
+        // If is pure-value above; opaque user-ops left:
+        // OpaqueCall
+        NodeKind::CPoolRef,
+        NodeKind::New,
+    ]
+}
+
+/// Original (pre-refactor) hand-written `is_cacheable` predicate.  Pinned
+/// here so the derived `category()`-based predicate can be checked for
+/// byte-identical behaviour on every NodeKind variant.
+fn legacy_is_cacheable(kind: &NodeKind) -> bool {
+    !matches!(
+        kind,
+        NodeKind::Entry
+            | NodeKind::InitialMemory
+            | NodeKind::InitialVar(..)
+            | NodeKind::FunctionArg { .. }
+            | NodeKind::Return
+            | NodeKind::IndirectBranch
+            | NodeKind::ControlState
+            | NodeKind::MemPhi
+            | NodeKind::Phi
+            | NodeKind::Call
+            | NodeKind::CallOther { .. }
+            | NodeKind::CPoolRef
+            | NodeKind::New
+            | NodeKind::StackStorePhi { .. }
+    )
+}
+
+/// Original (pre-refactor) hand-written `asm_fingerprint_exempt` predicate.
+fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Entry
+            | NodeKind::InitialMemory
+            | NodeKind::InitialVar(_)
+            | NodeKind::FunctionArg { .. }
+            | NodeKind::ControlState
+            | NodeKind::MemPhi
+            | NodeKind::Phi
+            | NodeKind::StackStorePhi { .. }
+    )
+}
+
+/// Derived `category()`-based `is_cacheable` must agree with the
+/// legacy hand-written predicate on every NodeKind variant.
+#[test]
+fn category_matches_legacy_is_cacheable() {
+    for k in every_node_kind_smoke() {
+        assert_eq!(
+            k.is_cacheable(),
+            legacy_is_cacheable(&k),
+            "is_cacheable disagrees with legacy for {k:?}"
+        );
+    }
+}
+
+/// Derived `category()`-based `asm_fingerprint_exempt` (Region |
+/// InitialState | Phi) must agree with the legacy hand-written
+/// predicate on every NodeKind variant.
+#[test]
+fn category_matches_legacy_asm_fingerprint_exempt() {
+    for k in every_node_kind_smoke() {
+        let derived = matches!(
+            k.category(),
+            NodeCategory::Region | NodeCategory::InitialState | NodeCategory::Phi
+        );
+        assert_eq!(
+            derived,
+            legacy_asm_fingerprint_exempt(&k),
+            "asm_fingerprint_exempt disagrees with legacy for {k:?}"
+        );
+    }
+}
