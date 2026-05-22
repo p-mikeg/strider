@@ -2,7 +2,7 @@
 //!
 //! Each submodule provides one or more handlers that map a specific
 //! pcode opcode (or family of related opcodes) onto IR builder calls.
-//! The top-level dispatch lives in [`lift`].
+//! The top-level dispatch lives in the parent `lift` module.
 
 use strider_ir::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,

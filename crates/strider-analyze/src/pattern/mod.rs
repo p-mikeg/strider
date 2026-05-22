@@ -85,7 +85,7 @@
 //! `BoolBinaryOpPat`, `FloatBinaryOpPat`) expose `.ordered()`; the bare
 //! `int_cmp` / `float_cmp` ctors return a `Pat` directly.
 //!
-//! ## Walk-through flags ([`MatcherOptions`])
+//! ## Walk-through flags (`MatcherOptions`)
 //!
 //! The matcher's default semantics are **strict exact-walk** — every input
 //! position must match the pattern there directly.  Two opt-in flags relax

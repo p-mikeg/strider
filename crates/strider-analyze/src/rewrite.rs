@@ -52,7 +52,7 @@ use anyhow::Result;
 use strider_ir::node::NodeId;
 use strider_ir::{BuiltFunctionGraph, Graph};
 
-/// Thin façade over [`crate::pattern::rewrite_rule`] / [`crate::pattern::apply_rules_in_order`]
+/// Thin façade over [`crate::pattern::rewrite_rule`] / `crate::pattern::apply_rules_in_order`
 /// that lets users replace any node's input with a constant (or any other
 /// built pattern) and re-run the optimizer pipeline on the rewritten graph.
 ///
@@ -185,7 +185,7 @@ impl<'a> GraphRewriter<'a> {
     /// Applies every rule in `rules` round-robin at every candidate
     /// root and returns the total fire count.
     ///
-    /// Composes [`crate::pattern::apply_rules_in_order`] (which OR-folds N
+    /// Composes `crate::pattern::apply_rules_in_order` (which OR-folds N
     /// rules into a single closure that runs every rule once at a
     /// single root) with [`Self::apply_rule`]'s graph-wide walk.  The
     /// resulting policy is exactly: "for each reachable node N, for

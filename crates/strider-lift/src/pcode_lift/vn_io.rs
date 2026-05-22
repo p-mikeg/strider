@@ -52,12 +52,12 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ///
     /// Dispatches based on the varnode's address space:
     /// - `CONST` → an integer constant node.
-    /// - `UNIQUE` → delegates to [`Self::read_reg_vn`] for sub-view
+    /// - `UNIQUE` → delegates to `Self::read_reg_vn` for sub-view
     ///   aliasing (Sleigh occasionally writes a wide unique and reads
     ///   a narrow slice of it — e.g. MIPS MULT writes a 64-bit unique
     ///   then Copy reads a 32-bit slice).
     /// - default code space → a `Load` from the code address space.
-    /// - `REGISTER` → delegates to [`Self::read_reg_vn`] for aliasing
+    /// - `REGISTER` → delegates to `Self::read_reg_vn` for aliasing
     ///   handling.
     ///
     /// # Errors
@@ -91,10 +91,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ///
     /// Dispatches based on the varnode's address space:
     /// - `CONST` → error (constants cannot be written).
-    /// - `UNIQUE` → delegates to [`Self::write_reg_vn`] for sub-view
+    /// - `UNIQUE` → delegates to `Self::write_reg_vn` for sub-view
     ///   aliasing.
     /// - default code space → a `Store` to the code address space.
-    /// - `REGISTER` → delegates to [`Self::write_reg_vn`] for aliasing
+    /// - `REGISTER` → delegates to `Self::write_reg_vn` for aliasing
     ///   handling.
     ///
     /// # Errors

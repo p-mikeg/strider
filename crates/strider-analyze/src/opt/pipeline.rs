@@ -1,6 +1,6 @@
 /// Whether an optimization pass made any change to the IR graph.
 ///
-/// Passes return this from [`Optimizer::optimize`].  The pipeline uses it to
+/// Passes return this from `Optimizer::optimize`.  The pipeline uses it to
 /// decide whether to run another fixed-point iteration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizationResult {
@@ -94,10 +94,10 @@ pub(crate) fn with_rewrite_ctx<R>(
 /// directly.  Used as the pipeline's dispatch trait: passes that want
 /// raw graph + entry access (e.g. external Python bindings that hold
 /// type-erased `Box<dyn OptimizerRaw>` adapters) implement this
-/// directly, and the higher-level [`Optimizer`] trait blanket-impls
-/// this via [`with_rewrite_ctx`].
+/// directly, and the higher-level `Optimizer` trait blanket-impls
+/// this via `with_rewrite_ctx`.
 ///
-/// **Most passes should implement [`Optimizer`] instead** — it operates
+/// **Most passes should implement `Optimizer` instead** — it operates
 /// on a [`crate::pattern::RewriteCtx`] and gets the ergonomic `Deref<Target =
 /// Graph>` + `preorder()` accessors for free.
 pub trait OptimizerRaw: Send + Sync {
@@ -169,7 +169,7 @@ impl<T: Optimizer> OptimizerRaw for T {
     }
 }
 
-/// An ordered list of [`Optimizer`] passes that are run in a shared fixed-point
+/// An ordered list of `Optimizer` passes that are run in a shared fixed-point
 /// loop.
 ///
 /// On each iteration every pass is called once in registration order.  The loop
@@ -179,7 +179,7 @@ impl<T: Optimizer> OptimizerRaw for T {
 /// Internally the pipeline stores passes as `Box<dyn OptimizerRaw>` so
 /// it can dispatch on `(&mut Graph, NodeId)` directly.  The blanket
 /// `impl<T: Optimizer> OptimizerRaw for T` lets users register any
-/// [`Optimizer`] pass without explicit conversion.
+/// `Optimizer` pass without explicit conversion.
 pub struct OptimizerPipeline {
     optimizers: Vec<Box<dyn OptimizerRaw>>,
     post_passes: Vec<Box<dyn OptimizerRaw>>,

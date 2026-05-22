@@ -6,16 +6,16 @@
 //! - [`RewriteSkip`] — opts a rewrite rule out without surfacing a hard
 //!   error. The `rewrite_rule` interpreter detects this via `is_skip`
 //!   and converts it back to "no change".
-//! - [`NotBuildable`] — pattern is match-only (wildcards, guards, control
+//! - `NotBuildable` — pattern is match-only (wildcards, guards, control
 //!   patterns) and has no build semantics. Surfaced when a pattern that
 //!   doesn't implement `try_build` appears on the RHS of a rewrite rule.
-//! - [`MissingBinding`] — a capture variable referenced by a builder is
+//! - `MissingBinding` — a capture variable referenced by a builder is
 //!   not bound by the LHS match. Indicates a pattern-authoring bug.
 //!
 //! Tests downcast the propagated [`anyhow::Error`] to these structs to
 //! assert which error path fired.
 
-/// Sentinel produced by [`skip`]; detected by the `rewrite_rule`
+/// Sentinel produced by `skip`; detected by the `rewrite_rule`
 /// interpreter via `is_skip` and converted to "no change".
 #[derive(Debug, thiserror::Error)]
 #[error("rewrite rule opted to skip")]

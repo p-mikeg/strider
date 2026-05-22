@@ -68,8 +68,8 @@ impl Binding {
 ///
 /// External callers see `Bindings` as read-only: construction is via
 /// `Default::default()`, the production mutation path
-/// ([`Self::bind_capture`]) is `pub(crate)`, and test scaffolds reach
-/// for [`Self::bind_capture_for_test`].  The `mark` / `restore`
+/// (`Self::bind_capture`) is `pub(crate)`, and test scaffolds reach
+/// for `Self::bind_capture_for_test`.  The `mark` / `restore`
 /// journal API is `pub(crate)` because only the matcher's
 /// commutative-retry / speculative-attempt paths legitimately need it.
 #[derive(Clone, Default)]

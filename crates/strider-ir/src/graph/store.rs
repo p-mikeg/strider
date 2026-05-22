@@ -69,7 +69,7 @@ impl Graph {
     /// Returns an error when either the old or the new kind is
     /// cacheable, or when the node's current slot shape does not match
     /// the new kind's expected
-    /// [`crate::node_signature::expected_signature`] (a mismatch
+    /// `crate::node_signature::expected_signature` (a mismatch
     /// indicates the caller forgot to reshape the inputs before
     /// mutating the kind).  Previously a `debug_assert!`; promoted to a
     /// runtime error so Python users see a clean typed exception
@@ -121,7 +121,7 @@ impl Graph {
     /// any prior entry for `vn`.  See [`Self::initial_var_for`].
     ///
     /// Callers must guarantee that `node_id`'s kind is
-    /// [`NodeKind::InitialVar(vn)`] — the index is advisory and the
+    /// `NodeKind::InitialVar(vn)` — the index is advisory and the
     /// graph does not re-check the kind on lookup.
     #[inline]
     pub fn register_initial_var(&mut self, vn: rsleigh::Vn, node_id: NodeId) {
@@ -163,7 +163,7 @@ impl Graph {
 
     /// Returns the per-Call clobber-list override for `node_id`, or
     /// `None` if the Call uses the function-default
-    /// [`crate::graph::CcMetadata::call_clobbered`].
+    /// `crate::graph::CcMetadata::call_clobbered`.
     #[inline]
     #[must_use]
     pub fn call_clobbered_override(&self, node_id: NodeId) -> Option<&[rsleigh::Vn]> {

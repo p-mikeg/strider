@@ -395,7 +395,7 @@ impl Graph {
         Ok(remap)
     }
 
-    /// Returns a [`crate::graph_dot::GraphDotDumper`] that can render
+    /// Returns a `crate::graph_dot::GraphDotDumper` that can render
     /// this function graph to a `.dot` / `.html` file.
     ///
     /// # Errors

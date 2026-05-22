@@ -89,7 +89,7 @@ impl PartialEq for Options {
     }
 }
 
-/// Builder for [`Options`].
+/// Builder for `Options`.
 ///
 /// # Example
 /// ```rust
@@ -176,7 +176,7 @@ impl OptionsBuilder {
         self
     }
 
-    /// Consumes the builder and returns the final [`Options`].
+    /// Consumes the builder and returns the final `Options`.
     #[must_use]
     pub fn build(self) -> Options {
         self.options

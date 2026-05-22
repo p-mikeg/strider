@@ -509,7 +509,7 @@ impl FunctionBuilder {
         map.get(reg).copied()
     }
 
-    /// Returns the [`rsleigh::Vn`] tracked at the given [`VarId`], or
+    /// Returns the [`rsleigh::Vn`] tracked at the given `VarId`, or
     /// `None` if `var_id` is not in the variable map.  Used by the
     /// `strider` crate to convert per-region `(VarId, NodeOutputId)`
     /// pairs (returned by [`Self::region_initial_variables`]) into the
@@ -519,7 +519,7 @@ impl FunctionBuilder {
         self.variables.get(var_id).copied()
     }
 
-    /// Returns the [`VarId`] for `vn`, or `None` if `vn` is not a
+    /// Returns the `VarId` for `vn`, or `None` if `vn` is not a
     /// tracked variable.  The inverse of [`Self::vn_of_var`].
     #[must_use]
     pub fn var_of_vn(&self, vn: &rsleigh::Vn) -> Option<VarId> {

@@ -185,7 +185,7 @@ impl<'g> Matcher<'g> {
     /// Enables transparent walk-through of every value-passthrough cast
     /// kind — equivalent to `.ignore_casts_mask(CastMask::all())`, and
     /// to the previous boolean `ignore_casts()` behaviour.  See
-    /// [`MatcherOptions::ignore_cast_mask`].
+    /// `MatcherOptions::ignore_cast_mask`.
     #[must_use]
     pub fn ignore_casts(mut self) -> Self {
         self.options.ignore_cast_mask = CastMask::all();
@@ -204,7 +204,7 @@ impl<'g> Matcher<'g> {
 
     /// Enables transparent walk-through of `ControlState` (region-join)
     /// nodes when traversing control chains.  See
-    /// [`MatcherOptions::ignore_control_states`].
+    /// `MatcherOptions::ignore_control_states`.
     #[must_use]
     pub fn ignore_control_states(mut self) -> Self {
         self.options.ignore_control_states = true;
@@ -386,7 +386,7 @@ impl<'g> Matcher<'g> {
     /// Outer index — one entry per joined-match tuple.  Inner index —
     /// one [`Match`] per input pattern, in input order.  Every inner
     /// `Match` in a given tuple agrees with the others on every
-    /// shared capture's [`crate::pattern::matcher::bindings::Binding`].
+    /// shared capture's `crate::pattern::matcher::bindings::Binding`.
     ///
     /// # Edge cases
     ///

@@ -31,7 +31,7 @@
 //!
 //! ## Field annotations
 //!
-//! - `#[field]` — primitive type (i64, u64, bool, BTreeSet<i64>, …):
+//! - `#[field]` — primitive type (i64, u64, bool, `BTreeSet<i64>`, …):
 //!   the Rust setter takes the type by value, the Python setter
 //!   accepts the corresponding Python type via pyo3's `IntoPy`
 //!   transparently.  The argument name in the generated method is the

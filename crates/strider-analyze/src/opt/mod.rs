@@ -1,6 +1,6 @@
 //! IR optimization passes for the Strider binary analysis framework.
 //!
-//! All passes implement the [`Optimizer`] trait and report whether they changed
+//! All passes implement the `Optimizer` trait and report whether they changed
 //! the graph via [`OptimizationResult`].  The [`OptimizerPipeline`] runs a list
 //! of passes in a shared fixed-point loop: the loop repeats until no pass
 //! reports a change in a full iteration.

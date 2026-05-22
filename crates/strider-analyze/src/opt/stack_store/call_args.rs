@@ -265,7 +265,7 @@ fn try_collect_stack_args(
 /// The walker tolerates non-stack-aliasing `Store` nodes interleaved on the
 /// chain (e.g. compiler-emitted volatile global writes that gcc/clang at
 /// `-O2` are free to schedule between stack-arg pushes).  Such stores are
-/// detected via [`crate::opt::sp_expr::decompose_sp`] returning `None` for their
+/// detected via `crate::opt::sp_expr::decompose_sp` returning `None` for their
 /// address; SP-rooted stores remain chain-terminating.
 #[derive(Clone)]
 pub struct CallStackArgCollect {

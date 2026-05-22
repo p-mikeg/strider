@@ -400,7 +400,7 @@ pub fn node_known_bits(
 // ── Read-only analyzer ────────────────────────────────────────────────────────
 
 /// Runs the known-bits worklist analysis to fixed point and returns the
-/// resulting [`Kb`] map keyed by [`NodeOutputId`].  Pure — does not mutate
+/// resulting `Kb` map keyed by [`NodeOutputId`].  Pure — does not mutate
 /// the graph; the [`KnownBits`] optimizer pass is layered on top of this
 /// to perform constant-replacement rewrites.
 ///

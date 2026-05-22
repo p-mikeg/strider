@@ -28,7 +28,7 @@ use crate::pattern::pat::traits::{BuildCtx, BuildOutcome};
 /// `*_const_with!` macros also propagate as [`anyhow::Error`] —
 /// anyhow's blanket `From<E: Error + Send + Sync + 'static>` wraps any
 /// custom error type the closure returns, and tests can downcast to
-/// recover the original.  Use [`crate::pattern::error::skip`] inside a closure
+/// recover the original.  Use `crate::pattern::error::skip` inside a closure
 /// to opt out of the rewrite without a hard error; the interpreter
 /// detects the [`crate::pattern::error::RewriteSkip`] sentinel via
 /// `crate::pattern::error::is_skip` and returns `Ok(false)`.
@@ -206,7 +206,7 @@ impl Mutability for Shared {
 ///
 /// **Field visibility note.**  Both fields are `pub(crate)`; external
 /// opt-pass code reaches `Graph` via the
-/// [`Deref<Target=Graph>`] / [`DerefMut<Target=Graph>`] impls for
+/// [`Deref`](std::ops::Deref) / [`DerefMut`](std::ops::DerefMut) impls (targeting `Graph`) for
 /// method calls, and uses [`Self::graph_ref`] / [`Self::graph_mut`]
 /// when an explicit `&Graph` / `&mut Graph` is needed for a free
 /// function or trait method.  This prevents struct-literal rebinding

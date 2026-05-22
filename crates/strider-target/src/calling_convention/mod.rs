@@ -847,7 +847,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
 
 /// Look up a calling-convention preset by its factory name.
 ///
-/// Linear scan over [`CC_PRESETS`] — the table holds ~22 rows, and
+/// Linear scan over `CC_PRESETS` — the table holds ~22 rows, and
 /// each name comparison short-circuits on length, so the lookup is
 /// cheap enough to skip a hash map.
 #[must_use]
@@ -860,7 +860,7 @@ pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
 ///
 /// If the lookup fails (which would mean this source file is internally
 /// inconsistent), the helper falls back to the first row of
-/// [`CC_PRESETS`] and emits a `debug_assert` so the inconsistency
+/// `CC_PRESETS` and emits a `debug_assert` so the inconsistency
 /// surfaces under test builds.  The unit test
 /// `every_preset_factory_resolves` guards against the fallback ever
 /// being hit in release builds.
@@ -887,7 +887,7 @@ impl CallingConvention {
     }
 
     /// Returns the x86-64 System V ABI calling convention.  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn x86_64_systemv() -> CallingConvention {
         cc_from_table("x86_64_systemv")
@@ -906,27 +906,27 @@ impl CallingConvention {
     }
 
     /// Returns the AArch64 AAPCS64 calling convention.  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn aarch64_aapcs64() -> CallingConvention {
         cc_from_table("aarch64_aapcs64")
     }
 
     /// Returns the ARM 32-bit AAPCS calling convention.  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn arm_aapcs() -> CallingConvention {
         cc_from_table("arm_aapcs")
     }
 
-    /// Returns the MIPS O32 calling convention.  See [`CC_PRESETS`] for
+    /// Returns the MIPS O32 calling convention.  See `CC_PRESETS` for
     /// the full field table.
     #[must_use]
     pub fn mips_o32() -> CallingConvention {
         cc_from_table("mips_o32")
     }
 
-    /// Returns the MIPS N64 calling convention.  See [`CC_PRESETS`] for
+    /// Returns the MIPS N64 calling convention.  See `CC_PRESETS` for
     /// the full field table.
     #[must_use]
     pub fn mips_n64() -> CallingConvention {
@@ -934,27 +934,27 @@ impl CallingConvention {
     }
 
     /// Returns the PowerPC 32-bit System V ABI calling convention.  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn powerpc_sysv32() -> CallingConvention {
         cc_from_table("powerpc_sysv32")
     }
 
     /// Returns the PowerPC 64-bit ELFv1 calling convention.  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn powerpc64_elf_v1() -> CallingConvention {
         cc_from_table("powerpc64_elf_v1")
     }
 
     /// Returns the PowerPC 64-bit ELFv2 calling convention.  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn powerpc64_elf_v2() -> CallingConvention {
         cc_from_table("powerpc64_elf_v2")
     }
 
-    /// Returns the x86 cdecl calling convention.  See [`CC_PRESETS`] for
+    /// Returns the x86 cdecl calling convention.  See `CC_PRESETS` for
     /// the full field table.
     #[must_use]
     pub fn x86_cdecl() -> CallingConvention {
@@ -1010,7 +1010,7 @@ impl CallingConvention {
 
 // ── Linux kernel + syscall preset wrappers ───────────────────────────────────
 //
-// Each named factory is a one-line lookup into [`CC_PRESETS`].  The
+// Each named factory is a one-line lookup into `CC_PRESETS`.  The
 // per-row table above carries the full ABI data; documentation comments
 // on each row describe the convention.
 //
@@ -1020,7 +1020,7 @@ impl CallingConvention {
 // docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md.
 impl CallingConvention {
     /// Returns the Linux kernel-internal CC for x86 32-bit
-    /// (`-mregparm=3`).  See [`CC_PRESETS`] for the full field table.
+    /// (`-mregparm=3`).  See `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn x86_linux_kernel() -> CallingConvention {
         cc_from_table("x86_linux_kernel")
@@ -1062,42 +1062,42 @@ impl CallingConvention {
     }
 
     /// Returns the Linux syscall ABI for x86 32-bit (`int 0x80`).  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn x86_linux_syscall() -> CallingConvention {
         cc_from_table("x86_linux_syscall")
     }
 
     /// Returns the Linux syscall ABI for x86_64 (`syscall`).  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn x86_64_linux_syscall() -> CallingConvention {
         cc_from_table("x86_64_linux_syscall")
     }
 
     /// Returns the Linux syscall ABI for AArch64 (`svc #0`).  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn aarch64_linux_syscall() -> CallingConvention {
         cc_from_table("aarch64_linux_syscall")
     }
 
     /// Returns the Linux syscall ABI for ARM 32-bit (`svc 0`).  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn arm_linux_syscall() -> CallingConvention {
         cc_from_table("arm_linux_syscall")
     }
 
     /// Returns the Linux syscall ABI for MIPS O32 (`syscall`).  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn mips_linux_syscall_o32() -> CallingConvention {
         cc_from_table("mips_linux_syscall_o32")
     }
 
     /// Returns the Linux syscall ABI for MIPS N64 (`syscall`).  See
-    /// [`CC_PRESETS`] for the full field table.
+    /// `CC_PRESETS` for the full field table.
     #[must_use]
     pub fn mips_linux_syscall_n64() -> CallingConvention {
         cc_from_table("mips_linux_syscall_n64")

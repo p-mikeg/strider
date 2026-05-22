@@ -31,9 +31,8 @@ use strider_target::Endianness;
 
 /// The set of statically-known targets of a single `BranchIndirect`.
 ///
-/// Returned by both the cfg-time mini-IR resolver
-/// ([`IndirectTargetResolver::resolve`]) and the IR-level resolver in
-/// `strider_analyze::opt::indirect_branch_resolve::classify_anchor`.
+/// Returned by both the cfg-time mini-IR resolver and the IR-level
+/// resolver in `strider_analyze::opt::indirect_branch_resolve::classify_anchor`.
 ///
 /// ## Variants
 ///

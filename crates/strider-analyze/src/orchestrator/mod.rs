@@ -13,8 +13,8 @@
 //! 4. For each unresolved anchor, run
 //!    [`crate::opt::indirect_branch_resolve::classify_anchor`].
 //! 5. Apply in-place IR edits for terminal classifications:
-//!    [`crate::opt::apply_link_register`] for `LinkRegister`,
-//!    [`crate::opt::apply_tail_call`] for `Single(K)` where `K` is outside
+//!    [`crate::opt::indirect_branch_resolve::apply_link_register`] for `LinkRegister`,
+//!    [`crate::opt::indirect_branch_resolve::apply_tail_call`] for `Single(K)` where `K` is outside
 //!    the function range.  These do NOT trigger a CFG rebuild.
 //! 6. If any classification requires a structural rebuild (intra-fn
 //!    `Single`, `Multiple` jump table), update `known_targets` and

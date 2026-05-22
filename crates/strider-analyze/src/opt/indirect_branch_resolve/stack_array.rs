@@ -14,7 +14,7 @@
 //!
 //!   * Match `Load[Add(sp_expr_with_offset_K, Mul(idx, IntConst(stride)))]`
 //!     — the sp_expr decomposes to a `Terminal { offset: K }` via the
-//!     existing [`opt::sp_expr::decompose_sp`] helper.
+//!     existing `crate::opt::sp_expr::decompose_sp` helper.
 //!   * Bound `idx` via the existing
 //!     [`super::jump_table::bound_via_known_bits`] /
 //!     [`super::jump_table::bound_via_predecessor_if`] machinery.
