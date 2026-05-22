@@ -143,41 +143,53 @@ pub struct PyCastMask {
     pub(crate) inner: strider_analyze::pattern::CastMask,
 }
 
+// Stamp out the 11 `CastMask` factory classmethods inside a dedicated
+// `#[pymethods]` block (PyO3's `multiple-pymethods` feature lets one
+// `#[pyclass]` carry several `#[pymethods]` impls).  Forms:
+//
+//   forall_castmask!(zero_extend => ZERO_EXTEND);  // const bitflags
+//   forall_castmask!(all => fn all);                // assoc fn
+//
+// The macro emits an entire `#[pymethods] impl PyCastMask { … }` block
+// per row so the `#[pymethods]` proc-macro sees the bare `#[classmethod]`
+// attribute it expects (the previous in-block `macro_rules!` form failed
+// because `#[classmethod]` is only recognised when it appears literally
+// to PyO3's `#[pymethods]` pass, not after a `macro_rules!` expansion).
+macro_rules! forall_castmask {
+    ($name:ident => $value:ident) => {
+        #[pymethods]
+        impl PyCastMask {
+            #[classmethod]
+            fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+                Self { inner: strider_analyze::pattern::CastMask::$value }
+            }
+        }
+    };
+    ($name:ident => fn $value:ident) => {
+        #[pymethods]
+        impl PyCastMask {
+            #[classmethod]
+            fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+                Self { inner: strider_analyze::pattern::CastMask::$value() }
+            }
+        }
+    };
+}
+
+forall_castmask!(zero_extend => ZERO_EXTEND);
+forall_castmask!(sign_extend => SIGN_EXTEND);
+forall_castmask!(extend => EXTEND);
+forall_castmask!(truncate => TRUNCATE);
+forall_castmask!(cast_to_int => CAST_TO_INT);
+forall_castmask!(cast_to_bool => CAST_TO_BOOL);
+forall_castmask!(cast_to_float => CAST_TO_FLOAT);
+forall_castmask!(int_bits_to_float => INT_BITS_TO_FLOAT);
+forall_castmask!(float_bits_to_int => FLOAT_BITS_TO_INT);
+forall_castmask!(all => fn all);
+forall_castmask!(none => fn empty);
+
 #[pymethods]
 impl PyCastMask {
-    #[classmethod] fn zero_extend(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::ZERO_EXTEND }
-    }
-    #[classmethod] fn sign_extend(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::SIGN_EXTEND }
-    }
-    #[classmethod] fn extend(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::EXTEND }
-    }
-    #[classmethod] fn truncate(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::TRUNCATE }
-    }
-    #[classmethod] fn cast_to_int(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::CAST_TO_INT }
-    }
-    #[classmethod] fn cast_to_bool(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::CAST_TO_BOOL }
-    }
-    #[classmethod] fn cast_to_float(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::CAST_TO_FLOAT }
-    }
-    #[classmethod] fn int_bits_to_float(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::INT_BITS_TO_FLOAT }
-    }
-    #[classmethod] fn float_bits_to_int(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::FLOAT_BITS_TO_INT }
-    }
-    #[classmethod] fn all(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::all() }
-    }
-    #[classmethod] fn none(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-        Self { inner: strider_analyze::pattern::CastMask::empty() }
-    }
     /// Alias for `none()` — mirrors Rust's `strider_analyze::pattern::CastMask::empty()`.
     #[classmethod] fn empty(cls: &Bound<'_, pyo3::types::PyType>) -> Self {
         Self::none(cls)
