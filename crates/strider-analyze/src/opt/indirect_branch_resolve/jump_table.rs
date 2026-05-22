@@ -48,6 +48,7 @@ use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use strider_ir::{Graph, IntCmpOp};
 use crate::opt::ReadOnlyMemory;
+#[cfg(test)]
 use rsleigh::VnSpace;
 
 /// Top-level classifier hook for the jump-table arm.  Called by
@@ -752,14 +753,13 @@ fn read_table_entries(
         // be safe.
         let offset = i.checked_mul(stride)?;
         let addr = base.checked_add(offset)?;
-        // Use VnSpace::RAM as the read space.  CORRECTNESS: jump
-        // tables live in the loaded image's read-only data
+        // Jump tables live in the loaded image's read-only data
         // (`.rodata`) or sometimes `.text`; both are addressable
-        // through `VnSpace::RAM` from the IR side regardless of
-        // the Load's literal `space` field, because the
-        // ElfFileMemReader's ReadOnlyMemory impl reads through the
-        // address-space-agnostic loaded-segments map.
-        let value = rom.read(VnSpace::RAM, addr, entry_size)?;
+        // through the rom's RAM-only `ReadOnlyMemory` surface
+        // regardless of the Load's literal `space` field, because
+        // the ElfFileMemReader's `ReadOnlyMemory` impl reads through
+        // the address-space-agnostic loaded-segments map.
+        let value = rom.read(addr, entry_size)?;
         targets.push(value);
     }
     Some(targets)

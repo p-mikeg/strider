@@ -78,10 +78,7 @@ impl rsleigh::MemReader for ElfFileMemReader {
 }
 
 impl crate::ReadOnlyMemory for ElfFileMemReader {
-    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
-        if space != rsleigh::VnSpace::RAM {
-            return None;
-        }
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
         if size == 0 || size > 8 {
             return None;
         }

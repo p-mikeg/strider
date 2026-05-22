@@ -64,7 +64,7 @@ fn assert_smoke(arch: &str) {
 
     // ReadOnlyMemory read at entry returns *some* u8 value.
     assert!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, entry, 1).is_some(),
+        ReadOnlyMemory::read(&r, entry, 1).is_some(),
         "{arch}: ReadOnlyMemory failed at entry {entry:#x}",
     );
 

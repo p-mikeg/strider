@@ -27,7 +27,6 @@
 
 mod common;
 
-use rsleigh::VnSpace;
 use strider_analyze::opt::indirect_branch_resolve::{ResolvedTargets, classify_anchor};
 use strider_analyze::opt::analyze_known_bits;
 use strider_analyze::pattern::RewriteCtxView;
@@ -65,7 +64,7 @@ struct TableRom {
 }
 
 impl strider_analyze::opt::ReadOnlyMemory for TableRom {
-    fn read(&self, _space: VnSpace, addr: u64, size: usize) -> Option<u64> {
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
         if size != self.size {
             return None;
         }
@@ -93,7 +92,7 @@ struct PartialRom {
 }
 
 impl strider_analyze::opt::ReadOnlyMemory for PartialRom {
-    fn read(&self, space: VnSpace, addr: u64, size: usize) -> Option<u64> {
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
         if addr < self.inner.base {
             return None;
         }
@@ -105,7 +104,7 @@ impl strider_analyze::opt::ReadOnlyMemory for PartialRom {
         if idx >= self.cutoff {
             return None;
         }
-        self.inner.read(space, addr, size)
+        self.inner.read(addr, size)
     }
 }
 

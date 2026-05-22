@@ -30,7 +30,7 @@ pub struct TableRom {
 }
 
 impl ReadOnlyMemory for TableRom {
-    fn read(&self, _space: VnSpace, addr: u64, size: usize) -> Option<u64> {
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
         if size != self.size {
             return None;
         }
@@ -58,9 +58,9 @@ pub struct RecordingRom {
 }
 
 impl ReadOnlyMemory for RecordingRom {
-    fn read(&self, space: VnSpace, addr: u64, size: usize) -> Option<u64> {
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
         self.log.lock().unwrap().push((addr, size));
-        self.inner.read(space, addr, size)
+        self.inner.read(addr, size)
     }
 }
 
@@ -73,7 +73,7 @@ pub struct PartialRom {
 }
 
 impl ReadOnlyMemory for PartialRom {
-    fn read(&self, space: VnSpace, addr: u64, size: usize) -> Option<u64> {
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
         if addr < self.inner.base {
             return None;
         }
@@ -85,7 +85,7 @@ impl ReadOnlyMemory for PartialRom {
         if idx >= self.cutoff {
             return None;
         }
-        self.inner.read(space, addr, size)
+        self.inner.read(addr, size)
     }
 }
 

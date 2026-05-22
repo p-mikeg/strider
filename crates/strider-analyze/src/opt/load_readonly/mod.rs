@@ -11,12 +11,11 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 ///
 /// # Memory-space contract
 ///
-/// The pass forwards the `Load`'s [`rsleigh::VnSpace`] to
-/// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] verbatim and
-/// trusts the impl to discriminate.  A rom that returns `Some(_)` for an
-/// unrelated space (e.g. a `Load(REGISTER, …)` request answered from rodata
-/// bytes) would produce wrong constants — implementations of
-/// `ReadOnlyMemory` MUST return `None` for any space they do not back.
+/// `ReadOnlyMemory` only models RAM.  The pass gates on
+/// `Load(VnSpace::RAM)` at the call site and never asks the rom about
+/// REGISTER / CONST / UNIQUE / OTHER spaces (those Load nodes are
+/// folded by varnode aliasing or constant propagation before reaching
+/// this pass).
 ///
 /// # Endianness
 ///
@@ -36,7 +35,7 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 ///
 /// struct MyRom;
 /// impl ReadOnlyMemory for MyRom {
-///     fn read(&self, _space: rsleigh::VnSpace, _addr: u64, _size: usize) -> Option<u64> {
+///     fn read(&self, _addr: u64, _size: usize) -> Option<u64> {
 ///         None
 ///     }
 /// }
@@ -64,6 +63,14 @@ impl<M: ReadOnlyMemory + 'static> PeepholePass for LoadReadOnly<M> {
         let NodeKind::Load(space) = kind else {
             return Ok(OptimizationResult::NoChange);
         };
+        // `ReadOnlyMemory` only ever models RAM — REGISTER / CONST /
+        // UNIQUE / OTHER Load nodes are folded by varnode aliasing or
+        // constant propagation before reaching this pass.  Gate the
+        // call so a misrouted non-RAM Load doesn't ask the rom for
+        // bytes outside its semantic domain.
+        if space != rsleigh::VnSpace::RAM {
+            return Ok(OptimizationResult::NoChange);
+        }
 
         // Load inputs: [memory_token, addr].
         let inputs = ctx.node_inputs(root);
@@ -87,7 +94,7 @@ impl<M: ReadOnlyMemory + 'static> PeepholePass for LoadReadOnly<M> {
         if size > 8 {
             return Ok(OptimizationResult::NoChange);
         }
-        let Some(loaded) = self.0.read(space, addr, size) else {
+        let Some(loaded) = self.0.read(addr, size) else {
             return Ok(OptimizationResult::NoChange);
         };
 

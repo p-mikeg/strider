@@ -11,7 +11,7 @@ use common::elf_fixture::{simple_text_elf, simple_text_elf_with_endian};
 use common::reader_contract::{
     assert_mem_reader_partial_read_ok, assert_mem_reader_reads,
     assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_reads,
-    assert_readonly_rejects_bad_sizes, assert_readonly_rejects_non_ram_spaces,
+    assert_readonly_rejects_bad_sizes,
     assert_readonly_returns_none,
 };
 use object::Endianness;
@@ -29,21 +29,9 @@ fn simple_text_elf_fixture_round_trips_through_elf_reader() {
 
     // reading 4 bytes at 0x1000 as a little-endian u32 = 0xddccbbaa
     assert_eq!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 4),
+        ReadOnlyMemory::read(&r, 0x1000, 4),
         Some(0xddccbbaa),
     );
-}
-
-// ── ReadOnlyMemory: space filter ──────────────────────────────────────────
-
-/// Only `VnSpace::RAM` produces a hit; other spaces always return `None`.
-#[test]
-fn ro_read_non_ram_space_returns_none() {
-    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
-    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
-    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::REGISTER, 0x1000, 4), None);
-    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::UNIQUE, 0x1000, 4), None);
-    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::CONST, 0x1000, 4), None);
 }
 
 // ── ReadOnlyMemory: size bounds ───────────────────────────────────────────
@@ -53,7 +41,7 @@ fn ro_read_non_ram_space_returns_none() {
 fn ro_read_size_zero_returns_none() {
     let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
-    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 0), None);
+    assert_eq!(ReadOnlyMemory::read(&r, 0x1000, 0), None);
 }
 
 /// `size > 8` exceeds what a `u64` can carry; the trait returns `None`.
@@ -61,7 +49,7 @@ fn ro_read_size_zero_returns_none() {
 fn ro_read_size_greater_than_eight_returns_none() {
     let elf = simple_text_elf(0x1000, &[0u8; 16]);
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
-    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 9), None);
+    assert_eq!(ReadOnlyMemory::read(&r, 0x1000, 9), None);
 }
 
 // ── ReadOnlyMemory: partial read ──────────────────────────────────────────
@@ -74,7 +62,7 @@ fn ro_read_partial_region_returns_none() {
     let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
     // request 4 bytes starting 2 bytes before the end → only 2 available
-    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1002, 4), None);
+    assert_eq!(ReadOnlyMemory::read(&r, 0x1002, 4), None);
 }
 
 /// An address outside any region returns `None`.
@@ -82,7 +70,7 @@ fn ro_read_partial_region_returns_none() {
 fn ro_read_unmapped_address_returns_none() {
     let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
-    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x9000, 4), None);
+    assert_eq!(ReadOnlyMemory::read(&r, 0x9000, 4), None);
 }
 
 // ── ReadOnlyMemory: endianness ────────────────────────────────────────────
@@ -95,7 +83,7 @@ fn ro_read_little_endian_u32() {
     );
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
     assert_eq!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 4),
+        ReadOnlyMemory::read(&r, 0x1000, 4),
         Some(0x04030201)
     );
 }
@@ -108,7 +96,7 @@ fn ro_read_big_endian_u32() {
     );
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
     assert_eq!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 4),
+        ReadOnlyMemory::read(&r, 0x1000, 4),
         Some(0x01020304)
     );
 }
@@ -123,7 +111,7 @@ fn ro_read_little_endian_u64() {
     );
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
     assert_eq!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 8),
+        ReadOnlyMemory::read(&r, 0x1000, 8),
         Some(0x89abcdef12345678)
     );
 }
@@ -134,7 +122,7 @@ fn ro_read_single_byte() {
     let elf = simple_text_elf(0x1000, &[0xab]);
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
     assert_eq!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 1),
+        ReadOnlyMemory::read(&r, 0x1000, 1),
         Some(0xab)
     );
 }
@@ -161,7 +149,7 @@ fn elf_reader_partial_read_asymmetry_between_traits() {
 
     // Same region, ReadOnlyMemory request for size=8 at start → None.
     assert_eq!(
-        ReadOnlyMemory::read(&r, VnSpace::RAM, 0x1000, 8),
+        ReadOnlyMemory::read(&r, 0x1000, 8),
         None,
         "ReadOnlyMemory must not truncate",
     );
@@ -187,9 +175,8 @@ fn elf_reader_satisfies_read_only_memory_contract() {
     let elf = simple_text_elf(0x1000, &[0x11, 0x22, 0x33, 0x44]);
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
 
-    assert_readonly_reads(&r, rsleigh::VnSpace::RAM, 0x1000, 4, 0x44332211);
-    assert_readonly_returns_none(&r, rsleigh::VnSpace::RAM, 0x9000, 4);
-    assert_readonly_rejects_non_ram_spaces(&r, 0x1000);
+    assert_readonly_reads(&r, 0x1000, 4, 0x44332211);
+    assert_readonly_returns_none(&r, 0x9000, 4);
     assert_readonly_rejects_bad_sizes(&r, 0x1000);
 }
 
@@ -222,7 +209,7 @@ fn elf_reader_from_path_reads_temp_elf() {
 
     let r = ElfFileMemReader::from_path(f.path()).unwrap();
     assert_eq!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 4),
+        ReadOnlyMemory::read(&r, 0x1000, 4),
         Some(0xefbeadde),
     );
 }

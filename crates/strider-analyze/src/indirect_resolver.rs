@@ -337,6 +337,12 @@ fn resolve_const_loads(
         let strider_ir::node::NodeKind::Load(space) = kind else {
             continue;
         };
+        // `ReadOnlyMemory` only models RAM; gate at the call site so
+        // non-RAM Load nodes never reach the rom.  Mirrors
+        // `crate::opt::LoadReadOnly::try_rewrite`.
+        if space != rsleigh::VnSpace::RAM {
+            continue;
+        }
         let inputs = fg.node_inputs(node_id);
         if inputs.len() < 2 {
             continue;
@@ -356,7 +362,7 @@ fn resolve_const_loads(
         if size > 8 {
             continue;
         }
-        let Some(loaded) = rom.read(space, addr, size) else {
+        let Some(loaded) = rom.read(addr, size) else {
             continue;
         };
         let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {

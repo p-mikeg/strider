@@ -275,7 +275,7 @@ fn resolves_rodata_load_to_single() {
     /// 0xcafe_babe; everything else is None.
     struct OneEntryRom;
     impl ReadOnlyMemory for OneEntryRom {
-        fn read(&self, _space: VnSpace, addr: u64, size: usize) -> Option<u64> {
+        fn read(&self, addr: u64, size: usize) -> Option<u64> {
             if addr == 0x4000 && size == 4 {
                 Some(0xcafe_babe)
             } else {

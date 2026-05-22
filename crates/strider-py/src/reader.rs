@@ -493,16 +493,6 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 /// Python-subclassable abstract base for `LoadReadOnly`.  Subclasses
 /// override `read(addr, size) -> Optional[int]` returning the
 /// little-endian-decoded value or `None` for unmapped.
-///
-/// The Rust trait `strider_reader::ReadOnlyMemory::read(VnSpace, addr, size)`
-/// takes a varnode-space because the IR's `Load` nodes carry one
-/// (`Load(VnSpace::REGISTER)` is a register read; `Load(VnSpace::RAM)`
-/// is a memory read).  In practice the `LoadReadOnly` pass only
-/// fires on RAM loads — every other space is either a register read
-/// (folded via varnode aliasing) or a constant/unique value (no rom
-/// involved) — so the Python ABC narrows the surface to RAM only.
-/// Non-RAM reads return `None` automatically without ever calling
-/// the user's `read` method.
 #[pyclass(name = "ReadOnlyMemory", module = "strider", subclass)]
 pub struct PyReadOnlyMemory;
 
@@ -528,16 +518,7 @@ pub struct PyReadOnlyMemoryAdapter {
 }
 
 impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
-    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
-        // The trait carries `space` for symmetry with the IR's `Load`
-        // nodes, but a Python rom only ever needs to model RAM (every
-        // other space is folded by varnode aliasing or constant
-        // propagation before reaching `LoadReadOnly`).  Skip the
-        // GIL acquisition entirely for non-RAM reads so the Python
-        // override sees only the calls it can answer.
-        if space != rsleigh::VnSpace::RAM {
-            return None;
-        }
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
         Python::with_gil(|py| -> Option<u64> {
             // Surface Python exceptions on stderr instead of silently
             // converting them to None — otherwise a buggy user override
@@ -640,16 +621,7 @@ impl rsleigh::MemReader for PyMemoryMapReader {
 /// explicitly via `set_endianness`); defaults to little for
 /// raw-bytes-only construction.
 impl ReadOnlyMemory for PyMemoryMapReader {
-    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
-        // PyMemoryMap models RAM only — it has no backing for REGISTER /
-        // CONST / UNIQUE / OTHER spaces.  Reject non-RAM reads up front
-        // so a misrouted read (e.g. a Load whose space is REGISTER but
-        // whose address happens to fall inside a loaded RAM region)
-        // doesn't return RAM bytes.  Mirrors `PyReadOnlyMemoryAdapter::read`
-        // which gates on space at the FFI boundary.
-        if space != rsleigh::VnSpace::RAM {
-            return None;
-        }
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
         if size == 0 || size > 8 {
             return None;
         }

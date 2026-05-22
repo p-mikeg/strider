@@ -9,7 +9,7 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 struct TestRom;
 
 impl ReadOnlyMemory for TestRom {
-    fn read(&self, _space: rsleigh::VnSpace, addr: u64, _size: usize) -> Option<u64> {
+    fn read(&self, addr: u64, _size: usize) -> Option<u64> {
         match addr {
             0x1000 => Some(42),
             0x2000 => Some(0xFF),
@@ -73,7 +73,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
 fn load_oversize_read_no_change() -> Result<()> {
     struct Limited;
     impl ReadOnlyMemory for Limited {
-        fn read(&self, _space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
+        fn read(&self, addr: u64, size: usize) -> Option<u64> {
             // Only single-byte reads are supported.
             if size == 1 && addr == 0x1000 {
                 Some(42)
@@ -92,18 +92,15 @@ fn load_oversize_read_no_change() -> Result<()> {
     Ok(())
 }
 
-/// A ROM that distinguishes spaces must not fold a load from a
-/// non-matching space.
+/// The pass gates on `Load(VnSpace::RAM)` at the call site, so a
+/// `Load(REGISTER, ...)` must not fold even if the rom would
+/// happily answer the address.
 #[test]
 fn load_other_space_no_change() -> Result<()> {
-    struct RamOnly;
-    impl ReadOnlyMemory for RamOnly {
-        fn read(&self, space: rsleigh::VnSpace, _addr: u64, _size: usize) -> Option<u64> {
-            if space == rsleigh::VnSpace::RAM {
-                Some(0)
-            } else {
-                None
-            }
+    struct AlwaysAnswer;
+    impl ReadOnlyMemory for AlwaysAnswer {
+        fn read(&self, _addr: u64, _size: usize) -> Option<u64> {
+            Some(0xdeadbeef)
         }
     }
     let mut fg = make_fn(|b| {
@@ -111,7 +108,7 @@ fn load_other_space_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::REGISTER, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly(RamOnly).optimize_raw(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly(AlwaysAnswer).optimize_raw(fg.graph_mut(), entry)?.changed());
     Ok(())
 }
 

@@ -66,37 +66,23 @@ where
 
 pub fn assert_readonly_reads(
     r: &impl ReadOnlyMemory,
-    space: VnSpace,
     addr: u64,
     size: usize,
     expected: u64,
 ) {
-    assert_eq!(r.read(space, addr, size), Some(expected), "ReadOnlyMemory::read");
+    assert_eq!(r.read(addr, size), Some(expected), "ReadOnlyMemory::read");
 }
 
 pub fn assert_readonly_returns_none(
     r: &impl ReadOnlyMemory,
-    space: VnSpace,
     addr: u64,
     size: usize,
 ) {
-    assert_eq!(r.read(space, addr, size), None);
-}
-
-/// Exercises the trait's rule that non-RAM spaces always return None.
-/// Caller supplies any mapped address; only the space varies.
-pub fn assert_readonly_rejects_non_ram_spaces(r: &impl ReadOnlyMemory, mapped_addr: u64) {
-    for space in [VnSpace::REGISTER, VnSpace::UNIQUE, VnSpace::CONST] {
-        assert_eq!(
-            r.read(space, mapped_addr, 4),
-            None,
-            "space {space:?} must be rejected",
-        );
-    }
+    assert_eq!(r.read(addr, size), None);
 }
 
 /// Exercises the trait's rule that `size == 0` and `size > 8` always return None.
 pub fn assert_readonly_rejects_bad_sizes(r: &impl ReadOnlyMemory, mapped_addr: u64) {
-    assert_eq!(r.read(VnSpace::RAM, mapped_addr, 0), None, "size=0 must be rejected");
-    assert_eq!(r.read(VnSpace::RAM, mapped_addr, 9), None, "size=9 must be rejected");
+    assert_eq!(r.read(mapped_addr, 0), None, "size=0 must be rejected");
+    assert_eq!(r.read(mapped_addr, 9), None, "size=9 must be rejected");
 }
