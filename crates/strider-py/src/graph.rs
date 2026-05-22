@@ -85,6 +85,30 @@ impl PyGraph {
             ),
         })
     }
+
+    /// Borrow the inner graph for read, then run `f` against it.  Centralises
+    /// the `self.read_inner().map_err(into_strider_err)?` incantation that
+    /// every read-only `#[pymethods]` accessor would otherwise repeat.  Use
+    /// this variant when `f` itself returns a `PyResult` (e.g. it propagates
+    /// `?` from `node_id_from_u32` or builds an error from graph state).
+    fn with_read<R>(
+        &self,
+        f: impl FnOnce(&strider_ir::BuiltFunctionGraph) -> PyResult<R>,
+    ) -> PyResult<R> {
+        let g = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        f(&g)
+    }
+
+    /// Like [`Self::with_read`] but for accessors whose closure just
+    /// produces a value with no further fallible step — saves the
+    /// per-site `Ok(...)` wrapping.
+    fn with_read_value<R>(
+        &self,
+        f: impl FnOnce(&strider_ir::BuiltFunctionGraph) -> R,
+    ) -> PyResult<R> {
+        let g = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        Ok(f(&g))
+    }
 }
 
 #[pymethods]
@@ -93,42 +117,44 @@ impl PyGraph {
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark");
         let cfg_borrow = self.cfg.borrow(py);
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let dumper = graph
-            .dot_dumper(cfg_borrow.inner.sleigh())
-            .map_err(crate::errors::into_strider_err)?;
-        let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
-        d.dump_as_html(Path::new(path))
-            .map_err(crate::errors::into_strider_err)
+        self.with_read(|graph| {
+            let dumper = graph
+                .dot_dumper(cfg_borrow.inner.sleigh())
+                .map_err(crate::errors::into_strider_err)?;
+            let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
+            d.dump_as_html(Path::new(path))
+                .map_err(crate::errors::into_strider_err)
+        })
     }
 
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
         let cfg_borrow = self.cfg.borrow(py);
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let dumper = graph
-            .dot_dumper(cfg_borrow.inner.sleigh())
-            .map_err(crate::errors::into_strider_err)?;
-        let d = dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
-        d.dump_as_dot(Path::new(path))
-            .map_err(crate::errors::into_strider_err)
+        self.with_read(|graph| {
+            let dumper = graph
+                .dot_dumper(cfg_borrow.inner.sleigh())
+                .map_err(crate::errors::into_strider_err)?;
+            let d = dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
+            d.dump_as_dot(Path::new(path))
+                .map_err(crate::errors::into_strider_err)
+        })
     }
 
     #[pyo3(signature = (style=None))]
     fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
         let style = style.unwrap_or("dark");
         let cfg_borrow = self.cfg.borrow(py);
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let dumper = graph
-            .dot_dumper(cfg_borrow.inner.sleigh())
-            .map_err(crate::errors::into_strider_err)?;
-        let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
-        d.as_html_from_dot().map_err(crate::errors::into_strider_err)
+        self.with_read(|graph| {
+            let dumper = graph
+                .dot_dumper(cfg_borrow.inner.sleigh())
+                .map_err(crate::errors::into_strider_err)?;
+            let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
+            d.as_html_from_dot().map_err(crate::errors::into_strider_err)
+        })
     }
 
     fn node_count(&self) -> PyResult<usize> {
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        Ok(graph.all_node_ids().count())
+        self.with_read_value(|graph| graph.all_node_ids().count())
     }
 
     /// Returns the count of `ControlState` join nodes reachable from
@@ -156,19 +182,18 @@ impl PyGraph {
     /// through the canonical IR traversal helper.
     fn count_loop_headers(&self) -> PyResult<usize> {
         use strider_ir::node::NodeKind;
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let count = graph
-            .preorder_kind(|k| matches!(k, NodeKind::ControlState))
-            .count();
-        Ok(count)
+        self.with_read_value(|graph| {
+            graph
+                .preorder_kind(|k| matches!(k, NodeKind::ControlState))
+                .count()
+        })
     }
 
     /// Returns a list of all reachable node ids in the graph as raw
     /// integers.  Useful for iterating from Python without going
     /// through pattern matching.
     fn node_ids(&self) -> PyResult<Vec<u32>> {
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        Ok(graph.all_node_ids().map(|n| n.as_u32()).collect())
+        self.with_read_value(|graph| graph.all_node_ids().map(|n| n.as_u32()).collect())
     }
 
     /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
@@ -178,9 +203,10 @@ impl PyGraph {
     ///
     /// Raises `StriderError` for an invalid `node_id`.
     fn node_kind(&self, node_id: u32) -> PyResult<String> {
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let nid = node_id_from_u32(&graph, node_id)?;
-        Ok(format!("{:?}", graph.node_kind(nid)))
+        self.with_read(|graph| {
+            let nid = node_id_from_u32(graph, node_id)?;
+            Ok(format!("{:?}", graph.node_kind(nid)))
+        })
     }
 
     /// Returns the asm-fingerprint addresses recorded on the node at
@@ -191,9 +217,10 @@ impl PyGraph {
     /// ControlState, FunctionArg) whose existence is synthesised by
     /// the IR builder rather than tied to a specific asm instruction.
     fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let nid = node_id_from_u32(&graph, node_id)?;
-        Ok(graph.asm_fingerprint(nid).to_vec())
+        self.with_read(|graph| {
+            let nid = node_id_from_u32(graph, node_id)?;
+            Ok(graph.asm_fingerprint(nid).to_vec())
+        })
     }
 
     /// Returns the raw little-endian bytes of an `IntConstWide` node's
@@ -204,22 +231,24 @@ impl PyGraph {
     /// doesn't fit in `u128`; narrow constants (≤ U128) are accessible
     /// via `Match.get_uint(c)` instead.
     fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let nid = node_id_from_u32(&graph, node_id)?;
-        match graph.node_kind(nid) {
-            strider_ir::node::NodeKind::IntConstWide(id) => {
-                Ok(Some(graph.wide_const(*id).to_le_bytes()))
+        self.with_read(|graph| {
+            let nid = node_id_from_u32(graph, node_id)?;
+            match graph.node_kind(nid) {
+                strider_ir::node::NodeKind::IntConstWide(id) => {
+                    Ok(Some(graph.wide_const(*id).to_le_bytes()))
+                }
+                _ => Ok(None),
             }
-            _ => Ok(None),
-        }
+        })
     }
 
     /// Returns the Sleigh user-op name attached to a `CallOther` node,
     /// or `None` for any other node kind.
     fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let nid = node_id_from_u32(&graph, node_id)?;
-        Ok(graph.call_other_name(nid).map(str::to_owned))
+        self.with_read(|graph| {
+            let nid = node_id_from_u32(graph, node_id)?;
+            Ok(graph.call_other_name(nid).map(str::to_owned))
+        })
     }
 
     /// Re-validates the graph and returns `None` on success or a
@@ -228,16 +257,17 @@ impl PyGraph {
     /// The asm-fingerprint Layer-C check is always-on: every reachable
     /// non-exempt node must carry a non-empty contributor list.
     fn validate(&self) -> PyResult<Option<String>> {
-        let graph = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        let entry = graph.entry().ok_or_else(|| {
-            crate::errors::into_strider_err(anyhow::anyhow!(
-                "Graph.validate: graph has not been built (entry is None)"
-            ))
-        })?;
-        match strider_ir::validate::validate(graph.graph(), entry) {
-            Ok(()) => Ok(None),
-            Err(e) => Ok(Some(format!("{e}"))),
-        }
+        self.with_read(|graph| {
+            let entry = graph.entry().ok_or_else(|| {
+                crate::errors::into_strider_err(anyhow::anyhow!(
+                    "Graph.validate: graph has not been built (entry is None)"
+                ))
+            })?;
+            match strider_ir::validate::validate(graph.graph(), entry) {
+                Ok(()) => Ok(None),
+                Err(e) => Ok(Some(format!("{e}"))),
+            }
+        })
     }
 
     /// Compact the graph arena: drop every node not reachable from
