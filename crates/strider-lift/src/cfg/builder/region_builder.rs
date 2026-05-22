@@ -88,25 +88,25 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
 
     /// Lift a single machine instruction at `addr`, consulting the
     /// optional [`crate::cfg::DecodeCache`] when present.  Returns an
-    /// `Arc<LiftRes>` so successive callers at the same address
+    /// `Rc<LiftRes>` so successive callers at the same address
     /// (across CFG rebuilds within one `strider::run`) share the
     /// underlying decoded pcode without re-invoking Sleigh.
-    fn lift_one_cached(&mut self, addr: u64) -> Result<std::sync::Arc<rsleigh::LiftRes>> {
+    fn lift_one_cached(&mut self, addr: u64) -> Result<std::rc::Rc<rsleigh::LiftRes>> {
         if let Some(cache) = &self.builder.decode_cache
-            && let Some(arc) = cache.get(addr)
+            && let Some(rc) = cache.get(addr)
         {
-            return Ok(arc);
+            return Ok(rc);
         }
         let res = self
             .builder
             .sleigh
             .lift_one(addr)
             .map_err(|e| anyhow!("generic sleigh error {e:?}"))?;
-        let arc = std::sync::Arc::new(res);
+        let rc = std::rc::Rc::new(res);
         if let Some(cache) = &self.builder.decode_cache {
-            cache.insert(addr, std::sync::Arc::clone(&arc));
+            cache.insert(addr, std::rc::Rc::clone(&rc));
         }
-        Ok(arc)
+        Ok(rc)
     }
 
     /// Decodes a pcode branch-target varnode into a [`PcodeInsnAddr`].
