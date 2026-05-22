@@ -394,24 +394,85 @@ where
             .sleigh
             .take()
             .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at {phase}"))?;
-        let (graph, unresolved, region_index, sleigh) = build_lift_stable(
+        let (graph, unresolved, region_index, sleigh) = self.build_lift_stable(sleigh)?;
+        self.sleigh = Some(sleigh);
+        self.region_index = region_index;
+        self.graph = graph;
+        self.unresolved = unresolved;
+        Ok(())
+    }
+
+    /// Build the CFG, lift to IR, run the stable optimiser subset.
+    /// Returns `(graph, unresolved, region_index, sleigh)` so the caller
+    /// can re-use the harvested Sleigh handle across iterations.
+    ///
+    /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
+    /// IR lift via [`Strider::analyze_cfg_with`], harvests the post-lift
+    /// varnode delta via [`scan_new_vns`], and finishes with the stable
+    /// optimiser pipeline.  The named helpers carry the per-step
+    /// commentary.
+    #[allow(clippy::type_complexity)]
+    fn build_lift_stable(
+        &mut self,
+        sleigh: rsleigh::Sleigh<R>,
+    ) -> Result<(
+        strider_ir::BuiltFunctionGraph,
+        Vec<(PcodeInsnAddr, strider_ir::Value)>,
+        RegionIndex,
+        rsleigh::Sleigh<R>,
+    )> {
+        let cfg = build_cfg(
             sleigh,
             self.strider,
             self.start_addr,
             self.rom.clone(),
             self.fn_max_size,
             self.allow_code_before_start_addr,
-            &self.per_address_built_ccs,
             &self.known_targets,
             &self.decode_cache,
-            &mut self.vn_cache,
-            &mut self.vn_cache_region_count,
         )?;
-        self.sleigh = Some(sleigh);
-        self.region_index = region_index;
-        self.graph = graph;
-        self.unresolved = unresolved;
-        Ok(())
+
+        let all_vns = scan_new_vns(&cfg, &mut self.vn_cache, &mut self.vn_cache_region_count);
+
+        // Wrap the IR lift step as `LiftError`.  `analyze_cfg_with`
+        // surfaces sleigh decode failures, pcode-lift type errors,
+        // unsupported register-aliasing widths, etc. — everything the
+        // Python boundary should report as `LiftError` rather than the
+        // catch-all `StriderError`.  The typed `UnknownCallOtherError`
+        // still flows through unchanged: it's an `anyhow::Error` whose
+        // typed root takes precedence over the `LiftError` wrapper at the
+        // strider-py boundary (the downcast for `UnknownCallOtherError`
+        // runs before the `LiftError` arm).
+        let outcome = self.strider.analyze_cfg_with(
+            &cfg,
+            crate::AnalyzeOptions {
+                all_vns: Some(all_vns),
+                per_address_ccs: Some(&self.per_address_built_ccs),
+            },
+        ).map_err(|e| {
+            // Preserve the typed `UnknownCallOtherError` root if the lift
+            // produced one — wrapping it in `LiftError` would hide the
+            // typed downcast at the strider-py boundary.
+            if e.downcast_ref::<crate::UnknownCallOtherError>().is_some() {
+                e
+            } else {
+                strider_lift::LiftError::wrap(e)
+            }
+        })?;
+        let region_index = RegionIndex::from_handles(outcome.region_handles);
+        let mut graph = outcome.graph;
+        let unresolved = outcome.unresolved_branches;
+
+        let pipeline = self.strider.build_stable_optimizer_pipeline();
+        let entry = graph.entry().ok_or_else(|| {
+            anyhow::anyhow!("seat: graph has not been built (entry is None)")
+        })?;
+        pipeline.run(graph.graph_mut(), entry)?;
+
+        // Harvest the Sleigh handle out of the consumed Cfg so the next
+        // iteration can re-use it without re-loading the SLA spec.
+        let harvested = cfg.into_sleigh();
+        Ok((graph, unresolved, region_index, harvested))
     }
 
     fn no_unresolved(&self) -> bool {
@@ -914,90 +975,6 @@ fn read_or_init_var(
     Ok(out)
 }
 
-/// Build the CFG, lift to IR, run the stable optimiser subset.
-/// Returns `(graph, unresolved, region_index, sleigh)` so the caller
-/// can re-use the harvested Sleigh handle across iterations.
-///
-/// Sequencer: delegates CFG construction to [`build_cfg`], runs the
-/// IR lift via [`Strider::analyze_cfg_with`], harvests the post-lift
-/// varnode delta via [`scan_new_vns`], and finishes with the stable
-/// optimiser pipeline.  The named helpers carry the per-step
-/// commentary.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
-fn build_lift_stable<R>(
-    sleigh: rsleigh::Sleigh<R>,
-    strider: &Strider,
-    start_addr: strider_lift::cfg::MachineInsnAddr,
-    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
-    fn_max_size: Option<u64>,
-    allow_code_before_start_addr: bool,
-    per_address_built_ccs: &HashMap<u64, strider_target::BuiltCallingConvention>,
-    known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
-    decode_cache: &DecodeCache,
-    vn_cache: &mut std::collections::HashSet<rsleigh::Vn>,
-    vn_cache_region_count: &mut usize,
-) -> Result<(
-    strider_ir::BuiltFunctionGraph,
-    Vec<(PcodeInsnAddr, strider_ir::Value)>,
-    RegionIndex,
-    rsleigh::Sleigh<R>,
-)>
-where
-    R: rsleigh::MemReader,
-{
-    let cfg = build_cfg(
-        sleigh,
-        strider,
-        start_addr,
-        rom,
-        fn_max_size,
-        allow_code_before_start_addr,
-        known_targets,
-        decode_cache,
-    )?;
-
-    let all_vns = scan_new_vns(&cfg, vn_cache, vn_cache_region_count);
-
-    // Wrap the IR lift step as `LiftError`.  `analyze_cfg_with`
-    // surfaces sleigh decode failures, pcode-lift type errors,
-    // unsupported register-aliasing widths, etc. — everything the
-    // Python boundary should report as `LiftError` rather than the
-    // catch-all `StriderError`.  The typed `UnknownCallOtherError`
-    // still flows through unchanged: it's an `anyhow::Error` whose
-    // typed root takes precedence over the `LiftError` wrapper at the
-    // strider-py boundary (the downcast for `UnknownCallOtherError`
-    // runs before the `LiftError` arm).
-    let outcome = strider.analyze_cfg_with(
-        &cfg,
-        crate::AnalyzeOptions {
-            all_vns: Some(all_vns),
-            per_address_ccs: Some(per_address_built_ccs),
-        },
-    ).map_err(|e| {
-        // Preserve the typed `UnknownCallOtherError` root if the lift
-        // produced one — wrapping it in `LiftError` would hide the
-        // typed downcast at the strider-py boundary.
-        if e.downcast_ref::<crate::UnknownCallOtherError>().is_some() {
-            e
-        } else {
-            strider_lift::LiftError::wrap(e)
-        }
-    })?;
-    let region_index = RegionIndex::from_handles(outcome.region_handles);
-    let mut graph = outcome.graph;
-    let unresolved = outcome.unresolved_branches;
-
-    let pipeline = strider.build_stable_optimizer_pipeline();
-    let entry = graph.entry().ok_or_else(|| {
-        anyhow::anyhow!("seat: graph has not been built (entry is None)")
-    })?;
-    pipeline.run(graph.graph_mut(), entry)?;
-
-    // Harvest the Sleigh handle out of the consumed Cfg so the next
-    // iteration can re-use it without re-loading the SLA spec.
-    let harvested = cfg.into_sleigh();
-    Ok((graph, unresolved, region_index, harvested))
-}
 
 /// Build the CFG with the strider's arch + the current `known_targets`
 /// resolution map.
@@ -1087,15 +1064,15 @@ fn scan_new_vns<R>(
 where
     R: rsleigh::MemReader,
 {
-    let regions_now: Vec<&strider_lift::cfg::Region> = cfg.regions().collect();
-    for region in regions_now.iter().skip(*vn_cache_region_count) {
+    let starting = *vn_cache_region_count;
+    for region in cfg.regions().skip(starting) {
         for wrapped in region.insns.iter() {
             for vn in wrapped.insn.all_vns() {
                 vn_cache.insert(vn);
             }
         }
     }
-    *vn_cache_region_count = regions_now.len();
+    *vn_cache_region_count = cfg.regions().count();
     let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
     all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
     all_vns
