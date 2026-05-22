@@ -62,7 +62,7 @@ pub(crate) fn missing_binding(kind: &'static str) -> anyhow::Error {
 /// crate's source tree.  The macro emits `$crate::pattern::__missing_binding(...)`.
 #[doc(hidden)]
 #[must_use]
-pub fn __missing_binding(kind: &'static str) -> anyhow::Error {
+pub(crate) fn __missing_binding(kind: &'static str) -> anyhow::Error {
     missing_binding(kind)
 }
 

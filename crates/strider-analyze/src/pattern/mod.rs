@@ -134,7 +134,7 @@ pub mod error;
 pub use error::Result;
 pub(crate) use error::skip;
 #[doc(hidden)]
-pub use error::__missing_binding;
+pub(crate) use error::__missing_binding;
 
 pub(crate) mod macros;
 mod matcher;
