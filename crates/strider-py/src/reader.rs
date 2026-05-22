@@ -12,8 +12,10 @@
 //! `Sleigh<AnyMemReader>` type without monomorphising the entire
 //! pipeline twice.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::rc::Rc;
+use std::sync::Arc;
 
 use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
@@ -84,69 +86,63 @@ impl From<strider_reader::elf::RelocationStats> for PyRelocationStats {
 
 // ── PyMemoryMap (data-only fast path) ────────────────────────────────────
 
-/// Owned-data memory map. Implements `rsleigh::MemReader` and
-/// `strider_reader::ReadOnlyMemory` indirectly through the
-/// internal `PyMemoryMapReader` view (`MemInput::into_arc` /
-/// `MemInput::into_any` mint the view on demand). Cheap to clone:
-/// the inner data is held behind `Arc`.
-#[pyclass(name = "MemoryMap", module = "strider")]
-#[derive(Clone)]
-pub struct PyMemoryMap {
-    /// Wrapped in `Arc<RwLock<...>>` so `add_region` after construction
-    /// remains possible without requiring `&mut self` plumbing across
-    /// PyO3.  Cloning the wrapper bumps the Arc; mutations are
-    /// synchronized through the `RwLock`.
-    inner: Arc<RwLock<Vec<MemRegion>>>,
+/// Plain-data inner state shared by every clone of a `PyMemoryMap`.
+/// Held behind a single `Rc<RefCell<...>>` on the surface pyclass; the
+/// `#[pyclass(unsendable)]` marker plus PyO3's GIL serialisation lets
+/// us drop all of the prior `Arc<RwLock<...>>` ceremony.
+pub(crate) struct PyMemoryMapInner {
+    pub(crate) regions: Vec<MemRegion>,
     /// Lazily-rebuilt lookup table; cleared on every `add_region`.
-    table: Arc<RwLock<Option<Arc<MemRegionsLookupTable>>>>,
+    pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
     /// Loaded ELF objects, in `add_region_from_elf` insertion order.
     /// Kept around so `symbol(name)` / `symbols()` can resolve names
     /// without forcing the user to re-parse the file via pyelftools.
     /// `object::File<'static>` borrows from a leaked byte slice (see
     /// `strider_reader::load_elf`), so storing it here is sound.
-    elfs: Arc<RwLock<Vec<object::File<'static>>>>,
+    pub(crate) elfs: Vec<object::File<'static>>,
     /// Byte order used by `ReadOnlyMemory::read` when assembling
     /// multi-byte words from the underlying buffer.  Defaults to
-    /// [`strider_target::Endianness::Little`]; auto-set from the ELF header in
-    /// `add_region_from_elf`, or set explicitly via
-    /// [`Self::set_endianness`].  Stored behind an Arc/RwLock so a
-    /// `PyMemoryMap` clone shares the same setting.
-    endianness: Arc<RwLock<strider_target::Endianness>>,
+    /// [`strider_target::Endianness::Little`]; auto-set from the ELF
+    /// header in `add_region_from_elf`, or set explicitly via
+    /// [`PyMemoryMap::set_endianness`].
+    pub(crate) endianness: strider_target::Endianness,
+}
+
+/// Owned-data memory map. Implements `rsleigh::MemReader` and
+/// `strider_reader::ReadOnlyMemory` indirectly through the
+/// internal `PyMemoryMapReader` view (`MemInput::into_arc` /
+/// `MemInput::into_any` mint the view on demand). Cheap to clone:
+/// the inner data is held behind one `Rc<RefCell<...>>`.
+///
+/// `unsendable`: a `PyMemoryMap` is only ever touched from the Python
+/// thread that holds the GIL.  Downstream consumers that need a
+/// `Send + Sync` reader take a `PyMemoryMapReader` snapshot instead
+/// (see `reader_view`), so the surface pyclass doesn't need to be
+/// thread-safe.
+#[pyclass(name = "MemoryMap", module = "strider", unsendable)]
+#[derive(Clone)]
+pub struct PyMemoryMap {
+    /// `Rc` so a `MemoryMap` clone shares state with the original
+    /// (e.g. an `add_region` on one handle is visible from the other —
+    /// the prior `Arc<RwLock<...>>` layout had the same semantics).
+    pub(crate) inner: Rc<RefCell<PyMemoryMapInner>>,
 }
 
 impl PyMemoryMap {
-    fn rebuild_table(&self) -> anyhow::Result<Arc<MemRegionsLookupTable>> {
-        let regions = self
-            .inner
-            .read()
-            .map_err(|_| anyhow::anyhow!("MemoryMap regions lock poisoned"))?
-            .clone();
-        let t = Arc::new(MemRegionsLookupTable::new(regions));
-        let mut slot = self
-            .table
-            .write()
-            .map_err(|_| anyhow::anyhow!("MemoryMap table lock poisoned"))?;
-        *slot = Some(Arc::clone(&t));
-        Ok(t)
+    fn rebuild_table(&self) -> Arc<MemRegionsLookupTable> {
+        let mut inner = self.inner.borrow_mut();
+        let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
+        inner.table = Some(Arc::clone(&t));
+        t
     }
 
     /// Returns a snapshot of the current lookup table, building it on
     /// demand if invalidated.  Used internally by both `read` and the
     /// `MemReader` view supplied to `Sleigh::new`.
-    ///
-    /// Recovers from RwLock poisoning via `into_inner()` — the table's
-    /// inner state is `Option<Arc<...>>` (an atomic-pointer slot), so
-    /// the only way it could be inconsistent after a panicking writer
-    /// is to be partially overwritten, which `*slot = Some(...)` cannot
-    /// do.  Recovery is therefore safe and matches the read-side
-    /// semantic: a partial-write panic leaves the prior value intact
-    /// or replaces it atomically.
-    pub(crate) fn lookup_table(&self) -> anyhow::Result<Arc<MemRegionsLookupTable>> {
-        let slot = self.table.read().unwrap_or_else(|p| p.into_inner());
-        if let Some(t) = slot.as_ref() {
-            return Ok(Arc::clone(t));
+    pub(crate) fn lookup_table(&self) -> Arc<MemRegionsLookupTable> {
+        if let Some(t) = self.inner.borrow().table.as_ref() {
+            return Arc::clone(t);
         }
-        drop(slot);
         self.rebuild_table()
     }
 
@@ -156,10 +152,10 @@ impl PyMemoryMap {
     /// implements both `rsleigh::MemReader` and `ReadOnlyMemory`, so
     /// downstream consumers that need either trait can take the view
     /// without forcing the surface `PyMemoryMap` to be thread-safe.
-    pub(crate) fn reader_view(&self) -> anyhow::Result<PyMemoryMapReader> {
-        let table = self.lookup_table()?;
-        let endianness = *self.endianness.read().unwrap_or_else(|p| p.into_inner());
-        Ok(PyMemoryMapReader { table, endianness })
+    pub(crate) fn reader_view(&self) -> PyMemoryMapReader {
+        let table = self.lookup_table();
+        let endianness = self.inner.borrow().endianness;
+        PyMemoryMapReader { table, endianness }
     }
 }
 
@@ -168,12 +164,14 @@ impl PyMemoryMap {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(Vec::new())),
-            table: Arc::new(RwLock::new(None)),
-            elfs: Arc::new(RwLock::new(Vec::new())),
-            // Default to LE; overridden by add_region_from_elf or
-            // set_endianness once the user supplies a real arch.
-            endianness: Arc::new(RwLock::new(strider_target::Endianness::Little)),
+            inner: Rc::new(RefCell::new(PyMemoryMapInner {
+                regions: Vec::new(),
+                table: None,
+                elfs: Vec::new(),
+                // Default to LE; overridden by add_region_from_elf or
+                // set_endianness once the user supplies a real arch.
+                endianness: strider_target::Endianness::Little,
+            })),
         }
     }
 
@@ -196,35 +194,20 @@ impl PyMemoryMap {
                 )));
             }
         };
-        let mut slot = self
-            .endianness
-            .write()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap endianness lock poisoned")))?;
-        *slot = parsed;
+        self.inner.borrow_mut().endianness = parsed;
         Ok(())
     }
 
     fn add_region(&self, start_addr: u64, data: Vec<u8>) -> PyResult<()> {
         let region = MemRegion::new(start_addr, data).map_err(into_reader_err)?;
-        let mut regions = self
-            .inner
-            .write()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap regions lock poisoned")))?;
-        regions.push(region);
-        let mut slot = self
-            .table
-            .write()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap table lock poisoned")))?;
-        *slot = None;
+        let mut inner = self.inner.borrow_mut();
+        inner.regions.push(region);
+        inner.table = None;
         Ok(())
     }
 
-    fn region_count(&self) -> PyResult<usize> {
-        let regions = self
-            .inner
-            .read()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap regions lock poisoned")))?;
-        Ok(regions.len())
+    fn region_count(&self) -> usize {
+        self.inner.borrow().regions.len()
     }
 
     fn read<'py>(
@@ -233,7 +216,7 @@ impl PyMemoryMap {
         addr: u64,
         size: usize,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        let table = self.lookup_table().map_err(into_reader_err)?;
+        let table = self.lookup_table();
         let mut buf = vec![0u8; size];
         match table.read(addr, &mut buf) {
             Some(n) => {
@@ -268,12 +251,6 @@ impl PyMemoryMap {
             object::Endianness::Little => strider_target::Endianness::Little,
             object::Endianness::Big => strider_target::Endianness::Big,
         };
-        {
-            let mut slot = self.endianness.write().map_err(|_| {
-                into_reader_err(anyhow::anyhow!("MemoryMap endianness lock poisoned"))
-            })?;
-            *slot = elf_endian;
-        }
         // When apply_relocations=True we widen the section coverage
         // to include `.data.rel.ro`, `.got`, …  Without the widening
         // a `R_*_RELATIVE` relocation against a writable-but-
@@ -288,22 +265,12 @@ impl PyMemoryMap {
             strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
                 .map_err(into_reader_err)?
         };
-        let mut inner = self
-            .inner
-            .write()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap regions lock poisoned")))?;
-        inner.extend(regions);
-        let mut slot = self
-            .table
-            .write()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap table lock poisoned")))?;
-        *slot = None;
+        let mut inner = self.inner.borrow_mut();
+        inner.endianness = elf_endian;
+        inner.regions.extend(regions);
+        inner.table = None;
         // Cache the ELF for subsequent symbol() / symbols() / entry_point() calls.
-        let mut elfs = self
-            .elfs
-            .write()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
-        elfs.push(obj);
+        inner.elfs.push(obj);
         Ok(())
     }
 
@@ -333,20 +300,13 @@ impl PyMemoryMap {
     /// autoloaded).
     fn apply_elf_relocations(&self, path: &str) -> PyResult<PyRelocationStats> {
         let obj = strider_reader::load_elf(path).map_err(into_reader_err)?;
-        let mut regions = self
-            .inner
-            .write()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap regions lock poisoned")))?;
-        let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj)
+        let mut inner = self.inner.borrow_mut();
+        let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut inner.regions, &obj)
             .map_err(into_reader_err)?;
         // Invalidate the lookup table — both the autoload step
         // (which appends new regions) and the in-place patches
         // require a rebuild before the next read.
-        let mut slot = self
-            .table
-            .write()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap table lock poisoned")))?;
-        *slot = None;
+        inner.table = None;
         Ok(stats.into())
     }
 
@@ -355,18 +315,15 @@ impl PyMemoryMap {
     /// the first match in load order; raises `ReaderError` when no
     /// loaded ELF defines the name.
     fn symbol(&self, name: &str) -> PyResult<u64> {
-        let elfs = self
-            .elfs
-            .read()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
-        for obj in elfs.iter() {
+        let inner = self.inner.borrow();
+        for obj in inner.elfs.iter() {
             if let Some(sym) = obj.symbol_by_name(name) {
                 return Ok(sym.address());
             }
         }
         Err(into_reader_err(anyhow::anyhow!(
             "symbol {name:?} not found in any ELF loaded into this MemoryMap \
-             ({} loaded)", elfs.len()
+             ({} loaded)", inner.elfs.len()
         )))
     }
 
@@ -386,11 +343,8 @@ impl PyMemoryMap {
     /// strider.run(..., entry=addr, function_max_size=size)
     /// ```
     fn symbol_size(&self, name: &str) -> PyResult<Option<u64>> {
-        let elfs = self
-            .elfs
-            .read()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
-        for obj in elfs.iter() {
+        let inner = self.inner.borrow();
+        for obj in inner.elfs.iter() {
             if let Some(sym) = obj.symbol_by_name(name) {
                 let size = sym.size();
                 return Ok(if size == 0 { None } else { Some(size) });
@@ -398,7 +352,7 @@ impl PyMemoryMap {
         }
         Err(into_reader_err(anyhow::anyhow!(
             "symbol {name:?} not found in any ELF loaded into this MemoryMap \
-             ({} loaded)", elfs.len()
+             ({} loaded)", inner.elfs.len()
         )))
     }
 
@@ -408,11 +362,8 @@ impl PyMemoryMap {
     /// `None` when the ELF doesn't record one (zero `st_size`).
     /// Raises `ReaderError` when the symbol is undefined.
     fn function_max_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
-        let elfs = self
-            .elfs
-            .read()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
-        for obj in elfs.iter() {
+        let inner = self.inner.borrow();
+        for obj in inner.elfs.iter() {
             if let Some(sym) = obj.symbol_by_name(name) {
                 let size = sym.size();
                 return Ok((sym.address(), if size == 0 { None } else { Some(size) }));
@@ -420,7 +371,7 @@ impl PyMemoryMap {
         }
         Err(into_reader_err(anyhow::anyhow!(
             "symbol {name:?} not found in any ELF loaded into this MemoryMap \
-             ({} loaded)", elfs.len()
+             ({} loaded)", inner.elfs.len()
         )))
     }
 
@@ -428,13 +379,10 @@ impl PyMemoryMap {
     /// `dict[str, int]`.  Symbols with empty names or zero addresses
     /// (typical for synthetic linker entries) are skipped.  When two
     /// ELFs define the same name, the earlier-loaded one wins.
-    fn symbols(&self) -> PyResult<HashMap<String, u64>> {
-        let elfs = self
-            .elfs
-            .read()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
+    fn symbols(&self) -> HashMap<String, u64> {
+        let inner = self.inner.borrow();
         let mut out: HashMap<String, u64> = HashMap::new();
-        for obj in elfs.iter() {
+        for obj in inner.elfs.iter() {
             for sym in obj.symbols() {
                 let Ok(name) = sym.name() else { continue };
                 if name.is_empty() || sym.address() == 0 {
@@ -443,17 +391,14 @@ impl PyMemoryMap {
                 out.entry(name.to_string()).or_insert(sym.address());
             }
         }
-        Ok(out)
+        out
     }
 
     /// ELF entry-point address from the first loaded ELF.  Raises
     /// `ReaderError` when no ELF has been loaded yet.
     fn entry_point(&self) -> PyResult<u64> {
-        let elfs = self
-            .elfs
-            .read()
-            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
-        let first = elfs.first().ok_or_else(|| {
+        let inner = self.inner.borrow();
+        let first = inner.elfs.first().ok_or_else(|| {
             into_reader_err(anyhow::anyhow!(
                 "no ELF loaded into this MemoryMap; call add_region_from_elf first"
             ))
@@ -768,18 +713,18 @@ impl MemInput {
     /// the surface pyclass no longer implements `ReadOnlyMemory` so
     /// callers can't accidentally observe later `add_region` calls in
     /// flight (the snapshot semantics match the Sleigh-reader path).
-    pub fn into_arc(self) -> anyhow::Result<Arc<dyn ReadOnlyMemory>> {
+    pub fn into_arc(self) -> Arc<dyn ReadOnlyMemory> {
         match self {
-            MemInput::Map(m) => Ok(Arc::new(m.reader_view()?)),
-            MemInput::Cb(obj) => Ok(Arc::new(PyReadOnlyMemoryAdapter { py_obj: obj })),
+            MemInput::Map(m) => Arc::new(m.reader_view()),
+            MemInput::Cb(obj) => Arc::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
         }
     }
 
     /// Materialise into the unified `AnyMemReader` (Sleigh-reader role).
-    pub fn into_any(self) -> anyhow::Result<AnyMemReader> {
+    pub fn into_any(self) -> AnyMemReader {
         match self {
-            MemInput::Map(m) => Ok(AnyMemReader::Map(m.reader_view()?)),
-            MemInput::Cb(obj) => Ok(AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj })),
+            MemInput::Map(m) => AnyMemReader::Map(m.reader_view()),
+            MemInput::Cb(obj) => AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj }),
         }
     }
 

@@ -69,7 +69,7 @@ impl PySleigh {
 impl PySleigh {
     #[new]
     fn new(arch: PySleighArch, mem: MemInput) -> PyResult<Self> {
-        let reader = mem.into_any().map_err(into_lift_err)?;
+        let reader = mem.into_any();
         Self::new_internal(arch, reader)
     }
 

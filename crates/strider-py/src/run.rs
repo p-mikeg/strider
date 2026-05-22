@@ -125,8 +125,8 @@ fn run_via_orchestrator(
 ) -> PyResult<PyRunResult> {
     // Snapshot the reader so we can hand a fresh AnyMemReader to both
     // the orchestrator (consumed) and the snapshot CFG (consumed).
-    let reader_for_cfg = mem.clone_one()?.into_any().map_err(into_lift_err)?;
-    let reader_for_orch = mem.into_any().map_err(into_lift_err)?;
+    let reader_for_cfg = mem.clone_one()?.into_any();
+    let reader_for_orch = mem.into_any();
 
     // Build a Sleigh handle the user can keep (its inner is consumed
     // by the snapshot CFG below; Sleigh.regs remains accessible).
@@ -156,7 +156,7 @@ fn run_via_orchestrator(
     let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
         .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
-    let rom_arc = rom.map(|r| r.into_arc()).transpose().map_err(into_lift_err)?;
+    let rom_arc = rom.map(|r| r.into_arc());
 
     // Snapshot the Strider out of the PyRef so we can release the GIL
     // across the long-running strider_analyze::run call.  Strider is cheap to
@@ -221,10 +221,10 @@ fn run_with_custom_pipeline(
     // expecting LoadReadOnly to fold loads got no folding at all.
     // Pass `rom=None` to opt out.
     if let Some(rom_input) = rom {
-        let rom_arc = rom_input.into_arc().map_err(into_lift_err)?;
+        let rom_arc = rom_input.into_arc();
         pipeline.prepend_load_read_only(rom_arc)?;
     }
-    let reader: AnyMemReader = mem.into_any().map_err(into_lift_err)?;
+    let reader: AnyMemReader = mem.into_any();
     let sleigh = Py::new(py, PySleigh::new_internal(arch.clone(), reader)?)?;
 
     let s = PyStrider::new_internal(py, arch.clone(), &sleigh, cc.clone())?;
