@@ -21,7 +21,14 @@
 //! live in `strider-analyze/tests/proptest_optimizer.rs` because
 //! `strider-ir` cannot depend on the analyzer.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::enum_variant_names
+)]
 
 use proptest::prelude::*;
 

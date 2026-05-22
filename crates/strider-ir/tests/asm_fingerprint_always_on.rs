@@ -1,3 +1,11 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo
+)]
+
 //! Layer-C asm-fingerprint check must fire on default `validate()`.
 //!
 //! Every optimization pass that forgets `extend_asm_fingerprint_from`

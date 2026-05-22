@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::type_complexity
+)]
+
 //! Smoke tests: every [`strider_target::SleighArch`] preset must successfully feed
 //! into `rsleigh::Sleigh::new` and produce a usable register table.  Without
 //! this, presets that nothing else exercises (e.g. `mipsbe32`, `mipsle32`,
@@ -7,7 +16,6 @@
 //! the crate's unit-test module — this file intentionally does not assert it,
 //! because the SP name lives on `CallingConvention`, not `SleighArch`.
 
-#![allow(clippy::panic, clippy::unwrap_used)]
 
 use strider_target::SleighArch;
 

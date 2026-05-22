@@ -62,6 +62,7 @@ fn branch_indirect(target_vn: Vn) -> Insn {
 /// Sequence:
 ///   1. `Copy reg, 0xdeadbeef` at machine address 0x1000.
 ///   2. `BranchIndirect reg`   at machine address 0x1004.
+///
 /// The mini-IR builds an `IntConst(0xdeadbeef)` (from the `Copy`'s
 /// CONST operand) and a `Return` anchoring the target's value.  Both
 /// kinds are non-exempt under the contract.

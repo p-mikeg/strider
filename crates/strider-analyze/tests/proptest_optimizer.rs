@@ -14,7 +14,14 @@
 //! [`FunctionBuilder`] actions, mirroring `cranelift-fuzzgen`.  Control-flow
 //! properties stay in hand-authored fixtures.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::enum_variant_names
+)]
 
 use std::collections::{BTreeSet, HashMap};
 

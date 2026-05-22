@@ -21,6 +21,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::unreachable,
+    clippy::todo,
+    clippy::crate_in_macro_def,
     dead_code  // category test files won't use every helper
 )]
 

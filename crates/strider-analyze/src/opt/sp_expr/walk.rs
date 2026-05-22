@@ -151,7 +151,7 @@ mod tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
             .expect("ControlState present");
-        let cs_outs = fg.node_outputs(cs).iter().copied().collect::<Vec<_>>();
+        let cs_outs = fg.node_outputs(cs).to_vec();
         let phi_token = *cs_outs
             .iter()
             .find(|&&o| matches!(fg.output_kind(o), NodeOutputKind::PhiToken))

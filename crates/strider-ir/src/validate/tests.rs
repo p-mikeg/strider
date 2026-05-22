@@ -685,7 +685,7 @@ fn local_typing_mem_phi_variadic_tail_must_be_memory() {
         [entry_ctrl],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
-    let cs_outputs: Vec<_> = graph.node_outputs(cs).iter().copied().collect();
+    let cs_outputs: Vec<_> = graph.node_outputs(cs).to_vec();
     let cs_ctrl = cs_outputs[0];
     let cs_phi_token = cs_outputs[1];
 
