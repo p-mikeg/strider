@@ -36,6 +36,8 @@ mod cfg;
 mod dot;
 mod errors;
 mod graph;
+#[macro_use]
+mod macros;
 mod matcher;
 mod opt;
 mod pattern;

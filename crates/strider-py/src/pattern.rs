@@ -873,6 +873,17 @@ macro_rules! binary {
             Ok(PyPat::from_pat(strider_analyze::pattern::$name(lp, rp).into()))
         }
     };
+    // Python-name override: exported Rust fn is `$py_name` (matching the
+    // Python attribute literal), but the underlying `strider_analyze::pattern`
+    // constructor is `$rust_name` without the keyword-collision suffix.
+    ($py_name:ident as $py_name_lit:literal => $rust_name:ident, into) => {
+        #[pyfunction(name = $py_name_lit)]
+        pub fn $py_name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
+            let lp = l.into_pat()?;
+            let rp = r.into_pat()?;
+            Ok(PyPat::from_pat(strider_analyze::pattern::$rust_name(lp, rp).into()))
+        }
+    };
 }
 
 macro_rules! unary {
@@ -890,6 +901,16 @@ macro_rules! unary {
             Ok(PyPat::from_pat(strider_analyze::pattern::$name(op).into()))
         }
     };
+    // Python-name override: exported Rust fn is `$py_name` (matching the
+    // Python attribute literal), but the underlying `strider_analyze::pattern`
+    // constructor is `$rust_name`.
+    ($py_name:ident as $py_name_lit:literal => $rust_name:ident) => {
+        #[pyfunction(name = $py_name_lit)]
+        pub fn $py_name(operand: PatLike<'_>) -> PyResult<PyPat> {
+            let op = operand.into_pat()?;
+            Ok(PyPat::from_pat(strider_analyze::pattern::$rust_name(op)))
+        }
+    };
 }
 
 // ── Binary integer ops ───────────────────────────────────────────────────
@@ -905,18 +926,8 @@ binary!(shl, into);
 binary!(shr, into);
 binary!(sshr, into);
 // `and` / `or` are Python keywords; expose as `and_` / `or_`.
-#[pyfunction(name = "and_")]
-pub fn and_(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
-    let lp = l.into_pat()?;
-    let rp = r.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::and(lp, rp).into()))
-}
-#[pyfunction(name = "or_")]
-pub fn or_(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
-    let lp = l.into_pat()?;
-    let rp = r.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::or(lp, rp).into()))
-}
+binary!(and_ as "and_" => and, into);
+binary!(or_ as "or_" => or, into);
 binary!(xor, into);
 binary!(int_eq, into);
 binary!(int_lt, into);
@@ -999,11 +1010,7 @@ unary!(bit_not);
 // `bit_not` — the Rust pattern crate keeps `not` since it's not a Rust
 // keyword, but `not` is a Python keyword so the Python surface uses
 // `not_` (matching the `and_` / `or_` convention above).
-#[pyfunction(name = "not_")]
-pub fn not_(operand: PatLike<'_>) -> PyResult<PyPat> {
-    let op = operand.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::bit_not(op)))
-}
+unary!(not_ as "not_" => bit_not);
 
 // ── Bool binary ops ──────────────────────────────────────────────────────
 

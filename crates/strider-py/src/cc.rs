@@ -4,6 +4,8 @@
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
+use crate::macros::forall_preset;
+
 #[pyclass(name = "CallingConvention", module = "strider", frozen)]
 #[derive(Clone)]
 pub struct PyCallingConvention {
@@ -11,41 +13,14 @@ pub struct PyCallingConvention {
     pub(crate) preset_name: &'static str,
 }
 
-// Stamp out one `#[classmethod] fn $name(_cls) -> Self` per preset
-// name in its own `#[pymethods]` block.  Each classmethod has the
-// same shape — name appears three times (Python method name, Rust
-// factory call, stored `preset_name` static-string).  Driving the
-// list once eliminates the repetition while preserving the Python
-// API (`CallingConvention.x86_64_systemv()` etc.) byte-for-byte.
-// Relies on PyO3's `multiple-pymethods` feature.
-//
 // `x86_64_all_preserving` stays hand-written below because it carries
 // a Python docstring that the macro form cannot reproduce.  Linux
 // kernel + syscall presets fit the same zero-arg shape and run
 // through the macro — see
 // `docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md`
 // for the full list and rationale.
-macro_rules! forall_preset {
-    ($self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
-        #[pymethods]
-        impl $self_ty {
-            $(
-                #[classmethod]
-                fn $name(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
-                    let inner = <$inner_ty>::$name()
-                        .map_err(|e| crate::errors::into_lift_err(e.into()))?;
-                    Ok(Self {
-                        inner,
-                        preset_name: stringify!($name),
-                    })
-                }
-            )*
-        }
-    };
-}
-
 forall_preset!(
-    PyCallingConvention,
+    try PyCallingConvention,
     strider_target::CallingConvention,
     [
         // Userland presets
