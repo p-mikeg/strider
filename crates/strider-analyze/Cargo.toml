@@ -15,7 +15,6 @@ rsleigh.workspace = true
 strider-target.workspace = true
 anyhow.workspace = true
 cranelift-entity.workspace = true
-ethnum.workspace = true
 rustc-hash = "2"
 smallvec.workspace = true
 thiserror.workspace = true

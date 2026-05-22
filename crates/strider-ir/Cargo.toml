@@ -15,7 +15,6 @@ strider-target.workspace = true
 smallvec.workspace = true
 itertools.workspace = true
 thiserror.workspace = true
-ethnum.workspace = true
 hashbrown = { version = "0.16", features = ["raw-entry"] }
 rustc-hash = "2"
 
