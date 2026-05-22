@@ -213,6 +213,60 @@ pub struct FunctionBuilder {
     pub(crate) lift_addr: Option<u64>,
 }
 
+/// Emits a `require_*` helper that returns `Err(anyhow!(...))` when its
+/// argument fails the named predicate.  Three argument shapes:
+///
+/// * `@kind`    — `&self, output: NodeOutputId`; predicate runs on
+///   `Graph::output_kind(output)` (a [`NodeOutputKind`]).
+/// * `@kind_with_got` — same, but the error message also prints the
+///   observed kind via a trailing `(got {kind:?})`.
+/// * `@type_of` — `&self, output: NodeOutputId`; predicate runs on the
+///   value's [`NodeOutputType`] via `get_output_type(output)?`.
+/// * `@ty`      — `ty: NodeOutputType` (associated fn, no `self`);
+///   predicate runs on `ty` directly.
+///
+/// `$label` is interpolated into the error message verbatim so each
+/// helper preserves its existing diagnostic wording.
+macro_rules! require_kind {
+    (@kind $name:ident, $pred:ident, $label:literal) => {
+        pub(super) fn $name(&self, output: NodeOutputId) -> Result<()> {
+            if !self.graph().output_kind(output).$pred() {
+                return Err(anyhow!(concat!("output {:?} is not ", $label), output));
+            }
+            Ok(())
+        }
+    };
+    (@kind_with_got $name:ident, $pred:ident, $label:literal) => {
+        pub(super) fn $name(&self, output: NodeOutputId) -> Result<()> {
+            let kind = self.graph().output_kind(output);
+            if !kind.$pred() {
+                return Err(anyhow!(
+                    concat!("output {:?} is not ", $label, " (got {:?})"),
+                    output,
+                    kind,
+                ));
+            }
+            Ok(())
+        }
+    };
+    (@type_of $name:ident, $pred:ident, $label:literal) => {
+        pub(super) fn $name(&self, output: NodeOutputId) -> Result<()> {
+            if !self.get_output_type(output)?.$pred() {
+                return Err(anyhow!(concat!("output {:?} is not ", $label), output));
+            }
+            Ok(())
+        }
+    };
+    (@ty $name:ident, $pred:ident, $label:literal) => {
+        pub(super) fn $name(ty: NodeOutputType) -> Result<()> {
+            if !ty.$pred() {
+                return Err(anyhow!(concat!("type {:?} is not ", $label), ty));
+            }
+            Ok(())
+        }
+    };
+}
+
 impl FunctionBuilder {
     /// Returns a reference to the underlying [`Graph`] without consuming
     /// the builder.  Pairs with [`Self::graph_mut`] and [`Self::entry`].
@@ -254,79 +308,19 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Returns `Ok(())` if `output` has a value kind (any integer / bool /
-    /// float / wide-int); otherwise an error.  Single-source check used
-    /// by every node-builder method that consumes a value input.
-    pub(super) fn require_value_kind(&self, output: NodeOutputId) -> Result<()> {
-        let kind = self.graph().output_kind(output);
-        if !kind.is_value() {
-            return Err(anyhow!(
-                "output {output:?} is not a value edge (got {kind:?})"
-            ));
-        }
-        Ok(())
-    }
-
-    /// Returns `Ok(())` if `output` carries an integer value; otherwise an
-    /// error.  Use on inputs to integer-only conversions
-    /// (`IntToFloat`, `IntBitsToFloat`).
-    pub(super) fn require_integer_value(&self, output: NodeOutputId) -> Result<()> {
-        if !self.get_output_type(output)?.is_integer() {
-            return Err(anyhow!("output {output:?} is not an integer value"));
-        }
-        Ok(())
-    }
-
-    /// Returns `Ok(())` if `output` carries a float value; otherwise an
-    /// error.  Use on inputs to float-only conversions (`FloatToInt`,
-    /// `FloatToFloat`, `FloatBitsToInt`).
-    pub(super) fn require_float_value(&self, output: NodeOutputId) -> Result<()> {
-        if !self.get_output_type(output)?.is_float() {
-            return Err(anyhow!("output {output:?} is not a float value"));
-        }
-        Ok(())
-    }
-
-    /// Returns `Ok(())` if `output` has `Bool` value kind; otherwise an
-    /// error.  Use on conditional-branch conditions.
-    pub(super) fn require_bool_value(&self, output: NodeOutputId) -> Result<()> {
-        let kind = self.graph().output_kind(output);
-        if !kind.is_bool() {
-            return Err(anyhow!("output {output:?} is not a bool value"));
-        }
-        Ok(())
-    }
-
-    /// Returns `Ok(())` if `output` is the `PhiToken` of a `ControlState`
-    /// node; otherwise an error.  Use when wiring a phi to its owning
-    /// region header.
-    pub(super) fn require_phi_token_kind(&self, output: NodeOutputId) -> Result<()> {
-        let kind = self.graph().output_kind(output);
-        if !kind.is_phi_token() {
-            return Err(anyhow!("output {output:?} is not a phi-token edge"));
-        }
-        Ok(())
-    }
-
-    /// Returns `Ok(())` if `ty` is an integer type; otherwise an error.
-    /// Use on declared output types in builders that emit integer-typed
-    /// values.
-    pub(super) fn require_integer_type(ty: NodeOutputType) -> Result<()> {
-        if !ty.is_integer() {
-            return Err(anyhow!("type {ty:?} is not an integer type"));
-        }
-        Ok(())
-    }
-
-    /// Returns `Ok(())` if `ty` is a float type (`F32` / `F64` / `F80`);
-    /// otherwise an error.  Use on declared output types in builders
-    /// that emit float-typed values.
-    pub(super) fn require_float_type(ty: NodeOutputType) -> Result<()> {
-        if !ty.is_float() {
-            return Err(anyhow!("type {ty:?} is not a float type"));
-        }
-        Ok(())
-    }
+    // The seven `require_*` helpers below all share the same
+    // kind-check + `anyhow!` shape.  They split into three argument
+    // shapes — kind-check on `NodeOutputId` (via `Graph::output_kind`),
+    // type-check on `NodeOutputId` (via `get_output_type?`), and
+    // type-check on `NodeOutputType` (static, no `self`) — each emitted
+    // by one arm of the `require_kind!` macro defined below this impl.
+    require_kind!(@kind_with_got require_value_kind, is_value, "a value edge");
+    require_kind!(@kind require_bool_value, is_bool, "a bool value");
+    require_kind!(@kind require_phi_token_kind, is_phi_token, "a phi-token edge");
+    require_kind!(@type_of require_integer_value, is_integer, "an integer value");
+    require_kind!(@type_of require_float_value, is_float, "a float value");
+    require_kind!(@ty require_integer_type, is_integer, "an integer type");
+    require_kind!(@ty require_float_type, is_float, "a float type");
 
     /// Creates a new [`FunctionBuilder`] from a resolved calling convention.
     ///
