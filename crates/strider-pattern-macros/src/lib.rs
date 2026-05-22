@@ -614,15 +614,42 @@ pub fn strider_pattern(attr: TokenStream, item: TokenStream) -> TokenStream {
     let inner_ident = format_ident!("{}Inner", &input.ident);
     let pyclass_struct = build_pyclass_struct(&attrs, &inner_ident, &input);
     let finalise_impl = build_finalise_impl(&attrs, &inner_ident, &fields);
+    let with_inner_impl = build_with_inner_impl(&attrs.rust_name, &inner_ident);
     let pymethods_impl = build_pymethods_impl(&attrs, &inner_ident, &fields);
 
     let expanded = quote! {
         #inner_struct
         #pyclass_struct
         #finalise_impl
+        #with_inner_impl
         #pymethods_impl
     };
     expanded.into()
+}
+
+/// Emit a `pub(crate) fn with_inner<R>(&self, f: …) -> R` accessor on the
+/// pyclass.  Centralises the `lock + poisoned-recovery` boilerplate that
+/// every field-mutating call site in `strider-py` would otherwise repeat
+/// (`b.inner.lock().unwrap_or_else(|p| p.into_inner())`).
+fn build_with_inner_impl(rust_name: &Ident, inner_ident: &Ident) -> TokenStream2 {
+    quote! {
+        impl #rust_name {
+            /// Lock the inner builder state and pass `&mut` access to
+            /// the closure `f`, recovering from a poisoned mutex via
+            /// `into_inner()` (parity with the `finalise()` recovery).
+            #[allow(dead_code)]
+            pub(crate) fn with_inner<R>(
+                &self,
+                f: impl ::core::ops::FnOnce(&mut #inner_ident) -> R,
+            ) -> R {
+                let mut guard = self
+                    .inner
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                f(&mut *guard)
+            }
+        }
+    }
 }
 
 fn collect_fields(input: &ItemStruct) -> syn::Result<Vec<Field>> {
@@ -651,23 +678,26 @@ fn build_inner_struct(
     required_args: &[RequiredArg],
 ) -> TokenStream2 {
     let inner_ident = format_ident!("{}Inner", def_ident);
+    // The inner struct + every field is emitted `pub(crate)` so call
+    // sites in `strider-py` can mutate them through the generated
+    // `with_inner` closure accessor (see `build_with_inner_impl`).
     let required_decls = required_args.iter().map(|r| {
         let ident = &r.ident;
         let ty = &r.ty;
-        quote! { #ident: #ty, }
+        quote! { pub(crate) #ident: #ty, }
     });
     let field_decls = fields.iter().map(|f| {
         let ident = &f.rust_ident;
         let ty = &f.inner_ty;
-        quote! { #ident: ::core::option::Option<#ty>, }
+        quote! { pub(crate) #ident: ::core::option::Option<#ty>, }
     });
     if required_args.is_empty() {
         quote! {
             #[derive(::core::default::Default)]
-            struct #inner_ident {
+            pub(crate) struct #inner_ident {
                 #(#field_decls)*
-                when: ::core::option::Option<::pyo3::PyObject>,
-                capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
+                pub(crate) when: ::core::option::Option<::pyo3::PyObject>,
+                pub(crate) capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
             }
         }
     } else {
@@ -675,11 +705,11 @@ fn build_inner_struct(
         // sensible default.  The `new(...)` constructor in
         // `build_pymethods_impl` initialises every slot explicitly.
         quote! {
-            struct #inner_ident {
+            pub(crate) struct #inner_ident {
                 #(#required_decls)*
                 #(#field_decls)*
-                when: ::core::option::Option<::pyo3::PyObject>,
-                capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
+                pub(crate) when: ::core::option::Option<::pyo3::PyObject>,
+                pub(crate) capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
             }
         }
     }

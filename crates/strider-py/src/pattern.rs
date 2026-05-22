@@ -715,10 +715,7 @@ pub fn phi() -> PyPhiPat { PyPhiPat::new() }
 #[pyfunction]
 pub fn phi_for(vn: crate::sleigh::PyVn) -> PyPhiPat {
     let b = PyPhiPat::new();
-    {
-        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
-        guard.for_vn = Some(vn.inner);
-    }
+    b.with_inner(|inner| inner.for_vn = Some(vn.inner));
     b
 }
 
@@ -1133,8 +1130,7 @@ pub fn load(addr: Option<PatLike<'_>>) -> PyResult<PyLoadPat> {
     let b = PyLoadPat::new();
     if let Some(a) = addr {
         let pat = a.into_pat()?;
-        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
-        guard.addr = Some(pat);
+        b.with_inner(|inner| inner.addr = Some(pat));
     }
     Ok(b)
 }
@@ -1181,15 +1177,12 @@ pub struct StorePatDef {
 #[pyo3(signature = (addr=None, data=None))]
 pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<PyStorePat> {
     let b = PyStorePat::new();
-    {
-        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(a) = addr {
-            guard.addr = Some(a.into_pat()?);
-        }
-        if let Some(v) = data {
-            guard.data = Some(v.into_pat()?);
-        }
-    }
+    let addr_pat = addr.map(|a| a.into_pat()).transpose()?;
+    let data_pat = data.map(|v| v.into_pat()).transpose()?;
+    b.with_inner(|inner| {
+        inner.addr = addr_pat;
+        inner.data = data_pat;
+    });
     Ok(b)
 }
 
@@ -1228,15 +1221,11 @@ pub struct StackStorePatDef {
 #[pyo3(signature = (offset=None, data=None))]
 pub fn stack_store(offset: Option<i64>, data: Option<PatLike<'_>>) -> PyResult<PyStackStorePat> {
     let b = PyStackStorePat::new();
-    {
-        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(o) = offset {
-            guard.offset = Some(o);
-        }
-        if let Some(v) = data {
-            guard.data = Some(v.into_pat()?);
-        }
-    }
+    let data_pat = data.map(|v| v.into_pat()).transpose()?;
+    b.with_inner(|inner| {
+        inner.offset = offset;
+        inner.data = data_pat;
+    });
     Ok(b)
 }
 
@@ -1272,8 +1261,7 @@ pub fn stack_store_phi(data: Option<PatLike<'_>>) -> PyResult<PyStackStorePhiPat
     let b = PyStackStorePhiPat::new();
     if let Some(v) = data {
         let pat = v.into_pat()?;
-        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
-        guard.data = Some(pat);
+        b.with_inner(|inner| inner.data = Some(pat));
     }
     Ok(b)
 }
@@ -1343,10 +1331,9 @@ impl PyCallPat {
     /// Constrain the call target to the literal address `addr`.
     /// Equivalent to `target(int_const(addr))`.
     fn at(slf: PyRef<'_, Self>, addr: u64) -> PyRef<'_, Self> {
-        {
-            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
-            guard.target = Some(strider_analyze::pattern::int_const(addr));
-        }
+        slf.with_inner(|inner| {
+            inner.target = Some(strider_analyze::pattern::int_const(addr));
+        });
         slf
     }
     /// Constrain the call target to any address in `addrs`.
@@ -1355,10 +1342,9 @@ impl PyCallPat {
     /// `target(int_const_any_of(addrs))`.  An empty list vacuously
     /// fails (matches nothing).
     fn at_any(slf: PyRef<'_, Self>, addrs: Vec<u64>) -> PyRef<'_, Self> {
-        {
-            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
-            guard.target = Some(strider_analyze::pattern::int_const_any_of(addrs));
-        }
+        slf.with_inner(|inner| {
+            inner.target = Some(strider_analyze::pattern::int_const_any_of(addrs));
+        });
         slf
     }
 }
@@ -1368,8 +1354,9 @@ impl PyCallPat {
 pub fn call(at: Option<u64>) -> PyCallPat {
     let b = PyCallPat::new();
     if let Some(addr) = at {
-        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
-        guard.target = Some(strider_analyze::pattern::int_const(addr));
+        b.with_inner(|inner| {
+            inner.target = Some(strider_analyze::pattern::int_const(addr));
+        });
     }
     b
 }
@@ -1439,10 +1426,9 @@ impl PyCallOtherPat {
         p: PatLike<'py>,
     ) -> PyResult<PyRef<'py, Self>> {
         let pat = p.into_pat()?;
-        {
-            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
-            guard.arg.get_or_insert_with(Vec::new).push((0, pat));
-        }
+        slf.with_inner(|inner| {
+            inner.arg.get_or_insert_with(Vec::new).push((0, pat));
+        });
         Ok(slf)
     }
     /// Convenience: match `inputs[1]` (memory predecessor).
@@ -1451,10 +1437,9 @@ impl PyCallOtherPat {
         p: PatLike<'py>,
     ) -> PyResult<PyRef<'py, Self>> {
         let pat = p.into_pat()?;
-        {
-            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
-            guard.arg.get_or_insert_with(Vec::new).push((1, pat));
-        }
+        slf.with_inner(|inner| {
+            inner.arg.get_or_insert_with(Vec::new).push((1, pat));
+        });
         Ok(slf)
     }
     /// Convenience: match `outputs[0]` (control output).
@@ -1463,10 +1448,9 @@ impl PyCallOtherPat {
         p: PatLike<'py>,
     ) -> PyResult<PyRef<'py, Self>> {
         let pat = p.into_pat()?;
-        {
-            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
-            guard.ret.get_or_insert_with(Vec::new).push((0, pat));
-        }
+        slf.with_inner(|inner| {
+            inner.ret.get_or_insert_with(Vec::new).push((0, pat));
+        });
         Ok(slf)
     }
     /// Convenience: match `outputs[1]` (memory output; dangles when
@@ -1476,10 +1460,9 @@ impl PyCallOtherPat {
         p: PatLike<'py>,
     ) -> PyResult<PyRef<'py, Self>> {
         let pat = p.into_pat()?;
-        {
-            let mut guard = slf.inner.lock().unwrap_or_else(|p| p.into_inner());
-            guard.ret.get_or_insert_with(Vec::new).push((1, pat));
-        }
+        slf.with_inner(|inner| {
+            inner.ret.get_or_insert_with(Vec::new).push((1, pat));
+        });
         Ok(slf)
     }
 }
@@ -1555,8 +1538,7 @@ pub fn if_(cond: Option<PatLike<'_>>) -> PyResult<PyIfPat> {
     let b = PyIfPat::new();
     if let Some(c) = cond {
         let pat = c.into_pat()?;
-        let mut guard = b.inner.lock().unwrap_or_else(|p| p.into_inner());
-        guard.cond = Some(pat);
+        b.with_inner(|inner| inner.cond = Some(pat));
     }
     Ok(b)
 }
