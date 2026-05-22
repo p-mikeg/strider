@@ -65,7 +65,7 @@ impl Optimizer for StackLoadForward {
         entry: strider_ir::node::NodeId,
     ) -> Result<OptimizationResult> {
         let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
-        let mut work = seeded_kind(&mut ctx, |k| matches!(k, NodeKind::Load(_)));
+        let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         while let Some(load) = work.dequeue() {

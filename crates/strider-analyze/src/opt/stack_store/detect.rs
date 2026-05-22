@@ -117,7 +117,7 @@ impl Optimizer for StackStoreDetect {
         // the iterator level so we don't allocate a Vec sized to all
         // reachable nodes.  Mirrors the established pattern in
         // `StackLoadForward` and `CallStackArgCollect`.
-        let mut work = seeded_kind(&mut ctx, |k| matches!(k, NodeKind::Store(_)));
+        let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Store(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         while let Some(node_id) = work.dequeue() {
