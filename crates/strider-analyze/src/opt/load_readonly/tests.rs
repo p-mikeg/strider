@@ -3,19 +3,12 @@ use crate::opt::test_support::{make_fn, return_kind};
 use super::*;
 use crate::opt::error::Result;
 use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir_test_utils::MockRom;
 
 // ── tiny ROM fixture ──────────────────────────────────────────────────────────
 
-struct TestRom;
-
-impl ReadOnlyMemory for TestRom {
-    fn read(&self, addr: u64, _size: usize) -> Option<u64> {
-        match addr {
-            0x1000 => Some(42),
-            0x2000 => Some(0xFF),
-            _ => None,
-        }
-    }
+fn test_rom() -> MockRom {
+    MockRom::fixed_table(&[(0x1000, 42), (0x2000, 0xFF)])
 }
 
 // ── original tests ────────────────────────────────────────────────────────────
@@ -27,7 +20,7 @@ fn load_from_rom_const_addr() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(fg.graph_mut(), entry)?.changed());
     assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(42));
     Ok(())
 }
@@ -39,7 +32,7 @@ fn load_non_rom_addr_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(fg.graph_mut(), entry)?.changed());
     // Load node should still be present.
     assert!(
         fg.all_node_ids()
@@ -61,7 +54,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
     })?;
     // addr is an Add node, not a const → LoadReadOnly must not fire.
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(fg.graph_mut(), entry)?.changed());
     Ok(())
 }
 
@@ -71,24 +64,15 @@ fn load_non_const_addr_no_change() -> Result<()> {
 /// Load node intact.
 #[test]
 fn load_oversize_read_no_change() -> Result<()> {
-    struct Limited;
-    impl ReadOnlyMemory for Limited {
-        fn read(&self, addr: u64, size: usize) -> Option<u64> {
-            // Only single-byte reads are supported.
-            if size == 1 && addr == 0x1000 {
-                Some(42)
-            } else {
-                None
-            }
-        }
-    }
+    // Only single-byte reads at 0x1000 are supported.
+    let rom = MockRom::limited(0x1000, 1, 42);
     let mut fg = make_fn(|b| {
         let addr = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
         // Request 8 bytes — limited ROM returns None.
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly::new(std::sync::Arc::new(Limited)).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(rom)).optimize(fg.graph_mut(), entry)?.changed());
     Ok(())
 }
 
@@ -97,18 +81,13 @@ fn load_oversize_read_no_change() -> Result<()> {
 /// happily answer the address.
 #[test]
 fn load_other_space_no_change() -> Result<()> {
-    struct AlwaysAnswer;
-    impl ReadOnlyMemory for AlwaysAnswer {
-        fn read(&self, _addr: u64, _size: usize) -> Option<u64> {
-            Some(0xdeadbeef)
-        }
-    }
+    let rom = MockRom::always_answer(0xdeadbeef);
     let mut fg = make_fn(|b| {
         let addr = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
         b.build_load(addr, rsleigh::VnSpace::REGISTER, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly::new(std::sync::Arc::new(AlwaysAnswer)).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(rom)).optimize(fg.graph_mut(), entry)?.changed());
     Ok(())
 }
 
@@ -121,7 +100,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(fg.graph_mut(), entry)?.changed());
     assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
@@ -137,7 +116,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
         b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly::new(std::sync::Arc::new(TestRom)).optimize(fg.graph_mut(), entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(fg.graph_mut(), entry)?.changed());
     // Both loads must have folded out of the reachable subgraph.
     let remaining_loads =
         crate::opt::test_support::count_reachable((&fg).into(), |k| matches!(k, NodeKind::Load(_)));

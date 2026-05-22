@@ -15,77 +15,23 @@ use strider_ir::BuiltFunctionGraph;
 use strider_ir::FunctionBuilder;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::NodeOutputType;
-use strider_ir_test_utils::RegisterSet;
+use strider_ir_test_utils::{MockRom, RegisterSet};
 use std::sync::Mutex;
-
-/// Toy `ReadOnlyMemory` impl that returns successive 4-byte
-/// values at `base`, `base + stride`, `base + 2*stride`, …
-/// according to a fixed table.  Reads outside the table return
-/// None.  Used to exercise `read_table_entries` deterministically
-/// and to drive the integration tests' rom setup.
-pub struct TableRom {
-    pub base: u64,
-    pub stride: u64,
-    pub entries: Vec<u64>,
-    pub size: usize,
-}
-
-impl ReadOnlyMemory for TableRom {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        if size != self.size {
-            return None;
-        }
-        if addr < self.base {
-            return None;
-        }
-        let offset = addr - self.base;
-        if self.stride == 0 {
-            return None;
-        }
-        if !offset.is_multiple_of(self.stride) {
-            return None;
-        }
-        let idx = (offset / self.stride) as usize;
-        self.entries.get(idx).copied()
-    }
-}
 
 /// `ReadOnlyMemory` impl that records every (addr,size) read it
 /// services.  Used to assert `read_table_entries` issues exactly
 /// `count` reads in index order.
+///
+/// Kept distinct from the shared [`MockRom`] helper because its
+/// recording-side-log behaviour is unique to this file.
 pub struct RecordingRom {
-    pub inner: TableRom,
+    pub inner: MockRom,
     pub log: Mutex<Vec<(u64, usize)>>,
 }
 
 impl ReadOnlyMemory for RecordingRom {
     fn read(&self, addr: u64, size: usize) -> Option<u64> {
         self.log.lock().unwrap().push((addr, size));
-        self.inner.read(addr, size)
-    }
-}
-
-/// `ReadOnlyMemory` impl that reads `cutoff` entries successfully
-/// then returns None for the rest.  Drives the partial-read
-/// soundness test.
-pub struct PartialRom {
-    pub inner: TableRom,
-    pub cutoff: usize,
-}
-
-impl ReadOnlyMemory for PartialRom {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        if addr < self.inner.base {
-            return None;
-        }
-        let offset = addr - self.inner.base;
-        if self.inner.stride == 0 {
-            return None;
-        }
-        let idx = (offset / self.inner.stride) as usize;
-        if idx >= self.cutoff {
-            return None;
-        }
         self.inner.read(addr, size)
     }
 }
@@ -458,12 +404,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
 fn read_table_entries_returns_targets_in_index_order() {
     // 4 entries: 0x100, 0x200, 0x300, 0x400.  Stride 4, base
     // 0x4000.  Verify the returned vec preserves index order.
-    let rom = TableRom {
-        base: 0x4000,
-        stride: 4,
-        entries: vec![0x100, 0x200, 0x300, 0x400],
-        size: 4,
-    };
+    let rom = MockRom::strided(0x4000, 4, vec![0x100, 0x200, 0x300, 0x400], 4);
     let result = read_table_entries(&rom, 0x4000, 4, 4, 4).expect("must read all");
     assert_eq!(result, vec![0x100, 0x200, 0x300, 0x400]);
 }
@@ -472,15 +413,7 @@ fn read_table_entries_returns_targets_in_index_order() {
 fn read_table_entries_returns_none_on_partial_read() {
     // 4 entries requested; rom only serves the first 2.  Must
     // fail closed: returns None, NOT a Vec of length 2.
-    let rom = PartialRom {
-        inner: TableRom {
-            base: 0x5000,
-            stride: 4,
-            entries: vec![0x100, 0x200, 0x300, 0x400],
-            size: 4,
-        },
-        cutoff: 2,
-    };
+    let rom = MockRom::strided(0x5000, 4, vec![0x100, 0x200, 0x300, 0x400], 4).with_cutoff(2);
     assert_eq!(read_table_entries(&rom, 0x5000, 4, 4, 4), None);
 }
 
@@ -490,12 +423,7 @@ fn read_table_entries_issues_count_reads_in_index_order() {
     // at stride 4, base 0x6000, expect: (0x6000, 4), (0x6004, 4),
     // (0x6008, 4) in that order.
     let rom = RecordingRom {
-        inner: TableRom {
-            base: 0x6000,
-            stride: 4,
-            entries: vec![0xaaaa, 0xbbbb, 0xcccc],
-            size: 4,
-        },
+        inner: MockRom::strided(0x6000, 4, vec![0xaaaa, 0xbbbb, 0xcccc], 4),
         log: Mutex::new(Vec::new()),
     };
     let _ = read_table_entries(&rom, 0x6000, 4, 3, 4).expect("read");
@@ -528,12 +456,12 @@ fn classify_jump_table_with_known_bits_bound_returns_multiple() {
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32)
             .expect("load")
     });
-    let rom = TableRom {
-        base: 0x4000,
-        stride: 4,
-        entries: vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
-        size: 4,
-    };
+    let rom = MockRom::strided(
+        0x4000,
+        4,
+        vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
+        4,
+    );
     let known = analyze_known_bits((&g).into()).expect("kb analyze");
     let result = classify_jump_table((&g).into(), anchor, Some(&rom), &known);
     match result {
@@ -590,12 +518,7 @@ fn classify_jump_table_unbounded_idx_returns_none() {
             .expect("add");
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
-    let rom = TableRom {
-        base: 0x4000,
-        stride: 4,
-        entries: vec![0x10, 0x20, 0x30, 0x40],
-        size: 4,
-    };
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let known = analyze_known_bits((&g).into()).expect("kb analyze");
     let result = classify_jump_table((&g).into(), anchor, Some(&rom), &known);
     assert_eq!(result, None);

@@ -14,7 +14,9 @@
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
-use strider_ir::{BuiltFunctionGraph, FunctionBuilder, Result, Value};
+use std::collections::BTreeMap;
+
+use strider_ir::{BuiltFunctionGraph, FunctionBuilder, ReadOnlyMemory, Result, Value};
 
 /// Sentinel asm-fingerprint address used by every helper in this
 /// module.  Distinct from any real machine address so debug output
@@ -215,6 +217,195 @@ pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
         size,
         addr_off: off,
         addr_space: rsleigh::VnSpace::REGISTER,
+    }
+}
+
+/// Test `ReadOnlyMemory` helper covering the three mock-rom shapes
+/// that appear across the opt-pass test suite.  Replaces the bespoke
+/// `TableRom` / `PartialRom` / `TestRom` / `Limited` / `AlwaysAnswer` /
+/// `OneEntryRom` impls that previously lived inline in each host test
+/// file.
+///
+/// Construct one with [`MockRom::strided`], [`MockRom::fixed_table`],
+/// [`MockRom::always_answer`], or [`MockRom::limited`].  Builder-style
+/// modifiers ([`MockRom::with_cutoff`], [`MockRom::with_size_filter`])
+/// cover the small set of additional behaviours real tests need.
+///
+/// `RecordingRom` deliberately stays separate — it records reads to a
+/// side log and is not shape-compatible with this helper.
+pub struct MockRom {
+    shape: MockRomShape,
+}
+
+enum MockRomShape {
+    /// Strided table: returns `entries[i]` at `base + i * stride`.
+    /// `size_filter` restricts which read sizes match (None = any).
+    /// `cutoff` caps how many entries can be served (None = all).
+    Strided {
+        base: u64,
+        stride: u64,
+        entries: Vec<u64>,
+        size_filter: Option<usize>,
+        cutoff: Option<usize>,
+    },
+    /// Lookup table keyed by exact address.  `size_filter` restricts
+    /// matching read sizes (None = any).
+    FixedTable {
+        entries: BTreeMap<u64, u64>,
+        size_filter: Option<usize>,
+    },
+    /// Single (addr, size) → value mapping; everything else returns
+    /// `None`.  Equivalent to `FixedTable` of length 1 with a size
+    /// filter, kept as a distinct shape for call-site clarity.
+    Limited {
+        addr: u64,
+        size: usize,
+        value: u64,
+    },
+    /// Returns the same value for every (addr, size).
+    AlwaysAnswer { value: u64 },
+}
+
+impl MockRom {
+    /// Strided lookup: returns `entries[i]` at addresses `base`,
+    /// `base + stride`, `base + 2*stride`, …  Read sizes other than
+    /// `size` return `None`.  Stride `0` always returns `None`.
+    ///
+    /// Replaces the bespoke `TableRom` shape used by the jump-table
+    /// classifier tests.
+    #[must_use]
+    pub fn strided(base: u64, stride: u64, entries: Vec<u64>, size: usize) -> Self {
+        Self {
+            shape: MockRomShape::Strided {
+                base,
+                stride,
+                entries,
+                size_filter: Some(size),
+                cutoff: None,
+            },
+        }
+    }
+
+    /// Cap a [`MockRom::strided`] to serve only the first `n` entries.
+    /// Reads at valid table addresses past the cutoff return `None`.
+    /// Replaces the bespoke `PartialRom` shape.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` was not constructed via [`MockRom::strided`].
+    #[must_use]
+    pub fn with_cutoff(mut self, n: usize) -> Self {
+        match &mut self.shape {
+            MockRomShape::Strided { cutoff, .. } => *cutoff = Some(n),
+            _ => panic!("with_cutoff only supported on MockRom::strided"),
+        }
+        self
+    }
+
+    /// Fixed `(addr, value)` lookup table; size is not constrained.
+    /// Replaces the bespoke `TestRom` shape.
+    #[must_use]
+    pub fn fixed_table(entries: &[(u64, u64)]) -> Self {
+        Self {
+            shape: MockRomShape::FixedTable {
+                entries: entries.iter().copied().collect(),
+                size_filter: None,
+            },
+        }
+    }
+
+    /// Restrict a [`MockRom::fixed_table`] to one read size.  Reads
+    /// at any other size return `None`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` was not constructed via [`MockRom::fixed_table`].
+    #[must_use]
+    pub fn with_size_filter(mut self, size: usize) -> Self {
+        match &mut self.shape {
+            MockRomShape::FixedTable { size_filter, .. } => *size_filter = Some(size),
+            _ => panic!("with_size_filter only supported on MockRom::fixed_table"),
+        }
+        self
+    }
+
+    /// Single `(addr, size) → value` mapping; every other read
+    /// returns `None`.  Replaces the bespoke `Limited` and
+    /// `OneEntryRom` shapes.
+    #[must_use]
+    pub fn limited(addr: u64, size: usize, value: u64) -> Self {
+        Self {
+            shape: MockRomShape::Limited { addr, size, value },
+        }
+    }
+
+    /// Returns the same value for every `(addr, size)`.  Replaces the
+    /// bespoke `AlwaysAnswer` shape.
+    #[must_use]
+    pub fn always_answer(value: u64) -> Self {
+        Self {
+            shape: MockRomShape::AlwaysAnswer { value },
+        }
+    }
+}
+
+impl ReadOnlyMemory for MockRom {
+    fn read(&self, addr: u64, size: usize) -> Option<u64> {
+        match &self.shape {
+            MockRomShape::Strided {
+                base,
+                stride,
+                entries,
+                size_filter,
+                cutoff,
+            } => {
+                if let Some(sz) = size_filter
+                    && size != *sz
+                {
+                    return None;
+                }
+                if addr < *base {
+                    return None;
+                }
+                let offset = addr - *base;
+                if *stride == 0 {
+                    return None;
+                }
+                if !offset.is_multiple_of(*stride) {
+                    return None;
+                }
+                let idx = (offset / *stride) as usize;
+                if let Some(c) = cutoff
+                    && idx >= *c
+                {
+                    return None;
+                }
+                entries.get(idx).copied()
+            }
+            MockRomShape::FixedTable {
+                entries,
+                size_filter,
+            } => {
+                if let Some(sz) = size_filter
+                    && size != *sz
+                {
+                    return None;
+                }
+                entries.get(&addr).copied()
+            }
+            MockRomShape::Limited {
+                addr: a,
+                size: s,
+                value,
+            } => {
+                if addr == *a && size == *s {
+                    Some(*value)
+                } else {
+                    None
+                }
+            }
+            MockRomShape::AlwaysAnswer { value } => Some(*value),
+        }
     }
 }
 

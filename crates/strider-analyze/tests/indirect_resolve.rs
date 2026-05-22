@@ -19,7 +19,7 @@ use strider_lift::cfg::{MachineInsnAddr, PcodeInsnAddr, RegionInstruction, Resol
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
 use strider_analyze::indirect_resolver::resolve_indirect_target;
-use strider_ir::ReadOnlyMemory;
+use strider_ir_test_utils::MockRom;
 
 type TestReader = BufMemReader<Vec<u8>>;
 
@@ -271,19 +271,6 @@ fn resolves_link_register_to_link_register() {
 /// the resulting pcode insns out as our `RegionInstruction` slice.
 #[test]
 fn resolves_rodata_load_to_single() {
-    /// Tiny ROM: covers a single 4-byte read at addr 0x4000 returning
-    /// 0xcafe_babe; everything else is None.
-    struct OneEntryRom;
-    impl ReadOnlyMemory for OneEntryRom {
-        fn read(&self, addr: u64, size: usize) -> Option<u64> {
-            if addr == 0x4000 && size == 4 {
-                Some(0xcafe_babe)
-            } else {
-                None
-            }
-        }
-    }
-
     // 0xA1 imm32       — `mov eax, [imm32]` (absolute load into EAX)
     // 0xFF 0xE0        — `jmp eax`
     let bytes: Vec<u8> = vec![0xA1, 0x00, 0x40, 0x00, 0x00, 0xFF, 0xE0];
@@ -296,7 +283,9 @@ fn resolves_rodata_load_to_single() {
     .expect("create x86 Sleigh");
     let region = lift_region(&mut sleigh, 0x1000, 7);
     let target = find_branch_indirect_target(&region);
-    let rom = OneEntryRom;
+    // Tiny ROM: covers a single 4-byte read at addr 0x4000 returning
+    // 0xcafe_babe; everything else is None.
+    let rom = MockRom::limited(0x4000, 4, 0xcafe_babe);
     let res = resolve_indirect_target(
         &region,
         target,
