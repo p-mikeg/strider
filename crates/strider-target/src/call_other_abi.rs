@@ -209,7 +209,15 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // so ECX is an explicit pcode arg and the EDX/EAX writes are
     // separate downstream pcode ops.  Nothing implicit; no memory edge
     // (an MSR read doesn't observe RAM).
-    CallOtherRow { preset_arches: X86_BOTH, op_names: &["rdmsr"], class: PURE_CLASS },
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["rdmsr"],
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &[],
+            implicit_writes: &[],
+            memory_edge:     false,
+        }),
+    },
 
     // x86 WRMSR — write model-specific register.  Sleigh emits
     //   `tmp:8 = (zext(EDX)<<32)|zext(EAX); wrmsr(ECX, tmp);`
@@ -217,7 +225,15 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // operands of upstream ops feeding this CALLOTHER.  Memory edge:
     // a WRMSR can change TSC, FSBASE, etc., so subsequent loads must
     // observe the write.
-    CallOtherRow { preset_arches: X86_BOTH, op_names: &["wrmsr"], class: PURE_WITH_MEM_EDGE_CLASS },
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["wrmsr"],
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &[],
+            implicit_writes: &[],
+            memory_edge:     true,
+        }),
+    },
 
     // x86_64 RDFSBASE / RDGSBASE — read FS/GS segment base into a GPR.
     // Sleigh emits `r32 = readfsbase()` / `r64 = readfsbase()`
@@ -226,7 +242,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["readfsbase", "readgsbase"],
-        class: PURE_CLASS,
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &[],
+            implicit_writes: &[],
+            memory_edge:     false,
+        }),
     },
 
     // WRFSBASE / WRGSBASE — write FS/GS base from a GPR.  Sleigh emits
@@ -236,7 +256,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["writefsbase", "writegsbase"],
-        class: PURE_WITH_MEM_EDGE_CLASS,
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &[],
+            implicit_writes: &[],
+            memory_edge:     true,
+        }),
     },
 
     // x86_64 MONITOR (0F 01 C8) — sets up address-range monitor.
@@ -290,7 +314,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // kernel-context control does not return to its kernel-context
     // caller); a future `ReturnToUserMode` classification could
     // differentiate user-mode trampolines.
-    CallOtherRow { preset_arches: X86_BOTH, op_names: &["sysret"], class: NO_RETURN_CLASS },
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &["sysret"],
+        class: CallOtherClass::NoReturn,
+    },
 
     // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
     // IA32_KERNEL_GS_BASE.  No GPR or RAM write on its own, but the
@@ -303,7 +331,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["swapgs"],
-        class: PURE_WITH_MEM_EDGE_CLASS,
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &[],
+            implicit_writes: &[],
+            memory_edge:     true,
+        }),
     },
 
     // x86's INT instruction also lifts to "swi" in some Sleigh
@@ -326,24 +358,6 @@ const ARM32_ALL: &[crate::ArchPreset] = &[
 ];
 const AARCH64_BOTH: &[crate::ArchPreset] =
     &[crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be];
-
-// `CallOtherClass` values for the shared shapes used by table rows.
-// The `PURE` / `PURE_WITH_MEM_EDGE` / `NO_OP` / `NO_RETURN` consts below
-// are `Option<CallOtherClass>` shorthands consumed by
-// `classify_arch_independent`'s match arms; the unwrapped variants here
-// suit the data-table rows that already wrap their class in a row
-// struct.
-const PURE_CLASS: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &[],
-    memory_edge: false,
-});
-const PURE_WITH_MEM_EDGE_CLASS: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &[],
-    memory_edge: true,
-});
-const NO_RETURN_CLASS: CallOtherClass = CallOtherClass::NoReturn;
 
 // ── Shared classification constants ──────────────────────────────────
 //
