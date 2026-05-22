@@ -209,26 +209,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// relevant bits.  If `reg` is already the container (or is its own
     /// largest container) the value is returned directly.
     pub(crate) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<strider_ir::Value> {
-        let container_reg = self.find_largest_fitting_register(reg)?;
-        let curr_reg_val = self.builder.read_variable(&container_reg)?;
-        if container_reg == *reg {
-            return Ok(curr_reg_val);
-        }
-        // Sub-register reads within a wide (>16-byte) container
-        // would need a wide mask + shift, which the current u128-mask
-        // path cannot represent.  Bail with a clear error rather than
-        // silently producing the wrong value.  Direct full-container
-        // reads (above) and narrow sub-slice within a ≤16-byte
-        // container (below) work normally.
-        if container_reg.size > 16 {
-            return Err(anyhow!(
-                "sub-register aliasing within a wide ({}-byte) container is not supported \
-                 (reading {:?} from {:?})",
-                container_reg.size,
-                reg,
-                container_reg,
-            ));
-        }
+        let ctx = match self.enter_sub_register(reg, "read_reg_vn")? {
+            SubRegOutcome::Direct { container_reg } => {
+                // Direct-container read: no aliasing slicing needed.
+                return self.builder.read_variable(&container_reg);
+            }
+            SubRegOutcome::SubReg(ctx) => ctx,
+        };
         // Sub-register read: shift the container's bits down to the LSB
         // position, then truncate to the sub-register's width.  Even when
         // the shift is zero (sub at offset 0 of the container), the
@@ -237,38 +224,18 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // (e.g. CastToFloat(F32) on a U64 input cannot lower to a clean
         // IntBitsToFloat and the optimizer ends up dropping the chain).
         let reg_ty: strider_ir::ValueType = reg.size.try_into()?;
-        let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
-        // Defensive bound: any shift ≥ container_bits is undefined per the
-        // IR's `ShiftRight` semantics (the lifted shift would silently wrap
-        // via `shift % bit_width` on x86 hardware in release builds).  By
-        // construction the largest legitimate sub-register offset is
-        // `(container.size - 1) * 8`, well below the bit width, and
-        // `find_largest_fitting_register` upstream enforces containment.
-        // A malformed Sleigh spec that ever emits an out-of-container
-        // sub-register surfaces as a clean lift failure rather than
-        // silently corrupting the IR.
-        if shift_value >= (container_reg.size as u64) * 8 {
-            return Err(anyhow!(
-                "read_reg_vn: shift {shift_value} >= container bit width {} \
-                 (container size {} bytes); sub-register {:?} is structurally \
-                 outside container {:?}",
-                (container_reg.size as u64) * 8,
-                container_reg.size,
-                reg,
-                container_reg,
-            ));
-        }
-        let shifted = if shift_value == 0 {
+        let curr_reg_val = self.builder.read_variable(&ctx.container_reg)?;
+        let shifted = if ctx.shift_bits == 0 {
             curr_reg_val
         } else {
             let shift_const = self
                 .builder
-                .build_int_const(shift_value, container_reg.size.try_into()?)?;
+                .build_int_const(ctx.shift_bits, ctx.container_ty)?;
             self.builder.build_int_binary_operation(
                 curr_reg_val,
                 shift_const,
                 IntBinaryOp::ShiftRight,
-                container_reg.size.try_into()?,
+                ctx.container_ty,
             )?
         };
         self.builder.truncate_if_needed(shifted, reg_ty)
@@ -292,46 +259,26 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ///
     /// If `reg` is equal to its own container the write is direct.
     pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
-        let container_reg = self.find_largest_fitting_register(reg)?;
-        if container_reg == *reg {
-            // Coerce `val` to reg's declared integer type before storing.
-            // (Direct full-container write — including writes to wide
-            // ymm/zmm registers — falls through this path unchanged.)
-            // Register variables always hold integer-typed values; the read
-            // side (handle_float_*, builder's auto-cast in build_float_*)
-            // re-introduces a Bool/Float view via CastToFloat /
-            // convert_to_bool_if_needed when downstream needs it.  The
-            // ConstantFold bitcast-extend rules
-            // (`IntBitsToFloat(FloatBitsToInt(x)) → x`) clean up the
-            // round-trip when both sides match.
-            let reg_ty: strider_ir::ValueType = reg.size.try_into()?;
-            let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
-            return self.builder.write_variable(reg, coerced);
-        }
-        // Wide-container guard — same shape as `read_reg_vn`.
-        if container_reg.size > 16 {
-            return Err(anyhow!(
-                "sub-register aliasing within a wide ({}-byte) container is not supported \
-                 (writing {:?} into {:?})",
-                container_reg.size,
-                reg,
-                container_reg,
-            ));
-        }
-        let container_ty: strider_ir::ValueType = container_reg.size.try_into()?;
-        let container_reg_val = self.builder.read_variable(&container_reg)?;
-        let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
-        // Defensive bound — see read_reg_vn for the rationale.
-        if shift_bits >= (container_reg.size as u64) * 8 {
-            return Err(anyhow!(
-                "write_reg_vn: shift_bits {shift_bits} >= container bit width {} \
-                 (container size {} bytes); sub-register {:?} outside container {:?}",
-                (container_reg.size as u64) * 8,
-                container_reg.size,
-                reg,
-                container_reg,
-            ));
-        }
+        let ctx = match self.enter_sub_register(reg, "write_reg_vn")? {
+            SubRegOutcome::Direct { container_reg: _ } => {
+                // Coerce `val` to reg's declared integer type before storing.
+                // (Direct full-container write — including writes to wide
+                // ymm/zmm registers — falls through this path unchanged.)
+                // Register variables always hold integer-typed values; the
+                // read side (handle_float_*, builder's auto-cast in
+                // build_float_*) re-introduces a Bool/Float view via
+                // CastToFloat / convert_to_bool_if_needed when downstream
+                // needs it.  The ConstantFold bitcast-extend rules
+                // (`IntBitsToFloat(FloatBitsToInt(x)) → x`) clean up the
+                // round-trip when both sides match.
+                let reg_ty: strider_ir::ValueType = reg.size.try_into()?;
+                let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
+                return self.builder.write_variable(reg, coerced);
+            }
+            SubRegOutcome::SubReg(ctx) => ctx,
+        };
+        let container_ty = ctx.container_ty;
+        let container_reg_val = self.builder.read_variable(&ctx.container_reg)?;
 
         // Extend `val` to container width first, then shift it into position.
         // Shifting at container width is the only way the mask AND afterwards
@@ -341,10 +288,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let val_extended =
             self.builder
                 .extend_if_needed(val, container_ty, ExtendOp::ZeroExtend)?;
-        let shifted_value = if shift_bits == 0 {
+        let shifted_value = if ctx.shift_bits == 0 {
             val_extended
         } else {
-            let shift_const = self.builder.build_int_const(shift_bits, container_ty)?;
+            let shift_const = self.builder.build_int_const(ctx.shift_bits, container_ty)?;
             self.builder.build_int_binary_operation(
                 val_extended,
                 shift_const,
@@ -356,7 +303,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // Build the *positioned* reg mask: vn_mask(reg) is in low-bits domain,
         // so shifting it by the same `shift_bits` lands it at reg's actual
         // bit slot inside the container.
-        let reg_mask = vn_mask(reg)? << shift_bits;
+        let reg_mask = vn_mask(reg)? << ctx.shift_bits;
         let reg_mask_val = self.builder.build_int_const(reg_mask, container_ty)?;
         let reg_val = self.builder.build_int_binary_operation(
             reg_mask_val,
@@ -368,7 +315,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // The "preserve" mask is the bits of the container that don't belong
         // to reg — i.e. the container's full mask minus the positioned reg
         // mask.
-        let container_mask = vn_mask(&container_reg)? & !reg_mask;
+        let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
         let container_mask_val = self.builder.build_int_const(container_mask, container_ty)?;
         let container_val = self.builder.build_int_binary_operation(
             container_mask_val,
@@ -384,9 +331,89 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             IntBinaryOp::Or,
             container_ty,
         )?;
-        self.write_reg_vn(&container_reg, final_container_value)?;
+        self.write_reg_vn(&ctx.container_reg, final_container_value)?;
         Ok(())
     }
+
+    /// Runs the shared sub-register entry checks for `reg`.
+    ///
+    /// Returns:
+    /// * `SubRegOutcome::Direct { container_reg }` — `reg` is its own largest
+    ///   container; caller takes the direct-container path (no shift / mask
+    ///   needed).
+    /// * `SubRegOutcome::SubReg(SubRegContext { .. })` — `reg` is a strict
+    ///   sub-slice of a ≤16-byte container; caller specialises read (shift
+    ///   right + truncate) or write (extend + shift left + mask + OR).
+    ///
+    /// Surfaces typed errors for the wide-container case (>16 bytes) and the
+    /// defensive shift-bound check, both of which are correctness-critical.
+    /// `op` is the caller's function name, used as a prefix in the shift-bound
+    /// error so the failure points at the originating site.
+    fn enter_sub_register(
+        &self,
+        reg: &rsleigh::Vn,
+        op: &'static str,
+    ) -> Result<SubRegOutcome> {
+        let container_reg = self.find_largest_fitting_register(reg)?;
+        if container_reg == *reg {
+            return Ok(SubRegOutcome::Direct { container_reg });
+        }
+        // Sub-register reads/writes within a wide (>16-byte) container would
+        // need a wide mask + shift, which the current u128-mask path cannot
+        // represent.  Bail with a clear error rather than silently producing
+        // the wrong value.  Direct full-container access (above) and narrow
+        // sub-slice within a ≤16-byte container (below) work normally.
+        if container_reg.size > 16 {
+            return Err(anyhow!(
+                "{op}: sub-register aliasing within a wide ({}-byte) container \
+                 is not supported (reg {:?}, container {:?})",
+                container_reg.size,
+                reg,
+                container_reg,
+            ));
+        }
+        let container_ty: strider_ir::ValueType = container_reg.size.try_into()?;
+        let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
+        // Defensive bound: any shift ≥ container_bits is undefined per the
+        // IR's `ShiftRight` / `ShiftLeft` semantics (the lifted shift would
+        // silently wrap via `shift % bit_width` on x86 hardware in release
+        // builds).  By construction the largest legitimate sub-register
+        // offset is `(container.size - 1) * 8`, well below the bit width,
+        // and `find_largest_fitting_register` upstream enforces containment.
+        // A malformed Sleigh spec that ever emits an out-of-container
+        // sub-register surfaces as a clean lift failure rather than silently
+        // corrupting the IR.
+        if shift_bits >= (container_reg.size as u64) * 8 {
+            return Err(anyhow!(
+                "{op}: shift {shift_bits} >= container bit width {} \
+                 (container size {} bytes); sub-register {:?} outside container {:?}",
+                (container_reg.size as u64) * 8,
+                container_reg.size,
+                reg,
+                container_reg,
+            ));
+        }
+        Ok(SubRegOutcome::SubReg(SubRegContext {
+            container_reg,
+            container_ty,
+            shift_bits,
+        }))
+    }
+}
+
+/// Outcome of the shared sub-register entry check — either the direct
+/// container-equals-reg case, or a fully-vetted sub-register context.
+enum SubRegOutcome {
+    Direct { container_reg: rsleigh::Vn },
+    SubReg(SubRegContext),
+}
+
+/// Sub-register entry context produced by the shared prelude check, consumed
+/// by the read / write specialisations.
+struct SubRegContext {
+    container_reg: rsleigh::Vn,
+    container_ty: strider_ir::ValueType,
+    shift_bits: u64,
 }
 
 // ── Self-contained unit tests for the bit-shift formulas ──────────────────────
