@@ -1,7 +1,7 @@
 //! Semantics tests for [`CastMask`] and [`cast_mask_of`].
 
 use super::*;
-use strider_ir::ExtendOp;
+use crate::{ExtendOp, FloatBinaryOp, IntBinaryOp, IntUnaryOp};
 
 // ── Bit-distinctness ────────────────────────────────────────────────────────
 
@@ -171,7 +171,7 @@ fn cast_mask_of_non_cast_kinds_is_empty() {
     let non_casts = [
         NodeKind::Entry,
         NodeKind::IntConst(0),
-        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add),
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::FloatToFloat,
         NodeKind::ControlState,
     ];
@@ -214,11 +214,11 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
     let non_casts = [
         NodeKind::Entry,
         NodeKind::IntConst(0),
-        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add),
-        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Mul),
-        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot),
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        NodeKind::IntBinaryOp(IntBinaryOp::Mul),
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         NodeKind::BoolConst(true),
-        NodeKind::FloatBinaryOp(strider_ir::FloatBinaryOp::Add),
+        NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
         NodeKind::FloatToFloat,
         NodeKind::FloatToInt,
         NodeKind::IntToFloat,

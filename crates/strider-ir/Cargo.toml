@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bitflags = "2"
 dot.workspace = true
 entity-utils.workspace = true
 graphwalk.workspace = true

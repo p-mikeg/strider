@@ -1320,6 +1320,7 @@ name = "strider-ir"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "cranelift-bitset",
  "cranelift-entity",
  "dot",

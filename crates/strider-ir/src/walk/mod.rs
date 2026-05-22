@@ -8,6 +8,9 @@ use crate::{
     node::{NodeId, NodeOutputId},
 };
 
+mod cast;
+pub use cast::{cast_mask_of, skip_casts, CastMask};
+
 /// Convenience alias for the `cfg_reachable` return shape.  Re-exported so
 /// downstream crates can take `&NodeIdSet` parameters without depending on
 /// `entity_utils` directly.
