@@ -280,17 +280,67 @@ pub enum NodeKind {
 
 impl NodeKind {
     /// Returns `true` if this node represents a compile-time constant
-    /// (`BoolConst`, `IntConst`, or `FloatConst`).
+    /// (`BoolConst`, `IntConst`, `IntConstWide`, or `FloatConst`).
+    ///
+    /// Exhaustive (no `_` arm) so adding a new const-shape `NodeKind`
+    /// variant is a compile error here — see [`crate::walk::cast_mask_of`]
+    /// for the same pattern.  This forces an explicit decision at every
+    /// constant-handling site (constant folding, validator typing,
+    /// pattern matching, …) when the IR grows a new constant kind.
+    /// All non-const variants are listed explicitly under one `false`
+    /// arm to keep the compile-time exhaustiveness check while
+    /// satisfying clippy's `match_same_arms` lint.
     #[inline]
     #[must_use]
     pub fn is_const(self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::BoolConst(..)
-                | Self::IntConst(..)
-                | Self::IntConstWide(..)
-                | Self::FloatConst(..)
-        )
+            | Self::IntConst(..)
+            | Self::IntConstWide(..)
+            | Self::FloatConst(..) => true,
+
+            // Every other variant — explicitly named so adding a new
+            // `NodeKind` is a compile error here.
+            Self::Entry
+            | Self::InitialMemory
+            | Self::InitialVar(..)
+            | Self::FunctionArg { .. }
+            | Self::ControlState
+            | Self::MemPhi
+            | Self::Phi
+            | Self::If
+            | Self::Call
+            | Self::Return
+            | Self::IndirectBranch
+            | Self::CallOther { .. }
+            | Self::Load(..)
+            | Self::Store(..)
+            | Self::StackStore { .. }
+            | Self::StackStorePhi { .. }
+            | Self::IntUnaryOp(..)
+            | Self::IntBinaryOp(..)
+            | Self::IntCmpOp(..)
+            | Self::CastToInt
+            | Self::Truncate
+            | Self::Popcount
+            | Self::Lzcount
+            | Self::Extend(..)
+            | Self::BoolUnaryOp(..)
+            | Self::BoolBinaryOp(..)
+            | Self::CastToBool
+            | Self::FloatBinaryOp(..)
+            | Self::FloatUnaryOp(..)
+            | Self::FloatCmpOp(..)
+            | Self::IntToFloat
+            | Self::FloatToInt
+            | Self::FloatToFloat
+            | Self::IntBitsToFloat
+            | Self::FloatBitsToInt
+            | Self::CastToFloat
+            | Self::SegmentOp { .. }
+            | Self::CPoolRef
+            | Self::New => false,
+        }
     }
 
     /// Returns the structural [`NodeCategory`] of this kind.
