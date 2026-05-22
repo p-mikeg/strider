@@ -401,6 +401,21 @@ fn find_anchor_consumer_placeholder(
 /// recursive version: a back-edge inside one predecessor's sub-walk
 /// is undone before the next predecessor starts, so the same node
 /// can legitimately appear on multiple incoming paths to a join.
+///
+/// **Why this is not folded into a generic `walk_cfg_backward`
+/// primitive in `strider_ir::walk`:** the trail-rollback semantics
+/// require the verdict callback to observe and mutate the walker's
+/// visited set across pred boundaries.  Exposing the visited set as a
+/// trait method (so the rollback policy can be supplied by a Verdict
+/// impl) is a full implementation leak — the rollback IS the walker.
+/// Add to that the classifier-driven specific-predecessor selection
+/// (`If` picks `inputs[0]`, default picks slot-0 if control, multi-pred
+/// `ControlState` forks, etc.) and a hypothetical
+/// `BackwardCfgVerdict` would carry the entire current body verbatim.
+/// The mem-chain walker in `crate::opt::mem_walk` is the right
+/// abstraction for the pure-DAG / no-trail-rollback case; this walker
+/// is the trail-rollback case and stays here until a second consumer
+/// demonstrates the rollback policy can be parameterised cleanly.
 fn walk_control_for_if_bound_iter(
     ctx: crate::pattern::RewriteCtxView<'_>,
     initial_control_out: NodeOutputId,
