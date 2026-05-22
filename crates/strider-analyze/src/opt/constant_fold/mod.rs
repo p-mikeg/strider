@@ -77,11 +77,7 @@ impl PeepholePass for ConstantFold {
         ctx: &mut crate::pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
-        Ok(apply_identity_rules(ctx, root)?
-            | apply_const_eval_rules(ctx, root)?
-            | apply_bool_float_rules(ctx, root)?
-            | apply_reassoc_and_mask_rules(ctx, root)?
-            | apply_bitcast_extend_rules(ctx, root)?)
+        Ok(apply_all_rules(ctx, root)? | try_lower_cast_to_float(ctx, root)?)
     }
 }
 

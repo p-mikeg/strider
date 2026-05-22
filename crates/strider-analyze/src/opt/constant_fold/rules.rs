@@ -8,13 +8,40 @@ use crate::opt::pipeline::OptimizationResult;
 
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
-use super::try_lower_cast_to_float;
+
+/// Runs every constant-fold rule group on `node`, OR-ing the per-group
+/// `bool` change flags.
+///
+/// The five `LazyLock` rule statics keep their semantic grouping
+/// (identity / const-eval / bool-float / reassoc-and-mask /
+/// bitcast-extend) for readers, but the per-group wrapper functions
+/// they used to feed were byte-identical boilerplate — this single
+/// entry point replaces them.  The `CastToFloat` lowering is graph
+/// surgery that doesn't fit the rule shape and is invoked separately
+/// by the caller.
+pub(super) fn apply_all_rules(
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    node: NodeId,
+) -> Result<OptimizationResult> {
+    use crate::pattern::apply_rules_in_order;
+    let mut changed = false;
+    for group in [
+        &*IDENTITY_RULES,
+        &*CONST_EVAL_RULES,
+        &*BOOL_FLOAT_RULES,
+        &*REASSOC_AND_MASK_RULES,
+        &*BITCAST_EXTEND_RULES,
+    ] {
+        if apply_rules_in_order(group)(ctx, node)? {
+            changed = true;
+        }
+    }
+    Ok(OptimizationResult::from_changed(changed))
+}
 
 // ── per-node folding ──────────────────────────────────────────────────────────
 
-/// Builds the rule vec for [`apply_reassoc_and_mask_rules`].
-///
-/// Called once from [`REASSOC_AND_MASK_RULES`]'s `LazyLock` initializer.
+/// Builds the rule vec for [`REASSOC_AND_MASK_RULES`].
 fn build_reassoc_and_mask_rules() -> Vec<crate::pattern::BoxedRule> {
     use crate::pattern::macros::int_const_with;
     use crate::pattern::{
@@ -82,10 +109,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-static REASSOC_AND_MASK_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> =
-    LazyLock::new(build_reassoc_and_mask_rules);
-
-/// Applies add/sub reassociation and AND-mask merging rules.
+/// Add/sub reassociation and AND-mask merging rules.
 ///
 /// Rules:
 /// - `(x + C1) + C2 → x + (C1 + C2)`
@@ -93,16 +117,10 @@ static REASSOC_AND_MASK_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> =
 /// - `(x + C1) - C2 → x + (C1 - C2)`
 /// - `(a & C1) & C2 → a & (C1 & C2)`
 /// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
-pub(super) fn apply_reassoc_and_mask_rules(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
-    node: NodeId,
-) -> Result<OptimizationResult> {
-    use crate::pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&REASSOC_AND_MASK_RULES)(ctx, node)?;
-    Ok(OptimizationResult::from_changed(changed))
-}
+static REASSOC_AND_MASK_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> =
+    LazyLock::new(build_reassoc_and_mask_rules);
 
-/// Builds the rule vec for [`apply_bitcast_extend_rules`].
+/// Builds the rule vec for [`BITCAST_EXTEND_RULES`].
 fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
     use crate::pattern::{
         BoxedRule, Capture, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule,
@@ -271,22 +289,13 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
+/// Bitcast identity rules:
+/// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
+/// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
 static BITCAST_EXTEND_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> =
     LazyLock::new(build_bitcast_extend_rules);
 
-/// Applies bitcast identity rules:
-/// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
-/// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
-pub(super) fn apply_bitcast_extend_rules(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
-    node: NodeId,
-) -> Result<OptimizationResult> {
-    use crate::pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&BITCAST_EXTEND_RULES)(ctx, node)?;
-    Ok(OptimizationResult::from_changed(changed))
-}
-
-/// Builds the rule vec for [`apply_identity_rules`].
+/// Builds the rule vec for [`IDENTITY_RULES`].
 fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
     use crate::pattern::{
         BoxedRule, Pat, Capture, add, and, any_int_const, bit_not, boxed_rule, int_const, mul, or,
@@ -355,9 +364,7 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-static IDENTITY_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_identity_rules);
-
-/// Applies single-operand algebraic identities to integer binary operations.
+/// Single-operand algebraic identities for integer binary operations.
 ///
 /// Rules ported from hand-written arms:
 /// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
@@ -366,16 +373,9 @@ static IDENTITY_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(
 /// - `x & 0 → 0`, `x & x → x`, `x & all_ones → x`
 /// - `x | 0 → x`, `x | x → x`
 /// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
-pub(super) fn apply_identity_rules(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
-    node: NodeId,
-) -> Result<OptimizationResult> {
-    use crate::pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&IDENTITY_RULES)(ctx, node)?;
-    Ok(OptimizationResult::from_changed(changed))
-}
+static IDENTITY_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_identity_rules);
 
-/// Builds the rule vec for [`apply_const_eval_rules`].
+/// Builds the rule vec for [`CONST_EVAL_RULES`].
 fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
     use strider_ir::node::NodeOutputType;
     use crate::pattern::macros::{bool_const_with, int_const_with};
@@ -574,21 +574,12 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-static CONST_EVAL_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_const_eval_rules);
-
-/// Applies full constant evaluation for integer binary ops, integer unary ops,
+/// Full constant evaluation for integer binary ops, integer unary ops,
 /// integer comparisons, truncate, extend (zero/sign), popcount, lzcount,
 /// cast_to_bool, and cast_to_int.
-pub(super) fn apply_const_eval_rules(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
-    node: NodeId,
-) -> Result<OptimizationResult> {
-    use crate::pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&CONST_EVAL_RULES)(ctx, node)?;
-    Ok(OptimizationResult::from_changed(changed))
-}
+static CONST_EVAL_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_const_eval_rules);
 
-/// Builds the rule vec for [`apply_bool_float_rules`].
+/// Builds the rule vec for [`BOOL_FLOAT_RULES`].
 fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     use crate::pattern::{
         BoxedRule, Capture, Pat, any_bool_const, any_float_const, bool_and, bool_const, bool_not,
@@ -721,20 +712,12 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-static BOOL_FLOAT_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_bool_float_rules);
-
-/// Applies constant evaluation and absorbing-element rules for bool binary ops,
+/// Constant evaluation and absorbing-element rules for bool binary ops,
 /// bool unary ops, and all float ops.  Also canonicalises:
 /// - `x ^ true → !x` (commutative)
 /// - `!!x → x`
-pub(super) fn apply_bool_float_rules(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
-    node: NodeId,
-) -> Result<OptimizationResult> {
-    use crate::pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&BOOL_FLOAT_RULES)(ctx, node)?;
-    // CastToFloat lowering is too stateful for a rule (it does graph surgery);
-    // handle it separately after the rule sweep.
-    let cast_changed = try_lower_cast_to_float(ctx, node)?;
-    Ok(OptimizationResult::from_changed(changed) | cast_changed)
-}
+///
+/// `CastToFloat` lowering is too stateful for a rule (it does graph
+/// surgery); the caller invokes `try_lower_cast_to_float` separately
+/// after the rule sweep.
+static BOOL_FLOAT_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_bool_float_rules);
