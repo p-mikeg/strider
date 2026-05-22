@@ -14,20 +14,31 @@ use crate::walk::walk_graph;
 
 use super::Graph;
 
-/// Moves entries from `src` (keyed by old id) into a fresh map
-/// (keyed by new id), draining `src` of every remapped slot via
-/// `std::mem::take`.  Used by `retain_reachable` to remap the four
-/// per-node side-tables (`stack_phi_offsets`, `call_other_names`,
-/// `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`) in one shape.
-fn remap_side_table<T: Default + Clone>(
-    src: &mut SecondaryMap<NodeId, T>,
-    old_to_new: &HashMap<NodeId, NodeId>,
-) -> SecondaryMap<NodeId, T> {
-    let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
-    for (&old_id, &new_id) in old_to_new {
-        dst[new_id] = std::mem::take(&mut src[old_id]);
+/// Remap-in-place trait for `SecondaryMap<NodeId, _>`-shaped side-tables.
+///
+/// Implementors expose a single method that rebuilds the table under the
+/// old→new translation, draining the source via `std::mem::take` so the
+/// post-remap source is left at `Default::default()` for every slot.
+/// Used by [`Graph::retain_reachable`] to fold every `NodeId`-keyed
+/// side-table through one iteration site — adding a new side-table now
+/// means adding one entry to [`Graph::node_keyed_side_tables_mut`] and
+/// no new logic.
+///
+/// The Vn-keyed `initial_var_index` does **not** fit this shape (its
+/// key is `rsleigh::Vn`, not `NodeId`) and stays inline in
+/// `retain_reachable`.
+trait SideTableRemap {
+    fn remap_node_keyed(&mut self, old_to_new: &HashMap<NodeId, NodeId>);
+}
+
+impl<T: Default + Clone> SideTableRemap for SecondaryMap<NodeId, T> {
+    fn remap_node_keyed(&mut self, old_to_new: &HashMap<NodeId, NodeId>) {
+        let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
+        for (&old_id, &new_id) in old_to_new {
+            dst[new_id] = std::mem::take(&mut self[old_id]);
+        }
+        *self = dst;
     }
-    dst
 }
 
 /// Old→new id translation table produced by
@@ -67,6 +78,22 @@ impl NodeIdRemap {
 }
 
 impl Graph {
+    /// Returns the set of `SecondaryMap<NodeId, _>`-shaped side-tables
+    /// that participate in [`Self::retain_reachable`]'s id remap.
+    ///
+    /// Adding a new `NodeId`-keyed side-table means: declare the field
+    /// on `Graph`, then append `&mut self.new_field` to this slice.
+    /// `retain_reachable` picks it up automatically.
+    fn node_keyed_side_tables_mut(&mut self) -> [&mut dyn SideTableRemap; 5] {
+        [
+            &mut self.stack_phi_offsets,
+            &mut self.call_other_names,
+            &mut self.asm_fingerprints,
+            &mut self.call_clobbered_overrides,
+            &mut self.phi_var_tag,
+        ]
+    }
+
     /// Rebuilds the arena to retain only nodes reachable from `entry`
     /// via [`crate::walk::walk_graph`] (control-out forward + data-in
     /// backward).  Returns the old→new id translation table.
@@ -220,26 +247,24 @@ impl Graph {
             self.node_to_id.insert(key, new_node_id);
         }
 
-        // 8. Remap all four side-tables.  For each table, iterate the
-        // surviving (old → new) pairs and write the old entry into the
-        // fresh table at the new id.  `remap_side_table` is generic over
-        // `T: Default`; the take-then-insert flow leaves the source
-        // entry at `Default::default()` and the destination carrying the
-        // moved value.  SecondaryMap stores `Default` cheaply (no
-        // allocation for `Vec`/`Option`), so we skip the prior
-        // `if !is_empty() { ... }` micro-optimization for clarity.
+        // 8. Remap every `SecondaryMap<NodeId, _>`-shaped side-table
+        // through `node_keyed_side_tables_mut`.  Each table's
+        // `remap_node_keyed` iterates the surviving (old → new) pairs
+        // and writes the old entry into the fresh table at the new id
+        // via `std::mem::take`; the post-remap source is left at
+        // `Default::default()` for every slot.  SecondaryMap stores
+        // `Default` cheaply (no allocation for `Vec`/`Option`), so the
+        // prior `if !is_empty() { ... }` micro-optimization isn't worth
+        // the complexity here.
         let mut old_to_new_pairs: HashMap<NodeId, NodeId> = HashMap::new();
         for &old_id in &reachable {
             if let Some(new_id) = remap.nodes[old_id] {
                 old_to_new_pairs.insert(old_id, new_id);
             }
         }
-        self.stack_phi_offsets = remap_side_table(&mut self.stack_phi_offsets, &old_to_new_pairs);
-        self.call_other_names = remap_side_table(&mut self.call_other_names, &old_to_new_pairs);
-        self.asm_fingerprints = remap_side_table(&mut self.asm_fingerprints, &old_to_new_pairs);
-        self.call_clobbered_overrides =
-            remap_side_table(&mut self.call_clobbered_overrides, &old_to_new_pairs);
-        self.phi_var_tag = remap_side_table(&mut self.phi_var_tag, &old_to_new_pairs);
+        for tbl in self.node_keyed_side_tables_mut() {
+            tbl.remap_node_keyed(&old_to_new_pairs);
+        }
 
         // Remap the InitialVar Vn→NodeId index.  Entries whose NodeId
         // didn't survive compaction (i.e. the InitialVar became
