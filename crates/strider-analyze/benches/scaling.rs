@@ -18,6 +18,7 @@ use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{NodeOutputType, NodeOutputKind};
 use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
+use strider_ir_test_utils::RegisterSet;
 use strider_analyze::opt::{
     ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
 };
@@ -156,10 +157,11 @@ mod synthetic {
     /// helper so the bench measures `StackLoadForward` in isolation.
     pub fn build_stack_store_chain(n: usize) -> BuiltFunctionGraph {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0).unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
-        b.set_region(region);
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .callee_saved(sp)
+            .build_fn_single_region()
+            .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
         // Build N stores at distinct SP offsets.
         let mut load_addrs: Vec<strider_ir::Value> = Vec::with_capacity(n);
@@ -206,7 +208,11 @@ mod synthetic {
     /// merge-heavy IRs.
     pub fn run_diamond_cfg(n: usize) -> BuiltFunctionGraph {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0).unwrap();
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .callee_saved(sp)
+            .build_fn()
+            .unwrap();
         let entry = b.create_region().unwrap();
         b.set_entry_region(entry).unwrap();
 
@@ -280,10 +286,12 @@ mod synthetic {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         };
-        let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0).unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
-        b.set_region(region);
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .tracked(arg_vn)
+            .callee_saved(sp)
+            .build_fn_single_region()
+            .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
 
         for i in 0..n {

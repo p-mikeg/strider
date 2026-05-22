@@ -3,7 +3,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
-use strider_ir::{FunctionBuilder, IntBinaryOp};
+use strider_ir::IntBinaryOp;
 use strider_target::Endianness;
 
 /// Fake 4-byte SP varnode (x86-cdecl-like).

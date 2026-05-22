@@ -5,8 +5,8 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::count;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use strider_ir_test_utils::{sp_vn_x86 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
-use strider_ir::{FunctionBuilder, IntBinaryOp};
+use strider_ir_test_utils::{sp_vn_x86 as sp_vn, RegisterSet};
+use strider_ir::IntBinaryOp;
 
 /// Simple straight-line program: `*(sp - 4) = 0x11; return *(sp - 4)`.  After
 /// `ConstantFold` reassociates the address to `sp + 0xFFFFFFFC`, the

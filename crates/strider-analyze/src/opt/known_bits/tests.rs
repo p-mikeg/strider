@@ -2,7 +2,7 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::{make_fn, return_kind};
 use super::*;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::RegisterSet;
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 
 // ── Original tests ────────────────────────────────────────────────────────────

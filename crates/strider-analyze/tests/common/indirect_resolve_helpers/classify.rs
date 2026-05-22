@@ -124,7 +124,8 @@ pub fn build_value_phi_target_scenario(
     per_pred: &[u64],
 ) -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
-    use strider_ir::{FunctionBuilder, IntBinaryOp};
+    use strider_ir::IntBinaryOp;
+    use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use strider_target::Endianness;
 
@@ -142,8 +143,11 @@ pub fn build_value_phi_target_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)
-        .expect("new_raw");
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .build_fn()
+        .expect("build_fn");
     let entry = b.create_region().expect("create entry");
     // One arm region per predecessor + a merge region.
     let arm_regions: Vec<_> = (0..per_pred.len())
@@ -158,7 +162,6 @@ pub fn build_value_phi_target_scenario(
     // if(true)/else; each else feeds the next predicate.  This
     // keeps the fixture topology arbitrary-arity friendly.
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     if per_pred.len() == 1 {
         b.build_branch(arm_regions[0]).expect("entry branch");
     } else {
@@ -243,7 +246,7 @@ pub fn build_value_phi_target_scenario(
 pub fn build_pop_pc_via_stack_load_forward_scenario(
 ) -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::NodeOutputType;
-    use strider_ir::FunctionBuilder;
+    use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use strider_target::Endianness;
 
@@ -257,12 +260,12 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![sp, lr], &[], &[sp], &[], None, 0)
-        .expect("new_raw");
-    let region = b.create_region().expect("region");
-    b.set_entry_region(region).expect("set_entry_region");
-    b.set_region(region);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .tracked(lr)
+        .callee_saved(sp)
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
 
     // Compute `sp - 4` — the slot we'll push lr to.
     let sp_v = b.read_variable(&sp).expect("read sp");
@@ -343,7 +346,7 @@ pub fn build_push_target_pop_pc_scenario(
     k: u64,
 ) -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::NodeOutputType;
-    use strider_ir::FunctionBuilder;
+    use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use strider_target::Endianness;
 
@@ -357,12 +360,12 @@ pub fn build_push_target_pop_pc_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![sp, lr], &[], &[sp], &[], None, 0)
-        .expect("new_raw");
-    let region = b.create_region().expect("region");
-    b.set_entry_region(region).expect("set_entry_region");
-    b.set_region(region);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .tracked(lr)
+        .callee_saved(sp)
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
 
     let sp_v = b.read_variable(&sp).expect("read sp");
     let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
@@ -440,7 +443,8 @@ pub fn build_jump_table_known_bits_scenario(
     idx_mask: u64,
 ) -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
-    use strider_ir::{FunctionBuilder, IntBinaryOp};
+    use strider_ir::IntBinaryOp;
+    use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     // Single tracked variable — a register-shaped VN.  We seed `idx`
@@ -451,12 +455,10 @@ pub fn build_jump_table_known_bits_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)
-        .expect("new_raw");
-    let region = b.create_region().expect("region");
-    b.set_entry_region(region).expect("set_entry");
-    b.set_region(region);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
 
     let raw_idx = b.read_variable(&idx_var).expect("read idx");
     let mask_c = b.build_int_const(idx_mask, NodeOutputType::U32).unwrap();
@@ -510,7 +512,8 @@ pub fn build_jump_table_predecessor_if_scenario(
     bound: u64,
 ) -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
-    use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp};
+    use strider_ir::{IntBinaryOp, IntCmpOp};
+    use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     let idx_var = rsleigh::Vn {
@@ -518,8 +521,10 @@ pub fn build_jump_table_predecessor_if_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)
-        .expect("new_raw");
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .build_fn()
+        .expect("build_fn");
     let entry = b.create_region().expect("entry");
     let dispatch = b.create_region().expect("dispatch");
     let exit = b.create_region().expect("exit");
@@ -527,7 +532,6 @@ pub fn build_jump_table_predecessor_if_scenario(
 
     // Entry: build `idx < bound`, branch to dispatch on true / exit on false.
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let raw_idx_at_entry = b.read_variable(&idx_var).expect("read idx (entry)");
     let bound_c = b.build_int_const(bound, NodeOutputType::U32).unwrap();
     let cond = b
@@ -579,7 +583,8 @@ pub fn build_jump_table_unbounded_scenario(
     stride: u64,
 ) -> (BuiltFunctionGraph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
-    use strider_ir::{FunctionBuilder, IntBinaryOp};
+    use strider_ir::IntBinaryOp;
+    use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     let idx_var = rsleigh::Vn {
@@ -587,12 +592,10 @@ pub fn build_jump_table_unbounded_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)
-        .expect("new_raw");
-    let region = b.create_region().expect("region");
-    b.set_entry_region(region).expect("set_entry");
-    b.set_region(region);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
 
     let idx = b.read_variable(&idx_var).expect("read idx");
     let stride_c = b.build_int_const(stride, NodeOutputType::U32).unwrap();
@@ -624,8 +627,8 @@ pub fn build_jump_table_unbounded_scenario(
 /// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
 /// a simple global read).
 pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, strider_ir::Value) {
-    use strider_ir::node::NodeOutputType;
     use strider_ir::FunctionBuilder;
+    use strider_ir::node::NodeOutputType;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     let mut b = FunctionBuilder::empty()
@@ -686,7 +689,8 @@ pub fn build_stack_array_dispatch_scenario(
     stride: u64,
 ) -> (BuiltFunctionGraph, strider_ir::node::NodeOutputId, rsleigh::Vn) {
     use strider_ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
-    use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
+    use strider_ir::{ExtendOp, IntBinaryOp};
+    use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let n = u64::try_from(targets.len()).expect("targets.len fits in u64");
@@ -708,12 +712,12 @@ pub fn build_stack_array_dispatch_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0)
-        .expect("FunctionBuilder::new_raw");
-    let region = b.create_region().expect("create_region");
-    b.set_entry_region(region).expect("set_entry_region");
-    b.set_region(region);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .tracked(arg_vn)
+        .callee_saved(sp)
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
     let sp_val = b.read_variable(&sp).expect("read sp");
 
     // N entry stores: target[i] → *(sp + base_offset + i*stride).

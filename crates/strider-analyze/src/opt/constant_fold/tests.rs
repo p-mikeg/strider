@@ -3,7 +3,7 @@ use crate::opt::pipeline::Optimizer;
 use anyhow::anyhow;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder,
+    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
     IntBinaryOp, IntCmpOp,
 };
 

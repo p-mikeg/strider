@@ -519,7 +519,7 @@ mod tests {
 
     use super::*;
     use strider_ir::node::NodeOutputType;
-    use strider_ir::{ExtendOp, FunctionBuilder};
+    use strider_ir::ExtendOp;
     use strider_ir_test_utils::RegisterSet;
     use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
