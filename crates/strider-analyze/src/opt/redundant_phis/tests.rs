@@ -61,10 +61,11 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
+        fg.preorder().collect();
     let surviving_sp_phis = fg
         .all_node_ids()
-        .filter(|&n| reachable.contains(&n)
+        .filter(|&n| reachable.contains(n)
             && matches!(fg.node_kind(n), NodeKind::Phi)
             && fg.phi_var_tag(n) == Some(sp))
         .count();

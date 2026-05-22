@@ -2,17 +2,11 @@ use super::*;
 use anyhow::anyhow;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
+use crate::opt::test_support::count;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use strider_ir_test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
-
-/// Counts how many nodes in `ctx` match the predicate.
-fn count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView<'_>, pred: F) -> usize {
-    ctx.all_node_ids()
-        .filter(|&n| pred(ctx.node_kind(n)))
-        .count()
-}
 
 /// Simple straight-line program: `*(sp - 4) = 0x11; return *(sp - 4)`.  After
 /// `ConstantFold` reassociates the address to `sp + 0xFFFFFFFC`, the

@@ -34,9 +34,10 @@ fn reachable_count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView
 /// `MemPhi`.  Vn-tagged phis (created at lift time for register-aliased
 /// reads) are excluded.
 fn reachable_anonymous_phi_count(fg: &strider_ir::BuiltFunctionGraph) -> usize {
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
+        fg.preorder().collect();
     fg.all_node_ids()
-        .filter(|n| reachable.contains(n)
+        .filter(|n| reachable.contains(*n)
             && matches!(fg.node_kind(*n), NodeKind::Phi)
             && fg.phi_var_tag(*n).is_none())
         .count()
@@ -46,8 +47,9 @@ fn reachable_anonymous_phi_count(fg: &strider_ir::BuiltFunctionGraph) -> usize {
 fn find_reachable_anonymous_phi(
     fg: &strider_ir::BuiltFunctionGraph,
 ) -> Option<strider_ir::node::NodeId> {
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    fg.all_node_ids().find(|n| reachable.contains(n)
+    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
+        fg.preorder().collect();
+    fg.all_node_ids().find(|n| reachable.contains(*n)
         && matches!(fg.node_kind(*n), NodeKind::Phi)
         && fg.phi_var_tag(*n).is_none())
 }
@@ -429,12 +431,13 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
 
     // The ValuePhi's phi-token (input 0) must come from the same
     // ControlState as the MemPhi's phi-token.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
+        fg.preorder().collect();
     let value_phi = find_reachable_anonymous_phi(&fg)
         .expect("ValuePhi found above");
     let mem_phi = fg
         .all_node_ids()
-        .find(|n| reachable.contains(n) && matches!(fg.node_kind(*n), NodeKind::MemPhi))
+        .find(|n| reachable.contains(*n) && matches!(fg.node_kind(*n), NodeKind::MemPhi))
         .expect("MemPhi survived to the merge");
     let vp_token = fg.node_inputs(value_phi)[0];
     let mp_token = fg.node_inputs(mem_phi)[0];

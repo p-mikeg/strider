@@ -671,8 +671,9 @@ fn fold_cast_to_bool_of_cast_to_int_round_trip() -> Result<()> {
     }
     // No reachable `CastToBool` may have a `CastToInt` immediately
     // upstream — if any survives, the round-trip rule didn't fire.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    for n in fg.all_node_ids().filter(|n| reachable.contains(n)) {
+    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
+        fg.preorder().collect();
+    for n in fg.all_node_ids().filter(|n| reachable.contains(*n)) {
         if !matches!(fg.node_kind(n), NodeKind::CastToBool) {
             continue;
         }

@@ -1,6 +1,7 @@
 use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
+use crate::opt::test_support::count;
 use strider_ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
 use strider_ir_test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
@@ -8,12 +9,6 @@ use strider_ir::{FunctionBuilder, IntBinaryOp};
 fn rdi_like_vn() -> rsleigh::Vn {
     // Fake 8-byte register to stand in for x86_64 RDI in tests.
     reg_vn(0x38, 8)
-}
-
-fn count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView<'_>, pred: F) -> usize {
-    ctx.all_node_ids()
-        .filter(|&n| pred(ctx.node_kind(n)))
-        .count()
 }
 
 /// x86_64-like convention passes arg 0 in a register.  A function
@@ -384,10 +379,11 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
 
     // The narrow (U32) use must be re-routed through a `Truncate` node
     // whose input is the FunctionArg's output.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
+        fg.preorder().collect();
     let trunc_from_fa = fg
         .all_node_ids()
-        .filter(|n| reachable.contains(n))
+        .filter(|n| reachable.contains(*n))
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .filter(|&n| {
             let inputs = fg.node_inputs(n);
