@@ -249,10 +249,81 @@ impl FunctionBuilder {
 
     pub(super) fn validate_value_inputs(&self, inputs: &[NodeOutputId]) -> Result<()> {
         for &v in inputs {
-            let kind = self.graph().output_kind(v);
-            if !kind.is_value() {
-                return Err(anyhow!("output {v:?} is not a value edge (got {kind:?})"));
-            }
+            self.require_value_kind(v)?;
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(())` if `output` has a value kind (any integer / bool /
+    /// float / wide-int); otherwise an error.  Single-source check used
+    /// by every node-builder method that consumes a value input.
+    pub(super) fn require_value_kind(&self, output: NodeOutputId) -> Result<()> {
+        let kind = self.graph().output_kind(output);
+        if !kind.is_value() {
+            return Err(anyhow!(
+                "output {output:?} is not a value edge (got {kind:?})"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(())` if `output` carries an integer value; otherwise an
+    /// error.  Use on inputs to integer-only conversions
+    /// (`IntToFloat`, `IntBitsToFloat`).
+    pub(super) fn require_integer_value(&self, output: NodeOutputId) -> Result<()> {
+        if !self.get_output_type(output)?.is_integer() {
+            return Err(anyhow!("output {output:?} is not an integer value"));
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(())` if `output` carries a float value; otherwise an
+    /// error.  Use on inputs to float-only conversions (`FloatToInt`,
+    /// `FloatToFloat`, `FloatBitsToInt`).
+    pub(super) fn require_float_value(&self, output: NodeOutputId) -> Result<()> {
+        if !self.get_output_type(output)?.is_float() {
+            return Err(anyhow!("output {output:?} is not a float value"));
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(())` if `output` has `Bool` value kind; otherwise an
+    /// error.  Use on conditional-branch conditions.
+    pub(super) fn require_bool_value(&self, output: NodeOutputId) -> Result<()> {
+        let kind = self.graph().output_kind(output);
+        if !kind.is_bool() {
+            return Err(anyhow!("output {output:?} is not a bool value"));
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(())` if `output` is the `PhiToken` of a `ControlState`
+    /// node; otherwise an error.  Use when wiring a phi to its owning
+    /// region header.
+    pub(super) fn require_phi_token_kind(&self, output: NodeOutputId) -> Result<()> {
+        let kind = self.graph().output_kind(output);
+        if !kind.is_phi_token() {
+            return Err(anyhow!("output {output:?} is not a phi-token edge"));
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(())` if `ty` is an integer type; otherwise an error.
+    /// Use on declared output types in builders that emit integer-typed
+    /// values.
+    pub(super) fn require_integer_type(ty: NodeOutputType) -> Result<()> {
+        if !ty.is_integer() {
+            return Err(anyhow!("type {ty:?} is not an integer type"));
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(())` if `ty` is a float type (`F32` / `F64` / `F80`);
+    /// otherwise an error.  Use on declared output types in builders
+    /// that emit float-typed values.
+    pub(super) fn require_float_type(ty: NodeOutputType) -> Result<()> {
+        if !ty.is_float() {
+            return Err(anyhow!("type {ty:?} is not a float type"));
         }
         Ok(())
     }

@@ -28,18 +28,8 @@ impl FunctionBuilder {
         rhs_id: NodeOutputId,
         op: BoolBinaryOp,
     ) -> Result<NodeOutputId> {
-        let lhs_kind = self.graph().output_kind(lhs_id);
-        if !lhs_kind.is_value() {
-            return Err(anyhow!(
-                "output {lhs_id:?} is not a value edge (got {lhs_kind:?})"
-            ));
-        }
-        let rhs_kind = self.graph().output_kind(rhs_id);
-        if !rhs_kind.is_value() {
-            return Err(anyhow!(
-                "output {rhs_id:?} is not a value edge (got {rhs_kind:?})"
-            ));
-        }
+        self.require_value_kind(lhs_id)?;
+        self.require_value_kind(rhs_id)?;
         let converted_lhs_id = self.convert_to_bool_if_needed(lhs_id)?;
         let converted_rhs_id = self.convert_to_bool_if_needed(rhs_id)?;
         Ok(self.build_single_output_pure(
@@ -59,12 +49,7 @@ impl FunctionBuilder {
         input_id: NodeOutputId,
         op: BoolUnaryOp,
     ) -> Result<NodeOutputId> {
-        let kind = self.graph().output_kind(input_id);
-        if !kind.is_value() {
-            return Err(anyhow!(
-                "output {input_id:?} is not a value edge (got {kind:?})"
-            ));
-        }
+        self.require_value_kind(input_id)?;
         let converted_input_id = self.convert_to_bool_if_needed(input_id)?;
         Ok(self.build_single_output_pure(
             NodeKind::BoolUnaryOp(op),
@@ -355,12 +340,8 @@ impl FunctionBuilder {
         input: NodeOutputId,
         float_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        if !self.get_output_type(input)?.is_integer() {
-            return Err(anyhow!("output {input:?} is not an integer value"));
-        }
-        if !float_type.is_float() {
-            return Err(anyhow!("type {float_type:?} is not a float type"));
-        }
+        self.require_integer_value(input)?;
+        Self::require_float_type(float_type)?;
         Ok(self.build_single_output_pure(NodeKind::IntToFloat, [input], float_type))
     }
 
@@ -377,12 +358,8 @@ impl FunctionBuilder {
         input: NodeOutputId,
         int_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        if !self.get_output_type(input)?.is_float() {
-            return Err(anyhow!("output {input:?} is not a float value"));
-        }
-        if !int_type.is_integer() {
-            return Err(anyhow!("type {int_type:?} is not an integer type"));
-        }
+        self.require_float_value(input)?;
+        Self::require_integer_type(int_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatToInt, [input], int_type))
     }
 
@@ -398,12 +375,8 @@ impl FunctionBuilder {
         input: NodeOutputId,
         float_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        if !self.get_output_type(input)?.is_float() {
-            return Err(anyhow!("output {input:?} is not a float value"));
-        }
-        if !float_type.is_float() {
-            return Err(anyhow!("type {float_type:?} is not a float type"));
-        }
+        self.require_float_value(input)?;
+        Self::require_float_type(float_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [input], float_type))
     }
 
@@ -421,12 +394,8 @@ impl FunctionBuilder {
         input: NodeOutputId,
         float_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        if !self.get_output_type(input)?.is_integer() {
-            return Err(anyhow!("output {input:?} is not an integer value"));
-        }
-        if !float_type.is_float() {
-            return Err(anyhow!("type {float_type:?} is not a float type"));
-        }
+        self.require_integer_value(input)?;
+        Self::require_float_type(float_type)?;
         // Immediate fold: IntConst → FloatConst (same bits).  F80 is
         // 80-bit and `FloatConst`'s payload is `u64`, so the bit pattern
         // doesn't fit — skip the immediate-fold and emit the node
@@ -457,13 +426,9 @@ impl FunctionBuilder {
         input: NodeOutputId,
         int_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
+        self.require_float_value(input)?;
+        Self::require_integer_type(int_type)?;
         let input_ty = self.get_output_type(input)?;
-        if !input_ty.is_float() {
-            return Err(anyhow!("output {input:?} is not a float value"));
-        }
-        if !int_type.is_integer() {
-            return Err(anyhow!("type {int_type:?} is not an integer type"));
-        }
         // Immediate fold: FloatConst → IntConst (same bits).  F80 input
         // is skipped because `FloatConst` only stores 64 bits — even if a
         // FloatConst at F80 type somehow appeared, its u64 payload
@@ -598,10 +563,7 @@ impl FunctionBuilder {
     ) -> Result<()> {
         let res = self.terminate_cur_region()?;
 
-        let cond_kind = self.graph().output_kind(cond);
-        if !cond_kind.is_bool() {
-            return Err(anyhow!("output {cond:?} is not a bool value"));
-        }
+        self.require_bool_value(cond)?;
         self.require_control_kind(res.control)?;
 
         let brcond = self.create_node(
@@ -698,24 +660,9 @@ impl FunctionBuilder {
         space: rsleigh::VnSpace,
     ) -> Result<()> {
         let memory = self.cur_region_memory()?;
-        let mem_kind = self.graph().output_kind(memory);
-        if !mem_kind.is_memory() {
-            return Err(anyhow!(
-                "output {memory:?} is not a memory edge (got {mem_kind:?})"
-            ));
-        }
-        let addr_kind = self.graph().output_kind(addr);
-        if !addr_kind.is_value() {
-            return Err(anyhow!(
-                "output {addr:?} is not a value edge (got {addr_kind:?})"
-            ));
-        }
-        let data_kind = self.graph().output_kind(data);
-        if !data_kind.is_value() {
-            return Err(anyhow!(
-                "output {data:?} is not a value edge (got {data_kind:?})"
-            ));
-        }
+        self.require_memory_kind(memory)?;
+        self.require_value_kind(addr)?;
+        self.require_value_kind(data)?;
 
         let node_id = self.create_node(
             NodeKind::Store(space),
@@ -742,18 +689,8 @@ impl FunctionBuilder {
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
         let memory = self.cur_region_memory()?;
-        let mem_kind = self.graph().output_kind(memory);
-        if !mem_kind.is_memory() {
-            return Err(anyhow!(
-                "output {memory:?} is not a memory edge (got {mem_kind:?})"
-            ));
-        }
-        let addr_kind = self.graph().output_kind(addr);
-        if !addr_kind.is_value() {
-            return Err(anyhow!(
-                "output {addr:?} is not a value edge (got {addr_kind:?})"
-            ));
-        }
+        self.require_memory_kind(memory)?;
+        self.require_value_kind(addr)?;
         Ok(self.build_single_output_pure(NodeKind::Load(space), [memory, addr], output_type))
     }
 
@@ -768,18 +705,8 @@ impl FunctionBuilder {
         phi_token: NodeOutputId,
         incoming_values: &[NodeOutputId],
     ) -> Result<NodeOutputId> {
-        let phi_token_kind = self.graph().output_kind(phi_token);
-        if !phi_token_kind.is_phi_token() {
-            return Err(anyhow!(
-                "output {phi_token:?} is not a phi-token edge"
-            ));
-        }
-        for &v in incoming_values {
-            let kind = self.graph().output_kind(v);
-            if !kind.is_value() {
-                return Err(anyhow!("output {v:?} is not a value edge (got {kind:?})"));
-            }
-        }
+        self.require_phi_token_kind(phi_token)?;
+        self.validate_value_inputs(incoming_values)?;
         let output_type = var.size.try_into()?;
         Ok(self.build_single_output_pure(
             NodeKind::Phi(Some(var)),
