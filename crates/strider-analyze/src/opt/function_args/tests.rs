@@ -3,7 +3,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::count;
 use strider_ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
-use strider_ir_test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 fn rdi_like_vn() -> rsleigh::Vn {
@@ -19,12 +19,12 @@ fn rdi_like_vn() -> rsleigh::Vn {
 fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let rdi = rdi_like_vn();
     let sp = sp_vn();
-    // new_raw(all_vns, callee_saved, ret_val_regs, arg_passing_regs, ...)
-    let mut b = FunctionBuilder::new_raw(vec![rdi, sp], &[], &[rdi], &[rdi], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(rdi)
+        .tracked(sp)
+        .callee_saved(rdi)
+        .ret(rdi)
+        .build_fn_single_region()?;
 
     // Build a trivial function that reads rdi and returns it.
     let v = b.read_variable(&rdi)?;
@@ -248,7 +248,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let true_br = b.create_region()?;
     let false_br = b.create_region()?;
@@ -260,7 +260,6 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     //    graph even though DeadBranchElimination could collapse it — we
     //    skip that pass here to preserve the phi.)
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, true_br, false_br)?;
 
@@ -408,11 +407,12 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
 
     let rdi = rdi_like_vn();
     let sp = sp_vn();
-    let mut b = FunctionBuilder::new_raw(vec![rdi, sp], &[], &[rdi], &[rdi], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(rdi)
+        .tracked(sp)
+        .callee_saved(rdi)
+        .ret(rdi)
+        .build_fn_single_region()?;
 
     // Return a constant — rdi is never read.
     let c = b.build_int_const(0u64, NodeOutputType::U64)?;
@@ -448,18 +448,14 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
         size: 8,
     };
     let sp = sp_vn();
-    let mut b = FunctionBuilder::new_raw(
-        vec![rdi, rsi, sp],
-        &[],
-        &[rdi],
-        &[rdi, rsi],
-        None,
-        0,
-    )?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(rdi)
+        .tracked(rsi)
+        .tracked(sp)
+        .callee_saved(rdi)
+        .ret(rdi)
+        .ret(rsi)
+        .build_fn_single_region()?;
 
     let a = b.read_variable(&rdi)?;
     let bb = b.read_variable(&rsi)?;
@@ -619,7 +615,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -627,7 +623,6 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
@@ -926,7 +921,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;

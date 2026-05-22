@@ -5,7 +5,7 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::count;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use strider_ir_test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{sp_vn_x86 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 /// Simple straight-line program: `*(sp - 4) = 0x11; return *(sp - 4)`.  After
@@ -93,14 +93,13 @@ fn add_sp_with_negative_unsigned_constant_becomes_stack_store() -> Result<()> {
 #[test]
 fn phi_sp_collapses_to_stack_store() -> Result<()> {
     let sp = sp_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     // Two regions: entry → body.  Body reads sp (which is a phi of the
     // single entry predecessor) and stores at sp + 0.
     let entry = b.create_region()?;
     let body = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
     let sp_val = b.read_variable(&sp)?;
@@ -133,7 +132,7 @@ fn phi_sp_collapses_to_stack_store() -> Result<()> {
 #[test]
 fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
     let sp = sp_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let a = b.create_region()?;
     let bb = b.create_region()?;
@@ -142,7 +141,6 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
 
     // entry: if (true) goto a else goto b
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, a, bb)?;
 
@@ -205,7 +203,7 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
 #[test]
 fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     let sp = sp_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let a = b.create_region()?;
     let bb = b.create_region()?;
@@ -213,7 +211,6 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, a, bb)?;
 
@@ -643,11 +640,12 @@ fn detect_non_sp_base_skipped() -> Result<()> {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![sp, other], &[other], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .tracked(other)
+        .arg(other)
+        .callee_saved(sp)
+        .build_fn_single_region()?;
     let other_v = b.read_variable(&other)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
     let addr =

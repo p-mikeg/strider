@@ -1,7 +1,7 @@
 use super::*;
 use strider_ir::FunctionBuilder;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{reg_vn, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
@@ -355,7 +355,7 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
 #[test]
 fn var_phi_loses_dead_slot() -> Result<()> {
     let var = reg_vn(0x1000, 8);
-    let mut b = FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;
@@ -363,7 +363,6 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, true_r, false_r)?;
 

@@ -2,7 +2,7 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::{make_fn, return_kind};
 use super::*;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 
 // ── Original tests ────────────────────────────────────────────────────────────
@@ -264,11 +264,7 @@ where
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 1,
     };
-    let mut b = FunctionBuilder::new_raw(vec![v], &[], &[], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new().tracked(v).build_fn_single_region()?;
     let val = f(&mut b, v)?;
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);

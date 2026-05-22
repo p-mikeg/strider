@@ -8,7 +8,7 @@ use strider_ir::{
 };
 
 use crate::opt::test_support::{make_fn, make_fn_with_var, return_kind, return_value};
-use strider_ir_test_utils::reg_vn;
+use strider_ir_test_utils::{reg_vn, RegisterSet};
 
 // ── integer binary folding ────────────────────────────────────────────────
 
@@ -380,11 +380,14 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     let xv = reg_vn(0x1000, 8);
     let yv = reg_vn(0x1008, 8);
     let zv = reg_vn(0x1010, 8);
-    let mut b = FunctionBuilder::new_raw(vec![xv, yv, zv], &[xv, yv, zv], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(xv)
+        .tracked(yv)
+        .tracked(zv)
+        .arg(xv)
+        .arg(yv)
+        .arg(zv)
+        .build_fn_single_region()?;
     let x = b.read_variable(&xv)?;
     let y = b.read_variable(&yv)?;
     let z = b.read_variable(&zv)?;
@@ -410,11 +413,12 @@ fn distribution_rewrite() -> Result<()> {
     //           = (a & 0xF0) | (b & 0x0F)  — changed=true.
     let av = reg_vn(0x1000, 8);
     let bv = reg_vn(0x1008, 8);
-    let mut b = FunctionBuilder::new_raw(vec![av, bv], &[av, bv], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(av)
+        .tracked(bv)
+        .arg(av)
+        .arg(bv)
+        .build_fn_single_region()?;
     let a = b.read_variable(&av)?;
     let bval = b.read_variable(&bv)?;
     let f0 = b.build_int_const(0xF0u64, NodeOutputType::U64).unwrap();
