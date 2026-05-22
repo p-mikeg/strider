@@ -126,13 +126,12 @@ pub struct Graph {
     /// Stored as `SecondaryMap<NodeId, Vec<u64>>` for O(1) array indexing
     /// and small-set merge — the typical fingerprint is 1–4 entries.
     /// The default value is the empty `Vec`, which represents "no
-    /// contributors recorded".  Structural nodes — `Entry`,
-    /// `InitialMemory`, `InitialVar`, `FunctionArg`, `ControlState`,
-    /// `MemPhi`, `Phi`, `StackStorePhi` — legitimately
-    /// stay empty; the validator's opt-in fingerprint check
-    /// (`asm_fingerprint_exempt` in `validate/graph_invariants.rs`) exempts those
-    /// kinds and flags any other reachable empty entry.  (`IfCase` is
-    /// not a `NodeKind` — it's a CFG edge label only.)
+    /// contributors recorded".  Structural nodes — those whose
+    /// [`NodeKind::category`] is `Region`, `InitialState`, or `Phi` —
+    /// legitimately stay empty; the validator's fingerprint check
+    /// (`asm_fingerprint_exempt` in `validate/graph_invariants.rs`)
+    /// derives its exempt set from the same category predicate and
+    /// flags any other reachable empty entry.
     pub(crate) asm_fingerprints: SecondaryMap<NodeId, Vec<u64>>,
     /// Per-Call clobber-list override.
     ///

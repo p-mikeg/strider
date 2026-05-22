@@ -12,45 +12,7 @@
 
 mod common;
 use common::*;
-use strider_ir::node::NodeKind;
 use strider_ir::validate::validate;
-
-/// Returns true if `kind` is documented as legitimately empty in the
-/// asm-fingerprint side-table.  Mirrors the validator's exempt list.
-fn is_exempt(kind: &NodeKind) -> bool {
-    matches!(
-        kind,
-        NodeKind::Entry
-            | NodeKind::InitialMemory
-            | NodeKind::InitialVar(_)
-            | NodeKind::FunctionArg { .. }
-            | NodeKind::ControlState
-            | NodeKind::MemPhi
-            | NodeKind::Phi
-            | NodeKind::StackStorePhi { .. }
-    )
-}
-
-#[test]
-fn arithmetic_x86_add_every_reachable_value_node_has_a_fingerprint() {
-    let g = analyze(Arch::X86, "arithmetic", "add");
-    let mut empty_non_exempt: Vec<(strider_ir::node::NodeId, NodeKind)> = Vec::new();
-    for node in g.preorder() {
-        let kind = *g.node_kind(node);
-        if is_exempt(&kind) {
-            continue;
-        }
-        if g.asm_fingerprint(node).is_empty() {
-            empty_non_exempt.push((node, kind));
-        }
-    }
-    assert!(
-        empty_non_exempt.is_empty(),
-        "found {} reachable non-exempt nodes with empty asm-fingerprints: {:?}",
-        empty_non_exempt.len(),
-        empty_non_exempt,
-    );
-}
 
 #[test]
 fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
