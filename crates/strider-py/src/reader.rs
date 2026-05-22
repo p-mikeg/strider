@@ -157,6 +157,29 @@ impl PyMemoryMap {
         let endianness = self.inner.borrow().endianness;
         PyMemoryMapReader { table, endianness }
     }
+
+    /// Walk the loaded ELFs in insertion order and run `f` on the first
+    /// symbol whose name matches `name`, returning its result.  Raises
+    /// `ReaderError` when no loaded ELF defines the name.  Centralises
+    /// the iterate-and-match loop plus the not-found error string
+    /// shared by `symbol`, `symbol_size`, and `function_max_size`.
+    fn find_symbol<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&object::Symbol<'_, '_>) -> R,
+    ) -> PyResult<R> {
+        let inner = self.inner.borrow();
+        for obj in inner.elfs.iter() {
+            if let Some(sym) = obj.symbol_by_name(name) {
+                return Ok(f(&sym));
+            }
+        }
+        Err(into_reader_err(anyhow::anyhow!(
+            "symbol {name:?} not found in any ELF loaded into this MemoryMap \
+             ({} loaded)",
+            inner.elfs.len()
+        )))
+    }
 }
 
 #[pymethods]
@@ -315,16 +338,7 @@ impl PyMemoryMap {
     /// the first match in load order; raises `ReaderError` when no
     /// loaded ELF defines the name.
     fn symbol(&self, name: &str) -> PyResult<u64> {
-        let inner = self.inner.borrow();
-        for obj in inner.elfs.iter() {
-            if let Some(sym) = obj.symbol_by_name(name) {
-                return Ok(sym.address());
-            }
-        }
-        Err(into_reader_err(anyhow::anyhow!(
-            "symbol {name:?} not found in any ELF loaded into this MemoryMap \
-             ({} loaded)", inner.elfs.len()
-        )))
+        self.find_symbol(name, |sym| sym.address())
     }
 
     /// Return the ELF-recorded size in bytes of the symbol named
@@ -343,17 +357,10 @@ impl PyMemoryMap {
     /// strider.run(..., entry=addr, function_max_size=size)
     /// ```
     fn symbol_size(&self, name: &str) -> PyResult<Option<u64>> {
-        let inner = self.inner.borrow();
-        for obj in inner.elfs.iter() {
-            if let Some(sym) = obj.symbol_by_name(name) {
-                let size = sym.size();
-                return Ok(if size == 0 { None } else { Some(size) });
-            }
-        }
-        Err(into_reader_err(anyhow::anyhow!(
-            "symbol {name:?} not found in any ELF loaded into this MemoryMap \
-             ({} loaded)", inner.elfs.len()
-        )))
+        self.find_symbol(name, |sym| {
+            let size = sym.size();
+            if size == 0 { None } else { Some(size) }
+        })
     }
 
     /// Convenience shortcut for the common
@@ -362,17 +369,10 @@ impl PyMemoryMap {
     /// `None` when the ELF doesn't record one (zero `st_size`).
     /// Raises `ReaderError` when the symbol is undefined.
     fn function_max_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
-        let inner = self.inner.borrow();
-        for obj in inner.elfs.iter() {
-            if let Some(sym) = obj.symbol_by_name(name) {
-                let size = sym.size();
-                return Ok((sym.address(), if size == 0 { None } else { Some(size) }));
-            }
-        }
-        Err(into_reader_err(anyhow::anyhow!(
-            "symbol {name:?} not found in any ELF loaded into this MemoryMap \
-             ({} loaded)", inner.elfs.len()
-        )))
+        self.find_symbol(name, |sym| {
+            let size = sym.size();
+            (sym.address(), if size == 0 { None } else { Some(size) })
+        })
     }
 
     /// All function/data symbols across every loaded ELF as a
