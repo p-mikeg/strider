@@ -2,7 +2,7 @@ use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_target::Endianness;
 
@@ -314,11 +314,11 @@ fn bail_on_call_between() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], Some(sp), 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .sp(sp)
+        .build_fn_single_region()?;
 
     let sp_val = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U64)?;
@@ -363,7 +363,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -372,7 +372,6 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
 
     // entry: if const(true) { then } else { else }
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
@@ -457,7 +456,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -465,7 +464,6 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
@@ -526,7 +524,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -839,7 +837,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -847,7 +845,6 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     b.set_entry_region(entry)?;
 
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 

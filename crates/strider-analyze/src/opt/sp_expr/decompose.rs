@@ -298,7 +298,7 @@ fn decompose_sp_phi(
 mod tests {
     use super::*;
     use strider_ir::node::NodeOutputType;
-    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
     use strider_ir::{FunctionBuilder, IntBinaryOp};
 
     fn sp() -> rsleigh::Vn {
@@ -369,11 +369,7 @@ mod tests {
     #[test]
     fn decompose_sp_initial_var() -> crate::opt::Result<()> {
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         b.build_return(Some(sp_val), &[])?;
         b.set_lift_addr(None);
@@ -390,11 +386,7 @@ mod tests {
     #[test]
     fn decompose_sp_sub_constant() -> crate::opt::Result<()> {
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
@@ -412,11 +404,7 @@ mod tests {
     fn decompose_sp_add_negative_unsigned() -> crate::opt::Result<()> {
         // Add(sp, 0xFFFF_FFFC_U32) must decompose to -4 (sign-extended).
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
         let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
@@ -435,11 +423,7 @@ mod tests {
         // Calling decompose_sp twice on the same out should populate the memo
         // and return the same answer.
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
@@ -491,11 +475,7 @@ mod tests {
         // frame, so intermediates were never cached and the memo was useless
         // for cross-call sharing.
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
@@ -560,7 +540,7 @@ mod tests {
         // misclassify a non-SP-rooted phi as the first stack argument or
         // wrongly forward a load over it.
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn()?;
         let entry = b.create_region()?;
         let a = b.create_region()?;
         let bb = b.create_region()?;
@@ -569,7 +549,6 @@ mod tests {
 
         // entry: if cond goto a else goto bb
         b.set_region(entry);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let cond = b.build_boolean_const(true);
         b.build_if(cond, a, bb)?;
 
@@ -619,11 +598,7 @@ mod tests {
     #[test]
     fn decompose_sp_and_with_alignment_mask_yields_opaque_base() -> crate::opt::Result<()> {
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         // Simulate `and $0xfffffff8, %esp`.
         let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
@@ -663,11 +638,7 @@ mod tests {
     #[test]
     fn decompose_sp_sub_after_and_chains_offset_through_opaque_base() -> crate::opt::Result<()> {
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
         let aligned = b.build_int_binary_operation(
@@ -706,11 +677,7 @@ mod tests {
     #[test]
     fn decompose_sp_does_not_stack_overflow_on_deep_chain() -> crate::opt::Result<()> {
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let mut current = b.read_variable(&sp)?;
         const N: usize = 5000;
         for _ in 0..N {

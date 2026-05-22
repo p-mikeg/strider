@@ -185,7 +185,7 @@ mod tests {
     use strider_ir::BuiltFunctionGraph;
     use strider_ir::FunctionBuilder;
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use strider_ir_test_utils::{reg_vn as fake_reg_vn, SENTINEL_LIFT_ADDR};
+    use strider_ir_test_utils::{reg_vn as fake_reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
     /// Unit-test convenience: recomputes `analyze_known_bits` and
     /// calls [`classify_anchor`] with no rom and no SP varnode.  The
@@ -271,19 +271,10 @@ mod tests {
         // Build a graph where the only tracked variable IS the
         // link register; reading it produces an `InitialVar(lr)`
         // output.
-        let mut builder = FunctionBuilder::new_raw(
-            vec![lr_vn],
-            &[],
-            &[],
-            &[],
-            None,
-            0,
-        )
-        .expect("FunctionBuilder::new_raw");
-        let region = builder.create_region().expect("create_region");
-        builder.set_entry_region(region).expect("set_entry_region");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut builder = RegisterSet::new()
+            .tracked(lr_vn)
+            .build_fn_single_region()
+            .expect("RegisterSet::build_fn_single_region");
         // `read_variable` in the entry region's only predecessor
         // (the function entry) returns the InitialVar.
         let anchor = builder.read_variable(&lr_vn).expect("read_variable(lr)");
@@ -329,19 +320,10 @@ mod tests {
         // Track only `other_vn`; reading it gives `InitialVar(other_vn)`.
         // Pass `lr_vn` as the link register — they don't match, so
         // the classifier must return None.
-        let mut builder = FunctionBuilder::new_raw(
-            vec![other_vn],
-            &[],
-            &[],
-            &[],
-            None,
-            0,
-        )
-        .expect("FunctionBuilder::new_raw");
-        let region = builder.create_region().expect("create_region");
-        builder.set_entry_region(region).expect("set_entry_region");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut builder = RegisterSet::new()
+            .tracked(other_vn)
+            .build_fn_single_region()
+            .expect("RegisterSet::build_fn_single_region");
         let anchor = builder
             .read_variable(&other_vn)
             .expect("read_variable(other)");
@@ -378,19 +360,10 @@ mod tests {
         // x86 / x86_64 case).  The `Some(vn) == None` guard fails;
         // classifier returns None.
         let lr_vn = fake_reg_vn(0x4c, 4);
-        let mut builder = FunctionBuilder::new_raw(
-            vec![lr_vn],
-            &[],
-            &[],
-            &[],
-            None,
-            0,
-        )
-        .expect("FunctionBuilder::new_raw");
-        let region = builder.create_region().expect("create_region");
-        builder.set_entry_region(region).expect("set_entry_region");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut builder = RegisterSet::new()
+            .tracked(lr_vn)
+            .build_fn_single_region()
+            .expect("RegisterSet::build_fn_single_region");
         let anchor = builder.read_variable(&lr_vn).expect("read_variable(lr)");
         builder
             .build_return(Some(anchor), &[])
@@ -524,12 +497,10 @@ mod tests {
         // soundly enumerate the target set when any input is a
         // runtime value.
         let other_vn = fake_reg_vn(0x10, 8);
-        let mut builder = FunctionBuilder::new_raw(vec![other_vn], &[], &[], &[], None, 0)
-            .expect("FunctionBuilder::new_raw");
-        let region = builder.create_region().expect("create_region");
-        builder.set_entry_region(region).expect("set_entry_region");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let mut builder = RegisterSet::new()
+            .tracked(other_vn)
+            .build_fn_single_region()
+            .expect("RegisterSet::build_fn_single_region");
         let const_out = builder.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
         let var_out = builder.read_variable(&other_vn).expect("read_variable");
         let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();

@@ -2,7 +2,7 @@ use super::*;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::{ConstantFold, OptimizerPipeline};
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{sp_vn_x86 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 // ── Original test ─────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ use strider_ir::{FunctionBuilder, IntBinaryOp};
 #[test]
 fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
     let sp = sp_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let a = b.create_region()?;
     let bb = b.create_region()?;
@@ -26,7 +26,6 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
 
     // entry: shared = sp - 4; if cond goto a else goto b
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_entry = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
     let shared_sp =
@@ -251,14 +250,13 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
 fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     use strider_ir_test_utils::reg_vn;
     let var = reg_vn(0x1000, 8);
-    let mut b = FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
     let entry = b.create_region()?;
     let join = b.create_region()?;
     b.set_entry_region(entry)?;
 
     // entry: branch to join.
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(join)?;
 
     // join: read `var` (creates a single-input VarPhi at this region's
