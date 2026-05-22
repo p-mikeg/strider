@@ -15,6 +15,7 @@ use strider_ir::BuiltFunctionGraph;
 use strider_ir::FunctionBuilder;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::NodeOutputType;
+use strider_ir_test_utils::RegisterSet;
 use std::sync::Mutex;
 
 /// Toy `ReadOnlyMemory` impl that returns successive 4-byte
@@ -717,20 +718,19 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
 fn build_pred_if_graph(
     bound: u64,
 ) -> (BuiltFunctionGraph, NodeOutputId, NodeOutputId) {
-    use strider_ir::{FunctionBuilder, IntCmpOp};
+    use strider_ir::IntCmpOp;
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
     let entry = b.create_region().unwrap();
     let dispatch = b.create_region().unwrap();
     let exit = b.create_region().unwrap();
     b.set_entry_region(entry).unwrap();
 
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
     let bound_c = b.build_int_const(bound, NodeOutputType::U32).unwrap();
     let cond = b
@@ -786,7 +786,7 @@ fn build_pred_if_graph(
 /// If the walk crashed, this test would never return.
 #[test]
 fn bound_via_predecessor_if_handles_deep_if_chain() {
-    use strider_ir::{FunctionBuilder, IntCmpOp};
+    use strider_ir::IntCmpOp;
     // 50 is comfortably below `same_value`'s 64-step phi-walk budget
     // (each region introduces a single-input VarPhi between idx in
     // the If's condition and the dispatch's idx).  Past 64 the
@@ -801,7 +801,7 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
     let mut regions = Vec::with_capacity(DEPTH + 2);
     for _ in 0..(DEPTH + 2) {
         regions.push(b.create_region().unwrap());
@@ -810,8 +810,6 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     let dispatch = regions[DEPTH];
     let exit = regions[DEPTH + 1];
     b.set_entry_region(entry).unwrap();
-
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     for i in 0..DEPTH {
         b.set_region(regions[i]);
         let idx = b.read_variable(&idx_var).unwrap();
@@ -864,17 +862,15 @@ fn bound_via_predecessor_if_walks_one_hop() {
 fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
     // No If on the path (single-region function with raw idx).
     // The walk reaches Entry without finding a bound → None.
-    use strider_ir::FunctionBuilder;
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
-    let region = b.create_region().unwrap();
-    b.set_entry_region(region).unwrap();
-    b.set_region(region);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .build_fn_single_region()
+        .unwrap();
     let idx = b.read_variable(&idx_var).unwrap();
     b.build_indirect_branch(idx).unwrap();
     b.set_lift_addr(None);
@@ -898,7 +894,7 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
 fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
     // The If's condition compares a DIFFERENT variable, not the
     // dispatch's idx.  The walk must NOT confabulate a bound.
-    use strider_ir::{FunctionBuilder, IntCmpOp};
+    use strider_ir::IntCmpOp;
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
         addr_space: rsleigh::VnSpace::REGISTER,
@@ -909,7 +905,10 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var, other_var], &[], &[], &[], None, 0)
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .tracked(other_var)
+        .build_fn()
         .unwrap();
     let entry = b.create_region().unwrap();
     let dispatch = b.create_region().unwrap();
@@ -917,7 +916,6 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
     b.set_entry_region(entry).unwrap();
 
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     // Compare OTHER var, not idx.
     let other = b.read_variable(&other_var).unwrap();
     let bound_c = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
@@ -1068,13 +1066,13 @@ fn build_diamond_two_bounds(
     bound_a: u64,
     bound_b: u64,
 ) -> (BuiltFunctionGraph, NodeOutputId, NodeOutputId) {
-    use strider_ir::{FunctionBuilder, IntCmpOp};
+    use strider_ir::IntCmpOp;
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
     let entry = b.create_region().unwrap();
     let path_a = b.create_region().unwrap();
     let path_b = b.create_region().unwrap();
@@ -1086,7 +1084,6 @@ fn build_diamond_two_bounds(
     // entry: split on a non-idx-related boolean so both arms proceed.
     // We use `idx == 0` as a dummy so both paths exist.
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
     let zero = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let dummy = b
@@ -1168,13 +1165,13 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
     // dummy If that doesn't bound idx — the walk reaches Entry on
     // path_b.  Per the documented contract: any unbounded
     // predecessor → join's bound = None.
-    use strider_ir::{FunctionBuilder, IntCmpOp};
+    use strider_ir::IntCmpOp;
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
     let entry = b.create_region().unwrap();
     let path_a = b.create_region().unwrap();
     let path_b = b.create_region().unwrap();
@@ -1184,7 +1181,6 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
 
     // entry: dummy split so both paths start.
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx_e = b.read_variable(&idx_var).unwrap();
     let zero = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let dummy = b

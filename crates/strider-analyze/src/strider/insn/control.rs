@@ -336,7 +336,7 @@ mod tests {
 
     use super::*;
     use strider_ir::node::NodeKind;
-    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir_test_utils::RegisterSet;
     use strider_ir::FunctionBuilder;
 
     /// Build a 4-byte register VN to act as the `idx` source.
@@ -356,11 +356,12 @@ mod tests {
         n: usize,
     ) -> (FunctionBuilder, strider_ir::Value, Vec<strider_ir::RegionId>) {
         let idx = idx_vn();
-        let mut b = FunctionBuilder::new_raw(vec![idx], &[], &[], &[], None, 0)
-            .expect("FunctionBuilder::new_raw");
+        let mut b = RegisterSet::new()
+            .tracked(idx)
+            .build_fn()
+            .expect("RegisterSet::build_fn");
         let dispatch = b.create_region().expect("dispatch region");
         b.set_entry_region(dispatch).expect("set_entry_region");
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let target_regions: Vec<strider_ir::RegionId> = (0..n)
             .map(|_| b.create_region().expect("create target region"))
             .collect();

@@ -520,6 +520,7 @@ mod tests {
     use super::*;
     use strider_ir::node::NodeOutputType;
     use strider_ir::{ExtendOp, FunctionBuilder};
+    use strider_ir_test_utils::RegisterSet;
     use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     fn sp64() -> rsleigh::Vn {
@@ -541,11 +542,12 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         };
-        let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0).unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
-        b.set_region(region);
-        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .tracked(arg_vn)
+            .callee_saved(sp)
+            .build_fn_single_region()
+            .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
         for (i, &target_addr) in targets.iter().enumerate() {
             let off = base_offset + (i as i64) * (stride as i64);
@@ -621,11 +623,11 @@ mod tests {
     #[test]
     fn classify_stack_array_returns_none_on_non_indexed_load() {
         let sp = sp64();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0).unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
-        b.set_region(region);
-        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .callee_saved(sp)
+            .build_fn_single_region()
+            .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
         let off = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr = b
@@ -661,11 +663,12 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         };
-        let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0).unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
-        b.set_region(region);
-        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .tracked(arg_vn)
+            .callee_saved(sp)
+            .build_fn_single_region()
+            .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
         let off24 = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr_24 = b
@@ -738,12 +741,7 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         };
-        let mut b =
-            FunctionBuilder::new_raw(vec![reg], &[], &[], &[], None, 0).unwrap();
-        let region = b.create_region().unwrap();
-        b.set_entry_region(region).unwrap();
-        b.set_region(region);
-        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let mut b = RegisterSet::new().tracked(reg).build_fn_single_region().unwrap();
         let addr = b.read_variable(&reg).unwrap();
         let v = b
             .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
