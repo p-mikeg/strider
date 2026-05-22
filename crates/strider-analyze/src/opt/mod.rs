@@ -33,7 +33,8 @@
 //! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
 //!
 //! Indirect-branch resolution is driven separately by the orchestrator
-//! (see [`indirect_branch_resolve`]); it is not a pipeline pass.
+//! (see the crate-internal `indirect_branch_resolve` module); it is not
+//! a pipeline pass.
 
 pub mod error;
 pub(crate) mod mem_walk;

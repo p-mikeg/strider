@@ -93,11 +93,11 @@ pub fn apply_link_register(
 ///
 /// `arg_passing_outputs`, `clobbered_kinds`, and `ret_val_outputs`
 /// thread the calling-convention context through the freshly-spliced
-/// Call+Return — see [`super::AnchorCallingContext`] for how the opt
-/// pass and the strider orchestrator populate them.  Empty slices are
-/// sound (the resulting Call/Return is degenerate but well-typed); a
-/// real ABI-aware caller passes the placeholder's pre-edit ABI
-/// register values.
+/// Call+Return — see the crate-internal `AnchorCallingContext` for how
+/// the opt pass and the strider orchestrator populate them.  Empty
+/// slices are sound (the resulting Call/Return is degenerate but
+/// well-typed); a real ABI-aware caller passes the placeholder's
+/// pre-edit ABI register values.
 ///
 /// # Errors
 ///
