@@ -97,7 +97,7 @@ pub(crate) use decl_pat_unary_ops;
 //   * `in_ty` — `Option<NodeOutputType>`: the type of the root's first
 //     value input.  Use `in_ty.ok_or_else(pattern::skip)?` if required.
 //
-// Missing bindings raise [`crate::pattern::error::MissingBinding`] tagged with the
+// Missing bindings raise [`crate::pattern::error::PatternBuildError::MissingBinding`] tagged with the
 // macro entry's `kind` token (e.g. `"uint"`, `"int_binary_op"`).
 
 /// Builds an `IntConst` node whose value is computed from LHS captures.

@@ -10,7 +10,7 @@
 //! The trait has a second mode — [`Pattern::try_build`] — for the RHS of
 //! [`crate::pattern::rewrite_rule`]: materialize this pattern into fresh IR nodes,
 //! filling holes from captured bindings. The default impl returns a
-//! [`crate::pattern::error::NotBuildable`]-wrapped error, so wildcards, guards, and
+//! [`crate::pattern::error::PatternBuildError::NotBuildable`]-wrapped error, so wildcards, guards, and
 //! other match-only patterns opt out automatically; buildable patterns
 //! override it.
 
