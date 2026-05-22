@@ -6,7 +6,7 @@
 //! - [`RewriteSkip`] — opts a rewrite rule out without surfacing a hard
 //!   error. The `rewrite_rule` interpreter detects this via `is_skip`
 //!   and converts it back to "no change".
-//! - [`PatternBuildError`] — covers the two build-time failure modes:
+//! - `PatternBuildError` (crate-private) — covers the two build-time failure modes:
 //!   - `NotBuildable` — pattern is match-only (wildcards, guards,
 //!     control patterns) and has no build semantics. Surfaced when a
 //!     pattern that doesn't implement `try_build` appears on the RHS

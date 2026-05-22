@@ -205,9 +205,9 @@ impl Graph {
     /// per-node graph-invariants checks.
     ///
     /// Callers that need to detect detached zombies (e.g. the
-    /// `Entry`/`InitialMemory` uniqueness check) must iterate
-    /// [`Graph::nodes`] directly instead — this helper deliberately
-    /// excludes them.
+    /// `Entry`/`InitialMemory` uniqueness check) must iterate the
+    /// arena directly via `Graph::all_node_ids` instead — this helper
+    /// deliberately excludes them.
     pub fn reachable_kind_iter<'a>(
         &'a self,
         reachable: &'a crate::walk::NodeIdSet,
