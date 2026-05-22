@@ -165,6 +165,7 @@ fn remove_phis(
 ///
 /// This pass is typically run after [`crate::opt::DeadBranchElimination`], which
 /// leaves single-input phis behind.
+#[derive(Clone)]
 pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
@@ -198,6 +199,10 @@ impl Optimizer for RedundantPhis {
         let entry = ctx.entry();
         let _ = crate::opt::worklist::detach_unreachable_nodes(ctx.graph_mut(), entry);
         Ok(res)
+    }
+
+    fn clone_box(&self) -> Box<dyn Optimizer> {
+        Box::new(self.clone())
     }
 }
 

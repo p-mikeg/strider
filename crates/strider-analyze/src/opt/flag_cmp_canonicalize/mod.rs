@@ -64,6 +64,7 @@ use crate::opt::peephole::{PeepholePass, impl_optimizer_from_peephole};
 use crate::opt::pipeline::OptimizationResult;
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
+#[derive(Clone)]
 pub struct FlagCmpCanonicalize;
 
 impl PeepholePass for FlagCmpCanonicalize {

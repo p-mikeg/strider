@@ -55,6 +55,7 @@ fn try_lower_cast_to_float(
 /// truncation, and extension operations.  Also applies identities such as
 /// `x + 0 → x`, `x ^ x → 0`, and nested AND-mask merging `(a & C1) & C2 →
 /// a & (C1 & C2)`.
+#[derive(Clone)]
 pub struct ConstantFold;
 
 impl PeepholePass for ConstantFold {

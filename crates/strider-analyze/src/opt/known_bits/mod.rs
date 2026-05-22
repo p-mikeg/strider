@@ -458,6 +458,7 @@ pub fn analyze(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> 
 /// Handles `IntConst`, `And`, `Or`, `Xor`, `Not`, `Truncate`, `ZeroExtend`,
 /// and constant-shift nodes.  Runs a fixed-point inner loop to propagate
 /// information along data-dependency chains before deciding replacements.
+#[derive(Clone)]
 pub struct KnownBits;
 
 impl Optimizer for KnownBits {
@@ -529,6 +530,10 @@ impl Optimizer for KnownBits {
             }
         }
         Ok(result)
+    }
+
+    fn clone_box(&self) -> Box<dyn Optimizer> {
+        Box::new(self.clone())
     }
 }
 

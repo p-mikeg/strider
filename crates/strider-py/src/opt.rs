@@ -34,6 +34,13 @@ impl strider_analyze::opt::Optimizer for ForwardPass {
     ) -> strider_analyze::opt::Result<strider_analyze::opt::OptimizationResult> {
         self.0.optimize(graph, entry)
     }
+
+    fn clone_box(&self) -> Box<dyn strider_analyze::opt::Optimizer> {
+        // Forward to the wrapped pass's clone_box rather than trying to
+        // clone the Box itself (the inner trait object is the source of
+        // truth for cloning).
+        self.0.clone_box()
+    }
 }
 
 /// Internal builder representation: a list of fixed-point passes and
@@ -52,41 +59,34 @@ impl PipelineState {
         }
     }
 
-    fn from_default() -> Self {
-        // Re-create the default pipeline by reconstructing each pass
-        // individually rather than calling strider_analyze::opt::default_pipeline()
-        // (which returns an OptimizerPipeline whose Box<dyn Optimizer>
-        // entries are not externally re-extractable).  Pass list and
-        // order MUST mirror `strider_analyze::opt::default_pipeline()` — drift here
-        // silently produces graphs that look different from the
-        // orchestrator path's, e.g. flag-cmp shapes the lifter emits
-        // never get canonicalised and pattern queries miss them.
+    /// Snapshot a canonical `strider_analyze` pipeline into the wrapper's
+    /// internal representation by `clone_box`-ing each pass.
+    ///
+    /// Iterating the canonical pipeline rather than hand-mirroring it
+    /// makes drift between the Python wrapper and `default_pipeline()` /
+    /// `stable_default_pipeline()` / `destructive_default_pipeline()`
+    /// structurally impossible.
+    fn snapshot_from(pipeline: &strider_analyze::opt::OptimizerPipeline) -> Self {
         let mut s = Self::new();
-        s.passes.push(Box::new(strider_analyze::opt::ConstantFold));
-        s.passes.push(Box::new(strider_analyze::opt::KnownBits));
-        s.passes.push(Box::new(strider_analyze::opt::FlagCmpCanonicalize));
-        s.passes.push(Box::new(strider_analyze::opt::IfCondInversion));
-        s.passes.push(Box::new(strider_analyze::opt::RedundantPhis));
-        s.passes.push(Box::new(strider_analyze::opt::DeadBranchElimination));
+        for pass in pipeline.iter() {
+            s.passes.push(pass.clone_box());
+        }
+        for pass in pipeline.iter_post() {
+            s.post_passes.push(pass.clone_box());
+        }
         s
+    }
+
+    fn from_default() -> Self {
+        Self::snapshot_from(&strider_analyze::opt::default_pipeline())
     }
 
     fn from_stable_default() -> Self {
-        // Mirrors `strider_analyze::opt::stable_default_pipeline()` — see `from_default`
-        // for why drift here is dangerous.
-        let mut s = Self::new();
-        s.passes.push(Box::new(strider_analyze::opt::ConstantFold));
-        s.passes.push(Box::new(strider_analyze::opt::KnownBits));
-        s.passes.push(Box::new(strider_analyze::opt::FlagCmpCanonicalize));
-        s.passes.push(Box::new(strider_analyze::opt::IfCondInversion));
-        s
+        Self::snapshot_from(&strider_analyze::opt::stable_default_pipeline())
     }
 
     fn from_destructive_default() -> Self {
-        let mut s = Self::new();
-        s.passes.push(Box::new(strider_analyze::opt::RedundantPhis));
-        s.passes.push(Box::new(strider_analyze::opt::DeadBranchElimination));
-        s
+        Self::snapshot_from(&strider_analyze::opt::destructive_default_pipeline())
     }
 }
 

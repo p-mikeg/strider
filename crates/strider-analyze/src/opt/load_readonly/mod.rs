@@ -46,6 +46,7 @@ use crate::opt::pipeline::OptimizationResult;
 /// let mut pipeline = OptimizerPipeline::new();
 /// pipeline.add(LoadReadOnly::new(Arc::new(MyRom)));
 /// ```
+#[derive(Clone)]
 pub struct LoadReadOnly {
     rom: Arc<dyn ReadOnlyMemory>,
 }

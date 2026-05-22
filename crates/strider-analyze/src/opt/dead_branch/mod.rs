@@ -269,6 +269,7 @@ fn dead_subgraph_has_live_data_consumer(
 /// Works together with [`crate::opt::RedundantPhis`]: after dead-branch elimination
 /// the previously-live successor region may have a single-input `ControlState`
 /// and `VarPhi` nodes, which `RedundantPhis` can then collapse.
+#[derive(Clone)]
 pub struct DeadBranchElimination;
 
 impl Optimizer for DeadBranchElimination {
@@ -289,5 +290,9 @@ impl Optimizer for DeadBranchElimination {
             result |= try_eliminate_dead_branch(&mut ctx, node_id)?;
         }
         Ok(result)
+    }
+
+    fn clone_box(&self) -> Box<dyn Optimizer> {
+        Box::new(self.clone())
     }
 }

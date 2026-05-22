@@ -73,6 +73,10 @@ impl Optimizer for StackLoadForward {
         }
         Ok(result)
     }
+
+    fn clone_box(&self) -> Box<dyn Optimizer> {
+        Box::new(self.clone())
+    }
 }
 
 /// Tries to forward a single `Load[sp + K]` to the value of a matching

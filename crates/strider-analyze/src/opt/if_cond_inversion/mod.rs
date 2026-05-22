@@ -53,6 +53,7 @@ use crate::opt::pipeline::OptimizationResult;
 ///
 /// Add to `stable_default_pipeline` after `ConstantFold` so the
 /// `BoolNeg(BoolNeg) → x` rule simplifies double-negations first.
+#[derive(Clone)]
 pub struct IfCondInversion;
 
 impl crate::opt::peephole::PeepholePass for IfCondInversion {
