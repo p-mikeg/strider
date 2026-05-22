@@ -1,5 +1,5 @@
 //! Integration tests for
-//! [`strider_analyze::opt::indirect_branch_resolve::classify_anchor`].
+//! [`strider_analyze::opt::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
 //! to IR via `Strider::analyze_cfg` (which returns an `AnalyzeOutcome`
@@ -16,7 +16,7 @@
 
 mod common;
 
-use strider_analyze::opt::indirect_branch_resolve::{ResolvedTargets, classify_anchor};
+use strider_analyze::opt::{ResolvedTargets, classify_anchor};
 use strider_analyze::opt::analyze_known_bits;
 use strider_analyze::pattern::RewriteCtxView;
 
@@ -193,7 +193,7 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 
 // ── O9 stack-array indirect-branch shape ──────────────────────────────────
 //
-// The classifier's stack-array arm (`strider_analyze::opt::indirect_branch_resolve::
+// The classifier's stack-array arm (`strider_analyze::opt::
 // stack_array::classify_stack_array`) is reached via
 // `classify_anchor` when the rodata jump-table arm
 // doesn't match and an SP varnode is supplied.  These tests pin the

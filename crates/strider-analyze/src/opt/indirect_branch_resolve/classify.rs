@@ -102,10 +102,9 @@ pub fn classify_anchor(
         // to `IntConst(k_i)`, the runtime target set is exactly
         // `{k_i}` for the predecessors that ever reach this branch.
         NodeKind::Phi(None) => {
-            let inputs: Vec<NodeOutputId> =
-                graph.node_inputs(producer_id).into_iter().collect();
+            let inputs = graph.node_inputs(producer_id);
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
-            for &val in inputs.iter().skip(1) {
+            for val in inputs.into_iter().skip(1) {
                 match graph.kind_of_output(val) {
                     NodeKind::IntConst(k) => {
                         #[allow(clippy::cast_possible_truncation)]
@@ -302,11 +301,13 @@ mod tests {
             // VarPhi inputs: [phi_token, ...per-pred values].
             // With one predecessor, slot 1 is the value.
             let pid = graph.get_node_from_output(producer_output);
-            let inputs: Vec<_> = graph.node_inputs(pid).into_iter().collect();
-            if inputs.len() != 2 {
+            if graph.node_inputs(pid).len() != 2 {
                 break;
             }
-            producer_output = inputs[1];
+            let Some(slot1) = graph.nth_input(pid, 1) else {
+                break;
+            };
+            producer_output = slot1;
         }
 
         let result = classify_anchor_bare((&graph).into(), producer_output, Some(lr_vn)).expect("classify");
@@ -345,11 +346,13 @@ mod tests {
         let mut producer_output = anchor;
         while let NodeKind::Phi(Some(_)) = graph.kind_of_output(producer_output) {
             let pid = graph.get_node_from_output(producer_output);
-            let inputs: Vec<_> = graph.node_inputs(pid).into_iter().collect();
-            if inputs.len() != 2 {
+            if graph.node_inputs(pid).len() != 2 {
                 break;
             }
-            producer_output = inputs[1];
+            let Some(slot1) = graph.nth_input(pid, 1) else {
+                break;
+            };
+            producer_output = slot1;
         }
 
         let result = classify_anchor_bare((&graph).into(), producer_output, Some(lr_vn)).expect("classify");
@@ -385,11 +388,13 @@ mod tests {
         let mut producer_output = anchor;
         while let NodeKind::Phi(Some(_)) = graph.kind_of_output(producer_output) {
             let pid = graph.get_node_from_output(producer_output);
-            let inputs: Vec<_> = graph.node_inputs(pid).into_iter().collect();
-            if inputs.len() != 2 {
+            if graph.node_inputs(pid).len() != 2 {
                 break;
             }
-            producer_output = inputs[1];
+            let Some(slot1) = graph.nth_input(pid, 1) else {
+                break;
+            };
+            producer_output = slot1;
         }
 
         let result = classify_anchor_bare((&graph).into(), producer_output, None).expect("classify");

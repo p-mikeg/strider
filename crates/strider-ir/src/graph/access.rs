@@ -159,6 +159,21 @@ impl Graph {
         &self.nodes[self.outputs[output_id].source_id].kind
     }
 
+    /// Returns the [`NodeOutputId`] driving the `idx`-th input slot of `node`,
+    /// or `None` if `idx` is past the node's input count.
+    ///
+    /// O(1) alternative to
+    /// `node_inputs(node).into_iter().collect::<Vec<_>>().into_iter().nth(idx)`
+    /// — avoids the intermediate allocation that several call sites
+    /// performed just to grab slot 0 (or N).
+    #[inline]
+    #[must_use]
+    pub fn nth_input(&self, node: NodeId, idx: usize) -> Option<NodeOutputId> {
+        let slice = self.nodes[node].inputs.as_slice(&self.input_pool);
+        let input_id = *slice.get(idx)?;
+        Some(self.inputs[input_id].output_id)
+    }
+
     /// Returns the [`NodeInputId`] of the input slot at position `idx` of `node`.
     ///
     /// # Errors

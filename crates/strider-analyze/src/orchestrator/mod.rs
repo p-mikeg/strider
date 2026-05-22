@@ -137,8 +137,7 @@ impl RegionIndex {
         graph: &strider_ir::BuiltFunctionGraph,
         placeholder: NodeId,
     ) -> Option<&ExitVnToValue> {
-        let inputs: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
-        let ctrl_in = *inputs.first()?;
+        let ctrl_in = graph.nth_input(placeholder, 0)?;
         self.by_exit_control.get(&ctrl_in)
     }
 }
@@ -717,8 +716,7 @@ fn apply_in_place_edit(
 ///   * `Call -> Return` (direct): one walk hop.
 ///   * `Call -> ControlState -> Return` (region-join): two walk hops.
 fn locate_spliced_call(graph: &strider_ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
-    let inputs: Vec<_> = graph.node_inputs(ret).into_iter().collect();
-    let ctrl_in = *inputs.first()?;
+    let ctrl_in = graph.nth_input(ret, 0)?;
     let (producer, _slot) = graph.output_definition(ctrl_in);
     if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
         return Some(producer);
@@ -728,8 +726,7 @@ fn locate_spliced_call(graph: &strider_ir::BuiltFunctionGraph, ret: NodeId) -> O
     // when `apply_tail_call`'s freshly-spliced Call feeds an existing
     // ControlState that the new Return then consumes.
     if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::ControlState) {
-        let cs_inputs: Vec<_> = graph.node_inputs(producer).into_iter().collect();
-        for cs_in in cs_inputs {
+        for cs_in in graph.node_inputs(producer) {
             let (cs_producer, _) = graph.output_definition(cs_in);
             if matches!(graph.node_kind(cs_producer), strider_ir::node::NodeKind::Call) {
                 return Some(cs_producer);

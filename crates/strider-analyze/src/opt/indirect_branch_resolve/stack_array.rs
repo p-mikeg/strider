@@ -165,10 +165,8 @@ fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
     let kind = *graph.node_kind(producer);
     match kind {
         NodeKind::Truncate => {
-            let inputs: Vec<NodeOutputId> =
-                graph.node_inputs(producer).into_iter().collect();
-            let inner = *inputs.first()?;
-            let inner_kind = *graph.node_kind(graph.get_node_from_output(inner));
+            let inner = graph.nth_input(producer, 0)?;
+            let inner_kind = *graph.kind_of_output(inner);
             if let NodeKind::IntConst(k) = inner_kind {
                 let out_ty = graph.output_kind(out).as_value()?;
                 let masked = k & out_ty.bit_mask_u128();
@@ -178,10 +176,8 @@ fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
             None
         }
         NodeKind::Extend(op) => {
-            let inputs: Vec<NodeOutputId> =
-                graph.node_inputs(producer).into_iter().collect();
-            let inner = *inputs.first()?;
-            let inner_kind = *graph.node_kind(graph.get_node_from_output(inner));
+            let inner = graph.nth_input(producer, 0)?;
+            let inner_kind = *graph.kind_of_output(inner);
             let NodeKind::IntConst(k) = inner_kind else {
                 return None;
             };

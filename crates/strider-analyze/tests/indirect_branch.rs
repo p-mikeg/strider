@@ -13,7 +13,7 @@
 //! forwarding** (`StackStoreDetect` + `StackLoadForward` joined
 //! across the function's region graph), routed through the
 //! IR-level resolver's stack-array classifier arm
-//! (`strider_analyze::opt::indirect_branch_resolve::classify_stack_array`).  The
+//! (`strider_analyze::opt::classify_stack_array`).  The
 //! cfg-time mini-graph resolver runs `ConstantFold` + `KnownBits` on
 //! a single region only and cannot prove the loaded target is one of
 //! the pushed label addresses; the IR-level resolver gets visibility
@@ -169,7 +169,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         let known = strider_analyze::opt::analyze_known_bits(view)
             .expect("analyze_known_bits");
         for live in &live_anchors {
-            let resolved = strider_analyze::opt::indirect_branch_resolve::classify_anchor(
+            let resolved = strider_analyze::opt::classify_anchor(
                 view,
                 *live,
                 lr_vn,

@@ -27,7 +27,7 @@
 
 mod common;
 
-use strider_analyze::opt::indirect_branch_resolve::{ResolvedTargets, classify_anchor};
+use strider_analyze::opt::{ResolvedTargets, classify_anchor};
 use strider_analyze::opt::analyze_known_bits;
 use strider_analyze::pattern::RewriteCtxView;
 

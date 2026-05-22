@@ -47,11 +47,11 @@ mod dead_branch;
 mod flag_cmp_canonicalize;
 mod function_args;
 mod if_cond_inversion;
-pub mod indirect_branch_resolve;
+pub(crate) mod indirect_branch_resolve;
 mod known_bits;
 mod load_readonly;
 mod redundant_phis;
-pub mod stack_load_forward;
+pub(crate) mod stack_load_forward;
 mod stack_store;
 #[cfg(test)]
 mod test_support;
@@ -61,12 +61,20 @@ pub use dead_branch::DeadBranchElimination;
 pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use function_args::FunctionArgDetect;
 pub use if_cond_inversion::IfCondInversion;
+pub use indirect_branch_resolve::{
+    ResolvedTargets,
+    apply_link_register,
+    apply_tail_call,
+    classify_anchor,
+    classify_jump_table,
+    classify_stack_array,
+};
 pub(crate) use indirect_branch_resolve::{AnchorCallingContext, find_placeholder_return_for_anchor};
 pub use known_bits::{KnownBits, analyze as analyze_known_bits};
 pub(crate) use known_bits::KnownBitsMap;
 pub use load_readonly::LoadReadOnly;
 pub use strider_ir::ReadOnlyMemory;
-pub use pipeline::{OptimizationResult, OptimizerPipeline, OptimizerRaw};
+pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};

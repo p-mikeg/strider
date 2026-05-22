@@ -119,18 +119,14 @@ pub fn apply_tail_call(
     if !matches!(kind, NodeKind::IndirectBranch) {
         return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
     }
-    let inputs: smallvec::SmallVec<[NodeOutputId; 4]> =
-        graph.node_inputs(placeholder).into_iter().collect();
-    if inputs.len() != 3 {
-        // Not a placeholder shape.  Surface as a typed error so
-        // callers don't silently mis-apply.
-        return Err(anyhow!(
-            "expected IndirectBranch with [control, memory, target_value] (3 inputs) node, got {kind:?}"
-        ));
-    }
-    let control_in = inputs[0];
-    let memory_in = inputs[1];
-    let target_value = inputs[2];
+    let [control_in, memory_in, target_value] =
+        graph.node_inputs_exact::<3>(placeholder).map_err(|_| {
+            // Not a placeholder shape.  Surface as a typed error so
+            // callers don't silently mis-apply.
+            anyhow!(
+                "expected IndirectBranch with [control, memory, target_value] (3 inputs) node, got {kind:?}"
+            )
+        })?;
 
     // Surface a non-integer target type as a typed error — silently
     // defaulting to U64 would mask an upstream invariant break (every
@@ -236,9 +232,7 @@ mod tests {
         // Pre-edit: IndirectBranch [ctrl, mem, target_value].  Post-edit:
         // Return [ctrl, mem] — same NodeId, kind mutated in place.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let inputs_before: Vec<_> =
-            ctx.node_inputs(placeholder).into_iter().collect();
-        assert_eq!(inputs_before.len(), 3);
+        assert_eq!(ctx.node_inputs(placeholder).len(), 3);
         ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[])).expect("apply");
         assert!(matches!(ctx.node_kind(placeholder), NodeKind::Return));
     }
@@ -335,19 +329,17 @@ mod tests {
         // `target_value` slot is dropped so `RetPat::ret_val(idx)` stays
         // 0-indexed over the real return values).
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let inputs_before: Vec<_> = ctx.node_inputs(placeholder).into_iter().collect();
-        assert_eq!(inputs_before.len(), 3);
+        assert_eq!(ctx.node_inputs(placeholder).len(), 3);
         let r0 = synth_value_output(ctx.graph_mut(), 0x42, NodeOutputType::U64);
         let r1 = synth_value_output(ctx.graph_mut(), 0x43, NodeOutputType::U64);
         ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[r0, r1])).expect("apply");
-        let inputs_after: Vec<_> = ctx.node_inputs(placeholder).into_iter().collect();
         assert_eq!(
-            inputs_after.len(),
+            ctx.node_inputs(placeholder).len(),
             2 + 2,
             "Return inputs are [ctrl, mem, ret_val_0, ret_val_1] after target_value removal",
         );
-        assert_eq!(inputs_after[2], r0);
-        assert_eq!(inputs_after[3], r1);
+        assert_eq!(ctx.nth_input(placeholder, 2), Some(r0));
+        assert_eq!(ctx.nth_input(placeholder, 3), Some(r1));
     }
 
     #[test]
@@ -365,20 +357,17 @@ mod tests {
             .expect("apply");
         // The new Return's input #0 is the Call's ctrl output.  Walk
         // back to the Call.
-        let new_return_inputs: Vec<_> =
-            ctx.node_inputs(new_return).into_iter().collect();
-        let call_ctrl = new_return_inputs[0];
+        let call_ctrl = ctx.nth_input(new_return, 0).expect("ctrl slot");
         let (call_node, _) = ctx.output_definition(call_ctrl);
         assert!(matches!(ctx.node_kind(call_node), NodeKind::Call));
-        let call_inputs: Vec<_> = ctx.node_inputs(call_node).into_iter().collect();
         assert_eq!(
-            call_inputs.len(),
+            ctx.node_inputs(call_node).len(),
             6,
             "Call must have [ctrl, mem, target, a0, a1, a2]",
         );
-        assert_eq!(call_inputs[3], a0);
-        assert_eq!(call_inputs[4], a1);
-        assert_eq!(call_inputs[5], a2);
+        assert_eq!(ctx.nth_input(call_node, 3), Some(a0));
+        assert_eq!(ctx.nth_input(call_node, 4), Some(a1));
+        assert_eq!(ctx.nth_input(call_node, 5), Some(a2));
     }
 
     #[test]
@@ -396,9 +385,8 @@ mod tests {
             })
             .expect("apply");
         // Walk to the Call.
-        let new_return_inputs: Vec<_> =
-            ctx.node_inputs(new_return).into_iter().collect();
-        let (call_node, _) = ctx.output_definition(new_return_inputs[0]);
+        let new_return_ctrl = ctx.nth_input(new_return, 0).expect("ctrl slot");
+        let (call_node, _) = ctx.output_definition(new_return_ctrl);
         let call_outputs: Vec<_> = ctx.node_outputs(call_node).to_vec();
         assert_eq!(
             call_outputs.len(),
@@ -421,10 +409,9 @@ mod tests {
                 apply_tail_call(rctx, placeholder, 0xface, &[], &[], &[r0, r1])
             })
             .expect("apply");
-        let inputs: Vec<_> = ctx.node_inputs(new_return).into_iter().collect();
-        assert_eq!(inputs.len(), 4, "[call_ctrl, call_mem, r0, r1]");
-        assert_eq!(inputs[2], r0);
-        assert_eq!(inputs[3], r1);
+        assert_eq!(ctx.node_inputs(new_return).len(), 4, "[call_ctrl, call_mem, r0, r1]");
+        assert_eq!(ctx.nth_input(new_return, 2), Some(r0));
+        assert_eq!(ctx.nth_input(new_return, 3), Some(r1));
     }
 
     /// Regression: `apply_tail_call` must propagate an
