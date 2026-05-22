@@ -971,7 +971,7 @@ where
         &cfg,
         crate::AnalyzeOptions {
             all_vns: Some(all_vns),
-            per_address_ccs: per_address_built_ccs,
+            per_address_ccs: Some(per_address_built_ccs),
         },
     ).map_err(|e| {
         // Preserve the typed `UnknownCallOtherError` root if the lift

@@ -1,15 +1,5 @@
-use std::sync::LazyLock;
-
 use anyhow::{anyhow, Result};
 use super::PerRegionDriver;
-
-/// Process-wide empty `per_address_ccs` map.  Borrowed by
-/// [`AnalyzeOptions::default`] so the default options bag has a real
-/// `&'static` reference (not `Option`) and the per-call lookup site
-/// stays a single `HashMap::get` with no `Option`-dance.
-pub(crate) static EMPTY_PER_ADDRESS_CCS: LazyLock<
-    std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
-> = LazyLock::new(std::collections::HashMap::new);
 
 /// Per-region exit-state snapshot needed by the orchestrator's
 /// indirect-branch placeholder lookup.  Captured during lift before
@@ -81,6 +71,7 @@ impl std::fmt::Display for AnalyzeOutcome {
 /// defaults match [`Strider::analyze_cfg`]'s convenience
 /// behaviour: the orchestrator uses this with both fields set;
 /// strider-py's custom-pipeline path uses it with `per_address_ccs` set.
+#[derive(Default)]
 pub struct AnalyzeOptions<'a> {
     /// Pre-computed varnode set.  When `None`, `Strider` calls
     /// `Strider::find_all_unique_vns` itself.  When `Some`, must be
@@ -96,18 +87,10 @@ pub struct AnalyzeOptions<'a> {
     /// Per-target-address CC override map.  Keys are direct-call
     /// target addresses; values are CCs already resolved against the
     /// same Sleigh register table the function-default CC was built
-    /// against.  Empty by default — every direct `Call` uses the
+    /// against.  `None` by default — every direct `Call` uses the
     /// function-default CC.
-    pub per_address_ccs: &'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
-}
-
-impl Default for AnalyzeOptions<'_> {
-    fn default() -> Self {
-        Self {
-            all_vns: None,
-            per_address_ccs: &EMPTY_PER_ADDRESS_CCS,
-        }
-    }
+    pub per_address_ccs:
+        Option<&'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>>,
 }
 
 /// Architecture-level binary analyser that lifts a [`strider_lift::cfg::Cfg`] to an IR

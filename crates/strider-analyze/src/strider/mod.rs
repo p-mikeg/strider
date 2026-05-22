@@ -22,12 +22,10 @@ pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     /// site.  Populated by `handle_unresolved_indirect_branch` at lift
     /// time, drained by `analyze_cfg` into the [`AnalyzeOutcome`].
     pub(crate) unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::Value)>,
-    /// Per-target-address CC override map.  Defaults to a process-wide
-    /// empty map (`pipeline::EMPTY_PER_ADDRESS_CCS`); set to a real map
-    /// at constructor time when the caller has overrides.  Lookup is a
-    /// single `HashMap::get` regardless.
+    /// Per-target-address CC override map.  `None` when the caller has
+    /// no overrides; lookups become `and_then(|m| m.get(addr))`.
     pub(crate) per_address_ccs:
-        &'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
+        Option<&'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>>,
 }
 
 impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
@@ -37,13 +35,14 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// `all_vns` (the set of every varnode any instruction in `cfg`
     /// references, sorted by `strider_lift::pcode_lift::vn_sort_key` for stable
     /// `VarId` numbering).  `per_address_ccs` is the lift-time CC
-    /// override map; pass `&EMPTY_PER_ADDRESS_CCS` (or an empty
-    /// `HashMap`) when the caller has no overrides.
+    /// override map; pass `None` when the caller has no overrides.
     pub(crate) fn new(
         strider: &'a Strider,
         cfg: &'a strider_lift::cfg::Cfg<R>,
         all_vns: Vec<rsleigh::Vn>,
-        per_address_ccs: &'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
+        per_address_ccs: Option<
+            &'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
+        >,
     ) -> Result<Self> {
         let builder = strider_ir::FunctionBuilder::new(
             all_vns,

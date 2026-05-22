@@ -48,7 +48,7 @@ fn analyze_cfg_with_applies_per_address_override() {
         .analyze_cfg_with(
             &cfg,
             AnalyzeOptions {
-                per_address_ccs: &built,
+                per_address_ccs: Some(&built),
                 ..AnalyzeOptions::default()
             },
         )

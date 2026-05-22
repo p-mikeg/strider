@@ -272,7 +272,7 @@ fn run_with_custom_pipeline(
         .analyze_cfg_with(
             &cfg_obj.borrow(py).inner,
             strider_analyze::AnalyzeOptions {
-                per_address_ccs: &per_address_built_ccs,
+                per_address_ccs: Some(&per_address_built_ccs),
                 ..strider_analyze::AnalyzeOptions::default()
             },
         )
