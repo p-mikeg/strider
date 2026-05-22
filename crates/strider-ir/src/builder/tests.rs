@@ -599,21 +599,21 @@ fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
     // Seed two IntConsts under different lift_addrs.
     b.set_lift_addr(Some(0x100));
     let l = b.build_int_const(5u64, NodeOutputType::U8)?;
-    let l_node = b.body().graph.get_node_from_output(l);
+    let l_node = b.graph().get_node_from_output(l);
     b.set_lift_addr(Some(0x104));
     let r = b.build_int_const(7u64, NodeOutputType::U8)?;
-    let r_node = b.body().graph.get_node_from_output(r);
+    let r_node = b.graph().get_node_from_output(r);
     // Synthesise a fresh Or node attributing both.  Use the IR graph's
     // create_node_attributed directly (rather than going through the
     // builder) to test the helper in isolation.
     b.set_lift_addr(None);
-    let or_node = b.body_mut().graph.create_node_attributed(
+    let or_node = b.graph_mut().create_node_attributed(
         NodeKind::IntBinaryOp(IntBinaryOp::Or),
         [l, r],
         [crate::node::NodeOutputKind::OutputType(NodeOutputType::U8)],
         &[l_node, r_node],
     );
-    let fp = b.body().graph.asm_fingerprint(or_node);
+    let fp = b.graph().asm_fingerprint(or_node);
     assert!(
         fp.contains(&0x100) && fp.contains(&0x104),
         "create_node_attributed must union both contributors' fingerprints; got {fp:?}"
@@ -635,16 +635,16 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
     // First build of IntConst(42, U64) under lift_addr 0x100.
     b.set_lift_addr(Some(0x100));
     let c1 = b.build_int_const(42u64, NodeOutputType::U64)?;
-    let c1_node = b.body().graph.get_node_from_output(c1);
+    let c1_node = b.graph().get_node_from_output(c1);
 
     // Second build under lift_addr 0x104.  Same kind+type+inputs, so
     // create_node returns the cached NodeId.
     b.set_lift_addr(Some(0x104));
     let c2 = b.build_int_const(42u64, NodeOutputType::U64)?;
-    let c2_node = b.body().graph.get_node_from_output(c2);
+    let c2_node = b.graph().get_node_from_output(c2);
 
     assert_eq!(c1_node, c2_node, "cache must return the same NodeId");
-    let fp = b.body().graph.asm_fingerprint(c1_node);
+    let fp = b.graph().asm_fingerprint(c1_node);
     assert!(
         fp.contains(&0x100),
         "fingerprint must retain first lift's address (0x100); got {fp:?}"
@@ -1425,13 +1425,13 @@ fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
 // run optimizer passes) without consuming the builder via `build()`.
 
 /// `graph_mut()` must return a mutable reference to the same `Graph` that
-/// `body().graph` would return — so a write through `graph_mut()` is visible
+/// `graph()` exposes immutably — so a write through `graph_mut()` is visible
 /// through the immutable view.
 #[test]
 fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let mut b = empty_builder()?;
     // Capture the node count via the immutable view first.
-    let count_before = b.body().graph.nodes.len();
+    let count_before = b.graph().nodes.len();
     // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.graph_mut().create_node(
         NodeKind::IntConst(42u128),
@@ -1439,10 +1439,10 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
     // Read back via the immutable view; the new node must be visible.
-    let count_after = b.body().graph.nodes.len();
-    assert_eq!(count_after, count_before + 1, "graph_mut() write must be visible via body()");
+    let count_after = b.graph().nodes.len();
+    assert_eq!(count_after, count_before + 1, "graph_mut() write must be visible via graph()");
     assert!(matches!(
-        b.body().graph.node_kind(node_id),
+        b.graph().node_kind(node_id),
         NodeKind::IntConst(42)
     ));
     Ok(())
@@ -1455,12 +1455,13 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
 fn entry_returns_recorded_entry_node_id() -> Result<()> {
     let b = empty_builder()?;
     let entry_via_accessor = b.entry();
-    // The builder's body field carries the same `entry` value that
-    // `build()` would copy into the produced `BuiltFunctionGraph`.
-    let entry_via_body = b.body().entry;
+    // The builder's `entry` field carries the same id that `build()` would
+    // copy into the produced `Graph`.  Access via the field directly to
+    // assert the accessor delegates to it.
+    let entry_via_field = b.entry;
     assert_eq!(
-        entry_via_accessor, entry_via_body,
-        "FunctionBuilder::entry() must match body().entry — opt passes consume both"
+        entry_via_accessor, entry_via_field,
+        "FunctionBuilder::entry() must match the recorded `entry` field"
     );
     Ok(())
 }
@@ -1520,11 +1521,11 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     assert_ne!(a, b_id, "consecutive create_node calls must produce distinct ids");
     // Both nodes are in the arena.
     assert!(matches!(
-        b.body().graph.node_kind(a),
+        b.graph().node_kind(a),
         NodeKind::IntConst(1)
     ));
     assert!(matches!(
-        b.body().graph.node_kind(b_id),
+        b.graph().node_kind(b_id),
         NodeKind::IntConst(2)
     ));
     Ok(())
@@ -1569,13 +1570,13 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     b.set_lift_addr(Some(0x10));
     let outside_post = b.build_int_const(3u64, NodeOutputType::U64)?;
 
-    let pre_node = b.body().graph.get_node_from_output(outside_pre);
-    let in_node = b.body().graph.get_node_from_output(inside);
-    let post_node = b.body().graph.get_node_from_output(outside_post);
+    let pre_node = b.graph().get_node_from_output(outside_pre);
+    let in_node = b.graph().get_node_from_output(inside);
+    let post_node = b.graph().get_node_from_output(outside_post);
 
-    assert_eq!(b.body().graph.asm_fingerprint(pre_node), &[0x10]);
-    assert_eq!(b.body().graph.asm_fingerprint(in_node), &[0xC0DE]);
-    assert_eq!(b.body().graph.asm_fingerprint(post_node), &[0x10]);
+    assert_eq!(b.graph().asm_fingerprint(pre_node), &[0x10]);
+    assert_eq!(b.graph().asm_fingerprint(in_node), &[0xC0DE]);
+    assert_eq!(b.graph().asm_fingerprint(post_node), &[0x10]);
     Ok(())
 }
 
@@ -1584,11 +1585,11 @@ fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
     let mut b = builder_with_region()?;
     let v = crate::wide_const::WideConstStorage::U256([0x1234, 0xabcd, 0, 0]);
     let out = b.build_int_const_wide(v.clone(), NodeOutputType::U256)?;
-    let node = b.body().graph.get_node_from_output(out);
-    let NodeKind::IntConstWide(id) = b.body().graph.node_kind(node) else {
-        panic!("expected IntConstWide, got {:?}", b.body().graph.node_kind(node));
+    let node = b.graph().get_node_from_output(out);
+    let NodeKind::IntConstWide(id) = b.graph().node_kind(node) else {
+        panic!("expected IntConstWide, got {:?}", b.graph().node_kind(node));
     };
-    assert_eq!(b.body().graph.wide_const(*id), &v);
+    assert_eq!(b.graph().wide_const(*id), &v);
     Ok(())
 }
 
@@ -1597,11 +1598,11 @@ fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
     let mut b = builder_with_region()?;
     let v = crate::wide_const::WideConstStorage::U512([1, 2, 3, 4, 5, 6, 7, 8]);
     let out = b.build_int_const_wide(v.clone(), NodeOutputType::U512)?;
-    let node = b.body().graph.get_node_from_output(out);
-    let NodeKind::IntConstWide(id) = b.body().graph.node_kind(node) else {
+    let node = b.graph().get_node_from_output(out);
+    let NodeKind::IntConstWide(id) = b.graph().node_kind(node) else {
         panic!();
     };
-    assert_eq!(b.body().graph.wide_const(*id), &v);
+    assert_eq!(b.graph().wide_const(*id), &v);
     Ok(())
 }
 
@@ -1611,8 +1612,8 @@ fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
     let v = crate::wide_const::WideConstStorage::U256([42, 0, 0, 0]);
     let o1 = b.build_int_const_wide(v.clone(), NodeOutputType::U256)?;
     let o2 = b.build_int_const_wide(v, NodeOutputType::U256)?;
-    let n1 = b.body().graph.get_node_from_output(o1);
-    let n2 = b.body().graph.get_node_from_output(o2);
+    let n1 = b.graph().get_node_from_output(o1);
+    let n2 = b.graph().get_node_from_output(o2);
     assert_eq!(n1, n2, "structural dedup must reuse the same NodeId");
     Ok(())
 }
@@ -1680,22 +1681,20 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     let out = b.build_int_const_wide(v, NodeOutputType::U256)?;
     b.set_lift_addr(None);
     // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
-    let entry_ctrl = b.body().graph.node_outputs(b.body().entry).iter().copied().next().unwrap();
+    let entry_ctrl = b.graph().node_outputs(b.entry()).iter().copied().next().unwrap();
     // Build a minimal Return — needs Memory input; pull it from InitialMemory.
     let mem_node = b
-        .body()
-        .graph
+        .graph()
         .all_node_ids()
-        .find(|n| matches!(b.body().graph.node_kind(*n), NodeKind::InitialMemory))
+        .find(|n| matches!(b.graph().node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
-    let mem_out = b.body().graph.node_outputs(mem_node).iter().copied().next().unwrap();
+    let mem_out = b.graph().node_outputs(mem_node).iter().copied().next().unwrap();
     let ret = b
-        .body_mut()
-        .graph
+        .graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, mem_out, out], []);
-    b.body_mut().graph.set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
-    let entry_id = b.body().entry;
-    let g = &b.body().graph;
+    b.graph_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
+    let entry_id = b.entry();
+    let g = b.graph();
     validate(g, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
     Ok(())
 }
@@ -1714,34 +1713,30 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     // Zombie isn't referenced by `_live` and the only Return walk-spine
     // visits `_live` (we wire it through Return to keep it reachable).
     let mem_node = b
-        .body()
-        .graph
+        .graph()
         .all_node_ids()
-        .find(|n| matches!(b.body().graph.node_kind(*n), NodeKind::InitialMemory))
+        .find(|n| matches!(b.graph().node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
     let mem_out = b
-        .body()
-        .graph
+        .graph()
         .node_outputs(mem_node)
         .iter()
         .copied()
         .next()
         .unwrap();
     let entry_ctrl = b
-        .body()
-        .graph
-        .node_outputs(b.body().entry)
+        .graph()
+        .node_outputs(b.entry())
         .iter()
         .copied()
         .next()
         .unwrap();
     let ret = b
-        .body_mut()
-        .graph
+        .graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, mem_out, _live], []);
-    b.body_mut().graph.set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
+    b.graph_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
 
-    let pre = b.body().graph.wide_consts.len();
+    let pre = b.graph().wide_consts.len();
     assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
 
     let mut bfg = b.build()?;

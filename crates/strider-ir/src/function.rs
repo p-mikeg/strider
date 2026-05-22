@@ -1,39 +1,4 @@
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeOutputId};
-use cranelift_entity::packed_option::ReservedValue;
-
-/// An under-construction IR function graph.
-///
-/// Holds the node graph together with the entry-node ids that anchor the
-/// control-flow and memory chains.  Call [`crate::FunctionBuilder::build`]
-/// to consume a `FunctionGraph` and produce a finalised [`Graph`] whose
-/// `entry` and `cc_metadata` fields are populated.
-#[derive(Clone)]
-pub struct FunctionGraph {
-    /// The sea-of-nodes graph being built.
-    pub graph: Graph,
-    /// The `Entry` node that serves as the root of the function.
-    pub entry: NodeId,
-    /// The single `Control` output of the `Entry` node.
-    pub entry_control: NodeOutputId,
-    /// The single `Memory` output of the `InitialMemory` node.
-    pub entry_memory: NodeOutputId,
-}
-
-impl FunctionGraph {
-    /// Creates a `FunctionGraph` with all ids set to their reserved
-    /// (invalid) sentinel values.  Used as a placeholder by the builder
-    /// before the real entry nodes are emitted; not part of the public
-    /// surface because consumers should never observe a partial graph.
-    pub(crate) fn new_invalid() -> Self {
-        Self {
-            graph: Graph::new(),
-            entry: NodeId::reserved_value(),
-            entry_control: NodeOutputId::reserved_value(),
-            entry_memory: NodeOutputId::reserved_value(),
-        }
-    }
-}
 
 /// A fully-built IR function graph ready for analysis.
 ///

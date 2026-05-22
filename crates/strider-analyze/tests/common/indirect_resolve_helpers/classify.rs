@@ -742,7 +742,7 @@ pub fn build_stack_array_dispatch_scenario(
     // auto-stamping; manually attribute these nodes to the sentinel
     // lift address so Layer-C asm-fingerprint validation accepts them.
     b.graph_mut().set_asm_fingerprint(arg_u32_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-    let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
+    let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
     let mask_c = b
         .build_int_const(mask, NodeOutputType::U32)
         .unwrap();
@@ -755,7 +755,7 @@ pub fn build_stack_array_dispatch_scenario(
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
     b.graph_mut().set_asm_fingerprint(idx_u64_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-    let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
+    let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
     let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
     let idx_scaled = b
         .build_int_binary_operation(

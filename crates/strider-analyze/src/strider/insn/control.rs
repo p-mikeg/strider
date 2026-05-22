@@ -72,7 +72,7 @@ pub(crate) fn build_switch_if_ladder(
     // IntCmpOp output type.  The cmp's output is always Bool but
     // `build_int_cmp_operation` takes `output_type` for the
     // input-side coercion.
-    let idx_ty = builder.body().graph.output_kind(idx).as_value_or_err()?;
+    let idx_ty = builder.graph().output_kind(idx).as_value_or_err()?;
     // Walk every case except the last; the last comparison's false
     // branch is the final target's region (no extra dispatcher).
     for i in 0..n - 1 {

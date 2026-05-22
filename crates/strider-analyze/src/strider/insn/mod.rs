@@ -199,7 +199,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
                 // 6. Memory edge: strider decides whether to advance.
                 if abi.memory_edge {
-                    let mem_out = self.builder.body().graph.memory_output_of(node)?;
+                    let mem_out = self.builder.graph().memory_output_of(node)?;
                     self.builder.advance_cur_region_memory(mem_out)?;
                 }
 

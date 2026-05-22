@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 
 use super::FunctionBuilder;
 use crate::error::Result;
-use crate::function::FunctionGraph;
+use crate::graph::Graph;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::ops::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
@@ -121,7 +121,7 @@ impl FunctionBuilder {
                 value.byte_size()
             ));
         }
-        let id = self.body_mut().graph.intern_wide_const(value);
+        let id = self.graph_mut().intern_wide_const(value);
         Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
     }
 
@@ -450,16 +450,19 @@ impl FunctionBuilder {
     /// or `InitialMemory` nodes do not have their expected single output
     /// (this would indicate a graph-construction bug, not user error).
     pub fn build_entry(&mut self) -> Result<()> {
-        self.function = FunctionGraph::new_invalid();
+        // Reset the graph to a fresh empty state.  Synthetic test builders
+        // call `build_entry` via `new_raw`; resetting in-place keeps the
+        // entry/InitialMemory pair as nodes 0/1.
+        self.graph = Graph::new();
 
-        self.function.entry = self.create_node(NodeKind::Entry, [], vec![NodeOutputKind::Control]);
-        let [control] = self.graph().node_outputs_exact(self.function.entry)?;
-        self.function.entry_control = control;
+        self.entry = self.create_node(NodeKind::Entry, [], vec![NodeOutputKind::Control]);
+        let [control] = self.graph().node_outputs_exact(self.entry)?;
+        self.entry_control = control;
 
         let memory_node =
             self.create_node(NodeKind::InitialMemory, [], vec![NodeOutputKind::Memory]);
         let [memory] = self.graph().node_outputs_exact(memory_node)?;
-        self.function.entry_memory = memory;
+        self.entry_memory = memory;
         Ok(())
     }
 

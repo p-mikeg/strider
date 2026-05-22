@@ -1,9 +1,9 @@
 use anyhow::anyhow;
+use cranelift_entity::packed_option::ReservedValue;
 use cranelift_entity::{PrimaryMap, entity_impl};
 use std::collections::HashMap;
 
 use crate::error::Result;
-use crate::function::FunctionGraph;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::region::Region;
@@ -156,7 +156,16 @@ fn build_call_clobbered_list(
 /// writes go through this mapping so that the graph is always in a consistent
 /// state.
 pub struct FunctionBuilder {
-    pub(crate) function: FunctionGraph,
+    /// The sea-of-nodes graph being built.
+    pub(crate) graph: Graph,
+    /// The `Entry` node that serves as the root of the function.
+    /// Set to a reserved sentinel before [`Self::build_entry`] runs;
+    /// `build()` will refuse to finalise if it remains reserved.
+    pub(crate) entry: NodeId,
+    /// The single `Control` output of the `Entry` node.
+    pub(crate) entry_control: NodeOutputId,
+    /// The single `Memory` output of the `InitialMemory` node.
+    pub(crate) entry_memory: NodeOutputId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
     pub(crate) cur_region: Option<crate::region::RegionId>,
     pub(crate) variables: PrimaryMap<VarId, rsleigh::Vn>,
@@ -205,19 +214,11 @@ pub struct FunctionBuilder {
 }
 
 impl FunctionBuilder {
-    /// Returns a reference to the underlying `FunctionGraph`.
-    #[must_use] 
-    pub fn body(&self) -> &FunctionGraph {
-        &self.function
-    }
-
-    /// Returns a mutable reference to the underlying `FunctionGraph`.
-    pub fn body_mut(&mut self) -> &mut FunctionGraph {
-        &mut self.function
-    }
-
-    pub(crate) fn graph(&self) -> &Graph {
-        &self.body().graph
+    /// Returns a reference to the underlying [`Graph`] without consuming
+    /// the builder.  Pairs with [`Self::graph_mut`] and [`Self::entry`].
+    #[must_use]
+    pub fn graph(&self) -> &Graph {
+        &self.graph
     }
 
     /// Returns a mutable reference to the underlying [`Graph`] without
@@ -225,13 +226,12 @@ impl FunctionBuilder {
     ///
     /// This is the primary entry point for in-place graph mutation (e.g.
     /// running an `opt::Optimizer` pass on a builder that we still want to
-    /// use afterwards). The returned reference borrows the same `Graph` as
-    /// [`Self::body`] / [`Self::body_mut`], so any mutations are immediately
-    /// visible through every accessor. Pairs with [`Self::entry`]: opt
-    /// passes need `(graph, entry)` together because `entry` anchors the
-    /// reachable-node walk the validator's local-typing check is scoped to.
+    /// use afterwards). Pairs with [`Self::entry`]: opt passes need
+    /// `(graph, entry)` together because `entry` anchors the
+    /// reachable-node walk the validator's local-typing check is scoped
+    /// to.
     pub fn graph_mut(&mut self) -> &mut Graph {
-        &mut self.function.graph
+        &mut self.graph
     }
 
     /// Returns the recorded entry [`NodeId`] of the function being
@@ -244,7 +244,7 @@ impl FunctionBuilder {
     /// so callers may cache it across iterations.
     #[must_use]
     pub fn entry(&self) -> NodeId {
-        self.function.entry
+        self.entry
     }
 
     pub(super) fn validate_value_inputs(&self, inputs: &[NodeOutputId]) -> Result<()> {
@@ -452,7 +452,10 @@ impl FunctionBuilder {
             .collect();
 
         let mut fb = FunctionBuilder {
-            function: FunctionGraph::new_invalid(),
+            graph: Graph::new(),
+            entry: NodeId::reserved_value(),
+            entry_control: NodeOutputId::reserved_value(),
+            entry_memory: NodeOutputId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
             variables,
@@ -627,7 +630,7 @@ impl FunctionBuilder {
             .copied()
             .filter(|v| Some(*v) != stack_ptr_vn)
             .collect();
-        let entry = self.function.entry;
+        let entry = self.entry;
         let cc_metadata = crate::graph::CcMetadata {
             variables: self.variables,
             call_clobbered: self.call_clobbered_variables.into_boxed_slice(),
@@ -635,7 +638,7 @@ impl FunctionBuilder {
             call_other_clobbered,
             no_memory_clobber: self.no_memory_clobber,
         };
-        let mut graph = self.function.graph;
+        let mut graph = self.graph;
         graph.entry = Some(entry);
         graph.cc_metadata = Some(cc_metadata);
         crate::validate::validate(&graph, entry)?;

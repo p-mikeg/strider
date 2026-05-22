@@ -296,7 +296,7 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
         // MemPhi needs a non-trivial mem-input shape.  Advance memory
         // manually here.
         let (call_node, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
-        let mem_out = b.body().graph.node_outputs(call_node)[1];
+        let mem_out = b.graph().node_outputs(call_node)[1];
         b.advance_cur_region_memory(mem_out)?;
         b.build_branch(join)?;
 

@@ -563,7 +563,7 @@ mod tests {
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
         b.graph_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let one = b.build_int_const(1u64, NodeOutputType::U32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, NodeOutputType::U32)
@@ -574,7 +574,7 @@ mod tests {
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
         b.graph_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
         let idx_scaled = b
             .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)

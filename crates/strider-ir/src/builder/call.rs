@@ -150,7 +150,7 @@ impl FunctionBuilder {
         // Record the per-Call override clobber list when an override was used.
         if override_cc.is_some() {
             let list: Vec<rsleigh::Vn> = clobber_vars.into_iter().collect();
-            self.body_mut().graph.set_call_clobbered_override(call, list);
+            self.graph_mut().set_call_clobbered_override(call, list);
         }
 
         // Model the caller-visible effect of the callee's `ret` on SP: on
@@ -211,9 +211,7 @@ impl FunctionBuilder {
             inputs,
             output_kinds,
         );
-        self.body_mut()
-            .graph
-            .set_call_other_name(node, name.to_string());
+        self.graph_mut().set_call_other_name(node, name.to_string());
         // Outputs intentionally dangle — no link_region.  The cfg layer
         // already terminates the region with `RegionTerminator::NoReturn`.
         Ok(node)
@@ -342,10 +340,10 @@ impl FunctionBuilder {
 
         // Stamp the user-op name + per-CallOther clobber override.
         let writes_vec: Vec<rsleigh::Vn> = implicit_writes_vns.to_vec();
-        let body = self.body_mut();
-        body.graph.set_call_other_name(node, name.to_string());
+        let graph = self.graph_mut();
+        graph.set_call_other_name(node, name.to_string());
         if !writes_vec.is_empty() {
-            body.graph.set_call_clobbered_override(node, writes_vec);
+            graph.set_call_clobbered_override(node, writes_vec);
         }
 
         Ok((node, value_output, clobber_outputs))

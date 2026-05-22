@@ -69,8 +69,8 @@ impl FunctionBuilder {
     /// `link_memory_regions` / `link_region_variables` also
     /// propagate.
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
-        let entry_control = self.body().entry_control;
-        let entry_memory = self.body().entry_memory;
+        let entry_control = self.entry_control;
+        let entry_memory = self.entry_memory;
         self.link_control_regions(region_id, entry_control)?;
         self.link_memory_regions(region_id, entry_memory)?;
 

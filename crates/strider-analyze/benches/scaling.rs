@@ -301,7 +301,7 @@ mod synthetic {
             [arg_val],
             [NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
-        let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let mask_c = b.build_int_const(mask, NodeOutputType::U32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::U32)
@@ -311,7 +311,7 @@ mod synthetic {
             [masked],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride = b.build_int_const(8u64, NodeOutputType::U64).unwrap();
         let idx_scaled = b
             .build_int_binary_operation(idx_u64_out, stride, IntBinaryOp::Mul, NodeOutputType::U64)
