@@ -52,7 +52,7 @@ use crate::opt::stack_load_forward::{StackStoredValueMemo, find_stack_stored_val
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
-use crate::pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var};
+use crate::pattern::{Capture, and as and_pat, any_int_const, or as or_pat, var};
 
 /// Top-level classifier hook for the stack-array arm.  Called by
 /// [`super::classify::classify_anchor`] when the rodata jump-table arm
@@ -242,7 +242,7 @@ fn strip_target_mask(
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
     let graph = ctx.graph_ref();
-    let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
+    let matcher = ctx.matcher();
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
@@ -473,10 +473,10 @@ fn extract_idx_and_stride(
     // are non-commutative) — the rhs must still be the const stride
     // exponent.  We try the multiplication shape first, then the
     // shift shape, mirroring the prior match's arm order.
-    use crate::pattern::{Capture, Matcher, any_int_const, mul, shl, var};
+    use crate::pattern::{Capture, any_int_const, mul, shl, var};
 
     let candidate_node = ctx.get_node_from_output(candidate);
-    let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
+    let matcher = ctx.matcher();
 
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();

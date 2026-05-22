@@ -201,7 +201,7 @@ fn match_jump_table_shape(
     // necessarily the *other* operand of the multiplication — the
     // same disambiguation the prior `extract_base_and_mul` performed
     // by trying `int_const_val` on each `mul` operand in turn.
-    use crate::pattern::{Capture, Matcher, add, any_int_const, load, mul, shl, var};
+    use crate::pattern::{Capture, add, any_int_const, load, mul, shl, var};
     let base_var = Capture::new();
     let stride_var = Capture::new();
     let idx_var = Capture::new();
@@ -211,7 +211,7 @@ fn match_jump_table_shape(
         any_int_const(base_var),
         mul(var(idx_var), any_int_const(stride_var)),
     ));
-    if let Some(m) = Matcher::for_graph(ctx.graph_ref(), ctx.entry()).match_at(load_node, &mul_pat.into()) {
+    if let Some(m) = ctx.matcher().match_at(load_node, &mul_pat.into()) {
         // CORRECTNESS — `get_uint` returns `Option<u128>`; the prior
         // code returned `u64` for both `base` and `stride` via
         // `int_const_val`, which itself truncates to `u64`.  We mirror
@@ -240,7 +240,7 @@ fn match_jump_table_shape(
         any_int_const(base_var),
         shl(var(idx_var), any_int_const(stride_var)),
     ));
-    let m = Matcher::for_graph(ctx.graph_ref(), ctx.entry()).match_at(load_node, &shl_pat.into())?;
+    let m = ctx.matcher().match_at(load_node, &shl_pat.into())?;
     #[allow(clippy::cast_possible_truncation)]
     let base = m.get_uint(base_var, ctx.graph_ref())? as u64;
     let shift = m.get_uint(stride_var, ctx.graph_ref())?;
@@ -614,7 +614,7 @@ fn bound_from_if_condition(
     if !on_true_branch {
         return None;
     }
-    use crate::pattern::{Capture, Matcher, any_int_const, bool_not, int_cmp_any, var};
+    use crate::pattern::{Capture, any_int_const, bool_not, int_cmp_any, var};
     let graph = ctx.graph_ref();
     let cmp_node = graph.get_node_from_output(cond_out);
 
@@ -629,7 +629,7 @@ fn bound_from_if_condition(
         let n_var = Capture::new();
         let idx_var = Capture::new();
         let pat = bool_not(int_cmp_any(op_var, any_int_const(n_var), var(idx_var)));
-        if let Some(m) = Matcher::for_graph(ctx.graph_ref(), ctx.entry()).match_at(cmp_node, &pat) {
+        if let Some(m) = ctx.matcher().match_at(cmp_node, &pat) {
             let inner = m.output(idx_var)?;
             if same_value(graph, inner, idx_output) {
                 let op = m.get_int_cmp_op(op_var, ctx.graph_ref())?;
@@ -646,7 +646,7 @@ fn bound_from_if_condition(
     let idx_var = Capture::new();
     let n_var = Capture::new();
     let pat = int_cmp_any(op_var, var(idx_var), any_int_const(n_var));
-    let m = Matcher::for_graph(ctx.graph_ref(), ctx.entry()).match_at(cmp_node, &pat)?;
+    let m = ctx.matcher().match_at(cmp_node, &pat)?;
 
     // The pattern accepts any LHS; we still verify it refers to the
     // dispatch's `idx_output`.  `same_value` walks through trivial

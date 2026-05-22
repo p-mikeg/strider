@@ -272,6 +272,14 @@ impl<'g> RewriteCtx<'g> {
     pub fn graph_mut(&mut self) -> &mut Graph {
         self.graph
     }
+
+    /// Build a [`Matcher`] anchored at this context's `(graph, entry)`.
+    /// Single-source the `Matcher::for_graph(ctx.graph_ref(), ctx.entry())`
+    /// pairing so call sites don't have to spell out both fields.
+    #[must_use]
+    pub fn matcher(&self) -> Matcher<'_> {
+        Matcher::for_graph(self.graph, self.entry)
+    }
 }
 
 impl<'g> RewriteCtxView<'g> {
@@ -320,6 +328,14 @@ impl<'g> RewriteCtxView<'g> {
     #[must_use]
     pub fn as_view(&self) -> RewriteCtxView<'_> {
         RewriteCtxView { graph: self.graph, entry: self.entry }
+    }
+
+    /// Build a [`Matcher`] anchored at this view's `(graph, entry)`.
+    /// Single-source the `Matcher::for_graph(ctx.graph_ref(), ctx.entry())`
+    /// pairing so call sites don't have to spell out both fields.
+    #[must_use]
+    pub fn matcher(&self) -> Matcher<'g> {
+        Matcher::for_graph(self.graph, self.entry)
     }
 
     /// Borrows a built [`strider_ir::BuiltFunctionGraph`] as a shared
