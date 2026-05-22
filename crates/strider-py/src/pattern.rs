@@ -933,25 +933,51 @@ pub fn int_cmp(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     Ok(PyPat::from_pat(strider_analyze::pattern::int_cmp(cmp_op, lp, rp)))
 }
 
+// Shared lookup helper for the four `parse_*_op` family.  Each `parse_*_op`
+// is a thin wrapper that supplies its op-enum's name/variant table and the
+// `op_kind` label used in the error message.  Lookups are case-insensitive
+// after an initial exact-match pass, so both the canonical form (`"Add"`)
+// and any lowercase aliases (`"add"`) succeed without the table needing
+// duplicate rows.
+//
+// The table is `&'static [(&'static str, Op)]`; for the tiny enums we have
+// (≤ 12 entries) the linear scan is well below the previous `match`'s
+// codegen footprint and avoids the parallel-table maintenance burden.
+fn lookup_op<Op: Copy>(
+    table: &[(&str, Op)],
+    name: &str,
+    op_kind: &str,
+) -> PyResult<Op> {
+    if let Some(&(_, op)) = table.iter().find(|(n, _)| *n == name) {
+        return Ok(op);
+    }
+    let lowered = name.to_ascii_lowercase();
+    if let Some(&(_, op)) = table.iter().find(|(n, _)| n.eq_ignore_ascii_case(&lowered)) {
+        return Ok(op);
+    }
+    Err(into_pattern_err(anyhow::anyhow!(
+        "unknown {op_kind} variant {name:?}"
+    )))
+}
+
 fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
     use strider_ir::IntCmpOp::*;
     // `LessEqual` / `SlessEqual` are deliberately absent: the IR has no
     // such primitives.  Python callers wanting `a <= b` must use
     // `pattern.int_le(a, b)` (or `pattern.int_sle` for signed), which
     // construct the lowered `BoolNeg(IntLess(b, a))` shape.
-    Ok(match name {
-        "Equal" | "eq" | "equal" => Equal,
-        "Less" | "lt" | "less" => Less,
-        "Sless" | "slt" | "sless" => Sless,
-        "Carry" | "carry" => Carry,
-        "Scarry" | "scarry" => Scarry,
-        "Sborrow" | "sborrow" => Sborrow,
-        other => {
-            return Err(into_pattern_err(anyhow::anyhow!(
-                "unknown IntCmpOp variant {other:?}"
-            )))
-        }
-    })
+    static TABLE: &[(&str, strider_ir::IntCmpOp)] = &[
+        ("Equal", Equal),
+        ("Less", Less),
+        ("Sless", Sless),
+        ("Carry", Carry),
+        ("Scarry", Scarry),
+        ("Sborrow", Sborrow),
+        ("eq", Equal),
+        ("lt", Less),
+        ("slt", Sless),
+    ];
+    lookup_op(TABLE, name, "IntCmpOp")
 }
 
 // ── Integer unary ops ────────────────────────────────────────────────────
@@ -1534,39 +1560,34 @@ fn parse_int_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
     // `pattern.sub(a, b)` (which constructs the lowered
     // `Add(a, IntUnaryOp::Neg(b))` shape directly).
     use strider_ir::IntBinaryOp::*;
-    Ok(match name {
-        "Add" | "add" => Add,
-        "Mul" | "mul" => Mul,
-        "Div" | "div" => Div,
-        "Sdiv" | "sdiv" => Sdiv,
-        "Rem" | "rem" => Rem,
-        "Srem" | "srem" => Srem,
-        "And" | "and" => And,
-        "Or" | "or" => Or,
-        "Xor" | "xor" => Xor,
-        "ShiftLeft" | "shl" => ShiftLeft,
-        "ShiftRight" | "shr" => ShiftRight,
-        "SShiftRight" | "sshr" => SShiftRight,
-        other => {
-            return Err(into_pattern_err(anyhow::anyhow!(
-                "unknown IntBinaryOp variant {other:?}"
-            )))
-        }
-    })
+    static TABLE: &[(&str, strider_ir::IntBinaryOp)] = &[
+        ("Add", Add),
+        ("Mul", Mul),
+        ("Div", Div),
+        ("Sdiv", Sdiv),
+        ("Rem", Rem),
+        ("Srem", Srem),
+        ("And", And),
+        ("Or", Or),
+        ("Xor", Xor),
+        ("ShiftLeft", ShiftLeft),
+        ("ShiftRight", ShiftRight),
+        ("SShiftRight", SShiftRight),
+        ("shl", ShiftLeft),
+        ("shr", ShiftRight),
+        ("sshr", SShiftRight),
+    ];
+    lookup_op(TABLE, name, "IntBinaryOp")
 }
 
 fn parse_bool_binary_op(name: &str) -> PyResult<strider_ir::BoolBinaryOp> {
     use strider_ir::BoolBinaryOp::*;
-    Ok(match name {
-        "And" | "and" => And,
-        "Or" | "or" => Or,
-        "Xor" | "xor" => Xor,
-        other => {
-            return Err(into_pattern_err(anyhow::anyhow!(
-                "unknown BoolBinaryOp variant {other:?}"
-            )))
-        }
-    })
+    static TABLE: &[(&str, strider_ir::BoolBinaryOp)] = &[
+        ("And", And),
+        ("Or", Or),
+        ("Xor", Xor),
+    ];
+    lookup_op(TABLE, name, "BoolBinaryOp")
 }
 
 fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
@@ -1574,16 +1595,12 @@ fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
     // Python callers wanting `a - b` should use `pattern.float_sub(a, b)`,
     // which constructs the lowered `FloatAdd(a, FloatUnaryOp::Neg(b))` shape.
     use strider_ir::FloatBinaryOp::*;
-    Ok(match name {
-        "Add" | "add" => Add,
-        "Mul" | "mul" => Mul,
-        "Div" | "div" => Div,
-        other => {
-            return Err(into_pattern_err(anyhow::anyhow!(
-                "unknown FloatBinaryOp variant {other:?}"
-            )))
-        }
-    })
+    static TABLE: &[(&str, strider_ir::FloatBinaryOp)] = &[
+        ("Add", Add),
+        ("Mul", Mul),
+        ("Div", Div),
+    ];
+    lookup_op(TABLE, name, "FloatBinaryOp")
 }
 
 /// Typed builder for an integer binary-op pattern.  Wraps
