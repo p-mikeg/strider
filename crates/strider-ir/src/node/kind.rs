@@ -64,15 +64,16 @@ pub enum NodeKind {
     /// in the same order as the `ControlState`'s `Control` inputs.
     /// Output: `[value]`.
     ///
-    /// `Phi(Some(vn))` tags the phi with the source-level varnode it
-    /// represents (lifter-emitted SSA φ for register-aliased reads).
-    /// `Phi(None)` is a value phi not tied to any source varnode —
-    /// synthesized by `StackLoadForward` when forwarding a `Load[sp+K]`
-    /// across a `MemPhi`: each predecessor resolves to a stored value,
-    /// and those values are merged here without a `Vn` tag since the
-    /// merged value has no source-level register/memory identity.
-    /// Non-cacheable: phi identity matters.
-    Phi(Option<rsleigh::Vn>),
+    /// Some phis carry a source-level varnode tag (lifter-emitted SSA
+    /// φ for register-aliased reads); others are anonymous value phis
+    /// synthesised by `StackLoadForward` when forwarding a
+    /// `Load[sp+K]` across a `MemPhi`.  The tag (when present) is
+    /// stored in [`crate::graph::Graph::phi_var_tag`] (an
+    /// `Option<Vn>` side-table); query it via
+    /// [`crate::graph::Graph::phi_var_tag`].  Anonymous phis have no
+    /// entry (the side-table returns `None`).  Non-cacheable: phi
+    /// identity matters.
+    Phi,
 
     // ── Conditional branch ─────────────────────────────────────────────────────
     /// Conditional branch.  Consumes `(control, bool_cond)` and produces two
@@ -276,7 +277,7 @@ impl NodeKind {
                 | Self::IndirectBranch
                 | Self::ControlState
                 | Self::MemPhi
-                | Self::Phi(..)
+                | Self::Phi
                 | Self::Call
                 | Self::CallOther { .. }
                 | Self::CPoolRef

@@ -326,11 +326,18 @@ fn uses_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
                 match g.node_kind(producer) {
                     NodeKind::Call if producer != outer => return true,
                     NodeKind::Load(_)
-                    | NodeKind::ControlState
-                    | NodeKind::Phi(None) => {
+                    | NodeKind::ControlState => {
                         // Walk the first input — Load[memory, addr] gives the
                         // memory predecessor (producing store/Call), and
-                        // ControlState/Phi(None) pass through their first input.
+                        // ControlState passes through its first input.
+                        let inps: Vec<_> =
+                            g.node_inputs(producer).into_iter().collect();
+                        let Some(&first) = inps.first() else { break; };
+                        producer = g.get_node_from_output(first);
+                    }
+                    NodeKind::Phi if g.phi_var_tag(producer).is_none() => {
+                        // Anonymous phi (ValuePhi from StackLoadForward) —
+                        // pass through its first input.
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };

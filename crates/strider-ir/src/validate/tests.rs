@@ -371,11 +371,12 @@ fn graph_invariants_phi_token_from_wrong_node() {
     );
     let cs_control_out = graph.node_outputs(cs).iter().copied().next().unwrap(); // index 0 = Control
     let vn = test_vn();
-    let _phi = graph.create_node(
-        NodeKind::Phi(Some(vn)),
+    let phi = graph.create_node(
+        NodeKind::Phi,
         [cs_control_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
+    graph.set_phi_var_tag(phi, vn);
 
     let errs = validate(&graph, entry).unwrap_err();
     assert!(
@@ -414,10 +415,11 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let c2_out = graph.node_outputs(c2).iter().copied().next().unwrap();
     let vn = test_vn();
     let phi = graph.create_node(
-        NodeKind::Phi(Some(vn)),
+        NodeKind::Phi,
         [cs_phi_out, c1_out, c2_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
+    graph.set_phi_var_tag(phi, vn);
 
     // V-2: graph_invariants_phis is reachability-scoped, so the phi must be
     // attached to something reachable from the entry.  Wire its value
@@ -516,11 +518,12 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
 
     // Detached zombie Phi with NO inputs.
     let vn = test_vn();
-    let _zombie = graph.create_node(
-        NodeKind::Phi(Some(vn)),
+    let zombie = graph.create_node(
+        NodeKind::Phi,
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
+    graph.set_phi_var_tag(zombie, vn);
 
     validate(&graph, entry).expect("validator must skip unreachable zombie phis");
 }
@@ -714,8 +717,8 @@ fn local_typing_mem_phi_variadic_tail_must_be_memory() {
 
 #[test]
 fn local_typing_accepts_bool_value_phi_inputs() {
-    // Phi(Some) / Phi(None) value inputs (the IN_PHI variadic tail) must
-    // accept Bool-typed values: real binaries phi-merge x86 flag registers
+    // Phi value inputs (the IN_PHI variadic tail) must accept
+    // Bool-typed values: real binaries phi-merge x86 flag registers
     // (CF/ZF/SF), which the IR models as Bool. Same rationale as ARG/RET/CALL_OUT.
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
@@ -738,9 +741,9 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     );
     let bc_out = graph.node_outputs(bc).iter().copied().next().unwrap();
 
-    // Phi(None) taking [phi_token, bool_value] — the Bool flows through IN_PHI.
+    // Anonymous Phi taking [phi_token, bool_value] — the Bool flows through IN_PHI.
     let vp = graph.create_node(
-        NodeKind::Phi(None),
+        NodeKind::Phi,
         [phi_token, bc_out],
         [NodeOutputKind::OutputType(NodeOutputType::Bool)],
     );
@@ -816,9 +819,9 @@ fn graph_invariants_value_phi_arity_mismatch() {
     );
     let c1_out = graph.node_outputs(c1).iter().copied().next().unwrap();
 
-    // Phi(None) with two value inputs but the owning ControlState has one predecessor.
+    // Anonymous Phi with two value inputs but the owning ControlState has one predecessor.
     let vp = graph.create_node(
-        NodeKind::Phi(None),
+        NodeKind::Phi,
         [cs_phi_out, c1_out, c1_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );

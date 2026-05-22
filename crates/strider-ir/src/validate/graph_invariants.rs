@@ -126,7 +126,7 @@ pub(super) fn check_graph_invariants_phis(
     for (node, kind) in reachable_nodes(graph, reachable) {
         let is_phi = matches!(
             kind,
-            NodeKind::Phi(_) | NodeKind::MemPhi | NodeKind::StackStorePhi { .. }
+            NodeKind::Phi | NodeKind::MemPhi | NodeKind::StackStorePhi { .. }
         );
         if !is_phi {
             continue;
@@ -193,7 +193,7 @@ fn asm_fingerprint_exempt(kind: &NodeKind) -> bool {
             | NodeKind::FunctionArg { .. }
             | NodeKind::ControlState
             | NodeKind::MemPhi
-            | NodeKind::Phi(_)
+            | NodeKind::Phi
             | NodeKind::StackStorePhi { .. }
     )
 }

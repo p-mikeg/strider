@@ -152,7 +152,7 @@ pub fn decompose_sp(
                     offset: accumulated,
                 });
             }
-            NodeKind::Phi(Some(vn)) if vn == sp_vn => {
+            NodeKind::Phi if g.phi_var_tag(node) == Some(sp_vn) => {
                 break decompose_sp_phi(g, node, sp_vn, memo, visiting)
                     .map(|e| e.shifted(accumulated));
             }

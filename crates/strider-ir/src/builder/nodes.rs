@@ -694,7 +694,8 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::Load(space), [memory, addr], output_type))
     }
 
-    /// Emits a `Phi(Some(var))` node for varnode `var`.
+    /// Emits a `Phi` node tagged with varnode `var` via the
+    /// `phi_var_tag` side-table.
     ///
     /// `phi_token` must be the `PhiToken` output of the owning `ControlState`.
     /// `incoming_values` are the data inputs, one per predecessor (may be empty
@@ -708,10 +709,13 @@ impl FunctionBuilder {
         self.require_phi_token_kind(phi_token)?;
         self.validate_value_inputs(incoming_values)?;
         let output_type = var.size.try_into()?;
-        Ok(self.build_single_output_pure(
-            NodeKind::Phi(Some(var)),
+        let out = self.build_single_output_pure(
+            NodeKind::Phi,
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
-        ))
+        );
+        let (node_id, _slot) = self.graph().output_definition(out);
+        self.graph_mut().set_phi_var_tag(node_id, var);
+        Ok(out)
     }
 }

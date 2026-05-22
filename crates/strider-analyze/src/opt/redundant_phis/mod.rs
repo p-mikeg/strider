@@ -44,7 +44,7 @@ fn remove_phis(
         // ControlState.inputs[j]'s producer is in the CFG-reachable set.
         // We deduplicate by NodeOutputId so that two edges from the same
         // predecessor (unusual but valid) count as one.
-        NodeKind::Phi(..) | NodeKind::MemPhi => {
+        NodeKind::Phi | NodeKind::MemPhi => {
             let inputs = ctx.node_inputs(node_id);
             if inputs.is_empty() {
                 return Ok(OptimizationResult::NoChange);
@@ -183,7 +183,7 @@ impl Optimizer for RedundantPhis {
             .filter(|&n| {
                 matches!(
                     ctx.node_kind(n),
-                    NodeKind::Phi(_) | NodeKind::MemPhi | NodeKind::ControlState
+                    NodeKind::Phi | NodeKind::MemPhi | NodeKind::ControlState
                 )
             })
             .collect();

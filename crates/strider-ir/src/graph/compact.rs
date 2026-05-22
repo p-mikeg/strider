@@ -18,7 +18,7 @@ use super::Graph;
 /// (keyed by new id), draining `src` of every remapped slot via
 /// `std::mem::take`.  Used by `retain_reachable` to remap the four
 /// per-node side-tables (`stack_phi_offsets`, `call_other_names`,
-/// `asm_fingerprints`, `call_clobbered_overrides`) in one shape.
+/// `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`) in one shape.
 fn remap_side_table<T: Default + Clone>(
     src: &mut SecondaryMap<NodeId, T>,
     old_to_new: &HashMap<NodeId, NodeId>,
@@ -76,10 +76,10 @@ impl Graph {
     /// MUST rewrite them through the returned [`NodeIdRemap`] (or
     /// drop them).
     ///
-    /// The dedup cache is rebuilt from scratch.  All four side-tables
+    /// The dedup cache is rebuilt from scratch.  All side-tables
     /// (`stack_phi_offsets`, `call_other_names`, `asm_fingerprints`,
-    /// `call_clobbered_overrides`) are remapped through the
-    /// translation table; entries for dropped nodes are dropped.
+    /// `call_clobbered_overrides`, `phi_var_tag`) are remapped through
+    /// the translation table; entries for dropped nodes are dropped.
     ///
     /// # Errors
     ///
@@ -239,6 +239,7 @@ impl Graph {
         self.asm_fingerprints = remap_side_table(&mut self.asm_fingerprints, &old_to_new_pairs);
         self.call_clobbered_overrides =
             remap_side_table(&mut self.call_clobbered_overrides, &old_to_new_pairs);
+        self.phi_var_tag = remap_side_table(&mut self.phi_var_tag, &old_to_new_pairs);
 
         // Remap the InitialVar Vn→NodeId index.  Entries whose NodeId
         // didn't survive compaction (i.e. the InitialVar became

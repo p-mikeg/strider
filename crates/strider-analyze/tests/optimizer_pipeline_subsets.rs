@@ -102,10 +102,9 @@ fn stable_subset_does_not_remove_phi_nodes() {
     let phi_count_before = graph
         .preorder()
         .filter(|&nid| {
-            matches!(
-                graph.node_kind(nid),
-                strider_ir::node::NodeKind::Phi(Some(_)) | strider_ir::node::NodeKind::MemPhi
-            )
+            (matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Phi)
+                && graph.phi_var_tag(nid).is_some())
+                || matches!(graph.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
         })
         .count();
     let entry = graph.entry().unwrap();
@@ -113,10 +112,9 @@ fn stable_subset_does_not_remove_phi_nodes() {
     let phi_count_after = graph
         .preorder()
         .filter(|&nid| {
-            matches!(
-                graph.node_kind(nid),
-                strider_ir::node::NodeKind::Phi(Some(_)) | strider_ir::node::NodeKind::MemPhi
-            )
+            (matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Phi)
+                && graph.phi_var_tag(nid).is_some())
+                || matches!(graph.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
         })
         .count();
     assert_eq!(

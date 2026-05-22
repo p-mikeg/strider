@@ -57,7 +57,7 @@ pub(crate) const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::InitialVar(_)
         | NodeKind::FunctionArg { .. }
         | NodeKind::ControlState
-        | NodeKind::Phi(_)
+        | NodeKind::Phi
         | NodeKind::MemPhi
         | NodeKind::If
         | NodeKind::Call

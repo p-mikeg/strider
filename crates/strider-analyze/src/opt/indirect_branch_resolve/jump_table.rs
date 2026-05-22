@@ -703,7 +703,7 @@ fn same_value(graph: &Graph, a: NodeOutputId, b: NodeOutputId) -> bool {
             visited.insert(out);
             let node = graph.get_node_from_output(out);
             match graph.node_kind(node) {
-                NodeKind::Phi(_) => {
+                NodeKind::Phi => {
                     // Slot 0 is the phi-token; slots 1.. are values.
                     // A trivial phi has exactly one value input.
                     if let Ok([_token, val]) = graph.node_inputs_exact::<2>(node) {

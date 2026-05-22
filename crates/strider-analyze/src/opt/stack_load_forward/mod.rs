@@ -2,7 +2,7 @@
 //! `Load[sp + K]` when the load's memory input traces back to that store with
 //! no aliasing writes in between.  When a `MemPhi` sits between store and
 //! load and every predecessor resolves to a store at the same offset, the
-//! load is replaced with a synthesized `NodeKind::Phi(None)` sharing the
+//! load is replaced with a synthesized anonymous `NodeKind::Phi` sharing the
 //! `MemPhi`'s phi-token.
 //!
 //! Must be wired into the pipeline with the calling convention's stack-pointer
@@ -414,7 +414,7 @@ fn realize(
                 return Ok(first);
             }
             let value_phi = ctx.create_node_attributed(
-                NodeKind::Phi(None),
+                NodeKind::Phi,
                 std::iter::once(phi_token).chain(resolved),
                 [NodeOutputKind::OutputType(load_ty)],
                 &[load],

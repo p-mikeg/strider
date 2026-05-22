@@ -110,7 +110,8 @@ impl Fingerprint {
 /// the same bucket.  Operator-bearing variants keep the operator name
 /// (e.g. `IntBinaryOp::Add`) since that's a *structural* property of the
 /// source program, not a register-renaming artefact.
-fn kind_bucket(k: &NodeKind) -> String {
+fn kind_bucket(g: &strider_ir::BuiltFunctionGraph, nid: strider_ir::node::NodeId) -> String {
+    let k = g.node_kind(nid);
     match k {
         NodeKind::Entry => "Entry".to_string(),
         NodeKind::InitialMemory => "InitialMemory".to_string(),
@@ -118,8 +119,8 @@ fn kind_bucket(k: &NodeKind) -> String {
         NodeKind::FunctionArg { .. } => "FunctionArg".to_string(),
         NodeKind::ControlState => "ControlState".to_string(),
         NodeKind::MemPhi => "MemPhi".to_string(),
-        NodeKind::Phi(Some(_)) => "VarPhi".to_string(),
-        NodeKind::Phi(None) => "ValuePhi".to_string(),
+        NodeKind::Phi if g.phi_var_tag(nid).is_some() => "VarPhi".to_string(),
+        NodeKind::Phi => "ValuePhi".to_string(),
         NodeKind::If => "If".to_string(),
         NodeKind::Call => "Call".to_string(),
         NodeKind::Return => "Return".to_string(),
@@ -185,12 +186,12 @@ fn structural_fingerprint(g: &strider_ir::BuiltFunctionGraph) -> Fingerprint {
     for nid in g.preorder() {
         reachable_nodes += 1;
         let kind = g.node_kind(nid);
-        *kind_histogram.entry(kind_bucket(kind)).or_insert(0) += 1;
+        *kind_histogram.entry(kind_bucket(g, nid)).or_insert(0) += 1;
         match kind {
             NodeKind::ControlState => regions += 1,
-            NodeKind::Phi(Some(_)) => var_phis += 1,
+            NodeKind::Phi if g.phi_var_tag(nid).is_some() => var_phis += 1,
+            NodeKind::Phi => value_phis += 1,
             NodeKind::MemPhi => mem_phis += 1,
-            NodeKind::Phi(None) => value_phis += 1,
             NodeKind::StackStorePhi { .. } => stack_store_phis += 1,
             _ => {}
         }

@@ -61,9 +61,13 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
-    let surviving_sp_phis = crate::opt::test_support::count_reachable((&fg).into(), |k| {
-        matches!(k, NodeKind::Phi(Some(vn)) if *vn == sp)
-    });
+    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    let surviving_sp_phis = fg
+        .all_node_ids()
+        .filter(|&n| reachable.contains(&n)
+            && matches!(fg.node_kind(n), NodeKind::Phi)
+            && fg.phi_var_tag(n) == Some(sp))
+        .count();
     assert_eq!(
         surviving_sp_phis, 0,
         "VarPhi(sp) with identical data inputs must be removed"
@@ -267,7 +271,8 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     // Locate the VarPhi(var) at `join` and its owning CS.
     let phi_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi(Some(v)) if *v == var))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
+            && fg.phi_var_tag(n) == Some(var))
         .expect("VarPhi(var) at join");
     let phi_inputs_pre = fg.node_inputs(phi_node);
     let phi_token = phi_inputs_pre[0];

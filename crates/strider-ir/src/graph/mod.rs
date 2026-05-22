@@ -152,6 +152,19 @@ pub struct Graph {
     /// per-NodeId and benefits from the `SecondaryMap`'s O(1) array
     /// lookup with no hashing.
     pub(crate) call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>,
+    /// Source-level varnode tag for [`crate::node::NodeKind::Phi`] nodes
+    /// created at lift time.  `Some(vn)` marks the phi as the SSA φ for
+    /// varnode `vn` (carries register-identity semantics — the
+    /// indirect-branch classifier's soundness gate refuses to walk
+    /// through such phis because doing so would erase that identity).
+    /// `None` (the default) marks an anonymous value phi — synthesised
+    /// by opt passes like `StackLoadForward` when forwarding a load
+    /// across a `MemPhi`.  Non-`Phi` kinds always store `None`; readers
+    /// must always pair the tag query with a `NodeKind::Phi` match.
+    ///
+    /// Stored as `SecondaryMap<NodeId, Option<rsleigh::Vn>>` for O(1)
+    /// array indexing without hashing.
+    pub(crate) phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>,
     /// Wide-integer constant values (U256, U512) referenced by
     /// [`crate::node::NodeKind::IntConstWide`].
     ///
@@ -208,6 +221,7 @@ impl Graph {
             call_other_names: SecondaryMap::new(),
             asm_fingerprints: SecondaryMap::new(),
             call_clobbered_overrides: SecondaryMap::new(),
+            phi_var_tag: SecondaryMap::new(),
             wide_consts: PrimaryMap::new(),
             wide_const_dedup: rustc_hash::FxHashMap::default(),
             initial_var_index: rustc_hash::FxHashMap::default(),

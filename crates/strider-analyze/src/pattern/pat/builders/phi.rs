@@ -1,22 +1,31 @@
 //! Phi node pattern builders.
 //!
-//! `PhiPat` matches `Phi(Some(vn))` nodes (the SSA phi for a tracked
+//! `PhiPat` matches Vn-tagged `Phi` nodes (the SSA phi for a tracked
 //! variable); `MemPhiPat` matches `MemPhi` (the memory-token phi at
-//! join points); `ValuePhiPat` matches `Phi(None)` (the value-phi
+//! join points); `ValuePhiPat` matches anonymous `Phi` (the value-phi
 //! synthesised by `StackLoadForward`).  All three carry an optional
 //! per-predecessor input constraint.
+//!
+//! The Vn tag for a `Phi` node lives in the
+//! `strider_ir::Graph::phi_var_tag` side-table; the kind discriminant
+//! alone cannot distinguish anonymous from tagged phis, so the
+//! distinction is enforced by a `post_match` predicate after the kind
+//! discriminant has matched.
+
+use std::sync::Arc;
 
 use strider_ir::node::NodeKind;
 
 use crate::pattern::pat::Pat;
-use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat, exemplar_vn};
+use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat};
 
-/// Builder for `Phi(Some(vn))` node patterns.  Created by [`crate::pattern::pat::phi`] or
-/// [`crate::pattern::pat::phi_for`].
+/// Builder for Vn-tagged `Phi` node patterns.  Created by
+/// [`crate::pattern::pat::phi`] or [`crate::pattern::pat::phi_for`].
 ///
-/// Matches **only** `Phi(Some(_))`.  For `MemPhi` use [`MemPhiPat`] /
-/// [`crate::pattern::pat::mem_phi`]; for `Phi(None)` use [`ValuePhiPat`] /
-/// [`crate::pattern::pat::value_phi`].
+/// Matches **only** phi nodes whose `phi_var_tag` side-table entry is
+/// `Some(_)`.  For `MemPhi` use [`MemPhiPat`] /
+/// [`crate::pattern::pat::mem_phi`]; for anonymous `Phi` use
+/// [`ValuePhiPat`] / [`crate::pattern::pat::value_phi`].
 ///
 /// Capture the matched output with `.capture(v)` from
 /// [`crate::pattern::pat::IntoPat`].
@@ -50,17 +59,21 @@ impl PhiPat {
 impl From<PhiPat> for Pat {
     fn from(b: PhiPat) -> Pat {
         let PhiPat { vn, inputs } = b;
-        let kind = match vn {
-            None => KindSpec::variant_with(
-                &NodeKind::Phi(Some(exemplar_vn())),
-                |k| matches!(k, NodeKind::Phi(Some(_))),
-            ),
-            Some(expected) => KindSpec::variant_with(
-                &NodeKind::Phi(Some(exemplar_vn())),
-                move |k| matches!(k, NodeKind::Phi(Some(actual)) if *actual == expected),
-            ),
+        // KindSpec accepts any Phi discriminant; the Vn-tag check
+        // runs as a post_match predicate against the graph's
+        // phi_var_tag side-table.
+        let kind = KindSpec::variant(&NodeKind::Phi);
+        let post_match = match vn {
+            None => Arc::new(|ctx: &crate::pattern::pat::traits::MatchCtx, node: strider_ir::node::NodeId, _b: &mut crate::pattern::matcher::Bindings| {
+                ctx.graph.phi_var_tag(node).is_some()
+            }) as crate::pattern::pat::node_pat::NodeKindCheck,
+            Some(expected) => Arc::new(move |ctx: &crate::pattern::pat::traits::MatchCtx, node: strider_ir::node::NodeId, _b: &mut crate::pattern::matcher::Bindings| {
+                ctx.graph.phi_var_tag(node) == Some(expected)
+            }) as crate::pattern::pat::node_pat::NodeKindCheck,
         };
-        NodePat::matcher(kind, InputsSpec::Indexed(inputs)).into_pat()
+        NodePat::matcher(kind, InputsSpec::Indexed(inputs))
+            .with_post_match(post_match)
+            .into_pat()
     }
 }
 
@@ -99,12 +112,13 @@ impl From<MemPhiPat> for Pat {
     }
 }
 
-/// Builder for `Phi(None)` (value-phi) node patterns.  Created by
+/// Builder for anonymous `Phi` (value-phi) node patterns.  Created by
 /// [`crate::pattern::pat::value_phi`].
 ///
-/// `Phi(None)` is synthesised by `StackLoadForward` to phi together
-/// stack-store values that flow into a load through a control-flow
-/// join.  Patterns that walk forwarded stack values may need this.
+/// Anonymous phis (those with no `phi_var_tag` entry) are synthesised
+/// by `StackLoadForward` to phi together stack-store values that flow
+/// into a load through a control-flow join.  Patterns that walk
+/// forwarded stack values may need this.
 pub struct ValuePhiPat {
     inputs: Vec<(usize, Pat)>,
 }
@@ -128,10 +142,13 @@ impl ValuePhiPat {
 impl From<ValuePhiPat> for Pat {
     fn from(b: ValuePhiPat) -> Pat {
         let ValuePhiPat { inputs } = b;
-        let kind = KindSpec::variant_with(
-            &NodeKind::Phi(None),
-            |k| matches!(k, NodeKind::Phi(None)),
-        );
-        NodePat::matcher(kind, InputsSpec::Indexed(inputs)).into_pat()
+        let kind = KindSpec::variant(&NodeKind::Phi);
+        // Post-match: anonymous phis have no entry in phi_var_tag.
+        let post_match = Arc::new(|ctx: &crate::pattern::pat::traits::MatchCtx, node: strider_ir::node::NodeId, _b: &mut crate::pattern::matcher::Bindings| {
+            ctx.graph.phi_var_tag(node).is_none()
+        }) as crate::pattern::pat::node_pat::NodeKindCheck;
+        NodePat::matcher(kind, InputsSpec::Indexed(inputs))
+            .with_post_match(post_match)
+            .into_pat()
     }
 }

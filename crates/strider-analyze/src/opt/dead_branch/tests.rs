@@ -385,7 +385,8 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     let mut fg = b.build()?;
     let pre_phi_count = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi(Some(_))))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
+            && fg.phi_var_tag(n).is_some())
         .count();
     assert!(pre_phi_count > 0);
 
@@ -395,7 +396,8 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     // value input (length = 1 token + 1 value = 2).
     let join_phi = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi(Some(v)) if *v == var))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
+            && fg.phi_var_tag(n) == Some(var))
         .expect("control phi at join must exist");
     let phi_inputs = fg.node_inputs(join_phi);
     assert_eq!(phi_inputs.len(), 2, "phi must have exactly 1 live value");

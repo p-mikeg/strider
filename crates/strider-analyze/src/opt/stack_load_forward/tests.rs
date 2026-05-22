@@ -29,6 +29,29 @@ fn reachable_count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView
     crate::opt::test_support::count_reachable(ctx, pred)
 }
 
+/// Counts reachable anonymous (Vn-untagged) `Phi` nodes — the shape
+/// `StackLoadForward` synthesises when forwarding a load across a
+/// `MemPhi`.  Vn-tagged phis (created at lift time for register-aliased
+/// reads) are excluded.
+fn reachable_anonymous_phi_count(fg: &strider_ir::BuiltFunctionGraph) -> usize {
+    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    fg.all_node_ids()
+        .filter(|n| reachable.contains(n)
+            && matches!(fg.node_kind(*n), NodeKind::Phi)
+            && fg.phi_var_tag(*n).is_none())
+        .count()
+}
+
+/// Finds the unique reachable anonymous (Vn-untagged) `Phi` node.
+fn find_reachable_anonymous_phi(
+    fg: &strider_ir::BuiltFunctionGraph,
+) -> Option<strider_ir::node::NodeId> {
+    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    fg.all_node_ids().find(|n| reachable.contains(n)
+        && matches!(fg.node_kind(*n), NodeKind::Phi)
+        && fg.phi_var_tag(*n).is_none())
+}
+
 /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes
 /// and the return sources from the stored constant.
 /// Stress test for the iterative `probe`: a long chain of disjoint
@@ -398,7 +421,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
         reachable_loads, 0,
         "Load at merge must be forwarded via synthesized ValuePhi"
     );
-    let reachable_value_phis = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Phi(None)));
+    let reachable_value_phis = reachable_anonymous_phi_count(&fg);
     assert_eq!(
         reachable_value_phis, 1,
         "exactly one ValuePhi must be synthesized"
@@ -407,9 +430,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     // The ValuePhi's phi-token (input 0) must come from the same
     // ControlState as the MemPhi's phi-token.
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let value_phi = fg
-        .all_node_ids()
-        .find(|n| reachable.contains(n) && matches!(fg.node_kind(*n), NodeKind::Phi(None)))
+    let value_phi = find_reachable_anonymous_phi(&fg)
         .expect("ValuePhi found above");
     let mem_phi = fg
         .all_node_ids()
@@ -482,7 +503,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
         reachable_loads, 1,
         "missing-store branch must prevent forwarding"
     );
-    let reachable_value_phis = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Phi(None)));
+    let reachable_value_phis = reachable_anonymous_phi_count(&fg);
     assert_eq!(
         reachable_value_phis, 0,
         "no ValuePhi should be synthesized when a branch bails"
@@ -562,7 +583,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
 
     let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load must be forwarded");
-    let reachable_value_phis = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Phi(None)));
+    let reachable_value_phis = reachable_anonymous_phi_count(&fg);
     assert_eq!(
         reachable_value_phis, 0,
         "identical branch values must skip the ValuePhi synthesis"
@@ -864,7 +885,8 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
         .count();
     let total_value_phi_before = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi(None)))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
+            && fg.phi_var_tag(n).is_none())
         .count();
 
     // Run StackLoadForward in isolation so the leak attributable to it is
@@ -884,7 +906,8 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
         .count();
     let total_value_phi_after = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi(None)))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
+            && fg.phi_var_tag(n).is_none())
         .count();
     assert_eq!(
         total_truncate_after, total_truncate_before,

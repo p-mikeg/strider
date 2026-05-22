@@ -2,7 +2,7 @@
 //!
 //! Walks the producer node of a placeholder anchor's value-input and
 //! classifies it into a [`ResolvedTargets`].  Each arm is a
-//! soundness-checked shape (`IntConst`, `InitialVar(lr)`, `Phi(None)`
+//! soundness-checked shape (`IntConst`, `InitialVar(lr)`, anonymous `Phi`
 //! of constants, jump-table load, stack-array load) — the comments on
 //! each arm spell out why the runtime target set is constrained.
 //!
@@ -96,12 +96,15 @@ pub fn classify_anchor(
         NodeKind::InitialVar(vn) if Some(vn) == link_register_vn => {
             Some(ResolvedTargets::LinkRegister)
         }
-        // SOUND: `Phi(None)`'s output is the merge of one
+        // SOUND: an anonymous `Phi`'s output is the merge of one
         // per-predecessor value input (slot 0 is the phi token,
         // slots 1.. are the values).  When *every* value input folds
         // to `IntConst(k_i)`, the runtime target set is exactly
         // `{k_i}` for the predecessors that ever reach this branch.
-        NodeKind::Phi(None) => {
+        //
+        // Vn-tagged phis are excluded: their register-identity
+        // semantics must not be folded into a target-set computation.
+        NodeKind::Phi if graph.phi_var_tag(producer_id).is_none() => {
             let inputs = graph.node_inputs(producer_id);
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
             for val in inputs.into_iter().skip(1) {
@@ -297,10 +300,15 @@ mod tests {
         // VarPhi in the test if we hit one, since
         // RedundantPhis would have done that in production.
         let mut producer_output = anchor;
-        while let NodeKind::Phi(Some(_)) = graph.kind_of_output(producer_output) {
+        loop {
+            let pid = graph.get_node_from_output(producer_output);
+            let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
+                && graph.phi_var_tag(pid).is_some();
+            if !is_var_phi {
+                break;
+            }
             // VarPhi inputs: [phi_token, ...per-pred values].
             // With one predecessor, slot 1 is the value.
-            let pid = graph.get_node_from_output(producer_output);
             if graph.node_inputs(pid).len() != 2 {
                 break;
             }
@@ -344,8 +352,13 @@ mod tests {
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
-        while let NodeKind::Phi(Some(_)) = graph.kind_of_output(producer_output) {
+        loop {
             let pid = graph.get_node_from_output(producer_output);
+            let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
+                && graph.phi_var_tag(pid).is_some();
+            if !is_var_phi {
+                break;
+            }
             if graph.node_inputs(pid).len() != 2 {
                 break;
             }
@@ -386,8 +399,13 @@ mod tests {
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
-        while let NodeKind::Phi(Some(_)) = graph.kind_of_output(producer_output) {
+        loop {
             let pid = graph.get_node_from_output(producer_output);
+            let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
+                && graph.phi_var_tag(pid).is_some();
+            if !is_var_phi {
+                break;
+            }
             if graph.node_inputs(pid).len() != 2 {
                 break;
             }
@@ -450,14 +468,15 @@ mod tests {
         // output kind for the ValuePhi's first input slot to
         // typecheck against `expected_signature`'s `PHI` slot.
         let fake_token_node = graph.create_node(
-            NodeKind::Phi(Some(rsleigh::Vn {
-                addr_off: 0xdead,
-                addr_space: rsleigh::VnSpace::REGISTER,
-                size: 8,
-            })),
+            NodeKind::Phi,
             [],
             [NodeOutputKind::PhiToken],
         );
+        graph.set_phi_var_tag(fake_token_node, rsleigh::Vn {
+            addr_off: 0xdead,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        });
         let [token_out] = graph
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
@@ -465,7 +484,7 @@ mod tests {
         // Build the ValuePhi: inputs = [phi_token, ...vals]; output
         // is a single value (U64 for definiteness).
         let vp_node = graph.create_node(
-            NodeKind::Phi(None),
+            NodeKind::Phi,
             std::iter::once(token_out).chain(const_outputs.iter().copied()),
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
@@ -518,19 +537,20 @@ mod tests {
         builder.set_lift_addr(None);
         let mut graph = builder.build().expect("build");
         let fake_token_node = graph.create_node(
-            NodeKind::Phi(Some(rsleigh::Vn {
-                addr_off: 0xdead,
-                addr_space: rsleigh::VnSpace::REGISTER,
-                size: 8,
-            })),
+            NodeKind::Phi,
             [],
             [NodeOutputKind::PhiToken],
         );
+        graph.set_phi_var_tag(fake_token_node, rsleigh::Vn {
+            addr_off: 0xdead,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        });
         let [token_out] = graph
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
         let vp_node = graph.create_node(
-            NodeKind::Phi(None),
+            NodeKind::Phi,
             [token_out, const_out, var_out],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );

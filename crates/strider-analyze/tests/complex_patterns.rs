@@ -554,10 +554,16 @@ fn call_uses_call_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
                         let Some(&data) = inps.get(2) else { break; };
                         producer = g.get_node_from_output(data);
                     }
-                    NodeKind::ControlState | NodeKind::Phi(None) => {
-                        // Take the first input; if it doesn't lead
-                        // back to a Call we'll bail at the next step
-                        // anyway.
+                    NodeKind::ControlState => {
+                        let inps: Vec<_> =
+                            g.node_inputs(producer).into_iter().collect();
+                        let Some(&first) = inps.first() else { break; };
+                        producer = g.get_node_from_output(first);
+                    }
+                    NodeKind::Phi if g.phi_var_tag(producer).is_none() => {
+                        // Anonymous phi (ValuePhi).  Take the first input;
+                        // if it doesn't lead back to a Call we'll bail at
+                        // the next step anyway.
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };

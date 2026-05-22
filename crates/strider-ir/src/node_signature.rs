@@ -256,9 +256,9 @@ const REF: Slot = Slot {
     name: "ref",
     role: R::Ref,
 };
-// Per-predecessor value input for Phi(Some(_)) / Phi(None). AnyValue (not AnyInt)
-// because flag-register phis are routinely Bool-typed — same rationale as
-// ARG / RET / CALL_OUT above.
+// Per-predecessor value input for Phi nodes (both Vn-tagged and
+// anonymous).  AnyValue (not AnyInt) because flag-register phis are
+// routinely Bool-typed — same rationale as ARG / RET / CALL_OUT above.
 const IN_PHI: Slot = Slot {
     kind: AnyValue,
     name: "in",
@@ -308,13 +308,14 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::ControlState => sig!(inputs: []; in_tail: CTRL, outputs: [CTRL, PHI]),
         // MemPhi: [phi_token, ...per-predecessor Memory tokens].
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
-        // Phi(Some(vn)): SSA φ tagged with source-level varnode `vn`.
-        // Phi(None):     value phi not tied to any source varnode (e.g.
-        //                synthesized by StackLoadForward).
-        // Both have shape [phi_token, ...per-predecessor values].
+        // Phi: SSA φ.  The optional source-level varnode tag lives in
+        //   `Graph::phi_var_tag` (a side-table) — `Some(vn)` is the
+        //   lift-time tagged shape; `None` is the anonymous value-phi
+        //   synthesised by StackLoadForward.  Both share this shape:
+        //   `[phi_token, ...per-predecessor values]`.
         // Output is AnyValue (not AnyInt): the phi's output type matches its
         // value inputs, which routinely include Bool-typed flag-register phis.
-        NodeKind::Phi(_) => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL]),
+        NodeKind::Phi => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL]),
 
         // ── Conditional branch ──────────────────────────────────────────────
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
@@ -687,8 +688,7 @@ mod tests {
             },
             NodeKind::ControlState,
             NodeKind::MemPhi,
-            NodeKind::Phi(Some(vn)),
-            NodeKind::Phi(None),
+            NodeKind::Phi,
             NodeKind::If,
             NodeKind::Call,
             NodeKind::Return,
@@ -755,8 +755,7 @@ mod tests {
         let cases: &[(NodeKind, K)] = &[
             (NodeKind::ControlState, K::Control),
             (NodeKind::MemPhi, K::Memory),
-            (NodeKind::Phi(Some(smoke_vn())), K::AnyValue),
-            (NodeKind::Phi(None), K::AnyValue),
+            (NodeKind::Phi, K::AnyValue),
             (NodeKind::Call, K::AnyValue),
             (NodeKind::CallOther { user_op_id: 0 }, K::AnyValue),
             (NodeKind::Return, K::AnyValue),

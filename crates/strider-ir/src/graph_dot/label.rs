@@ -125,8 +125,10 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 }
             },
             NodeKind::MemPhi => "φ Mem".to_string(),
-            NodeKind::Phi(None) => "φ Val".to_string(),
-            NodeKind::Phi(Some(var)) => format!("φ {}", self.vn_to_name(var)?),
+            NodeKind::Phi => match self.graph.phi_var_tag(node) {
+                None => "φ Val".to_string(),
+                Some(var) => format!("φ {}", self.vn_to_name(&var)?),
+            },
 
             // ── constants ─────────────────────────────────────────────────────
             NodeKind::BoolConst(v) => format!("const {v}"),

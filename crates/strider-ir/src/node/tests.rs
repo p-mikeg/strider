@@ -166,7 +166,7 @@ fn non_cacheable_kinds_are_not_cacheable() {
         NodeKind::Return,
         NodeKind::ControlState,
         NodeKind::MemPhi,
-        NodeKind::Phi(None),
+        NodeKind::Phi,
         NodeKind::Call,
         NodeKind::StackStorePhi { space },
     ];

@@ -109,6 +109,28 @@ impl Graph {
         self.call_other_names[node_id] = Some(name);
     }
 
+    /// Returns the source-level varnode tag for `node_id` if it is a
+    /// [`NodeKind::Phi`] created at lift time tracking a specific
+    /// varnode, or `None` for anonymous phis (synthesised by opt
+    /// passes) or non-phi nodes.
+    ///
+    /// Used by the indirect-branch classifier as a soundness gate:
+    /// Vn-tagged phis carry register-identity semantics that walking
+    /// through would erase.  Anonymous value phis (the `None` arm) can
+    /// be walked through safely.
+    #[inline]
+    #[must_use]
+    pub fn phi_var_tag(&self, node_id: NodeId) -> Option<rsleigh::Vn> {
+        self.phi_var_tag[node_id]
+    }
+
+    /// Sets the source-level varnode tag for `node_id`.  Callers must
+    /// guarantee that `node_id`'s kind is [`NodeKind::Phi`].
+    #[inline]
+    pub fn set_phi_var_tag(&mut self, node_id: NodeId, vn: rsleigh::Vn) {
+        self.phi_var_tag[node_id] = Some(vn);
+    }
+
     /// Returns the per-Call clobber-list override for `node_id`, or
     /// `None` if the Call uses the function-default
     /// `crate::graph::CcMetadata::call_clobbered`.
