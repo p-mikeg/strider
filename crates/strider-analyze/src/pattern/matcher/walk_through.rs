@@ -10,13 +10,19 @@
 //! direct attempt and bindings rollback, so strict patterns keep
 //! matching unchanged.
 //!
+//! The structural enumeration of predecessors lives in
+//! [`strider_ir::walk::control_state_predecessors`]; this helper owns
+//! only the per-attempt bindings-rollback policy and the recursion back
+//! into the matcher.
+//!
 //! The sibling cast walk-through (selected by
 //! [`MatcherOptions::ignore_cast_mask`]) lives inline in
 //! [`crate::pattern::matcher::Matcher::match_output_with_walk_through`] — it
 //! unwraps a value-passthrough cast and loops, which is cheaper as a
 //! tail-loop than a recursive call.
 
-use strider_ir::node::{NodeKind, NodeOutputId};
+use strider_ir::node::NodeOutputId;
+use strider_ir::walk::control_state_predecessors;
 
 use crate::pattern::matcher::Bindings;
 use crate::pattern::pat::Pat;
@@ -27,10 +33,11 @@ use crate::pattern::pat::traits::MatchCtx;
 /// each of the ControlState's control-typed inputs (one per
 /// predecessor region).  Returns true on first success.
 ///
-/// `ControlState`'s signature is `inputs: variadic Control; outputs:
-/// [Control, PhiToken]`, so every input is a control-typed producer
-/// from a predecessor region.  This helper tries them in order and
-/// rolls back bindings between attempts via `b.mark()` / `b.restore()`.
+/// Iterates predecessors via the structural enumerator in
+/// `strider_ir::walk` and rolls back bindings between failed attempts
+/// via `b.mark()` / `b.restore()`.  Recurses via the walk-through entry
+/// point so chained ControlStates (region joins of region joins) also
+/// resolve.
 ///
 /// Used to implement `ret(call(...))` against IR shapes where a region
 /// join (`Return ← ControlState ← Call`) sits between the Return and
@@ -43,15 +50,8 @@ pub(crate) fn try_walk_through_control_state(
     pat: &Pat,
     b: &mut Bindings,
 ) -> bool {
-    let producer = ctx.graph.get_node_from_output(target);
-    if !matches!(ctx.graph.node_kind(producer), NodeKind::ControlState) {
-        return false;
-    }
-    // Try each control input; rollback bindings between failed attempts.
-    // Recurse via the walk-through entry point so chained ControlStates
-    // (region joins of region joins) also resolve.
     let mark = b.mark();
-    for input in ctx.graph.node_inputs(producer) {
+    for input in control_state_predecessors(ctx.graph, target) {
         if ctx.matcher.match_output_with_walk_through(input, pat, b) {
             return true;
         }
