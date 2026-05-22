@@ -13,9 +13,9 @@
 //! Architecture-independence is delegated to the `object` crate's
 //! `RelocationKind` enum (`Absolute` = `S + A`, `Relative` = `S + A
 //! - P`, `PltRelative` = `L + A - P` — modelled as `Relative` here
-//! because we don't materialise PLT stubs).  Anything else we
-//! recognise but skip on; unknown architectures are skipped silently
-//! rather than producing partial / mis-applied patches.
+//!   because we don't materialise PLT stubs).  Anything else we
+//!   recognise but skip on; unknown architectures are skipped silently
+//!   rather than producing partial / mis-applied patches.
 
 use anyhow::Context as _;
 use object::{

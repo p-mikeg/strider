@@ -339,6 +339,7 @@ impl<'g> RewriteCtx<'g, Shared> {
     /// Constructs a shared view from a `(graph, entry)` pair.  Used by
     /// callers that hold an immutable graph reference and want to feed
     /// a read-only opt pass.
+    #[must_use]
     pub fn new_shared(graph: &'g Graph, entry: NodeId) -> Self {
         Self { graph, entry }
     }

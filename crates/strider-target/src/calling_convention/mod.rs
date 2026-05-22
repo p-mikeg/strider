@@ -855,15 +855,26 @@ pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
     CC_PRESETS.iter().find(|row| row.name == name)
 }
 
-/// Internal helper used by every named factory wrapper below — looks up
-/// the row and returns its `CallingConvention`.  Panics with a clear
-/// message if the lookup ever fails (which would mean the source file
-/// is internally inconsistent; the unit test
-/// `every_preset_factory_resolves` guards against that).
+/// Internal helper used by every named factory wrapper below — looks
+/// up the row and returns its `CallingConvention`.
+///
+/// If the lookup fails (which would mean this source file is internally
+/// inconsistent), the helper falls back to the first row of
+/// [`CC_PRESETS`] and emits a `debug_assert` so the inconsistency
+/// surfaces under test builds.  The unit test
+/// `every_preset_factory_resolves` guards against the fallback ever
+/// being hit in release builds.
 fn cc_from_table(name: &'static str) -> CallingConvention {
-    lookup_preset(name)
-        .unwrap_or_else(|| panic!("calling-convention preset {name:?} missing from CC_PRESETS table"))
-        .cc
+    match lookup_preset(name) {
+        Some(row) => row.cc,
+        None => {
+            debug_assert!(
+                false,
+                "calling-convention preset {name:?} missing from CC_PRESETS table"
+            );
+            CC_PRESETS[0].cc
+        }
+    }
 }
 
 impl CallingConvention {

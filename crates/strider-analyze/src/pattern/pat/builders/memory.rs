@@ -86,7 +86,7 @@ impl From<LoadPat> for Pat {
         if let Some(want) = bit_width {
             pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
                 let outs = ctx.graph.node_outputs(node);
-                let Some(&value_out) = outs.get(0) else {
+                let Some(&value_out) = outs.first() else {
                     return false;
                 };
                 let Some(ty) = ctx.graph.output_kind(value_out).as_value() else {

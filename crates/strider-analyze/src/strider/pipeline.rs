@@ -60,6 +60,7 @@ impl AnalyzeOutcome {
     /// Returns the number of per-region lift-handle snapshots
     /// captured at lift time.  Equivalent to the count of regions
     /// the orchestrator's indirect-branch resolver tracks.
+    #[must_use]
     pub fn region_count(&self) -> usize {
         self.region_handles.len()
     }

@@ -1070,7 +1070,7 @@ where
         .with_decode_cache(decode_cache.clone())
         .with_indirect_resolver(resolver)
         .build()
-        .map_err(|e| strider_lift::LiftError::wrap(e).into())
+        .map_err(strider_lift::LiftError::wrap)
 }
 
 /// Union the varnodes from any regions added since the last

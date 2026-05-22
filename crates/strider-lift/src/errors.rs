@@ -54,6 +54,7 @@ impl LiftError {
     /// (cfg `Builder::build`, `Strider::analyze_cfg_with`) so the
     /// Python converter can route to `LiftError` via a typed downcast
     /// instead of a substring scan over the formatted chain.
+    #[must_use]
     pub fn wrap(e: anyhow::Error) -> anyhow::Error {
         anyhow::Error::new(LiftError(e))
     }
