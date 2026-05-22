@@ -47,7 +47,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     ) -> Result<Self> {
         let builder = strider_ir::FunctionBuilder::new(
             all_vns,
-            &strider_ir::FunctionBuilderCC::from(&strider.calling_convention),
+            &strider.calling_convention,
         )?;
         Ok(Self {
             strider,

@@ -183,7 +183,7 @@ pub struct FunctionBuilder {
     /// Ignored when `stack_ptr_vn` is `None`.
     pub(crate) ret_stack_pop: i64,
     /// Function-default value of `CallingConvention::no_memory_clobber`
-    /// (carried over via [`crate::FunctionBuilderCC::no_memory_clobber`]).
+    /// (carried over via [`strider_target::BuiltCallingConvention::no_memory_clobber`]).
     /// When `true`, [`Self::build_call_with_cc`] suppresses the `Memory`
     /// output on the resulting `Call` node and does not advance the region's
     /// memory chain.  Per-call `override_cc` may override this.
@@ -273,7 +273,7 @@ impl FunctionBuilder {
     /// a tracked variable's byte size has no matching `NodeOutputType`.
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
-        cc: &crate::FunctionBuilderCC,
+        cc: &strider_target::BuiltCallingConvention,
     ) -> Result<Self> {
         // Ensure all return registers (int + float) are tracked variables.
         // This keeps the data-flow chain from a float operation's output
@@ -324,7 +324,7 @@ impl FunctionBuilder {
     /// Low-level constructor that takes the convention-derived data as
     /// unpacked slices.  Used by synthetic tests that don't resolve a real
     /// calling convention against a Sleigh register table — production code
-    /// should use [`FunctionBuilder::new`] with a [`crate::FunctionBuilderCC`].
+    /// should use [`FunctionBuilder::new`] with a [`strider_target::BuiltCallingConvention`].
     ///
     /// # Errors
     ///

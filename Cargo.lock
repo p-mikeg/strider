@@ -1340,6 +1340,7 @@ dependencies = [
  "rustc-hash",
  "smallvec",
  "strider-ir-test-utils",
+ "strider-target",
  "thiserror",
 ]
 
@@ -1412,7 +1413,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rsleigh",
- "strider-ir",
 ]
 
 [[package]]

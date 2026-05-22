@@ -241,13 +241,10 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             .build_int_const(target_addr, space_info.addr_size().try_into()?)?;
         // Per-address CC override: when the call target matches a
         // user-supplied entry, build the Call with that CC instead of
-        // the function-default.  Convert the rich
-        // `strider_target::BuiltCallingConvention` to the thin
-        // `strider_ir::FunctionBuilderCC` slice the builder consumes
-        // (keeps the ir → target dependency direction forward).
-        let override_cc = self.per_address_ccs.get(&target_addr).map(strider_ir::FunctionBuilderCC::from);
+        // the function-default.
+        let override_cc = self.per_address_ccs.get(&target_addr);
         self.builder
-            .build_call_with_cc(call_address, override_cc.as_ref())
+            .build_call_with_cc(call_address, override_cc)
             .map(|_| ())?;
         Ok(())
     }
@@ -278,11 +275,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             .builder
             .build_int_const(target, space_info.addr_size().try_into()?)?;
         // Per-address CC override applies to lift-time tail calls too.
-        // Convert from the rich `BuiltCallingConvention` to the thin
-        // `FunctionBuilderCC` slice (see `handle_call`).
-        let override_cc = self.per_address_ccs.get(&target).map(strider_ir::FunctionBuilderCC::from);
+        let override_cc = self.per_address_ccs.get(&target);
         self.builder
-            .build_call_with_cc(call_address, override_cc.as_ref())
+            .build_call_with_cc(call_address, override_cc)
             .map(|_| ())?;
         let ret_regs = self.builder.ret_val_vars().to_vec();
         self.builder.build_return(None, &ret_regs)?;

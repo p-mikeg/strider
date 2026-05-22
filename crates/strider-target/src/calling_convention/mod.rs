@@ -72,11 +72,10 @@ pub struct CallingConvention {
     /// `pop {pc}` / `jr ra` shapes as `Return`.
     link_register_reg_name: Option<&'static str>,
     /// `true` if calls under this convention preserve **all** observable
-    /// state, including memory.  When set, [`build_call_with_cc`](
-    /// `strider_ir::FunctionBuilder::build_call_with_cc`) skips emitting a Memory
-    /// output on the resulting Call node and does not advance the region's
-    /// memory chain — so passes like `LoadReadOnly` and `StackLoadForward`
-    /// can forward loads across the call.
+    /// state, including memory.  When set, `strider_ir::FunctionBuilder::build_call_with_cc`
+    /// skips emitting a Memory output on the resulting Call node and does not
+    /// advance the region's memory chain — so passes like `LoadReadOnly` and
+    /// `StackLoadForward` can forward loads across the call.
     ///
     /// `false` for every standard ABI; `true` only on
     /// [`Self::x86_64_all_preserving`] and analogous "transparent hook"
@@ -247,50 +246,6 @@ impl BuiltCallingConvention {
         })
     }
 
-}
-
-/// Downcast a rich [`BuiltCallingConvention`] to the thin
-/// [`strider_ir::FunctionBuilderCC`] slice the IR builder consumes.
-///
-/// Defined here (in `strider-target`) rather than in `strider-ir` so the IR
-/// crate doesn't need to depend on `strider-target` — `strider-target` sits
-/// above `strider-ir`
-/// in the crate-dependency order, so having the `From` impl here keeps
-/// the direction forward.
-///
-/// The conversion is a straight field copy: every field of
-/// `FunctionBuilderCC` has a same-named accessor (or field) on
-/// `BuiltCallingConvention`.
-impl From<BuiltCallingConvention> for strider_ir::FunctionBuilderCC {
-    fn from(cc: BuiltCallingConvention) -> strider_ir::FunctionBuilderCC {
-        strider_ir::FunctionBuilderCC {
-            arg_passing_regs: cc.arg_passing_regs,
-            callee_saved_regs: cc.callee_saved_regs,
-            ret_val_regs: cc.ret_val_regs,
-            ret_val_regs_float: cc.ret_val_regs_float,
-            stack_ptr_vn: cc.stack_ptr_vn,
-            ret_stack_pop: cc.ret_stack_pop,
-            no_memory_clobber: cc.no_memory_clobber,
-        }
-    }
-}
-
-/// Borrow form: same as the owning [`From`] impl but takes a reference,
-/// for call sites that still need the original `BuiltCallingConvention`
-/// after the conversion (e.g. the strider lift driver, which holds onto
-/// the rich CC for arg-passing register access).
-impl From<&BuiltCallingConvention> for strider_ir::FunctionBuilderCC {
-    fn from(cc: &BuiltCallingConvention) -> strider_ir::FunctionBuilderCC {
-        strider_ir::FunctionBuilderCC {
-            arg_passing_regs: cc.arg_passing_regs.clone(),
-            callee_saved_regs: cc.callee_saved_regs.clone(),
-            ret_val_regs: cc.ret_val_regs.clone(),
-            ret_val_regs_float: cc.ret_val_regs_float.clone(),
-            stack_ptr_vn: cc.stack_ptr_vn,
-            ret_stack_pop: cc.ret_stack_pop,
-            no_memory_clobber: cc.no_memory_clobber,
-        }
-    }
 }
 
 /// One row of the calling-convention preset table.  Carries the

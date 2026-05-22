@@ -47,7 +47,7 @@ impl FunctionBuilder {
     pub fn build_call_with_cc(
         &mut self,
         call_address: NodeOutputId,
-        override_cc: Option<&crate::FunctionBuilderCC>,
+        override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<NodeId> {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
