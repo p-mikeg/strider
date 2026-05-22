@@ -2,11 +2,11 @@
 //!
 //! The Rust `strider_analyze::opt::OptimizerPipeline::add` is generic over the concrete
 //! pass type (`O: Optimizer + 'static`) and stores it as
-//! `Box<dyn OptimizerRaw>` internally.  We can't directly stuff a
-//! type-erased `Box<dyn OptimizerRaw>` back into `add`, so the Python
+//! `Box<dyn Optimizer>` internally.  We can't directly stuff a
+//! type-erased `Box<dyn Optimizer>` back into `add`, so the Python
 //! wrapper accumulates erased boxes and, at run time, transfers them
 //! into a fresh real pipeline via a small adapter that re-implements
-//! `OptimizerRaw` as a forwarder.
+//! `Optimizer` as a forwarder.
 
 use pyo3::prelude::*;
 use pyo3::types::PyType;
@@ -14,31 +14,25 @@ use std::sync::Mutex;
 
 use crate::errors::into_strider_err;
 
-/// Trait-object holder owning a heap-allocated `strider_analyze::opt::OptimizerRaw`.
+/// Trait-object holder owning a heap-allocated `strider_analyze::opt::Optimizer`.
 /// The wrapper itself is `Send + Sync` so it can move across the
 /// PyO3 boundary safely (Python objects are reachable from any
 /// thread that holds the GIL).
-///
-/// We use the low-level [`strider_analyze::opt::OptimizerRaw`] trait (which takes
-/// `(&mut Graph, NodeId)`) rather than [`strider_analyze::opt::Optimizer`] (which
-/// takes `&mut RewriteCtx`) because every passes' concrete type is
-/// already erased here — no per-call `RewriteCtx` construction is
-/// needed and the Rust signature stays purely in `Graph` terms.
-pub(crate) type ErasedPass = Box<dyn strider_analyze::opt::OptimizerRaw + Send + Sync>;
+pub(crate) type ErasedPass = Box<dyn strider_analyze::opt::Optimizer + Send + Sync>;
 
 /// Adapter that turns an owned `ErasedPass` into something
 /// `strider_analyze::opt::OptimizerPipeline::add` can accept.  `add` requires
-/// `O: OptimizerRaw + 'static`; this newtype satisfies both bounds and
-/// forwards `optimize_raw` straight through.
+/// `O: Optimizer + 'static`; this newtype satisfies both bounds and
+/// forwards `optimize` straight through.
 struct ForwardPass(ErasedPass);
 
-impl strider_analyze::opt::OptimizerRaw for ForwardPass {
-    fn optimize_raw(
+impl strider_analyze::opt::Optimizer for ForwardPass {
+    fn optimize(
         &self,
         graph: &mut strider_ir::Graph,
         entry: strider_ir::node::NodeId,
     ) -> strider_analyze::opt::Result<strider_analyze::opt::OptimizationResult> {
-        self.0.optimize_raw(graph, entry)
+        self.0.optimize(graph, entry)
     }
 }
 
@@ -61,7 +55,7 @@ impl PipelineState {
     fn from_default() -> Self {
         // Re-create the default pipeline by reconstructing each pass
         // individually rather than calling strider_analyze::opt::default_pipeline()
-        // (which returns an OptimizerPipeline whose Box<dyn OptimizerRaw>
+        // (which returns an OptimizerPipeline whose Box<dyn Optimizer>
         // entries are not externally re-extractable).  Pass list and
         // order MUST mirror `strider_analyze::opt::default_pipeline()` — drift here
         // silently produces graphs that look different from the

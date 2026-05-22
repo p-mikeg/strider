@@ -1,6 +1,6 @@
 use super::*;
 use crate::opt::error::Result;
-use crate::opt::pipeline::OptimizerRaw;
+use crate::opt::pipeline::Optimizer;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_ir::{FunctionBuilder, IntBinaryOp};
@@ -871,7 +871,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
     let entry = fg.entry().unwrap();
-    StackLoadForward::new(sp, Endianness::Little).optimize_raw(fg.graph_mut(), entry)?;
+    StackLoadForward::new(sp, Endianness::Little).optimize(fg.graph_mut(), entry)?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.

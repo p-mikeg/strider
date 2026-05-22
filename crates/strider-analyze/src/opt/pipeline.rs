@@ -75,98 +75,56 @@ impl std::ops::BitOrAssign for OptimizationResult {
     }
 }
 
-/// Bridge `(&mut Graph, NodeId)` callers to a `&mut RewriteCtx`-typed
-/// closure.  No partial-state `BuiltFunctionGraph` construction is
-/// needed: every `Optimizer` impl in this crate reads only `graph` and
-/// `entry`, both of which `RewriteCtx` exposes natively (with
-/// `Deref<Target=Graph>` + `preorder()` mirroring BFG's API for
-/// ergonomic call-site compatibility).
-pub(crate) fn with_rewrite_ctx<R>(
-    graph: &mut strider_ir::Graph,
-    entry: strider_ir::node::NodeId,
-    f: impl FnOnce(&mut crate::pattern::RewriteCtx<'_>) -> R,
-) -> R {
-    let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
-    f(&mut ctx)
-}
-
-/// Low-level optimizer interface that takes `(&mut Graph, NodeId)`
-/// directly.  Used as the pipeline's dispatch trait: passes that want
-/// raw graph + entry access (e.g. external Python bindings that hold
-/// type-erased `Box<dyn OptimizerRaw>` adapters) implement this
-/// directly, and the higher-level `Optimizer` trait blanket-impls
-/// this via `with_rewrite_ctx`.
-///
-/// **Most passes should implement `Optimizer` instead** — it operates
-/// on a [`crate::pattern::RewriteCtx`] and gets the ergonomic `Deref<Target =
-/// Graph>` + `preorder()` accessors for free.
-pub trait OptimizerRaw: Send + Sync {
-    /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
-    ///
-    /// # Why `(&mut Graph, NodeId)` and not `&mut crate::pattern::RewriteCtx<'_>`
-    ///
-    /// Callers can run optimizer passes on a graph that has not yet
-    /// been packaged into a final [`strider_ir::BuiltFunctionGraph`] (e.g. on
-    /// a live [`strider_ir::FunctionBuilder`] via
-    /// [`strider_ir::FunctionBuilder::graph_mut`] + [`strider_ir::FunctionBuilder::entry`]).
-    /// `BuiltFunctionGraph` is a final-output convenience type, not
-    /// a precondition for analysis.
-    ///
-    /// `entry` is the function's entry [`strider_ir::node::NodeId`] — needed because
-    /// several passes walk the reachable-node set (`graph.preorder(entry)`)
-    /// or use it directly (`strider_ir::walk::cfg_reachable(graph, entry)`).
-    ///
-    /// # Errors
-    ///
-    /// Returns the first error encountered by the pass — typically an IR
-    /// validation failure or a pattern-rewrite error propagated up through
-    /// `anyhow::Error`.
-    fn optimize_raw(
-        &self,
-        graph: &mut strider_ir::Graph,
-        entry: strider_ir::node::NodeId,
-    ) -> crate::opt::Result<OptimizationResult>;
-}
-
 /// A single IR optimization pass.
 ///
-/// Implement this trait to add a new pass.  The pass receives a
-/// [`crate::pattern::RewriteCtx`] (a `&mut Graph + entry` pair with
-/// ergonomic `Deref<Target = Graph>` + `preorder()` accessors),
+/// Implement this trait to add a new pass.  The pass receives the
+/// function `graph` and its `entry` [`strider_ir::node::NodeId`],
 /// applies whatever transformations it can in one sweep, and returns
 /// [`OptimizationResult::Changed`] if anything was modified (causing
 /// the pipeline to run another iteration) or
 /// [`OptimizationResult::NoChange`] if the graph is already in normal
 /// form for this pass.
 ///
-/// `RewriteCtx` mirrors BFG's API, so pass bodies can use
-/// `ctx.node_kind(_)` / `ctx.preorder()` / `ctx.create_node(_)`
-/// directly.
+/// # Why `(&mut Graph, NodeId)` and not `&mut crate::pattern::RewriteCtx<'_>`
 ///
-/// Passes that need direct `&mut Graph` access without the wrapper
-/// (rare — typically external bindings holding type-erased boxes) can
-/// implement [`OptimizerRaw`] instead.
-pub(crate) trait Optimizer: Send + Sync {
-    /// Run one sweep of this pass over the function graph.  See
-    /// [`OptimizationResult`] for the `Changed`/`NoChange` contract.
+/// `RewriteCtx<'_>` carries a lifetime parameter, which prevents it
+/// appearing as the receiver type of a trait object
+/// (`Box<dyn Optimizer>`).  The pipeline stores type-erased passes, so
+/// the trait must be object-safe with no lifetime parameter.  Pass
+/// authors that want the ergonomic `RewriteCtx` API construct one
+/// internally at the top of `optimize`:
+///
+/// ```ignore
+/// fn optimize(&self, graph: &mut Graph, entry: NodeId) -> Result<OptimizationResult> {
+///     let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+///     // ... pass body operating on `ctx` ...
+/// }
+/// ```
+///
+/// Callers can run optimizer passes on a graph that has not yet been
+/// packaged into a final [`strider_ir::BuiltFunctionGraph`] (e.g. on a
+/// live [`strider_ir::FunctionBuilder`] via
+/// [`strider_ir::FunctionBuilder::graph_mut`] +
+/// [`strider_ir::FunctionBuilder::entry`]).  `BuiltFunctionGraph` is a
+/// final-output convenience type, not a precondition for analysis.
+///
+/// `entry` is the function's entry [`strider_ir::node::NodeId`] —
+/// needed because several passes walk the reachable-node set
+/// (`graph.preorder(entry)`) or use it directly
+/// (`strider_ir::walk::cfg_reachable(graph, entry)`).
+pub trait Optimizer: Send + Sync {
+    /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
     ///
     /// # Errors
     ///
-    /// Returns the first error encountered by the pass.
+    /// Returns the first error encountered by the pass — typically an IR
+    /// validation failure or a pattern-rewrite error propagated up through
+    /// `anyhow::Error`.
     fn optimize(
-        &self,
-        ctx: &mut crate::pattern::RewriteCtx<'_>,
-    ) -> crate::opt::Result<OptimizationResult>;
-}
-
-impl<T: Optimizer> OptimizerRaw for T {
-    fn optimize_raw(
         &self,
         graph: &mut strider_ir::Graph,
         entry: strider_ir::node::NodeId,
-    ) -> crate::opt::Result<OptimizationResult> {
-        with_rewrite_ctx(graph, entry, |ctx| self.optimize(ctx))
-    }
+    ) -> crate::opt::Result<OptimizationResult>;
 }
 
 /// An ordered list of `Optimizer` passes that are run in a shared fixed-point
@@ -176,13 +134,11 @@ impl<T: Optimizer> OptimizerRaw for T {
 /// repeats until no pass reports a change.  Use [`OptimizerPipeline::add`] to
 /// register passes and [`OptimizerPipeline::run`] to execute them.
 ///
-/// Internally the pipeline stores passes as `Box<dyn OptimizerRaw>` so
-/// it can dispatch on `(&mut Graph, NodeId)` directly.  The blanket
-/// `impl<T: Optimizer> OptimizerRaw for T` lets users register any
-/// `Optimizer` pass without explicit conversion.
+/// Internally the pipeline stores passes as `Box<dyn Optimizer>` so it
+/// can dispatch on `(&mut Graph, NodeId)` directly.
 pub struct OptimizerPipeline {
-    optimizers: Vec<Box<dyn OptimizerRaw>>,
-    post_passes: Vec<Box<dyn OptimizerRaw>>,
+    optimizers: Vec<Box<dyn Optimizer>>,
+    post_passes: Vec<Box<dyn Optimizer>>,
 }
 
 impl Default for OptimizerPipeline {
@@ -202,14 +158,14 @@ impl OptimizerPipeline {
     }
 
     /// Appends `opt` to the end of the pass list.
-    pub fn add<O: OptimizerRaw + 'static>(&mut self, opt: O) {
+    pub fn add<O: Optimizer + 'static>(&mut self, opt: O) {
         self.optimizers.push(Box::new(opt));
     }
 
     /// Appends `opt` to the post-pass list.  Post-passes run once, in
     /// registration order, after the fixed-point loop converges.  Their return
     /// value is ignored (no re-entry into the fixed-point loop).
-    pub fn add_post_pass<O: OptimizerRaw + 'static>(&mut self, opt: O) {
+    pub fn add_post_pass<O: Optimizer + 'static>(&mut self, opt: O) {
         self.post_passes.push(Box::new(opt));
     }
 
@@ -236,7 +192,7 @@ impl OptimizerPipeline {
         loop {
             let mut changed = false;
             for opt in &self.optimizers {
-                if opt.optimize_raw(graph, entry)?.changed() {
+                if opt.optimize(graph, entry)?.changed() {
                     changed = true;
                 }
             }
@@ -249,7 +205,7 @@ impl OptimizerPipeline {
             }
         }
         for opt in &self.post_passes {
-            opt.optimize_raw(graph, entry)?;
+            opt.optimize(graph, entry)?;
         }
         strider_ir::validate::validate(graph, entry)?;
         Ok(())

@@ -163,36 +163,29 @@ fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
     }
     let producer = graph.get_node_from_output(out);
     let kind = *graph.node_kind(producer);
+    // Both Truncate and Extend take their single input as slot 0; peel
+    // to that input and require it to be an IntConst.  The arm-specific
+    // mask / extend logic then operates on the unwrapped `k`.
+    let inner = graph.nth_input(producer, 0)?;
+    let NodeKind::IntConst(k) = *graph.kind_of_output(inner) else {
+        return None;
+    };
     match kind {
         NodeKind::Truncate => {
-            let inner = graph.nth_input(producer, 0)?;
-            let inner_kind = *graph.kind_of_output(inner);
-            if let NodeKind::IntConst(k) = inner_kind {
-                let out_ty = graph.output_kind(out).as_value()?;
-                let masked = k & out_ty.bit_mask_u128();
-                #[allow(clippy::cast_possible_truncation)]
-                return Some(masked as u64);
-            }
-            None
+            let out_ty = graph.output_kind(out).as_value()?;
+            let masked = k & out_ty.bit_mask_u128();
+            #[allow(clippy::cast_possible_truncation)]
+            Some(masked as u64)
         }
-        NodeKind::Extend(op) => {
-            let inner = graph.nth_input(producer, 0)?;
-            let inner_kind = *graph.kind_of_output(inner);
-            let NodeKind::IntConst(k) = inner_kind else {
-                return None;
-            };
-            match op {
-                strider_ir::ExtendOp::ZeroExtend => {
-                    #[allow(clippy::cast_possible_truncation)]
-                    Some(k as u64)
-                }
-                strider_ir::ExtendOp::SignExtend => {
-                    let in_ty = graph.output_kind(inner).as_value()?;
-                    let signed = in_ty.get_signed_int(k)?;
-                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-                    Some(signed as u64)
-                }
-            }
+        NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend) => {
+            #[allow(clippy::cast_possible_truncation)]
+            Some(k as u64)
+        }
+        NodeKind::Extend(strider_ir::ExtendOp::SignExtend) => {
+            let in_ty = graph.output_kind(inner).as_value()?;
+            let signed = in_ty.get_signed_int(k)?;
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            Some(signed as u64)
         }
         _ => None,
     }

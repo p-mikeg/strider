@@ -1,6 +1,6 @@
 use super::*;
 use crate::opt::error::Result;
-use crate::opt::pipeline::OptimizerRaw;
+use crate::opt::pipeline::Optimizer;
 use strider_ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
 use strider_ir_test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
@@ -39,7 +39,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
 
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
     let entry = fg.entry().unwrap();
-    pass.optimize_raw(fg.graph_mut(), entry)?;
+    pass.optimize(fg.graph_mut(), entry)?;
 
     let n_fa = count((&fg).into(), |k| {
         matches!(

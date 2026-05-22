@@ -168,7 +168,12 @@ fn remove_phis(
 pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
-    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut strider_ir::Graph,
+        entry: NodeId,
+    ) -> crate::opt::Result<OptimizationResult> {
+        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
         let reachable = strider_ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `remove_phis`, so don't
@@ -183,7 +188,7 @@ impl Optimizer for RedundantPhis {
             })
             .collect();
         for node_id in candidates {
-            res |= remove_phis(ctx, node_id, &reachable)?;
+            res |= remove_phis(&mut ctx, node_id, &reachable)?;
         }
         // Detaching unreachable zombies is bookkeeping, not progress: an
         // unreachable node cannot be a consumer of a reachable producer, so

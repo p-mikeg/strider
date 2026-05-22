@@ -1,7 +1,7 @@
 use super::*;
 use anyhow::anyhow;
 use crate::opt::error::Result;
-use crate::opt::pipeline::OptimizerRaw;
+use crate::opt::pipeline::Optimizer;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use strider_ir_test_utils::{sp_vn_x86 as sp_vn, SENTINEL_LIFT_ADDR};
@@ -391,7 +391,7 @@ fn non_stack_store_is_untouched() -> Result<()> {
     })?;
 
     let entry = fg.entry().unwrap();
-    StackStoreDetect::new(sp).optimize_raw(fg.graph_mut(), entry)?;
+    StackStoreDetect::new(sp).optimize(fg.graph_mut(), entry)?;
 
     assert_eq!(
         count((&fg).into(), |k| matches!(k, NodeKind::StackStore { .. })),
@@ -665,7 +665,7 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     let mut fg = b.build()?;
 
     let entry = fg.entry().unwrap();
-    StackStoreDetect::new(sp).optimize_raw(fg.graph_mut(), entry)?;
+    StackStoreDetect::new(sp).optimize(fg.graph_mut(), entry)?;
 
     assert_eq!(
         count((&fg).into(), |k| matches!(k, NodeKind::StackStore { .. })),

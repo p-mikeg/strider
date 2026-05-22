@@ -115,8 +115,13 @@ impl<M: ReadOnlyMemory + 'static> PeepholePass for LoadReadOnly<M> {
 }
 
 impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
-    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
-        run_peephole(self, ctx)
+    fn optimize(
+        &self,
+        graph: &mut strider_ir::Graph,
+        entry: strider_ir::node::NodeId,
+    ) -> crate::opt::Result<OptimizationResult> {
+        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        run_peephole(self, &mut ctx)
     }
 }
 

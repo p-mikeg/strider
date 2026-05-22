@@ -19,7 +19,7 @@ use object::{Object, ObjectSymbol};
 use strider_ir::node::{NodeOutputType, NodeOutputKind};
 use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use strider_analyze::opt::{
-    ConstantFold, OptimizerPipeline, OptimizerRaw, RedundantPhis, StackLoadForward, StackStoreDetect,
+    ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
 };
 
 #[derive(Clone, Copy)]
@@ -369,7 +369,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 |mut fg| {
                     let pass = StackLoadForward::new(sp, strider_target::Endianness::Little);
                     let entry = fg.entry().unwrap();
-                    let _ = pass.optimize_raw(fg.graph_mut(), entry);
+                    let _ = pass.optimize(fg.graph_mut(), entry);
                     black_box(fg);
                 },
                 BatchSize::LargeInput,

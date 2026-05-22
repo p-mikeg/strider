@@ -90,11 +90,16 @@ impl FunctionArgDetect {
 }
 
 impl Optimizer for FunctionArgDetect {
-    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut strider_ir::Graph,
+        entry: NodeId,
+    ) -> Result<OptimizationResult> {
+        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
         let mut changed = OptimizationResult::NoChange;
-        changed |= detect_register_args(ctx, &self.arg_passing_regs)?;
+        changed |= detect_register_args(&mut ctx, &self.arg_passing_regs)?;
         changed |= detect_stack_args(
-            ctx,
+            &mut ctx,
             self.stack_ptr_vn,
             &self.stack_arg_offsets,
             self.arg_passing_regs.len(),

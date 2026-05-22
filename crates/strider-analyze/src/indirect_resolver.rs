@@ -285,7 +285,7 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     //
     // `LoadReadOnly` is NOT added to the pipeline by the caller: its
     // `Optimizer` impl requires `M: 'static` (the pipeline
-    // stores passes as `Box<dyn OptimizerRaw + 'static>`), and `rom`
+    // stores passes as `Box<dyn Optimizer + 'static>`), and `rom`
     // is borrowed for an arbitrary lifetime.  The with-rom branch
     // upstream drives an inlined load-folder by hand — see
     // [`resolve_const_loads`].
@@ -321,7 +321,7 @@ fn make_resolver_pipeline() -> OptimizerPipeline {
 /// rewrites the load's value output to the resulting `IntConst`.
 ///
 /// Why a copy: `OptimizerPipeline::add` requires `O: 'static` because
-/// the pipeline stores passes as `Box<dyn OptimizerRaw + 'static>`.  The
+/// the pipeline stores passes as `Box<dyn Optimizer + 'static>`.  The
 /// resolver's `rom` is borrowed for an arbitrary (non-'static)
 /// lifetime so it can't be wrapped in `LoadReadOnly` and registered
 /// directly.  Must stay in lockstep with [`crate::opt::LoadReadOnly`]'s impl.

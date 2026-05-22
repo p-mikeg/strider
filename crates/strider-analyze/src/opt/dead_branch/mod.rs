@@ -272,7 +272,12 @@ fn dead_subgraph_has_live_data_consumer(
 pub struct DeadBranchElimination;
 
 impl Optimizer for DeadBranchElimination {
-    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> crate::opt::Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut strider_ir::Graph,
+        entry: NodeId,
+    ) -> crate::opt::Result<OptimizationResult> {
+        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
         // DBE only fires on `If` nodes whose outputs are control edges. We
         // drain the seeded preorder once: chained constant-branch patterns
         // (where one elimination exposes another) are caught by the outer
@@ -281,7 +286,7 @@ impl Optimizer for DeadBranchElimination {
         let mut work: Worklist<NodeId> = ctx.preorder().collect();
         let mut result = OptimizationResult::NoChange;
         while let Some(node_id) = work.dequeue() {
-            result |= try_eliminate_dead_branch(ctx, node_id)?;
+            result |= try_eliminate_dead_branch(&mut ctx, node_id)?;
         }
         Ok(result)
     }

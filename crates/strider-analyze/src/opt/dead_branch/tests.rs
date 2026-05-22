@@ -3,7 +3,7 @@ use strider_ir::FunctionBuilder;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::{reg_vn, SENTINEL_LIFT_ADDR};
 
-use crate::opt::pipeline::OptimizerRaw;
+use crate::opt::pipeline::Optimizer;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
 // Helper: count ControlState nodes with N ctrl inputs.
@@ -52,7 +52,7 @@ fn dead_branch_false() -> Result<()> {
     assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
 
     let entry = fg.entry().unwrap();
-    let result = DeadBranchElimination.optimize_raw(fg.graph_mut(), entry)?;
+    let result = DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
     assert!(result.changed());
 
     // After: true region's CS loses its input (dead branch removed).
@@ -77,7 +77,7 @@ fn dead_branch_true() -> Result<()> {
     assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
 
     let entry = fg.entry().unwrap();
-    let result = DeadBranchElimination.optimize_raw(fg.graph_mut(), entry)?;
+    let result = DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
     assert!(result.changed());
 
     assert_eq!(
@@ -122,7 +122,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
     // DeadBranchElimination alone should not fire because the condition
     // is a BoolBinaryOp node, not a BoolConst.
     let entry = fg.entry().unwrap();
-    assert!(!DeadBranchElimination.optimize_raw(fg.graph_mut(), entry)?.changed());
+    assert!(!DeadBranchElimination.optimize(fg.graph_mut(), entry)?.changed());
     Ok(())
 }
 
@@ -232,7 +232,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     // a deliberately-unusual (but IR-permitted) shape. DBE itself must handle
     // it without leaving a stale reference behind.
     let entry = fg.entry().unwrap();
-    DeadBranchElimination.optimize_raw(fg.graph_mut(), entry)?;
+    DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
 
     let post_inputs: Vec<_> = fg.node_inputs(false_cs).into_iter().collect();
     assert_eq!(
@@ -334,7 +334,7 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
     // now-zero-input If via backward-data and reported
     // `NodeInputCountMismatch { expected: 2, actual: 0 }`.
     let entry = fg.entry().unwrap();
-    DeadBranchElimination.optimize_raw(fg.graph_mut(), entry)?;
+    DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
     strider_ir::validate::validate(fg.graph(), fg.entry().unwrap())
         .map_err(|e| anyhow::anyhow!("post-DBE validation failed: {e:?}"))?;
 
@@ -390,7 +390,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     assert!(pre_phi_count > 0);
 
     let entry = fg.entry().unwrap();
-    DeadBranchElimination.optimize_raw(fg.graph_mut(), entry)?;
+    DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
     // A VarPhi at the join should now have only the live predecessor's
     // value input (length = 1 token + 1 value = 2).
     let join_phi = fg

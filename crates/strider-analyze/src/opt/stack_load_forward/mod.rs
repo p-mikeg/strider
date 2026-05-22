@@ -59,12 +59,17 @@ impl StackLoadForward {
 }
 
 impl Optimizer for StackLoadForward {
-    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
-        let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
+    fn optimize(
+        &self,
+        graph: &mut strider_ir::Graph,
+        entry: strider_ir::node::NodeId,
+    ) -> Result<OptimizationResult> {
+        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        let mut work = seeded_kind(&mut ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         while let Some(load) = work.dequeue() {
-            result |= try_forward_load(ctx, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
+            result |= try_forward_load(&mut ctx, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
         }
         Ok(result)
     }

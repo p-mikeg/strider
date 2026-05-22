@@ -84,8 +84,13 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
 }
 
 impl Optimizer for IfCondInversion {
-    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
-        crate::opt::peephole::run_peephole(self, ctx)
+    fn optimize(
+        &self,
+        graph: &mut strider_ir::Graph,
+        entry: strider_ir::node::NodeId,
+    ) -> Result<OptimizationResult> {
+        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        crate::opt::peephole::run_peephole(self, &mut ctx)
     }
 }
 

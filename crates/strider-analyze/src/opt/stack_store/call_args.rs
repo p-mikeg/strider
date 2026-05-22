@@ -298,7 +298,12 @@ impl CallStackArgCollect {
 }
 
 impl Optimizer for CallStackArgCollect {
-    fn optimize(&self, ctx: &mut crate::pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut strider_ir::Graph,
+        entry: NodeId,
+    ) -> Result<OptimizationResult> {
+        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
         let calls: Vec<NodeId> = ctx
             .preorder()
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
@@ -311,7 +316,7 @@ impl Optimizer for CallStackArgCollect {
         let mut result = OptimizationResult::NoChange;
         for call_id in calls {
             result |= try_collect_stack_args(
-                ctx,
+                &mut ctx,
                 call_id,
                 &self.stack_arg_offsets,
                 self.stack_ptr_vn,
