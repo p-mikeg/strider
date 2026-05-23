@@ -164,17 +164,16 @@ fn bool_binary_any_captures_variant() {
 
 #[test]
 fn bool_unary_any_captures_variant() {
-    for op in [BoolUnaryOp::Neg] {
-        let mut t = Tb::empty();
-        let v = t.boolean(true);
-        let v = t.bool_un(v, op);
-        let cast = t.as_int(v, NodeOutputType::U64);
-        let g = t.ret_val(cast);
+    let op = BoolUnaryOp::Neg;
+    let mut t = Tb::empty();
+    let v = t.boolean(true);
+    let v = t.bool_un(v, op);
+    let cast = t.as_int(v, NodeOutputType::U64);
+    let g = t.ret_val(cast);
 
-        let ov = Capture::new();
-        let m = a::unique(&g, bool_unary_any(ov, bool_const(true)));
-        assert_eq!(m.get_bool_unary_op(ov, &g), Some(op));
-    }
+    let ov = Capture::new();
+    let m = a::unique(&g, bool_unary_any(ov, bool_const(true)));
+    assert_eq!(m.get_bool_unary_op(ov, &g), Some(op));
 }
 
 // ── Float binary / unary / cmp ───────────────────────────────────────────────

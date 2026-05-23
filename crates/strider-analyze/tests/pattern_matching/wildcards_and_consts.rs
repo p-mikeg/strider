@@ -24,7 +24,7 @@ fn any_matches_every_output() {
     // `any()` has no kind filter so it returns a match per reachable output.
     // The exact count depends on graph internals (Entry/Return produce control
     // edges, not value outputs) so we only require >= 3.
-    let hits = Matcher::new(&g).find_all(&any().into());
+    let hits = Matcher::new(&g).find_all(&any());
     assert!(hits.len() >= 3, "expected at least 3 matches, got {}", hits.len());
 }
 

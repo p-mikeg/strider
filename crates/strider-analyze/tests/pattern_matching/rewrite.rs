@@ -107,9 +107,10 @@ fn rule_returns_false_when_lhs_does_not_match() {
     let x = Capture::new();
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u64));
     let add_node = find_add(&g);
-    let mut ctx = RewriteCtx::for_built(&mut g);
-    let fired = rule(&mut ctx, add_node).expect("ok");
-    drop(ctx);
+    let fired = {
+        let mut ctx = RewriteCtx::for_built(&mut g);
+        rule(&mut ctx, add_node).expect("ok")
+    };
     assert!(!fired);
 
     assert!(matches!(
@@ -125,9 +126,10 @@ fn sub_x_x_to_zero_rule() {
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u64));
 
     let sub_node = find_sub(&g);
-    let mut ctx = RewriteCtx::for_built(&mut g);
-    let fired = rule(&mut ctx, sub_node).expect("ok");
-    drop(ctx);
+    let fired = {
+        let mut ctx = RewriteCtx::for_built(&mut g);
+        rule(&mut ctx, sub_node).expect("ok")
+    };
     assert!(fired);
 
     let kind = return_data_input_kind(&g);
@@ -138,11 +140,6 @@ fn sub_x_x_to_zero_rule() {
 
 fn is_not_buildable_err(err: &anyhow::Error) -> bool {
     format!("{err}").contains("not buildable")
-}
-
-fn is_missing_binding_err(err: &anyhow::Error, kind: &str) -> bool {
-    let s = format!("{err}");
-    s.contains("missing binding") && s.contains(kind)
 }
 
 #[test]
