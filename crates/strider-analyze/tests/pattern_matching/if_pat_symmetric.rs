@@ -91,8 +91,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     let pat: Pat = if_node()
         .cond(int_eq(int_const(4u64), int_const(1u64)))
         .true_branch(any())
-        .capture(n)
-        .into();
+        .capture(n);
     let m_d = a::unique(&g_direct, pat.clone());
     assert!(matches!(
         g_direct.node_kind(m_d.node(n).unwrap()),
