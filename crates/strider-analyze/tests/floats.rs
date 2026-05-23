@@ -42,7 +42,7 @@ per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
     ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatUnaryOp::Neg",
 });
 
-fn has_four_float_binops(g: &strider_ir::BuiltFunctionGraph) {
+fn has_four_float_binops(g: &strider_ir::Graph) {
     // `FloatBinaryOp::Sub` is no longer a primitive — `FloatSub` lifts to
     // `FloatAdd(_, FloatUnaryOp::Neg(_))`.  A real subtraction in the
     // source contributes one `FloatAdd` AND one `FloatUnaryOp::Neg`, so
@@ -53,19 +53,19 @@ fn has_four_float_binops(g: &strider_ir::BuiltFunctionGraph) {
         + count_float_binop(g, FloatBinaryOp::Div);
     assert!(total >= 4, "expected ≥4 FloatBinaryOp (including lowered subs counted as Add), got {total}");
 }
-fn has_float_to_float(g: &strider_ir::BuiltFunctionGraph) {
+fn has_float_to_float(g: &strider_ir::Graph) {
     assert!(has_kind(g, |k| matches!(k, NodeKind::FloatToFloat)),
             "expected ≥1 FloatToFloat node");
 }
-fn has_int_to_float(g: &strider_ir::BuiltFunctionGraph) {
+fn has_int_to_float(g: &strider_ir::Graph) {
     assert!(has_kind(g, |k| matches!(k, NodeKind::IntToFloat)),
             "expected ≥1 IntToFloat node");
 }
-fn has_float_to_int(g: &strider_ir::BuiltFunctionGraph) {
+fn has_float_to_int(g: &strider_ir::Graph) {
     assert!(has_kind(g, |k| matches!(k, NodeKind::FloatToInt)),
             "expected ≥1 FloatToInt node");
 }
-fn has_two_float_cmps(g: &strider_ir::BuiltFunctionGraph) {
+fn has_two_float_cmps(g: &strider_ir::Graph) {
     // The C source has two `if (a OP b) ...` branches.  x64 / aarch64 may
     // lower one or both via cmov / csel (conditional-move) instead of a
     // real branch — those don't appear as `If` nodes in the IR.  The
@@ -78,7 +78,7 @@ fn has_two_float_cmps(g: &strider_ir::BuiltFunctionGraph) {
     let total = count_float_cmp(g, FloatCmpOp::Less) + count_float_cmp(g, FloatCmpOp::Equal);
     assert!(total >= 2, "expected ≥2 FloatCmpOp, got {total}");
 }
-fn has_float_neg(g: &strider_ir::BuiltFunctionGraph) {
+fn has_float_neg(g: &strider_ir::Graph) {
     // Float negation `-f` has two equally-valid lowerings, with several
     // arch-specific variants:
     //   1. FloatUnaryOp::Neg (semantic; some lifters emit this directly).

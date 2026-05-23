@@ -8,7 +8,7 @@
 //! ```no_run
 //! # fn example<R: rsleigh::MemReader>(
 //! #     config: strider_analyze::Config<'_, R>,
-//! # ) -> Result<strider_ir::BuiltFunctionGraph, anyhow::Error> {
+//! # ) -> Result<strider_ir::Graph, anyhow::Error> {
 //! match strider_analyze::run(config) {
 //!     Ok(graph) => Ok(graph),
 //!     Err(e) => match e.downcast_ref::<strider_analyze::UnresolvedIndirectBranch>() {

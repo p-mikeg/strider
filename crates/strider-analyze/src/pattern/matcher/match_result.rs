@@ -1,4 +1,4 @@
-use strider_ir::BuiltFunctionGraph;
+use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use strider_ir::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
@@ -173,18 +173,18 @@ impl Match {
     ///   override on [`strider_ir::Graph::call_clobbered_override`] when one
     ///   was recorded (e.g. `__fentry__` callbacks built via
     ///   [`strider_ir::FunctionBuilder::build_call_with_cc`]), otherwise the
-    ///   varnode at `BuiltFunctionGraph::call_clobbered[i]`.
+    ///   varnode at `Graph::call_clobbered[i]`.
     /// * `CallOther` outputs in their clobber slot range (slot 2.. for
     ///   value-less CallOther, slot 3.. for CallOther with a value
     ///   output) — the varnode at the per-CallOther override on
     ///   [`strider_ir::Graph::call_clobbered_override`] when one was recorded,
     ///   otherwise the varnode at
-    ///   `BuiltFunctionGraph::call_other_clobbered[i]`.
+    ///   `Graph::call_other_clobbered[i]`.
     ///
     /// Returns `None` for unbound captures or producers without a
     /// well-defined varnode mapping.
     #[must_use]
-    pub fn get_vn(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<rsleigh::Vn> {
+    pub fn get_vn(&self, c: Capture, graph: &Graph) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
         if let Some(out) = binding.1 {
             let (node, slot) = graph.output_definition(out);

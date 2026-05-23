@@ -9,7 +9,7 @@ use super::FlagCmpCanonicalize;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 
-use strider_ir::{BuiltFunctionGraph, FunctionBuilder};
+use strider_ir::{Graph, FunctionBuilder};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
@@ -45,7 +45,7 @@ fn build_cmp_flags(
 /// region pair and return the graph + the unique If node id + the two
 /// leaves `a`, `b` (so tests can assert the rewritten cond points at
 /// them).
-fn build_if_with_flag_cond<F>(make_cond: F) -> Result<(BuiltFunctionGraph, NodeId, NodeOutputId, NodeOutputId)>
+fn build_if_with_flag_cond<F>(make_cond: F) -> Result<(Graph, NodeId, NodeOutputId, NodeOutputId)>
 where
     F: FnOnce(
         &mut FunctionBuilder,

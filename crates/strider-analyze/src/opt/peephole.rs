@@ -204,12 +204,12 @@ mod tests {
     }
 
     /// `fn() -> u64 { return 7; }` — minimal reachable graph.
-    fn one_const_fn() -> strider_ir::BuiltFunctionGraph {
+    fn one_const_fn() -> strider_ir::Graph {
         make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
     }
 
     /// `fn() -> u64 { return Add(11, 13); }`.
-    fn add_two_consts() -> strider_ir::BuiltFunctionGraph {
+    fn add_two_consts() -> strider_ir::Graph {
         make_empty_fn(|b| {
             let a = b.build_int_const(11u64, NodeOutputType::U64)?;
             let bb = b.build_int_const(13u64, NodeOutputType::U64)?;

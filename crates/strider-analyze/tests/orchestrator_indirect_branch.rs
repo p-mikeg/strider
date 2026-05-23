@@ -15,7 +15,7 @@ use object::{Object, ObjectSymbol};
 use std::sync::Arc;
 
 fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
-    -> anyhow::Result<strider_ir::BuiltFunctionGraph>
+    -> anyhow::Result<strider_ir::Graph>
 {
     let path = common::binary_path(arch, case);
     if !path.exists() {

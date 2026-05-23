@@ -114,7 +114,7 @@ fn sleigh_for(
 }
 
 fn to_dot_string(
-    g: &strider_ir::BuiltFunctionGraph,
+    g: &strider_ir::Graph,
     sleigh: &rsleigh::Sleigh<strider_reader::ElfFileMemReader>,
 ) -> String {
     let dumper = g.dot_dumper(sleigh).expect("v3_baseline: dot_dumper on built graph");

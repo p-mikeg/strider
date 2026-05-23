@@ -36,9 +36,6 @@
 //!   has run, its `entry` / `cc_metadata` fields are populated and it
 //!   serves as the finished function graph for optimization and querying
 //! - [`FunctionBuilder`] — constructs the graph with SSA variable tracking
-//! - [`BuiltFunctionGraph`] — type alias for [`Graph`] kept for
-//!   source-compat with consumers that read "BFG" as a hint that the
-//!   graph has been finalised
 //! - [`RegionId`] — identifies a basic block within the function
 //! - [`node::NodeOutputType`] — `Bool`, integers `U8`/`U16`/`U32`/`U64`/`U80`/`U128`/`U256`/`U512`,
 //!   floats `F32`/`F64`/`F80`
@@ -75,4 +72,3 @@ pub use region::RegionId;
 
 pub type Value = node::NodeOutputId;
 pub type ValueType = node::NodeOutputType;
-pub use crate::function::BuiltFunctionGraph;

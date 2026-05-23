@@ -422,7 +422,7 @@ mod tests {
     }
 
     /// Build `fn() -> u64 { return 7; }` and return (graph, initial_mem_output).
-    fn empty_chain() -> (strider_ir::BuiltFunctionGraph, NodeOutputId) {
+    fn empty_chain() -> (strider_ir::Graph, NodeOutputId) {
         let fg = make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap();
         // Locate the InitialMemory node and its output.
         let im = fg
@@ -436,7 +436,7 @@ mod tests {
     /// Builds `fn() -> u64 { Store(...); Store(...); ...; return 7; }` —
     /// a linear chain of `depth` Store nodes followed by Return.  Returns
     /// (graph, mem_output_of_last_store, depth).
-    fn linear_store_chain(depth: usize) -> (strider_ir::BuiltFunctionGraph, NodeOutputId) {
+    fn linear_store_chain(depth: usize) -> (strider_ir::Graph, NodeOutputId) {
         let fg = make_empty_fn(|b| {
             // Emit `depth` Stores using sentinel addresses so each is
             // structurally distinct (different value inputs).
@@ -533,7 +533,7 @@ mod tests {
     /// arms route through `InitialMemory`, so structurally they're
     /// identical and combine_phi must OR-combine the same verdict.
     fn mem_phi_all_initial(
-        fg: &mut strider_ir::BuiltFunctionGraph,
+        fg: &mut strider_ir::Graph,
         n_arms: usize,
     ) -> NodeOutputId {
         // Find InitialMemory and ControlState; use them to build a MemPhi.

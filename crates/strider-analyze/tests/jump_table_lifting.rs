@@ -25,7 +25,7 @@ use strider_lift::cfg::{
     Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets,
 };
 use strider_ir::node::NodeKind;
-use strider_ir::BuiltFunctionGraph;
+use strider_ir::Graph;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_target::SleighArch;
@@ -62,7 +62,7 @@ fn analyze_with_known_targets(
     base: u64,
     branch_indirect_addr: u64,
     targets: Vec<u64>,
-) -> BuiltFunctionGraph {
+) -> Graph {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
     let sleigh =
@@ -83,13 +83,13 @@ fn analyze_with_known_targets(
     strider.analyze_cfg(&cfg).expect("analyze_cfg").graph
 }
 
-fn count_if_nodes(g: &BuiltFunctionGraph) -> usize {
+fn count_if_nodes(g: &Graph) -> usize {
     g.preorder()
         .filter(|nid| matches!(g.node_kind(*nid), NodeKind::If))
         .count()
 }
 
-fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
+fn count_eq_cmps(g: &Graph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
@@ -100,7 +100,7 @@ fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
         .count()
 }
 
-fn count_int_consts_eq(g: &BuiltFunctionGraph, want: u64) -> usize {
+fn count_int_consts_eq(g: &Graph, want: u64) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(

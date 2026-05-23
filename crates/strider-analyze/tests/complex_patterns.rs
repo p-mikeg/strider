@@ -50,7 +50,7 @@ use strider_ir::node::{NodeId, NodeKind};
 ///   through these, structural patterns like
 ///   `if_node().cond(int_cmp(...))` never match across arches.
 /// * `ControlState` region-join nodes.
-fn matcher(g: &strider_ir::BuiltFunctionGraph) -> Matcher<'_> {
+fn matcher(g: &strider_ir::Graph) -> Matcher<'_> {
     Matcher::new(g)
         .ignore_casts_mask(
             CastMask::EXTEND
@@ -108,7 +108,7 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> Pat {
 
 per_arch_test!("complex", "read_struct_fields", read_struct_fields_assertions);
 
-fn read_struct_fields_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn read_struct_fields_assertions(g: &strider_ir::Graph) {
     // (a) The graph must contain ≥3 Loads (s->a, s->b, s->c).
     assert!(count_loads(g) >= 3,
             "read_struct_fields must have ≥3 Loads; got {}", count_loads(g));
@@ -137,7 +137,7 @@ fn read_struct_fields_assertions(g: &strider_ir::BuiltFunctionGraph) {
 
 per_arch_test!("complex", "write_struct_fields", write_struct_fields_assertions);
 
-fn write_struct_fields_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn write_struct_fields_assertions(g: &strider_ir::Graph) {
     assert!(count_stores(g) >= 3,
             "write_struct_fields must have ≥3 Stores; got {}", count_stores(g));
 
@@ -164,7 +164,7 @@ fn write_struct_fields_assertions(g: &strider_ir::BuiltFunctionGraph) {
 
 per_arch_test!("complex", "nested_struct_field", nested_struct_field_assertions);
 
-fn nested_struct_field_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn nested_struct_field_assertions(g: &strider_ir::Graph) {
     // o->inner.x = *(base + padding + offsetof(Inner, x)).
     assert!(count_loads(g) >= 1,
             "nested_struct_field must Load; got {}", count_loads(g));
@@ -195,7 +195,7 @@ fn nested_struct_field_assertions(g: &strider_ir::BuiltFunctionGraph) {
 // target back to `InitialVar(lr)`.
 per_arch_test!("complex", "bit_test_zero", bit_test_zero_assertions);
 
-fn bit_test_zero_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn bit_test_zero_assertions(g: &strider_ir::Graph) {
     // (mask & 0x4) == 0 → graph contains both `And` and `Equal`.
     assert!(count_int_binop(g, strider_ir::IntBinaryOp::And) >= 1,
             "bit_test_zero must contain ≥1 IntBinaryOp::And; got {}",
@@ -228,7 +228,7 @@ fn bit_test_zero_assertions(g: &strider_ir::BuiltFunctionGraph) {
 
 per_arch_test!("complex", "if_bit_clear_call", if_bit_clear_call_assertions);
 
-fn if_bit_clear_call_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn if_bit_clear_call_assertions(g: &strider_ir::Graph) {
     assert!(count_ifs(g) >= 1,
             "if_bit_clear_call must contain ≥1 If; got {}", count_ifs(g));
     assert!(count_calls(g) >= 1,
@@ -289,7 +289,7 @@ fn if_bit_clear_call_assertions(g: &strider_ir::BuiltFunctionGraph) {
 
 per_arch_test!("complex", "call_with_field_arg", call_with_field_arg_assertions);
 
-fn call_with_field_arg_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn call_with_field_arg_assertions(g: &strider_ir::Graph) {
     assert!(count_loads(g) >= 1,
             "call_with_field_arg must Load s->handler");
     assert!(count_calls(g) >= 1,
@@ -322,7 +322,7 @@ fn call_with_field_arg_assertions(g: &strider_ir::BuiltFunctionGraph) {
 
 per_arch_test!("complex", "dispatch_on_flag", dispatch_on_flag_assertions);
 
-fn dispatch_on_flag_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn dispatch_on_flag_assertions(g: &strider_ir::Graph) {
     assert!(count_ifs(g) >= 1, "dispatch_on_flag must contain ≥1 If");
     assert!(count_calls(g) >= 1, "dispatch_on_flag must contain ≥1 Call");
     assert!(count_loads(g) >= 1, "dispatch_on_flag must contain ≥1 Load");
@@ -397,7 +397,7 @@ fn dispatch_on_flag_assertions(g: &strider_ir::BuiltFunctionGraph) {
 
 per_arch_test!("complex", "multi_arg_call_in_branch", multi_arg_call_in_branch_assertions);
 
-fn multi_arg_call_in_branch_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn multi_arg_call_in_branch_assertions(g: &strider_ir::Graph) {
     assert!(count_calls(g) >= 2,
             "multi_arg_call_in_branch must have ≥2 Calls; got {}", count_calls(g));
 
@@ -446,7 +446,7 @@ fn multi_arg_call_in_branch_assertions(g: &strider_ir::BuiltFunctionGraph) {
 
 per_arch_test!("complex", "complex_dispatch", complex_dispatch_assertions);
 
-fn complex_dispatch_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn complex_dispatch_assertions(g: &strider_ir::Graph) {
     let n = g.preorder().count();
     // Larger function (many locals, several stack-allocated structs,
     // 3 loops, ≥10 branches, mixed-width compute) → expect a much
@@ -495,7 +495,7 @@ fn complex_dispatch_assertions(g: &strider_ir::BuiltFunctionGraph) {
 
 per_arch_test!("complex", "call_uses_call_return", call_uses_call_return_assertions);
 
-fn call_uses_call_return_assertions(g: &strider_ir::BuiltFunctionGraph) {
+fn call_uses_call_return_assertions(g: &strider_ir::Graph) {
     // Source: `consume(produce(x))` — outer Call's arg(0) is the
     // return value of the inner Call.  IR shape (-O0):
     //   call_inner = Call(produce, x)

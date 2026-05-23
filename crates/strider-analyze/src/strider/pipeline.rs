@@ -30,7 +30,7 @@ pub(crate) struct RegionLiftHandles {
 /// callers read `unresolved_branches` and `region_handles`.
 pub struct AnalyzeOutcome {
     /// The lifted IR ready for the optimiser pipeline.
-    pub graph: strider_ir::BuiltFunctionGraph,
+    pub graph: strider_ir::Graph,
     /// One entry per region whose CFG terminator was
     /// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode
@@ -433,7 +433,7 @@ impl Strider {
         // Capture per-region IR handles BEFORE `build()` consumes the
         // builder.  `NodeId`/`NodeOutputId` are stable across the
         // build-time arena move, so the snapshots remain valid for the
-        // returned `BuiltFunctionGraph`.
+        // returned `Graph`.
         let mut region_handles: Vec<RegionLiftHandles> = Vec::new();
         for &cfg_rid in &cfg_region_ids {
             let ir_region_id = ir_region_of(cfg_rid)?;

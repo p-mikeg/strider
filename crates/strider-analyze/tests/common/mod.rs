@@ -5,7 +5,7 @@
 //!
 //! ```ignore
 //! per_arch_test!("arithmetic", "add", graph_must_contain_int_add);
-//! fn graph_must_contain_int_add(g: &strider_ir::BuiltFunctionGraph) {
+//! fn graph_must_contain_int_add(g: &strider_ir::Graph) {
 //!     assert!(common::count_int_binop(g, strider_ir::IntBinaryOp::Add) >= 1);
 //! }
 //! ```
@@ -198,7 +198,7 @@ fn lift_for_pipeline(
     case: &str,
     fn_name: &str,
 ) -> (
-    strider_ir::BuiltFunctionGraph,
+    strider_ir::Graph,
     strider_analyze::Strider,
     strider_target::SleighArch,
     std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
@@ -270,7 +270,7 @@ fn lift_for_pipeline(
 /// Panics on any failure — system tests are pass/fail end-to-end checks.  If
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
-pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFunctionGraph {
+pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Graph {
     let (mut graph, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, case, fn_name);
     let mut p = ana.build_optimizer_pipeline();
@@ -291,32 +291,32 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::BuiltFuncti
 
 use strider_ir::node::NodeKind;
 
-pub fn count_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::BuiltFunctionGraph, pred: F) -> usize {
+pub fn count_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::Graph, pred: F) -> usize {
     g.preorder().filter(|nid| pred(g.node_kind(*nid))).count()
 }
 
-pub fn count_int_binop(g: &strider_ir::BuiltFunctionGraph, op: strider_ir::IntBinaryOp) -> usize {
+pub fn count_int_binop(g: &strider_ir::Graph, op: strider_ir::IntBinaryOp) -> usize {
     count_kind(g, |k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op))
 }
-pub fn count_int_unop(g: &strider_ir::BuiltFunctionGraph, op: strider_ir::IntUnaryOp) -> usize {
+pub fn count_int_unop(g: &strider_ir::Graph, op: strider_ir::IntUnaryOp) -> usize {
     count_kind(g, |k| matches!(k, NodeKind::IntUnaryOp(o) if *o == op))
 }
-pub fn count_int_cmp(g: &strider_ir::BuiltFunctionGraph, op: strider_ir::IntCmpOp) -> usize {
+pub fn count_int_cmp(g: &strider_ir::Graph, op: strider_ir::IntCmpOp) -> usize {
     count_kind(g, |k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
 }
-pub fn count_float_binop(g: &strider_ir::BuiltFunctionGraph, op: strider_ir::FloatBinaryOp) -> usize {
+pub fn count_float_binop(g: &strider_ir::Graph, op: strider_ir::FloatBinaryOp) -> usize {
     count_kind(g, |k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op))
 }
-pub fn count_float_unop(g: &strider_ir::BuiltFunctionGraph, op: strider_ir::FloatUnaryOp) -> usize {
+pub fn count_float_unop(g: &strider_ir::Graph, op: strider_ir::FloatUnaryOp) -> usize {
     count_kind(g, |k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op))
 }
-pub fn count_float_cmp(g: &strider_ir::BuiltFunctionGraph, op: strider_ir::FloatCmpOp) -> usize {
+pub fn count_float_cmp(g: &strider_ir::Graph, op: strider_ir::FloatCmpOp) -> usize {
     count_kind(g, |k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op))
 }
 
-pub fn count_calls (g: &strider_ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Call)) }
-pub fn count_ifs   (g: &strider_ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::If)) }
-pub fn count_returns(g: &strider_ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Return)) }
+pub fn count_calls (g: &strider_ir::Graph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Call)) }
+pub fn count_ifs   (g: &strider_ir::Graph) -> usize { count_kind(g, |k| matches!(k, NodeKind::If)) }
+pub fn count_returns(g: &strider_ir::Graph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Return)) }
 
 /// Counts the distinct control-flow paths converging at any `Return` node.
 ///
@@ -336,7 +336,7 @@ pub fn count_returns(g: &strider_ir::BuiltFunctionGraph) -> usize { count_kind(g
 /// are not transitively expanded — the result is therefore a lower bound on
 /// the number of source-level return paths, sufficient for the
 /// "≥ 2 return paths" assertions in this suite.
-pub fn count_return_paths(g: &strider_ir::BuiltFunctionGraph) -> usize {
+pub fn count_return_paths(g: &strider_ir::Graph) -> usize {
     let mut total = 0usize;
     for nid in g.preorder() {
         if !matches!(g.node_kind(nid), NodeKind::Return) {
@@ -371,7 +371,7 @@ pub fn count_return_paths(g: &strider_ir::BuiltFunctionGraph) -> usize {
 /// variable is loop-invariant (e.g. a register that's read in the loop
 /// header but never modified by the body — `RedundantPhis`'s self-ref
 /// rule then collapses the phi to the entry value).
-pub fn count_loops(g: &strider_ir::BuiltFunctionGraph) -> usize {
+pub fn count_loops(g: &strider_ir::Graph) -> usize {
     use std::collections::HashSet;
     let mut count = 0;
     let reachable: HashSet<_> = g.preorder().collect();
@@ -414,25 +414,25 @@ pub fn count_loops(g: &strider_ir::BuiltFunctionGraph) -> usize {
     }
     count
 }
-pub fn count_loads (g: &strider_ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Load(_))) }
-pub fn count_stores(g: &strider_ir::BuiltFunctionGraph) -> usize {
+pub fn count_loads (g: &strider_ir::Graph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Load(_))) }
+pub fn count_stores(g: &strider_ir::Graph) -> usize {
     // Both raw Store and StackStore count as "writes to memory" from the user's POV.
     count_kind(g, |k| matches!(k, NodeKind::Store(_) | NodeKind::StackStore { .. }))
 }
-pub fn count_stack_stores(g: &strider_ir::BuiltFunctionGraph) -> usize {
+pub fn count_stack_stores(g: &strider_ir::Graph) -> usize {
     count_kind(g, |k| matches!(k, NodeKind::StackStore { .. }))
 }
-pub fn count_popcount(g: &strider_ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Popcount)) }
-pub fn count_lzcount (g: &strider_ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Lzcount)) }
-pub fn count_int_consts(g: &strider_ir::BuiltFunctionGraph) -> usize {
+pub fn count_popcount(g: &strider_ir::Graph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Popcount)) }
+pub fn count_lzcount (g: &strider_ir::Graph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Lzcount)) }
+pub fn count_int_consts(g: &strider_ir::Graph) -> usize {
     count_kind(g, |k| matches!(k, NodeKind::IntConst(_)))
 }
 
-pub fn has_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::BuiltFunctionGraph, pred: F) -> bool {
+pub fn has_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::Graph, pred: F) -> bool {
     count_kind(g, pred) > 0
 }
 
-pub fn has_constant(g: &strider_ir::BuiltFunctionGraph, value: u64) -> bool {
+pub fn has_constant(g: &strider_ir::Graph, value: u64) -> bool {
     // IntConst stores u128; compare against the u64 value widened to u128.
     has_kind(g, |k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(value)))
 }

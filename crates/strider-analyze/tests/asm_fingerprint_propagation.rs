@@ -21,7 +21,7 @@ use strider_ir_test_utils::make_empty_fn;
 
 /// Walks the graph for the first node whose kind matches `pred`.
 fn find<F: Fn(&NodeKind) -> bool>(
-    fg: &strider_ir::BuiltFunctionGraph,
+    fg: &strider_ir::Graph,
     pred: F,
 ) -> Option<NodeId> {
     fg.preorder().find(|&n| pred(fg.node_kind(n)))

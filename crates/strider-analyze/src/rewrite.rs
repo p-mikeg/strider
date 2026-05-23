@@ -50,7 +50,7 @@
 
 use anyhow::Result;
 use strider_ir::node::NodeId;
-use strider_ir::{BuiltFunctionGraph, Graph};
+use strider_ir::Graph;
 
 /// Thin façade over [`crate::pattern::rewrite_rule`] / `crate::pattern::apply_rules_in_order`
 /// that lets users replace any node's input with a constant (or any other
@@ -59,7 +59,7 @@ use strider_ir::{BuiltFunctionGraph, Graph};
 /// See module-level docs for the architecture and intended use case.
 pub struct GraphRewriter<'a> {
     /// The graph to rewrite.  Held as `&mut Graph` rather than
-    /// `&mut BuiltFunctionGraph` to align with the optimizer pass
+    /// `&mut Graph` to align with the optimizer pass
     /// contract `(&mut Graph, NodeId)`.  `crate::pattern::rewrite_rule`'s
     /// closure expects `&mut RewriteCtx<'_>`, so [`Self::apply_rule`]
     /// builds a fresh `RewriteCtx::new(&mut *self.graph, self.entry)`
@@ -71,7 +71,7 @@ pub struct GraphRewriter<'a> {
 }
 
 impl<'a> GraphRewriter<'a> {
-    /// Wraps a [`BuiltFunctionGraph`].  Infallible legacy entry point;
+    /// Wraps a [`Graph`].  Infallible legacy entry point;
     /// new `Result`-returning code paths should prefer
     /// [`Self::try_wrap_built`] which surfaces the un-built case as a
     /// typed error.
@@ -83,7 +83,7 @@ impl<'a> GraphRewriter<'a> {
     /// [`strider_ir::FunctionBuilder::build`].
     #[must_use]
     #[allow(clippy::expect_used)]
-    pub fn wrap_built(built: &'a mut BuiltFunctionGraph) -> Self {
+    pub fn wrap_built(built: &'a mut Graph) -> Self {
         let entry = built.entry().expect(
             "GraphRewriter::wrap_built: pre-condition violated — \
              graph has not been built (entry is None); use \
@@ -103,7 +103,7 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// Returns an error if the graph has not been built (i.e. `entry`
     /// is `None`).
-    pub fn try_wrap_built(built: &'a mut BuiltFunctionGraph) -> Result<Self> {
+    pub fn try_wrap_built(built: &'a mut Graph) -> Result<Self> {
         let entry = built.entry().ok_or_else(|| {
             anyhow::anyhow!("GraphRewriter::try_wrap_built: graph has not been built (entry is None)")
         })?;
@@ -118,11 +118,11 @@ impl<'a> GraphRewriter<'a> {
     /// (i.e. returned `Ok(true)`).
     ///
     /// The closure shape matches what [`crate::pattern::rewrite_rule`] hands
-    /// back — `Fn(&mut BuiltFunctionGraph, NodeId) -> crate::pattern::Result<bool>`.
-    /// Wraps the wrapped graph into a short-lived `BuiltFunctionGraph`
+    /// back — `Fn(&mut Graph, NodeId) -> crate::pattern::Result<bool>`.
+    /// Wraps the wrapped graph into a short-lived `Graph`
     /// per call (via [`std::mem::take`]) so the closure has the input shape
     /// the `pattern` crate's rewrite engine was designed for.  The
-    /// dummy `BuiltFunctionGraph` carries empty `variables` /
+    /// dummy `Graph` carries empty `variables` /
     /// `call_clobbered` / `ret_val_regs` — `crate::pattern::rewrite_rule`
     /// only touches `graph` and `entry`, verified by inspection of
     /// [`crate::pattern::rewrite_rule`]'s implementation.
@@ -144,7 +144,7 @@ impl<'a> GraphRewriter<'a> {
     /// # Rule-closure context
     ///
     /// The closure receives `&mut crate::pattern::RewriteCtx`, NOT the wrapped
-    /// `BuiltFunctionGraph`.  `RewriteCtx` exposes only `graph` and
+    /// `Graph`.  `RewriteCtx` exposes only `graph` and
     /// `entry`; the calling convention's `variables`, `call_clobbered`,
     /// `ret_val_regs`, `call_other_clobbered` fields on the BFG are
     /// **not** visible from inside the closure.  Rules that need CC

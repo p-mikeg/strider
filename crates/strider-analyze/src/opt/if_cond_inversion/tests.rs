@@ -12,7 +12,7 @@ use strider_ir_test_utils::RegisterSet;
 /// Builds `if (!cond) { return 1 } else { return 2 }`, where `cond` is a
 /// fresh boolean variable read from a register.  Returns the graph and
 /// the `If` node id for downstream assertions.
-fn build_if_with_neg_cond() -> Result<(strider_ir::BuiltFunctionGraph, strider_ir::node::NodeId)> {
+fn build_if_with_neg_cond() -> Result<(strider_ir::Graph, strider_ir::node::NodeId)> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
     let mut b = RegisterSet::new().tracked(cond_vn).build_fn()?;
     let entry = b.create_region()?;
@@ -41,7 +41,7 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::BuiltFunctionGraph, strider_i
 }
 
 /// Returns the cond input (input slot 1) of the given `If` node.
-fn if_cond_kind(fg: &strider_ir::BuiltFunctionGraph, if_node: strider_ir::node::NodeId) -> NodeKind {
+fn if_cond_kind(fg: &strider_ir::Graph, if_node: strider_ir::node::NodeId) -> NodeKind {
     let [_ctrl, cond_out] = fg
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
@@ -135,7 +135,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     // `ControlState` consumer of each output before the pass and
     // verifying they are now consumed in the swapped slots.
     let (mut fg, if_node) = build_if_with_neg_cond()?;
-    let consumer_of = |fg: &strider_ir::BuiltFunctionGraph, out: strider_ir::node::NodeOutputId| -> strider_ir::node::NodeId {
+    let consumer_of = |fg: &strider_ir::Graph, out: strider_ir::node::NodeOutputId| -> strider_ir::node::NodeId {
         let (consumer, _idx) = fg
             .output_uses(out)
             .next()

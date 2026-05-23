@@ -146,10 +146,10 @@ pub fn rewrite_rule(
 /// function's `entry: NodeId`.  Used by `rewrite_rule` and the
 /// destructive optimizer passes.
 ///
-/// Replaces the prior "wrap into a dummy `BuiltFunctionGraph`" trick —
+/// Replaces the prior "wrap into a dummy `Graph`" trick —
 /// pure-rewrite paths (constant fold, known-bits, flag-cmp
 /// canonicalisation, etc.) only ever consult graph + entry, never the
-/// CC-bearing fields of `BuiltFunctionGraph`.
+/// CC-bearing fields of `Graph`.
 ///
 /// **Field visibility note.**  Both fields are `pub(crate)`; external
 /// opt-pass code reaches `Graph` via the
@@ -167,8 +167,8 @@ pub struct RewriteCtx<'g> {
 
 /// Read-only `(&Graph, NodeId)` view used by opt's read-only public
 /// API.  `Copy` and cheap to pass.  Constructible from `&RewriteCtx`
-/// (via `as_view`) or `&BuiltFunctionGraph` (via
-/// `From<&BuiltFunctionGraph>`).
+/// (via `as_view`) or `&Graph` (via
+/// `From<&Graph>`).
 #[derive(Clone, Copy)]
 pub struct RewriteCtxView<'g> {
     pub(crate) graph: &'g Graph,
@@ -183,7 +183,7 @@ impl<'g> RewriteCtx<'g> {
         Self { graph, entry }
     }
 
-    /// Constructs a `RewriteCtx` borrowing from a `BuiltFunctionGraph`'s
+    /// Constructs a `RewriteCtx` borrowing from a `Graph`'s
     /// inner `graph` + `entry`.  Used by callers that already hold a
     /// fully-built form and want to drive the rewrite engine without
     /// surrendering the wrapper.
@@ -194,7 +194,7 @@ impl<'g> RewriteCtx<'g> {
     /// `None`).  Pre-condition: `bfg` must have been built via
     /// [`strider_ir::FunctionBuilder::build`].
     #[allow(clippy::expect_used)]
-    pub fn for_built(bfg: &'g mut strider_ir::BuiltFunctionGraph) -> Self {
+    pub fn for_built(bfg: &'g mut strider_ir::Graph) -> Self {
         let entry = bfg.entry().expect(
             "RewriteCtx::for_built: pre-condition violated — \
              graph has not been built (entry is None)",
@@ -206,16 +206,16 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
-    /// `BuiltFunctionGraph::preorder` so optimizer pass bodies that
+    /// `Graph::preorder` so optimizer pass bodies that
     /// call `ctx.preorder()` look the same as if they held a
-    /// `BuiltFunctionGraph` directly.
+    /// `Graph` directly.
     #[must_use]
     pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
         self.graph.walk_from(self.entry)
     }
 
     /// kind-filtered pre-order walk.  Mirrors
-    /// `BuiltFunctionGraph::preorder_kind`.
+    /// `Graph::preorder_kind`.
     pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
@@ -239,7 +239,7 @@ impl<'g> RewriteCtx<'g> {
     /// Lightweight read-only `(graph, entry)` view.  Used by the
     /// public read-only opt API (`analyze_known_bits`,
     /// `classify_anchor`) so callers that hold either `&mut RewriteCtx`,
-    /// `&BuiltFunctionGraph`, or a raw `(&Graph, NodeId)` pair can all
+    /// `&Graph`, or a raw `(&Graph, NodeId)` pair can all
     /// pass the same `RewriteCtxView<'_>`.
     #[must_use]
     pub fn as_view(&self) -> RewriteCtxView<'_> {
@@ -262,16 +262,16 @@ impl<'g> RewriteCtx<'g> {
 
 impl<'g> RewriteCtxView<'g> {
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
-    /// `BuiltFunctionGraph::preorder` so optimizer pass bodies that
+    /// `Graph::preorder` so optimizer pass bodies that
     /// call `ctx.preorder()` look the same as if they held a
-    /// `BuiltFunctionGraph` directly.
+    /// `Graph` directly.
     #[must_use]
     pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
         self.graph.walk_from(self.entry)
     }
 
     /// kind-filtered pre-order walk.  Mirrors
-    /// `BuiltFunctionGraph::preorder_kind`.
+    /// `Graph::preorder_kind`.
     pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
@@ -300,7 +300,7 @@ impl<'g> RewriteCtxView<'g> {
         Matcher::for_graph(self.graph, self.entry)
     }
 
-    /// Borrows a built [`strider_ir::BuiltFunctionGraph`] as a shared
+    /// Borrows a built [`strider_ir::Graph`] as a shared
     /// rewrite-context view.  Fallible companion to the legacy
     /// `From<&BFG>` impl now that [`strider_ir::Graph::entry`] returns
     /// `Option`.  New code should prefer this method.
@@ -309,7 +309,7 @@ impl<'g> RewriteCtxView<'g> {
     ///
     /// Returns an error if the graph has not been built (i.e. `entry`
     /// is `None`).
-    pub fn from_built(bfg: &'g strider_ir::BuiltFunctionGraph) -> anyhow::Result<Self> {
+    pub fn from_built(bfg: &'g strider_ir::Graph) -> anyhow::Result<Self> {
         let entry = bfg.entry().ok_or_else(|| {
             anyhow::anyhow!("RewriteCtxView::from_built: graph has not been built (entry is None)")
         })?;
@@ -317,7 +317,7 @@ impl<'g> RewriteCtxView<'g> {
     }
 }
 
-/// Legacy infallible conversion from a `BuiltFunctionGraph`.  Retained
+/// Legacy infallible conversion from a `Graph`.  Retained
 /// for compatibility with the wide test surface (~200 call sites) that
 /// uses `(&fg).into()`.  Now that [`strider_ir::Graph::entry`] returns
 /// `Option`, this `From` impl can only honour the trait's infallible
@@ -326,8 +326,8 @@ impl<'g> RewriteCtxView<'g> {
 /// [`RewriteCtxView::from_built`], which surfaces the `None` arm as a
 /// typed error.
 #[allow(clippy::expect_used)]
-impl<'g> From<&'g strider_ir::BuiltFunctionGraph> for RewriteCtxView<'g> {
-    fn from(bfg: &'g strider_ir::BuiltFunctionGraph) -> Self {
+impl<'g> From<&'g strider_ir::Graph> for RewriteCtxView<'g> {
+    fn from(bfg: &'g strider_ir::Graph) -> Self {
         let entry = bfg.entry().expect(
             "RewriteCtxView::<From<&BFG>>: pre-condition violated — \
              graph has not been built (entry is None); use \
@@ -337,7 +337,7 @@ impl<'g> From<&'g strider_ir::BuiltFunctionGraph> for RewriteCtxView<'g> {
     }
 }
 
-/// Extension trait on [`strider_ir::BuiltFunctionGraph`] (alias for
+/// Extension trait on [`strider_ir::Graph`] (alias for
 /// [`Graph`]) providing the `with_rewrite_ctx` callback that absorbs the
 /// `let mut ctx = RewriteCtx::for_built(&mut bfg); apply_*(&mut ctx, …)`
 /// construct-then-pass pattern into a single
@@ -356,7 +356,7 @@ pub trait GraphRewriteCtxExt {
         F: FnOnce(&mut RewriteCtx<'_>) -> R;
 }
 
-impl GraphRewriteCtxExt for strider_ir::BuiltFunctionGraph {
+impl GraphRewriteCtxExt for strider_ir::Graph {
     fn with_rewrite_ctx<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce(&mut RewriteCtx<'_>) -> R,
@@ -381,9 +381,9 @@ impl<'g> std::ops::Deref for RewriteCtxView<'g> {
 
 // allow Graph methods to be
 // called on `RewriteCtx` directly via Deref.  Mirrors
-// `BuiltFunctionGraph::Deref<Target=Graph>` so optimizer pass bodies
+// `Graph::Deref<Target=Graph>` so optimizer pass bodies
 // using `ctx.node_kind(_)` / `ctx.create_node(_)` look the same as
-// if they held a `BuiltFunctionGraph` directly.
+// if they held a `Graph` directly.
 impl<'g> std::ops::Deref for RewriteCtx<'g> {
     type Target = Graph;
     fn deref(&self) -> &Graph {
@@ -480,12 +480,12 @@ mod tests {
     use strider_ir_test_utils::{make_empty_fn, SENTINEL_LIFT_ADDR};
 
     /// `fn() -> u64 { return 7; }` — no Add node, used by no-match tests.
-    fn just_const() -> strider_ir::BuiltFunctionGraph {
+    fn just_const() -> strider_ir::Graph {
         make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
     }
 
     /// `fn() -> u64 { return Add(11, 0); }` — exactly one Add with `0` RHS.
-    fn add_x_zero() -> strider_ir::BuiltFunctionGraph {
+    fn add_x_zero() -> strider_ir::Graph {
         make_empty_fn(|b| {
             let a = b.build_int_const(11u64, NodeOutputType::U64)?;
             let z = b.build_int_const(0u64, NodeOutputType::U64)?;
@@ -495,7 +495,7 @@ mod tests {
     }
 
     /// Returns the unique Add node in `fg`, or panics.
-    fn unique_add(fg: &strider_ir::BuiltFunctionGraph) -> strider_ir::node::NodeId {
+    fn unique_add(fg: &strider_ir::Graph) -> strider_ir::node::NodeId {
         fg.preorder()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
             .expect("unique Add must exist")

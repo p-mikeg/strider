@@ -123,7 +123,7 @@ fn fold_and_and_masks() -> Result<()> {
 /// Asserts the return-value node is `expected_base + expected_const`
 /// (type-masked; operand order irrelevant).
 fn assert_add_with_const(
-    fg: &strider_ir::BuiltFunctionGraph,
+    fg: &strider_ir::Graph,
     expected_base: strider_ir::Value,
     expected_const: u64,
     ty: NodeOutputType,
@@ -171,7 +171,7 @@ fn assert_add_with_const(
 /// `Add(a, Neg(b))` and `ConstantFold` collapses `Neg(IntConst(K))` to
 /// `IntConst(-K)`, leaving a single `Add` node with a negative-valued constant.
 fn assert_sub_with_const(
-    fg: &strider_ir::BuiltFunctionGraph,
+    fg: &strider_ir::Graph,
     expected_base: strider_ir::Value,
     expected_const: u64,
     ty: NodeOutputType,
@@ -1067,7 +1067,7 @@ fn build_unary_with_wide_const_input(
     kind: NodeKind,
     wide_ty: NodeOutputType,
     out_ty: NodeOutputType,
-) -> Result<strider_ir::BuiltFunctionGraph> {
+) -> Result<strider_ir::Graph> {
     use strider_ir::node::NodeOutputKind;
     let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, NodeOutputType::U64).unwrap()))?;
     let placeholder = return_value((&fg).into())?;

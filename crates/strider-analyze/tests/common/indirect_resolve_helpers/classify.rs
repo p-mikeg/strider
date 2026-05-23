@@ -1,7 +1,7 @@
 //! Fixture builders feeding the IR-level *classifier* unit / integration tests.
 //!
 //! Split out from the previous monolithic `indirect_resolve_helpers.rs`.  Every
-//! helper here builds a `BuiltFunctionGraph` whose unique placeholder
+//! helper here builds a `Graph` whose unique placeholder
 //! Return's value-input is shaped to exercise one specific classifier arm
 //! (IntConst, InitialVar(lr), ValuePhi-of-IntConsts, Load jump-table, etc.).
 //!
@@ -23,7 +23,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
 use strider_lift::cfg::{Builder, OptionsBuilder};
-use strider_ir::BuiltFunctionGraph;
+use strider_ir::Graph;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -55,7 +55,7 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// exactly the shape IR-level indirect-branch resolver's IntConst arm classifies.
 pub fn build_int_const_target_scenario_via_stack(
     k: u64,
-) -> (BuiltFunctionGraph, strider_ir::Value) {
+) -> (Graph, strider_ir::Value) {
     // x86_64 encoding:
     //   68 K K K K           push imm32       (sign-extended; rsp -= 8)
     //   58                   pop rax          (rax = pushed K; rsp += 8)
@@ -85,7 +85,7 @@ pub fn build_int_const_target_scenario_via_stack(
 /// On x86_64 there is no architectural link register, so the
 /// "InitialVar(target_vn) == InitialVar(lr_vn)" arm in the classifier
 /// returns `None` here regardless of caller-supplied lr.
-pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, strider_ir::Value) {
+pub fn build_initial_var_target_scenario_x86_64() -> (Graph, strider_ir::Value) {
     // Just `jmp rax`.  RAX is a function-entry value with no constant
     // write; the placeholder's input is `InitialVar(rax)`.
     let bytes: Vec<u8> = vec![0xff, 0xe0];
@@ -93,7 +93,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, stride
     (graph, anchor)
 }
 
-/// Build a `BuiltFunctionGraph` whose placeholder Return's
+/// Build a `Graph` whose placeholder Return's
 /// value-input is a `ValuePhi` whose every value slot folds to an
 /// `IntConst(k_i)` taken from `per_pred`.
 ///
@@ -122,7 +122,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, stride
 /// shape across all `per_pred` lengths.
 pub fn build_value_phi_target_scenario(
     per_pred: &[u64],
-) -> (BuiltFunctionGraph, strider_ir::Value) {
+) -> (Graph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::IntBinaryOp;
     use strider_ir_test_utils::RegisterSet;
@@ -225,7 +225,7 @@ pub fn build_value_phi_target_scenario(
     (fg, anchor)
 }
 
-/// Build a `BuiltFunctionGraph` modelling gcc-ARM's standard
+/// Build a `Graph` modelling gcc-ARM's standard
 /// `push {lr}; ...; pop {pc}` epilogue using FunctionBuilder
 /// directly (not through cfg + analyze_cfg).
 ///
@@ -244,7 +244,7 @@ pub fn build_value_phi_target_scenario(
 /// claim that the natural pop-pc shape resolves to LinkRegister
 /// via StackLoadForward without any special-cased heuristic.
 pub fn build_pop_pc_via_stack_load_forward_scenario(
-) -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
+) -> (Graph, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::NodeOutputType;
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
@@ -325,7 +325,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     (fg, anchor, lr)
 }
 
-/// Build a `BuiltFunctionGraph` modelling the soundness-critical
+/// Build a `Graph` modelling the soundness-critical
 /// `push 0xK; pop pc` tail-call shape.  Same SP slot manipulation
 /// as `build_pop_pc_via_stack_load_forward_scenario`, but the
 /// stored value is an IntConst rather than `InitialVar(lr)`.
@@ -344,7 +344,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 /// LinkRegister arm doesn't false-positive.
 pub fn build_push_target_pop_pc_scenario(
     k: u64,
-) -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
+) -> (Graph, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::NodeOutputType;
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
@@ -410,7 +410,7 @@ pub fn build_push_target_pop_pc_scenario(
 
 // ── jump-table fixtures ──────────────────────────────────────────────────
 //
-// Each helper builds a `BuiltFunctionGraph` whose placeholder Return's
+// Each helper builds a `Graph` whose placeholder Return's
 // value-input is shaped like a jump-table dispatch — `Load(IntAdd(
 // IntConst(base), IntMul(idx, IntConst(stride))))` — and runs the
 // stable optimiser subset so the structure is exactly what IR-level indirect-branch resolver's
@@ -441,7 +441,7 @@ pub fn build_jump_table_known_bits_scenario(
     base: u64,
     stride: u64,
     idx_mask: u64,
-) -> (BuiltFunctionGraph, strider_ir::Value) {
+) -> (Graph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::IntBinaryOp;
     use strider_ir_test_utils::RegisterSet;
@@ -510,7 +510,7 @@ pub fn build_jump_table_predecessor_if_scenario(
     base: u64,
     stride: u64,
     bound: u64,
-) -> (BuiltFunctionGraph, strider_ir::Value) {
+) -> (Graph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::{IntBinaryOp, IntCmpOp};
     use strider_ir_test_utils::RegisterSet;
@@ -581,7 +581,7 @@ pub fn build_jump_table_predecessor_if_scenario(
 pub fn build_jump_table_unbounded_scenario(
     base: u64,
     stride: u64,
-) -> (BuiltFunctionGraph, strider_ir::Value) {
+) -> (Graph, strider_ir::Value) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::IntBinaryOp;
     use strider_ir_test_utils::RegisterSet;
@@ -626,7 +626,7 @@ pub fn build_jump_table_unbounded_scenario(
 /// shaped — used to verify the classifier's Load arm falls through
 /// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
 /// a simple global read).
-pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, strider_ir::Value) {
+pub fn build_non_jump_table_load_scenario() -> (Graph, strider_ir::Value) {
     use strider_ir::FunctionBuilder;
     use strider_ir::node::NodeOutputType;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
@@ -687,7 +687,7 @@ pub fn build_stack_array_dispatch_scenario(
     targets: &[u64],
     base_offset: i64,
     stride: u64,
-) -> (BuiltFunctionGraph, strider_ir::node::NodeOutputId, rsleigh::Vn) {
+) -> (Graph, strider_ir::node::NodeOutputId, rsleigh::Vn) {
     use strider_ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
     use strider_ir::{ExtendOp, IntBinaryOp};
     use strider_ir_test_utils::RegisterSet;
@@ -825,7 +825,7 @@ pub fn build_stack_array_dispatch_scenario(
 /// `OptionsBuilder`), so the cfg builder defers via
 /// `UnresolvedIndirectBranch` and IR-level indirect-branch resolver sees the cleaned-up
 /// shape.
-pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, strider_ir::Value, rsleigh::Vn) {
+pub fn build_bx_lr_scenario() -> (Graph, strider_ir::Value, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
     //   mov x0, x30  →  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
     //   br  x0       →  00 00 1f d6

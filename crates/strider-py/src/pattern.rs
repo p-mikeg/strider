@@ -318,7 +318,7 @@ pub struct PyPartialMatch {
 }
 
 // SAFETY: We never share PyPartialMatch across threads (`unsendable`).
-// The `*const BuiltFunctionGraph` it holds is only valid for the
+// The `*const Graph` it holds is only valid for the
 // duration of one synchronous predicate call, after which it's cleared.
 // The Mutex guards against re-entrant access from a Python callback
 // that re-enters Rust.
@@ -362,7 +362,7 @@ impl PyPartialMatch {
     fn with_graph<R>(&self, f: impl FnOnce(&strider_ir::Graph) -> R) -> Option<R> {
         let guard = self.graph_ptr.lock().unwrap_or_else(|p| p.into_inner());
         let ptr = (*guard)?;
-        // SAFETY: `ptr` was set to a valid `&BuiltFunctionGraph` by the
+        // SAFETY: `ptr` was set to a valid `&Graph` by the
         // matcher and only cleared after the predicate returns.  The
         // outer Mutex guard prevents the cleanup from racing this call.
         let graph_ref = unsafe { &*ptr };

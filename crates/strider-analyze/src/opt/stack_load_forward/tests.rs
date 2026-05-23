@@ -33,7 +33,7 @@ fn reachable_count<F: Fn(&NodeKind) -> bool>(ctx: crate::pattern::RewriteCtxView
 /// `StackLoadForward` synthesises when forwarding a load across a
 /// `MemPhi`.  Vn-tagged phis (created at lift time for register-aliased
 /// reads) are excluded.
-fn reachable_anonymous_phi_count(fg: &strider_ir::BuiltFunctionGraph) -> usize {
+fn reachable_anonymous_phi_count(fg: &strider_ir::Graph) -> usize {
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
         fg.preorder().collect();
     fg.all_node_ids()
@@ -45,7 +45,7 @@ fn reachable_anonymous_phi_count(fg: &strider_ir::BuiltFunctionGraph) -> usize {
 
 /// Finds the unique reachable anonymous (Vn-untagged) `Phi` node.
 fn find_reachable_anonymous_phi(
-    fg: &strider_ir::BuiltFunctionGraph,
+    fg: &strider_ir::Graph,
 ) -> Option<strider_ir::node::NodeId> {
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
         fg.preorder().collect();

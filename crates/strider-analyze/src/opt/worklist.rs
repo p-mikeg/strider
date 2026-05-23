@@ -77,7 +77,7 @@ mod tests {
 
     /// A minimal function `fn() -> u64 { return 7; }` — Entry + Return chain,
     /// no orphans, single IntConst.
-    fn trivial_const_fn() -> strider_ir::BuiltFunctionGraph {
+    fn trivial_const_fn() -> strider_ir::Graph {
         make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
     }
 

@@ -102,10 +102,10 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// ```
 ///
 /// Callers can run optimizer passes on a graph that has not yet been
-/// packaged into a final [`strider_ir::BuiltFunctionGraph`] (e.g. on a
+/// packaged into a final [`strider_ir::Graph`] (e.g. on a
 /// live [`strider_ir::FunctionBuilder`] via
 /// [`strider_ir::FunctionBuilder::graph_mut`] +
-/// [`strider_ir::FunctionBuilder::entry`]).  `BuiltFunctionGraph` is a
+/// [`strider_ir::FunctionBuilder::entry`]).  `Graph` is a
 /// final-output convenience type, not a precondition for analysis.
 ///
 /// `entry` is the function's entry [`strider_ir::node::NodeId`] —
@@ -252,7 +252,7 @@ mod tests {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
-    fn one_const_fn(k: u64) -> strider_ir::BuiltFunctionGraph {
+    fn one_const_fn(k: u64) -> strider_ir::Graph {
         let mut b = FunctionBuilder::empty().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();

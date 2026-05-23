@@ -9,7 +9,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
 use strider_lift::cfg::{Builder, OptionsBuilder};
-use strider_ir::BuiltFunctionGraph;
+use strider_ir::Graph;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -23,7 +23,7 @@ use strider_target::{CallingConvention, SleighArch};
 ///
 /// The placeholder `IndirectBranch` has exactly 3 inputs:
 /// `[control, memory, target_value]`.
-pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<strider_ir::Value> {
+pub fn anchor_value_input(graph: &Graph) -> Option<strider_ir::Value> {
     let mut found: Option<strider_ir::Value> = None;
     for nid in graph.preorder() {
         if !matches!(graph.node_kind(nid), NodeKind::IndirectBranch) {
@@ -56,7 +56,7 @@ pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<strider_ir::Valu
 /// module is supposed to have exactly one indirect branch.
 pub fn run_pipeline_x86_64(
     bytes: Vec<u8>,
-) -> (BuiltFunctionGraph, strider_ir::Value, Option<rsleigh::Vn>) {
+) -> (Graph, strider_ir::Value, Option<rsleigh::Vn>) {
     let base = 0x1000u64;
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);

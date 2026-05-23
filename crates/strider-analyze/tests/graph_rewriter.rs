@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
+use strider_ir::{Graph, FunctionBuilder, IntBinaryOp};
 use strider_analyze::pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -63,7 +63,7 @@ fn analyze_with_known_targets(
     base: u64,
     branch_indirect_addr: u64,
     targets: Vec<u64>,
-) -> (BuiltFunctionGraph, Strider) {
+) -> (Graph, Strider) {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
@@ -84,13 +84,13 @@ fn analyze_with_known_targets(
     (graph, strider)
 }
 
-fn count_if_nodes(g: &BuiltFunctionGraph) -> usize {
+fn count_if_nodes(g: &Graph) -> usize {
     g.preorder()
         .filter(|nid| matches!(g.node_kind(*nid), NodeKind::If))
         .count()
 }
 
-fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
+fn count_eq_cmps(g: &Graph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
@@ -104,7 +104,7 @@ fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
 /// Build a tiny non-Sleigh function: `fn() -> u64 { return Add(K, 0); }`.
 /// Uses [`FunctionBuilder::new_raw`] directly so the test doesn't depend
 /// on any Sleigh fixtures.
-fn add_k_plus_zero(k: u64) -> BuiltFunctionGraph {
+fn add_k_plus_zero(k: u64) -> Graph {
     let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
@@ -120,7 +120,7 @@ fn add_k_plus_zero(k: u64) -> BuiltFunctionGraph {
     b.build().unwrap()
 }
 
-fn count_adds(g: &BuiltFunctionGraph) -> usize {
+fn count_adds(g: &Graph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(

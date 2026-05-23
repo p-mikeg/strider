@@ -125,10 +125,8 @@ time, so the resolver-bearing dependency stays one-way.
     Carries `lift_addr: Option<u64>` for centralised lift-time
     fingerprint attribution.  `FunctionBuilder::new` accepts
     `&strider_target::BuiltCallingConvention` directly.
-  - `BuiltFunctionGraph` — produced by `FunctionBuilder::build`.  A
-    plain `pub type BuiltFunctionGraph = Graph;` alias preserved for
-    source compatibility.  After `build`, the returned `Graph` has
-    populated `entry` and `cc_metadata`.
+  - `FunctionBuilder::build` returns the populated `Graph` directly —
+    `entry` and `cc_metadata` are `Some(_)` after `build` succeeds.
   - `ReadOnlyMemory` trait — `read(&self, addr: u64, size: usize) ->
     Option<u64>`; returns up to 8 bytes as a little-endian-decoded
     `u64`, or `None` for unmapped addresses / sizes > 8.  Blanket
@@ -303,7 +301,7 @@ time, so the resolver-bearing dependency stays one-way.
     `build_stable_optimizer_pipeline`,
     `build_destructive_optimizer_pipeline` produce the three pre-canned
     pipelines.
-  - `orchestrator::run(config) -> Result<BuiltFunctionGraph>` — the
+  - `orchestrator::run(config) -> Result<Graph>` — the
     canonical top-level entry, re-exported as
     `strider_analyze::run`.  Build the CFG, lift to IR, run the stable
     optimiser subset, drive the indirect-branch fixed-point loop

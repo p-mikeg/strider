@@ -1,6 +1,6 @@
 //! `PyMatch` — result wrapper for a successful pattern match.
 //!
-//! The Rust `strider_analyze::pattern::Matcher` borrows the BuiltFunctionGraph
+//! The Rust `strider_analyze::pattern::Matcher` borrows the Graph
 //! immutably for its lifetime; we cannot store one across Python
 //! method calls without an unsafe lifetime extension.  Instead each
 //! call constructs a fresh `Matcher`, runs the query, and converts
@@ -49,7 +49,7 @@ impl PyMatch {
     /// the key → borrow the PyGraph → read the inner RwLock → poison-map).
     fn with_graph<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
     where
-        F: FnOnce(strider_analyze::pattern::Capture, &strider_ir::BuiltFunctionGraph) -> R,
+        F: FnOnce(strider_analyze::pattern::Capture, &strider_ir::Graph) -> R,
     {
         let cap = key.resolve()?;
         let g = self.graph.borrow(py);

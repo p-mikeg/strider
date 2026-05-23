@@ -170,7 +170,7 @@ pub fn classify_anchor(
 mod tests {
     //! Unit tests for [`classify_anchor`].
     //!
-    //! Each test constructs a minimal [`strider_ir::BuiltFunctionGraph`]
+    //! Each test constructs a minimal [`strider_ir::Graph`]
     //! via [`strider_ir::FunctionBuilder::new_raw`], appends nodes
     //! directly via `graph.create_node` to control the producer shape
     //! exactly, and then invokes the classifier on the targeted output.
@@ -182,7 +182,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_ir::BuiltFunctionGraph;
+    use strider_ir::Graph;
     use strider_ir::FunctionBuilder;
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
     use strider_ir_test_utils::{reg_vn as fake_reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
@@ -208,14 +208,14 @@ mod tests {
         ))
     }
 
-    /// Build a minimal `BuiltFunctionGraph` with one tracked
+    /// Build a minimal `Graph` with one tracked
     /// variable and an empty body region terminated by a Return
     /// whose single value-input is the caller-supplied
     /// `NodeOutputId`.  Used as a scaffold for the unit tests so
     /// the classifier sees a real, validation-passing graph.
     fn empty_graph_returning(
         anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> NodeOutputId,
-    ) -> (BuiltFunctionGraph, NodeOutputId) {
+    ) -> (Graph, NodeOutputId) {
         // No tracked variables, no calling convention plumbing.
         let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
@@ -410,7 +410,7 @@ mod tests {
     /// validation-passing path end-to-end.
     fn build_value_phi_graph(
         per_pred_consts: &[u64],
-    ) -> (BuiltFunctionGraph, NodeOutputId) {
+    ) -> (Graph, NodeOutputId) {
         let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");

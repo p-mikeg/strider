@@ -86,7 +86,7 @@ impl Fingerprint {
 /// the same bucket.  Operator-bearing variants keep the operator name
 /// (e.g. `IntBinaryOp::Add`) since that's a *structural* property of the
 /// source program, not a register-renaming artefact.
-fn kind_bucket(g: &strider_ir::BuiltFunctionGraph, nid: strider_ir::node::NodeId) -> String {
+fn kind_bucket(g: &strider_ir::Graph, nid: strider_ir::node::NodeId) -> String {
     let k = g.node_kind(nid);
     match k {
         NodeKind::Entry => "Entry".to_string(),
@@ -138,7 +138,7 @@ fn kind_bucket(g: &strider_ir::BuiltFunctionGraph, nid: strider_ir::node::NodeId
 
 /// Compute the structural fingerprint of `g`.
 ///
-/// Walks every reachable node via `BuiltFunctionGraph::preorder` (same
+/// Walks every reachable node via `Graph::preorder` (same
 /// reachability scope used by the validator's local-typing check), accumulating:
 ///   * histogram of payload-elided `NodeKind` buckets,
 ///   * total edge counts by kind (Control / Memory / Value), where an
@@ -147,7 +147,7 @@ fn kind_bucket(g: &strider_ir::BuiltFunctionGraph, nid: strider_ir::node::NodeId
 ///   * region count (one per `ControlState` reachable node — matches
 ///     how `strider_lift::cfg::Cfg` regions are projected into the IR),
 ///   * per-kind phi counts (broken out for sensitivity to kind drift).
-fn structural_fingerprint(g: &strider_ir::BuiltFunctionGraph) -> Fingerprint {
+fn structural_fingerprint(g: &strider_ir::Graph) -> Fingerprint {
     let mut kind_histogram: BTreeMap<String, usize> = BTreeMap::new();
     let mut reachable_nodes = 0usize;
     let mut regions = 0usize;

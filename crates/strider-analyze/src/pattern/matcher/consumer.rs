@@ -37,7 +37,7 @@ mod tests {
 
     /// Entry → Call → Return, single region (no `ControlState` between
     /// Entry and Call nor between Call and Return).
-    fn graph_call_return() -> strider_ir::Result<strider_ir::BuiltFunctionGraph> {
+    fn graph_call_return() -> strider_ir::Result<strider_ir::Graph> {
         let mut b = FunctionBuilder::empty()?;
         let r = b.create_region()?;
         b.set_entry_region(r)?;
@@ -50,7 +50,7 @@ mod tests {
         b.build()
     }
 
-    fn entry_ctrl_out(g: &strider_ir::BuiltFunctionGraph) -> NodeOutputId {
+    fn entry_ctrl_out(g: &strider_ir::Graph) -> NodeOutputId {
         g.node_outputs(g.entry().expect("test fixture must be built"))
             .iter()
             .copied()

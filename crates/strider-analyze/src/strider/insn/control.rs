@@ -386,14 +386,14 @@ mod tests {
     }
 
     /// Count `If` nodes via the post-build preorder walk.
-    fn count_if_nodes(g: &strider_ir::BuiltFunctionGraph) -> usize {
+    fn count_if_nodes(g: &strider_ir::Graph) -> usize {
         g.preorder()
             .filter(|nid| matches!(g.node_kind(*nid), NodeKind::If))
             .count()
     }
 
     /// Count `IntCmpOp(Equal)` nodes via the post-build preorder walk.
-    fn count_eq_cmps(g: &strider_ir::BuiltFunctionGraph) -> usize {
+    fn count_eq_cmps(g: &strider_ir::Graph) -> usize {
         g.preorder()
             .filter(|nid| {
                 matches!(
@@ -405,7 +405,7 @@ mod tests {
     }
 
     /// Count `IntConst` nodes whose value equals `want`.
-    fn count_int_consts_eq(g: &strider_ir::BuiltFunctionGraph, want: u64) -> usize {
+    fn count_int_consts_eq(g: &strider_ir::Graph, want: u64) -> usize {
         g.preorder()
             .filter(|nid| {
                 matches!(

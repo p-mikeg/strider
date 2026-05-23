@@ -431,7 +431,7 @@ impl Graph {
     }
 
     /// Identity self-reference — no-op now that the
-    /// `BuiltFunctionGraph` wrapper was collapsed into `Graph`.  Kept
+    /// `Graph` wrapper was collapsed into `Graph`.  Kept
     /// so call sites that were written against the wrapper continue to
     /// compile.
     #[doc(hidden)]

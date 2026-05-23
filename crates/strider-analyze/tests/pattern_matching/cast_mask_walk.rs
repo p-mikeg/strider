@@ -11,7 +11,7 @@ use strider_analyze::pattern::{
     CastMask, Capture, Matcher, Pat, add, any_int_const, initial_var_for,
 };
 use strider_ir::node::{NodeOutputId, NodeOutputType};
-use strider_ir::{BuiltFunctionGraph, ExtendOp, FunctionBuilder, IntBinaryOp};
+use strider_ir::{Graph, ExtendOp, FunctionBuilder, IntBinaryOp};
 
 use strider_ir_test_utils::RegisterSet;
 
@@ -20,7 +20,7 @@ use strider_ir_test_utils::RegisterSet;
 /// variable.  Without this pass, `read_variable(vn)` returns the
 /// `Phi(Some(vn))` output (with `InitialVar(vn)` as its sole input),
 /// which sits between the matcher's input descent and the InitialVar.
-fn collapse_phis(g: &mut BuiltFunctionGraph) {
+fn collapse_phis(g: &mut Graph) {
     let entry = g.entry().expect("entry");
     RedundantPhis.optimize(g, entry).expect("RedundantPhis");
 }
@@ -43,7 +43,7 @@ fn build_add_wrapped<F>(
     vn: rsleigh::Vn,
     ty: NodeOutputType,
     wrap: F,
-) -> BuiltFunctionGraph
+) -> Graph
 where
     F: FnOnce(&mut FunctionBuilder, NodeOutputId) -> NodeOutputId,
 {
@@ -70,14 +70,14 @@ fn pat() -> Pat {
 }
 
 /// Run the pattern under `mask` and return the match count.
-fn count(g: &BuiltFunctionGraph, mask: CastMask) -> usize {
+fn count(g: &Graph, mask: CastMask) -> usize {
     Matcher::new(g).ignore_casts_mask(mask).find_all(&pat()).len()
 }
 
 // ── Add(Truncate(InitialVar), IntConst) ─────────────────────────────────────
 
 /// `Add(Truncate(InitialVar : U64) : U32, IntConst(7) : U32) : U32`.
-fn fixture_truncate_then_add() -> BuiltFunctionGraph {
+fn fixture_truncate_then_add() -> Graph {
     build_add_wrapped(x_vn(), NodeOutputType::U32, |fb, x| {
         fb.truncate_if_needed(x, NodeOutputType::U32).unwrap()
     })
@@ -119,7 +119,7 @@ fn x_u32_vn() -> rsleigh::Vn {
 }
 
 /// `Add(ZeroExt(InitialVar : U32) : U64, IntConst(7) : U64) : U64`.
-fn fixture_zext_then_add() -> BuiltFunctionGraph {
+fn fixture_zext_then_add() -> Graph {
     build_add_wrapped(x_u32_vn(), NodeOutputType::U64, |fb, x| {
         fb.extend_if_needed(x, NodeOutputType::U64, ExtendOp::ZeroExtend)
             .unwrap()
@@ -131,7 +131,7 @@ fn pat_u32_initial_var() -> Pat {
     add(initial_var_for(x_u32_vn()), any_int_const(Capture::new())).into()
 }
 
-fn count_u32(g: &BuiltFunctionGraph, mask: CastMask) -> usize {
+fn count_u32(g: &Graph, mask: CastMask) -> usize {
     Matcher::new(g)
         .ignore_casts_mask(mask)
         .find_all(&pat_u32_initial_var())
@@ -159,7 +159,7 @@ fn zext_initial_var_extend_mask_one_match() {
 // ── Add(SignExtend(InitialVar), IntConst) ───────────────────────────────────
 
 /// `Add(SignExt(InitialVar : U32) : U64, IntConst(7) : U64) : U64`.
-fn fixture_sext_then_add() -> BuiltFunctionGraph {
+fn fixture_sext_then_add() -> Graph {
     build_add_wrapped(x_u32_vn(), NodeOutputType::U64, |fb, x| {
         fb.extend_if_needed(x, NodeOutputType::U64, ExtendOp::SignExtend)
             .unwrap()
@@ -195,7 +195,7 @@ fn x_u16_vn() -> rsleigh::Vn {
 }
 
 /// `Add(Truncate(ZeroExt(InitialVar : U16) : U64) : U32, IntConst(7) : U32) : U32`.
-fn fixture_truncate_of_zext_then_add() -> BuiltFunctionGraph {
+fn fixture_truncate_of_zext_then_add() -> Graph {
     build_add_wrapped(x_u16_vn(), NodeOutputType::U32, |fb, x| {
         let widened = fb
             .extend_if_needed(x, NodeOutputType::U64, ExtendOp::ZeroExtend)
@@ -208,7 +208,7 @@ fn pat_u16_initial_var() -> Pat {
     add(initial_var_for(x_u16_vn()), any_int_const(Capture::new())).into()
 }
 
-fn count_u16(g: &BuiltFunctionGraph, mask: CastMask) -> usize {
+fn count_u16(g: &Graph, mask: CastMask) -> usize {
     Matcher::new(g)
         .ignore_casts_mask(mask)
         .find_all(&pat_u16_initial_var())
@@ -240,7 +240,7 @@ fn truncate_of_zext_truncate_or_zero_extend_mask_one_match() {
 
 /// Builds `Add(<truncate-extend tower>(InitialVar : U64), IntConst(7) : U64)`
 /// with `levels` round-trips of `Truncate(U64 → U32)` → `Extend(U32 → U64)`.
-fn fixture_deep_cast_chain(levels: usize) -> BuiltFunctionGraph {
+fn fixture_deep_cast_chain(levels: usize) -> Graph {
     build_add_wrapped(x_vn(), NodeOutputType::U64, |fb, x| {
         let mut current = x;
         for _ in 0..levels {

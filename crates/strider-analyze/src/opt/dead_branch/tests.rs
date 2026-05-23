@@ -7,7 +7,7 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
 // Helper: count ControlState nodes with N ctrl inputs.
-fn count_cs_with_n_inputs(fg: &strider_ir::BuiltFunctionGraph, n: usize) -> usize {
+fn count_cs_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
     fg.all_node_ids()
         .filter(|&node| {
             matches!(fg.node_kind(node), NodeKind::ControlState)
@@ -17,7 +17,7 @@ fn count_cs_with_n_inputs(fg: &strider_ir::BuiltFunctionGraph, n: usize) -> usiz
 }
 
 /// Build a function with `if(cond)`, two branches each ending in `return`.
-fn make_if_fn(cond_val: bool) -> Result<strider_ir::BuiltFunctionGraph> {
+fn make_if_fn(cond_val: bool) -> Result<strider_ir::Graph> {
     let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let true_region = b.create_region()?;

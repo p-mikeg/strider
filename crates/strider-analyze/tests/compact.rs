@@ -26,7 +26,7 @@ fn make_strider() -> Strider {
     common::strider_x86_64()
 }
 
-fn run_with(compact: bool) -> strider_ir::BuiltFunctionGraph {
+fn run_with(compact: bool) -> strider_ir::Graph {
     let strider = make_strider();
     let (bytes, entry) = x86_64_call_then_ret_bytes();
     let arch = SleighArch::x86_64();

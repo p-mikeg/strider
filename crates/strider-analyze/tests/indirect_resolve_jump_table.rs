@@ -1,6 +1,6 @@
 //! Integration tests for the jump-table classifier.
 //!
-//! Each test builds a synthetic `BuiltFunctionGraph` via the fixture
+//! Each test builds a synthetic `Graph` via the fixture
 //! helpers in `common::indirect_resolve_helpers`, runs the stable optimiser
 //! subset (matching what intermediate orchestrator iterations will
 //! see), then invokes [`classify_anchor`] on the placeholder

@@ -534,7 +534,7 @@ mod tests {
         targets: [u64; 2],
         base_offset: i64,
         stride: u64,
-    ) -> (strider_ir::BuiltFunctionGraph, NodeOutputId) {
+    ) -> (strider_ir::Graph, NodeOutputId) {
         let sp = sp64();
         let arg_vn = rsleigh::Vn {
             addr_off: 0x38,
@@ -734,7 +734,7 @@ mod tests {
     /// an `IntConst`, because `strip_target_mask`'s commutative-And
     /// handling captures the const operand on either side; an IntConst
     /// inner would incorrectly pin the captured "non-const" side.
-    fn build_load_anchor() -> (strider_ir::BuiltFunctionGraph, NodeOutputId) {
+    fn build_load_anchor() -> (strider_ir::Graph, NodeOutputId) {
         let reg = rsleigh::Vn {
             addr_off: 0x10,
             addr_space: rsleigh::VnSpace::REGISTER,
@@ -989,7 +989,7 @@ mod tests {
         targets: [u64; 1],
         base_offset: i64,
         stride: u64,
-    ) -> (strider_ir::BuiltFunctionGraph, strider_ir::node::NodeOutputId) {
+    ) -> (strider_ir::Graph, strider_ir::node::NodeOutputId) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::RegisterSet;

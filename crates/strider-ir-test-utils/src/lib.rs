@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use strider_ir::{BuiltFunctionGraph, FunctionBuilder, ReadOnlyMemory, Result, Value};
+use strider_ir::{Graph, FunctionBuilder, ReadOnlyMemory, Result, Value};
 
 /// Sentinel asm-fingerprint address used by every helper in this
 /// module.  Distinct from any real machine address so debug output
@@ -158,7 +158,7 @@ impl RegisterSet {
 /// # Errors
 ///
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
-pub fn make_empty_fn<F>(f: F) -> Result<BuiltFunctionGraph>
+pub fn make_empty_fn<F>(f: F) -> Result<Graph>
 where
     F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
 {
@@ -193,7 +193,7 @@ where
 pub fn make_fn_with_var<F>(
     vn: rsleigh::Vn,
     f: F,
-) -> Result<(BuiltFunctionGraph, Value)>
+) -> Result<(Graph, Value)>
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<Value>,
 {
@@ -431,7 +431,7 @@ pub fn sp_vn_x86_64() -> rsleigh::Vn {
 /// # Errors
 ///
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
-pub fn make_sp_fn<F>(sp_vn: rsleigh::Vn, f: F) -> Result<BuiltFunctionGraph>
+pub fn make_sp_fn<F>(sp_vn: rsleigh::Vn, f: F) -> Result<Graph>
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<()>,
 {

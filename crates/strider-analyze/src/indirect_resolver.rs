@@ -19,7 +19,7 @@
 //!    `Return(target_value)` so the value is reachable from the entry.
 //! 3. Run `ConstantFold + KnownBits + RedundantPhis` (and optionally
 //!    [`crate::opt::LoadReadOnly`] when the caller passes a [`strider_ir::ReadOnlyMemory`])
-//!    over the resulting [`strider_ir::BuiltFunctionGraph`].
+//!    over the resulting [`strider_ir::Graph`].
 //! 4. Inspect the producer of the post-fold target value:
 //!    - `IntConst(k)` → [`ResolvedTargets::Single(k as u64)`].
 //!    - `InitialVar(vn)` where `vn == cc_link_register_vn` →
@@ -159,7 +159,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
 /// Builds the resolver's mini-IR graph and emits `Return(target_value)`
 /// so the dispatch target is reachable from the entry.  Hoisted out of
 /// [`resolve_indirect_target`] so the test API can drive it and inspect
-/// the resulting [`strider_ir::BuiltFunctionGraph`] (e.g. for asm-fingerprint
+/// the resulting [`strider_ir::Graph`] (e.g. for asm-fingerprint
 /// validation in tests).
 ///
 /// Each pcode insn is lifted under a
@@ -186,7 +186,7 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     sleigh: &rsleigh::Sleigh<R>,
     cc_link_register_vn: Option<rsleigh::Vn>,
     endianness: Endianness,
-) -> Result<strider_ir::BuiltFunctionGraph> {
+) -> Result<strider_ir::Graph> {
     // Collect every varnode the region touches plus `target_vn` and
     // `cc_link_register_vn` so the IR builder can pre-declare them.
     // Including `target_vn` lets us read its value even on regions
@@ -326,7 +326,7 @@ fn make_resolver_pipeline() -> OptimizerPipeline {
 /// lifetime so it can't be wrapped in `LoadReadOnly` and registered
 /// directly.  Must stay in lockstep with [`crate::opt::LoadReadOnly`]'s impl.
 fn resolve_const_loads(
-    fg: &mut strider_ir::BuiltFunctionGraph,
+    fg: &mut strider_ir::Graph,
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
     let nodes: Vec<_> = fg.preorder().collect();
@@ -390,7 +390,7 @@ fn resolve_const_loads(
 /// add or remove `Return` nodes, so this is well-defined post-fold.
 /// Zero or more than one Return signals a graph-construction bug in
 /// this module and propagates as an error.
-fn find_unique_return(fg: &strider_ir::BuiltFunctionGraph) -> Result<strider_ir::node::NodeId> {
+fn find_unique_return(fg: &strider_ir::Graph) -> Result<strider_ir::node::NodeId> {
     let mut iter = fg.preorder_kind(|k| matches!(k, strider_ir::node::NodeKind::Return));
     let first = iter
         .next()

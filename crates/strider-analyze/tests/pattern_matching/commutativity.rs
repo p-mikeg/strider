@@ -220,7 +220,7 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
 
 /// Builds a graph that asserts a float comparison `a OP b` and returns
 /// the boolean result (cast to u64 for typability).
-fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::BuiltFunctionGraph {
+fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Graph {
     let mut t = Tb::empty();
     let a = t.f64(l);
     let b = t.f64(r);

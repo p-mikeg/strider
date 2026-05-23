@@ -1,17 +1,9 @@
-use crate::graph::Graph;
-
-/// A fully-built IR function graph ready for analysis.
-///
-/// Type alias for [`Graph`] preserved for source compatibility — the
-/// previous `BuiltFunctionGraph` newtype wrapper was a `Deref<Target =
-/// Graph>` whose every accessor unwrapped `Option`s on the inner
-/// `Graph`'s `entry` / `cc_metadata` fields.  Those fields are now part
-/// of `Graph` itself; the wrapper's only contribution was a type-level
-/// "is built" hint that opt-pass call sites (taking `&mut Graph`)
-/// already lacked.  After [`crate::FunctionBuilder::build`] returns, the
-/// `Graph` has populated `entry` and `cc_metadata`; pre-build construction
-/// uses `Graph::new`.
-pub type BuiltFunctionGraph = Graph;
+//! Function-level graph helpers and their tests.
+//!
+//! [`crate::graph::Graph`] is the IR function graph.  After
+//! [`crate::FunctionBuilder::build`] returns, the graph has its `entry`
+//! and `cc_metadata` populated; pre-build construction uses
+//! [`crate::graph::Graph::new`].
 
 #[cfg(test)]
 mod compact_tests {

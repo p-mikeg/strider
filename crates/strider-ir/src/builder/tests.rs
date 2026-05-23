@@ -1449,7 +1449,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
 }
 
 /// `entry()` must return the same `NodeId` that `build()` would record on the
-/// produced `BuiltFunctionGraph`.  This is the contract opt passes rely on
+/// produced `Graph`.  This is the contract opt passes rely on
 /// when they take `(graph, entry)` from a builder that hasn't been consumed.
 #[test]
 fn entry_returns_recorded_entry_node_id() -> Result<()> {
@@ -1467,7 +1467,7 @@ fn entry_returns_recorded_entry_node_id() -> Result<()> {
 }
 
 /// Calling `build()` after mutating via `graph_mut()` must still succeed
-/// and the resulting `BuiltFunctionGraph` must be consistent with the
+/// and the resulting `Graph` must be consistent with the
 /// in-place mutations.
 #[test]
 fn build_after_inplace_optimization_still_succeeds() -> Result<()> {

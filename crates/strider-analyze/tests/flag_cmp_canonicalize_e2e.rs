@@ -13,7 +13,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_lift::cfg::{Builder, OptionsBuilder};
-use strider_ir::BuiltFunctionGraph;
+use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -23,7 +23,7 @@ use strider_target::{CallingConvention, SleighArch};
 /// Lift the supplied bytes starting at `0x1000` and run the full
 /// strider optimiser pipeline (which now includes
 /// `FlagCmpCanonicalize`).  Returns the post-pipeline graph.
-fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> BuiltFunctionGraph {
+fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Graph {
     let base = 0x1000u64;
     let reader = BufMemReader::new(bytes, base);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
@@ -43,7 +43,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> BuiltFunctio
     graph
 }
 
-fn find_unique_if(fg: &BuiltFunctionGraph) -> NodeId {
+fn find_unique_if(fg: &Graph) -> NodeId {
     let ifs: Vec<NodeId> = fg
         .all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
@@ -73,7 +73,7 @@ fn aarch64_cmp_eq_branch_bytes() -> Vec<u8> {
 }
 
 /// Returns the producer-`NodeKind` of `if_node`'s cond input.
-fn if_cond_kind(fg: &BuiltFunctionGraph, if_node: NodeId) -> NodeKind {
+fn if_cond_kind(fg: &Graph, if_node: NodeId) -> NodeKind {
     let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)
         .expect("If has 2 inputs");
     *fg.node_kind(fg.get_node_from_output(cond_out))

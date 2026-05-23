@@ -30,7 +30,7 @@ use proptest::prelude::*;
 use strider_analyze::opt::{OptimizerPipeline, default_pipeline};
 use strider_ir::node::{NodeId, NodeOutputType};
 use strider_ir::{
-    BuiltFunctionGraph, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    Graph, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
 /// Sentinel lift-address base; per-step `lift_off` is added on top.
@@ -191,7 +191,7 @@ impl Pools {
     }
 }
 
-fn replay(steps: &[Step]) -> Option<BuiltFunctionGraph> {
+fn replay(steps: &[Step]) -> Option<Graph> {
     let mut b = FunctionBuilder::empty().ok()?;
     let region = b.create_region().ok()?;
     b.set_entry_region(region).ok()?;

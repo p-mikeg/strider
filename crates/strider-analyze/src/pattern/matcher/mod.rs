@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use strider_ir::BuiltFunctionGraph;
+use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::pattern::pat::Pat;
@@ -57,7 +57,7 @@ pub(crate) struct MatcherOptions {
     pub ignore_control_states: bool,
 }
 
-/// Executes pattern queries against a [`BuiltFunctionGraph`].
+/// Executes pattern queries against a [`Graph`].
 ///
 /// Construction is O(1).  `find_all` / `match_at` do a single preorder
 /// walk of the graph each call and try the pattern against every
@@ -97,11 +97,11 @@ pub struct Matcher<'g> {
 }
 
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher` over a [`BuiltFunctionGraph`].  Wrapper
+    /// Creates a new `Matcher` over a [`Graph`].  Wrapper
     /// around [`Self::for_graph`] for callers that already hold the
     /// fully-built form (the common query path).  Rewrite-only callers
     /// that have just `&Graph + NodeId` should use [`Self::for_graph`]
-    /// directly to avoid synthesising a dummy `BuiltFunctionGraph` with
+    /// directly to avoid synthesising a dummy `Graph` with
     /// empty CC fields.
     ///
     /// # Panics
@@ -111,7 +111,7 @@ impl<'g> Matcher<'g> {
     /// via [`strider_ir::FunctionBuilder::build`].
     #[must_use]
     #[allow(clippy::expect_used)]
-    pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
+    pub fn new(fn_graph: &'g Graph) -> Self {
         let entry = fn_graph.entry().expect(
             "Matcher::new: pre-condition violated — \
              graph has not been built (entry is None)",
@@ -120,7 +120,7 @@ impl<'g> Matcher<'g> {
     }
 
     /// Creates a new `Matcher` over a raw `(graph, entry)` pair —
-    /// the rewrite-only path.  No `BuiltFunctionGraph` wrapper required;
+    /// the rewrite-only path.  No `Graph` wrapper required;
     /// the matcher only ever consults graph + entry.
     #[must_use]
     pub fn for_graph(graph: &'g strider_ir::Graph, entry: NodeId) -> Self {
@@ -402,7 +402,7 @@ impl<'g> Matcher<'g> {
     /// # use strider_analyze::pattern::{call, load, add, int_const, any_int_const, initial_var_for};
     /// # fn example(
     /// #     matcher: &Matcher<'_>,
-    /// #     graph: &strider_ir::BuiltFunctionGraph,
+    /// #     graph: &strider_ir::Graph,
     /// #     rbp: rsleigh::Vn,
     /// #     vn_open_addr: u64,
     /// # ) -> Option<()> {

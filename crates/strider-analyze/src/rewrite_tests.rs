@@ -25,7 +25,7 @@ use super::GraphRewriter;
 ///
 /// — a single `IntConst(7)` returned via `build_return`.  No Add /
 /// Sub / Load nodes — used by the no-match test.
-fn one_const_fn(k: u64) -> strider_ir::BuiltFunctionGraph {
+fn one_const_fn(k: u64) -> strider_ir::Graph {
     let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
@@ -43,7 +43,7 @@ fn one_const_fn(k: u64) -> strider_ir::BuiltFunctionGraph {
 ///
 /// — exactly one `Add(IntConst(7), IntConst(0))`.  The `add(x, 0) → x`
 /// rule fires once on this fixture.
-fn add_x_plus_zero(x: u64) -> strider_ir::BuiltFunctionGraph {
+fn add_x_plus_zero(x: u64) -> strider_ir::Graph {
     let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
@@ -70,7 +70,7 @@ fn add_x_plus_zero(x: u64) -> strider_ir::BuiltFunctionGraph {
 /// match).  Pinning the round-robin contract: `apply_rules` walks
 /// every reachable node once per call, so 2 firings on a single
 /// call.
-fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::BuiltFunctionGraph {
+fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::Graph {
     let mut bd = FunctionBuilder::empty().unwrap();
     let region = bd.create_region().unwrap();
     bd.set_entry_region(region).unwrap();
@@ -95,7 +95,7 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::BuiltFunctionGraph {
 
 /// Counts reachable Add nodes — the easy way to assert "the rule
 /// fired" without poking at internal graph slot ids.
-fn count_adds(g: &strider_ir::BuiltFunctionGraph) -> usize {
+fn count_adds(g: &strider_ir::Graph) -> usize {
     g.preorder()
         .filter(|nid| {
             matches!(
@@ -109,7 +109,7 @@ fn count_adds(g: &strider_ir::BuiltFunctionGraph) -> usize {
 /// Counts reachable lowered-Sub shapes: `Add(_, IntUnaryOp::Neg(_))`.
 /// `IntBinaryOp::Sub` is not a primitive in this IR — `build_int_sub`
 /// produces this two-node shape, and `crate::pattern::sub(_, _)` matches it.
-fn count_subs(g: &strider_ir::BuiltFunctionGraph) -> usize {
+fn count_subs(g: &strider_ir::Graph) -> usize {
     g.preorder()
         .filter(|&nid| {
             // Outer node must be Add with exactly two value inputs.

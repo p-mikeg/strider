@@ -4,7 +4,7 @@
 
 use strider_ir::node::NodeOutputType;
 use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, BuiltFunctionGraph, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    BoolBinaryOp, BoolUnaryOp, Graph, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
 use super::graph::{Tb, reg_vn, sp_vn};
@@ -14,7 +14,7 @@ use super::graph::{Tb, reg_vn, sp_vn};
 // the op lets every test module drive the full op enum without open-coding
 // the boilerplate.
 
-pub fn int_bin_5_3(op: IntBinaryOp) -> BuiltFunctionGraph {
+pub fn int_bin_5_3(op: IntBinaryOp) -> Graph {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -22,7 +22,7 @@ pub fn int_bin_5_3(op: IntBinaryOp) -> BuiltFunctionGraph {
     t.ret_val(v)
 }
 
-pub fn int_bin(l: u64, r: u64, op: IntBinaryOp) -> BuiltFunctionGraph {
+pub fn int_bin(l: u64, r: u64, op: IntBinaryOp) -> Graph {
     let mut t = Tb::empty();
     let a = t.u64(l);
     let b = t.u64(r);
@@ -30,14 +30,14 @@ pub fn int_bin(l: u64, r: u64, op: IntBinaryOp) -> BuiltFunctionGraph {
     t.ret_val(v)
 }
 
-pub fn int_un(v: u64, op: IntUnaryOp) -> BuiltFunctionGraph {
+pub fn int_un(v: u64, op: IntUnaryOp) -> Graph {
     let mut t = Tb::empty();
     let v = t.u64(v);
     let v = t.int_un(v, op);
     t.ret_val(v)
 }
 
-pub fn int_cmp_5_3(op: IntCmpOp) -> BuiltFunctionGraph {
+pub fn int_cmp_5_3(op: IntCmpOp) -> Graph {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -48,7 +48,7 @@ pub fn int_cmp_5_3(op: IntCmpOp) -> BuiltFunctionGraph {
 
 /// `return(5 <= 3)` built as the lowered shape `BoolNeg(IntLess(3, 5))`,
 /// matching the canonical form pcode-lift produces for `IntLessEqual`.
-pub fn int_le_lowered_5_3() -> BuiltFunctionGraph {
+pub fn int_le_lowered_5_3() -> Graph {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -60,7 +60,7 @@ pub fn int_le_lowered_5_3() -> BuiltFunctionGraph {
 }
 
 /// Signed analogue of [`int_le_lowered_5_3`]: `BoolNeg(IntSless(3, 5))`.
-pub fn int_sle_lowered_5_3() -> BuiltFunctionGraph {
+pub fn int_sle_lowered_5_3() -> Graph {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
@@ -70,7 +70,7 @@ pub fn int_sle_lowered_5_3() -> BuiltFunctionGraph {
     t.ret_val(cast)
 }
 
-pub fn bool_bin(l: bool, r: bool, op: BoolBinaryOp) -> BuiltFunctionGraph {
+pub fn bool_bin(l: bool, r: bool, op: BoolBinaryOp) -> Graph {
     let mut t = Tb::empty();
     let a = t.boolean(l);
     let b = t.boolean(r);
@@ -79,7 +79,7 @@ pub fn bool_bin(l: bool, r: bool, op: BoolBinaryOp) -> BuiltFunctionGraph {
     t.ret_val(as_int)
 }
 
-pub fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> BuiltFunctionGraph {
+pub fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> Graph {
     let mut t = Tb::empty();
     let a = t.f64(l);
     let b = t.f64(r);
@@ -89,7 +89,7 @@ pub fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> BuiltFunctionGraph {
 }
 
 /// `return(a + b)` — both operands are `IntConst` of type `U64`.
-pub fn add_consts(a: u64, b: u64) -> BuiltFunctionGraph {
+pub fn add_consts(a: u64, b: u64) -> Graph {
     let mut t = Tb::empty();
     let la = t.u64(a);
     let lb = t.u64(b);
@@ -98,7 +98,7 @@ pub fn add_consts(a: u64, b: u64) -> BuiltFunctionGraph {
 }
 
 /// `return(((a + b) + c))` — three-deep nested add.
-pub fn add_nested_3(a: u64, b: u64, c: u64) -> BuiltFunctionGraph {
+pub fn add_nested_3(a: u64, b: u64, c: u64) -> Graph {
     let mut t = Tb::empty();
     let la = t.u64(a);
     let lb = t.u64(b);
@@ -109,14 +109,14 @@ pub fn add_nested_3(a: u64, b: u64, c: u64) -> BuiltFunctionGraph {
 }
 
 /// `call(addr)` then `return` — no args, no return value.
-pub fn call_at(addr: u64) -> BuiltFunctionGraph {
+pub fn call_at(addr: u64) -> Graph {
     let mut t = Tb::empty();
     t.call_at(addr);
     t.ret_nothing()
 }
 
 /// `store(ram, addr=a, data=d)` then `load(ram, addr=a)` then return.
-pub fn store_then_load_ram(addr: u64, data: u64) -> BuiltFunctionGraph {
+pub fn store_then_load_ram(addr: u64, data: u64) -> Graph {
     let mut t = Tb::empty();
     let a = t.u64(addr);
     let d = t.u64(data);
@@ -127,7 +127,7 @@ pub fn store_then_load_ram(addr: u64, data: u64) -> BuiltFunctionGraph {
 
 /// `if c == 1 { return 10 } else { return 20 }` where `c` is a u64 const
 /// supplied by the caller.  Useful for If-pattern and dead-branch tests.
-pub fn if_cmp_then_return(c: u64) -> BuiltFunctionGraph {
+pub fn if_cmp_then_return(c: u64) -> Graph {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
     let true_r = t.region();
@@ -158,7 +158,7 @@ pub fn if_cmp_then_return(c: u64) -> BuiltFunctionGraph {
 /// program — `if (c == 1) { return 10 } else { return 20 }` — but the IR has
 /// the cond wrapped in `Not(...)` and the branches swapped, so the literal
 /// IR shape is `if (!(c == 1)) { return 20 } else { return 10 }`.
-pub fn if_cmp_then_return_inverted(c: u64) -> BuiltFunctionGraph {
+pub fn if_cmp_then_return_inverted(c: u64) -> Graph {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
     let true_r = t.region();
@@ -189,7 +189,7 @@ pub fn if_cmp_then_return_inverted(c: u64) -> BuiltFunctionGraph {
 /// Graph with a single tracked register and `return(reg)` — yields one
 /// `InitialVar(reg)` node.  Returns the register so tests can construct
 /// `phi_for` / `initial_var_for` patterns against it.
-pub fn single_initial_var() -> (BuiltFunctionGraph, rsleigh::Vn) {
+pub fn single_initial_var() -> (Graph, rsleigh::Vn) {
     let reg = reg_vn(0x00, 8);
     let mut t = Tb::with_vars(&[reg]);
     let v = t.read_var(&reg);
@@ -198,7 +198,7 @@ pub fn single_initial_var() -> (BuiltFunctionGraph, rsleigh::Vn) {
 
 /// Graph that, after `opt::FunctionArgDetect`, contains a single
 /// `FunctionArg { Register(reg), 0 }` node.
-pub fn function_arg_reg() -> (BuiltFunctionGraph, rsleigh::Vn) {
+pub fn function_arg_reg() -> (Graph, rsleigh::Vn) {
     use strider_analyze::opt::{FunctionArgDetect, Optimizer};
     let reg = reg_vn(0x38, 8);
     let sp = sp_vn();
@@ -215,7 +215,7 @@ pub fn function_arg_reg() -> (BuiltFunctionGraph, rsleigh::Vn) {
 /// Runs the minimal opt pipeline needed before `StackStoreDetect` can see a
 /// `Store(sp ± K)` — `ConstantFold` normalises the address, `RedundantPhis`
 /// removes dead joins, and `StackStoreDetect` lowers the store.
-pub fn run_stack_store_pipeline(g: &mut BuiltFunctionGraph, sp: rsleigh::Vn) {
+pub fn run_stack_store_pipeline(g: &mut Graph, sp: rsleigh::Vn) {
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
     let entry = g.entry().expect("entry");
     let mut p = OptimizerPipeline::new();

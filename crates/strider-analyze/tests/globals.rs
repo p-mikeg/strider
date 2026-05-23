@@ -17,23 +17,23 @@ per_arch_test!("globals", "branch_on_const_string", string_branch_folds_one_arm)
 // via CastToInt (extend_if_needed handles Bool input).
 per_arch_test!("globals", "runtime_const_idx",      runtime_idx_keeps_load);
 
-fn const_byte_folds_to_0x61(g: &strider_ir::BuiltFunctionGraph) {
+fn const_byte_folds_to_0x61(g: &strider_ir::Graph) {
     // 'a' = 0x61.  After LoadReadOnly, this is an IntConst.
     assert!(has_constant(g, 0x61),
             "expected IntConst(0x61) after LoadReadOnly fold");
 }
-fn const_int_folds_to_value(g: &strider_ir::BuiltFunctionGraph) {
+fn const_int_folds_to_value(g: &strider_ir::Graph) {
     assert!(has_constant(g, 0x12345678),
             "expected IntConst(0x12345678) after LoadReadOnly fold");
 }
-fn string_branch_folds_one_arm(g: &strider_ir::BuiltFunctionGraph) {
+fn string_branch_folds_one_arm(g: &strider_ir::Graph) {
     // The byte 'y' = 0x79 read from k_str[0] folds; combined with
     // DeadBranchElimination this often eliminates one arm of the If.
     // We pin only the constant — the arm-elimination is opt's responsibility.
     assert!(has_constant(g, 0x79) || count_ifs(g) == 0,
             "expected either IntConst(0x79) or eliminated If; neither found");
 }
-fn runtime_idx_keeps_load(g: &strider_ir::BuiltFunctionGraph) {
+fn runtime_idx_keeps_load(g: &strider_ir::Graph) {
     // Index isn't constant, so the Load survives.  Two ifs gate the bounds.
     assert!(count_loads(g) >= 1, "runtime index → Load survives");
     assert!(count_ifs(g) >= 1, "bounds-check If(s) survive");

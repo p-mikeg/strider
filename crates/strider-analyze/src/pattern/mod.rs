@@ -52,7 +52,7 @@
 //! - [`Pat`] — pattern values (cheap to clone, reference-counted)
 //! - [`Capture`] — unified capture variable; binds a node id and (when
 //!   the pattern is value-producing) a value output
-//! - [`Matcher`] — executes a pattern against an [`strider_ir::BuiltFunctionGraph`]
+//! - [`Matcher`] — executes a pattern against an [`strider_ir::Graph`]
 //! - [`Match`] — result of one successful match; exposes captured bindings
 //!
 //! # Builder API

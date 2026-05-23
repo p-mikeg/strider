@@ -134,7 +134,7 @@ impl RegionIndex {
 
     fn region_for_placeholder(
         &self,
-        graph: &strider_ir::BuiltFunctionGraph,
+        graph: &strider_ir::Graph,
         placeholder: NodeId,
     ) -> Option<&ExitVnToValue> {
         let ctrl_in = graph.nth_input(placeholder, 0)?;
@@ -149,7 +149,7 @@ impl RegionIndex {
 /// Returns an error when the iteration cap is hit, when unresolved
 /// branches remain at fixed point, or any error propagated from
 /// strider / cfg / opt.
-pub fn run<R>(config: Config<'_, R>) -> Result<strider_ir::BuiltFunctionGraph>
+pub fn run<R>(config: Config<'_, R>) -> Result<strider_ir::Graph>
 where
     R: rsleigh::MemReader,
 {
@@ -185,7 +185,7 @@ enum Decision {
 /// Stall-guard helper for the fixed-point loop's `step` method.
 /// extracted to a free function so the
 /// invariant can be unit-tested directly without constructing a
-/// real `LoopState` (which requires a `Sleigh<R>`, `BuiltFunctionGraph`,
+/// real `LoopState` (which requires a `Sleigh<R>`, `Graph`,
 /// and full CFG state).
 ///
 /// Fires `Err` when an in-place-only iteration's unresolved count
@@ -270,7 +270,7 @@ where
     /// construction.  No `Option` wrapper because the post-init
     /// invariant is "always populated" — paying `as_ref().ok_or_else`
     /// on every read for an unreachable `None` branch is pure cost.
-    graph: strider_ir::BuiltFunctionGraph,
+    graph: strider_ir::Graph,
     /// Pending placeholder anchors for the current iteration.
     unresolved: Vec<(PcodeInsnAddr, strider_ir::Value)>,
     /// Pending count at iter 0; sets the cap.
@@ -414,7 +414,7 @@ where
         &mut self,
         sleigh: rsleigh::Sleigh<R>,
     ) -> Result<(
-        strider_ir::BuiltFunctionGraph,
+        strider_ir::Graph,
         Vec<(PcodeInsnAddr, strider_ir::Value)>,
         RegionIndex,
         rsleigh::Sleigh<R>,
@@ -561,7 +561,7 @@ where
 
     /// Run the destructive subset and consume `self`, returning the
     /// final graph.
-    fn finalize(mut self) -> Result<strider_ir::BuiltFunctionGraph> {
+    fn finalize(mut self) -> Result<strider_ir::Graph> {
         let pipeline = self.strider.build_destructive_optimizer_pipeline();
         let compact = self.compact;
         let entry = self.graph.entry().ok_or_else(|| {
@@ -700,7 +700,7 @@ fn is_tail_call(
 }
 
 fn apply_in_place_edit(
-    graph: &mut strider_ir::BuiltFunctionGraph,
+    graph: &mut strider_ir::Graph,
     strider: &Strider,
     region_index: &RegionIndex,
     placeholder: NodeId,
@@ -774,7 +774,7 @@ fn apply_in_place_edit(
 /// Walks two levels to handle both shapes the splicer can produce:
 ///   * `Call -> Return` (direct): one walk hop.
 ///   * `Call -> ControlState -> Return` (region-join): two walk hops.
-fn locate_spliced_call(graph: &strider_ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
+fn locate_spliced_call(graph: &strider_ir::Graph, ret: NodeId) -> Option<NodeId> {
     let ctrl_in = graph.nth_input(ret, 0)?;
     let (producer, _slot) = graph.output_definition(ctrl_in);
     if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
@@ -804,7 +804,7 @@ impl crate::opt::AnchorCallingContext {
     /// pre-edit control input, falling back to a fresh
     /// `InitialVar(vn)` when a varnode isn't tracked in the region.
     /// The `clobbered_kinds` slot mirrors
-    /// `BuiltFunctionGraph::call_clobbered` so the resulting Call
+    /// `Graph::call_clobbered` so the resulting Call
     /// node's outputs match the canonical
     /// `FunctionBuilder::build_call`-shape.
     ///
@@ -812,7 +812,7 @@ impl crate::opt::AnchorCallingContext {
     /// computation through `cc` (per-target-address override);
     /// `None` uses the strider's function-default convention.
     fn for_anchor(
-        graph: &mut strider_ir::BuiltFunctionGraph,
+        graph: &mut strider_ir::Graph,
         placeholder: NodeId,
         strider: &Strider,
         region_index: &RegionIndex,
@@ -841,7 +841,7 @@ impl crate::opt::AnchorCallingContext {
         // callee_saved set against the function's tracked variables (via
         // the shared [`override_clobber_vars`] helper, which is also reused
         // by `apply_in_place_edit` after splicing); without, use the
-        // precomputed `BuiltFunctionGraph::call_clobbered` shape.
+        // precomputed `Graph::call_clobbered` shape.
         //
         // The two branches type-unify via a `SmallVec<[&Vn; 16]>` — stack
         // allocation covers the common case (typical clobber lists are well
@@ -905,7 +905,7 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Nod
 /// `set_call_clobbered_override`, or iterate directly to feed
 /// `clobbered_kinds`).
 fn override_clobber_vars<'a>(
-    graph: &'a strider_ir::BuiltFunctionGraph,
+    graph: &'a strider_ir::Graph,
     cc: &'a strider_target::BuiltCallingConvention,
     strider: &'a Strider,
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
@@ -935,7 +935,7 @@ fn override_clobber_vars<'a>(
 /// output (the `node_signature` invariant guarantees this; the error
 /// path exists only for defensive completeness).
 fn read_or_init_var(
-    graph: &mut strider_ir::BuiltFunctionGraph,
+    graph: &mut strider_ir::Graph,
     region: Option<&ExitVnToValue>,
     vn: rsleigh::Vn,
 ) -> Result<NodeOutputId> {

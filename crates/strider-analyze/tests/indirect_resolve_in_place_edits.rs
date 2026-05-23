@@ -20,7 +20,7 @@ use strider_analyze::opt::{apply_link_register, apply_tail_call};
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.
-fn locate_placeholder_return(graph: &strider_ir::BuiltFunctionGraph) -> NodeId {
+fn locate_placeholder_return(graph: &strider_ir::Graph) -> NodeId {
     let mut found: Option<NodeId> = None;
     for nid in graph.preorder() {
         if !matches!(graph.node_kind(nid), NodeKind::IndirectBranch) {
@@ -38,7 +38,7 @@ fn locate_placeholder_return(graph: &strider_ir::BuiltFunctionGraph) -> NodeId {
 /// Locate the (unique) freshly-created Return — the one that's NOT the
 /// placeholder.  The placeholder has been detached so finding the
 /// reachable Return is sufficient.
-fn locate_fresh_return(graph: &strider_ir::BuiltFunctionGraph) -> NodeId {
+fn locate_fresh_return(graph: &strider_ir::Graph) -> NodeId {
     let mut found: Option<NodeId> = None;
     for nid in graph.preorder() {
         if !matches!(graph.node_kind(nid), NodeKind::Return) {
@@ -285,7 +285,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // an existing `InitialVar(rdi)`, but for this unit-level
     // integration test the IR identity of the value doesn't matter —
     // only that the in-place edit threads it through unchanged.
-    let mk_const = |g: &mut strider_ir::BuiltFunctionGraph, v: u128| {
+    let mk_const = |g: &mut strider_ir::Graph, v: u128| {
         let nid = g.create_node(
             NodeKind::IntConst(v),
             [],

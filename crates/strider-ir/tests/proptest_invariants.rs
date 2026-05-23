@@ -34,7 +34,7 @@ use proptest::prelude::*;
 
 use strider_ir::node::NodeOutputType;
 use strider_ir::{
-    BuiltFunctionGraph, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    Graph, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
 /// Sentinel lift-address base; per-step `lift_off` is added on top.
@@ -229,7 +229,7 @@ impl Pools {
 /// Replay a sequence into a fresh empty function and close with a Return.
 /// Returns `None` only when the resulting graph would be empty (no value
 /// to return).  Such sequences are uninteresting and proptest will retry.
-fn replay(steps: &[Step]) -> Option<BuiltFunctionGraph> {
+fn replay(steps: &[Step]) -> Option<Graph> {
     let mut b = FunctionBuilder::empty().ok()?;
     let region = b.create_region().ok()?;
     b.set_entry_region(region).ok()?;

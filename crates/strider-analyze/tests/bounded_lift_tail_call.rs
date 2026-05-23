@@ -105,7 +105,7 @@ fn bounded_lift_handles_tail_call_terminator() {
 /// `Call(IntConst(target)) + Return` pair.  Mirrors the verifier in
 /// `bounded_lift_handles_tail_call_terminator` so the new tests can
 /// share the same shape assertion.
-fn graph_has_tail_call_to(graph: &strider_ir::BuiltFunctionGraph, target: u64) -> bool {
+fn graph_has_tail_call_to(graph: &strider_ir::Graph, target: u64) -> bool {
     let mut had_call = false;
     let mut had_return = false;
     for nid in graph.preorder() {
