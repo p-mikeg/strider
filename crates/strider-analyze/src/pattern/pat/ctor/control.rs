@@ -36,10 +36,13 @@ pub fn stack_store_phi() -> StackStorePhiPat { StackStorePhiPat::new() }
 
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
-/// Starts building a `VarPhi` pattern.  Matches `VarPhi` nodes only.
+/// Starts building a tagged-`Phi` pattern.  Matches `Phi` nodes whose
+/// optional source-varnode tag (in `Graph::phi_var_tag`) is `Some` —
+/// the lifter-emitted SSA φ for a register-aliased read.
 ///
 /// For other phi kinds use [`mem_phi`] (memory-token phi) or
-/// [`value_phi`] (`StackLoadForward`-synthesised value phi).
+/// [`value_phi`] (anonymous value phi, `phi_var_tag` is `None`, e.g.
+/// the one `StackLoadForward` synthesises).
 #[must_use]
 pub fn phi() -> PhiPat {
     PhiPat::new()
@@ -59,7 +62,8 @@ pub fn mem_phi() -> MemPhiPat {
 pub fn value_phi() -> ValuePhiPat {
     ValuePhiPat::new()
 }
-/// Starts building a `VarPhi` pattern pinned to varnode `vn`.
+/// Starts building a tagged-`Phi` pattern (see [`phi`]) pinned to
+/// varnode `vn` in `Graph::phi_var_tag`.
 #[must_use]
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
     PhiPat::new().for_vn(vn)

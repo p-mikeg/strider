@@ -18,7 +18,7 @@
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
 //! | [`FlagCmpCanonicalize`] | Flag-tree → single `IntCmpOp` rewrite (AArch64 NZCV-style flag chains) |
 //! | [`IfCondInversion`] | `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}` |
-//! | [`RedundantPhis`] | Eliminates `VarPhi` / `MemPhi` / `ControlState` with a single reachable predecessor |
+//! | [`RedundantPhis`] | Eliminates `Phi` / `MemPhi` / `ControlState` with a single reachable predecessor |
 //! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
 //!
 //! Layered on top by `Strider::build_optimizer_pipeline` (not in
@@ -151,7 +151,7 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 /// nodes.  The orchestrator runs them exactly once at fixed point.
 ///
 /// Passes (in order):
-/// 1. [`RedundantPhis`] — eliminates `VarPhi` / `MemPhi` /
+/// 1. [`RedundantPhis`] — eliminates `Phi` / `MemPhi` /
 ///    `ControlState` nodes with a single reachable predecessor.
 ///    Detaches inputs and rewires consumers — destructive.
 /// 2. [`DeadBranchElimination`] — removes `If(const)` branches and
@@ -184,7 +184,7 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
 /// 3. [`FlagCmpCanonicalize`] — flag-tree → single `IntCmpOp` rewrite
 /// 4. [`IfCondInversion`] — `If(BoolNeg(C)) → If(C)` with branches swapped
-/// 5. [`RedundantPhis`] — `VarPhi` / `MemPhi` / `ControlState` elimination
+/// 5. [`RedundantPhis`] — `Phi` / `MemPhi` / `ControlState` elimination
 /// 6. [`DeadBranchElimination`] — `If(const)` branch pruning
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {

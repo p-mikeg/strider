@@ -680,10 +680,11 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
 
 // ── PhiPat ───────────────────────────────────────────────────────────
 
-/// Typed builder for `VarPhi` patterns.  Chain `.for_vn(vn)` to
-/// constrain the matched VarPhi to a specific varnode, and
-/// `.input(idx, p)` to constrain the value arriving from the given
-/// predecessor slot.
+/// Typed builder for tagged-`Phi` patterns (the lifter-emitted SSA
+/// φ for a register-aliased read, whose `Graph::phi_var_tag` entry
+/// is `Some`).  Chain `.for_vn(vn)` to constrain the matched phi to
+/// a specific varnode, and `.input(idx, p)` to constrain the value
+/// arriving from the given predecessor slot.
 #[strider_pattern(
     rust_name = "PyPhiPat",
     py_name = "PhiPat",
@@ -710,8 +711,9 @@ pub struct PhiPatDef {
 #[pyfunction]
 pub fn phi() -> PyPhiPat { PyPhiPat::new() }
 
-/// Match `VarPhi` for a specific varnode.  Equivalent to
-/// `phi().for_vn(vn)` but reads more naturally at the call site.
+/// Match a tagged `Phi` (see [`phi`]) for a specific varnode in
+/// `Graph::phi_var_tag`.  Equivalent to `phi().for_vn(vn)` but
+/// reads more naturally at the call site.
 #[pyfunction]
 pub fn phi_for(vn: crate::sleigh::PyVn) -> PyPhiPat {
     let b = PyPhiPat::new();
