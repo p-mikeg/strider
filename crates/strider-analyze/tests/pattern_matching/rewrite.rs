@@ -75,14 +75,16 @@ where
     F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<bool>,
 {
     let nodes: Vec<NodeId> = g.preorder().collect();
-    let mut ctx = RewriteCtx::try_for_built(g).expect("test fixture is built");
-    let mut any = false;
-    for n in nodes {
-        if rule(&mut ctx, n).expect("rule did not error") {
-            any = true;
+    g.with_rewrite_ctx(|ctx| {
+        let mut any = false;
+        for n in nodes {
+            if rule(ctx, n)? {
+                any = true;
+            }
         }
-    }
-    any
+        Ok(any)
+    })
+    .expect("test fixture is built")
 }
 
 // ── Basic firing ─────────────────────────────────────────────────────────────
@@ -107,10 +109,9 @@ fn rule_returns_false_when_lhs_does_not_match() {
     let x = Capture::new();
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u64));
     let add_node = find_add(&g);
-    let fired = {
-        let mut ctx = RewriteCtx::try_for_built(&mut g).expect("test fixture is built");
-        rule(&mut ctx, add_node).expect("ok")
-    };
+    let fired = g
+        .with_rewrite_ctx(|ctx| rule(ctx, add_node))
+        .expect("test fixture is built");
     assert!(!fired);
 
     assert!(matches!(
@@ -126,10 +127,9 @@ fn sub_x_x_to_zero_rule() {
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u64));
 
     let sub_node = find_sub(&g);
-    let fired = {
-        let mut ctx = RewriteCtx::try_for_built(&mut g).expect("test fixture is built");
-        rule(&mut ctx, sub_node).expect("ok")
-    };
+    let fired = g
+        .with_rewrite_ctx(|ctx| rule(ctx, sub_node))
+        .expect("test fixture is built");
     assert!(fired);
 
     let kind = return_data_input_kind(&g);
@@ -147,8 +147,12 @@ fn rhs_wildcard_is_not_buildable() {
     let mut g = graph_add_const_const(5, 3);
     let rule = rewrite_rule(add(any(), any()), any());
     let add_node = find_add(&g);
-    let mut ctx = RewriteCtx::try_for_built(&mut g).expect("test fixture is built");
-    let err = rule(&mut ctx, add_node).expect_err("any() on RHS must error");
+    let err = g
+        .with_rewrite_ctx(|ctx| match rule(ctx, add_node) {
+            Ok(_) => panic!("any() on RHS must error"),
+            Err(e) => Ok(e),
+        })
+        .expect("test fixture is built");
     assert!(is_not_buildable_err(&err), "expected not-buildable, got {err}");
 }
 
@@ -157,8 +161,12 @@ fn rhs_predicate_is_not_buildable() {
     let mut g = graph_add_const_const(5, 3);
     let rule = rewrite_rule(add(any(), any()), predicate(|_g, _ty, _o| true));
     let add_node = find_add(&g);
-    let mut ctx = RewriteCtx::try_for_built(&mut g).expect("test fixture is built");
-    let err = rule(&mut ctx, add_node).expect_err("predicate RHS must error");
+    let err = g
+        .with_rewrite_ctx(|ctx| match rule(ctx, add_node) {
+            Ok(_) => panic!("predicate RHS must error"),
+            Err(e) => Ok(e),
+        })
+        .expect("test fixture is built");
     assert!(is_not_buildable_err(&err), "got {err}");
 }
 
@@ -167,8 +175,12 @@ fn rhs_control_pattern_is_not_buildable() {
     let mut g = graph_add_const_const(5, 3);
     let rule = rewrite_rule(add(any(), any()), ret());
     let add_node = find_add(&g);
-    let mut ctx = RewriteCtx::try_for_built(&mut g).expect("test fixture is built");
-    let err = rule(&mut ctx, add_node).expect_err("ret() RHS must error");
+    let err = g
+        .with_rewrite_ctx(|ctx| match rule(ctx, add_node) {
+            Ok(_) => panic!("ret() RHS must error"),
+            Err(e) => Ok(e),
+        })
+        .expect("test fixture is built");
     assert!(is_not_buildable_err(&err), "got {err}");
 }
 
@@ -199,8 +211,12 @@ fn rewrite_rule_on_call_root_returns_err() {
         .preorder()
         .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
         .expect("Call node");
-    let mut ctx = RewriteCtx::try_for_built(&mut g).expect("test fixture is built");
-    let err = rule(&mut ctx, call_node).expect_err("multi-output root must error");
+    let err = g
+        .with_rewrite_ctx(|ctx| match rule(ctx, call_node) {
+            Ok(_) => panic!("multi-output root must error"),
+            Err(e) => Ok(e),
+        })
+        .expect("test fixture is built");
     let dbg = format!("{err:?}");
     assert!(
         dbg.contains("output") || dbg.contains("exactly"),

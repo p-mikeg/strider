@@ -17,6 +17,7 @@ use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
 use strider_ir::node::{NodeId, NodeKind};
 use strider_analyze::opt::{apply_link_register, apply_tail_call};
+use strider_analyze::pattern::GraphRewriteCtxExt;
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.
@@ -63,7 +64,7 @@ fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
-    apply_link_register(&mut strider_analyze::pattern::RewriteCtx::try_for_built(&mut graph).unwrap(), return_id, &[]).expect("apply");
+    graph.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[])).expect("apply");
     let new_return = locate_fresh_return(&graph);
     let inputs_after: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     assert_eq!(inputs_after.len(), 2, "target_value dropped, no ret_vals appended");
@@ -83,7 +84,7 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
     let (mut graph, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
-    apply_link_register(&mut strider_analyze::pattern::RewriteCtx::try_for_built(&mut graph).unwrap(), return_id, &[anchor]).expect("apply");
+    graph.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[anchor])).expect("apply");
     let new_return = locate_fresh_return(&graph);
     let inputs_after: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     assert_eq!(inputs_after.len(), inputs_before.len(), "[ctrl, mem, ret_val_0]");
@@ -101,8 +102,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0x1234_5678_u64;
-    let new_return = apply_tail_call(&mut strider_analyze::pattern::RewriteCtx::try_for_built(&mut graph).unwrap(), return_id, target, &[], &[], &[])
-        .expect("apply_tail_call");
+    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[])).expect("apply_tail_call");
     assert_ne!(
         new_return, return_id,
         "tail-call edit must produce a fresh Return id",
@@ -135,8 +135,7 @@ fn apply_tail_call_returns_node_id_of_new_return() {
     // `exit_control` after the in-place edit.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = apply_tail_call(&mut strider_analyze::pattern::RewriteCtx::try_for_built(&mut graph).unwrap(), return_id, 0xc0de_u64, &[], &[], &[])
-        .expect("apply_tail_call");
+    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, &[], &[], &[])).expect("apply_tail_call");
     assert_ne!(new_return, return_id);
     assert!(matches!(graph.node_kind(new_return), NodeKind::Return));
 }
@@ -149,8 +148,7 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     // `exit_control`, so test it directly.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = apply_tail_call(&mut strider_analyze::pattern::RewriteCtx::try_for_built(&mut graph).unwrap(), return_id, 0xface_u64, &[], &[], &[])
-        .expect("apply_tail_call");
+    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, &[], &[], &[])).expect("apply_tail_call");
     let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     let new_ctrl_in = inputs[0];
     let (producer, _idx) = graph.output_definition(new_ctrl_in);
@@ -169,7 +167,7 @@ fn apply_link_register_emits_fresh_return_and_detaches_placeholder() {
     // (zero inputs, no longer reachable via the exit-control walk).
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    apply_link_register(&mut strider_analyze::pattern::RewriteCtx::try_for_built(&mut graph).unwrap(), return_id, &[]).expect("apply");
+    graph.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[])).expect("apply");
     // Placeholder is detached: zero inputs.  Kind remains
     // IndirectBranch (the orchestrator filters by kind via
     // find_placeholder_return_for_anchor, but the anchor's use-list
@@ -236,8 +234,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0xdead_beef_u64;
-    let new_return = apply_tail_call(&mut strider_analyze::pattern::RewriteCtx::try_for_built(&mut graph).unwrap(), return_id, target, &[], &[], &[])
-        .expect("apply_tail_call");
+    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[])).expect("apply_tail_call");
     let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
     let (call_node, _idx) = graph.output_definition(call_ctrl);
@@ -309,15 +306,18 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         NodeOutputKind::OutputType(NodeOutputType::U64),
     ];
 
-    let _new_return = apply_tail_call(
-        &mut strider_analyze::pattern::RewriteCtx::try_for_built(&mut graph).unwrap(),
-        return_id,
-        0xdead_beef,
-        &[arg0, arg1, arg2],
-        &clob_kinds,
-        &[ret_val],
-    )
-    .expect("apply_tail_call");
+    let _new_return = graph
+        .with_rewrite_ctx(|ctx| {
+            apply_tail_call(
+                ctx,
+                return_id,
+                0xdead_beef,
+                &[arg0, arg1, arg2],
+                &clob_kinds,
+                &[ret_val],
+            )
+        })
+        .expect("apply_tail_call");
 
     // Validate the post-edit graph.  `validate` is the contract the
     // optimiser's pipeline relies on between iterations.
