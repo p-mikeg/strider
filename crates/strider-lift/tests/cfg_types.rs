@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Type-level tests for `MachineInsnAddr`, `PcodeInsnAddr`, `Region`,
 //! `RegionEdgeKind`, and `OptionsBuilder`.  Ported from the pre-rewrite

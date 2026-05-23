@@ -710,4 +710,378 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    //! Tests for `next_pcode_addr`, `RegionBuilder::decode_branch_target`,
+    //! and `RegionBuilder::is_branch_tail_call_nocheck`.
+    //!
+    //! Ported from pre-rewrite
+    //! `crates/cfg/tests/{region_builder_decode,region_builder_tail_call}.rs`.
+    //! Live inline so the private helpers are reachable without a
+    //! re-exported `test_api`.
+    //!
+    //! Dropped (3 tests target deleted production code):
+    //! - `check_valid_insn_index_zero_is_tail_call`
+    //! - `check_invalid_insn_index_nonzero_returns_error`
+    //! - `check_inside_function_any_insn_index_is_not_tail_call`
+    //!
+    //! These pinned the now-removed `is_branch_tail_call` (the
+    //! insn-index-validating variant); the check is enforced inline in
+    //! `process_new_insn` today.
+
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::cast_sign_loss)]
+
+    use rsleigh::mem_readers::BufMemReader;
+    use rsleigh::{Vn, VnSpace};
+    use strider_target::SleighArch;
+
+    use super::*;
+    use crate::cfg::OptionsBuilder;
+
+    type TestReader = BufMemReader<Vec<u8>>;
+
+    fn addr_at(machine: u64, insn: u64) -> PcodeInsnAddr {
+        PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: machine },
+            insn_index: insn,
+        }
+    }
+
+    fn fake_insn() -> rsleigh::Insn {
+        rsleigh::Insn {
+            opcode: rsleigh::Opcode::Copy,
+            output: None,
+            inputs: vec![].into(),
+        }
+    }
+
+    fn fake_lift_res(n: usize) -> rsleigh::LiftRes {
+        fake_lift_res_with_len(n, 1)
+    }
+
+    fn fake_lift_res_with_len(n: usize, machine_insn_len: usize) -> rsleigh::LiftRes {
+        rsleigh::LiftRes {
+            insns: (0..n).map(|_| fake_insn()).collect(),
+            machine_insn_len,
+        }
+    }
+
+    fn make_builder(start_addr: u64) -> Builder<TestReader> {
+        make_builder_opts(start_addr, OptionsBuilder::new().build())
+    }
+
+    fn make_builder_opts(
+        start_addr: u64,
+        options: crate::cfg::options::Options,
+    ) -> Builder<TestReader> {
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+            .expect("create empty Sleigh");
+        Builder::for_arch(&arch, sleigh, start_addr, options)
+    }
+
+    fn make_region_builder<'a>(
+        b: &'a mut Builder<TestReader>,
+        start: PcodeInsnAddr,
+    ) -> RegionBuilder<'a, TestReader> {
+        RegionBuilder::new(b, start, None)
+    }
+
+    fn const_vn(offset: u64) -> Vn {
+        Vn {
+            addr_off: offset,
+            addr_space: VnSpace::CONST,
+            size: 8,
+        }
+    }
+
+    fn code_space_vn(space: VnSpace, offset: u64) -> Vn {
+        Vn {
+            addr_off: offset,
+            addr_space: space,
+            size: 8,
+        }
+    }
+
+    // ── decode_branch_target ─────────────────────────────────────────────
+
+    #[test]
+    fn const_space_is_relative_to_current_pcode_insn_index() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
+        let lift = fake_lift_res(8);
+        let target = rb
+            .decode_branch_target(const_vn(3), addr_at(0x2000, 2), &lift)
+            .unwrap();
+        assert_eq!(target, addr_at(0x2000, 5));
+    }
+
+    #[test]
+    fn const_space_with_zero_offset_stays_at_same_pcode_index() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
+        let lift = fake_lift_res(4);
+        let target = rb
+            .decode_branch_target(const_vn(0), addr_at(0x2000, 2), &lift)
+            .unwrap();
+        assert_eq!(target, addr_at(0x2000, 2));
+    }
+
+    #[test]
+    fn default_code_space_is_absolute_machine_address() {
+        let mut b = make_builder(0x1000);
+        let default_cs = b.sleigh.default_code_space();
+        let vn = code_space_vn(default_cs, 0xabc0);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let lift = fake_lift_res(1);
+        let target = rb.decode_branch_target(vn, addr_at(0x1000, 4), &lift).unwrap();
+        assert_eq!(target, addr_at(0xabc0, 0));
+    }
+
+    #[test]
+    fn register_space_returns_invalid_branch_target_error() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let vn = Vn {
+            addr_off: 0x10,
+            addr_space: VnSpace::REGISTER,
+            size: 8,
+        };
+        let lift = fake_lift_res(1);
+        let err = rb
+            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid branch target variable"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_space_returns_invalid_branch_target_error() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let vn = Vn {
+            addr_off: 0x2000,
+            addr_space: VnSpace::new(b'x'),
+            size: 8,
+        };
+        let lift = fake_lift_res(1);
+        let err = rb
+            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid branch target variable"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn unique_space_returns_invalid_branch_target_error() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let vn = Vn {
+            addr_off: 0x40,
+            addr_space: VnSpace::UNIQUE,
+            size: 8,
+        };
+        let lift = fake_lift_res(1);
+        let err = rb
+            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid branch target variable"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn decode_branch_target_const_space_negative_offset_does_not_wrap() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let vn = Vn {
+            addr_off: (-2_i64) as u64,
+            addr_space: VnSpace::CONST,
+            size: 8,
+        };
+        let lift = fake_lift_res(8);
+        let got = rb
+            .decode_branch_target(vn, addr_at(0x1000, 5), &lift)
+            .unwrap();
+        assert_eq!(got, addr_at(0x1000, 3));
+    }
+
+    #[test]
+    fn decode_branch_target_const_space_underflow_errors() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let vn = Vn {
+            addr_off: (-5_i64) as u64,
+            addr_space: VnSpace::CONST,
+            size: 8,
+        };
+        let lift = fake_lift_res(8);
+        let err = rb
+            .decode_branch_target(vn, addr_at(0x1000, 2), &lift)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid branch target variable"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn decode_branch_target_const_space_index_past_end_errors() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let pcode_count = 4u64;
+        let lift = fake_lift_res(usize::try_from(pcode_count).unwrap());
+        let vn = Vn {
+            addr_off: pcode_count + 1,
+            addr_space: VnSpace::CONST,
+            size: 8,
+        };
+        let err = rb
+            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid branch target variable"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn const_space_branch_to_pcode_count_falls_through_to_next_insn() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let pcode_count = 4usize;
+        let lift = fake_lift_res_with_len(pcode_count, 4);
+        let vn = Vn {
+            addr_off: pcode_count as u64,
+            addr_space: VnSpace::CONST,
+            size: 8,
+        };
+        let target = rb.decode_branch_target(vn, addr_at(0x1000, 0), &lift).unwrap();
+        assert_eq!(target, addr_at(0x1004, 0));
+    }
+
+    #[test]
+    fn decode_branch_target_const_space_index_past_pcode_count_errors() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let pcode_count = 4u64;
+        let lift = fake_lift_res(usize::try_from(pcode_count).unwrap());
+        let vn = Vn {
+            addr_off: pcode_count + 2,
+            addr_space: VnSpace::CONST,
+            size: 8,
+        };
+        let err = rb
+            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid branch target variable"),
+            "got: {err}"
+        );
+    }
+
+    // ── next_pcode_addr ──────────────────────────────────────────────────
+
+    #[test]
+    fn next_pcode_addr_machine_address_overflow_errors() {
+        let lift = fake_lift_res_with_len(1, 16);
+        let cur = addr_at(u64::MAX - 8, 0);
+        let err = next_pcode_addr(cur, &lift).unwrap_err();
+        assert!(
+            err.to_string().contains("machine-address overflow"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn next_pcode_addr_non_overflowing_advance_succeeds() {
+        let lift = fake_lift_res_with_len(1, 4);
+        let cur = addr_at(0x1000, 0);
+        let next = next_pcode_addr(cur, &lift).unwrap();
+        assert_eq!(next, addr_at(0x1004, 0));
+    }
+
+    #[test]
+    fn next_pcode_addr_within_machine_insn_advances_pcode_index() {
+        let lift = fake_lift_res(4);
+        let cur = addr_at(0x1000, 1);
+        let next = next_pcode_addr(cur, &lift).unwrap();
+        assert_eq!(next, addr_at(0x1000, 2));
+    }
+
+    // ── is_branch_tail_call_nocheck ──────────────────────────────────────
+
+    #[test]
+    fn nocheck_below_start_default_opts_is_tail_call() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        assert!(rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
+    }
+
+    #[test]
+    fn nocheck_below_start_with_allow_is_not_tail_call() {
+        let opts = OptionsBuilder::new().allow_code_before_start_addr().build();
+        let mut b = make_builder_opts(0x1000, opts);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
+    }
+
+    #[test]
+    fn nocheck_below_start_with_allow_and_fn_max_size_is_tail_call() {
+        let opts = OptionsBuilder::new()
+            .allow_code_before_start_addr()
+            .set_function_max_size(0x100)
+            .build();
+        let mut b = make_builder_opts(0x1000, opts);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        assert!(
+            rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)),
+            "with fn_max_size set, backward jumps below start must be tail calls regardless of allow_code_before_start_addr"
+        );
+    }
+
+    #[test]
+    fn nocheck_below_start_with_fn_max_size_no_allow_is_tail_call() {
+        let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+        let mut b = make_builder_opts(0x1000, opts);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        assert!(rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
+    }
+
+    #[test]
+    fn nocheck_within_function_no_limit_is_not_tail_call() {
+        let mut b = make_builder(0x1000);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x1200, 0)));
+    }
+
+    #[test]
+    fn nocheck_at_fn_max_size_boundary() {
+        let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+        let mut b = make_builder_opts(0x1000, opts);
+        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        assert!(rb.is_branch_tail_call_nocheck(addr_at(0x1100, 0)));
+        assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x10ff, 0)));
+    }
+
+    #[test]
+    fn fn_max_size_plus_start_addr_overflow_treats_inside_range_as_non_tail_call() {
+        let start_addr = u64::MAX - 0x100;
+        let max_size = 0x1000u64;
+        let opts = OptionsBuilder::new().set_function_max_size(max_size).build();
+        let mut b = make_builder_opts(start_addr, opts);
+        let rb = make_region_builder(&mut b, addr_at(start_addr, 0));
+        let target = addr_at(start_addr + 0x10, 0);
+        assert!(
+            !rb.is_branch_tail_call_nocheck(target),
+            "target inside function range must NOT classify as tail call even when start+max overflows"
+        );
+    }
+}
 
