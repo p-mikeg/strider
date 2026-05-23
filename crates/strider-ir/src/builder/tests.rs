@@ -1936,4 +1936,78 @@ mod build_call_with_cc {
             "side-table records the empty per-Call override list"
         );
     }
+
+    // ── FunctionBuilder extended-use round-trip ────────────────────────
+
+    /// Drive the builder through several rounds of in-place mutation
+    /// (mimicking an iterative analysis loop) without consuming it
+    /// via `build()`.  At each step `entry()` must stay stable and
+    /// `graph_mut()` must keep producing fresh node ids.
+    #[test]
+    fn analysis_loop_without_build_round_trips() {
+        let mut b = FunctionBuilder::empty().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let v = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
+        b.build_return(Some(v), &[]).unwrap();
+        b.set_lift_addr(None);
+
+        let entry = b.entry();
+
+        // Round 1: synthesize a fresh IntConst via graph_mut().
+        let r1 = b.graph_mut().create_node(
+            NodeKind::IntConst(1u128),
+            std::iter::empty(),
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        assert_eq!(b.entry(), entry, "entry() stable after round 1");
+
+        // Round 2: another mutation; round 1's node must persist.
+        let r2 = b.graph_mut().create_node(
+            NodeKind::IntConst(2u128),
+            std::iter::empty(),
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        assert_eq!(b.entry(), entry, "entry() stable after round 2");
+        assert_ne!(r1, r2, "consecutive create_node calls produce distinct ids");
+
+        // Both synthesized nodes are live in the arena.
+        assert!(matches!(b.graph().node_kind(r1), NodeKind::IntConst(1)));
+        assert!(matches!(b.graph().node_kind(r2), NodeKind::IntConst(2)));
+    }
+
+    /// After driving the builder through several rounds of in-place
+    /// mutation, calling `build()` must still produce a valid graph
+    /// (passes `validate`).  Pins the "build still works after
+    /// extended use" contract that every imperative opt pass relies
+    /// on.
+    #[test]
+    fn final_build_after_extended_use_yields_valid_built() {
+        let mut b = FunctionBuilder::empty().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let v = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
+        b.build_return(Some(v), &[]).unwrap();
+        b.set_lift_addr(None);
+
+        // N rounds of in-place mutation via graph_mut() — synthesize
+        // a fresh node, leave it detached.  The validator skips
+        // unreachable nodes, so detached extras are still valid.
+        for k in 1u128..=5 {
+            b.graph_mut().create_node(
+                NodeKind::IntConst(k),
+                std::iter::empty(),
+                [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            );
+        }
+
+        let g = b.build().unwrap();
+        let entry = g.entry().unwrap();
+        crate::validate::validate(&g, entry)
+            .expect("build() after extended use must yield a valid graph");
+    }
 }
