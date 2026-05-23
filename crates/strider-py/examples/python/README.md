@@ -46,9 +46,9 @@ PYTHONPATH=crates/strider-py python crates/strider-py/examples/python/01_quickst
 These are not benchmarks and not stress tests. The fixture binaries
 are intentionally small (a few dozen instructions per function) so the
 output stays readable. For real workloads, see the
-`crates/strider/examples/strider.rs` Rust example for the canonical
-end-to-end run, and the `tests/python/` directory for stress-tested
-end-to-end coverage.
+`crates/strider-analyze/examples/orchestrator_demo.rs` Rust example for
+the canonical end-to-end run, and the `tests/python/` directory for
+stress-tested end-to-end coverage.
 
 ## Reading order
 

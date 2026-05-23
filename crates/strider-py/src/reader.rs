@@ -317,7 +317,7 @@ impl PyMemoryMap {
     /// `add_region_from_elf(path, apply_relocations=True)` form,
     /// instead of silently reporting `applied = 0` with every
     /// reloc counted under `skipped_no_region`.  See
-    /// `crates/reader/src/elf.rs::apply_elf_relocations_autoload`
+    /// `crates/strider-reader/src/elf/relocations.rs::apply_elf_relocations_autoload`
     /// for the lazy-load contract (file-backed `SHF_ALLOC`
     /// sections only — `SHT_NOBITS` like `.bss` is never
     /// autoloaded).

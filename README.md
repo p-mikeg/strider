@@ -179,7 +179,7 @@ The predicate proxy is short-lived: it's only valid during the predicate call.  
 ### Per-node introspection (no pattern needed)
 
 ```python
-g.node_kind(node_id)          # "IntConst", "Call", "VarPhi", ...
+g.node_kind(node_id)          # "IntConst", "Call", "Phi", ...
 g.node_ids()                  # [0, 1, 2, ...] every reachable node
 g.asm_fingerprint(node_id)    # [0x1000, 0x1004, ...]
 g.call_other_name(node_id)    # "cpuid" or None

@@ -151,7 +151,9 @@ pub enum RegionTerminator {
         target_value: Option<strider_ir::Value>,
     },
     /// `BranchIndirect` whose target the cfg-time mini-graph resolver
-    /// (`indirect_resolve::resolve_indirect_target`) could not prove.
+    /// (the installed `IndirectResolverFn`, canonical implementation:
+    /// `strider_analyze::indirect_resolver::resolve_indirect_target`)
+    /// could not prove.
     ///
     /// The region was finalised with this terminator instead of an
     /// error; the strider-level fixed-point loop runs the full

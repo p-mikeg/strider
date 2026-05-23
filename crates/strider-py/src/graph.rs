@@ -197,7 +197,7 @@ impl PyGraph {
     }
 
     /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
-    /// a string (e.g. "IntConst", "Call", "VarPhi", "Add", …).  Useful
+    /// a string (e.g. "IntConst", "Call", "Phi", "Add", …).  Useful
     /// for direct graph introspection from Python tests / debug
     /// scripts.
     ///

@@ -50,10 +50,11 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: Options,
-    /// Byte order of the target architecture.  Threaded into
-    /// [`super::indirect_resolve::resolve_indirect_target`] which
-    /// builds a mini IR via `crate::pcode_lift::ValueLifter::new`.  Set
-    /// atomically with `preset` via [`Self::for_arch`].
+    /// Byte order of the target architecture.  Threaded into the
+    /// installed [`IndirectResolverFn`] (canonical implementation:
+    /// `strider_analyze::indirect_resolver::resolve_indirect_target`)
+    /// which builds a mini IR via `crate::pcode_lift::ValueLifter::new`.
+    /// Set atomically with `preset` via [`Self::for_arch`].
     pub(super) endianness: strider_target::Endianness,
     /// Coarse architecture family.  Consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`

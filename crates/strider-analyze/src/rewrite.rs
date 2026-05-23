@@ -91,15 +91,15 @@ impl<'a> GraphRewriter<'a> {
     /// per candidate root.  Returns the number of times the rule fired
     /// (i.e. returned `Ok(true)`).
     ///
-    /// The closure shape matches what [`crate::pattern::rewrite_rule`] hands
-    /// back — `Fn(&mut Graph, NodeId) -> crate::pattern::Result<bool>`.
-    /// Wraps the wrapped graph into a short-lived `Graph`
-    /// per call (via [`std::mem::take`]) so the closure has the input shape
-    /// the `pattern` crate's rewrite engine was designed for.  The
-    /// dummy `Graph` carries empty `variables` /
-    /// `call_clobbered` / `ret_val_regs` — `crate::pattern::rewrite_rule`
-    /// only touches `graph` and `entry`, verified by inspection of
-    /// [`crate::pattern::rewrite_rule`]'s implementation.
+    /// The closure shape matches what [`crate::pattern::rewrite_rule`]
+    /// hands back —
+    /// `Fn(&mut crate::pattern::RewriteCtx<'_>, NodeId) -> crate::pattern::Result<bool>`.
+    /// Each candidate root gets a freshly-constructed
+    /// `RewriteCtx::new(&mut *self.graph, self.entry)` so the closure
+    /// has the input shape the `pattern` crate's rewrite engine was
+    /// designed for.  `RewriteCtx` exposes only `graph` and `entry`;
+    /// `crate::pattern::rewrite_rule` only touches those two fields,
+    /// verified by inspection of its implementation.
     ///
     /// CORRECTNESS — reachable-set walk:
     /// We pre-collect the candidate node ids before invoking the rule

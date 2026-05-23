@@ -192,7 +192,9 @@ pub struct Graph {
     /// The `Entry` node of the function, once
     /// [`crate::FunctionBuilder::build`] has finalised the graph.
     /// `None` during build; `Some(_)` after.  Consumers go through
-    /// [`Self::entry`], which unwraps and panics on the un-built case.
+    /// [`Self::entry`], which returns the `Option<NodeId>` as-is —
+    /// `Result`-returning callers bubble the un-built case via `?`
+    /// (see the accessor's doc comment for the canonical idiom).
     pub(crate) entry: Option<NodeId>,
     /// Calling-convention metadata captured at build time.  `None`
     /// during build; `Some(_)` after.  See [`CcMetadata`].

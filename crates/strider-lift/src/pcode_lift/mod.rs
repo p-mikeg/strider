@@ -9,11 +9,12 @@
 //!
 //! This separation lets two callers reuse the value-lifting logic:
 //!
-//! * `strider`, which uses it as the inner-loop dispatch for translating
-//!   a CFG region into the per-region IR;
-//! * `cfg`, which uses it to build a stand-alone single-block mini-IR
-//!   for resolving the targets of indirect branches (see
-//!   `crates/cfg/src/cfg/builder/indirect_resolve.rs`).
+//! * `strider-analyze`, which uses it as the inner-loop dispatch for
+//!   translating a CFG region into the per-region IR;
+//! * `strider-analyze`'s indirect-branch resolver, which uses it to
+//!   build a stand-alone single-block mini-IR for resolving the targets
+//!   of indirect branches (see
+//!   `crates/strider-analyze/src/indirect_resolver.rs`).
 
 pub mod value;
 pub mod vn_io;

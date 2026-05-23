@@ -61,8 +61,8 @@ Strider crates:
   indirect-branch resolver, graph rewriter.
 - `strider-pattern-macros` — proc-macro that emits paired Rust + PyO3
   pattern builders from one annotated `*Def` struct.
-- `strider-ir-test-utils` — `TestGraph` and asm-fingerprint-stamping
-  helpers shared by every crate's tests.
+- `strider-ir-test-utils` — `make_empty_fn` / `RegisterSet` builders
+  and asm-fingerprint-stamping helpers shared by every crate's tests.
 - `strider-py` — PyO3 bindings (`maturin develop` builds a wheel).
 
 ### Crate Dependency Flow
@@ -92,9 +92,10 @@ Strider crates:
 
 All edges point upward; there are no back-edges.  `strider-lift` calls
 back into `strider-analyze`'s indirect-branch resolver through the
-`strider_lift::cfg::IndirectTargetResolver` trait object — the resolver
-is constructed in `strider-analyze` and passed down at `Builder::build`
-time, so the resolver-bearing dependency stays one-way.
+`strider_lift::cfg::IndirectResolverFn` callback type (an `Arc<dyn Fn>`
+alias) — the resolver function lives in `strider-analyze` and is
+installed on the cfg builder via `Builder::with_indirect_resolver`,
+so the resolver-bearing dependency stays one-way.
 
 ### Key Crates
 
@@ -245,9 +246,10 @@ time, so the resolver-bearing dependency stays one-way.
     `rsleigh`.  Uses `petgraph::StableDiGraph` internally.  Bounded-lift
     semantics (`function_max_size`), `is_addr_tail_call`, and
     `RegionBuilder::build` are the load-bearing primitives.  Exposes the
-    `IndirectTargetResolver` trait — the cfg builder calls back through
-    a trait object for indirect-branch resolution, so the
-    cfg-to-analyze direction stays clean.  The only public construction
+    `IndirectResolverFn<R>` callback type (an `Arc<dyn Fn>` alias) —
+    the cfg builder calls back through the installed closure for
+    indirect-branch resolution, so the cfg-to-analyze direction stays
+    clean.  The only public construction
     path is `Builder::for_arch(arch, sleigh, addr, options)` so
     endianness and `ArchPreset` are derived from the arch atomically
     (the older `Builder::new` / `with_endianness` ctors silently
@@ -291,9 +293,9 @@ time, so the resolver-bearing dependency stays one-way.
       into `Call` nodes.
     - Imperative peephole passes use `pattern::Matcher::find_all`
       rather than rolling their own matching.
-  - `pattern` module — pattern DSL (`Pat` / `PatKind` / `Capture` /
-    `Matcher` / `Match` and fluent builders).  Cross-pattern joins on
-    shared captures via `Matcher::find_all_requirements`.
+  - `pattern` module — pattern DSL (`Pat` / `Capture` / `Matcher` /
+    `Match` and fluent builders).  Cross-pattern joins on shared
+    captures via `Matcher::find_all_requirements`.
   - `strider` module — `Strider`, `AnalyzeOptions`, `AnalyzeOutcome`,
     `RegionLiftHandles`, and `PerRegionDriver` (the per-region driver
     that converts a `Cfg` into the IR graph region by region).
@@ -318,8 +320,12 @@ time, so the resolver-bearing dependency stays one-way.
     the orchestrator's fixed-point loop.  There is no `Optimizer`-
     implementing struct here — the orchestrator calls these directly,
     outside any pipeline.
-  - `indirect_resolver` — `MiniIrIndirectResolver`, the trait object
-    that satisfies `strider_lift::cfg::IndirectTargetResolver`.
+  - `indirect_resolver` — `resolve_indirect_target` (free function),
+    the cfg-time mini-IR resolver installed on the cfg builder via
+    `strider_lift::cfg::Builder::with_indirect_resolver`.  Callers wrap
+    it in an `IndirectResolverFn<R>` closure (the type alias
+    `Arc<dyn Fn(...) -> Result<Option<ResolvedTargets>>>` exposed at
+    `strider_lift::cfg`).
   - `GraphRewriter` — pattern-rewrite façade over
     `pattern::rewrite_rule`.
   - `errors` — typed error catalogue, including

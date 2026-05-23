@@ -15,7 +15,7 @@
 //! shape.
 //!
 //! The unit-level coverage of `build_switch_if_ladder`'s primitive
-//! lives in `crates/strider/src/strider/insn/control.rs::tests`.
+//! lives in `crates/strider-analyze/src/strider/insn/control.rs::tests`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

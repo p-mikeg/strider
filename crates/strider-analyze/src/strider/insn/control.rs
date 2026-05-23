@@ -330,7 +330,7 @@ mod tests {
     //! construction primitive in isolation (no Cfg required); the
     //! integration coverage that drives the full
     //! `handle_switch` → `analyze_cfg` path lives in
-    //! `crates/strider/tests/jump_table_lifting.rs`.
+    //! `crates/strider-analyze/tests/jump_table_lifting.rs`.
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
