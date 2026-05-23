@@ -186,10 +186,7 @@ impl<'g> RewriteCtx<'g> {
     /// Constructs a `RewriteCtx` borrowing from a `BuiltFunctionGraph`'s
     /// inner `graph` + `entry`.  Used by callers that already hold a
     /// fully-built form and want to drive the rewrite engine without
-    /// surrendering the wrapper.  Infallible legacy entry point; new
-    /// `Result`-returning code paths should prefer
-    /// [`Self::try_for_built`] which surfaces the un-built case as a
-    /// typed error.
+    /// surrendering the wrapper.
     ///
     /// # Panics
     ///
@@ -200,31 +197,12 @@ impl<'g> RewriteCtx<'g> {
     pub fn for_built(bfg: &'g mut strider_ir::BuiltFunctionGraph) -> Self {
         let entry = bfg.entry().expect(
             "RewriteCtx::for_built: pre-condition violated — \
-             graph has not been built (entry is None); use \
-             RewriteCtx::try_for_built for the typed-error path",
+             graph has not been built (entry is None)",
         );
         Self {
             graph: bfg.graph_mut(),
             entry,
         }
-    }
-
-    /// Fallible companion to [`Self::for_built`].  Returns an error if
-    /// the graph has not been built; preferred for `Result`-returning
-    /// code paths.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the graph has not been built (i.e. `entry`
-    /// is `None`).
-    pub fn try_for_built(bfg: &'g mut strider_ir::BuiltFunctionGraph) -> anyhow::Result<Self> {
-        let entry = bfg.entry().ok_or_else(|| {
-            anyhow::anyhow!("RewriteCtx::try_for_built: graph has not been built (entry is None)")
-        })?;
-        Ok(Self {
-            graph: bfg.graph_mut(),
-            entry,
-        })
     }
 
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
@@ -283,14 +261,6 @@ impl<'g> RewriteCtx<'g> {
 }
 
 impl<'g> RewriteCtxView<'g> {
-    /// Constructs a shared view from a `(graph, entry)` pair.  Used by
-    /// callers that hold an immutable graph reference and want to feed
-    /// a read-only opt pass.
-    #[must_use]
-    pub fn new_shared(graph: &'g Graph, entry: NodeId) -> Self {
-        Self { graph, entry }
-    }
-
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
     /// `BuiltFunctionGraph::preorder` so optimizer pass bodies that
     /// call `ctx.preorder()` look the same as if they held a
@@ -320,14 +290,6 @@ impl<'g> RewriteCtxView<'g> {
     #[must_use]
     pub fn entry(&self) -> NodeId {
         self.entry
-    }
-
-    /// Returns `*self` — convenience parity with `RewriteCtx::as_view`
-    /// so generic callers can write `ctx.as_view()` regardless of
-    /// whether `ctx` is mutable or shared.
-    #[must_use]
-    pub fn as_view(&self) -> RewriteCtxView<'_> {
-        RewriteCtxView { graph: self.graph, entry: self.entry }
     }
 
     /// Build a [`Matcher`] anchored at this view's `(graph, entry)`.

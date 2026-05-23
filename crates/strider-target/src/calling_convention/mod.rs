@@ -239,12 +239,6 @@ impl BuiltCallingConvention {
         })
     }
 
-    /// Returns the positional-argument layout derived from this
-    /// convention.  See [`PositionalArgLayout`] for the contract.
-    #[must_use]
-    pub fn positional_arg_layout(&self) -> PositionalArgLayout {
-        PositionalArgLayout::from_convention(self)
-    }
 }
 
 /// One positional argument slot in a calling convention, in ABI order.
@@ -375,13 +369,6 @@ impl PositionalArgLayout {
         self.stack_args().map(|(_, o)| o).collect()
     }
 
-    /// Bare list of arg-passing register varnodes, in ABI order.
-    /// Convenience for passes that still consume the register list as
-    /// a `&[rsleigh::Vn]` slice.
-    #[must_use]
-    pub fn arg_passing_regs(&self) -> Vec<rsleigh::Vn> {
-        self.register_args().map(|(_, vn)| vn).collect()
-    }
 }
 
 /// One row of the calling-convention preset table.  Carries the

@@ -12,7 +12,7 @@
 //! constructors funnel through here so the four passes share a single
 //! synthetic-CC construction site and a single drift surface.
 
-use strider_target::{BuiltCallingConvention, PositionalArgLayout};
+use strider_target::BuiltCallingConvention;
 
 /// Synthesises a minimal [`BuiltCallingConvention`] for the given
 /// stack-pointer varnode.  No register-passed args, no stack-passed
@@ -56,13 +56,4 @@ pub(crate) fn minimal_cc(
         link_register_vn: None,
         no_memory_clobber: false,
     }
-}
-
-/// Derives the [`PositionalArgLayout`] for a calling convention.
-/// Thin wrapper to make call sites in the four passes self-documenting:
-/// every pass that needs positional-arg knowledge goes through this
-/// one helper so the derivation source is unambiguous.
-#[must_use]
-pub(crate) fn layout_of(cc: &BuiltCallingConvention) -> PositionalArgLayout {
-    PositionalArgLayout::from_convention(cc)
 }

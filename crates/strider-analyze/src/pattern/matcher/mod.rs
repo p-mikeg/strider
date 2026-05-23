@@ -104,10 +104,6 @@ impl<'g> Matcher<'g> {
     /// directly to avoid synthesising a dummy `BuiltFunctionGraph` with
     /// empty CC fields.
     ///
-    /// Infallible legacy entry point; new `Result`-returning code
-    /// paths should prefer [`Self::try_new`] which surfaces the
-    /// un-built case as a typed error.
-    ///
     /// # Panics
     ///
     /// Panics if the wrapped graph has not been built (i.e. `entry`
@@ -118,25 +114,9 @@ impl<'g> Matcher<'g> {
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
         let entry = fn_graph.entry().expect(
             "Matcher::new: pre-condition violated — \
-             graph has not been built (entry is None); use \
-             Matcher::try_new for the typed-error path",
+             graph has not been built (entry is None)",
         );
         Self::for_graph(fn_graph.graph(), entry)
-    }
-
-    /// Fallible companion to [`Self::new`].  Returns an error if the
-    /// graph has not been built; preferred for `Result`-returning code
-    /// paths.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the graph has not been built (i.e. `entry`
-    /// is `None`).
-    pub fn try_new(fn_graph: &'g BuiltFunctionGraph) -> anyhow::Result<Self> {
-        let entry = fn_graph.entry().ok_or_else(|| {
-            anyhow::anyhow!("Matcher::try_new called on un-built BuiltFunctionGraph (entry is None)")
-        })?;
-        Ok(Self::for_graph(fn_graph.graph(), entry))
     }
 
     /// Creates a new `Matcher` over a raw `(graph, entry)` pair —

@@ -293,7 +293,7 @@ impl CallStackArgCollect {
     /// stack-pointer varnode are taken from the supplied calling convention.
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        let layout = crate::opt::sp_pass_cc::layout_of(cc);
+        let layout = strider_target::PositionalArgLayout::from_convention(cc);
         Self {
             cc: std::sync::Arc::new(cc.clone()),
             layout,
