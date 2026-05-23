@@ -399,7 +399,6 @@ mod tests {
         ) -> crate::opt::error::Result<StepResult<bool>> {
             match *g.node_kind(node) {
                 NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
-                NodeKind::Store(_) => Ok(StepResult::Verdict(true)),
                 NodeKind::MemPhi => {
                     let inputs = g.node_inputs(node);
                     let phi_token = inputs[0];
@@ -523,7 +522,7 @@ mod tests {
         // emit additional memory-edge wiring (e.g. a region join
         // ControlState-mem path), so we don't pin the exact count.
         assert!(
-            visited.len() >= DEPTH + 1,
+            visited.len() > DEPTH,
             "every chain node visited at least once, got {}",
             visited.len(),
         );

@@ -984,91 +984,90 @@ mod tests {
             other => panic!("unexpected classifier result: {other:?}"),
         }
     }
-}
 
-#[cfg(test)]
-fn build_one_target_array(
-    targets: [u64; 1],
-    base_offset: i64,
-    stride: u64,
-) -> (strider_ir::BuiltFunctionGraph, strider_ir::node::NodeOutputId) {
+    fn build_one_target_array(
+        targets: [u64; 1],
+        base_offset: i64,
+        stride: u64,
+    ) -> (strider_ir::BuiltFunctionGraph, strider_ir::node::NodeOutputId) {
     use strider_ir::node::NodeOutputType;
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::RegisterSet;
     use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
-    let sp = rsleigh::Vn {
-        addr_off: 0x40,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .tracked(arg_vn)
-        .callee_saved(sp)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
-    let off_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
-    let addr = b
-        .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
-        .unwrap();
-    let target = b.build_int_const(targets[0], NodeOutputType::U64).unwrap();
-    b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
-    let arg_val = b.read_variable(&arg_vn).unwrap();
-    // Build the dispatch site: load through sp+base+idx*stride with
-    // idx masked to a single value (& 0 → idx is always 0).
-    let arg_u32 = b.graph_mut().create_node(
-        NodeKind::Truncate,
-        [arg_val],
-        [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
-    );
-    b.graph_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-    let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-    let mask0 = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    let masked = b
-        .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, NodeOutputType::U32)
-        .unwrap();
-    let idx_u64 = b.graph_mut().create_node(
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        [masked],
-        [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
-    );
-    b.graph_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-    let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-    let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
-    let idx_scaled = b
-        .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
-        .unwrap();
-    let base_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
-    let sp_plus_base = b
-        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::U64)
-        .unwrap();
-    let load_addr = b
-        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
-        .unwrap();
-    let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
-        .unwrap();
-    b.build_return(Some(loaded), &[]).unwrap();
-    b.set_lift_addr(None);
-    let mut fg = b.build().unwrap();
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold);
-    p.add(KnownBits);
-    p.add(RedundantPhis);
-    p.add(StackStoreDetect::new(sp));
-    let entry = fg.entry().unwrap();
-    p.run(fg.graph_mut(), entry).unwrap();
-    let load = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .expect("Load survives — StackLoadForward not in pipeline");
-    let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-    (fg, load_out)
+        let sp = rsleigh::Vn {
+            addr_off: 0x40,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        };
+        let arg_vn = rsleigh::Vn {
+            addr_off: 0x38,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        };
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .tracked(arg_vn)
+            .callee_saved(sp)
+            .build_fn_single_region()
+            .unwrap();
+        let sp_val = b.read_variable(&sp).unwrap();
+        let off_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
+        let addr = b
+            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
+            .unwrap();
+        let target = b.build_int_const(targets[0], NodeOutputType::U64).unwrap();
+        b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
+        let arg_val = b.read_variable(&arg_vn).unwrap();
+        // Build the dispatch site: load through sp+base+idx*stride with
+        // idx masked to a single value (& 0 → idx is always 0).
+        let arg_u32 = b.graph_mut().create_node(
+            NodeKind::Truncate,
+            [arg_val],
+            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        b.graph_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let mask0 = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
+        let masked = b
+            .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, NodeOutputType::U32)
+            .unwrap();
+        let idx_u64 = b.graph_mut().create_node(
+            NodeKind::Extend(ExtendOp::ZeroExtend),
+            [masked],
+            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        b.graph_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
+        let idx_scaled = b
+            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
+            .unwrap();
+        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
+        let sp_plus_base = b
+            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::U64)
+            .unwrap();
+        let load_addr = b
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
+            .unwrap();
+        let loaded = b
+            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+            .unwrap();
+        b.build_return(Some(loaded), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut fg = b.build().unwrap();
+        let mut p = OptimizerPipeline::new();
+        p.add(ConstantFold);
+        p.add(KnownBits);
+        p.add(RedundantPhis);
+        p.add(StackStoreDetect::new(sp));
+        let entry = fg.entry().unwrap();
+        p.run(fg.graph_mut(), entry).unwrap();
+        let load = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+            .expect("Load survives — StackLoadForward not in pipeline");
+        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
+        (fg, load_out)
+    }
 }
