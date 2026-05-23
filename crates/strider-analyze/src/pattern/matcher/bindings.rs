@@ -31,11 +31,15 @@ pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
 /// an O(1) `Vec::truncate`.  No allocations, no per-kind HashMap
 /// clones, no deep copy of the full state.
 ///
-/// Lookups (`get_*`) are linear scans over the entry `Vec`.  In the
-/// patterns we currently exercise (constant-fold rules, indirect-
-/// branch resolvers) bindings stay in the single-digit range; if
-/// profiling shows the scan as hot we can layer a hash overlay on top
-/// of the journaled `Vec` without changing the public API.
+/// Storage shape: an append-only journal `entries: Vec<(Capture,
+/// Binding)>` (the rollback log) **plus** an `FxHashMap<Capture,
+/// usize>` overlay whose value is the journal index.  `bind_capture` /
+/// `get_binding` are O(1); `restore` truncates the journal and walks
+/// the dropped tail to evict matching overlay entries (also O(k) in
+/// the number of dropped entries, never O(N)).  `Capture` does not
+/// impl `cranelift_entity::EntityRef` (ids come from a process-wide
+/// atomic counter), so the overlay is `FxHashMap` rather than
+/// `SecondaryMap`.
 ///
 /// External callers see `Bindings` as read-only: construction is via
 /// `Default::default()`, the production mutation path
@@ -45,7 +49,13 @@ pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
 /// commutative-retry / speculative-attempt paths legitimately need it.
 #[derive(Clone, Default)]
 pub struct Bindings {
+    /// Append-only journal of `(Capture, Binding)` insertions in the
+    /// order they were produced — preserves `iter()` ordering and is
+    /// the source of truth for `restore`.
     entries: Vec<(Capture, Binding)>,
+    /// O(1) `Capture → index-into-entries` overlay.  Kept in sync with
+    /// `entries` on every push and on `restore`.
+    index: rustc_hash::FxHashMap<Capture, usize>,
 }
 
 /// Opaque marker returned by [`Bindings::mark`] and consumed by
@@ -63,12 +73,27 @@ impl Bindings {
 
     /// Discard every entry appended after `mark` was taken.  Idempotent:
     /// restoring to a mark that's already current is a no-op.
+    ///
+    /// Iterates the dropped tail to evict the matching overlay entries
+    /// — every overlay key is also in the journal at exactly one index,
+    /// so dropping `entries[mark.0..]` and removing each `Capture` from
+    /// `index` keeps the two views in sync.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
+        if mark.0 >= self.entries.len() {
+            return;
+        }
+        for (c, _) in &self.entries[mark.0..] {
+            self.index.remove(c);
+        }
         self.entries.truncate(mark.0);
     }
 
     /// Bind `c` to `binding`.  Returns `true` on new or idempotent
     /// (full-binding-equal) bind, `false` on conflict (no mutation).
+    ///
+    /// O(1) via the `index` overlay: a hit returns the existing
+    /// binding's equality; a miss appends to `entries` and updates the
+    /// overlay.
     ///
     /// Tightened to `pub(crate)`: callers outside `pattern` (test
     /// scaffolds in particular) construct bindings via
@@ -76,12 +101,12 @@ impl Bindings {
     /// a name signal that the caller is bypassing the matcher's
     /// normal accumulation path.
     pub(crate) fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
-        for (k, existing) in &self.entries {
-            if *k == c {
-                return *existing == binding;
-            }
+        if let Some(&idx) = self.index.get(&c) {
+            return self.entries[idx].1 == binding;
         }
+        let idx = self.entries.len();
         self.entries.push((c, binding));
+        self.index.insert(c, idx);
         true
     }
 
@@ -99,12 +124,12 @@ impl Bindings {
 
     /// Returns the [`Binding`] (node + optional value output) bound to
     /// `c`, or `None` if `c` was not captured in this match.
+    ///
+    /// O(1) via the `index` overlay.
     #[must_use]
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
-        self.entries
-            .iter()
-            .find(|(k, _)| *k == c)
-            .map(|(_, b)| *b)
+        let idx = *self.index.get(&c)?;
+        Some(self.entries[idx].1)
     }
 
     /// Convenience: returns the value `NodeOutputId` bound to `c`, or
@@ -492,6 +517,70 @@ mod tests {
         assert_eq!(bindings.get_float_binary_op(v, &g), None);
         assert_eq!(bindings.get_float_unary_op(v, &g), None);
         assert_eq!(bindings.get_float_cmp_op(v, &g), None);
+    }
+
+    // ── mark / restore rollback ──────────────────────────────────────────
+
+    /// `restore` after a speculative `bind_capture` must wipe both the
+    /// journal and the index overlay so the post-rollback view is
+    /// indistinguishable from the pre-mark view — and a subsequent
+    /// `bind_capture(c, _)` for the rolled-back capture must succeed as
+    /// brand-new (not bounce off a stale overlay entry).
+    #[test]
+    fn restore_evicts_overlay_entries_for_dropped_journal_tail() {
+        let g = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
+            .expect("build graph");
+        let n = g
+            .preorder()
+            .find(|&n| matches!(g.node_kind(n), NodeKind::IntConst(_)))
+            .expect("int const node");
+
+        let mut bindings = Bindings::default();
+        let kept = Capture::new();
+        let dropped_a = Capture::new();
+        let dropped_b = Capture::new();
+
+        assert!(bindings.bind_capture(kept, Binding(n, None)));
+        let mark = bindings.mark();
+        assert!(bindings.bind_capture(dropped_a, Binding(n, None)));
+        assert!(bindings.bind_capture(dropped_b, Binding(n, None)));
+
+        // Pre-restore: all three visible via O(1) overlay.
+        assert!(bindings.get_binding(kept).is_some());
+        assert!(bindings.get_binding(dropped_a).is_some());
+        assert!(bindings.get_binding(dropped_b).is_some());
+
+        bindings.restore(mark);
+
+        // Post-restore: only `kept` remains.
+        assert!(bindings.get_binding(kept).is_some());
+        assert!(bindings.get_binding(dropped_a).is_none());
+        assert!(bindings.get_binding(dropped_b).is_none());
+
+        // Rebinding a rolled-back capture to a fresh binding must
+        // succeed as brand-new — the overlay must not retain a stale
+        // entry pointing at a now-truncated journal index.
+        assert!(bindings.bind_capture(dropped_a, Binding(n, None)));
+        assert!(bindings.get_binding(dropped_a).is_some());
+    }
+
+    /// Restoring to a mark that's already the current cursor must be a
+    /// no-op — covers the early-return guard in `restore`.
+    #[test]
+    fn restore_to_current_mark_is_noop() {
+        let g = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
+            .expect("build graph");
+        let n = g
+            .preorder()
+            .find(|&n| matches!(g.node_kind(n), NodeKind::IntConst(_)))
+            .expect("int const node");
+
+        let mut bindings = Bindings::default();
+        let c = Capture::new();
+        assert!(bindings.bind_capture(c, Binding(n, None)));
+        let mark = bindings.mark();
+        bindings.restore(mark);
+        assert!(bindings.get_binding(c).is_some());
     }
 
     // ── Globally unique IDs ──────────────────────────────────────────────
