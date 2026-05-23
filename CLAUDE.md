@@ -103,30 +103,39 @@ time, so the resolver-bearing dependency stays one-way.
 
   - `Graph` — stores `NodeId`, `NodeOutputId`, `NodeInputId` via
     `cranelift-entity` PrimaryMaps.  Cacheable nodes are deduplicated
-    by `(NodeKind, inputs, output_kinds)`.  Side-tables hold ancillary
-    per-node data (`stack_phi_offsets`, `call_other_names`,
-    `asm_fingerprints`, `call_clobbered_overrides`, `wide_consts`,
-    `entry`, `cc_metadata`).
+    by `(NodeKind, inputs, output_kinds)`.  Ancillary state lives in
+    three forms on the `Graph` itself:
+    - **Scalars on `Graph`:** `entry: Option<NodeId>` and
+      `cc_metadata: Option<CcMetadata>` (the latter carries the
+      variable map, call-clobbered list, ret-val regs, call-other
+      clobbered list, and `no_memory_clobber` flag).  Both populated
+      by `FunctionBuilder::build`.
+    - **`PrimaryMap`:** `wide_consts` (`WideConstId → WideConstStorage`,
+      consulted by `IntConstWide(WideConstId)` nodes for U256 / U512
+      payloads that don't fit in the regular `IntConst(u128)`).
+    - **Side-table registry (`SecondaryMap<NodeId, _>`):**
+      `stack_phi_offsets`, `call_other_names`, `asm_fingerprints`,
+      `call_clobbered_overrides`, and `phi_var_tag` (the per-node
+      `Option<Vn>` source-varnode tag for `Phi` nodes — see the
+      "Initial state" / "Region / join" bullets below).
   - `FunctionBuilder` — builds the IR with SSA-like variable tracking.
     Variables map `rsleigh::Vn` → `VarId`.  Each region gets a
-    `ControlState` node and per-variable `Phi(Some(vn))` nodes.  Carries
-    `lift_addr: Option<u64>` for centralised lift-time fingerprint
-    attribution.  Accepts the thin `FunctionBuilderCC` plain-data struct
-    rather than the richer `strider_target::BuiltCallingConvention` so
-    the IR crate doesn't pull a back-edge.
-  - `FunctionBuilderCC` — plain-data DTO containing exactly the fields
-    `FunctionBuilder` reads.  `strider-target` provides
-    `impl From<&BuiltCallingConvention> for FunctionBuilderCC`.
-  - `BuiltFunctionGraph` — produced by `FunctionBuilder::build`.  A thin
-    wrapper around `Graph` that encodes `graph.entry.is_some()` and
-    `graph.cc_metadata.is_some()` at the type level.  All CC metadata
-    (variable map, call-clobbered list, ret-val regs, call-other clobber
-    list, no-memory-clobber flag) lives on the wrapped `Graph`'s
-    `cc_metadata` side-table.  `Deref<Target = Graph>` so accessors are
-    one call away.  Implements `Clone`.
-  - `ReadOnlyMemory` trait — defines `read_bytes(addr, buf) -> Result<()>`
-    only; no binary-format knowledge.  Concrete impls live in
-    `strider-reader`.  The optimizer's `LoadReadOnly` takes
+    `ControlState` node and per-variable `Phi` nodes whose source
+    varnode tag is recorded in the `Graph::phi_var_tag` side-table.
+    Carries `lift_addr: Option<u64>` for centralised lift-time
+    fingerprint attribution.  `FunctionBuilder::new` accepts
+    `&strider_target::BuiltCallingConvention` directly.
+  - `BuiltFunctionGraph` — produced by `FunctionBuilder::build`.  A
+    plain `pub type BuiltFunctionGraph = Graph;` alias preserved for
+    source compatibility.  After `build`, the returned `Graph` has
+    populated `entry` and `cc_metadata`.
+  - `ReadOnlyMemory` trait — `read(&self, addr: u64, size: usize) ->
+    Option<u64>`; returns up to 8 bytes as a little-endian-decoded
+    `u64`, or `None` for unmapped addresses / sizes > 8.  Blanket
+    impls for `Arc<T>` and `Box<T>`.  Defined here (not in
+    `strider-reader`) so optimiser passes can depend on the trait
+    without back-edging through the reader crate.  Concrete impls live
+    in `strider-reader`.  The optimizer's `LoadReadOnly` takes
     `&dyn ReadOnlyMemory` so it doesn't depend on the reader crate.
   - `NodeOutputKind` — `Control`, `Memory`, `PhiToken`, or
     `OutputType(NodeOutputType)`.
@@ -206,6 +215,14 @@ time, so the resolver-bearing dependency stays one-way.
     `CallOtherAbi` carries `implicit_reads` / `implicit_writes` /
     `memory_edge` describing the ISA-fixed register-and-memory footprint
     beyond Sleigh's pcode-explicit args.
+  - `PositionalArgLayout` — canonical positional-arg-layout DTO derived
+    from a `BuiltCallingConvention` via
+    `BuiltCallingConvention::positional_arg_layout()` (or
+    `PositionalArgLayout::from_convention(&cc)`).  Single source of
+    truth for positional argument slot order (register slots first,
+    then stack slots at the convention's `stack_arg_offsets`); consumed
+    by `FunctionArgDetect`, `CallStackArgCollect`, `StackStoreDetect`,
+    and `StackLoadForward` so each pass sees the same slot order.
 
 - **`strider-reader`** — `ReadOnlyMemory` + `rsleigh::MemReader`
   backends.
@@ -260,7 +277,7 @@ time, so the resolver-bearing dependency stays one-way.
     - `FlagCmpCanonicalize` — flag-tree → single `IntCmpOp` rewrite
       (AArch64 NZCV-style chains).
     - `IfCondInversion` — `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}`.
-    - `RedundantPhis` — eliminates `Phi(Some(_))` / `Phi(None)` /
+    - `RedundantPhis` — eliminates `Phi` (tagged or anonymous) /
       `MemPhi` / `ControlState` with a single reachable predecessor.
     - `DeadBranchElimination` — removes `If(const)` branches and strips
       dead control edges.
@@ -294,11 +311,15 @@ time, so the resolver-bearing dependency stays one-way.
     destructive subset once at the fixed-point exit.  `Config` carries
     the `Strider`, start address, `Sleigh`, optional ROM, function-size
     bound, per-target-address CC overrides, and a `compact` flag.
-  - `indirect_resolve` module — `classify_anchor` /
-    `apply_link_register` / `apply_tail_call` and the producer-shape
-    classifier free functions (`classify_jump_table`,
-    `classify_stack_array`, `ResolvedTargets { LinkRegister, Single,
-    Multiple }`).  Called by the orchestrator's `LoopState`.
+  - `opt::indirect_branch_resolve` module — free-function classifiers
+    (`classify_anchor`, `classify_jump_table`, `classify_stack_array`)
+    and in-place IR editors (`apply_link_register`, `apply_tail_call`),
+    re-exported through `opt::mod.rs`.  `ResolvedTargets { LinkRegister,
+    Single(u64), Multiple(Vec<u64>) }` lives in
+    `strider_lift::cfg::builder::indirect_resolver` and is consumed by
+    the orchestrator's fixed-point loop.  There is no `Optimizer`-
+    implementing struct here — the orchestrator calls these directly,
+    outside any pipeline.
   - `indirect_resolver` — `MiniIrIndirectResolver`, the trait object
     that satisfies `strider_lift::cfg::IndirectTargetResolver`.
   - `GraphRewriter` — pattern-rewrite façade over
@@ -315,11 +336,12 @@ time, so the resolver-bearing dependency stays one-way.
   `FloatBinaryOpPat`) whose required-construction shape doesn't fit the
   macro's field-based model.
 
-- **`strider-ir-test-utils`** — `make_empty_fn` / `TestGraph` and
-  friends that auto-stamp a sentinel asm fingerprint
-  (`SENTINEL_LIFT_ADDR = 0xDEAD_BEEF_0000_0001`) on every node created
-  through the helper, so mock-graph tests satisfy the always-on
-  asm-fingerprint check without manual stamping.
+- **`strider-ir-test-utils`** — `RegisterSet` (fluent builder over
+  `FunctionBuilder::new_raw`), `make_empty_fn`, `make_fn_with_var`,
+  `reg_vn`, and the `SENTINEL_LIFT_ADDR` constant
+  (`0xDEAD_BEEF_0000_0001`).  Helpers auto-stamp the sentinel asm
+  fingerprint on every node created through them so mock-graph tests
+  satisfy the always-on asm-fingerprint check without manual stamping.
 
 - **`strider-py`** — Python bindings (PyO3 + maturin + abi3-py39).
   High-level API: `strider.load(path).analyze(fn).find(pattern)`,
@@ -348,12 +370,14 @@ truth for every node's input/output shape.  Node kinds, grouped:
 - **Initial state:** `Entry`, `InitialMemory`, `InitialVar(Vn)`,
   `FunctionArg { source, index }` (introduced by `FunctionArgDetect`).
 - **Region / join:** `ControlState` (variadic Control inputs; outputs
-  `Control` + `PhiToken`), `MemPhi` (φ for the memory token),
-  `Phi(Option<Vn>)` — one node kind covers both forms.  `Phi(Some(vn))`
-  is the lifter-emitted SSA φ for the register-aliased read of varnode
-  `vn`; `Phi(None)` is a value phi not tied to any source varnode,
-  synthesized by `StackLoadForward` when forwarding a `Load[sp+K]`
-  across a `MemPhi`.
+  `Control` + `PhiToken`), `MemPhi` (φ for the memory token), `Phi`
+  (unit-variant node kind covering both tagged and anonymous forms).
+  The optional source-varnode tag lives in the
+  `Graph::phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>` side-
+  table: `Some(vn)` marks the lifter-emitted SSA φ for the register-
+  aliased read of varnode `vn`; `None` (the default) marks an anonymous
+  value phi synthesised by `StackLoadForward` when forwarding a
+  `Load[sp+K]` across a `MemPhi`.
 - **Conditional branch:** `If` (outputs true / false `Control` edges).
 - **Indirect branch:** `IndirectBranch` (placeholder consumed by the
   orchestrator's indirect-resolution loop; rewritten in place by
@@ -388,9 +412,8 @@ truth for every node's input/output shape.  Node kinds, grouped:
 
 ### Pattern DSL
 
-`strider_analyze::pattern` exposes `Pat` / `PatKind` / `Capture` /
-`Matcher` / `Match` with fluent builders for every node kind.  Key
-points:
+`strider_analyze::pattern` exposes `Pat` / `Capture` / `Matcher` /
+`Match` with fluent builders for every node kind.  Key points:
 
 - 10 of 14 builders are emitted by `strider-pattern-macros` from one
   annotated `*Def` struct; the macro emits the Rust builder + the PyO3

@@ -30,16 +30,17 @@ Binary → CFG → IR → Optimizations → Pattern Queries (Python)
 
 | Crate | Role |
 |-------|------|
-| `reader` | ELF loader, memory reader for rsleigh |
-| `cfg` | Control flow graph construction from p-code |
-| `pcode-lift` | Pure pcode → IR value lifter (register aliasing) |
-| `ir` | Sea-of-nodes IR graph (`Graph`, `FunctionBuilder`) |
-| `strider` | CFG → IR translation, indirect-branch fixed-point loop |
-| `target` | SleighArch + CallingConvention presets, CallOther ABI table |
-| `opt` | IR optimization passes |
-| `pattern` | IR graph pattern matching with named captures |
-| `dot` | Renders CFG and IR graphs to `.dot` / `.html` for visualization |
+| `strider-reader` | ELF loader, memory reader for rsleigh |
+| `strider-lift` | Pcode → IR value lifter (register aliasing) + CFG construction |
+| `strider-ir` | Sea-of-nodes IR graph (`Graph`, `FunctionBuilder`) |
+| `strider-target` | SleighArch + CallingConvention presets, CallOther ABI table |
+| `strider-analyze` | Orchestrator, optimizer pipeline, pattern matcher, indirect-branch resolver |
+| `strider-pattern-macros` | Proc-macro that emits paired Rust + PyO3 pattern builders |
+| `strider-ir-test-utils` | Mock-IR helpers with sentinel asm-fingerprint stamping |
 | `strider-py` | **Python bindings — the primary user-facing query interface** |
+| `dot` | Generic Graphviz / dark-themed HTML renderer |
+| `entity-utils` | `cranelift-entity` helpers (`DenseEntitySet`, `Worklist`) |
+| `graphwalk` | Generic preorder / postorder graph traversal |
 
 Each crate carries its own `README.md` with details. The full architecture (including invariants and gotchas) lives in the per-crate READMEs and in [`CLAUDE.md`](CLAUDE.md).
 
@@ -247,28 +248,41 @@ When stuck, dump the IR (`result.graph.to_html("graph.html")` and open in a brow
 The Rust crates are usable directly when scripting in Rust is a better fit than Python.  Each crate has a top-level `README.md` documenting its public surface; below is an end-to-end skeleton.
 
 ```rust
-use strider::{run, RunConfig};
-use target::{SleighArch, CallingConvention};
+use std::collections::HashMap;
+use strider_analyze::{run, Config, Strider};
+use strider_target::{CallingConvention, SleighArch};
 
 let arch = SleighArch::x86_64();
-let mem  = reader::ElfFileMemReader::open("path/to/binary.elf")?;
-let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem)?;
-let cc = CallingConvention::x86_64_systemv().build(sleigh.regs()?)?;
-let strider = strider::Strider::new(arch, sleigh.regs()?, cc)?;
+let obj = strider_reader::load_elf("path/to/binary.elf")?;
+let mem = strider_reader::ElfFileMemReader::from_object(&obj)?;
+let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)?;
 
-let graph = run(RunConfig {
+// `Strider::new` takes the raw `CallingConvention` and resolves it
+// against `sleigh.regs()` internally.
+let strider = Strider::new(
+    arch,
+    sleigh.regs()?,
+    CallingConvention::x86_64_systemv()?,
+)?;
+
+let graph = run(Config {
     strider: &strider,
-    start_addr: 0x1000,
+    start_addr: 0x1000_u64.into(),  // MachineInsnAddr
     sleigh,
     rom: None,
     fn_max_size: None,
     allow_code_before_start_addr: false,
     compact: true,
-    per_address_ccs: Default::default(),
+    per_address_ccs: HashMap::new(),
 })?;
 ```
 
-For pattern-construction details see [`crates/pattern/README.md`](crates/pattern/README.md).  For per-pass details see [`crates/opt/README.md`](crates/opt/README.md).
+For a runnable end-to-end example see
+[`crates/strider-analyze/examples/orchestrator_demo.rs`](crates/strider-analyze/examples/orchestrator_demo.rs).
+For pattern-construction details see
+[`crates/strider-analyze/src/pattern/`](crates/strider-analyze/src/pattern/).
+For per-pass details see
+[`crates/strider-analyze/src/opt/`](crates/strider-analyze/src/opt/).
 
 ---
 
@@ -296,4 +310,4 @@ uv run pytest tests/python/
 
 ## Project status
 
-The 12-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  The `feature/ai` branch carries day-to-day work; `review/ai*` branches carry pre-deployment cleanup passes with detailed audit findings under `reviews/round10-*.md` (latest).  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface; the design specs that drove major refactors live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.
+The 11-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  The `feature/ai` branch carries day-to-day work.  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface; the design specs that drove major refactors live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.

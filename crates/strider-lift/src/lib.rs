@@ -8,9 +8,9 @@
     )
 )]
 
-//! Strider lift: target descriptions, sleigh integration, CFG construction,
-//! and IR lifting.  Consolidation crate for what previously lived in
-//! standalone `strider-target`, `pcode-lift`, and `cfg` crates.
+//! Strider lift: Sleigh integration, CFG construction, and pcode → IR
+//! value lifting.  Sits between `strider-target` (architecture
+//! descriptors) and `strider-analyze` (orchestrator + opt + pattern).
 
 pub mod pcode_lift;
 pub mod cfg;
