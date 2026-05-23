@@ -63,6 +63,28 @@
     textarea#dotSrc:focus{border-color:var(--accent)}
     #minimap{width:100%;height:120px;border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;background:rgba(0,0,0,.3);cursor:crosshair;position:relative}
     #minimap svg{width:100%;height:100%;display:block}
+    /* CSS-scoped minimap styling: disables pointer events for every cloned
+       SVG descendant and strips the dim/highlight rules that would otherwise
+       fight against the minimap's "always show the whole graph" intent.
+       Doing this in CSS lets `buildMM` skip the per-element JS walk
+       (`cloneNode(true) + querySelectorAll("*").forEach(...)`) that was
+       O(n) in node count per render. */
+    #minimap svg *{pointer-events:none}
+    /* Override the dim CSS by re-asserting full opacity for everything
+       inside the minimap (the parent `svg.gv-has-sel g.node:not(...)`
+       rule above would otherwise fade out non-highlighted nodes in the
+       cloned SVG too — but the minimap should always show the full
+       graph). */
+    #minimap svg g.node,#minimap svg g.edge{opacity:1!important;transition:none!important}
+    /* Strip highlight rings from the cloned minimap SVG — the cloned
+       nodes carry whatever highlight classes were active on the main
+       graph at clone time, but the minimap should render uniformly. */
+    #minimap svg .gv-sn ellipse,#minimap svg .gv-sn polygon,#minimap svg .gv-sn path,#minimap svg .gv-sn rect,
+    #minimap svg .gv-se path,#minimap svg .gv-se polygon,
+    #minimap svg .gv-nn ellipse,#minimap svg .gv-nn polygon,#minimap svg .gv-nn rect,#minimap svg .gv-nn path,
+    #minimap svg .gv-ne path,#minimap svg .gv-ne polygon,
+    #minimap svg .gv-sh ellipse,#minimap svg .gv-sh polygon,#minimap svg .gv-sh rect,#minimap svg .gv-sh path
+      {stroke:inherit!important;stroke-width:inherit!important;filter:none!important;fill:inherit!important}
     .mini-vp{fill:rgba(91,156,246,.1);stroke:var(--accent);stroke-width:1.5px;pointer-events:none;vector-effect:non-scaling-stroke}
     .statusbar{padding:6px 10px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap}
     .pill{font-size:11px;color:var(--text2);background:var(--panel2);border:1px solid var(--border);padding:2px 7px;border-radius:999px}
@@ -600,6 +622,14 @@ function buildMM(mainSvg,vbStr){
 
   // Clone the full SVG; reset the svg-pan-zoom viewport transform so the
   // whole graph is visible at the minimap scale.
+  //
+  // The clone-time per-element walk (`querySelectorAll("*").forEach(...)`
+  // setting `pointer-events:none` and stripping highlight classes) used
+  // to be O(N+E) per render — visibly slow on multi-thousand-node graphs.
+  // The CSS now scopes both behaviours to `#minimap svg *` and
+  // `#minimap svg .gv-sn/...` (see <style> above), so this function only
+  // does the constant-cost work: clone, drop the viewport transform,
+  // and resize via the wrapping <svg>'s attributes.
   const clone=mainSvg.cloneNode(true);
   const vpClone=clone.querySelector(".svg-pan-zoom_viewport");
   if(vpClone)vpClone.removeAttribute("transform");
@@ -607,10 +637,6 @@ function buildMM(mainSvg,vbStr){
   clone.style.cssText="width:100%;height:100%;display:block;background:transparent;";
   clone.setAttribute("viewBox",`${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
   clone.setAttribute("preserveAspectRatio","xMidYMid meet");
-  clone.querySelectorAll("*").forEach(e=>{
-    e.style.pointerEvents="none";
-    e.classList.remove("gv-sn","gv-se","gv-nn","gv-ne","gv-dim","gv-sh");
-  });
 
   const ns="http://www.w3.org/2000/svg";
   const r=document.createElementNS(ns,"rect");
