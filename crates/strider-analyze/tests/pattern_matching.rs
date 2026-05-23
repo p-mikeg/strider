@@ -69,3 +69,6 @@ mod control_flow;
 
 #[path = "pattern_matching/call_other_arg_ret_slots.rs"]
 mod call_other_arg_ret_slots;
+
+#[path = "pattern_matching/call_other_name_filter.rs"]
+mod call_other_name_filter;
