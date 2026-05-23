@@ -291,15 +291,13 @@ where
     /// every iteration; threaded into each fresh `strider_lift::cfg::Builder` so
     /// machine-instruction decodes are paid once per address per run.
     decode_cache: DecodeCache,
-    // TODO: remove after incremental indirect-resolve lands —
-    // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     /// Cached set of varnodes seen so far across all CFG iterations.
-    /// `find_all_unique_vns` would otherwise re-scan every region's
-    /// every instruction's every varnode on every Rebuild iteration;
-    /// here we only scan the regions added since the previous
-    /// iteration (petgraph's `StableDiGraph` allocates monotonic
-    /// `NodeIndex`s, so the new regions sit at indices
-    /// `[prev_count..current_count)`).
+    /// Amortises `find_all_unique_vns` across CFG-rebuild iterations:
+    /// without the cache, every Rebuild iteration would re-scan every
+    /// region's every instruction's every varnode; here we only scan
+    /// the regions added since the previous iteration (petgraph's
+    /// `StableDiGraph` allocates monotonic `NodeIndex`s, so the new
+    /// regions sit at indices `[prev_count..current_count)`).
     ///
     /// The set is conservative under region splits: a split region's
     /// original vns stay in the cache even if the original's insn
