@@ -6,7 +6,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::find_unique_if;
 
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::NodeKind;
 use strider_ir_test_utils::RegisterSet;
 
 /// Builds `if (!cond) { return 1 } else { return 2 }`, where `cond` is a
@@ -14,29 +14,15 @@ use strider_ir_test_utils::RegisterSet;
 /// the `If` node id for downstream assertions.
 fn build_if_with_neg_cond() -> Result<(strider_ir::Graph, strider_ir::node::NodeId)> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
-    let mut b = RegisterSet::new().tracked(cond_vn).build_fn()?;
-    let entry = b.create_region()?;
-    let t = b.create_region()?;
-    let f = b.create_region()?;
-
-    b.set_entry_region(entry)?;
-    b.set_region(entry);
-    let raw = b.read_variable(&cond_vn)?;
-    let cond_bool = b.convert_to_bool_if_needed(raw)?;
-    let neg_cond = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
-    b.build_if(neg_cond, t, f)?;
-
-    b.set_region(t);
-    let one = b.build_int_const(1u64, NodeOutputType::U64)?;
-    b.build_return(Some(one), &[])?;
-
-    b.set_region(f);
-    let two = b.build_int_const(2u64, NodeOutputType::U64)?;
-    b.build_return(Some(two), &[])?;
-    b.set_lift_addr(None);
-
-    let fg = b.build()?;
-    let if_node = find_unique_if(crate::pattern::RewriteCtxView::from_built(&fg).unwrap());
+    let (fg, if_node, ()) = RegisterSet::new()
+        .tracked(cond_vn)
+        .build_if_then_else_returns(|b| {
+            let raw = b.read_variable(&cond_vn)?;
+            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            let neg_cond =
+                b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+            Ok((neg_cond, ()))
+        })?;
     Ok((fg, if_node))
 }
 
@@ -91,25 +77,15 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     // pipelines) the If is canonical with no swap.  Pin the
     // even-parity-no-swap invariant.
     let cond_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
-    let mut b = RegisterSet::new().tracked(cond_vn).build_fn()?;
-    let entry = b.create_region()?;
-    let t = b.create_region()?;
-    let f = b.create_region()?;
-    b.set_entry_region(entry)?;
-    b.set_region(entry);
-    let raw = b.read_variable(&cond_vn)?;
-    let cond_bool = b.convert_to_bool_if_needed(raw)?;
-    let n1 = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
-    let n2 = b.build_boolean_unary_operation(n1, strider_ir::BoolUnaryOp::Neg)?;
-    b.build_if(n2, t, f)?;
-    b.set_region(t);
-    let one = b.build_int_const(1u64, NodeOutputType::U64)?;
-    b.build_return(Some(one), &[])?;
-    b.set_region(f);
-    let two = b.build_int_const(2u64, NodeOutputType::U64)?;
-    b.build_return(Some(two), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, _if_node, ()) = RegisterSet::new()
+        .tracked(cond_vn)
+        .build_if_then_else_returns(|b| {
+            let raw = b.read_variable(&cond_vn)?;
+            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            let n1 = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+            let n2 = b.build_boolean_unary_operation(n1, strider_ir::BoolUnaryOp::Neg)?;
+            Ok((n2, ()))
+        })?;
 
     // ConstantFold first: collapses `!!x → x`.
     let mut changed = true;
@@ -179,32 +155,20 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
 #[test]
 fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x2000, 1);
-    let mut b = RegisterSet::new().tracked(cond_vn).build_fn()?;
-    let entry = b.create_region()?;
-    let t = b.create_region()?;
-    let f = b.create_region()?;
-
-    b.set_entry_region(entry)?;
-    b.set_region(entry);
-    // Stamp distinct lift_addrs on the cond producer and the BoolNeg so we
-    // can observe absorption.
-    b.set_lift_addr(Some(0x500));
-    let raw = b.read_variable(&cond_vn)?;
-    let cond_bool = b.convert_to_bool_if_needed(raw)?;
-    b.set_lift_addr(Some(0x504));
-    let neg_cond = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    b.build_if(neg_cond, t, f)?;
-
-    b.set_region(t);
-    let one = b.build_int_const(1u64, NodeOutputType::U64)?;
-    b.build_return(Some(one), &[])?;
-    b.set_region(f);
-    let two = b.build_int_const(2u64, NodeOutputType::U64)?;
-    b.build_return(Some(two), &[])?;
-    b.set_lift_addr(None);
-
-    let mut fg = b.build()?;
+    let (mut fg, _if_node, ()) = RegisterSet::new()
+        .tracked(cond_vn)
+        .build_if_then_else_returns(|b| {
+            // Stamp distinct lift_addrs on the cond producer and the
+            // BoolNeg so we can observe absorption.
+            b.set_lift_addr(Some(0x500));
+            let raw = b.read_variable(&cond_vn)?;
+            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            b.set_lift_addr(Some(0x504));
+            let neg_cond =
+                b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+            b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+            Ok((neg_cond, ()))
+        })?;
 
     // Capture the BoolNeg's NodeId BEFORE optimisation; after the rewrite
     // it becomes dead but stays in the arena.
@@ -244,33 +208,21 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 #[test]
 fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x3000, 1);
-    let mut b = RegisterSet::new().tracked(cond_vn).build_fn()?;
-    let entry = b.create_region()?;
-    let t = b.create_region()?;
-    let f = b.create_region()?;
-
-    // Distinct addresses on the cond producer (0x800), the BoolNeg (0x804),
-    // and the If (0x808) so we can prove the BoolNeg's address lands on
-    // exactly one of the three.
-    b.set_entry_region(entry)?;
-    b.set_region(entry);
-    b.set_lift_addr(Some(0x800));
-    let raw = b.read_variable(&cond_vn)?;
-    let cond_bool = b.convert_to_bool_if_needed(raw)?;
-    b.set_lift_addr(Some(0x804));
-    let neg_cond = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
-    b.set_lift_addr(Some(0x808));
-    b.build_if(neg_cond, t, f)?;
-
-    b.set_region(t);
-    let one = b.build_int_const(1u64, NodeOutputType::U64)?;
-    b.build_return(Some(one), &[])?;
-    b.set_region(f);
-    let two = b.build_int_const(2u64, NodeOutputType::U64)?;
-    b.build_return(Some(two), &[])?;
-    b.set_lift_addr(None);
-
-    let mut fg = b.build()?;
+    // Distinct addresses on the cond producer (0x800), the BoolNeg
+    // (0x804), and the If (0x808) so we can prove the BoolNeg's
+    // address lands on exactly one of the three.
+    let (mut fg, _if_node, ()) = RegisterSet::new()
+        .tracked(cond_vn)
+        .build_if_then_else_returns(|b| {
+            b.set_lift_addr(Some(0x800));
+            let raw = b.read_variable(&cond_vn)?;
+            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            b.set_lift_addr(Some(0x804));
+            let neg_cond =
+                b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+            b.set_lift_addr(Some(0x808));
+            Ok((neg_cond, ()))
+        })?;
 
     // Identify pre-pass: the BoolNeg, the If, and the BoolNeg's input
     // producer (the "inner cond producer" that should receive the

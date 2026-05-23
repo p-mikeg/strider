@@ -8,7 +8,6 @@
 use super::FlagCmpCanonicalize;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
-use crate::opt::test_support::find_unique_if;
 
 use strider_ir::{Graph, FunctionBuilder};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
@@ -58,30 +57,16 @@ where
 {
     let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
-    let mut fb = RegisterSet::new().tracked(a_vn).tracked(b_vn).build_fn()?;
-    let entry = fb.create_region()?;
-    let t = fb.create_region()?;
-    let f = fb.create_region()?;
-    fb.set_entry_region(entry)?;
-
-    fb.set_region(entry);
-    let a = fb.read_variable(&a_vn)?;
-    let b = fb.read_variable(&b_vn)?;
-    let (zr, ng, cy, ov) = build_cmp_flags(&mut fb, a, b)?;
-    let cond = make_cond(&mut fb, zr, ng, cy, ov)?;
-    fb.build_if(cond, t, f)?;
-
-    fb.set_region(t);
-    let one = fb.build_int_const(1u64, NodeOutputType::U64)?;
-    fb.build_return(Some(one), &[])?;
-
-    fb.set_region(f);
-    let two = fb.build_int_const(2u64, NodeOutputType::U64)?;
-    fb.build_return(Some(two), &[])?;
-    fb.set_lift_addr(None);
-
-    let fg = fb.build()?;
-    let if_node = find_unique_if(crate::pattern::RewriteCtxView::from_built(&fg).unwrap());
+    let (fg, if_node, (a, b)) = RegisterSet::new()
+        .tracked(a_vn)
+        .tracked(b_vn)
+        .build_if_then_else_returns(|fb| {
+            let a = fb.read_variable(&a_vn)?;
+            let b = fb.read_variable(&b_vn)?;
+            let (zr, ng, cy, ov) = build_cmp_flags(fb, a, b)?;
+            let cond = make_cond(fb, zr, ng, cy, ov)?;
+            Ok((cond, (a, b)))
+        })?;
     Ok((fg, if_node, a, b))
 }
 

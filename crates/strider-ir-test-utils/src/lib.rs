@@ -139,6 +139,58 @@ impl RegisterSet {
         b.set_region(region);
         Ok(b)
     }
+
+    /// Build the canonical `if (cond) { return 1 } else { return 2 }`
+    /// scaffold used by the `If`-rewrite passes' test suites.
+    ///
+    /// Creates entry / true / false regions, calls `cond_builder` in
+    /// the entry region to produce the boolean condition, then emits
+    /// `build_if(cond, t, f)`, `return 1` from `t`, and `return 2`
+    /// from `f`.  Returns the built graph, the unique `If` node id,
+    /// and whatever auxiliary value the closure threads back through
+    /// `T` (e.g. the operands the caller will assert against after
+    /// the rewrite).
+    ///
+    /// Use `()` for `T` when the closure has no auxiliary outputs.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from `FunctionBuilder::new_raw`, region /
+    /// IR construction, the closure, or `FunctionBuilder::build`.
+    pub fn build_if_then_else_returns<F, T>(self, cond_builder: F) -> Result<(Graph, strider_ir::node::NodeId, T)>
+    where
+        F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::Value, T)>,
+    {
+        use strider_ir::node::{NodeKind, NodeOutputType};
+
+        let mut b = self.build_fn()?;
+        let entry = b.create_region()?;
+        let t = b.create_region()?;
+        let f = b.create_region()?;
+
+        b.set_entry_region(entry)?;
+        b.set_region(entry);
+        let (cond, aux) = cond_builder(&mut b)?;
+        b.build_if(cond, t, f)?;
+
+        b.set_region(t);
+        let one = b.build_int_const(1u64, NodeOutputType::U64)?;
+        b.build_return(Some(one), &[])?;
+
+        b.set_region(f);
+        let two = b.build_int_const(2u64, NodeOutputType::U64)?;
+        b.build_return(Some(two), &[])?;
+        b.set_lift_addr(None);
+
+        let fg = b.build()?;
+        // The scaffold has exactly one `If` node — the validator's
+        // shape contract would already reject anything else.
+        let if_node = fg
+            .all_node_ids()
+            .find(|&nid| matches!(fg.node_kind(nid), NodeKind::If))
+            .expect("scaffold must contain exactly one If node");
+        Ok((fg, if_node, aux))
+    }
 }
 
 /// Builds a single-region function whose return value is what `f` produces.
