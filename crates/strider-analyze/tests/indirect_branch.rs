@@ -37,84 +37,32 @@
 mod common;
 use common::*;
 
-use object::{Object, ObjectSymbol};
-
 /// Build the CFG for `indirect_branch_resolved` with the same setup
 /// `common::analyze` uses (read-only-memory + link-register threaded
 /// through the cfg builder), and panic if any region still carries
 /// `RegionTerminator::UnresolvedIndirectBranch` at fixed point.
 ///
-/// Mirrors `common::analyze`'s prologue verbatim down to the
-/// function-symbol lookup; only diverges by stopping at the CFG
-/// instead of running `analyze_cfg`.
+/// Reuses `common::lift_for_pipeline` for the load-ELF /
+/// Sleigh / CFG-build / `analyze_cfg` prologue so this test does not
+/// drift from the canonical lift path; only diverges by inspecting
+/// `unresolved_branches` on the returned `AnalyzeOutcome` and
+/// classifying each one through the IR-level resolver.
 fn assert_no_unresolved_indirect_branch(arch: Arch) {
-    let path = binary_path(arch, "indirect_branch");
-    if !path.exists() {
-        panic!(
-            "missing test binary {path:?}; run `make -C fixtures` (or \
-             `make -C fixtures ARCH={} CASE=indirect_branch` for just this case)",
-            arch.name()
-        );
-    }
-    let obj = strider_reader::load_elf(&path)
-        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let sleigh_arch = arch.sleigh();
-    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
-        .expect("probe sleigh new")
-        .regs()
-        .expect("probe sleigh regs");
-    let ana = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc())
-        .expect("Strider::new");
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("real sleigh new");
-    let raw_addr = obj
-        .symbol_by_name("indirect_branch_resolved")
-        .unwrap_or_else(|| panic!("symbol indirect_branch_resolved not found in {path:?}"))
-        .address();
-    // ARM-Thumb interworking: mask the LSB Thumb-mode marker (see
-    // common::analyze for the same masking).
-    let addr = match arch {
-        Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
-        _ => raw_addr,
-    };
-    let rom_for_cfg: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
-        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
-    );
-    let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
-        .allow_code_before_start_addr()
-        .set_read_only_memory(rom_for_cfg);
-    if let Some(lr) = ana.calling_convention().link_register_vn {
-        cfg_opts_b = cfg_opts_b.set_link_register(lr);
-    }
-    let cfg_opts = cfg_opts_b.build();
-    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
-        .build()
-        .unwrap_or_else(|e| panic!("Cfg build for indirect_branch_resolved: {e:?}"));
+    let (outcome, ana, _sleigh_arch, rom_for_opt) =
+        lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
+    let unresolved = outcome.unresolved_branches.clone();
+    let mut graph = outcome.graph;
 
-    // F3: the stack-array shape resolves only at IR-LEVEL (post-IR
-    // optimisation, on the optimised graph).  The CFG already contains
-    // `UnresolvedIndirectBranch` terminators; we lift to IR, run the
-    // optimiser pipeline (with rom for `LoadReadOnly`), then call the
-    // IR-level classifier directly on each unresolved anchor.  Asserting
-    // that EVERY anchor classifies into `ResolvedTargets::Multiple`
-    // (or any non-`None` resolution) is the stack-array contract — failing on
-    // any anchor surfaces the gap.
-    let mut graph = ana.analyze_cfg(&cfg)
-        .unwrap_or_else(|e| panic!("analyze_cfg for indirect_branch_resolved on {}: {e:?}", arch.name()));
-    let unresolved = graph.unresolved_branches.clone();
     if unresolved.is_empty() {
         // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
         // The test's promise is "no UnresolvedIndirectBranch survives";
         // that promise holds vacuously.  Mirror common::analyze's
         // post-lift sanity by running the optimiser pipeline so any
         // pipeline regression on the placeholder code-path is caught.
-        let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
         let mut p = ana.build_optimizer_pipeline();
-        p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));
-        let entry = graph.graph.entry().unwrap();
-        p.run(graph.graph.graph_mut(), entry)
+        p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
+        let entry = graph.entry().unwrap();
+        p.run(graph.graph_mut(), entry)
             .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
         return;
     }
@@ -122,18 +70,15 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     // detect, KnownBits, and rodata-load resolutions run before
     // classification — same shape as the orchestrator's per-iteration
     // pre-classify pass.
-    let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
-    p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));
-    let entry = graph.graph.entry().unwrap();
-    p.run(graph.graph.graph_mut(), entry)
+    p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt.clone()));
+    let entry = graph.entry().unwrap();
+    p.run(graph.graph_mut(), entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn;
     let sp_vn = Some(ana.calling_convention().stack_ptr_vn);
-    let rom_for_classify: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
-        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
-    );
+    let rom_for_classify = rom_for_opt;
     for (anchor_addr, anchor_output) in &unresolved {
         // After the optimizer runs, the placeholder IndirectBranch's
         // current 3rd-input may differ from the cached `anchor_output`
@@ -145,10 +90,10 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // for each per-iteration classify — but here we just consume
         // the surviving placeholder on the post-optimizer graph.
         let mut live_anchors: Vec<strider_ir::node::NodeOutputId> = Vec::new();
-        for n in graph.graph.preorder() {
-            if matches!(graph.graph.node_kind(n), strider_ir::node::NodeKind::IndirectBranch) {
+        for n in graph.preorder() {
+            if matches!(graph.node_kind(n), strider_ir::node::NodeKind::IndirectBranch) {
                 let inputs: Vec<strider_ir::node::NodeOutputId> =
-                    graph.graph.node_inputs(n).into_iter().collect();
+                    graph.node_inputs(n).into_iter().collect();
                 if inputs.len() == 3 {
                     live_anchors.push(inputs[2]);
                 }
@@ -165,7 +110,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             live_anchors.push(*anchor_output);
         }
         let mut any_resolved = false;
-        let view: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&graph.graph).unwrap();
+        let view: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap();
         let known = strider_analyze::opt::analyze_known_bits(view)
             .expect("analyze_known_bits");
         for live in &live_anchors {

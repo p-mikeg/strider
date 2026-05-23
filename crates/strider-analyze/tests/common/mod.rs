@@ -190,15 +190,21 @@ pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
 // ── Pipeline runner ──────────────────────────────────────────────────────────
 
 /// Internal helper: load the (arch, case) ELF, build a CFG at `fn_name`,
-/// and lift it to IR.  Returns the lifted graph, the strider instance,
-/// the sleigh arch (for endianness), and an Arc-shared ROM that callers
+/// and lift it to IR.  Returns the full [`AnalyzeOutcome`] (so callers
+/// that need `unresolved_branches` get it), the strider instance, the
+/// sleigh arch (for endianness), and an Arc-shared ROM that callers
 /// can use to drive their optimizer pipeline.
-fn lift_for_pipeline(
+///
+/// Shared between [`analyze`] (which discards
+/// `unresolved_branches`) and `indirect_branch.rs`'s
+/// `assert_no_unresolved_indirect_branch` (which needs both halves of
+/// the outcome).
+pub fn lift_for_pipeline(
     arch: Arch,
     case: &str,
     fn_name: &str,
 ) -> (
-    strider_ir::Graph,
+    strider_analyze::AnalyzeOutcome,
     strider_analyze::Strider,
     strider_target::SleighArch,
     std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
@@ -253,13 +259,12 @@ fn lift_for_pipeline(
     let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
-    let graph = ana.analyze_cfg(&cfg)
-        .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"))
-        .graph;
+    let outcome = ana.analyze_cfg(&cfg)
+        .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"));
     let rom_for_opt: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),
     );
-    (graph, ana, sleigh_arch, rom_for_opt)
+    (outcome, ana, sleigh_arch, rom_for_opt)
 }
 
 /// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
@@ -271,8 +276,9 @@ fn lift_for_pipeline(
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
 pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Graph {
-    let (mut graph, ana, _sleigh_arch, rom_for_opt) =
+    let (outcome, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, case, fn_name);
+    let mut graph = outcome.graph;
     let mut p = ana.build_optimizer_pipeline();
     // `LoadReadOnly` stores its rom as `Arc<dyn ReadOnlyMemory>`; the
     // `rom_for_opt` carry type already matches, so this is a no-op
