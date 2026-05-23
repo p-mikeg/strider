@@ -165,7 +165,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             live_anchors.push(*anchor_output);
         }
         let mut any_resolved = false;
-        let view: strider_analyze::pattern::RewriteCtxView<'_> = (&graph.graph).into();
+        let view: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&graph.graph).unwrap();
         let known = strider_analyze::opt::analyze_known_bits(view)
             .expect("analyze_known_bits");
         for live in &live_anchors {

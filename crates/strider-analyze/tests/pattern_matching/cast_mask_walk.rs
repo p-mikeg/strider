@@ -71,7 +71,7 @@ fn pat() -> Pat {
 
 /// Run the pattern under `mask` and return the match count.
 fn count(g: &Graph, mask: CastMask) -> usize {
-    Matcher::new(g).ignore_casts_mask(mask).find_all(&pat()).len()
+    Matcher::try_new(g).unwrap().ignore_casts_mask(mask).find_all(&pat()).len()
 }
 
 // ── Add(Truncate(InitialVar), IntConst) ─────────────────────────────────────
@@ -132,7 +132,7 @@ fn pat_u32_initial_var() -> Pat {
 }
 
 fn count_u32(g: &Graph, mask: CastMask) -> usize {
-    Matcher::new(g)
+    Matcher::try_new(g).unwrap()
         .ignore_casts_mask(mask)
         .find_all(&pat_u32_initial_var())
         .len()
@@ -209,7 +209,7 @@ fn pat_u16_initial_var() -> Pat {
 }
 
 fn count_u16(g: &Graph, mask: CastMask) -> usize {
-    Matcher::new(g)
+    Matcher::try_new(g).unwrap()
         .ignore_casts_mask(mask)
         .find_all(&pat_u16_initial_var())
         .len()
@@ -256,7 +256,7 @@ fn fixture_deep_cast_chain(levels: usize) -> Graph {
 #[test]
 fn deep_cast_chain_walks_through_all_levels() {
     let g = fixture_deep_cast_chain(500);
-    let count = Matcher::new(&g)
+    let count = Matcher::try_new(&g).unwrap()
         .ignore_casts_mask(CastMask::TRUNCATE | CastMask::ZERO_EXTEND)
         .find_all(&pat())
         .len();
@@ -266,7 +266,7 @@ fn deep_cast_chain_walks_through_all_levels() {
 #[test]
 fn deep_cast_chain_with_partial_mask_does_not_match() {
     let g = fixture_deep_cast_chain(500);
-    let count = Matcher::new(&g)
+    let count = Matcher::try_new(&g).unwrap()
         .ignore_casts_mask(CastMask::TRUNCATE)
         .find_all(&pat())
         .len();

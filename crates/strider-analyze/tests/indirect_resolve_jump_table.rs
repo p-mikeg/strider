@@ -129,7 +129,7 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
         size: 4,
     };
     let (graph, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom((&graph).into(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
+    let result = classify_anchor_with_rom(strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(
@@ -158,7 +158,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
         size: 4,
     };
     let (graph, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_anchor_with_rom((&graph).into(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
+    let result = classify_anchor_with_rom(strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, entries);
@@ -183,7 +183,7 @@ fn jump_table_unbounded_idx_returns_none() {
         size: 4,
     };
     let (graph, anchor) = build_jump_table_unbounded_scenario(base, stride);
-    let result = classify_anchor_with_rom((&graph).into(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
+    let result = classify_anchor_with_rom(strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
         "unbounded idx must NOT classify to Multiple — the orchestrator \
@@ -201,7 +201,7 @@ fn jump_table_no_rom_returns_none() {
     let stride = 4;
     let idx_mask = 0x3u64;
     let (graph, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom((&graph).into(), anchor, None, /* rom */ None).expect("classify_anchor_with_rom");
+    let result = classify_anchor_with_rom(strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None, /* rom */ None).expect("classify_anchor_with_rom");
     assert_eq!(result, None);
 }
 
@@ -225,7 +225,7 @@ fn jump_table_partial_rom_returns_none() {
         cutoff: 4,
     };
     let (graph, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom((&graph).into(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
+    let result = classify_anchor_with_rom(strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
         "partial rom read must fail closed (None), NOT produce a partial \
@@ -265,7 +265,7 @@ fn jump_table_zero_bound_returns_none() {
         size: 4,
     };
     let (graph, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_anchor_with_rom((&graph).into(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
+    let result = classify_anchor_with_rom(strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
         "bound = 0 must return None — Multiple([]) would wrongly imply \
@@ -291,7 +291,7 @@ fn non_jump_table_load_shape_falls_through() {
         entries: vec![0x100, 0x200],
         size: 4,
     };
-    let result = classify_anchor_with_rom((&graph).into(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
+    let result = classify_anchor_with_rom(strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None, Some(&rom)).expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
         "non-jump-table Load shape must fall through to None, NOT \

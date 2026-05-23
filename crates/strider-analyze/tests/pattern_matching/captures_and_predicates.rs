@@ -91,7 +91,7 @@ fn when_on_subpattern_filters() {
 #[test]
 fn predicate_true_matches_all_outputs() {
     let g = shapes::add_consts(5, 3);
-    let hits = Matcher::new(&g).find_all(&predicate(|_g, _ty, _o| true));
+    let hits = Matcher::try_new(&g).unwrap().find_all(&predicate(|_g, _ty, _o| true));
     assert!(!hits.is_empty());
 }
 
@@ -112,7 +112,7 @@ fn predicate_inspects_node_kind() {
     let s = t.add(a_, b_);
     let g = t.ret_val(s);
 
-    let hits = Matcher::new(&g).find_all(&predicate(|graph, _ty, o| {
+    let hits = Matcher::try_new(&g).unwrap().find_all(&predicate(|graph, _ty, o| {
         matches!(graph.kind_of_output(o), strider_ir::node::NodeKind::IntConst(7))
     }));
     assert_eq!(hits.len(), 1);
@@ -125,7 +125,7 @@ fn capture_then_when_composes() {
     let g = shapes::add_consts(5, 3);
     let x = Capture::new();
     // Root matches; the predicate later inspects the capture and filters.
-    let hits = Matcher::new(&g).find_all(
+    let hits = Matcher::try_new(&g).unwrap().find_all(
         &add(int_const(5), int_const(3))
             .capture(x)
             .when(|_g, _ty, _o| true),

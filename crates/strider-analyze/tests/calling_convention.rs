@@ -51,7 +51,7 @@ use strider_ir::node::{NodeKind, FunctionArgSource};
 
 /// Standard matcher for this suite — same selectivity as `complex_patterns.rs`.
 fn matcher(g: &strider_ir::Graph) -> Matcher<'_> {
-    Matcher::new(g)
+    Matcher::try_new(g).unwrap()
         .ignore_casts_mask(
             CastMask::EXTEND
                 | CastMask::TRUNCATE

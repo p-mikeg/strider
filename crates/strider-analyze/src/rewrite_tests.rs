@@ -147,7 +147,7 @@ fn apply_rule_with_no_match_returns_zero_applications() -> anyhow::Result<()> {
     let mut built = one_const_fn(7);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::wrap_built(&mut built);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
     let n = rewriter.apply_rule(rule)?;
     assert_eq!(n, 0, "rule must not fire on a graph without any Add node");
     Ok(())
@@ -165,7 +165,7 @@ fn apply_rule_with_one_match_returns_one_application() -> anyhow::Result<()> {
     assert_eq!(count_adds(&built), 1, "fixture must have exactly one Add");
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::wrap_built(&mut built);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
     let n = rewriter.apply_rule(rule)?;
     assert_eq!(n, 1, "exactly one application expected");
     // After replace_all_uses, the Add becomes unreachable: its
@@ -205,7 +205,7 @@ fn apply_rules_round_robin_reaches_fixed_point() -> anyhow::Result<()> {
         boxed_rule(rewrite_rule(add(var(y), int_const(0)), var(y))),
         boxed_rule(rewrite_rule(sub(var(z), var(z)), int_const(0))),
     ];
-    let mut rewriter = GraphRewriter::wrap_built(&mut built);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
 
     // Drive the rewriter to a fixed point by re-applying rules
     // until none fire.  The user-facing contract: "keep going
@@ -237,11 +237,11 @@ fn re_optimize_is_idempotent() -> anyhow::Result<()> {
     // (zero new changes, same reachable count).
     let mut built = add_x_plus_zero(7);
     let pipeline = crate::opt::default_pipeline();
-    let mut rewriter = GraphRewriter::wrap_built(&mut built);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
     let entry = rewriter.entry();
     pipeline.run(rewriter.graph_mut(), entry)?;
     let count_after_first = built.preorder().count();
-    let mut rewriter2 = GraphRewriter::wrap_built(&mut built);
+    let mut rewriter2 = GraphRewriter::try_wrap_built(&mut built)?;
     let entry2 = rewriter2.entry();
     pipeline.run(rewriter2.graph_mut(), entry2)?;
     let count_after_second = built.preorder().count();
@@ -263,7 +263,7 @@ fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
     let mut built = add_x_plus_zero(7);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::wrap_built(&mut built);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
     rewriter.apply_rule(rule)?;
     // Run validate directly (local typing + use-list + graph invariants).
     // If any check fails we surface the bundle as a strider error.

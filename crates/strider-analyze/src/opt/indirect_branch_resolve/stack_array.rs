@@ -612,8 +612,8 @@ mod tests {
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
         let (fg, load_out) = build_two_target_array(targets, -24, 8);
-        let known = crate::opt::analyze_known_bits((&fg).into()).expect("kb analyze");
-        let result = classify_stack_array((&fg).into(), load_out, sp64(), &known);
+        let known = crate::opt::analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
+        let result = classify_stack_array(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known);
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -650,8 +650,8 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        let known = crate::opt::analyze_known_bits((&fg).into()).expect("kb analyze");
-        assert_eq!(classify_stack_array((&fg).into(), load_out, sp64(), &known), None);
+        let known = crate::opt::analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
+        assert_eq!(classify_stack_array(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known), None);
     }
 
     #[test]
@@ -705,8 +705,8 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        let known = crate::opt::analyze_known_bits((&fg).into()).expect("kb analyze");
-        assert_eq!(classify_stack_array((&fg).into(), load_out, sp64(), &known), None);
+        let known = crate::opt::analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
+        assert_eq!(classify_stack_array(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known), None);
     }
 
     // ── strip_target_mask characterization tests ──────────────────
@@ -783,7 +783,7 @@ mod tests {
     #[test]
     fn strip_target_mask_no_wrapper_returns_all_ones() {
         let (fg, anchor) = build_load_anchor();
-        let (out, mask) = strip_target_mask((&fg).into(), anchor);
+        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), anchor);
         assert_eq!(out, anchor, "no wrapper: anchor passes through");
         assert_eq!(mask, !0u64, "no wrapper: mask must be all-ones");
     }
@@ -794,7 +794,7 @@ mod tests {
         let wrapped = build_binop_wrapped(
             fg.graph_mut(), inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask((&fg).into(), wrapped);
+        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
         assert_eq!(mask, 0xFFFE, "And(load, K) yields mask K");
     }
@@ -805,7 +805,7 @@ mod tests {
         let wrapped = build_binop_wrapped(
             fg.graph_mut(), inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
         );
-        let (out, mask) = strip_target_mask((&fg).into(), wrapped);
+        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
         assert_eq!(mask, 0xFFFE, "And(K, load) yields mask K");
     }
@@ -823,7 +823,7 @@ mod tests {
         let and_layer = build_binop_wrapped(
             fg.graph_mut(), or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask((&fg).into(), and_layer);
+        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
         assert_eq!(mask, 0xFFFE, "and-then-or yields the And's mask");
     }
@@ -840,7 +840,7 @@ mod tests {
         let and_layer = build_binop_wrapped(
             fg.graph_mut(), or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask((&fg).into(), and_layer);
+        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
         assert_eq!(mask, 0xFFFE, "And's mask still applies");
     }
@@ -856,7 +856,7 @@ mod tests {
         let outer_and = build_binop_wrapped(
             fg.graph_mut(), inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask((&fg).into(), outer_and);
+        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");
         assert_eq!(mask, 0xFF, "nested Ands intersect their masks");
     }
@@ -970,8 +970,8 @@ mod tests {
         // means bound = 1 (the only valid idx).
         let targets = [0x401200u64];
         let (fg, load_out) = build_one_target_array(targets, -8, 8);
-        let known = crate::opt::analyze_known_bits((&fg).into()).expect("kb analyze");
-        let result = classify_stack_array((&fg).into(), load_out, sp64(), &known);
+        let known = crate::opt::analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
+        let result = classify_stack_array(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known);
         // Whether the existing helpers can resolve a 1-element case
         // depends on how KnownBits bounds the index.  Pin the contract
         // that the classifier does NOT panic and returns Some/None

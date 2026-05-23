@@ -61,7 +61,7 @@ mod tests {
     #[test]
     fn next_control_node_returns_single_consumer() -> strider_ir::Result<()> {
         let g = graph_call_return()?;
-        let m = Matcher::new(&g);
+        let m = Matcher::try_new(&g).unwrap();
         // Entry.ctrl feeds the region's `ControlState` header directly —
         // it is the single consumer. The walk helper does not skip it;
         // the caller's pattern decides whether to match a ControlState.
@@ -84,7 +84,7 @@ mod tests {
             .copied()
             .next()
             .expect("Entry has one output");
-        let m = Matcher::new(&g);
+        let m = Matcher::try_new(&g).unwrap();
         assert_eq!(next_control_node(&m, out), None);
         Ok(())
     }

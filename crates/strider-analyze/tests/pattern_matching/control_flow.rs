@@ -291,14 +291,14 @@ fn if_node_branch_walks_through_control_state_when_flag_set() {
     let pat: Pat = if_node().false_branch(call().at(0x9999)).into();
     // Strict semantics: the False-branch consumer is a ControlState,
     // not the Call — direct match should fail.
-    let strict = Matcher::new(&g);
+    let strict = Matcher::try_new(&g).unwrap();
     assert!(
         strict.find_all(&pat).is_empty(),
         "without ignore_control_states the strict if_node().false_branch(call) match must fail"
     );
     // With ignore_control_states, the matcher walks through the
     // ControlState region-join and finds the Call.
-    let lenient = Matcher::new(&g).ignore_control_states();
+    let lenient = Matcher::try_new(&g).unwrap().ignore_control_states();
     assert_eq!(
         lenient.find_all(&pat).len(),
         1,

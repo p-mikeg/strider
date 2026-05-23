@@ -65,8 +65,8 @@ fn compact_preserves_reachable_pattern_matches() {
     let noncompact_graph = run_with(false);
 
     let pat: Pat = ret().into();
-    let compact_matches = Matcher::new(&compact_graph).find_all(&pat).len();
-    let noncompact_matches = Matcher::new(&noncompact_graph).find_all(&pat).len();
+    let compact_matches = Matcher::try_new(&compact_graph).unwrap().find_all(&pat).len();
+    let noncompact_matches = Matcher::try_new(&noncompact_graph).unwrap().find_all(&pat).len();
     assert_eq!(
         compact_matches, noncompact_matches,
         "ret() match count must be invariant under compaction"

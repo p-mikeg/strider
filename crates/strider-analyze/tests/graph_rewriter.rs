@@ -164,7 +164,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
         strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), int_const(targets[0] as i128)).capture(cmp_var),
         strider_analyze::pattern::bool_const(true),
     );
-    let mut rewriter = GraphRewriter::wrap_built(&mut g);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
     let n = rewriter.apply_rule(rule)?;
     assert!(
         n >= 1,
@@ -207,7 +207,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
         strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), strider_analyze::pattern::any_int_const(strider_analyze::pattern::Capture::new())),
         strider_analyze::pattern::bool_const(false),
     );
-    let mut rewriter = GraphRewriter::wrap_built(&mut g);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
     let fired = rewriter.apply_rule(rule_all_false)?;
     assert!(
         fired >= 2,
@@ -257,7 +257,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     let pipeline = strider_analyze::opt::default_pipeline();
 
     // Edit 1: collapse the `Add(7, 0)`.  Returns 1 application.
-    let mut rewriter = GraphRewriter::wrap_built(&mut graph);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut graph)?;
     let n1 = rewriter.apply_rule(&rule_x_plus_zero)?;
     assert_eq!(n1, 1, "first rewrite collapses Add(7,0)");
     // re-optimise — propagates the constant through the second Add.
@@ -283,11 +283,11 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     let mut g = add_k_plus_zero(7);
     let pipeline = strider_analyze::opt::default_pipeline();
 
-    let mut rewriter = GraphRewriter::wrap_built(&mut g);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
     { let __entry = rewriter.entry(); pipeline.run(rewriter.graph_mut(), __entry) }?; // first run: collapses Add(7,0)
     let count_after_first = g.preorder().count();
 
-    let mut rewriter2 = GraphRewriter::wrap_built(&mut g);
+    let mut rewriter2 = GraphRewriter::try_wrap_built(&mut g)?;
     { let __entry = rewriter2.entry(); pipeline.run(rewriter2.graph_mut(), __entry) }?; // second run: no-op
     let count_after_second = g.preorder().count();
 
@@ -309,7 +309,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
-    let mut rewriter = GraphRewriter::wrap_built(&mut g);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
     rewriter.apply_rule(rule)?;
 
     strider_ir::validate::validate(g.graph(), g.entry().unwrap())
@@ -337,7 +337,7 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::wrap_built(&mut g);
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
     let fired = rewriter.apply_rule(rule)?;
     assert_eq!(fired, 1, "Capture-capture rule fires exactly once");
     assert_eq!(

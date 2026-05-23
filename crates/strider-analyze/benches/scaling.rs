@@ -430,7 +430,7 @@ fn bench_find_all_requirements_shared_capture(c: &mut Criterion) {
         let pat2: strider_analyze::pattern::Pat = any_int_const(x);
         group.bench_function(format!("n_{n}"), |bnch| {
             bnch.iter(|| {
-                let m = Matcher::new(&fg);
+                let m = Matcher::try_new(&fg).expect("bench fixture is built");
                 let pat_refs: Vec<&strider_analyze::pattern::Pat> = vec![&pat1, &pat2];
                 let result = m.find_all_requirements(&pat_refs);
                 black_box(result);

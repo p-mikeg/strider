@@ -36,7 +36,7 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::Graph, strider_ir::node::Node
     b.set_lift_addr(None);
 
     let fg = b.build()?;
-    let if_node = find_unique_if((&fg).into());
+    let if_node = find_unique_if(crate::pattern::RewriteCtxView::from_built(&fg).unwrap());
     Ok((fg, if_node))
 }
 
@@ -219,7 +219,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 
     // The BoolNeg's fingerprint MUST have been absorbed into the
     // inner-cond node (the new If cond input's producer).
-    let if_node = find_unique_if((&fg).into());
+    let if_node = find_unique_if(crate::pattern::RewriteCtxView::from_built(&fg).unwrap());
     let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)?;
     let inner_node = fg.get_node_from_output(cond_out);
     let inner_fp = fg.asm_fingerprint(inner_node);

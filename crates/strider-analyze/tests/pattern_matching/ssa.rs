@@ -77,14 +77,14 @@ fn graph_phi_for_reg() -> (strider_ir::Graph, rsleigh::Vn) {
 fn phi_matches_any() {
     let (g, _reg) = graph_phi_for_reg();
     // At least one phi exists at the merge region.
-    let hits = Matcher::new(&g).find_all(&phi().into());
+    let hits = Matcher::try_new(&g).unwrap().find_all(&phi().into());
     assert!(!hits.is_empty(), "expected at least one phi");
 }
 
 #[test]
 fn phi_for_matches_exact_vn() {
     let (g, reg) = graph_phi_for_reg();
-    let hits = Matcher::new(&g).find_all(&phi_for(reg).into());
+    let hits = Matcher::try_new(&g).unwrap().find_all(&phi_for(reg).into());
     assert!(!hits.is_empty(), "phi_for({reg:?}) should match");
 }
 
@@ -156,7 +156,7 @@ fn function_arg_stack_matches_only_stack_source() {
 #[test]
 fn matcher_function_arg_api_returns_handle() {
     let (g, _reg) = shapes::function_arg_reg();
-    let matcher = Matcher::new(&g);
+    let matcher = Matcher::try_new(&g).unwrap();
     let h = matcher.function_arg(0).expect("fn arg 0");
     assert_eq!(h.index(), 0);
     assert!(matches!(h.source(), FunctionArgSource::Register(_)));
@@ -167,7 +167,7 @@ fn matcher_function_arg_api_returns_handle() {
 #[test]
 fn matcher_function_arg_out_of_range_none() {
     let (g, _reg) = shapes::function_arg_reg();
-    let matcher = Matcher::new(&g);
+    let matcher = Matcher::try_new(&g).unwrap();
     assert!(matcher.function_arg(1).is_none());
     assert!(matcher.function_arg(u32::MAX).is_none());
 }
@@ -175,7 +175,7 @@ fn matcher_function_arg_out_of_range_none() {
 #[test]
 fn matcher_function_args_iterator_sorted() {
     let (g, _reg) = shapes::function_arg_reg();
-    let matcher = Matcher::new(&g);
+    let matcher = Matcher::try_new(&g).unwrap();
     let indices: Vec<u32> = matcher.function_args().map(|(i, _)| i).collect();
     assert_eq!(indices, vec![0]);
 }

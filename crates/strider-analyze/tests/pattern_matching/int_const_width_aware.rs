@@ -13,7 +13,7 @@ fn negative_int_const_matches_at_u32_width() {
     let mut t = Tb::empty();
     let neg50_u32 = t.int_of(0xffff_ffceu64, NodeOutputType::U32);
     let g = t.ret_val(neg50_u32);
-    let hits = Matcher::new(&g).find_all(&int_const(-50));
+    let hits = Matcher::try_new(&g).unwrap().find_all(&int_const(-50));
     assert!(
         !hits.is_empty(),
         "expected int_const(-50) to match 0xffff_ffce at U32 width"
@@ -27,7 +27,7 @@ fn negative_int_const_matches_at_u64_width() {
     let mut t = Tb::empty();
     let neg50_u64 = t.u64(0xffff_ffff_ffff_ffceu64);
     let g = t.ret_val(neg50_u64);
-    let hits = Matcher::new(&g).find_all(&int_const(-50));
+    let hits = Matcher::try_new(&g).unwrap().find_all(&int_const(-50));
     assert!(
         !hits.is_empty(),
         "expected int_const(-50) to match 0xffff_ffff_ffff_ffce at U64 width"
@@ -45,7 +45,7 @@ fn negative_int_const_matches_at_u128_width() {
         .build_int_const(neg50_at_u128, NodeOutputType::U128)
         .unwrap();
     let g = t.ret_val(neg50);
-    let hits = Matcher::new(&g).find_all(&int_const(-50));
+    let hits = Matcher::try_new(&g).unwrap().find_all(&int_const(-50));
     assert!(
         !hits.is_empty(),
         "expected int_const(-50) to match at U128 width"
@@ -59,7 +59,7 @@ fn positive_int_const_matches_unchanged_and_negative_does_not() {
     let mut t = Tb::empty();
     let fifty = t.int_of(50u64, NodeOutputType::U32);
     let g = t.ret_val(fifty);
-    let m = Matcher::new(&g);
+    let m = Matcher::try_new(&g).unwrap();
     assert!(
         !m.find_all(&int_const(50)).is_empty(),
         "expected int_const(50) to match"

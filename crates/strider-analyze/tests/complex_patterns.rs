@@ -51,7 +51,7 @@ use strider_ir::node::{NodeId, NodeKind};
 ///   `if_node().cond(int_cmp(...))` never match across arches.
 /// * `ControlState` region-join nodes.
 fn matcher(g: &strider_ir::Graph) -> Matcher<'_> {
-    Matcher::new(g)
+    Matcher::try_new(g).unwrap()
         .ignore_casts_mask(
             CastMask::EXTEND
                 | CastMask::TRUNCATE

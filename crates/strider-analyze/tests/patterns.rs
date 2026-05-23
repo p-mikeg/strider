@@ -41,7 +41,7 @@ fn mac_pattern_finds_match(g: &strider_ir::Graph) {
     // — the Mul is one hop deeper than the matcher's exact-walk would
     // see otherwise.  Other arches don't have intervening casts, so the
     // flag is a no-op there (direct match still tried first).
-    let m = Matcher::new(g).ignore_casts();
+    let m = Matcher::try_new(g).unwrap().ignore_casts();
     let pat: Pat = add(mul(any(), any()), any()).into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
@@ -86,7 +86,7 @@ fn if_const_pattern_finds_two_consts(g: &strider_ir::Graph) {
 
 fn invariant_load_pattern_finds_load(g: &strider_ir::Graph) {
     // Pattern: any Load.
-    let m = Matcher::new(g);
+    let m = Matcher::try_new(g).unwrap();
     let pat: Pat = strider_analyze::pattern::load().into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(), "expected ≥1 Load match in loop_with_invariant_load");
@@ -95,7 +95,7 @@ fn invariant_load_pattern_finds_load(g: &strider_ir::Graph) {
 
 fn recursive_pattern_finds_self_call(g: &strider_ir::Graph) {
     // Pattern: any Call.
-    let m = Matcher::new(g);
+    let m = Matcher::try_new(g).unwrap();
     let pat: Pat = call().into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),

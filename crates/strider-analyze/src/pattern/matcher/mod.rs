@@ -97,26 +97,20 @@ pub struct Matcher<'g> {
 }
 
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher` over a [`Graph`].  Wrapper
-    /// around [`Self::for_graph`] for callers that already hold the
-    /// fully-built form (the common query path).  Rewrite-only callers
-    /// that have just `&Graph + NodeId` should use [`Self::for_graph`]
-    /// directly to avoid synthesising a dummy `Graph` with
-    /// empty CC fields.
+    /// Creates a new `Matcher` over a built [`Graph`].  Wrapper around
+    /// [`Self::for_graph`] for callers that hold the fully-built form
+    /// (the common query path).  Rewrite-only callers that have just
+    /// `&Graph + NodeId` should use [`Self::for_graph`] directly.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the wrapped graph has not been built (i.e. `entry`
-    /// is `None`).  Pre-condition: `fn_graph` must have been built
-    /// via [`strider_ir::FunctionBuilder::build`].
-    #[must_use]
-    #[allow(clippy::expect_used)]
-    pub fn new(fn_graph: &'g Graph) -> Self {
-        let entry = fn_graph.entry().expect(
-            "Matcher::new: pre-condition violated — \
-             graph has not been built (entry is None)",
-        );
-        Self::for_graph(fn_graph.graph(), entry)
+    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// is `None`).
+    pub fn try_new(fn_graph: &'g Graph) -> anyhow::Result<Self> {
+        let entry = fn_graph.entry().ok_or_else(|| {
+            anyhow::anyhow!("Matcher::try_new: graph has not been built (entry is None)")
+        })?;
+        Ok(Self::for_graph(fn_graph, entry))
     }
 
     /// Creates a new `Matcher` over a raw `(graph, entry)` pair —

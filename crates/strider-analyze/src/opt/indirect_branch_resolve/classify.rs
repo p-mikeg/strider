@@ -247,7 +247,7 @@ mod tests {
             // also fold via the `as u64` cast in the classifier.
             fb.build_int_const(0x1234u64, NodeOutputType::U64).unwrap()
         });
-        let result = classify_anchor_bare((&graph).into(), anchor, None).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
     }
 
@@ -260,7 +260,7 @@ mod tests {
             fb.build_int_const(0xfeed_face_u64, NodeOutputType::U64).unwrap()
         });
         assert_eq!(
-            classify_anchor_bare((&graph).into(), anchor, None).expect("classify"),
+            classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify"),
             Some(ResolvedTargets::Single(0xfeed_face)),
         );
     }
@@ -309,7 +309,7 @@ mod tests {
             producer_output = slot1;
         }
 
-        let result = classify_anchor_bare((&graph).into(), producer_output, Some(lr_vn)).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), producer_output, Some(lr_vn)).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::LinkRegister));
     }
 
@@ -350,7 +350,7 @@ mod tests {
             producer_output = slot1;
         }
 
-        let result = classify_anchor_bare((&graph).into(), producer_output, Some(lr_vn)).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), producer_output, Some(lr_vn)).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -388,7 +388,7 @@ mod tests {
             producer_output = slot1;
         }
 
-        let result = classify_anchor_bare((&graph).into(), producer_output, None).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), producer_output, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -472,7 +472,7 @@ mod tests {
         // Phi(IntConst(7), IntConst(3), IntConst(7)) →
         //   Multiple(sorted, deduped) = Multiple([3, 7]).
         let (graph, anchor) = build_value_phi_graph(&[7, 3, 7]);
-        let result = classify_anchor_bare((&graph).into(), anchor, None).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify");
         match result {
             Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![3, 7]),
             other => panic!("expected Multiple([3, 7]); got {other:?}"),
@@ -486,7 +486,7 @@ mod tests {
         // guess by collapsing to Single, since the orchestrator
         // treats Multiple-of-len-1 identically).
         let (graph, anchor) = build_value_phi_graph(&[42]);
-        let result = classify_anchor_bare((&graph).into(), anchor, None).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Multiple(vec![42])));
     }
 
@@ -531,7 +531,7 @@ mod tests {
 
         // No lr supplied: the InitialVar arm doesn't accidentally
         // classify as LinkRegister either.
-        assert_eq!(classify_anchor_bare((&graph).into(), vp_out, None).expect("classify"), None);
+        assert_eq!(classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), vp_out, None).expect("classify"), None);
     }
 
     #[test]
@@ -548,7 +548,7 @@ mod tests {
         // the normal lift path, but DeadBranchElim's input-detach
         // can leave a zero-input phi observable transiently.
         let (graph, anchor) = build_value_phi_graph(&[]);
-        let result = classify_anchor_bare((&graph).into(), anchor, None).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -571,6 +571,6 @@ mod tests {
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"
         );
-        assert_eq!(classify_anchor_bare((&graph).into(), anchor, None).expect("classify"), None);
+        assert_eq!(classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify"), None);
     }
 }

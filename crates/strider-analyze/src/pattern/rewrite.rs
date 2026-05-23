@@ -183,26 +183,21 @@ impl<'g> RewriteCtx<'g> {
         Self { graph, entry }
     }
 
-    /// Constructs a `RewriteCtx` borrowing from a `Graph`'s
-    /// inner `graph` + `entry`.  Used by callers that already hold a
-    /// fully-built form and want to drive the rewrite engine without
-    /// surrendering the wrapper.
+    /// Constructs a `RewriteCtx` borrowing from a [`Graph`]'s built
+    /// form (i.e. `entry` is populated).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the graph has not been built (i.e. `entry` is
-    /// `None`).  Pre-condition: `bfg` must have been built via
-    /// [`strider_ir::FunctionBuilder::build`].
-    #[allow(clippy::expect_used)]
-    pub fn for_built(bfg: &'g mut strider_ir::Graph) -> Self {
-        let entry = bfg.entry().expect(
-            "RewriteCtx::for_built: pre-condition violated — \
-             graph has not been built (entry is None)",
-        );
-        Self {
-            graph: bfg.graph_mut(),
-            entry,
-        }
+    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// is `None`).  Use [`Self::new`] when you already have an explicit
+    /// `(graph, entry)` pair.
+    pub fn try_for_built(graph: &'g mut Graph) -> anyhow::Result<Self> {
+        let entry = graph.entry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "RewriteCtx::try_for_built: graph has not been built (entry is None)"
+            )
+        })?;
+        Ok(Self { graph, entry })
     }
 
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
@@ -301,67 +296,53 @@ impl<'g> RewriteCtxView<'g> {
     }
 
     /// Borrows a built [`strider_ir::Graph`] as a shared
-    /// rewrite-context view.  Fallible companion to the legacy
-    /// `From<&BFG>` impl now that [`strider_ir::Graph::entry`] returns
-    /// `Option`.  New code should prefer this method.
+    /// rewrite-context view.
     ///
     /// # Errors
     ///
     /// Returns an error if the graph has not been built (i.e. `entry`
     /// is `None`).
-    pub fn from_built(bfg: &'g strider_ir::Graph) -> anyhow::Result<Self> {
-        let entry = bfg.entry().ok_or_else(|| {
+    pub fn from_built(graph: &'g strider_ir::Graph) -> anyhow::Result<Self> {
+        let entry = graph.entry().ok_or_else(|| {
             anyhow::anyhow!("RewriteCtxView::from_built: graph has not been built (entry is None)")
         })?;
-        Ok(Self { graph: bfg.graph(), entry })
+        Ok(Self { graph, entry })
     }
 }
 
-/// Legacy infallible conversion from a `Graph`.  Retained
-/// for compatibility with the wide test surface (~200 call sites) that
-/// uses `(&fg).into()`.  Now that [`strider_ir::Graph::entry`] returns
-/// `Option`, this `From` impl can only honour the trait's infallible
-/// shape by panicking when the pre-condition is violated — hence the
-/// localised `expect_used` allow.  New code should prefer
-/// [`RewriteCtxView::from_built`], which surfaces the `None` arm as a
-/// typed error.
-#[allow(clippy::expect_used)]
-impl<'g> From<&'g strider_ir::Graph> for RewriteCtxView<'g> {
-    fn from(bfg: &'g strider_ir::Graph) -> Self {
-        let entry = bfg.entry().expect(
-            "RewriteCtxView::<From<&BFG>>: pre-condition violated — \
-             graph has not been built (entry is None); use \
-             RewriteCtxView::from_built for the typed-error path",
-        );
-        Self { graph: bfg.graph(), entry }
-    }
-}
-
-/// Extension trait on [`strider_ir::Graph`] (alias for
-/// [`Graph`]) providing the `with_rewrite_ctx` callback that absorbs the
-/// `let mut ctx = RewriteCtx::for_built(&mut bfg); apply_*(&mut ctx, …)`
+/// Extension trait on [`strider_ir::Graph`] providing a
+/// `with_rewrite_ctx` callback that absorbs the
+/// `let mut ctx = RewriteCtx::try_for_built(&mut g)?; apply_*(&mut ctx, …)`
 /// construct-then-pass pattern into a single
-/// `bfg.with_rewrite_ctx(|ctx| apply_*(ctx, …))` call.
+/// `g.with_rewrite_ctx(|ctx| apply_*(ctx, …))?` call.
+///
+/// The callback's `anyhow::Result<T>` output is flattened into the
+/// method's return type — the un-built case and the closure's failure
+/// path share one `?` at the call site.
 ///
 /// `Graph` lives in `strider-ir`, which doesn't know about `RewriteCtx`,
 /// so the helper has to ride on an extension trait defined here.
 pub trait GraphRewriteCtxExt {
-    /// Borrow `self` as a `RewriteCtx` and run `f` with mutable access.
+    /// Borrow `self` as a [`RewriteCtx`] and run `f` with mutable
+    /// access.  The closure's `anyhow::Result<T>` and the un-built
+    /// case are merged into one outer `Result<T>` — call sites need a
+    /// single `?` to surface either failure mode.
     ///
-    /// Mirrors `RewriteCtx::for_built(&mut self)` but folds the
-    /// construction into a callback so call sites don't have to spell
-    /// out the temporary.
-    fn with_rewrite_ctx<F, R>(&mut self, f: F) -> R
+    /// # Errors
+    ///
+    /// Returns an error if `self.entry()` is `None` (graph not built),
+    /// or if the closure returns an `Err`.
+    fn with_rewrite_ctx<F, T>(&mut self, f: F) -> anyhow::Result<T>
     where
-        F: FnOnce(&mut RewriteCtx<'_>) -> R;
+        F: FnOnce(&mut RewriteCtx<'_>) -> anyhow::Result<T>;
 }
 
 impl GraphRewriteCtxExt for strider_ir::Graph {
-    fn with_rewrite_ctx<F, R>(&mut self, f: F) -> R
+    fn with_rewrite_ctx<F, T>(&mut self, f: F) -> anyhow::Result<T>
     where
-        F: FnOnce(&mut RewriteCtx<'_>) -> R,
+        F: FnOnce(&mut RewriteCtx<'_>) -> anyhow::Result<T>,
     {
-        let mut ctx = RewriteCtx::for_built(self);
+        let mut ctx = RewriteCtx::try_for_built(self)?;
         f(&mut ctx)
     }
 }

@@ -12,7 +12,7 @@ use strider_ir::node::{NodeId, NodeKind};
 #[track_caller]
 pub fn matches(g: &Graph, pat: impl Into<Pat>, expected: usize) -> Vec<Match> {
     let pat = pat.into();
-    let hits = Matcher::new(g).find_all(&pat);
+    let hits = Matcher::try_new(g).unwrap().find_all(&pat);
     assert_eq!(
         hits.len(),
         expected,
@@ -43,7 +43,7 @@ pub fn none(g: &Graph, pat: impl Into<Pat>) {
 #[track_caller]
 pub fn first(g: &Graph, pat: impl Into<Pat>) -> Match {
     let pat = pat.into();
-    let mut hits = Matcher::new(g).find_all(&pat);
+    let mut hits = Matcher::try_new(g).unwrap().find_all(&pat);
     assert!(!hits.is_empty(), "expected at least one match, got 0");
     hits.swap_remove(0)
 }

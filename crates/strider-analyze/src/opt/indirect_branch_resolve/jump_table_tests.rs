@@ -108,7 +108,7 @@ fn match_jump_table_shape_recognises_canonical_form() {
     // load (non-const) so the shape match's stride-vs-idx
     // disambiguation is exercised cleanly.
     let (g, anchor) = build_jt_load(0x4000, 4, false, false, build_non_const_idx);
-    let shape = match_jump_table_shape((&g).into(), anchor).expect("must match");
+    let shape = match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).expect("must match");
     assert_eq!(shape.base, 0x4000);
     assert_eq!(shape.stride, 4);
     assert_eq!(shape.entry_size, 4);
@@ -119,7 +119,7 @@ fn match_jump_table_shape_recognises_commuted_intadd() {
     // IntAdd(IntMul(idx, stride), IntConst(base)) — base on the
     // right.  match-shape must try both orderings.
     let (g, anchor) = build_jt_load(0x5000, 4, true, false, build_non_const_idx);
-    let shape = match_jump_table_shape((&g).into(), anchor).expect("must match commuted add");
+    let shape = match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).expect("must match commuted add");
     assert_eq!(shape.base, 0x5000);
     assert_eq!(shape.stride, 4);
 }
@@ -129,7 +129,7 @@ fn match_jump_table_shape_recognises_commuted_intmul() {
     // IntMul(IntConst(stride), idx) — stride on the left of the
     // multiplication.
     let (g, anchor) = build_jt_load(0x6000, 8, false, true, build_non_const_idx);
-    let shape = match_jump_table_shape((&g).into(), anchor).expect("must match commuted mul");
+    let shape = match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).expect("must match commuted mul");
     assert_eq!(shape.base, 0x6000);
     assert_eq!(shape.stride, 8);
 }
@@ -138,7 +138,7 @@ fn match_jump_table_shape_recognises_commuted_intmul() {
 fn match_jump_table_shape_recognises_both_commutations() {
     // Both add and mul commuted — the worst-case ordering.
     let (g, anchor) = build_jt_load(0x7000, 4, true, true, build_non_const_idx);
-    let shape = match_jump_table_shape((&g).into(), anchor).expect("must match both commuted");
+    let shape = match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).expect("must match both commuted");
     assert_eq!(shape.base, 0x7000);
     assert_eq!(shape.stride, 4);
 }
@@ -178,7 +178,7 @@ fn match_jump_table_shape_recognises_shl_form() {
     // entries.  `Shl(idx, 2)` is arithmetically equal to
     // `Mul(idx, 4)` but lifts as a distinct IR op.
     let (g, anchor) = build_jt_load_shl(0x4000, 2, false, build_non_const_idx);
-    let shape = match_jump_table_shape((&g).into(), anchor)
+    let shape = match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor)
         .expect("Shl-scaled table must match");
     assert_eq!(shape.base, 0x4000);
     assert_eq!(shape.stride, 4); // 1 << 2
@@ -191,7 +191,7 @@ fn match_jump_table_shape_recognises_shl_form_commuted_add() {
     // — so we must still match `(idx<<shift) + base` as well as
     // `base + (idx<<shift)`.
     let (g, anchor) = build_jt_load_shl(0x5000, 3, true, build_non_const_idx);
-    let shape = match_jump_table_shape((&g).into(), anchor)
+    let shape = match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor)
         .expect("Shl-scaled table with commuted add must match");
     assert_eq!(shape.base, 0x5000);
     assert_eq!(shape.stride, 8); // 1 << 3 — AArch64 jump table of 8-byte pointers
@@ -204,7 +204,7 @@ fn match_jump_table_shape_rejects_shl_with_oversize_shift() {
     // out at shift = 3.
     let (g, anchor) = build_jt_load_shl(0x6000, 64, false, build_non_const_idx);
     assert!(
-        match_jump_table_shape((&g).into(), anchor).is_none(),
+        match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).is_none(),
         "shift >= 64 must reject; otherwise stride computation overflows"
     );
 }
@@ -213,7 +213,7 @@ fn match_jump_table_shape_rejects_shl_with_oversize_shift() {
 fn match_jump_table_shape_rejects_non_load_producer() {
     // Anchor is a raw IntConst, not a Load.  Reject.
     let (g, anchor) = build_with_anchor(|fb| fb.build_int_const(0x1000u64, NodeOutputType::U32).unwrap());
-    assert!(match_jump_table_shape((&g).into(), anchor).is_none());
+    assert!(match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).is_none());
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn match_jump_table_shape_rejects_load_with_unrelated_addr_shape() {
         let addr = fb.build_int_const(0x1234u64, NodeOutputType::U32).unwrap();
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
-    assert!(match_jump_table_shape((&g).into(), anchor).is_none());
+    assert!(match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).is_none());
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn match_jump_table_shape_rejects_load_without_intconst_base() {
             .expect("add");
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
-    assert!(match_jump_table_shape((&g).into(), anchor).is_none());
+    assert!(match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).is_none());
 }
 
 // ── Bound-via-known-bits tests ───────────────────────────────────────────
@@ -263,8 +263,8 @@ fn bound_via_known_bits_returns_max_plus_one() {
         fb.build_int_binary_operation(v, mask, IntBinaryOp::And, NodeOutputType::U32)
             .expect("and")
     });
-    let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let bound = bound_via_known_bits((&g).into(), idx, &known).expect("must bound");
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
+    let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), idx, &known).expect("must bound");
     assert_eq!(bound, 8);
 }
 
@@ -275,8 +275,8 @@ fn bound_via_known_bits_returns_none_when_unbounded() {
         let addr = fb.build_int_const(0x1000u64, NodeOutputType::U32).unwrap();
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
-    let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    assert_eq!(bound_via_known_bits((&g).into(), idx, &known), None);
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
+    assert_eq!(bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), idx, &known), None);
 }
 
 #[test]
@@ -286,8 +286,8 @@ fn bound_via_known_bits_with_int_const_input() {
     // this to a Single, but the local recurrence handles it
     // anyway.)
     let (g, idx) = build_with_anchor(|fb| fb.build_int_const(5u64, NodeOutputType::U32).unwrap());
-    let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let bound = bound_via_known_bits((&g).into(), idx, &known).expect("must bound a const");
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
+    let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), idx, &known).expect("must bound a const");
     assert_eq!(bound, 6);
 }
 
@@ -329,8 +329,8 @@ fn bound_via_known_bits_handles_zero_extend() {
     // Replace the placeholder with the Extend so the Return
     // depends on it; `walk_graph` then sweeps it into preorder.
     g.replace_all_uses(placeholder, idx).expect("rewire");
-    let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let bound = bound_via_known_bits((&g).into(), idx, &known).expect("bound from zero-extend");
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
+    let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), idx, &known).expect("bound from zero-extend");
     // U8 narrows to 0..255, so bound = 256.
     assert_eq!(bound, 256);
 }
@@ -390,8 +390,8 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // The detached AND's output isn't in the entry preorder, so
     // `analyze_known_bits` never visits it.  Its kb defaults to
     // all-unknown and `bound_via_known_bits` returns None.
-    let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let bound = bound_via_known_bits((&g).into(), detached_idx, &known);
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
+    let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), detached_idx, &known);
     assert_eq!(
         bound, None,
         "unreachable output must yield None (default Kb, no narrowing)",
@@ -462,8 +462,8 @@ fn classify_jump_table_with_known_bits_bound_returns_multiple() {
         vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
         4,
     );
-    let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let result = classify_jump_table((&g).into(), anchor, Some(&rom), &known);
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
+    let result = classify_jump_table(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, Some(&rom), &known);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
@@ -493,8 +493,8 @@ fn classify_jump_table_no_rom_returns_none() {
             .expect("add");
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
-    let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let result = classify_jump_table((&g).into(), anchor, None, &known);
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
+    let result = classify_jump_table(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, None, &known);
     assert_eq!(result, None);
 }
 
@@ -519,8 +519,8 @@ fn classify_jump_table_unbounded_idx_returns_none() {
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let result = classify_jump_table((&g).into(), anchor, Some(&rom), &known);
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
+    let result = classify_jump_table(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, Some(&rom), &known);
     assert_eq!(result, None);
 }
 
@@ -544,7 +544,7 @@ fn bound_from_if_condition_idx_less_than_n_true() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition((&g).into(), cmp, idx, /* on_true */ true);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true);
     assert_eq!(bound, Some(4));
 }
 
@@ -564,7 +564,7 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition((&g).into(), cmp, idx, /* on_true */ false);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ false);
     assert_eq!(bound, None);
 }
 
@@ -598,7 +598,7 @@ fn bound_from_if_condition_signed_less_treated_as_unsigned_bound() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition((&g).into(), cmp, idx, /* on_true */ true);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true);
     assert_eq!(bound, Some(8), "Sless bounds via N (current behavior)");
 }
 
@@ -627,7 +627,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition((&g).into(), cmp, idx, true);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true);
     assert_eq!(bound, Some(5));
 }
 
@@ -767,7 +767,7 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     // The walk hits the innermost If first (closest to dispatch),
     // whose bound is `LOOSE_BOUND` — and `bound_from_if_condition`
     // returns immediately, so it never crawls all the way back.
-    let bound = bound_via_predecessor_if((&g).into(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
     assert_eq!(bound, Some(LOOSE_BOUND));
 }
 
@@ -777,7 +777,7 @@ fn bound_via_predecessor_if_walks_one_hop() {
     // region.  bound_via_predecessor_if must follow control back
     // through one hop and surface bound = 4.
     let (g, anchor, idx_in_dispatch) = build_pred_if_graph(4);
-    let bound = bound_via_predecessor_if((&g).into(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
     assert_eq!(bound, Some(4));
 }
 
@@ -809,7 +809,7 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if((&g).into(), anchor, idx);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx);
     assert_eq!(bound, None);
 }
 
@@ -866,7 +866,7 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if((&g).into(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
     assert_eq!(bound, None, "If on unrelated var must not bound idx");
 }
 
@@ -892,12 +892,12 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
     assert_eq!(
-        bound_from_if_condition((&g).into(), cmp, idx, /* on_true */ true),
+        bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true),
         None,
         "Equal must NOT yield a 0..N bound — see H2 fix",
     );
     // Same on the false branch (the negation idx != N — also no bound).
-    assert_eq!(bound_from_if_condition((&g).into(), cmp, idx, false), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, false), None);
 }
 
 #[test]
@@ -926,12 +926,12 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
     let g = builder.build().unwrap();
     // True branch of `N < idx` ↔ `idx > N` — no upper bound (and
     // the pattern wouldn't bind to the desired `idx_var` anyway).
-    assert_eq!(bound_from_if_condition((&g).into(), cmp, idx, true), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true), None);
     // False branch of `N < idx` ↔ `idx <= N` — *would* be
     // soundly bounded by N+1 if the helper looked through the
     // swapped operands, but the current implementation returns
     // None.  Documented limitation.
-    assert_eq!(bound_from_if_condition((&g).into(), cmp, idx, false), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, false), None);
 }
 
 #[test]
@@ -951,7 +951,7 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition((&g).into(), cmp, idx, true);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true);
     assert_eq!(bound, None);
 }
 
@@ -1075,7 +1075,7 @@ fn bound_via_predecessor_if_join_with_multi_input_phi_is_unbounded() {
     // first or `same_value` is taught to look through multi-value
     // phis.  See the `same_value` rationale in `jump_table.rs`.
     let (g, anchor, idx_in_dispatch) = build_diamond_two_bounds(4, 8);
-    let bound = bound_via_predecessor_if((&g).into(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
     assert_eq!(
         bound, None,
         "multi-input join phi blocks predecessor-If walk's bound proof",
@@ -1144,7 +1144,7 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if((&g).into(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
     assert_eq!(
         bound, None,
         "any unbounded predecessor must collapse the join's bound to None",

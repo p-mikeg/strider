@@ -40,7 +40,7 @@
 //! // A no-op rule: matches anything, returns `Ok(false)` (didn't fire).
 //! // Real rules come from `crate::pattern::rewrite_rule(matcher_pat, replacement_pat)`
 //! // and would mutate the graph here.
-//! let mut rewriter = strider_analyze::GraphRewriter::wrap_built(&mut built);
+//! let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut built)?;
 //! let fired = rewriter.apply_rule(|_g, _n| Ok(false))?;
 //! assert_eq!(fired, 0);
 //! # Ok(())
@@ -71,33 +71,7 @@ pub struct GraphRewriter<'a> {
 }
 
 impl<'a> GraphRewriter<'a> {
-    /// Wraps a [`Graph`].  Infallible legacy entry point;
-    /// new `Result`-returning code paths should prefer
-    /// [`Self::try_wrap_built`] which surfaces the un-built case as a
-    /// typed error.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the graph has not been built (i.e. `entry` is
-    /// `None`).  Pre-condition: `built` must have been built via
-    /// [`strider_ir::FunctionBuilder::build`].
-    #[must_use]
-    #[allow(clippy::expect_used)]
-    pub fn wrap_built(built: &'a mut Graph) -> Self {
-        let entry = built.entry().expect(
-            "GraphRewriter::wrap_built: pre-condition violated — \
-             graph has not been built (entry is None); use \
-             GraphRewriter::try_wrap_built for the typed-error path",
-        );
-        Self {
-            graph: built.graph_mut(),
-            entry,
-        }
-    }
-
-    /// Fallible companion to [`Self::wrap_built`].  Returns an error
-    /// if the graph has not been built; preferred for `Result`-
-    /// returning code paths.
+    /// Wraps a built [`Graph`].
     ///
     /// # Errors
     ///
@@ -146,7 +120,7 @@ impl<'a> GraphRewriter<'a> {
     /// The closure receives `&mut crate::pattern::RewriteCtx`, NOT the wrapped
     /// `Graph`.  `RewriteCtx` exposes only `graph` and
     /// `entry`; the calling convention's `variables`, `call_clobbered`,
-    /// `ret_val_regs`, `call_other_clobbered` fields on the BFG are
+    /// `ret_val_regs`, `call_other_clobbered` fields on the `Graph` are
     /// **not** visible from inside the closure.  Rules that need CC
     /// information must close over it from the surrounding scope at
     /// call site.

@@ -36,7 +36,7 @@
 //! let off_c = Capture::new();
 //! let pat = load().addr(add(var(ptr_c), var(off_c)));
 //!
-//! let matcher = Matcher::new(&graph);
+//! let matcher = Matcher::try_new(&graph).unwrap();
 //! let hits = matcher.find_all(&pat.into());
 //! assert_eq!(hits.len(), 1);
 //!
@@ -124,7 +124,7 @@
 //! fb.set_lift_addr(None);
 //! let graph = fb.build().unwrap();
 //!
-//! let m = Matcher::new(&graph)
+//! let m = Matcher::try_new(&graph).unwrap()
 //!     .ignore_casts()
 //!     .ignore_control_states();
 //! # let _ = m;

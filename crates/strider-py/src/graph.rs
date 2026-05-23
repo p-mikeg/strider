@@ -352,7 +352,8 @@ impl PyGraph {
         let pat = pat.into_pat()?;
         let g_borrow = slf.borrow(py);
         let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_analyze::pattern::Matcher::new(&graph_guard);
+        let mut matcher = strider_analyze::pattern::Matcher::try_new(&graph_guard)
+            .map_err(crate::errors::into_strider_err)?;
         if ignore_casts {
             matcher = matcher.ignore_casts();
         } else if let Some(m) = ignore_casts_mask {
@@ -427,7 +428,8 @@ impl PyGraph {
         let pat_refs: Vec<&strider_analyze::pattern::Pat> = owned.iter().collect();
         let g_borrow = slf.borrow(py);
         let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_analyze::pattern::Matcher::new(&graph_guard);
+        let mut matcher = strider_analyze::pattern::Matcher::try_new(&graph_guard)
+            .map_err(crate::errors::into_strider_err)?;
         if ignore_casts {
             matcher = matcher.ignore_casts();
         } else if let Some(m) = ignore_casts_mask {

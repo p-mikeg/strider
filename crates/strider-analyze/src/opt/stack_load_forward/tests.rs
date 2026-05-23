@@ -113,7 +113,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load at sp+0 must forward past all {CHAIN_LEN} disjoint stack stores"
@@ -145,7 +145,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
     Ok(())
 }
@@ -184,7 +184,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load[sp+4] should forward past the non-aliasing StackStore{{+12}}"
@@ -220,7 +220,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 1,
         "overlapping store must prevent forwarding"
@@ -252,7 +252,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
     Ok(())
 }
@@ -296,7 +296,7 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "non-SP-relative intervening Store must not block forwarding \
@@ -345,7 +345,7 @@ fn bail_on_call_between() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 1,
         "Call on memory chain must prevent forwarding"
@@ -417,7 +417,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load at merge must be forwarded via synthesized ValuePhi"
@@ -499,7 +499,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 1,
         "missing-store branch must prevent forwarding"
@@ -582,7 +582,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load must be forwarded");
     let reachable_value_phis = reachable_anonymous_phi_count(&fg);
     assert_eq!(
@@ -625,7 +625,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load[Add(sp, 0xFFFFFFFC)] must be forwarded from Store[Sub(sp, 4)]",
@@ -676,7 +676,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load u8 at matching offset must be forwarded as the low byte of the u32 store",
@@ -727,7 +727,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
     let ret = fg
         .all_node_ids()
@@ -779,7 +779,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
         "Load u8 at matching offset must be forwarded as the high byte of the u32 store on BE",
@@ -897,7 +897,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
-    let reachable_loads = reachable_count((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
+    let reachable_loads = reachable_count(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "load must remain — bail expected");
 
     let total_truncate_after = fg
