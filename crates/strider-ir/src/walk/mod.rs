@@ -778,4 +778,42 @@ mod tests {
         // since the seed is entry and entry has no control predecessors).
         assert!(!mem.contains(src), "src is not a data ancestor of entry");
     }
+
+    /// General no-duplicate-visit property: build a richer graph
+    /// (diamond + data + back-edge approximation) and assert that
+    /// `walk_graph` visits every reachable node at most once.  The
+    /// existing inline tests cover specific shapes (single, linear,
+    /// diamond); this test pins the general invariant on a less
+    /// regular shape.
+    #[test]
+    fn walk_visits_no_node_more_than_once() {
+        use std::collections::HashSet;
+        let mut graph = Graph::new();
+        let (entry, e_ctrl) = make_entry(&mut graph);
+        // entry → A → B (linear).
+        let (a, a_ctrl) = make_ctrl_node(&mut graph, e_ctrl);
+        let (b, b_ctrl) = make_ctrl_node(&mut graph, a_ctrl);
+        // Pure data node referenced as Return's value input.
+        let data = graph.create_node(
+            NodeKind::IntConst(0),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [data_out] = graph.node_outputs_exact::<1>(data).unwrap();
+        let ret = graph.create_node(NodeKind::Return, [], []);
+        graph.add_node_input(ret, b_ctrl).unwrap();
+        graph.add_node_input(ret, data_out).unwrap();
+
+        let visited: Vec<NodeId> = walk_graph(&graph, entry).collect();
+        let unique: HashSet<NodeId> = visited.iter().copied().collect();
+        assert_eq!(
+            visited.len(),
+            unique.len(),
+            "walk_graph must visit each node at most once: visited={visited:?}"
+        );
+        // All 5 reachable nodes (entry, a, b, data, ret) must appear.
+        for nid in [entry, a, b, data, ret] {
+            assert!(unique.contains(&nid), "missing {nid:?}");
+        }
+    }
 }
