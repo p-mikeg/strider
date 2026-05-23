@@ -75,3 +75,6 @@ mod call_other_name_filter;
 
 #[path = "pattern_matching/memory_chain.rs"]
 mod memory_chain;
+
+#[path = "pattern_matching/bit_width.rs"]
+mod bit_width;
