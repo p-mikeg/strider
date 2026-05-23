@@ -45,3 +45,6 @@ mod variant_agnostic;
 
 #[path = "pattern_matching/if_pat_symmetric.rs"]
 mod if_pat_symmetric;
+
+#[path = "pattern_matching/int_const_width_aware.rs"]
+mod int_const_width_aware;
