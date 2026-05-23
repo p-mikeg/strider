@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Skill notes
+
+This workspace is **Rust-only** (plus thin Python bindings via PyO3 in
+`crates/strider-py/`).  When the `code-simplifier` skill (or any other
+plugin-provided skill) emits JS/TS guidance ("use ES modules", "prefer
+function over arrow functions", "follow React component patterns"),
+ignore it — the project-relevant guidance is the Rust ecosystem
+conventions established by clippy + the workspace lints in `Cargo.toml`.
+
+For generating Python pattern code, prefer the project-local skill at
+`.claude/skills/strider-py-pattern/SKILL.md` which has the full
+strider-py builder cheat sheet + lift-time canonicalisations.
+
 ## Build & Run Commands
 
 ```bash
