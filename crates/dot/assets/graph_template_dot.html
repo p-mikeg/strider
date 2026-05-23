@@ -125,6 +125,15 @@
     /* search hit */
     .gv-sh ellipse,.gv-sh polygon,.gv-sh rect,.gv-sh path{stroke:var(--hl-search)!important;stroke-width:2.5px!important;filter:drop-shadow(0 0 8px rgba(250,204,21,.4))}
 
+    /* Cursor: pointer on every node/edge — replaces an O(N+E) per-render
+       sweep that set `g.style.cursor="pointer"` on each <g.node>/<g.edge>
+       individually.  CSS scopes the rule uniformly for constant-cost
+       application regardless of node count, mirroring the v11 I4 minimap
+       fix.  The drag-mode `grab` / `grabbing` cursors still set
+       `svg.style.cursor` on the root, but that's a single-element write
+       and unaffected. */
+    #gw svg g.node,#gw svg g.edge{cursor:pointer}
+
     /* node kind colour rings */
     .nk-entry ellipse,.nk-entry polygon,.nk-entry rect,.nk-entry path{stroke:var(--col-entry)!important;stroke-width:2px!important}
     .nk-ctrl  ellipse,.nk-ctrl  polygon,.nk-ctrl  rect,.nk-ctrl  path{stroke:var(--col-ctrl) !important;stroke-width:2px!important}
@@ -728,7 +737,9 @@ function pickHit(ev){
   return edgeHit;
 }
 function installEvents(svg){
-  svg.querySelectorAll("g.node,g.edge").forEach(g=>{g.style.cursor="pointer";});
+  // Cursor styling moved to CSS (`#gw svg g.node,#gw svg g.edge{cursor:pointer}`)
+  // so we no longer walk every node/edge here.  Constant-cost regardless of
+  // node count.
   svg.addEventListener("click",ev=>{
     if(drag)return;
     const g=pickHit(ev);
