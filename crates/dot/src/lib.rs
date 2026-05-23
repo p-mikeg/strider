@@ -26,6 +26,16 @@ pub type Result<T> = anyhow::Result<T>;
 
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
 
+/// Vendored `@viz-js/viz` v3.5.0 standalone build (Graphviz 11.x compiled
+/// to Wasm, with the Wasm itself base64-embedded in the JS).  Inlined at
+/// build time into [`HTML_DOT_TEMPLATE`] so the generated HTML is fully
+/// self-contained — no CDN fetch, no `.wasm` side-load.
+const VIZ_STANDALONE_JS: &str = include_str!("../assets/vendored/viz-standalone.js");
+
+/// Vendored `svg-pan-zoom` v3.6.1 minified build.  Same rationale as
+/// [`VIZ_STANDALONE_JS`].
+const SVG_PAN_ZOOM_JS: &str = include_str!("../assets/vendored/svg-pan-zoom.min.js");
+
 /// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
     type Node;
@@ -347,11 +357,18 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// `<script type="application/json">` element, so it is safe regardless of
     /// what characters appear in node labels.
     ///
+    /// The vendored `@viz-js/viz` and `svg-pan-zoom` JS payloads are
+    /// inlined directly into the output, so the resulting HTML works
+    /// fully offline — no CDN fetch, no `.wasm` side-load.
+    ///
     /// # Errors
     /// Same as [`Self::as_dot`].
     pub fn as_html_from_dot(&self) -> anyhow::Result<String> {
         let dot_src = self.as_dot()?;
-        Ok(HTML_DOT_TEMPLATE.replace("__DOT_JSON__", &json_quote(&dot_src)))
+        Ok(HTML_DOT_TEMPLATE
+            .replace("__VIZ_STANDALONE_JS__", VIZ_STANDALONE_JS)
+            .replace("__SVG_PAN_ZOOM_JS__", SVG_PAN_ZOOM_JS)
+            .replace("__DOT_JSON__", &json_quote(&dot_src)))
     }
 
     /// Writes an interactive HTML viewer for this graph to `out_path`.

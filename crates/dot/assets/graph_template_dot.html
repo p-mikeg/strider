@@ -120,10 +120,12 @@
     .leg{font-size:10.5px;padding:2px 7px;border-radius:999px;color:#fff;font-weight:600}
     @media(max-width:900px){.app{grid-template-columns:1fr;grid-template-rows:260px 1fr}.sidebar{border-right:none;border-bottom:1px solid var(--border)}}
   </style>
-  <!-- @viz-js/viz v3 – Graphviz 7.x via Wasm, handles large graphs well -->
-  <!-- @viz-js/viz v3 – Graphviz 9.x via Wasm, renders in a background worker -->
-  <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3/lib/viz-standalone.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+  <!-- @viz-js/viz v3.5.0 (vendored): Graphviz 11.x via Wasm, base64-inlined.
+       svg-pan-zoom v3.6.1 (vendored).  Both inlined at build time by the
+       Rust side so the generated HTML works fully offline (no CDN fetch,
+       no .wasm side-load). -->
+  <script>__VIZ_STANDALONE_JS__</script>
+  <script>__SVG_PAN_ZOOM_JS__</script>
   <!-- DOT source embedded as JSON so labels with backticks / ${ are safe -->
   <script type="application/json" id="dot-src">__DOT_JSON__</script>
 </head>
