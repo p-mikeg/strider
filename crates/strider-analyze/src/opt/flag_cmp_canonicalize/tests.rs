@@ -70,35 +70,35 @@ where
     Ok((fg, if_node, a, b))
 }
 
-fn if_cond_output(ctx: crate::pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeOutputId {
-    let [_ctrl, cond_out] = ctx
+fn if_cond_output(graph: &Graph, if_node: NodeId) -> NodeOutputId {
+    let [_ctrl, cond_out] = graph
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
     cond_out
 }
 
-fn if_cond_node_kind(ctx: crate::pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeKind {
-    let cond_out = if_cond_output(ctx, if_node);
-    *ctx.node_kind(ctx.get_node_from_output(cond_out))
+fn if_cond_node_kind(graph: &Graph, if_node: NodeId) -> NodeKind {
+    let cond_out = if_cond_output(graph, if_node);
+    *graph.node_kind(graph.get_node_from_output(cond_out))
 }
 
 /// Asserts that the captured If's cond is `IntCmpOp(op)` with inputs
 /// `(expect_lhs, expect_rhs)` in that exact order.
 fn assert_if_cond_is_intcmp(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    graph: &Graph,
     if_node: NodeId,
     op: IntCmpOp,
     expect_lhs: NodeOutputId,
     expect_rhs: NodeOutputId,
 ) {
-    let cond_out = if_cond_output(ctx, if_node);
-    let cond_node = ctx.get_node_from_output(cond_out);
+    let cond_out = if_cond_output(graph, if_node);
+    let cond_node = graph.get_node_from_output(cond_out);
     assert_eq!(
-        *ctx.node_kind(cond_node),
+        *graph.node_kind(cond_node),
         NodeKind::IntCmpOp(op),
         "If cond should be IntCmpOp({op:?})",
     );
-    let [lhs, rhs] = ctx
+    let [lhs, rhs] = graph
         .node_inputs_exact::<2>(cond_node)
         .expect("IntCmpOp has 2 inputs");
     assert_eq!(lhs, expect_lhs, "lhs of canonicalised cmp");
@@ -112,29 +112,29 @@ fn assert_if_cond_is_intcmp(
 /// `IfCondInversion` (in the full pipeline, not in this test) is the
 /// pass that finally swaps the If's branches and strips the BoolNeg.
 fn assert_if_cond_is_neg_intcmp(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    graph: &Graph,
     if_node: NodeId,
     op: IntCmpOp,
     expect_lhs: NodeOutputId,
     expect_rhs: NodeOutputId,
 ) {
-    let cond_out = if_cond_output(ctx, if_node);
-    let neg_node = ctx.get_node_from_output(cond_out);
+    let cond_out = if_cond_output(graph, if_node);
+    let neg_node = graph.get_node_from_output(cond_out);
     assert_eq!(
-        *ctx.node_kind(neg_node),
+        *graph.node_kind(neg_node),
         NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg),
         "If cond should be BoolNeg(...)",
     );
-    let [inner] = ctx
+    let [inner] = graph
         .node_inputs_exact::<1>(neg_node)
         .expect("BoolNeg has 1 input");
-    let inner_node = ctx.get_node_from_output(inner);
+    let inner_node = graph.get_node_from_output(inner);
     assert_eq!(
-        *ctx.node_kind(inner_node),
+        *graph.node_kind(inner_node),
         NodeKind::IntCmpOp(op),
         "Inner cond should be IntCmpOp({op:?})",
     );
-    let [lhs, rhs] = ctx
+    let [lhs, rhs] = graph
         .node_inputs_exact::<2>(inner_node)
         .expect("IntCmpOp has 2 inputs");
     assert_eq!(lhs, expect_lhs, "lhs of canonicalised cmp");
@@ -151,7 +151,7 @@ fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
     let r = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the EQ flag tree");
 
-    assert_if_cond_is_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Equal, a, b);
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Equal, a, b);
     Ok(())
 }
 
@@ -166,7 +166,7 @@ fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
     let r = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the NE flag tree");
 
-    assert_if_cond_is_neg_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Equal, a, b);
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Equal, a, b);
     Ok(())
 }
 
@@ -185,7 +185,7 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
     assert!(r.changed(), "pass should rewrite the HI flag tree");
 
     // Note swapped operands: `a > b` becomes `IntLess(b, a)`.
-    assert_if_cond_is_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Less, b, a);
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
     Ok(())
 }
 
@@ -211,7 +211,7 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
     let entry = fg.entry().unwrap();
     let r = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
     assert!(r.changed(), "HI rewrite must survive a prior ConstantFold pass");
-    assert_if_cond_is_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Less, b, a);
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
     Ok(())
 }
 
@@ -234,7 +234,7 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
     let r = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the LS flag tree");
 
-    assert_if_cond_is_neg_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Less, b, a);
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
     Ok(())
 }
 
@@ -253,7 +253,7 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
     let r = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the LT flag tree");
 
-    assert_if_cond_is_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Sless, a, b);
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Sless, a, b);
     Ok(())
 }
 
@@ -268,7 +268,7 @@ fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
     let r = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the GE flag tree");
 
-    assert_if_cond_is_neg_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Sless, a, b);
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Sless, a, b);
     Ok(())
 }
 
@@ -285,7 +285,7 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
     let r = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the GT flag tree");
 
-    assert_if_cond_is_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Sless, b, a);
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
     Ok(())
 }
 
@@ -302,7 +302,7 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
     let r = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
     assert!(r.changed(), "pass should rewrite the LE flag tree");
 
-    assert_if_cond_is_neg_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Sless, b, a);
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
     Ok(())
 }
 
@@ -320,7 +320,7 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
     assert!(!r.changed(), "CS already canonical; pass must not fire");
 
     assert_eq!(
-        if_cond_node_kind(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node),
+        if_cond_node_kind(&fg, if_node),
         NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg),
     );
     Ok(())
@@ -339,7 +339,7 @@ fn flag_cmp_mi_is_left_alone_as_int_sless_diff() -> Result<()> {
     assert!(!r.changed(), "MI is not algebraically reducible; pass must not fire");
 
     assert_eq!(
-        if_cond_node_kind(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node),
+        if_cond_node_kind(&fg, if_node),
         NodeKind::IntCmpOp(IntCmpOp::Sless),
     );
     Ok(())
@@ -369,7 +369,7 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     let entry = fg.entry().unwrap();
     let _ = FlagCmpCanonicalize.optimize(fg.graph_mut(), entry)?;
 
-    assert_if_cond_is_intcmp(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node, IntCmpOp::Equal, a, b);
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Equal, a, b);
     Ok(())
 }
 
@@ -385,7 +385,7 @@ fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
     assert!(!r.changed(), "VS already canonical; pass must not fire");
 
     assert_eq!(
-        if_cond_node_kind(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), if_node),
+        if_cond_node_kind(&fg, if_node),
         NodeKind::IntCmpOp(IntCmpOp::Sborrow),
     );
     Ok(())

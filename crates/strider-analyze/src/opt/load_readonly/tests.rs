@@ -21,7 +21,7 @@ fn load_from_rom_const_addr() -> Result<()> {
     })?;
     let entry = fg.entry().unwrap();
     assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(fg.graph_mut(), entry)?.changed());
-    assert_eq!(return_kind(crate::pattern::RewriteCtxView::from_built(&fg).unwrap())?, NodeKind::IntConst(42));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(42));
     Ok(())
 }
 
@@ -101,7 +101,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
     })?;
     let entry = fg.entry().unwrap();
     assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(fg.graph_mut(), entry)?.changed());
-    assert_eq!(return_kind(crate::pattern::RewriteCtxView::from_built(&fg).unwrap())?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
     Ok(())
 }
 
@@ -119,7 +119,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(fg.graph_mut(), entry)?.changed());
     // Both loads must have folded out of the reachable subgraph.
     let remaining_loads =
-        crate::opt::test_support::count_reachable(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::Load(_)));
+        fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(remaining_loads, 0, "both loads must have folded");
     Ok(())
 }

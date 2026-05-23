@@ -183,7 +183,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 
     // The BoolNeg's fingerprint MUST have been absorbed into the
     // inner-cond node (the new If cond input's producer).
-    let if_node = find_unique_if(crate::pattern::RewriteCtxView::from_built(&fg).unwrap());
+    let if_node = find_unique_if(&fg);
     let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)?;
     let inner_node = fg.get_node_from_output(cond_out);
     let inner_fp = fg.asm_fingerprint(inner_node);
@@ -231,7 +231,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
         .all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)))
         .expect("BoolNeg pre-pass");
-    let if_node_pre = find_unique_if(crate::pattern::RewriteCtxView::from_built(&fg).unwrap());
+    let if_node_pre = find_unique_if(&fg);
     let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
     let inner_producer_pre = fg.get_node_from_output(bool_neg_input);
 

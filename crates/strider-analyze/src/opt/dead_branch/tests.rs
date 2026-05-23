@@ -167,7 +167,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
-    let if_count = crate::opt::test_support::count_reachable(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), |k| matches!(k, NodeKind::If));
+    let if_count = fg.count_kind(|k| matches!(k, NodeKind::If));
     assert_eq!(if_count, 0, "both If nodes must be eliminated");
     Ok(())
 }
