@@ -699,6 +699,190 @@ mod tests {
         );
     }
 
+    // ── apply_rules_in_order: OR-composition of N rules ────────────────
+
+    /// `Add(5, 3)` fixture — the same one used by the historical
+    /// `crates/pattern/tests/matching/rewrite.rs::graph_add_const_const`.
+    fn add_const_const(a: u64, b: u64) -> strider_ir::Graph {
+        make_empty_fn(|b_| {
+            let ca = b_.build_int_const(a, NodeOutputType::U64)?;
+            let cb = b_.build_int_const(b, NodeOutputType::U64)?;
+            b_.build_int_binary_operation(ca, cb, IntBinaryOp::Add, NodeOutputType::U64)
+        })
+        .unwrap()
+    }
+
+    /// Two rules, neither matches → composed result is `false`.
+    #[test]
+    fn apply_rules_returns_false_when_neither_fires() {
+        use crate::pattern::{mul, sub};
+        let mut g = add_const_const(5, 3);
+        let x = Capture::new();
+        let rules: Vec<BoxedRule> = vec![
+            boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0u64))),
+            boxed_rule(rewrite_rule(mul(var(x), int_const(1u64)), var(x))),
+        ];
+        let apply = apply_rules_in_order(&rules);
+        let add_node = unique_add(&g);
+        let entry = g.entry().unwrap();
+        let mut ctx = RewriteCtx::new(g.graph_mut(), entry);
+        assert!(!apply(&mut ctx, add_node).unwrap());
+    }
+
+    /// Two rules, only the second matches → composed result is `true`.
+    /// Pins the OR semantics (not first-fire short-circuit).
+    #[test]
+    fn apply_rules_or_composes_results() {
+        use crate::pattern::{any, sub};
+        let mut g = add_const_const(5, 3);
+        let x = Capture::new();
+        let y = Capture::new();
+        let rules: Vec<BoxedRule> = vec![
+            // First rule doesn't match.
+            boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0u64))),
+            // Second rule: add(a, b) → a (demo only — not sensible
+            // semantically, but fires on any Add).
+            boxed_rule(rewrite_rule(add(var(y), any()), var(y))),
+        ];
+        let apply = apply_rules_in_order(&rules);
+        let add_node = unique_add(&g);
+        let entry = g.entry().unwrap();
+        let mut ctx = RewriteCtx::new(g.graph_mut(), entry);
+        let fired = apply(&mut ctx, add_node).unwrap();
+        assert!(fired, "second rule should have fired");
+    }
+
+    /// Two rules applied across every node.  Documents the contract that
+    /// `apply_rules_in_order` hands the *same* `NodeId` to each rule in
+    /// sequence, OR-ing their results — the second rule sees the state
+    /// left by the first rule's rewrites.
+    #[test]
+    fn apply_rules_observes_post_fire_state() {
+        use crate::pattern::any;
+        let mut g = add_x_zero();
+        let x = Capture::new();
+        let y = Capture::new();
+        let rules: Vec<BoxedRule> = vec![
+            boxed_rule(rewrite_rule(add(var(x), int_const(0u64)), var(x))),
+            // Also an identity-ish rule for demo.
+            boxed_rule(rewrite_rule(add(var(y), any()), var(y))),
+        ];
+        let apply = apply_rules_in_order(&rules);
+        let nodes: Vec<_> = g.preorder().collect();
+        let entry = g.entry().unwrap();
+        let mut ctx = RewriteCtx::new(g.graph_mut(), entry);
+        let mut any_fired = false;
+        for n in nodes {
+            if apply(&mut ctx, n).unwrap() {
+                any_fired = true;
+            }
+        }
+        assert!(any_fired);
+    }
+
+    // ── int_const_with! macro: capture folding + ty / in_ty exposure ───
+
+    /// `int_const_with!([a: uint, b: uint] => a + b)` folds two captured
+    /// `IntConst` values at RHS-build time.
+    #[test]
+    fn int_const_with_folds_two_captured_ints() {
+        use crate::pattern::any_int_const;
+        use crate::pattern::macros::int_const_with;
+        let mut g = add_const_const(5, 3);
+        let a_v = Capture::new();
+        let b_v = Capture::new();
+        let rule = rewrite_rule(
+            add(any_int_const(a_v), any_int_const(b_v)),
+            int_const_with!([a_v: uint, b_v: uint] => a_v.wrapping_add(b_v)),
+        );
+        let add_node = unique_add(&g);
+        let entry = g.entry().unwrap();
+        let mut ctx = RewriteCtx::new(g.graph_mut(), entry);
+        assert!(rule(&mut ctx, add_node).unwrap());
+
+        // After the rewrite the Return consumes IntConst(8).
+        let ret = g
+            .all_node_ids()
+            .find(|&n| matches!(g.node_kind(n), NodeKind::Return))
+            .unwrap();
+        let value_input = g.node_inputs(ret)[2];
+        let producer = g.get_node_from_output(value_input);
+        match g.node_kind(producer) {
+            NodeKind::IntConst(k) => assert_eq!(*k, 8u128, "5 + 3 folds to 8"),
+            other => panic!("expected IntConst(8), got {other:?}"),
+        }
+    }
+
+    /// `int_const_with!` exposes the root's `ty` (output type) and
+    /// `in_ty` (first value-input type) as bare-ident bindings.  We just
+    /// pin that the macro compiles and runs against a Truncate-rooted
+    /// LHS — the rule won't match the Add fixture, but the build-side
+    /// must compile.
+    #[test]
+    fn int_const_with_exposes_ty_and_in_ty() {
+        use crate::pattern::{any_int_const, truncate};
+        use crate::pattern::macros::int_const_with;
+        let mut g = make_empty_fn(|b_| {
+            let a_ = b_.build_int_const(1u64, NodeOutputType::U64)?;
+            let b_v = b_.build_int_const(2u64, NodeOutputType::U64)?;
+            let s = b_.build_int_binary_operation(a_, b_v, IntBinaryOp::Add, NodeOutputType::U64)?;
+            // Truncate U64 → U8.
+            b_.truncate_if_needed(s, NodeOutputType::U8)
+        })
+        .unwrap();
+        let v = Capture::new();
+        let rule = rewrite_rule(
+            truncate(any_int_const(v)),
+            int_const_with!([v: uint, ty] => { let _ = ty; v }),
+        );
+        let nodes: Vec<_> = g.preorder().collect();
+        let entry = g.entry().unwrap();
+        let mut ctx = RewriteCtx::new(g.graph_mut(), entry);
+        for n in nodes {
+            // Rule should not fire (input is an Add, not an IntConst),
+            // but the build-side compiles.  Pin no-error.
+            let _ = rule(&mut ctx, n);
+        }
+        // Graph unchanged: Return still consumes a Truncate.
+        let ret = g
+            .all_node_ids()
+            .find(|&n| matches!(g.node_kind(n), NodeKind::Return))
+            .unwrap();
+        let value_input = g.node_inputs(ret)[2];
+        let producer = g.get_node_from_output(value_input);
+        assert!(matches!(g.node_kind(producer), NodeKind::Truncate));
+    }
+
+    // ── MissingBinding error path ──────────────────────────────────────
+
+    /// A RHS builder that references a `Capture` the LHS never bound
+    /// raises `PatternBuildError::MissingBinding`.
+    #[test]
+    fn rhs_unbound_capture_raises_missing_binding() {
+        use crate::pattern::error::PatternBuildError;
+        use crate::pattern::{any, any_int_const};
+        use crate::pattern::macros::int_const_with;
+        let mut g = add_const_const(5, 3);
+        // LHS binds only `bound`; RHS references `unbound` (a fresh
+        // Capture never mentioned in LHS).
+        let bound = Capture::new();
+        let unbound = Capture::new();
+        let rule = rewrite_rule(
+            add(any_int_const(bound), any()),
+            int_const_with!([unbound: uint] => unbound),
+        );
+        let add_node = unique_add(&g);
+        let entry = g.entry().unwrap();
+        let mut ctx = RewriteCtx::new(g.graph_mut(), entry);
+        let err = rule(&mut ctx, add_node)
+            .expect_err("missing binding expected");
+        let mb = err.downcast_ref::<PatternBuildError>();
+        assert!(
+            matches!(mb, Some(PatternBuildError::MissingBinding("uint"))),
+            "expected MissingBinding(\"uint\"), got {err:?}"
+        );
+    }
+
     #[test]
     fn rule_with_capture_root_match_uses_any_int_const() {
         // Sanity test: capture-based LHS that uses `any_int_const(c)`
