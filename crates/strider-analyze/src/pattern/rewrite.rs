@@ -458,3 +458,292 @@ where
 {
     Box::new(r)
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for [`rewrite_rule`] — the LHS-match → RHS-build →
+    //! `replace_all_uses` interpreter that drives every pure-rewrite
+    //! opt pass.
+    //!
+    //! Covers: no-match, single-use rewire, multi-use rewire, RHS skip
+    //! sentinel, RHS error propagation, and the fingerprint-absorption
+    //! contract for freshly-built RHS interior nodes.
+
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use crate::pattern::{
+        add, any_int_const, boxed_rule, int_const, int_const_with_fn, rewrite_rule, var, Capture,
+    };
+    use strider_ir::node::{NodeKind, NodeOutputType};
+    use strider_ir::IntBinaryOp;
+    use strider_ir_test_utils::{make_empty_fn, SENTINEL_LIFT_ADDR};
+
+    /// `fn() -> u64 { return 7; }` — no Add node, used by no-match tests.
+    fn just_const() -> strider_ir::BuiltFunctionGraph {
+        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
+    }
+
+    /// `fn() -> u64 { return Add(11, 0); }` — exactly one Add with `0` RHS.
+    fn add_x_zero() -> strider_ir::BuiltFunctionGraph {
+        make_empty_fn(|b| {
+            let a = b.build_int_const(11u64, NodeOutputType::U64)?;
+            let z = b.build_int_const(0u64, NodeOutputType::U64)?;
+            b.build_int_binary_operation(a, z, IntBinaryOp::Add, NodeOutputType::U64)
+        })
+        .unwrap()
+    }
+
+    /// Returns the unique Add node in `fg`, or panics.
+    fn unique_add(fg: &strider_ir::BuiltFunctionGraph) -> strider_ir::node::NodeId {
+        fg.preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+            .expect("unique Add must exist")
+    }
+
+    #[test]
+    fn rule_with_no_lhs_match_returns_false_nochange() {
+        // Graph has no Add → `add(x, 0)` cannot match.  Rule returns
+        // Ok(false), no rewire, no fingerprint absorption.
+        let mut fg = just_const();
+        let x = Capture::new();
+        let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
+
+        let pre_count = fg.preorder().count();
+        let entry = fg.entry().unwrap();
+        // Pick any reachable node (Return) as the root candidate; rule
+        // won't match it because its kind isn't Add.
+        let ret = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+            .unwrap();
+        let mut ctx = RewriteCtx::new(fg.graph_mut(), entry);
+        let r = rule(&mut ctx, ret).unwrap();
+        assert!(!r, "no match → returns false");
+        assert_eq!(fg.preorder().count(), pre_count, "graph unchanged");
+    }
+
+    #[test]
+    fn rule_with_match_rewires_single_use() {
+        // `Add(11, 0)` has exactly one consumer (Return).  After
+        // rewrite the Return's value-input must be IntConst(11).
+        let mut fg = add_x_zero();
+        let add_node = unique_add(&fg);
+
+        let x = Capture::new();
+        let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
+
+        let entry = fg.entry().unwrap();
+        let mut ctx = RewriteCtx::new(fg.graph_mut(), entry);
+        let changed = rule(&mut ctx, add_node).unwrap();
+        assert!(changed, "match + single-use rewire → true");
+
+        // Return's value-input is now the IntConst(11) producer.
+        let ret = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+            .unwrap();
+        let value_input = fg.node_inputs(ret)[2];
+        let producer = fg.get_node_from_output(value_input);
+        match fg.node_kind(producer) {
+            NodeKind::IntConst(k) => assert_eq!(*k, 11u128, "rewired to the 11 constant"),
+            other => panic!("expected IntConst(11), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rule_with_match_rewires_multiple_uses() {
+        // Graph: let x = Add(a, 0); return Add(x, x);  — outer Add has
+        // two uses of inner x.  After applying `add(c, 0) → c` to inner
+        // Add, both inputs of the outer Add point at `a` (the original
+        // IntConst).  `replace_all_uses` rewires every consumer in one
+        // shot; this pins the multi-use rewire contract.
+        let mut fg = make_empty_fn(|b| {
+            let a = b.build_int_const(13u64, NodeOutputType::U64)?;
+            let z = b.build_int_const(0u64, NodeOutputType::U64)?;
+            let inner = b.build_int_binary_operation(a, z, IntBinaryOp::Add, NodeOutputType::U64)?;
+            // outer Add consumes inner twice.
+            b.build_int_binary_operation(inner, inner, IntBinaryOp::Add, NodeOutputType::U64)
+        })
+        .unwrap();
+        // Find the inner Add: the one whose second input is the IntConst(0).
+        let inner_add = fg
+            .preorder()
+            .find(|&n| {
+                if !matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)) {
+                    return false;
+                }
+                let inputs = fg.node_inputs(n);
+                if inputs.len() != 2 {
+                    return false;
+                }
+                let rhs = fg.get_node_from_output(inputs[1]);
+                matches!(fg.node_kind(rhs), NodeKind::IntConst(0))
+            })
+            .expect("inner Add must exist");
+        let x = Capture::new();
+        let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
+
+        let entry = fg.entry().unwrap();
+        let mut ctx = RewriteCtx::new(fg.graph_mut(), entry);
+        let changed = rule(&mut ctx, inner_add).unwrap();
+        assert!(changed, "match + multi-use → true");
+
+        // The outer Add now has both inputs pointing at the IntConst(13).
+        let outer_add = fg
+            .preorder()
+            .find(|&n| {
+                matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add))
+                    && {
+                        let inputs = fg.node_inputs(n);
+                        inputs.len() == 2 && {
+                            let l = fg.get_node_from_output(inputs[0]);
+                            let r = fg.get_node_from_output(inputs[1]);
+                            matches!(fg.node_kind(l), NodeKind::IntConst(13))
+                                && matches!(fg.node_kind(r), NodeKind::IntConst(13))
+                        }
+                    }
+            })
+            .expect("outer Add must now have both inputs == IntConst(13)");
+        let _ = outer_add;
+    }
+
+    #[test]
+    fn rule_with_rhs_skip_returns_false_nochange() {
+        // RHS uses `int_const_with_fn` that returns `skip()`.  Interpreter
+        // must catch the sentinel, surface no change, and not modify the
+        // graph.
+        let mut fg = add_x_zero();
+        let add_node = unique_add(&fg);
+
+        let pre_count = fg.preorder().count();
+
+        let x = Capture::new();
+        // RHS that always returns the skip sentinel.
+        let rhs = int_const_with_fn(|_ctx| Err(crate::pattern::error::skip()));
+        let rule = rewrite_rule(add(var(x), int_const(0)), rhs);
+
+        let entry = fg.entry().unwrap();
+        let mut ctx = RewriteCtx::new(fg.graph_mut(), entry);
+        let changed = rule(&mut ctx, add_node).unwrap();
+        assert!(!changed, "RHS skip → Ok(false)");
+        assert_eq!(fg.preorder().count(), pre_count, "graph unchanged after skip");
+    }
+
+    #[test]
+    fn rule_with_rhs_error_propagates() {
+        // RHS returns a non-skip error.  Interpreter must propagate as Err.
+        let mut fg = add_x_zero();
+        let add_node = unique_add(&fg);
+
+        let x = Capture::new();
+        let rhs = int_const_with_fn(|_ctx| Err(anyhow::anyhow!("forced rhs error")));
+        let rule = rewrite_rule(add(var(x), int_const(0)), rhs);
+
+        let entry = fg.entry().unwrap();
+        let mut ctx = RewriteCtx::new(fg.graph_mut(), entry);
+        let r = rule(&mut ctx, add_node);
+        let err = r.expect_err("forced rhs error must propagate");
+        let msg = format!("{err:?}");
+        assert!(msg.contains("forced rhs error"), "error must propagate, got {msg}");
+    }
+
+    #[test]
+    fn rewrite_root_absorbs_source_fingerprint() {
+        // After a rule fires, the rewritten root's producer must carry
+        // a fingerprint that includes the source root's fingerprint
+        // (superset-only contract).
+        //
+        // Build `Add(11, 0)` and stamp a recognisable fingerprint on the
+        // Add node only.  Run `add(x, 0) → x` — the new producer is the
+        // pre-existing IntConst(11), and the interpreter explicitly
+        // attributes the rewritten root (line: `extend_asm_fingerprint_from(new_node, node)`).
+        let mut fg = add_x_zero();
+        let add_node = unique_add(&fg);
+        // Override the sentinel-stamped fingerprint on the Add with a
+        // distinct value so we can assert absorption.
+        const SOURCE_ADDR: u64 = 0xFEED_CAFE_0000_1111;
+        fg.set_asm_fingerprint(add_node, vec![SOURCE_ADDR]);
+        assert_eq!(fg.asm_fingerprint(add_node), &[SOURCE_ADDR]);
+
+        let x = Capture::new();
+        let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
+
+        let entry = fg.entry().unwrap();
+        let mut ctx = RewriteCtx::new(fg.graph_mut(), entry);
+        let changed = rule(&mut ctx, add_node).unwrap();
+        assert!(changed);
+
+        // The new producer (IntConst(11)) must now include SOURCE_ADDR
+        // in its fingerprint (it had its own sentinel + the absorbed
+        // contributor).  Locate it via the Return's value-input.
+        let ret = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+            .unwrap();
+        let value_input = fg.node_inputs(ret)[2];
+        let producer = fg.get_node_from_output(value_input);
+        let fp = fg.asm_fingerprint(producer);
+        assert!(
+            fp.contains(&SOURCE_ADDR),
+            "rewritten root's producer must absorb source's fingerprint, got {fp:?}",
+        );
+    }
+
+    #[test]
+    fn boxed_rule_typeerase_compiles_and_runs() {
+        // Smoke test that `boxed_rule` wraps a `rewrite_rule` closure
+        // into a `BoxedRule` storable in a Vec; calling the boxed form
+        // exercises the same interpreter path.
+        let mut fg = add_x_zero();
+        let add_node = unique_add(&fg);
+        let x = Capture::new();
+        let r: BoxedRule = boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x)));
+
+        let entry = fg.entry().unwrap();
+        let mut ctx = RewriteCtx::new(fg.graph_mut(), entry);
+        let changed = r(&mut ctx, add_node).unwrap();
+        assert!(changed);
+        // Sentinel-stamped const → fingerprint includes the sentinel.
+        let ret = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+            .unwrap();
+        let v = fg.node_inputs(ret)[2];
+        let producer = fg.get_node_from_output(v);
+        let fp = fg.asm_fingerprint(producer);
+        assert!(
+            fp.contains(&SENTINEL_LIFT_ADDR) || !fp.is_empty(),
+            "rewritten producer has non-empty fp, got {fp:?}",
+        );
+    }
+
+    #[test]
+    fn rule_with_capture_root_match_uses_any_int_const() {
+        // Sanity test: capture-based LHS that uses `any_int_const(c)`
+        // matches and the RHS reuses the same capture — i.e. the rule
+        // fires as identity replacement at the value level.  No graph
+        // structural change but `replace_all_uses` returns false because
+        // old==new producer.
+        let mut fg = make_empty_fn(|b| b.build_int_const(42u64, NodeOutputType::U64)).unwrap();
+        // Locate the IntConst node.
+        let c_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::IntConst(_)))
+            .unwrap();
+        let c = Capture::new();
+        let lhs: Pat = any_int_const(c);
+        // RHS is the same capture — `replace_all_uses(old, old)` is a
+        // legal no-op that returns false.
+        let rule = rewrite_rule(lhs, var(c));
+
+        let entry = fg.entry().unwrap();
+        let mut ctx = RewriteCtx::new(fg.graph_mut(), entry);
+        let changed = rule(&mut ctx, c_node).unwrap();
+        // Whether `changed` is true or false depends on whether the
+        // dedup cache returns the same NodeOutputId for the capture;
+        // either way the interpreter must return Ok (not Err).  Pin
+        // the API contract: no panic, no error.
+        let _ = changed;
+    }
+}
