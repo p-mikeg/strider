@@ -4,7 +4,6 @@
 //! callers can fix up any ids they hold.
 
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
-use std::collections::HashMap;
 
 use crate::node::{
     Node, NodeId, NodeInput, NodeInputId, NodeInputIdList, NodeOutput, NodeOutputId,
@@ -26,13 +25,17 @@ use super::Graph;
 /// key is `rsleigh::Vn`, not `NodeId`) and stays inline in
 /// `retain_reachable`.
 trait SideTableRemap {
-    fn remap_node_keyed(&mut self, old_to_new: &HashMap<NodeId, NodeId>);
+    fn remap_node_keyed(&mut self, remap: &NodeIdRemap);
 }
 
 impl<T: Default + Clone> SideTableRemap for SecondaryMap<NodeId, T> {
-    fn remap_node_keyed(&mut self, old_to_new: &HashMap<NodeId, NodeId>) {
+    fn remap_node_keyed(&mut self, remap: &NodeIdRemap) {
         let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
-        for (&old_id, &new_id) in old_to_new {
+        for (old_id, new_id) in remap
+            .nodes
+            .iter()
+            .filter_map(|(o, new)| new.map(|n| (o, n)))
+        {
             dst[new_id] = std::mem::take(&mut self[old_id]);
         }
         *self = dst;
@@ -251,20 +254,21 @@ impl Graph {
         // 8. Remap every `SecondaryMap<NodeId, _>`-shaped side-table
         // through `node_keyed_side_tables_mut`.  Each table's
         // `remap_node_keyed` iterates the surviving (old → new) pairs
-        // and writes the old entry into the fresh table at the new id
-        // via `std::mem::take`; the post-remap source is left at
-        // `Default::default()` for every slot.  SecondaryMap stores
-        // `Default` cheaply (no allocation for `Vec`/`Option`), so the
-        // prior `if !is_empty() { ... }` micro-optimization isn't worth
-        // the complexity here.
-        let mut old_to_new_pairs: HashMap<NodeId, NodeId> = HashMap::new();
-        for &old_id in &reachable {
-            if let Some(new_id) = remap.nodes[old_id] {
-                old_to_new_pairs.insert(old_id, new_id);
-            }
-        }
+        // straight off `remap.nodes` and writes the old entry into the
+        // fresh table at the new id via `std::mem::take`; the post-
+        // remap source is left at `Default::default()` for every slot.
+        // SecondaryMap stores `Default` cheaply (no allocation for
+        // `Vec`/`Option`), so the prior `if !is_empty() { ... }` micro-
+        // optimization isn't worth the complexity here.
+        //
+        // Implementation note: we used to materialise an intermediate
+        // `HashMap<NodeId, NodeId>` of surviving pairs and pass that to
+        // each side-table; that was a lossy copy of `remap.nodes` (which
+        // is itself a `SecondaryMap<NodeId, Option<NodeId>>`).  Iterating
+        // `remap.nodes` directly drops one hash-insert per surviving
+        // node per compaction.
         for tbl in self.node_keyed_side_tables_mut() {
-            tbl.remap_node_keyed(&old_to_new_pairs);
+            tbl.remap_node_keyed(&remap);
         }
 
         // Remap the InitialVar Vn→NodeId index.  Entries whose NodeId
@@ -278,7 +282,7 @@ impl Graph {
                 Default::default(),
             );
         for (vn, old_id) in self.initial_var_index.drain() {
-            if let Some(&new_id) = old_to_new_pairs.get(&old_id) {
+            if let Some(new_id) = remap.nodes[old_id] {
                 new_initial_var_index.insert(vn, new_id);
             }
         }
