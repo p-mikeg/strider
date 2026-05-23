@@ -17,15 +17,14 @@ use strider_target::SleighArch;
 
 use super::strider_x86_64;
 
-/// Build an x86_64 [`Cfg`] for the trivial single-region snippet
-/// `0xc3` (`ret`), then run `analyze_cfg` on it.  Returns the lifted
-/// outcome alongside the original CFG (which owns the Sleigh handle
-/// that the dump helpers need for register name labelling).
-pub fn lift_ret_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
+/// Shared scaffold: assemble `bytes` as an x86_64 snippet at entry
+/// `0x1000`, build a CFG via `Builder::for_arch`, then run `analyze_cfg`.
+/// All three `lift_*_snippet_x86_64` helpers are thin wrappers that
+/// differ only in the bytes vector.
+fn lift_x86_64_bytes(bytes: Vec<u8>) -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
     let strider = strider_x86_64();
     let arch = SleighArch::x86_64();
 
-    let bytes = vec![0xc3u8]; // ret
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
@@ -35,6 +34,14 @@ pub fn lift_ret_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>)
 
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
     (outcome, cfg)
+}
+
+/// Build an x86_64 [`Cfg`] for the trivial single-region snippet
+/// `0xc3` (`ret`), then run `analyze_cfg` on it.  Returns the lifted
+/// outcome alongside the original CFG (which owns the Sleigh handle
+/// that the dump helpers need for register name labelling).
+pub fn lift_ret_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
+    lift_x86_64_bytes(vec![0xc3u8]) // ret
 }
 
 /// Build an x86_64 [`Cfg`] for a tiny conditional-branch snippet that
@@ -52,20 +59,8 @@ pub fn lift_ret_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>)
 /// `dump_per_region_writes_one_html_per_region` to verify
 /// multi-region emission without depending on a built ELF fixture.
 pub fn lift_branch_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
-    let strider = strider_x86_64();
-    let arch = SleighArch::x86_64();
-
     // test rax, rax ; jz +1 ; ret ; ret
-    let bytes = vec![0x48u8, 0x85, 0xc0, 0x74, 0x01, 0xc3, 0xc3];
-    let entry = 0x1000u64;
-    let reader = BufMemReader::new(bytes, entry);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
-        .build()
-        .expect("cfg");
-
-    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
-    (outcome, cfg)
+    lift_x86_64_bytes(vec![0x48u8, 0x85, 0xc0, 0x74, 0x01, 0xc3, 0xc3])
 }
 
 /// Build an x86_64 [`Cfg`] for a straight-line snippet that produces
@@ -85,25 +80,13 @@ pub fn lift_branch_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>
 /// register read.  Used by the depth-3 neighborhood test to verify
 /// that `dump_neighborhood` walks more than one hop.
 pub fn lift_add_chain_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
-    let strider = strider_x86_64();
-    let arch = SleighArch::x86_64();
-
-    let bytes = vec![
+    lift_x86_64_bytes(vec![
         0x48, 0x01, 0xc0, // add rax, rax
         0x48, 0x01, 0xc0, // add rax, rax
         0x48, 0x01, 0xc0, // add rax, rax
         0x48, 0x01, 0xc0, // add rax, rax
-        0xc3,             // ret
-    ];
-    let entry = 0x1000u64;
-    let reader = BufMemReader::new(bytes, entry);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
-        .build()
-        .expect("cfg");
-
-    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
-    (outcome, cfg)
+        0xc3, // ret
+    ])
 }
 
 /// Allocate a per-test scratch directory under the system temp dir
