@@ -71,7 +71,22 @@ fn remove_phis(
             for (j, ctrl_in) in ctrl_inputs.into_iter().enumerate() {
                 if reachable.contains(ctx.output_definition(ctrl_in).0) {
                     reachable_ctrl.insert(ctrl_in);
-                    let value = inputs[j + 1];
+                    // Defend against transient mid-opt arity mismatch: a
+                    // peer pass running in the same fixed-point loop can
+                    // momentarily leave a phi with fewer value inputs than
+                    // its owning ControlState has ctrl edges.  Surface as a
+                    // typed error instead of panicking on slice indexing —
+                    // the fixed-point loop will rerun and the next
+                    // iteration sees the repaired arity.
+                    let value = inputs.get(j + 1).copied().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "redundant_phis: phi {node_id:?} value-input arity \
+                             ({}) does not match owning ControlState ctrl-edge \
+                             count ({}); transient mid-opt invariant violation",
+                            inputs.len().saturating_sub(1),
+                            ctx.node_inputs(control_state_id).len()
+                        )
+                    })?;
                     if value != phi_self_output {
                         live_values.insert(value);
                     }
@@ -93,7 +108,15 @@ fn remove_phis(
                     else {
                         bail!("unique control edge not found in control-state inputs");
                     };
-                    let value = ctx.node_inputs(node_id)[j + 1];
+                    // Same transient-arity defense as the loop above —
+                    // bail typed instead of panicking on `[j + 1]`.
+                    let value = ctx.node_inputs(node_id).get(j + 1).copied().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "redundant_phis: phi {node_id:?} value-input arity \
+                             does not cover ctrl-edge index {j}; transient mid-opt \
+                             invariant violation"
+                        )
+                    })?;
                     let [output] = ctx.node_outputs_exact::<1>(node_id)?;
                     // Absorb the phi's asm-fingerprint into the surviving
                     // value producer.  Phis are exempt-empty by default, but

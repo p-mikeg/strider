@@ -181,6 +181,21 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -
                 let sign_res = result < 0;
                 sign_l == sign_r && sign_l != sign_res
             } else {
+                // SAFETY: at `bits < 128`, both `sl` and `sr` are sign-extended
+                // from a narrower type into `i128`, so each lies in
+                // `[-2^(bits-1), 2^(bits-1) - 1]`.  Their sum therefore lies
+                // in `[-2^bits, 2^bits - 2]`, which fits well inside i128 for
+                // any `bits < 128` — no `+` overflow on the host i128.  The
+                // overflow we detect here is the source-type's overflow,
+                // captured by the `< min || > max` range check.  When the
+                // narrow-width invariant fails (e.g. a caller passes raw u128
+                // values that `signed()` could not represent), `signed(l)?` /
+                // `signed(r)?` short-circuit before reaching the `sl + sr`.
+                debug_assert!(
+                    bits < 128 && sl >= min && sl <= max && sr >= min && sr <= max,
+                    "Scarry narrow-width invariant violated: bits={bits} \
+                     sl={sl} sr={sr} min={min} max={max}"
+                );
                 let result = sl + sr;
                 result < min || result > max
             }
@@ -196,6 +211,18 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -
                 let sign_res = result < 0;
                 sign_l != sign_r && sign_l != sign_res
             } else {
+                // SAFETY: identical reasoning to `Scarry` above — at
+                // `bits < 128` both operands sign-extend into
+                // `[-2^(bits-1), 2^(bits-1) - 1]`, so `sl - sr` lies in
+                // `[-2^bits + 1, 2^bits - 1]`, comfortably inside i128 with
+                // no host-side `-` overflow.  The narrow-width signed
+                // overflow we want to detect is captured by the subsequent
+                // `< min || > max` range check.
+                debug_assert!(
+                    bits < 128 && sl >= min && sl <= max && sr >= min && sr <= max,
+                    "Sborrow narrow-width invariant violated: bits={bits} \
+                     sl={sl} sr={sr} min={min} max={max}"
+                );
                 let result = sl - sr;
                 result < min || result > max
             }

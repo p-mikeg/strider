@@ -101,6 +101,24 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
 /// Per-pass-call memo for `decompose_sp`.
 pub type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
 
+/// Hard ceiling on recursion depth through [`decompose_sp_inner`] and
+/// [`decompose_sp_phi`].  The iterative spine in `decompose_sp_inner`
+/// is bounded by `visiting` (each node enters once), so depth can only
+/// grow when a leaf-handler recurses — the `And(sp_root, mask)` arm and
+/// `_phi`'s per-predecessor descent.  A pathologically deep nested
+/// `And`-chain or nested-phi shape (lifter bug or adversarial fixture)
+/// could otherwise blow the thread stack.  The companion budget on the
+/// flatten side lives at `stack_array.rs::flatten_add_tree`; this one
+/// covers the downstream SP-decomposition walks the flatten arm
+/// triggers indirectly.
+///
+/// 512 comfortably covers realistic IR (real prologue chains stay
+/// well under 100 nested phis or Ands) while keeping a couple-MB-stack
+/// debug build safe — each `_inner` frame carries a `spine: Vec<...>`
+/// plus borrows of the graph, so deeper budgets would risk overflow
+/// on debug stacks before the ceiling check fires.
+pub(crate) const MAX_DECOMPOSE_DEPTH: u32 = 512;
+
 /// Decomposes `out` into `InitialVar(sp) + K` (or per-branch equivalent),
 /// caching definitive results in `memo`.  Cycles through `VarPhi`
 /// back-edges are detected by an internal `visiting` set; cycle-broken
@@ -120,7 +138,7 @@ pub fn decompose_sp(
     memo: &mut SpExprMemo,
 ) -> Option<SpExpr> {
     let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-    decompose_sp_inner(g, out, sp_vn, memo, &mut visiting)
+    decompose_sp_inner(g, out, sp_vn, memo, &mut visiting, 0)
 }
 
 /// Inner form of [`decompose_sp`] that threads a shared `visiting` set
@@ -136,7 +154,16 @@ fn decompose_sp_inner(
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visiting: &mut entity_utils::DenseEntitySet<NodeId>,
+    depth: u32,
 ) -> Option<SpExpr> {
+    // Hard cap: pathologically deep recursion (nested-And or nested-phi
+    // shapes) could blow the thread stack.  Bail with `None`; the
+    // visiting-set rollback for any partially-pushed spine entries is
+    // handled by the shared spine teardown below — we haven't pushed
+    // anything yet here, so a direct return is safe.
+    if depth > MAX_DECOMPOSE_DEPTH {
+        return None;
+    }
     // Spine record: (output_id_at_visit, accumulated_offset_BEFORE_descend).
     // After we determine the leaf result, we propagate the SpExpr back up
     // the spine, memoizing each level by reconstructing its offset from
@@ -171,7 +198,7 @@ fn decompose_sp_inner(
                 });
             }
             NodeKind::Phi if g.phi_var_tag(node) == Some(sp_vn) => {
-                break decompose_sp_phi(g, node, sp_vn, memo, visiting)
+                break decompose_sp_phi(g, node, sp_vn, memo, visiting, depth + 1)
                     .map(|e| e.shifted(accumulated));
             }
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
@@ -223,7 +250,7 @@ fn decompose_sp_inner(
                 // The sub-call resolves to anything SP-rooted; we discard
                 // its concrete decomposition because the And's output is a
                 // fresh opaque base (offset 0) for downstream walkers.
-                let sub = decompose_sp_inner(g, sp_input, sp_vn, memo, visiting);
+                let sub = decompose_sp_inner(g, sp_input, sp_vn, memo, visiting, depth + 1);
                 break sub.map(|_| SpExpr::Terminal {
                     base: current,
                     offset: accumulated,
@@ -278,7 +305,11 @@ fn decompose_sp_phi(
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visiting: &mut entity_utils::DenseEntitySet<NodeId>,
+    depth: u32,
 ) -> Option<SpExpr> {
+    if depth > MAX_DECOMPOSE_DEPTH {
+        return None;
+    }
     let inputs = g.node_inputs(node);
     // A VarPhi has inputs[0] = dispatch token, inputs[1..] = per-pred
     // values. Fewer than 2 inputs means no actual predecessor — the phi is
@@ -298,7 +329,7 @@ fn decompose_sp_phi(
         // stack_arg_offsets[0] == 0 a fabricated `offset = 0` would be
         // silently misclassified as the first stack arg.
         let SpExpr::Terminal { base, offset } =
-            decompose_sp_inner(g, pred_input, sp_vn, memo, visiting)?
+            decompose_sp_inner(g, pred_input, sp_vn, memo, visiting, depth + 1)?
         else {
             return None;
         };
@@ -669,6 +700,45 @@ mod tests {
         );
         assert_eq!(aligned_off, 0);
         assert_eq!(post_sub_off, -0x1D0, "Sub by 0x1D0 shifts offset by -0x1D0");
+        Ok(())
+    }
+
+    /// `MAX_DECOMPOSE_DEPTH` budget: a pathologically deep nested-`And`
+    /// shape (each And calls back into `decompose_sp_inner` recursively,
+    /// growing the runtime stack one frame per level) must terminate with
+    /// `None` once `depth > MAX_DECOMPOSE_DEPTH`, not stack-overflow.  The
+    /// Add-chain spine is iterative and bounded by `visiting`, so it
+    /// doesn't exercise this code path — we need the And-arm's recursion
+    /// to grow depth.
+    #[test]
+    fn decompose_sp_budget_kicks_in_on_deep_and_chain() -> crate::opt::Result<()> {
+        let sp = sp();
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
+        let mut current = b.read_variable(&sp)?;
+        // 5001 nested Ands: each `And(prev_and, mask)` triggers one
+        // recursion in `decompose_sp_inner`, so depth reaches MAX+1 and
+        // the budget bails the outermost call.
+        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
+        const N: usize = (super::MAX_DECOMPOSE_DEPTH as usize) + 1;
+        for _ in 0..N {
+            current = b.build_int_binary_operation(
+                current, mask, IntBinaryOp::And, NodeOutputType::U32)?;
+        }
+        b.build_return(Some(current), &[])?;
+        b.set_lift_addr(None);
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        // Budget exhaustion must surface as None — not a stack overflow,
+        // not a fabricated Terminal.  This call would have overflowed
+        // pre-budget; post-budget it returns None cleanly.
+        let r = decompose_sp(fg.graph(), current, sp, &mut memo);
+        assert!(
+            r.is_none(),
+            "deep nested-And chain ({} levels > MAX_DECOMPOSE_DEPTH={}) must \
+             bail with None once the budget is exhausted, got {r:?}",
+            N,
+            super::MAX_DECOMPOSE_DEPTH,
+        );
         Ok(())
     }
 

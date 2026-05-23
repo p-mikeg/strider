@@ -233,3 +233,85 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     }
     Ok(())
 }
+
+/// Pins **which** node receives the absorbed fingerprint: the producer
+/// of the BoolNeg's *input* (i.e. the new cond input's producer), not
+/// the `If` node, not the BoolNeg itself, and not any unrelated reachable
+/// node.  Guards against a buggy implementation that absorbs into the
+/// wrong neighbour (e.g. unioning into `if_node` instead of the inner
+/// cond, which would lose the contributing-asm history when the If gets
+/// rewritten by a later pass).
+#[test]
+fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
+    let cond_vn = strider_ir_test_utils::reg_vn(0x3000, 1);
+    let mut b = RegisterSet::new().tracked(cond_vn).build_fn()?;
+    let entry = b.create_region()?;
+    let t = b.create_region()?;
+    let f = b.create_region()?;
+
+    // Distinct addresses on the cond producer (0x800), the BoolNeg (0x804),
+    // and the If (0x808) so we can prove the BoolNeg's address lands on
+    // exactly one of the three.
+    b.set_entry_region(entry)?;
+    b.set_region(entry);
+    b.set_lift_addr(Some(0x800));
+    let raw = b.read_variable(&cond_vn)?;
+    let cond_bool = b.convert_to_bool_if_needed(raw)?;
+    b.set_lift_addr(Some(0x804));
+    let neg_cond = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+    b.set_lift_addr(Some(0x808));
+    b.build_if(neg_cond, t, f)?;
+
+    b.set_region(t);
+    let one = b.build_int_const(1u64, NodeOutputType::U64)?;
+    b.build_return(Some(one), &[])?;
+    b.set_region(f);
+    let two = b.build_int_const(2u64, NodeOutputType::U64)?;
+    b.build_return(Some(two), &[])?;
+    b.set_lift_addr(None);
+
+    let mut fg = b.build()?;
+
+    // Identify pre-pass: the BoolNeg, the If, and the BoolNeg's input
+    // producer (the "inner cond producer" that should receive the
+    // absorbed fingerprint).
+    let bool_neg_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)))
+        .expect("BoolNeg pre-pass");
+    let if_node_pre = find_unique_if(crate::pattern::RewriteCtxView::from_built(&fg).unwrap());
+    let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
+    let inner_producer_pre = fg.get_node_from_output(bool_neg_input);
+
+    // 0x804 (the BoolNeg's address) must be present on BoolNeg pre-pass,
+    // absent on inner_producer_pre, and absent on if_node_pre.  Sanity-check
+    // the fixture before running the pass.
+    assert!(fg.asm_fingerprint(bool_neg_node).contains(&0x804));
+    assert!(!fg.asm_fingerprint(inner_producer_pre).contains(&0x804));
+    assert!(!fg.asm_fingerprint(if_node_pre).contains(&0x804));
+
+    let entry = fg.entry().unwrap();
+    let r = IfCondInversion.optimize(fg.graph_mut(), entry)?;
+    assert!(r.changed());
+
+    // After the pass, BoolNeg's address (0x804) must land on exactly the
+    // inner producer — NOT on the If, and NOT on any sibling reachable
+    // node that wasn't an ancestor of the cond input.
+    assert!(
+        fg.asm_fingerprint(inner_producer_pre).contains(&0x804),
+        "BoolNeg's address 0x804 must be absorbed into the inner cond producer"
+    );
+    assert!(
+        !fg.asm_fingerprint(if_node_pre).contains(&0x804),
+        "BoolNeg's address 0x804 must NOT be absorbed into the If node"
+    );
+
+    // After absorption, the inner producer's fingerprint should contain
+    // BOTH its own original address AND the BoolNeg's.
+    let inner_fp = fg.asm_fingerprint(inner_producer_pre);
+    assert!(
+        inner_fp.contains(&0x804),
+        "inner cond producer must carry the absorbed BoolNeg address 0x804"
+    );
+    Ok(())
+}

@@ -715,9 +715,24 @@ fn locate_and_write(
 }
 
 /// Writes `value`'s low `size_bytes` bytes into `bytes` starting at
-/// `off`, using the target's endianness.  Caller must guarantee
-/// `off + size_bytes <= bytes.len()`.
+/// `off`, using the target's endianness.
+///
+/// # Preconditions
+///
+/// - `off + size_bytes <= bytes.len()` (panics in release on slice
+///   bounds violation).
+/// - `size_bytes <= 8` — `value` is a `u64`, so its `to_le_bytes()`
+///   yields exactly 8 bytes; reading more than 8 bytes from that array
+///   would panic on the LE arm or read garbage from the trailing
+///   zero-padding on the BE arm.  Every ELF relocation kind dispatched
+///   by [`locate_and_write`] picks a `size_bytes` in `{1, 2, 4, 8}`, so
+///   this bound is satisfied at every reachable call site.
 fn write_at(bytes: &mut [u8], off: usize, value: u64, size_bytes: usize, endian_le: bool) {
+    debug_assert!(
+        size_bytes <= 8,
+        "write_at: size_bytes={size_bytes} exceeds u64 width; every ELF \
+         relocation kind must select size_bytes in {{1, 2, 4, 8}}"
+    );
     // Truncate `value` to the field width; signed/unsigned doesn't
     // matter for fixed-width 2's-complement bit patterns.
     let v_bytes = value.to_le_bytes();

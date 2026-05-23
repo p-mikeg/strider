@@ -234,6 +234,73 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
     Ok(())
 }
 
+/// Transient mid-opt arity violation: a peer pass running in the same
+/// fixed-point loop can momentarily leave a `Phi` whose value-input
+/// arity does not match its owning `ControlState`'s ctrl-edge count.
+/// `RedundantPhis` must surface this as a typed error (`Err`) rather than
+/// panicking on slice indexing — the fixed-point loop will rerun and
+/// the next iteration sees the repaired arity.
+#[test]
+fn transient_arity_mismatch_surfaces_as_error_not_panic() -> crate::opt::Result<()> {
+    use strider_ir_test_utils::reg_vn;
+    let var = reg_vn(0x1000, 8);
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
+    let entry = b.create_region()?;
+    let join = b.create_region()?;
+    b.set_entry_region(entry)?;
+
+    // entry: branch to join.
+    b.set_region(entry);
+    b.build_branch(join)?;
+
+    // join: read `var` (creates the VarPhi(var) we'll deform), then return.
+    b.set_region(join);
+    let read_back = b.read_variable(&var)?;
+    b.build_return(Some(read_back), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    // Locate the VarPhi(var) and its owning CS.
+    let phi_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.phi_var_tag(n) == Some(var))
+        .expect("VarPhi(var) at join");
+    let phi_token = fg.node_inputs(phi_node)[0];
+    let cs_node = fg.output_definition(phi_token).0;
+
+    // Surgery: append a new ctrl input to the CS WITHOUT appending the
+    // matching value to the VarPhi.  This simulates a peer pass that
+    // attached a new predecessor's ctrl edge but had not yet wired
+    // value/MemPhi inputs.
+    let cs_ctrl_out = fg.node_outputs(cs_node)[0];
+    fg.add_node_input(cs_node, cs_ctrl_out)?;
+
+    // Sanity: the CS now has 2 ctrl inputs, but the phi only has token + 1
+    // value (2 inputs total), so accessing `inputs[2]` would panic.
+    assert_eq!(
+        fg.node_inputs(cs_node).len(),
+        2,
+        "CS has 2 ctrl edges after surgery"
+    );
+    assert_eq!(
+        fg.node_inputs(phi_node).len(),
+        2,
+        "VarPhi has only token + 1 value after deliberate surgery"
+    );
+
+    let entry = fg.entry().unwrap();
+    let result = RedundantPhis.optimize(fg.graph_mut(), entry);
+    let err = result.expect_err(
+        "RedundantPhis must surface transient phi-arity violation as a typed Err, not panic"
+    );
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("transient mid-opt"),
+        "error must identify the failure mode: got {msg:?}"
+    );
+    Ok(())
+}
+
 /// Loop-style self-referential `VarPhi`: one operand is the entry value, the
 /// other is the phi's own output (the back-edge of an unsimplified loop where
 /// the variable is never modified inside the body).  Braun-style trivial-phi
