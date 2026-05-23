@@ -10,7 +10,7 @@
 
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use strider_analyze::AnalyzeOutcome;
 use strider_lift::cfg::{Builder, Cfg, OptionsBuilder};
 use strider_target::SleighArch;
@@ -104,6 +104,34 @@ pub fn unique_tmp_dir(tag: &str) -> PathBuf {
     ));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
     tmp
+}
+
+/// RAII scratch directory: allocates a per-test temp dir under the
+/// system temp dir (via [`unique_tmp_dir`]) and recursively removes it
+/// on drop.  Replaces the hand-rolled
+/// `let tmp = unique_tmp_dir(...); ... let _ = remove_dir_all(&tmp);`
+/// pattern across the dump integration tests; the `Drop` impl runs
+/// even on panic, so a failing assertion no longer leaks the temp dir.
+pub struct ScratchDir(PathBuf);
+
+impl ScratchDir {
+    /// Create a new per-test scratch directory tagged with `tag`.
+    pub fn new(tag: &str) -> Self {
+        Self(unique_tmp_dir(tag))
+    }
+
+    /// The directory's path.  Borrowed (not owned) so callers can use
+    /// it for `.join(...)` against the temp dir without consuming the
+    /// guard.
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// The vendored viewer's JSON-payload anchor string.  Both dump

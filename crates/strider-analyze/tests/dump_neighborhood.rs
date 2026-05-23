@@ -6,7 +6,7 @@
 mod common;
 
 use common::dump_helpers::{
-    lift_add_chain_snippet_x86_64, lift_ret_snippet_x86_64, unique_tmp_dir, VIEWER_JSON_ANCHOR,
+    lift_add_chain_snippet_x86_64, lift_ret_snippet_x86_64, ScratchDir, VIEWER_JSON_ANCHOR,
 };
 
 #[test]
@@ -14,8 +14,8 @@ fn dump_neighborhood_writes_one_html_for_the_anchor() {
     let (outcome, cfg) = lift_ret_snippet_x86_64();
     let entry_node = outcome.graph.entry().expect("entry should be set after analyze_cfg");
 
-    let tmp = unique_tmp_dir("dump-neighborhood");
-    let out = tmp.join("focus.html");
+    let scratch = ScratchDir::new("dump-neighborhood");
+    let out = scratch.path().join("focus.html");
 
     strider_analyze::dump_neighborhood(
         &outcome.graph,
@@ -32,8 +32,6 @@ fn dump_neighborhood_writes_one_html_for_the_anchor() {
         "viewer JSON script missing from {}",
         out.display()
     );
-
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Pins the `Graph::has_node` precondition added to `dump_neighborhood`.
@@ -78,8 +76,8 @@ fn dump_neighborhood_rejects_foreign_node_id() {
         "test precondition: foreign_id must not collide with a live A slot",
     );
 
-    let tmp = unique_tmp_dir("dump-neighborhood-foreign");
-    let out = tmp.join("focus.html");
+    let scratch = ScratchDir::new("dump-neighborhood-foreign");
+    let out = scratch.path().join("focus.html");
 
     let err = strider_analyze::dump_neighborhood(
         &outcome_a.graph,
@@ -98,8 +96,6 @@ fn dump_neighborhood_rejects_foreign_node_id() {
     // Sanity reference: `foreign_anchor` exists in graph B (covers
     // the warning-only branch and keeps the variable in use).
     assert!(outcome_b.graph.has_node(foreign_anchor));
-
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Deeper-depth coverage: a snippet with four chained `add rax,rax`
@@ -153,8 +149,8 @@ fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
 
     // Smoke: the renderer accepts the larger selection and produces a
     // well-formed viewer.
-    let tmp = unique_tmp_dir("dump-neighborhood-depth3");
-    let out = tmp.join("focus.html");
+    let scratch = ScratchDir::new("dump-neighborhood-depth3");
+    let out = scratch.path().join("focus.html");
 
     strider_analyze::dump_neighborhood(
         &outcome.graph,
@@ -171,6 +167,4 @@ fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
         "viewer JSON script missing from depth=3 dump at {}",
         out.display(),
     );
-
-    let _ = std::fs::remove_dir_all(&tmp);
 }

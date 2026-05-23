@@ -12,7 +12,7 @@
 mod common;
 
 use common::dump_helpers::{
-    lift_branch_snippet_x86_64, lift_ret_snippet_x86_64, unique_tmp_dir, VIEWER_JSON_ANCHOR,
+    lift_branch_snippet_x86_64, lift_ret_snippet_x86_64, ScratchDir, VIEWER_JSON_ANCHOR,
 };
 
 #[test]
@@ -27,17 +27,18 @@ fn dump_per_region_writes_one_html_per_region() {
         "expected at least one region for `ret`, got 0"
     );
 
-    let tmp = unique_tmp_dir("dump-per-region");
+    let scratch = ScratchDir::new("dump-per-region");
+    let tmp = scratch.path();
     strider_analyze::dump_per_region(
         &outcome.graph,
         exit_controls.iter().copied(),
         outcome.lift_generation(),
         cfg.sleigh(),
-        &tmp,
+        tmp,
     )
     .expect("dump_per_region");
 
-    let entries: Vec<_> = std::fs::read_dir(&tmp)
+    let entries: Vec<_> = std::fs::read_dir(tmp)
         .expect("read_dir")
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())
@@ -60,10 +61,6 @@ fn dump_per_region_writes_one_html_per_region() {
         "viewer JSON script missing from {}",
         first.display()
     );
-
-    // Clean up the scratch dir on success — leave it on panic so a
-    // developer can inspect the offending HTML.
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Thicker per-region coverage: a 2-region conditional-branch snippet
@@ -81,17 +78,18 @@ fn dump_per_region_emits_one_html_for_each_branch_region() {
         exit_controls.len(),
     );
 
-    let tmp = unique_tmp_dir("dump-per-region-branch");
+    let scratch = ScratchDir::new("dump-per-region-branch");
+    let tmp = scratch.path();
     strider_analyze::dump_per_region(
         &outcome.graph,
         exit_controls.iter().copied(),
         outcome.lift_generation(),
         cfg.sleigh(),
-        &tmp,
+        tmp,
     )
     .expect("dump_per_region");
 
-    let entries: Vec<_> = std::fs::read_dir(&tmp)
+    let entries: Vec<_> = std::fs::read_dir(tmp)
         .expect("read_dir")
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())
@@ -115,8 +113,6 @@ fn dump_per_region_emits_one_html_for_each_branch_region() {
             "viewer JSON script missing from {name}",
         );
     }
-
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Pins the stale-id detection added alongside `Graph::generation`.
@@ -139,13 +135,13 @@ fn dump_per_region_rejects_post_compaction() {
         "compact must bump generation",
     );
 
-    let tmp = unique_tmp_dir("dump-per-region-stale");
+    let scratch = ScratchDir::new("dump-per-region-stale");
     let err = strider_analyze::dump_per_region(
         &outcome.graph,
         exit_controls.iter().copied(),
         lift_gen,
         cfg.sleigh(),
-        &tmp,
+        scratch.path(),
     )
     .expect_err("dump_per_region must reject post-compaction ids");
     let msg = format!("{err}");
@@ -153,6 +149,4 @@ fn dump_per_region_rejects_post_compaction() {
         msg.contains("does not match lift snapshot"),
         "unexpected error message: {msg}",
     );
-
-    let _ = std::fs::remove_dir_all(&tmp);
 }
