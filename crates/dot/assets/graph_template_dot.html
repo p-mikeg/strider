@@ -456,6 +456,7 @@ function clrSel(doH=true){
   document.getElementById("bTail").disabled=true;
   document.getElementById("bHead").disabled=true;
   if(doH)pushH({kind:"none"});
+  syncHash();
 }
 function selN(name,g,center=false){
   const svg=gw.querySelector("svg");
@@ -463,6 +464,7 @@ function selN(name,g,center=false){
   if(svg)applyDim(svg,name,null);
   updSelUI();document.getElementById("bTail").disabled=true;document.getElementById("bHead").disabled=true;
   pushH({kind:"node",name});
+  syncHash();
   if(center)centerOnNeighborhood(name);
 }
 function selE(key,g,ep,center=false){
@@ -473,8 +475,60 @@ function selE(key,g,ep,center=false){
   document.getElementById("bTail").disabled=!sel.tail;
   document.getElementById("bHead").disabled=!sel.head;
   pushH({kind:"edge",key,tail:sel.tail,head:sel.head});
+  syncHash();
   if(center)centerOnEdgeNeighborhood(sel.tail,sel.head);
 }
+
+// ── URL fragment deep links ──
+// Selection mirrored in `window.location.hash` so `graph.html#n=42` opens
+// straight to node 42 and `Copy URL` from the address bar produces a
+// shareable link.  `applyingHash` guards the obvious re-entrancy: programmatic
+// hash writes by `syncHash` would otherwise trigger our own `hashchange`
+// listener and re-apply the very selection we just made.
+let applyingHash=false;
+function encodeHashId(id){return encodeURIComponent(id);}
+function decodeHashId(s){try{return decodeURIComponent(s);}catch{return s;}}
+// Write the current selection into window.location.hash.  Uses
+// history.replaceState so we don't pollute the browser back-stack with one
+// entry per click — our own `pushH` is the canonical history.
+function syncHash(){
+  if(applyingHash)return;
+  let h="";
+  if(sel.type==="node"&&sel.name)h="#n="+encodeHashId(sel.name);
+  else if(sel.type==="edge"&&sel.ekey)h="#e="+encodeHashId(sel.ekey);
+  // Only write when changed — avoids redundant replaceState calls during
+  // history replay (applyHAt → selN → syncHash with the same hash).
+  if((window.location.hash||"")===h)return;
+  try{history.replaceState(null,"",h||window.location.pathname+window.location.search);}
+  catch{window.location.hash=h;}
+}
+// Parse window.location.hash and apply it to the current graph selection.
+// Tolerates missing prefix (`#`) and unknown ids — returns false in either
+// case so callers can short-circuit.
+function applyHashFromUrl(){
+  const raw=window.location.hash||"";
+  if(!raw)return false;
+  const h=raw.startsWith("#")?raw.slice(1):raw;
+  applyingHash=true;
+  try{
+    if(h.startsWith("n=")){
+      const id=decodeHashId(h.slice(2));
+      const g=nIdx.get(id);
+      if(g){selN(id,g,true);return true;}
+    }else if(h.startsWith("e=")){
+      const key=decodeHashId(h.slice(2));
+      const g=eIdx.get(key);
+      if(g){selE(key,g,eEp.get(g),true);return true;}
+    }
+  }finally{applyingHash=false;}
+  return false;
+}
+window.addEventListener("hashchange",()=>{
+  if(applyingHash)return;
+  // popstate fires before hashchange for back/forward; both routes call into
+  // applyHashFromUrl which is idempotent for the same hash value.
+  applyHashFromUrl();
+});
 
 // ── pan/zoom ──────────────────────────────────────────────────────────────────
 const PZ_MIN=.01,PZ_MAX=80;
@@ -856,6 +910,10 @@ async function render(dot,engine){
     document.getElementById("rs").textContent=`ok (${ms}ms)`;
     setDrag(false);
     hist.length=0;hIdx=-1;pushH({kind:"none"});updHist();
+    // Auto-apply any pre-existing URL fragment (e.g. user pasted a shared
+    // link like graph.html#n=42).  Runs after indexSvg populates nIdx/eIdx
+    // so the lookup succeeds.
+    applyHashFromUrl();
   }catch(err){
     viz=null;  // force re-init next time
     setRS(false,err);
