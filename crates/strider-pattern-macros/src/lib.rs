@@ -143,119 +143,137 @@ struct CrateAttrs {
     required_args: Vec<RequiredArg>,
 }
 
+/// Builder for [`CrateAttrs::parse`] — each `key = "..."` arm of the
+/// `#[strider_pattern(...)]` attribute lands in the matching `Option`
+/// here; the final `finish` step validates required keys and
+/// materialises the immutable [`CrateAttrs`].  The split keeps
+/// `CrateAttrs::parse` flat — its match arms each touch one builder
+/// slot — instead of inlining the whole "init / parse / validate"
+/// flow into one giant function.
+#[derive(Default)]
+struct CrateAttrsBuilder {
+    rust_name: Option<Ident>,
+    py_name: Option<String>,
+    py_module: Option<String>,
+    base_builder: Option<Ident>,
+    node_phrase: Option<String>,
+    required_args: Vec<RequiredArg>,
+}
+
+impl CrateAttrsBuilder {
+    /// Apply one parsed `key = "value"` pair.  Unknown keys surface as
+    /// a typed `syn::Error`.
+    fn apply_kv(&mut self, kv: KeyValue) -> syn::Result<()> {
+        let key_str = kv.key.to_string();
+        match key_str.as_str() {
+            "rust_name" => {
+                self.rust_name = Some(format_ident!("{}", kv.value.value()));
+            }
+            "py_name" => {
+                self.py_name = Some(kv.value.value());
+            }
+            "py_module" => {
+                self.py_module = Some(kv.value.value());
+            }
+            "base_builder" => {
+                self.base_builder = Some(format_ident!("{}", kv.value.value()));
+            }
+            "node_phrase" => {
+                self.node_phrase = Some(kv.value.value());
+            }
+            "constructor_args" => {
+                self.required_args = parse_required_args(&kv)?;
+            }
+            other => {
+                return Err(syn::Error::new_spanned(
+                    kv.key,
+                    format!(
+                        "unknown #[strider_pattern] argument `{other}`; expected one of \
+                         rust_name, py_name, py_module, base_builder, node_phrase, \
+                         constructor_args",
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate required keys and materialise the immutable form.
+    /// `attr_span` names the attribute span used in "missing required
+    /// key" diagnostics.
+    fn finish(self, attr_span: proc_macro2::Span) -> syn::Result<CrateAttrs> {
+        Ok(CrateAttrs {
+            rust_name: self.rust_name.ok_or_else(|| {
+                syn::Error::new(attr_span, "#[strider_pattern] requires `rust_name = \"...\"`")
+            })?,
+            py_name: self.py_name.ok_or_else(|| {
+                syn::Error::new(attr_span, "#[strider_pattern] requires `py_name = \"...\"`")
+            })?,
+            py_module: self.py_module.ok_or_else(|| {
+                syn::Error::new(attr_span, "#[strider_pattern] requires `py_module = \"...\"`")
+            })?,
+            base_builder: self.base_builder.ok_or_else(|| {
+                syn::Error::new(attr_span, "#[strider_pattern] requires `base_builder = \"...\"`")
+            })?,
+            node_phrase: self.node_phrase.unwrap_or_else(|| "node".to_string()),
+            required_args: self.required_args,
+        })
+    }
+}
+
+/// Parse `constructor_args = "name: Type, name2: Type2"` into a Vec of
+/// [`RequiredArg`].  Reuses syn's `FnArg` parser so the surface
+/// matches how the user already writes Rust function signatures
+/// (lifetimes, generics, etc.).
+fn parse_required_args(kv: &KeyValue) -> syn::Result<Vec<RequiredArg>> {
+    let parser = syn::punctuated::Punctuated::<FnArg, Token![,]>::parse_terminated;
+    let parsed: syn::punctuated::Punctuated<FnArg, Token![,]> = match parser.parse_str(&kv.value.value()) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(syn::Error::new_spanned(
+                &kv.value,
+                format!(
+                    "#[strider_pattern(constructor_args = ...)] failed to parse as a \
+                     comma-separated `name: Type` list: {e}",
+                ),
+            ));
+        }
+    };
+    let mut out: Vec<RequiredArg> = Vec::new();
+    for arg in parsed {
+        let FnArg::Typed(pat_ty) = arg else {
+            return Err(syn::Error::new_spanned(
+                &kv.value,
+                "#[strider_pattern(constructor_args = ...)] does not accept `self` arguments \
+                 — use plain `name: Type` entries",
+            ));
+        };
+        let SynPat::Ident(pat_ident) = pat_ty.pat.as_ref() else {
+            return Err(syn::Error::new_spanned(
+                &kv.value,
+                "#[strider_pattern(constructor_args = ...)] entries must use a plain identifier \
+                 on the left of `:` (no destructuring)",
+            ));
+        };
+        out.push(RequiredArg {
+            ident: pat_ident.ident.clone(),
+            ty: (*pat_ty.ty).clone(),
+        });
+    }
+    Ok(out)
+}
+
 impl Parse for CrateAttrs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut rust_name: Option<Ident> = None;
-        let mut py_name: Option<String> = None;
-        let mut py_module: Option<String> = None;
-        let mut base_builder: Option<Ident> = None;
-        let mut node_phrase: Option<String> = None;
-        let mut required_args: Vec<RequiredArg> = Vec::new();
-
+        let attr_span = input.span();
+        let mut builder = CrateAttrsBuilder::default();
         // Parse a comma-separated list of `key = "value"` pairs.
         let pairs: syn::punctuated::Punctuated<KeyValue, Token![,]> =
             input.parse_terminated(KeyValue::parse, Token![,])?;
         for kv in pairs {
-            let key_str = kv.key.to_string();
-            match key_str.as_str() {
-                "rust_name" => {
-                    rust_name = Some(format_ident!("{}", kv.value.value()));
-                }
-                "py_name" => {
-                    py_name = Some(kv.value.value());
-                }
-                "py_module" => {
-                    py_module = Some(kv.value.value());
-                }
-                "base_builder" => {
-                    base_builder = Some(format_ident!("{}", kv.value.value()));
-                }
-                "node_phrase" => {
-                    node_phrase = Some(kv.value.value());
-                }
-                "constructor_args" => {
-                    // Parse the string as a comma-separated list of
-                    // `name: Type` `FnArg`s.  Reusing syn's `FnArg`
-                    // parser keeps the surface aligned with how the
-                    // user already writes Rust function signatures
-                    // — supports lifetimes, generic types, etc.
-                    let parser = syn::punctuated::Punctuated::<FnArg, Token![,]>::parse_terminated;
-                    let parsed: syn::punctuated::Punctuated<FnArg, Token![,]> = match parser
-                        .parse_str(&kv.value.value())
-                    {
-                        Ok(p) => p,
-                        Err(e) => {
-                            return Err(syn::Error::new_spanned(
-                                &kv.value,
-                                format!(
-                                    "#[strider_pattern(constructor_args = ...)] failed to \
-                                     parse as a comma-separated `name: Type` list: {e}",
-                                ),
-                            ));
-                        }
-                    };
-                    for arg in parsed {
-                        let FnArg::Typed(pat_ty) = arg else {
-                            return Err(syn::Error::new_spanned(
-                                &kv.value,
-                                "#[strider_pattern(constructor_args = ...)] does not accept \
-                                 `self` arguments — use plain `name: Type` entries",
-                            ));
-                        };
-                        let SynPat::Ident(pat_ident) = pat_ty.pat.as_ref() else {
-                            return Err(syn::Error::new_spanned(
-                                &kv.value,
-                                "#[strider_pattern(constructor_args = ...)] entries must use \
-                                 a plain identifier on the left of `:` (no destructuring)",
-                            ));
-                        };
-                        required_args.push(RequiredArg {
-                            ident: pat_ident.ident.clone(),
-                            ty: (*pat_ty.ty).clone(),
-                        });
-                    }
-                }
-                other => {
-                    return Err(syn::Error::new_spanned(
-                        kv.key,
-                        format!(
-                            "unknown #[strider_pattern] argument `{other}`; expected one of \
-                             rust_name, py_name, py_module, base_builder, node_phrase, \
-                             constructor_args",
-                        ),
-                    ));
-                }
-            }
+            builder.apply_kv(kv)?;
         }
-
-        Ok(Self {
-            rust_name: rust_name.ok_or_else(|| {
-                syn::Error::new(
-                    input.span(),
-                    "#[strider_pattern] requires `rust_name = \"...\"`",
-                )
-            })?,
-            py_name: py_name.ok_or_else(|| {
-                syn::Error::new(
-                    input.span(),
-                    "#[strider_pattern] requires `py_name = \"...\"`",
-                )
-            })?,
-            py_module: py_module.ok_or_else(|| {
-                syn::Error::new(
-                    input.span(),
-                    "#[strider_pattern] requires `py_module = \"...\"`",
-                )
-            })?,
-            base_builder: base_builder.ok_or_else(|| {
-                syn::Error::new(
-                    input.span(),
-                    "#[strider_pattern] requires `base_builder = \"...\"`",
-                )
-            })?,
-            node_phrase: node_phrase.unwrap_or_else(|| "node".to_string()),
-            required_args,
-        })
+        builder.finish(attr_span)
     }
 }
 
@@ -354,16 +372,144 @@ struct Field {
     doc: Option<String>,
 }
 
+/// Mutable collector populated by [`parse_field_inner_attrs`] and
+/// consumed by [`Field::parse`] to build the immutable [`Field`].
+#[derive(Default)]
+struct FieldAttrBag {
+    alias: Option<String>,
+    arg: Option<String>,
+    accepts: Option<String>,
+    doc: Option<String>,
+    multi: bool,
+    terminal: bool,
+}
+
+/// Parse the inner `#[field(...)]` meta items into a [`FieldAttrBag`].
+/// Each item is either a bare flag (`multi`, `terminal`) or a
+/// `key = "value"` pair (`alias`, `arg`, `accepts`, `doc`); both
+/// shapes mix in any order.  An empty / `#[field]` attribute returns
+/// the default bag.
+fn parse_field_inner_attrs(attr: &syn::Attribute) -> syn::Result<FieldAttrBag> {
+    let mut bag = FieldAttrBag::default();
+    if matches!(attr.meta, Meta::Path(_)) {
+        return Ok(bag);
+    }
+    let nested = attr.parse_args_with(
+        syn::punctuated::Punctuated::<FieldArg, Token![,]>::parse_terminated,
+    )?;
+    for item in nested {
+        match item {
+            FieldArg::Flag(ident) => {
+                let s = ident.to_string();
+                match s.as_str() {
+                    "multi" => bag.multi = true,
+                    "terminal" => bag.terminal = true,
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            &ident,
+                            format!(
+                                "unknown #[field(...)] flag `{other}`; expected one of \
+                                 `multi`, `terminal`",
+                            ),
+                        ));
+                    }
+                }
+            }
+            FieldArg::KeyValue(kv) => {
+                let key_str = kv.key.to_string();
+                match key_str.as_str() {
+                    "alias" => bag.alias = Some(kv.value.value()),
+                    "arg" => bag.arg = Some(kv.value.value()),
+                    "accepts" => bag.accepts = Some(kv.value.value()),
+                    "doc" => bag.doc = Some(kv.value.value()),
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            kv.key,
+                            format!(
+                                "unknown #[field(...)] key `{other}`; expected one of \
+                                 alias, arg, accepts, doc, or the flag `multi`",
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(bag)
+}
+
+/// Resolve the validated [`FieldAttrBag`] into the [`FieldKind`] the
+/// generated PyO3 setter dispatches on.  Reports mutually-exclusive
+/// flag combinations + unknown `accepts` values as typed
+/// `syn::Error`s.
+fn field_kind_from_bag(
+    attr: &syn::Attribute,
+    bag: &FieldAttrBag,
+    inner_ty: &Type,
+    field_ty: &Type,
+) -> syn::Result<FieldKind> {
+    if bag.terminal && bag.multi {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`#[field(terminal)]` and `#[field(multi)]` are mutually exclusive",
+        ));
+    }
+    if bag.terminal && bag.accepts.is_some() {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`#[field(terminal)]` does not accept `accepts = ...` — the setter is no-arg",
+        ));
+    }
+    if bag.terminal {
+        // The inner type must be `bool` so the toggle is well-typed.
+        // (The macro doesn't strictly enforce this — anything that
+        // accepts `Some(true)` would compile — but the contract is
+        // that terminal setters are no-arg toggles backed by an
+        // `Option<bool>` field.)
+        return Ok(FieldKind::TerminalBool);
+    }
+    if bag.multi {
+        // `multi` requires `accepts = "Pat"` and the field must be
+        // typed `Option<Vec<(IDX, T)>>`.  Extract `IDX` from the
+        // tuple so the generated setter has the right signature.
+        return match bag.accepts.as_deref() {
+            Some("Pat") => {
+                let idx_ty = extract_multi_idx_ty(inner_ty).ok_or_else(|| {
+                    syn::Error::new_spanned(
+                        field_ty,
+                        "#[field(multi, accepts = \"Pat\")] requires \
+                         `Option<Vec<(usize, T)>>` or `Option<Vec<(u32, T)>>`",
+                    )
+                })?;
+                Ok(FieldKind::MultiPat { idx_ty })
+            }
+            Some(_) | None => Err(syn::Error::new_spanned(
+                attr,
+                "`#[field(multi)]` currently requires `accepts = \"Pat\"`",
+            )),
+        };
+    }
+    match bag.accepts.as_deref() {
+        None => Ok(FieldKind::Primitive),
+        Some("Pat") => Ok(FieldKind::PatLike),
+        Some("VnSpace") => Ok(FieldKind::VnSpace),
+        Some("Vn") => Ok(FieldKind::Vn),
+        Some(other) => Err(syn::Error::new_spanned(
+            attr,
+            format!(
+                "unknown #[field(accepts = \"{other}\")] target; expected one of \
+                 \"Pat\", \"VnSpace\", \"Vn\"",
+            ),
+        )),
+    }
+}
+
 impl Field {
     fn parse(field: &syn::Field) -> syn::Result<Option<Self>> {
         // Skip fields without `#[field]` annotation entirely — they're
         // hidden state.  The reference uses `when` and `capture`
         // unannotated; we emit those universally.
-        let Some(attr) = field
-            .attrs
-            .iter()
-            .find(|a| a.path().is_ident("field"))
-        else {
+        let Some(attr) = field.attrs.iter().find(|a| a.path().is_ident("field")) else {
             return Ok(None);
         };
 
@@ -371,142 +517,26 @@ impl Field {
         // because the inner-state struct uses `Option<T>` to track
         // "field set vs unset".
         let inner_ty = extract_option_inner(&field.ty).ok_or_else(|| {
-            syn::Error::new_spanned(
-                &field.ty,
-                "#[field] requires the type to be `Option<T>`",
-            )
+            syn::Error::new_spanned(&field.ty, "#[field] requires the type to be `Option<T>`")
         })?;
-
         let rust_ident = field
             .ident
             .clone()
             .ok_or_else(|| syn::Error::new_spanned(field, "named fields only"))?;
 
-        let mut alias: Option<String> = None;
-        let mut arg: Option<String> = None;
-        let mut accepts: Option<String> = None;
-        let mut doc: Option<String> = None;
-        let mut multi: bool = false;
-        let mut terminal: bool = false;
-
-        // Parse the inner attribute meta items.  Each item is either a
-        // bare flag like `multi` or a `key = "value"` pair.  We accept
-        // both shapes in any order, e.g. `#[field(multi, accepts =
-        // "Pat", arg = "p")]`.
-        if !matches!(attr.meta, Meta::Path(_)) {
-            // `#[field(...)]` form.
-            let nested = attr.parse_args_with(
-                syn::punctuated::Punctuated::<FieldArg, Token![,]>::parse_terminated,
-            )?;
-            for item in nested {
-                match item {
-                    FieldArg::Flag(ident) => {
-                        let s = ident.to_string();
-                        match s.as_str() {
-                            "multi" => multi = true,
-                            "terminal" => terminal = true,
-                            other => {
-                                return Err(syn::Error::new_spanned(
-                                    &ident,
-                                    format!(
-                                        "unknown #[field(...)] flag `{other}`; expected one of \
-                                         `multi`, `terminal`",
-                                    ),
-                                ));
-                            }
-                        }
-                    }
-                    FieldArg::KeyValue(kv) => {
-                        let key_str = kv.key.to_string();
-                        match key_str.as_str() {
-                            "alias" => alias = Some(kv.value.value()),
-                            "arg" => arg = Some(kv.value.value()),
-                            "accepts" => accepts = Some(kv.value.value()),
-                            "doc" => doc = Some(kv.value.value()),
-                            other => {
-                                return Err(syn::Error::new_spanned(
-                                    kv.key,
-                                    format!(
-                                        "unknown #[field(...)] key `{other}`; expected one of \
-                                         alias, arg, accepts, doc, or the flag `multi`",
-                                    ),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let mut bag = parse_field_inner_attrs(attr)?;
 
         // Pull a Rust `///` docstring off the field if no `doc = "..."`
         // override was given.  Multi-line doc comments concatenate
         // with newlines (matches pyo3-stub-gen's emission).
-        if doc.is_none() {
-            doc = extract_rust_doc(&field.attrs);
+        if bag.doc.is_none() {
+            bag.doc = extract_rust_doc(&field.attrs);
         }
 
-        if terminal && multi {
-            return Err(syn::Error::new_spanned(
-                attr,
-                "`#[field(terminal)]` and `#[field(multi)]` are mutually exclusive",
-            ));
-        }
-        if terminal && accepts.is_some() {
-            return Err(syn::Error::new_spanned(
-                attr,
-                "`#[field(terminal)]` does not accept `accepts = ...` — the setter is no-arg",
-            ));
-        }
+        let kind = field_kind_from_bag(attr, &bag, &inner_ty, &field.ty)?;
 
-        let kind = if terminal {
-            // The inner type must be `bool` so the toggle is well-typed.
-            // (The macro doesn't strictly enforce this — anything that
-            // accepts `Some(true)` would compile — but the contract is
-            // that terminal setters are no-arg toggles backed by an
-            // `Option<bool>` field.)
-            FieldKind::TerminalBool
-        } else if multi {
-            // `multi` requires `accepts = "Pat"` and the field must be
-            // typed `Option<Vec<(IDX, T)>>`.  Extract `IDX` from the
-            // tuple so the generated setter has the right signature.
-            match accepts.as_deref() {
-                Some("Pat") => {
-                    let idx_ty = extract_multi_idx_ty(&inner_ty).ok_or_else(|| {
-                        syn::Error::new_spanned(
-                            &field.ty,
-                            "#[field(multi, accepts = \"Pat\")] requires \
-                             `Option<Vec<(usize, T)>>` or `Option<Vec<(u32, T)>>`",
-                        )
-                    })?;
-                    FieldKind::MultiPat { idx_ty }
-                }
-                Some(_) | None => {
-                    return Err(syn::Error::new_spanned(
-                        attr,
-                        "`#[field(multi)]` currently requires `accepts = \"Pat\"`",
-                    ));
-                }
-            }
-        } else {
-            match accepts.as_deref() {
-                None => FieldKind::Primitive,
-                Some("Pat") => FieldKind::PatLike,
-                Some("VnSpace") => FieldKind::VnSpace,
-                Some("Vn") => FieldKind::Vn,
-                Some(other) => {
-                    return Err(syn::Error::new_spanned(
-                        attr,
-                        format!(
-                            "unknown #[field(accepts = \"{other}\")] target; expected one of \
-                             \"Pat\", \"VnSpace\", \"Vn\"",
-                        ),
-                    ));
-                }
-            }
-        };
-
-        let py_name = alias.unwrap_or_else(|| rust_ident.to_string());
-        let arg_name = match arg {
+        let py_name = bag.alias.unwrap_or_else(|| rust_ident.to_string());
+        let arg_name = match bag.arg {
             Some(s) => format_ident!("{}", s),
             // Default argument name: most setters use the same name
             // as the Rust field.  The reference's `offset(k: i64)`
@@ -520,7 +550,7 @@ impl Field {
             arg_name,
             inner_ty,
             kind,
-            doc,
+            doc: bag.doc,
         }))
     }
 }
