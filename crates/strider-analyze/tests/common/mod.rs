@@ -35,6 +35,10 @@ use std::path::PathBuf;
 // unchanged.
 pub mod indirect_resolve_helpers;
 
+// Sub-module with the shared lift + temp-dir setup used by the
+// `dump_per_region` / `dump_neighborhood` integration tests.
+pub mod dump_helpers;
+
 // ── Architecture enum ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

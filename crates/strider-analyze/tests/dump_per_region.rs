@@ -9,47 +9,23 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use rsleigh::mem_readers::BufMemReader;
-use rsleigh::Sleigh;
-use strider_lift::cfg::{Builder, OptionsBuilder};
-use strider_target::SleighArch;
-
 mod common;
+
+use common::dump_helpers::{lift_ret_snippet_x86_64, unique_tmp_dir, VIEWER_JSON_ANCHOR};
 
 #[test]
 fn dump_per_region_writes_one_html_per_region() {
-    let strider = common::strider_x86_64();
-    let arch = SleighArch::x86_64();
-
     // `ret` is a single-region function — the `analyze_cfg`'s outcome
     // carries one `RegionLiftHandles` entry, so `dump_per_region` must
     // emit exactly one HTML file.
-    let bytes = vec![0xc3u8]; // ret
-    let entry = 0x1000u64;
-    let reader = BufMemReader::new(bytes, entry);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
-        .build()
-        .expect("cfg");
-
-    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+    let (outcome, cfg) = lift_ret_snippet_x86_64();
     let exit_controls: Vec<_> = outcome.region_exit_controls().collect();
     assert!(
         !exit_controls.is_empty(),
         "expected at least one region for `ret`, got 0"
     );
 
-    // Avoid the `tempfile` crate dep — a unique subdir under the
-    // process's temp dir is sufficient for a per-test scratch space.
-    let tmp = std::env::temp_dir().join(format!(
-        "strider-dump-per-region-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    std::fs::create_dir_all(&tmp).expect("create tmp dir");
+    let tmp = unique_tmp_dir("dump-per-region");
     strider_analyze::dump_per_region(&outcome.graph, exit_controls.iter().copied(), cfg.sleigh(), &tmp)
         .expect("dump_per_region");
 
@@ -67,13 +43,12 @@ fn dump_per_region_writes_one_html_per_region() {
     );
 
     // Sanity-check the first file: it must contain the JSON-embedded
-    // DOT payload (the viewer's `<script type=\"application/json\">`
-    // element).  We don't assert engine choice here — the smallest
+    // DOT payload.  We don't assert engine choice here — the smallest
     // region trivially stays below the sfdp threshold.
     let first = tmp.join(&entries[0]);
     let html = std::fs::read_to_string(&first).expect("read html");
     assert!(
-        html.contains("<script type=\"application/json\" id=\"dot-src\">"),
+        html.contains(VIEWER_JSON_ANCHOR),
         "viewer JSON script missing from {}",
         first.display()
     );
