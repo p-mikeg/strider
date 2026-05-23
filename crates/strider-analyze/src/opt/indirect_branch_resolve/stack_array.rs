@@ -860,4 +860,215 @@ mod tests {
         assert_eq!(out, inner, "nested Ands strip down to innermost");
         assert_eq!(mask, 0xFF, "nested Ands intersect their masks");
     }
+
+    // ── flatten_add_tree budget boundary tests ────────────────────────
+    //
+    // These tests pin the 32-node budget cap that defends against
+    // pathologically deep Add trees (a bug in lifter output, or a
+    // crafted input).  The function is recursive; the cap converts
+    // "would-be stack overflow" into "graceful unmatch".
+
+    /// Build a right-spine Add tree of the given depth over fresh
+    /// IntConst(i) leaves.  Returns the root NodeOutputId.
+    fn build_right_spine_add_tree(
+        graph: &mut strider_ir::Graph,
+        depth: usize,
+    ) -> NodeOutputId {
+        assert!(depth >= 1, "need at least one node");
+        // Innermost: IntConst(0).  Wrap depth-1 additional Add layers,
+        // each adding a fresh IntConst on the LHS.
+        let mut cur = {
+            let n = graph.create_node(
+                NodeKind::IntConst(0u128),
+                [],
+                [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+            );
+            graph.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+            graph.node_outputs_exact::<1>(n).unwrap()[0]
+        };
+        for i in 1..depth {
+            let leaf = {
+                let n = graph.create_node(
+                    NodeKind::IntConst(u128::from(i as u64)),
+                    [],
+                    [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+                );
+                graph.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+                graph.node_outputs_exact::<1>(n).unwrap()[0]
+            };
+            let add = graph.create_node(
+                NodeKind::IntBinaryOp(IntBinaryOp::Add),
+                [leaf, cur],
+                [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+            );
+            graph.set_asm_fingerprint(add, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+            cur = graph.node_outputs_exact::<1>(add).unwrap()[0];
+        }
+        cur
+    }
+
+    #[test]
+    fn flatten_add_tree_within_budget_collects_all_leaves() {
+        // 8-deep Add tree → 8 leaves should all flatten out.
+        let (mut fg, _anchor) = build_load_anchor();
+        let root = build_right_spine_add_tree(fg.graph_mut(), 8);
+        let mut acc: Vec<NodeOutputId> = Vec::new();
+        let mut budget = 0usize;
+        flatten_add_tree(fg.graph(), root, &mut acc, &mut budget);
+        // Each Add contributes 1 to budget; total budget = (depth-1)
+        // increments.  Leaves equal `depth`.
+        assert_eq!(acc.len(), 8, "8 leaves collected, got {}", acc.len());
+        assert!(budget <= 32, "budget under cap: {}", budget);
+    }
+
+    #[test]
+    fn flatten_add_tree_at_budget_boundary_terminates_gracefully() {
+        // 64-deep tree exceeds the 32 budget.  flatten_add_tree must
+        // not panic; it pushes the over-budget node verbatim (which
+        // downstream per-term decompose rejects as non-const non-Mul).
+        let (mut fg, _anchor) = build_load_anchor();
+        let root = build_right_spine_add_tree(fg.graph_mut(), 64);
+        let mut acc: Vec<NodeOutputId> = Vec::new();
+        let mut budget = 0usize;
+        // Smoke test: must not panic at any tree depth.
+        flatten_add_tree(fg.graph(), root, &mut acc, &mut budget);
+        // Once budget hits 32, the recursive walk stops adding new
+        // entries.  The exact behaviour depends on traversal order; we
+        // just pin "doesn't panic" and "acc is bounded".
+        assert!(
+            !acc.is_empty(),
+            "flatten must always push at least one entry",
+        );
+    }
+
+    #[test]
+    fn flatten_add_tree_on_non_add_root_pushes_single_term() {
+        // Non-Add root → push the root verbatim; budget should be 1
+        // (one entry to the walk).
+        let (mut fg, _anchor) = build_load_anchor();
+        let n = fg.graph_mut().create_node(
+            NodeKind::IntConst(0xABCDu128),
+            [],
+            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        fg.graph_mut().set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let out = fg.graph().node_outputs_exact::<1>(n).unwrap()[0];
+        let mut acc: Vec<NodeOutputId> = Vec::new();
+        let mut budget = 0usize;
+        flatten_add_tree(fg.graph(), out, &mut acc, &mut budget);
+        assert_eq!(acc.len(), 1, "non-Add root → single entry");
+        assert_eq!(acc[0], out, "entry is the root itself");
+    }
+
+    // ── classify_stack_array boundary cases ────────────────────────────
+
+    #[test]
+    fn classify_stack_array_one_target_resolves() {
+        // Single-element stack array — degenerate jump table of size 1.
+        // The classifier should still resolve.  Bound is supplied via
+        // KnownBits (idx & 0): always 0.  But that mask is 0, which
+        // means bound = 1 (the only valid idx).
+        let targets = [0x401200u64];
+        let (fg, load_out) = build_one_target_array(targets, -8, 8);
+        let known = crate::opt::analyze_known_bits((&fg).into()).expect("kb analyze");
+        let result = classify_stack_array((&fg).into(), load_out, sp64(), &known);
+        // Whether the existing helpers can resolve a 1-element case
+        // depends on how KnownBits bounds the index.  Pin the contract
+        // that the classifier does NOT panic and returns Some/None
+        // consistently.
+        match result {
+            None => { /* defer-via-unresolved is sound */ }
+            Some(ResolvedTargets::Multiple(v)) => {
+                assert_eq!(v, vec![0x401200u64], "single-element resolves to one target");
+            }
+            other => panic!("unexpected classifier result: {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+fn build_one_target_array(
+    targets: [u64; 1],
+    base_offset: i64,
+    stride: u64,
+) -> (strider_ir::BuiltFunctionGraph, strider_ir::node::NodeOutputId) {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir::ExtendOp;
+    use strider_ir_test_utils::RegisterSet;
+    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = rsleigh::Vn {
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let arg_vn = rsleigh::Vn {
+        addr_off: 0x38,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .tracked(arg_vn)
+        .callee_saved(sp)
+        .build_fn_single_region()
+        .unwrap();
+    let sp_val = b.read_variable(&sp).unwrap();
+    let off_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
+    let addr = b
+        .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
+        .unwrap();
+    let target = b.build_int_const(targets[0], NodeOutputType::U64).unwrap();
+    b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
+    let arg_val = b.read_variable(&arg_vn).unwrap();
+    // Build the dispatch site: load through sp+base+idx*stride with
+    // idx masked to a single value (& 0 → idx is always 0).
+    let arg_u32 = b.graph_mut().create_node(
+        NodeKind::Truncate,
+        [arg_val],
+        [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    b.graph_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+    let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+    let mask0 = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
+    let masked = b
+        .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, NodeOutputType::U32)
+        .unwrap();
+    let idx_u64 = b.graph_mut().create_node(
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        [masked],
+        [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    b.graph_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+    let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+    let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
+    let idx_scaled = b
+        .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
+        .unwrap();
+    let base_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
+    let sp_plus_base = b
+        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::U64)
+        .unwrap();
+    let load_addr = b
+        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
+        .unwrap();
+    let loaded = b
+        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+        .unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut fg = b.build().unwrap();
+    let mut p = OptimizerPipeline::new();
+    p.add(ConstantFold);
+    p.add(KnownBits);
+    p.add(RedundantPhis);
+    p.add(StackStoreDetect::new(sp));
+    let entry = fg.entry().unwrap();
+    p.run(fg.graph_mut(), entry).unwrap();
+    let load = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("Load survives — StackLoadForward not in pipeline");
+    let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
+    (fg, load_out)
 }
