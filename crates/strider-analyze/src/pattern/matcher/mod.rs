@@ -678,3 +678,144 @@ fn prefix_agrees(prefix: &[Match], m: &Match) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    //! Unit tests for the [`MatcherOptions`] builder-state contract.
+    //!
+    //! The 9 tests below pin the chaining algebra of the matcher's
+    //! ignore-flags: defaults, mask widening, mask union across
+    //! repeated calls, and the independence of `ignore_casts` /
+    //! `ignore_control_states`.  Restored from the pre-rewrite
+    //! `crates/pattern/tests/matching/matcher_api.rs` builder-state
+    //! suite.
+
+    use super::*;
+    use strider_ir::node::NodeOutputType;
+
+    fn trivial_graph() -> strider_ir::Graph {
+        strider_ir_test_utils::make_empty_fn(|b| {
+            b.build_int_const(0u64, NodeOutputType::U64)
+        })
+        .expect("trivial graph")
+    }
+
+    #[test]
+    fn matcher_default_options_are_both_off() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g).expect("matcher");
+        assert!(
+            m.options.ignore_cast_mask.is_empty(),
+            "ignore_cast_mask must default to empty"
+        );
+        assert!(
+            !m.options.ignore_control_states,
+            "ignore_control_states must default to false"
+        );
+    }
+
+    #[test]
+    fn matcher_default_ignore_cast_mask_is_empty() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g).expect("matcher");
+        assert!(
+            m.options.ignore_cast_mask.is_empty(),
+            "default ignore_cast_mask must be empty"
+        );
+    }
+
+    #[test]
+    fn ignore_casts_sets_mask_to_all() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g).expect("matcher").ignore_casts();
+        assert_eq!(
+            m.options.ignore_cast_mask,
+            CastMask::all(),
+            "ignore_casts() must set the mask to CastMask::all()"
+        );
+    }
+
+    #[test]
+    fn ignore_casts_mask_sets_just_truncate() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g)
+            .expect("matcher")
+            .ignore_casts_mask(CastMask::TRUNCATE);
+        assert_eq!(
+            m.options.ignore_cast_mask,
+            CastMask::TRUNCATE,
+            "ignore_casts_mask(TRUNCATE) must set only the TRUNCATE bit"
+        );
+    }
+
+    #[test]
+    fn ignore_casts_mask_unions_repeated_calls() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g)
+            .expect("matcher")
+            .ignore_casts_mask(CastMask::TRUNCATE)
+            .ignore_casts_mask(CastMask::EXTEND);
+        assert_eq!(
+            m.options.ignore_cast_mask,
+            CastMask::TRUNCATE | CastMask::EXTEND,
+            "repeated ignore_casts_mask calls must union"
+        );
+    }
+
+    #[test]
+    fn ignore_casts_after_mask_widens_to_all() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g)
+            .expect("matcher")
+            .ignore_casts_mask(CastMask::TRUNCATE)
+            .ignore_casts();
+        assert_eq!(
+            m.options.ignore_cast_mask,
+            CastMask::all(),
+            "ignore_casts() after a mask must widen to all()"
+        );
+    }
+
+    #[test]
+    fn ignore_casts_chains_and_flips_flag() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g).expect("matcher").ignore_casts();
+        assert_eq!(
+            m.options.ignore_cast_mask,
+            CastMask::all(),
+            "ignore_casts() must set the mask to CastMask::all()"
+        );
+        assert!(
+            !m.options.ignore_control_states,
+            "ignore_casts() must not touch ignore_control_states"
+        );
+    }
+
+    #[test]
+    fn ignore_control_states_chains_and_flips_flag() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g)
+            .expect("matcher")
+            .ignore_control_states();
+        assert!(
+            m.options.ignore_control_states,
+            "ignore_control_states() must enable the flag"
+        );
+        assert!(
+            m.options.ignore_cast_mask.is_empty(),
+            "ignore_control_states() must not touch ignore_cast_mask"
+        );
+    }
+
+    #[test]
+    fn both_flags_chain_independently() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g)
+            .expect("matcher")
+            .ignore_casts()
+            .ignore_control_states();
+        assert_eq!(m.options.ignore_cast_mask, CastMask::all());
+        assert!(m.options.ignore_control_states);
+    }
+}
