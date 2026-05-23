@@ -175,40 +175,11 @@ pub fn apply_elf_relocations(
         // having to model a PLT.
         if let Some(size_bytes) = got_or_plt_slot_reloc_size(&reloc, obj.architecture()) {
             // Need the target symbol for these (no symbol → skip).
-            let target_addr = match reloc.target() {
-                RelocationTarget::Symbol(idx) => {
-                    let resolved = if let Some(dynsym) = obj.dynamic_symbol_table() {
-                        dynsym
-                            .symbol_by_index(idx)
-                            .map(|s| (s.address(), s.is_undefined()))
-                            .ok()
-                    } else {
-                        obj.symbol_by_index(idx)
-                            .map(|s| (s.address(), s.is_undefined()))
-                            .ok()
-                    };
-                    let Some((addr, undef)) = resolved else {
-                        // symbol_by_index returned Err — the index is
-                        // invalid (malformed ELF), distinct from the
-                        // legitimate weak-extern case below.
-                        stats.skipped_malformed_target += 1;
-                        continue;
-                    };
-                    if addr == 0 && undef {
-                        // Legitimate undefined / weak extern.
-                        stats.skipped_unresolved_target += 1;
-                        continue;
-                    }
-                    addr
-                }
-                _ => {
-                    // Non-Symbol relocation target (e.g. SectionIndex
-                    // we don't model) — bucket as malformed-from-our-
-                    // perspective rather than as a legitimate
-                    // weak-extern.
-                    stats.skipped_malformed_target += 1;
-                    continue;
-                }
+            // The GOT/PLT path classifies non-Symbol targets as
+            // `malformed_target` (consistent with the bad-symbol-
+            // index bucket); pass `non_symbol_is_malformed = true`.
+            let Some(target_addr) = resolve_symbol_target(obj, &reloc, true, &mut stats) else {
+                continue;
             };
             let value = target_addr.wrapping_add(reloc.addend() as u64);
             locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
@@ -221,42 +192,26 @@ pub fn apply_elf_relocations(
         // and returns the wrong entry for a given index, so we
         // must dispatch through `dynamic_symbol_table()` first and
         // fall back to the static `.symtab` only if the dynamic
-        // table is absent (ET_REL files).
+        // table is absent (ET_REL files).  The general path also
+        // handles `RelocationTarget::Section` (the GOT/PLT path
+        // doesn't see those); pass `non_symbol_is_malformed = false`
+        // so `Absolute` and unknown future variants bucket as
+        // `skipped_unsupported_kind` via `record_unsupported`.
         let target_addr = match reloc.target() {
-            RelocationTarget::Symbol(idx) => {
-                let resolved = if let Some(dynsym) = obj.dynamic_symbol_table() {
-                    dynsym
-                        .symbol_by_index(idx)
-                        .map(|s| (s.address(), s.is_undefined()))
-                        .ok()
-                } else {
-                    obj.symbol_by_index(idx)
-                        .map(|s| (s.address(), s.is_undefined()))
-                        .ok()
-                };
-                let Some((addr, undef)) = resolved else {
-                    // symbol_by_index returned Err — the index is invalid
-                    // (malformed ELF), distinct from the legitimate
-                    // weak-extern case below.  Match the GOT/PLT path's
-                    // bucket so callers diagnosing relocation outcomes
-                    // see a consistent error class.
-                    stats.skipped_malformed_target += 1;
+            RelocationTarget::Symbol(_) => {
+                let Some(addr) = resolve_symbol_target(obj, &reloc, false, &mut stats) else {
                     continue;
                 };
-                if addr == 0 && undef {
-                    stats.skipped_unresolved_target += 1;
-                    continue;
-                }
                 addr
             }
             RelocationTarget::Section(idx) => match obj.section_by_index(idx) {
                 Ok(sec) => sec.address(),
                 Err(_) => {
                     // Bad section index — structurally malformed, NOT a
-                    // legitimate weak-extern.                      // matches the GOT-PLT path's classification at line 538
-                    // and the bad-symbol-index path at line 572, so callers
-                    // inspecting RelocationStats see a consistent
-                    // "malformed" bucket regardless of which arm fires.
+                    // legitimate weak-extern.  Matches the GOT/PLT
+                    // path's malformed bucket so callers inspecting
+                    // RelocationStats see a consistent error class
+                    // regardless of which arm fired.
                     stats.skipped_malformed_target += 1;
                     continue;
                 }
@@ -493,6 +448,69 @@ fn find_loadable_section_containing<'data, 'a>(
         let hi = lo.saturating_add(sec.size());
         addr >= lo && addr < hi
     })
+}
+
+/// Look up the address of `reloc`'s `RelocationTarget::Symbol` index,
+/// preferring the dynamic symbol table (`obj.dynamic_symbol_table()`)
+/// over the static `.symtab` per `Object::dynamic_relocations`'s
+/// doc-comment.  Buckets failures into `stats` and returns `None`
+/// when the caller should `continue` past this relocation:
+///
+/// - Returns `None` and increments `skipped_malformed_target` when
+///   the symbol index doesn't resolve at all (malformed ELF), or
+///   when the relocation target is not a `Symbol` and
+///   `non_symbol_is_malformed` is `true` (GOT/PLT path).
+/// - Returns `None` and increments `skipped_unresolved_target` when
+///   the symbol resolves cleanly but is the legitimate weak / undef
+///   case (`address == 0 && is_undefined`).
+/// - Returns `None` and calls `record_unsupported` when the target
+///   isn't a `Symbol` and `non_symbol_is_malformed` is `false` (the
+///   general path).
+/// - Otherwise returns `Some(address)`.
+fn resolve_symbol_target(
+    obj: &object::File<'_>,
+    reloc: &object::Relocation,
+    non_symbol_is_malformed: bool,
+    stats: &mut RelocationStats,
+) -> Option<u64> {
+    match reloc.target() {
+        RelocationTarget::Symbol(idx) => {
+            let resolved = if let Some(dynsym) = obj.dynamic_symbol_table() {
+                dynsym
+                    .symbol_by_index(idx)
+                    .map(|s| (s.address(), s.is_undefined()))
+                    .ok()
+            } else {
+                obj.symbol_by_index(idx)
+                    .map(|s| (s.address(), s.is_undefined()))
+                    .ok()
+            };
+            let Some((addr, undef)) = resolved else {
+                // symbol_by_index returned Err — the index is invalid
+                // (malformed ELF), distinct from the legitimate
+                // weak-extern case below.
+                stats.skipped_malformed_target += 1;
+                return None;
+            };
+            if addr == 0 && undef {
+                // Legitimate undefined / weak extern.
+                stats.skipped_unresolved_target += 1;
+                return None;
+            }
+            Some(addr)
+        }
+        _ if non_symbol_is_malformed => {
+            // Non-Symbol relocation target (e.g. SectionIndex
+            // we don't model) — bucket as malformed-from-our-
+            // perspective rather than as a legitimate weak-extern.
+            stats.skipped_malformed_target += 1;
+            None
+        }
+        _ => {
+            record_unsupported(reloc, stats);
+            None
+        }
+    }
 }
 
 /// Increment `stats.skipped_unsupported_kind` and record the raw
