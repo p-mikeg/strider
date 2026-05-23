@@ -250,6 +250,14 @@ function withDefaults(dot){
 const ORIG=JSON.parse(document.getElementById("dot-src").textContent);
 let curDot=withDefaults(ORIG);
 document.getElementById("dotSrc").value=ORIG;
+// Pre-selected layout engine (chosen server-side based on node count: graphs
+// above the size threshold default to "sfdp" so the initial render doesn't
+// stall on `dot`'s O(n^2) layout phase).  Placeholder replaced by Rust.
+(function pickDefaultEngine(){
+  const e="__DEFAULT_ENGINE__";
+  const sel=document.getElementById("engSel");
+  if(sel&&[...sel.options].some(o=>o.value===e))sel.value=e;
+})();
 
 // ── node-kind rules ───────────────────────────────────────────────────────────
 const KINDS=[
