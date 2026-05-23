@@ -18,6 +18,24 @@ create_exception!(strider.errors, RewriteError, StriderError);
 create_exception!(strider.errors, UnresolvedIndirectBranchError, StriderError);
 create_exception!(strider.errors, UnknownCallOtherError, StriderError);
 
+/// Shared preamble for typed-downcast converters.  Returns `Some(PyErr)`
+/// when the caller should short-circuit:
+///   1. A pending Python exception was `restore`d by a callback (e.g. a
+///      subclassed `MemReader.read` raising `KeyboardInterrupt` or
+///      `SystemExit`).  Take it here so the original control-flow
+///      exception wins over the synthesized `StriderError`.
+///   2. The error downcasts to `UnknownCallOtherError`, which both
+///      typed converters surface as the specific subclass.
+fn take_pending_or_unknown_call_other(e: &anyhow::Error) -> Option<PyErr> {
+    if let Some(pending) = Python::with_gil(PyErr::take) {
+        return Some(pending);
+    }
+    if e.downcast_ref::<strider_analyze::UnknownCallOtherError>().is_some() {
+        return Some(UnknownCallOtherError::new_err(format!("{e:?}")));
+    }
+    None
+}
+
 /// Convert an `anyhow::Error` into the most specific `StriderError`
 /// subclass we can recover from its typed inner error.  Falls back to
 /// the generic `StriderError` when the inner error is opaque.
@@ -27,23 +45,12 @@ create_exception!(strider.errors, UnknownCallOtherError, StriderError);
 /// is included as well. Python's `__cause__` chain is left empty —
 /// PyO3-anyhow does not synthesize a separate exception per Rust
 /// error link.
-///
-/// **Pending-PyErr passthrough.**  If a Python callback (e.g. a
-/// subclassed `MemReader.read`) raised `KeyboardInterrupt` or
-/// `SystemExit` and `restore`d the `PyErr` before propagating its
-/// failure as an `anyhow::Error`, that `PyErr` is still pending on
-/// the Python interpreter.  Take it here so the original control-flow
-/// exception wins over the synthesized `StriderError` — Ctrl-C
-/// interrupts a long lift instead of being absorbed.
 pub fn into_strider_err(e: anyhow::Error) -> PyErr {
-    if let Some(pending) = Python::with_gil(PyErr::take) {
-        return pending;
+    if let Some(pyerr) = take_pending_or_unknown_call_other(&e) {
+        return pyerr;
     }
     if e.downcast_ref::<strider_analyze::UnresolvedIndirectBranch>().is_some() {
         return UnresolvedIndirectBranchError::new_err(format!("{e:?}"));
-    }
-    if e.downcast_ref::<strider_analyze::UnknownCallOtherError>().is_some() {
-        return UnknownCallOtherError::new_err(format!("{e:?}"));
     }
     // Typed-downcast for lift failures.  The orchestrator's
     // `build_lift_stable` wraps every cfg-build and IR-lift failure
@@ -62,11 +69,8 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
 }
 
 pub fn into_lift_err(e: anyhow::Error) -> PyErr {
-    if let Some(pending) = Python::with_gil(PyErr::take) {
-        return pending;
-    }
-    if e.downcast_ref::<strider_analyze::UnknownCallOtherError>().is_some() {
-        return UnknownCallOtherError::new_err(format!("{e:?}"));
+    if let Some(pyerr) = take_pending_or_unknown_call_other(&e) {
+        return pyerr;
     }
     LiftError::new_err(format!("{e:?}"))
 }
