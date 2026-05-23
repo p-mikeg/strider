@@ -51,3 +51,6 @@ mod int_const_width_aware;
 
 #[path = "pattern_matching/asm_fingerprint.rs"]
 mod asm_fingerprint;
+
+#[path = "pattern_matching/memory.rs"]
+mod memory;
