@@ -80,11 +80,14 @@ impl Graph {
     /// that participate in [`Self::retain_reachable`]'s id remap.
     ///
     /// Adding a new `NodeId`-keyed side-table means: declare the field
-    /// on `Graph`, then append `&mut self.new_field` to this slice.
-    /// `retain_reachable` picks it up automatically.
-    fn node_keyed_side_tables_mut(&mut self) -> [&mut dyn SideTableRemap; 5] {
+    /// on `Graph`, then append `&mut self.new_field` to this iterator.
+    /// `retain_reachable` picks it up automatically — no fixed array
+    /// size to update.
+    fn node_keyed_side_tables_mut(
+        &mut self,
+    ) -> impl IntoIterator<Item = &mut dyn SideTableRemap> {
         [
-            &mut self.stack_phi_offsets,
+            &mut self.stack_phi_offsets as &mut dyn SideTableRemap,
             &mut self.call_other_names,
             &mut self.asm_fingerprints,
             &mut self.call_clobbered_overrides,
