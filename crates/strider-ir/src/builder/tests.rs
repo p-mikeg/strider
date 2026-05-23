@@ -1749,3 +1749,112 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     );
     Ok(())
 }
+
+// ── build_call_with_cc — per-Call CC override ───────────────────────────
+
+mod build_call_with_cc {
+    use super::*;
+    use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
+
+    fn x86_64_regs() -> rsleigh::SleighRegs {
+        SleighArch::x86_64().probe_regs().unwrap()
+    }
+
+    fn x86_64_built_cc() -> BuiltCallingConvention {
+        CallingConvention::x86_64_systemv()
+            .unwrap()
+            .build(&x86_64_regs())
+            .unwrap()
+    }
+
+    #[test]
+    fn build_call_with_cc_none_matches_build_call() {
+        let cc = x86_64_built_cc();
+        let regs = x86_64_regs();
+        let rax = regs.name_to_vn("RAX").unwrap();
+        let rdi = regs.name_to_vn("RDI").unwrap();
+        let rsp = regs.name_to_vn("RSP").unwrap();
+        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let addr = b
+            .build_int_const(0xdead_beef_u64, NodeOutputType::U64)
+            .unwrap();
+        b.build_call_with_cc(addr, None).unwrap();
+        // The Call output kinds match `build_call(addr)` exactly: Control,
+        // Memory, then one slot per `call_clobbered_variables` entry.
+        let g = b.graph();
+        let call_node = g
+            .all_node_ids()
+            .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
+            .unwrap();
+        assert!(
+            g.node_outputs(call_node).len() >= 2,
+            "Control + Memory at minimum"
+        );
+        assert!(
+            g.call_clobbered_override(call_node).is_none(),
+            "no override means side-table stays None"
+        );
+    }
+
+    #[test]
+    fn build_call_with_cc_all_preserving_clobbers_nothing() {
+        let cc = x86_64_built_cc();
+        let regs = x86_64_regs();
+        let rax = regs.name_to_vn("RAX").unwrap();
+        let rdi = regs.name_to_vn("RDI").unwrap();
+        let rsp = regs.name_to_vn("RSP").unwrap();
+        // FunctionBuilder::new auto-adds the cc.ret_val_regs (rax, rdx) and
+        // ret_val_regs_float (xmm0, xmm1) into the tracked set even if the
+        // caller's `all_used_variables` doesn't list them.  An "all-preserving"
+        // override needs to mark those callee-saved too or they'll appear as
+        // clobber outputs.
+        let rdx = regs.name_to_vn("RDX").unwrap();
+        let xmm0 = regs.name_to_vn("XMM0").unwrap();
+        let xmm1 = regs.name_to_vn("XMM1").unwrap();
+        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+
+        // Override CC: every tracked variable is callee-saved → 0 clobbers.
+        let override_cc = BuiltCallingConvention {
+            arg_passing_regs: vec![],
+            callee_saved_regs: vec![rax, rdi, rdx, xmm0, xmm1],
+            ret_val_regs: vec![],
+            ret_val_regs_float: vec![],
+            stack_ptr_vn: rsp,
+            stack_arg_offsets: vec![],
+            ret_stack_pop: 0,
+            link_register_vn: None,
+            no_memory_clobber: false,
+        };
+
+        let addr = b
+            .build_int_const(0xdead_beef_u64, NodeOutputType::U64)
+            .unwrap();
+        b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
+        let g = b.graph();
+        let call_node = g
+            .all_node_ids()
+            .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
+            .unwrap();
+        let outs = g.node_outputs(call_node);
+        // Outputs: Control + Memory + 0 clobbered slots.
+        assert_eq!(
+            outs.len(),
+            2,
+            "fentry-style Call has 0 clobbered output slots"
+        );
+        let inputs: Vec<_> = g.node_inputs(call_node).into_iter().collect();
+        // Inputs: control + memory + target.  No arg slots.
+        assert_eq!(inputs.len(), 3, "fentry-style Call takes no args");
+        assert_eq!(
+            g.call_clobbered_override(call_node),
+            Some(&[][..]),
+            "side-table records the empty per-Call override list"
+        );
+    }
+}

@@ -66,3 +66,6 @@ mod stack;
 
 #[path = "pattern_matching/control_flow.rs"]
 mod control_flow;
+
+#[path = "pattern_matching/call_other_arg_ret_slots.rs"]
+mod call_other_arg_ret_slots;
