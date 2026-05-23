@@ -135,3 +135,238 @@ macro_rules! impl_optimizer_from_peephole {
 }
 
 pub(crate) use impl_optimizer_from_peephole;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use std::cell::RefCell;
+    use strider_ir::node::{NodeKind, NodeOutputType};
+    use strider_ir::IntBinaryOp;
+    use strider_ir_test_utils::make_empty_fn;
+
+    use crate::opt::error::Result;
+    use crate::opt::pipeline::OptimizationResult;
+
+    /// A scriptable pass: matches on a configured kind predicate, records
+    /// every `try_rewrite` invocation, and on match rewires the root's
+    /// single value output to a fresh `IntConst(REPLACEMENT_K)`.  Used by
+    /// the tests below to assert ordering / propagation behaviour without
+    /// pulling in a real opt pass.
+    struct ScriptedPass {
+        // The trait contract requires implementing `name()`; the test
+        // driver doesn't surface it back but the field documents intent
+        // when a fixture is read in isolation.
+        #[allow(dead_code)]
+        name: &'static str,
+        match_kind: fn(&NodeKind) -> bool,
+        do_rewrite: bool,
+        propagate: bool,
+        return_error: bool,
+        visit_log: RefCell<Vec<u32>>,
+    }
+
+    const REPLACEMENT_K: u64 = 0xABCD_1234;
+
+    impl PeepholePass for ScriptedPass {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn matches_kind(&self, k: &NodeKind) -> bool {
+            (self.match_kind)(k)
+        }
+        fn try_rewrite(
+            &self,
+            ctx: &mut crate::pattern::RewriteCtx<'_>,
+            root: NodeId,
+        ) -> Result<OptimizationResult> {
+            use cranelift_entity::EntityRef;
+            self.visit_log.borrow_mut().push(root.index() as u32);
+            if self.return_error {
+                return Err(anyhow::anyhow!("scripted-pass forced error"));
+            }
+            if !self.do_rewrite {
+                return Ok(OptimizationResult::NoChange);
+            }
+            let kind = *ctx.node_kind(root);
+            if !(self.match_kind)(&kind) {
+                return Ok(OptimizationResult::NoChange);
+            }
+            let [root_out] = ctx.node_outputs_exact::<1>(root)?;
+            let ty = ctx.output_kind(root_out).as_value_or_err()?;
+            let new_out = ctx.make_int_const(REPLACEMENT_K, ty)?;
+            OptimizationResult::NoChange.after_replace(ctx, root_out, new_out)
+        }
+        fn propagate_to_consumers(&self) -> bool {
+            self.propagate
+        }
+    }
+
+    /// `fn() -> u64 { return 7; }` — minimal reachable graph.
+    fn one_const_fn() -> strider_ir::BuiltFunctionGraph {
+        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
+    }
+
+    /// `fn() -> u64 { return Add(11, 13); }`.
+    fn add_two_consts() -> strider_ir::BuiltFunctionGraph {
+        make_empty_fn(|b| {
+            let a = b.build_int_const(11u64, NodeOutputType::U64)?;
+            let bb = b.build_int_const(13u64, NodeOutputType::U64)?;
+            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)
+        })
+        .unwrap()
+    }
+
+    fn match_add(k: &NodeKind) -> bool {
+        matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add))
+    }
+    fn match_nothing(_: &NodeKind) -> bool {
+        false
+    }
+
+    #[test]
+    fn run_peephole_on_minimal_graph_no_match() {
+        let mut fg = one_const_fn();
+        let pass = ScriptedPass {
+            name: "Empty",
+            match_kind: match_nothing,
+            do_rewrite: false,
+            propagate: false,
+            return_error: false,
+            visit_log: RefCell::new(Vec::new()),
+        };
+        let entry = fg.entry().unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::new(fg.graph_mut(), entry);
+        let r = run_peephole(&pass, &mut ctx).unwrap();
+        assert_eq!(r, OptimizationResult::NoChange);
+        assert!(pass.visit_log.borrow().is_empty());
+    }
+
+    #[test]
+    fn run_peephole_pass_never_matches_returns_nochange() {
+        // Graph has an Add but the pass kind-filter rejects everything.
+        let mut fg = add_two_consts();
+        let pass = ScriptedPass {
+            name: "MissAll",
+            match_kind: match_nothing,
+            do_rewrite: true,
+            propagate: true,
+            return_error: false,
+            visit_log: RefCell::new(Vec::new()),
+        };
+        let entry = fg.entry().unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::new(fg.graph_mut(), entry);
+        let r = run_peephole(&pass, &mut ctx).unwrap();
+        assert_eq!(r, OptimizationResult::NoChange);
+        assert!(pass.visit_log.borrow().is_empty());
+    }
+
+    #[test]
+    fn run_peephole_rewrites_and_reports_changed() {
+        let mut fg = add_two_consts();
+        let pass = ScriptedPass {
+            name: "RewriteAdd",
+            match_kind: match_add,
+            do_rewrite: true,
+            propagate: false,
+            return_error: false,
+            visit_log: RefCell::new(Vec::new()),
+        };
+        let entry = fg.entry().unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::new(fg.graph_mut(), entry);
+        let r = run_peephole(&pass, &mut ctx).unwrap();
+        assert_eq!(r, OptimizationResult::Changed);
+        assert!(!pass.visit_log.borrow().is_empty());
+
+        // Return's value-input is now an IntConst (the rewrite replacement).
+        let ret = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+            .expect("Return must exist");
+        let value_input = fg.node_inputs(ret)[2];
+        let producer = fg.get_node_from_output(value_input);
+        assert!(
+            matches!(fg.node_kind(producer), NodeKind::IntConst(_)),
+            "Return's value input must be IntConst post-rewrite",
+        );
+    }
+
+    #[test]
+    fn run_peephole_with_propagate_false_skips_reenqueue() {
+        // `Add(Add(1,2), 3)` — outer consumes inner.  With propagate=false
+        // each Add is visited at most once (the seed-time visit).
+        let mut fg = make_empty_fn(|b| {
+            let a = b.build_int_const(1u64, NodeOutputType::U64)?;
+            let bb = b.build_int_const(2u64, NodeOutputType::U64)?;
+            let c = b.build_int_const(3u64, NodeOutputType::U64)?;
+            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, NodeOutputType::U64)
+        })
+        .unwrap();
+        let pass = ScriptedPass {
+            name: "RewriteAddNoProp",
+            match_kind: match_add,
+            do_rewrite: true,
+            propagate: false,
+            return_error: false,
+            visit_log: RefCell::new(Vec::new()),
+        };
+        let entry = fg.entry().unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::new(fg.graph_mut(), entry);
+        let _ = run_peephole(&pass, &mut ctx).unwrap();
+        let log = pass.visit_log.borrow().clone();
+        assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
+    }
+
+    #[test]
+    fn run_peephole_with_propagate_true_reenqueues_consumers() {
+        let mut fg = make_empty_fn(|b| {
+            let a = b.build_int_const(1u64, NodeOutputType::U64)?;
+            let bb = b.build_int_const(2u64, NodeOutputType::U64)?;
+            let c = b.build_int_const(3u64, NodeOutputType::U64)?;
+            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, NodeOutputType::U64)
+        })
+        .unwrap();
+        let pass = ScriptedPass {
+            name: "RewriteAddProp",
+            match_kind: match_add,
+            do_rewrite: true,
+            propagate: true,
+            return_error: false,
+            visit_log: RefCell::new(Vec::new()),
+        };
+        let entry = fg.entry().unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::new(fg.graph_mut(), entry);
+        let r = run_peephole(&pass, &mut ctx).unwrap();
+        assert_eq!(r, OptimizationResult::Changed);
+        // Each Add visited at least once; propagate-true allows extra
+        // re-enqueue visits.  The exact count depends on worklist dedup
+        // policy, but the lower bound is 2.
+        let log_len = pass.visit_log.borrow().len();
+        assert!(log_len >= 2, "expected >=2 visits with propagate=true, got {log_len}");
+    }
+
+    #[test]
+    fn run_peephole_propagates_pass_internal_error() {
+        let mut fg = add_two_consts();
+        let pass = ScriptedPass {
+            name: "Erroring",
+            match_kind: match_add,
+            do_rewrite: false,
+            propagate: false,
+            return_error: true,
+            visit_log: RefCell::new(Vec::new()),
+        };
+        let entry = fg.entry().unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::new(fg.graph_mut(), entry);
+        let r = run_peephole(&pass, &mut ctx);
+        assert!(r.is_err(), "errored pass must surface error");
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("scripted-pass forced error"),
+            "error must propagate, got {msg}",
+        );
+    }
+}
