@@ -60,3 +60,6 @@ mod ssa;
 
 #[path = "pattern_matching/casts_and_conversions.rs"]
 mod casts_and_conversions;
+
+#[path = "pattern_matching/stack.rs"]
+mod stack;
