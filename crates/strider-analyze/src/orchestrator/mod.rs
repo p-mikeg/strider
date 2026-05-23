@@ -111,8 +111,8 @@ where
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
 /// snapshot.  Maps a region's exit-control `NodeOutputId` to the
 /// region's exit `vn_to_value` table — what
-/// [`AnchorCallingContext::for_anchor`] needs to thread ABI varnodes
-/// through an in-place edit.
+/// [`crate::opt::AnchorCallingContext::for_anchor`] needs to thread
+/// ABI varnodes through an in-place edit.
 /// Maps a region's exit-control `NodeOutputId` to the region's exit
 /// `vn_to_value` table.  The map is `Arc`-shared with each
 /// [`RegionLiftHandles::exit_vn_to_value`] entry — never mutated
@@ -746,8 +746,8 @@ fn apply_in_place_edit(
             // spliced node is the freshly-created Call adjacent to
             // `new_return`'s ctrl predecessor.  Reuses
             // [`override_clobber_vars`] (also called from
-            // [`AnchorCallingContext::for_anchor`]) so the projection over
-            // `graph.variables` is defined once.
+            // [`crate::opt::AnchorCallingContext::for_anchor`]) so the
+            // projection over `graph.variables` is defined once.
             if let Some(cc) = override_cc
                 && let Some(call_id) = locate_spliced_call(graph, new_return)
             {
@@ -880,7 +880,7 @@ impl crate::opt::AnchorCallingContext {
 /// Map a varnode's byte width to the matching [`strider_ir::node::NodeOutputType`].
 ///
 /// Used by the orchestrator's anchor-calling-context plumbing
-/// (`AnchorCallingContext::for_anchor` for clobber outputs,
+/// ([`crate::opt::AnchorCallingContext::for_anchor`] for clobber outputs,
 /// `read_or_init_var` for freshly-created `InitialVar` nodes) to surface
 /// unsupported sizes as a typed error rather than silently dropping the
 /// slot.  Every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10, 16,
@@ -902,8 +902,9 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Nod
 /// per-address override calling convention `cc`.
 ///
 /// Mirrors the body of the `override_cc.is_some()` arm of
-/// [`AnchorCallingContext::for_anchor`]'s clobber computation and the
-/// post-splice clobber rebuild in [`apply_in_place_edit`] — extracted so
+/// [`crate::opt::AnchorCallingContext::for_anchor`]'s clobber
+/// computation and the post-splice clobber rebuild in
+/// [`apply_in_place_edit`] — extracted so
 /// the same projection (`!callee_saved && != stack_ptr`) is defined in
 /// exactly one place.
 ///
