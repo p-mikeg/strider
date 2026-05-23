@@ -176,6 +176,26 @@ API both yield the post-destructive-pipeline IR.  This is what
 - Python: `Graph.to_dot()` / `Graph.to_html()`.
 - For new fixtures, follow `strider-fixture-author`.
 
+**Dump APIs (v12+):**
+
+- `strider_analyze::dump_per_region(graph, exit_controls, lift_gen, sleigh, dir)`
+  — emits one `region_<N>.html` per region into `dir`.  Useful when
+  the full-graph dump is too dense to read; each file scopes the
+  view to a single region's subgraph.  `lift_gen` must match
+  `outcome.lift_generation()` — `Graph::compact` between lift and
+  dump invalidates the captured ids and the helper surfaces a
+  typed error rather than silently rendering the wrong region.
+- `strider_analyze::dump_neighborhood(graph, anchor, depth, sleigh, path)`
+  — emits a single HTML file scoped to the BFS frontier within
+  `depth` hops of `anchor` (via
+  `strider_ir::walk::collect_neighborhood`).  Use when you have a
+  candidate match anchor and need to inspect just its local
+  context.  Rejects foreign / stale anchors with a typed error.
+- URL-fragment deep links: append `#n=42` to a dumped `graph.html` URL
+  to auto-focus node 42 in the viewer.  Useful for pasting "look at
+  node N in this dump" links into bug reports / chat without
+  walking the renderer's pan-and-zoom by hand.
+
 ## Worked examples
 
 [Sketch — second half]

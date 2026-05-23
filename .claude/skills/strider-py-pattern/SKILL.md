@@ -175,7 +175,7 @@ pipeline):
 ### Commutative ops (matcher tries both operand orderings)
 
 Single source of truth: `NodeKind::is_commutative` in
-`crates/strider-ir/src/node/kind.rs:448`.
+`crates/strider-ir/src/node/kind.rs:560`.
 
 - `IntBinaryOp`: `Add`, `Mul`, `And`, `Or`, `Xor`
 - `BoolBinaryOp`: `And`, `Or`, `Xor`
