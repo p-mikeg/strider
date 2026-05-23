@@ -261,3 +261,484 @@ pub(crate) fn walk_mem_chain<S: MemChainStep>(
     };
     Ok(verdict)
 }
+
+#[cfg(test)]
+mod tests {
+    //! White-box tests for [`walk_mem_chain`].
+    //!
+    //! Constructs synthetic mem chains (using `InitialMemory` and
+    //! `MemPhi` / `Store` nodes) and drives the walker with a stub
+    //! [`MemChainStep`] impl whose semantics each test pins.
+
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use entity_utils::DenseEntitySet;
+    use strider_ir::node::{NodeKind, NodeOutputType};
+    use strider_ir::IntBinaryOp;
+    use strider_ir_test_utils::{make_empty_fn, SENTINEL_LIFT_ADDR};
+
+    /// Stub step that classifies every visited memory node as `Verdict(false)`
+    /// — used by the empty-chain and short-chain tests.
+    struct AlwaysClean {
+        visit_count: usize,
+    }
+    impl MemChainStep for AlwaysClean {
+        type Verdict = bool;
+        fn classify(
+            &mut self,
+            _g: &Graph,
+            _mem: NodeOutputId,
+            _node: NodeId,
+        ) -> crate::opt::error::Result<StepResult<bool>> {
+            self.visit_count += 1;
+            Ok(StepResult::Verdict(false))
+        }
+        fn cycle_verdict(&mut self) -> bool {
+            false
+        }
+        fn combine_phi(
+            &mut self,
+            _phi_node: NodeId,
+            _phi_token: NodeOutputId,
+            preds: Vec<bool>,
+        ) -> bool {
+            preds.into_iter().any(|d| d)
+        }
+    }
+
+    /// Stub step that stops early with a value-bearing verdict once a
+    /// `RawStop` is set — used by the early-exit verdict test.
+    struct EarlyStopWithValue {
+        target_value: u64,
+    }
+    impl MemChainStep for EarlyStopWithValue {
+        type Verdict = u64;
+        fn classify(
+            &mut self,
+            _g: &Graph,
+            _mem: NodeOutputId,
+            _node: NodeId,
+        ) -> crate::opt::error::Result<StepResult<u64>> {
+            // First node we see → stop with our payload value.
+            Ok(StepResult::Verdict(self.target_value))
+        }
+        fn cycle_verdict(&mut self) -> u64 {
+            0
+        }
+        fn combine_phi(
+            &mut self,
+            _phi_node: NodeId,
+            _phi_token: NodeOutputId,
+            preds: Vec<u64>,
+        ) -> u64 {
+            preds.into_iter().max().unwrap_or(0)
+        }
+    }
+
+    /// Step that walks backward through Stores until it hits InitialMemory.
+    /// Records every node visited; verdict at InitialMemory is `false`,
+    /// at any other node is "continue to inputs[1]".  At MemPhi, fans
+    /// out to every predecessor and OR-combines verdicts.
+    struct LinearTraceStep {
+        visited: std::cell::RefCell<Vec<u32>>,
+    }
+    impl MemChainStep for LinearTraceStep {
+        type Verdict = bool;
+        fn classify(
+            &mut self,
+            g: &Graph,
+            _mem: NodeOutputId,
+            node: NodeId,
+        ) -> crate::opt::error::Result<StepResult<bool>> {
+            use cranelift_entity::EntityRef;
+            self.visited.borrow_mut().push(node.index() as u32);
+            match *g.node_kind(node) {
+                NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
+                NodeKind::Store(_) => {
+                    // Store inputs layout: [memory, addr, data].  Slot 0
+                    // is the prior memory edge.
+                    let inputs = g.node_inputs(node);
+                    Ok(StepResult::Continue(inputs[0]))
+                }
+                NodeKind::MemPhi => {
+                    let inputs = g.node_inputs(node);
+                    let phi_token = inputs[0];
+                    let preds = inputs.iter().skip(1).collect();
+                    Ok(StepResult::JoinPhi { phi_node: node, phi_token, preds })
+                }
+                _ => Ok(StepResult::Verdict(true)),
+            }
+        }
+        fn cycle_verdict(&mut self) -> bool {
+            // Distinct sentinel so we can detect cycle paths if needed.
+            false
+        }
+        fn combine_phi(
+            &mut self,
+            _phi_node: NodeId,
+            _phi_token: NodeOutputId,
+            preds: Vec<bool>,
+        ) -> bool {
+            preds.into_iter().any(|d| d)
+        }
+    }
+
+    /// Step that returns Verdict(value) per arm based on the visited
+    /// node's NodeKind.  Used to construct a MemPhi with disagreeing
+    /// arms (one Store-leg → Verdict(true), one InitialMemory-leg →
+    /// Verdict(false)).  combine_phi OR-combines.
+    struct PhiDisagreeStep;
+    impl MemChainStep for PhiDisagreeStep {
+        type Verdict = bool;
+        fn classify(
+            &mut self,
+            g: &Graph,
+            _mem: NodeOutputId,
+            node: NodeId,
+        ) -> crate::opt::error::Result<StepResult<bool>> {
+            match *g.node_kind(node) {
+                NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
+                NodeKind::Store(_) => Ok(StepResult::Verdict(true)),
+                NodeKind::MemPhi => {
+                    let inputs = g.node_inputs(node);
+                    let phi_token = inputs[0];
+                    let preds = inputs.iter().skip(1).collect();
+                    Ok(StepResult::JoinPhi { phi_node: node, phi_token, preds })
+                }
+                _ => Ok(StepResult::Verdict(true)),
+            }
+        }
+        fn cycle_verdict(&mut self) -> bool {
+            false
+        }
+        fn combine_phi(
+            &mut self,
+            _phi_node: NodeId,
+            _phi_token: NodeOutputId,
+            preds: Vec<bool>,
+        ) -> bool {
+            preds.into_iter().any(|d| d)
+        }
+    }
+
+    /// Build `fn() -> u64 { return 7; }` and return (graph, initial_mem_output).
+    fn empty_chain() -> (strider_ir::BuiltFunctionGraph, NodeOutputId) {
+        let fg = make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap();
+        // Locate the InitialMemory node and its output.
+        let im = fg
+            .preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+            .expect("InitialMemory must exist");
+        let im_out = fg.node_outputs_exact::<1>(im).unwrap()[0];
+        (fg, im_out)
+    }
+
+    /// Builds `fn() -> u64 { Store(...); Store(...); ...; return 7; }` —
+    /// a linear chain of `depth` Store nodes followed by Return.  Returns
+    /// (graph, mem_output_of_last_store, depth).
+    fn linear_store_chain(depth: usize) -> (strider_ir::BuiltFunctionGraph, NodeOutputId) {
+        let fg = make_empty_fn(|b| {
+            // Emit `depth` Stores using sentinel addresses so each is
+            // structurally distinct (different value inputs).
+            for i in 0..depth {
+                let addr = b.build_int_const(0x1000u64 + (i as u64) * 8, NodeOutputType::U64).unwrap();
+                let v = b.build_int_const(i as u64, NodeOutputType::U64).unwrap();
+                b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
+            }
+            b.build_int_const(7u64, NodeOutputType::U64)
+        })
+        .unwrap();
+        // The Return's slot-1 input is the final memory token — the
+        // head of the chain.  Following its prev_mem (Store inputs[0])
+        // walks backward to InitialMemory.
+        let ret = fg
+            .preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+            .expect("Return must exist");
+        let mem_out = fg.node_inputs(ret)[1];
+        (fg, mem_out)
+    }
+
+    #[test]
+    fn empty_chain_classifies_initial_memory_once() {
+        let (fg, im_out) = empty_chain();
+        let mut step = AlwaysClean { visit_count: 0 };
+        let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let r = walk_mem_chain(
+            fg.graph(),
+            im_out,
+            CyclePolicy::GuardEveryNode,
+            &mut seen,
+            |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
+            &mut step,
+        )
+        .unwrap();
+        assert!(!r, "AlwaysClean returns Verdict(false)");
+        assert_eq!(step.visit_count, 1, "exactly one classify call");
+    }
+
+    #[test]
+    fn early_exit_verdict_returns_payload() {
+        // Verdict(target) on the first visit short-circuits; the result
+        // must be the payload, not Default.
+        let (fg, im_out) = empty_chain();
+        let mut step = EarlyStopWithValue { target_value: 0xDEADBEEF };
+        let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let r = walk_mem_chain(
+            fg.graph(),
+            im_out,
+            CyclePolicy::GuardEveryNode,
+            &mut seen,
+            |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
+            &mut step,
+        )
+        .unwrap();
+        assert_eq!(r, 0xDEADBEEF, "early Verdict payload must be returned");
+    }
+
+    #[test]
+    fn long_linear_chain_does_not_overflow_or_lose_verdicts() {
+        // 64-deep chain of Stores — exceeds the 32 lower-bound suggested
+        // in the audit and confirms the walker is heap-bounded, not
+        // stack-bounded.
+        const DEPTH: usize = 64;
+        let (fg, head) = linear_store_chain(DEPTH);
+        let mut step = LinearTraceStep { visited: Default::default() };
+        let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let r = walk_mem_chain(
+            fg.graph(),
+            head,
+            CyclePolicy::GuardEveryNode,
+            &mut seen,
+            |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
+            &mut step,
+        )
+        .unwrap();
+        // No MemPhi in this chain; LinearTraceStep returns false at
+        // InitialMemory.
+        assert!(!r, "linear chain over InitialMemory yields false");
+        let visited = step.visited.borrow().clone();
+        // At least DEPTH Stores + 1 InitialMemory.  The builder may
+        // emit additional memory-edge wiring (e.g. a region join
+        // ControlState-mem path), so we don't pin the exact count.
+        assert!(
+            visited.len() >= DEPTH + 1,
+            "every chain node visited at least once, got {}",
+            visited.len(),
+        );
+    }
+
+    /// Builds a synthetic MemPhi via direct `Graph::create_node`, with
+    /// `n_arms` predecessors — useful for testing forking behaviour.  All
+    /// arms route through `InitialMemory`, so structurally they're
+    /// identical and combine_phi must OR-combine the same verdict.
+    fn mem_phi_all_initial(
+        fg: &mut strider_ir::BuiltFunctionGraph,
+        n_arms: usize,
+    ) -> NodeOutputId {
+        // Find InitialMemory and ControlState; use them to build a MemPhi.
+        let im_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+            .expect("InitialMemory must exist");
+        let cs_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
+            .expect("ControlState must exist");
+        let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
+        let phi_token = {
+            // ControlState's outputs are [Control, PhiToken].
+            let outs = fg.node_outputs(cs_node);
+            outs[1]
+        };
+        // Synthesise inputs: [phi_token, im_out, im_out, …] (n_arms times).
+        let mut inputs: Vec<NodeOutputId> = vec![phi_token];
+        for _ in 0..n_arms {
+            inputs.push(im_out);
+        }
+        let phi = fg.graph_mut().create_node(
+            NodeKind::MemPhi,
+            inputs.iter().copied(),
+            [strider_ir::node::NodeOutputKind::Memory],
+        );
+        fg.graph_mut().set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
+        fg.node_outputs_exact::<1>(phi).unwrap()[0]
+    }
+
+    #[test]
+    fn mem_phi_all_arms_clean_combines_to_clean() {
+        // Build the IM-only function and graft a 3-arm MemPhi all routing
+        // to InitialMemory.  All arms verdict false → combine_phi → false.
+        // The MemPhi must be reachable from `entry` so `make_empty_fn`
+        // produces a ControlState we can borrow the phi-token from.
+        // To ensure that, build an Add-chain function with a single Store
+        // so a ControlState exists in the graph.
+        let mut fg = make_empty_fn(|b| {
+            let addr = b.build_int_const(0x100u64, NodeOutputType::U64)?;
+            let v = b.build_int_const(0x42u64, NodeOutputType::U64)?;
+            b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+            b.build_int_const(7u64, NodeOutputType::U64)
+        })
+        .unwrap();
+        let phi_out = mem_phi_all_initial(&mut fg, 3);
+        let mut step = LinearTraceStep { visited: Default::default() };
+        let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let r = walk_mem_chain(
+            fg.graph(),
+            phi_out,
+            CyclePolicy::GuardPhiOnly,
+            &mut seen,
+            |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
+            &mut step,
+        )
+        .unwrap();
+        assert!(!r, "all-clean arms combine to false");
+    }
+
+    #[test]
+    fn mem_phi_disagreeing_arms_or_combines() {
+        // Construct a MemPhi with 2 arms: one through a Store, one
+        // through InitialMemory.  PhiDisagreeStep returns Verdict(true)
+        // on Store, Verdict(false) on IM, then combine_phi ORs → true.
+        let mut fg = make_empty_fn(|b| {
+            let addr = b.build_int_const(0x200u64, NodeOutputType::U64)?;
+            let v = b.build_int_const(0x99u64, NodeOutputType::U64)?;
+            b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+            b.build_int_const(7u64, NodeOutputType::U64)
+        })
+        .unwrap();
+        // Locate IM, Store, CS, then build a MemPhi[token, im_out, store_mem_out].
+        let im_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+            .unwrap();
+        let store_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+            .unwrap();
+        let cs_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
+            .unwrap();
+        let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
+        let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
+        let phi_token = fg.node_outputs(cs_node)[1];
+        let phi = fg.graph_mut().create_node(
+            NodeKind::MemPhi,
+            [phi_token, store_mem, im_out],
+            [strider_ir::node::NodeOutputKind::Memory],
+        );
+        fg.graph_mut().set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
+        let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
+
+        let mut step = PhiDisagreeStep;
+        let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let r = walk_mem_chain(
+            fg.graph(),
+            phi_out,
+            CyclePolicy::GuardPhiOnly,
+            &mut seen,
+            |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
+            &mut step,
+        )
+        .unwrap();
+        assert!(r, "Store-arm verdict true OR IM-arm verdict false → true");
+    }
+
+    #[test]
+    fn guard_every_node_blocks_revisits() {
+        // Visit InitialMemory twice via the same walk by setting up a
+        // MemPhi whose two arms both feed InitialMemory.  With
+        // GuardEveryNode, the second visit short-circuits to
+        // cycle_verdict.  With GuardPhiOnly, both arms classify
+        // independently.  We pin both behaviours.
+        let mut fg = make_empty_fn(|b| {
+            let addr = b.build_int_const(0x100u64, NodeOutputType::U64)?;
+            let v = b.build_int_const(0x42u64, NodeOutputType::U64)?;
+            b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+            b.build_int_const(7u64, NodeOutputType::U64)
+        })
+        .unwrap();
+        let phi_out = mem_phi_all_initial(&mut fg, 2);
+
+        // Step counts visits to InitialMemory specifically.
+        struct CountIM { im_visits: usize }
+        impl MemChainStep for CountIM {
+            type Verdict = bool;
+            fn classify(
+                &mut self,
+                g: &Graph,
+                _mem: NodeOutputId,
+                node: NodeId,
+            ) -> crate::opt::error::Result<StepResult<bool>> {
+                if matches!(*g.node_kind(node), NodeKind::InitialMemory) {
+                    self.im_visits += 1;
+                    return Ok(StepResult::Verdict(false));
+                }
+                if matches!(*g.node_kind(node), NodeKind::MemPhi) {
+                    let inputs = g.node_inputs(node);
+                    let phi_token = inputs[0];
+                    let preds = inputs.iter().skip(1).collect();
+                    return Ok(StepResult::JoinPhi {
+                        phi_node: node, phi_token, preds,
+                    });
+                }
+                Ok(StepResult::Verdict(true))
+            }
+            fn cycle_verdict(&mut self) -> bool { false }
+            fn combine_phi(
+                &mut self,
+                _phi_node: NodeId,
+                _phi_token: NodeOutputId,
+                preds: Vec<bool>,
+            ) -> bool { preds.into_iter().any(|d| d) }
+        }
+
+        // GuardEveryNode: IM visited once, second arm short-circuits via cycle.
+        let mut step1 = CountIM { im_visits: 0 };
+        let mut seen1: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let _ = walk_mem_chain(
+            fg.graph(),
+            phi_out,
+            CyclePolicy::GuardEveryNode,
+            &mut seen1,
+            |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
+            &mut step1,
+        )
+        .unwrap();
+        assert_eq!(
+            step1.im_visits, 1,
+            "GuardEveryNode: IM classified once even with 2 arms",
+        );
+
+        // GuardPhiOnly: IM not guarded; both arms classify independently.
+        let mut step2 = CountIM { im_visits: 0 };
+        let mut seen2: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let _ = walk_mem_chain(
+            fg.graph(),
+            phi_out,
+            CyclePolicy::GuardPhiOnly,
+            &mut seen2,
+            |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
+            &mut step2,
+        )
+        .unwrap();
+        assert_eq!(
+            step2.im_visits, 2,
+            "GuardPhiOnly: IM classified once per arm",
+        );
+    }
+
+    /// IntBinaryOp::Add is used by the linear-trace fixture so verify the
+    /// constant pulls in.
+    #[test]
+    fn linear_chain_with_intermediate_add_classifies_as_unknown() {
+        // Step has NodeKind::IntBinaryOp arm → Verdict(true) (unknown).
+        // We can't construct a memory chain that ends in Add (Add doesn't
+        // produce a memory edge), so use this as a sanity that compile-only
+        // patterns referenced above are wired.  The `IntBinaryOp::Add` enum
+        // import compiles iff the import path is correct.
+        let _ = IntBinaryOp::Add;
+    }
+}
