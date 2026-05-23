@@ -42,9 +42,8 @@ pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
 /// `SecondaryMap`.
 ///
 /// External callers see `Bindings` as read-only: construction is via
-/// `Default::default()`, the production mutation path
-/// (`Self::bind_capture`) is `pub(crate)`, and test scaffolds reach
-/// for `Self::bind_capture_for_test`.  The `mark` / `restore`
+/// `Default::default()`, and the production mutation path
+/// (`Self::bind_capture`) is `pub(crate)`.  The `mark` / `restore`
 /// journal API is `pub(crate)` because only the matcher's
 /// commutative-retry / speculative-attempt paths legitimately need it.
 #[derive(Clone, Default)]
@@ -94,12 +93,6 @@ impl Bindings {
     /// O(1) via the `index` overlay: a hit returns the existing
     /// binding's equality; a miss appends to `entries` and updates the
     /// overlay.
-    ///
-    /// Tightened to `pub(crate)`: callers outside `pattern` (test
-    /// scaffolds in particular) construct bindings via
-    /// [`Self::bind_capture_for_test`] which has the same shape but
-    /// a name signal that the caller is bypassing the matcher's
-    /// normal accumulation path.
     pub(crate) fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
         if let Some(&idx) = self.index.get(&c) {
             return self.entries[idx].1 == binding;
@@ -108,17 +101,6 @@ impl Bindings {
         self.entries.push((c, binding));
         self.index.insert(c, idx);
         true
-    }
-
-    /// Test-only setter: directly install a `(Capture, Binding)`
-    /// pair on this `Bindings` value, bypassing the matcher.  Same
-    /// semantics as [`Self::bind_capture`] (returns `true` on new or
-    /// idempotent bind, `false` on conflict).  The `_for_test` suffix
-    /// signals that the caller is hand-building a `Bindings` rather
-    /// than going through [`crate::pattern::Matcher::find_all`].
-    #[allow(dead_code)]
-    pub(crate) fn bind_capture_for_test(&mut self, c: Capture, binding: Binding) -> bool {
-        self.bind_capture(c, binding)
     }
 
     /// Returns the [`Binding`] (node + optional value output) bound to
