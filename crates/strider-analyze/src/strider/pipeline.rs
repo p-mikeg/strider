@@ -8,7 +8,7 @@ use super::PerRegionDriver;
 /// pre-edit ctrl input back to the region whose exit produced it (so
 /// it can read the region's exit `vn_to_value` for in-place edit ABI
 /// threading).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct RegionLiftHandles {
     /// Exit control output (consumed by the region's terminator).
     pub(crate) exit_control: strider_ir::node::NodeOutputId,
