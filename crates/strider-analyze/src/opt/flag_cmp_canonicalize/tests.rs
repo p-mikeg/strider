@@ -8,6 +8,7 @@
 use super::FlagCmpCanonicalize;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
+use crate::opt::test_support::find_unique_if;
 
 use strider_ir::{Graph, FunctionBuilder};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
@@ -82,15 +83,6 @@ where
     let fg = fb.build()?;
     let if_node = find_unique_if(crate::pattern::RewriteCtxView::from_built(&fg).unwrap());
     Ok((fg, if_node, a, b))
-}
-
-fn find_unique_if(ctx: crate::pattern::RewriteCtxView<'_>) -> NodeId {
-    let ifs: Vec<NodeId> = ctx
-        .all_node_ids()
-        .filter(|&n| matches!(ctx.node_kind(n), NodeKind::If))
-        .collect();
-    assert_eq!(ifs.len(), 1, "fixture must have exactly one If node");
-    ifs[0]
 }
 
 fn if_cond_output(ctx: crate::pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeOutputId {
