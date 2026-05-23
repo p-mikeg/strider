@@ -331,6 +331,169 @@ mod tests {
         );
     }
 
+    /// `default_pipeline().run` invokes `validate` at the end on a
+    /// trivial valid input — pins that the validate-on-finish step
+    /// is wired and accepts a clean graph (smoke).
+    #[test]
+    fn run_validates_after_default_pipeline() -> crate::opt::Result<()> {
+        let mut g = one_const_fn(0);
+        let entry = g.entry().unwrap();
+        crate::opt::default_pipeline().run(g.graph_mut(), entry)?;
+        Ok(())
+    }
+
+    /// `run` calls `validate` after every post-pass too — pin that a
+    /// pipeline carrying a post-pass produces a graph that still
+    /// validates.  Uses ConstantFold + StackStoreDetect (stable) +
+    /// CallStackArgCollect (post-pass) — the same plumbing the
+    /// orchestrator relies on.
+    #[test]
+    fn run_with_post_passes_validates() -> crate::opt::Result<()> {
+        use crate::opt::{CallStackArgCollect, ConstantFold, OptimizerPipeline, StackStoreDetect};
+        // Use a synthetic SP varnode in REGISTER space.
+        let sp = rsleigh::Vn {
+            addr_off: 0x20,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 4,
+        };
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut g = b.build()?;
+        let entry = g.entry().unwrap();
+
+        let mut p = OptimizerPipeline::new();
+        p.add(ConstantFold);
+        p.add(StackStoreDetect::new(sp));
+        p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
+        p.run(g.graph_mut(), entry)?;
+        Ok(())
+    }
+
+    /// 2-pass cooperation contract: `StackStoreDetect` must run
+    /// before `StackLoadForward` for forward-through-store to fire.
+    /// Build `store sp-4 = 0x42; load sp-4` and assert the load is
+    /// forwarded to `IntConst(0x42)`.  Pins the in-pipeline ordering
+    /// the orchestrator depends on.
+    #[test]
+    fn store_then_load_at_same_offset_forwarded() -> crate::opt::Result<()> {
+        use crate::opt::{
+            ConstantFold, DeadBranchElimination, KnownBits, OptimizerPipeline, RedundantPhis,
+            StackLoadForward, StackStoreDetect,
+        };
+        use strider_ir::node::NodeKind;
+        use strider_target::Endianness;
+
+        let sp = rsleigh::Vn {
+            addr_off: 0x20,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 4,
+        };
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let sp_v = b.read_variable(&sp)?;
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        b.set_lift_addr(None);
+        let mut g = b.build()?;
+        let entry = g.entry().unwrap();
+
+        let mut p = OptimizerPipeline::new();
+        p.add(ConstantFold);
+        p.add(KnownBits);
+        p.add(RedundantPhis);
+        p.add(DeadBranchElimination);
+        p.add(StackStoreDetect::new(sp));
+        p.add(StackLoadForward::new(sp, Endianness::Little));
+        p.run(g.graph_mut(), entry)?;
+
+        let ret = g
+            .all_node_ids()
+            .find(|&n| matches!(g.node_kind(n), NodeKind::Return))
+            .expect("Return present");
+        let val = g.node_inputs(ret)[2];
+        let kind = *g.kind_of_output(val);
+        assert!(
+            matches!(kind, NodeKind::IntConst(0x42)),
+            "load must forward to stored value, got {kind:?}"
+        );
+        Ok(())
+    }
+
+    /// 3-pass cooperation contract: stack-store passes + the
+    /// `CallStackArgCollect` post-pass must collaborate to extend a
+    /// Call's input list with positional stack arg values pushed
+    /// before it.  Pins the orchestrator's full SP-aware pipeline.
+    #[test]
+    fn full_call_pipeline_collects_args() -> crate::opt::Result<()> {
+        use crate::opt::{
+            CallStackArgCollect, ConstantFold, DeadBranchElimination, KnownBits,
+            OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
+        };
+        use strider_ir::node::NodeKind;
+        use strider_target::Endianness;
+
+        let sp = rsleigh::Vn {
+            addr_off: 0x20,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 4,
+        };
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let sp_v0 = b.read_variable(&sp)?;
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let sp_v1 = b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_v1)?;
+        let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
+        b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
+        let sp_v2 = b.build_int_sub(sp_v1, four, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_v2)?;
+        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut g = b.build()?;
+        let entry = g.entry().unwrap();
+
+        let mut p = OptimizerPipeline::new();
+        p.add(ConstantFold);
+        p.add(KnownBits);
+        p.add(RedundantPhis);
+        p.add(DeadBranchElimination);
+        p.add(StackStoreDetect::new(sp));
+        p.add(StackLoadForward::new(sp, Endianness::Little));
+        p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
+        p.run(g.graph_mut(), entry)?;
+
+        let call = g
+            .all_node_ids()
+            .find(|&n| matches!(g.node_kind(n), NodeKind::Call))
+            .expect("Call present");
+        let inputs = g.node_inputs(call);
+        assert_eq!(
+            inputs.len(),
+            5,
+            "ctrl + mem + target + 2 collected args = 5 inputs"
+        );
+        Ok(())
+    }
+
     /// A 50-deep chain of `Add(_, 1)` ops must reach fixed point via
     /// the default pipeline — no premature exit, no infinite loop.
     /// Pins the convergence side of the fixed-point loop.
