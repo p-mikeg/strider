@@ -830,11 +830,17 @@ impl crate::opt::AnchorCallingContext {
         // maintained `Graph::initial_var_for` index — no per-iteration
         // arena scan, no per-edit threading.
 
-        for vn in &cc.arg_passing_regs {
+        // Route `arg_passing_regs` enumeration through the canonical
+        // `PositionalArgLayout::register_args` so the ABI-order policy
+        // (register slots first, then stack slots) lives in one place.
+        // Stack args / clobbers / return-value regs keep the hand-rolled
+        // loops — those don't fit the layout's register/stack split.
+        let layout = strider_target::PositionalArgLayout::from_convention(cc);
+        for (_index, vn) in layout.register_args() {
             // surface unsupported reg sizes as Err instead
             // of silently dropping the slot (which under-models the Call
             // and can cause downstream pattern queries to miss args).
-            let out = read_or_init_var(graph, region, *vn)?;
+            let out = read_or_init_var(graph, region, vn)?;
             ctx.arg_passing_outputs.push(out);
         }
         // Clobber list: with an override, recompute from the override's
