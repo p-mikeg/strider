@@ -161,3 +161,214 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    //! Tests for `Cfg`'s query API: `region_if`, `region_branch`,
+    //! `regions`, `region_ids`, `region_id_at_start`, and the
+    //! DuplicateEdgeKind error path through `region_branch` / `region_if`.
+    //!
+    //! Ported from pre-rewrite `crates/cfg/tests/cfg_query.rs`.  The
+    //! malformed-CFG tests live inline so they can populate the
+    //! `pub(crate) start_addr_to_region_id` field directly.
+
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::collections::BTreeMap;
+
+    use petgraph::stable_graph::StableDiGraph;
+    use rsleigh::mem_readers::BufMemReader;
+    use strider_target::SleighArch;
+
+    use super::*;
+    use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
+    use crate::cfg::{Builder, OptionsBuilder};
+
+    // ── synthetic helpers ────────────────────────────────────────────────
+
+    fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
+        PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: machine },
+            insn_index: insn,
+        }
+    }
+
+    fn fake_insn() -> rsleigh::Insn {
+        rsleigh::Insn {
+            opcode: rsleigh::Opcode::Copy,
+            output: None,
+            inputs: vec![].into(),
+        }
+    }
+
+    fn make_region(addrs: &[(u64, u64)]) -> Region {
+        let start = addr(addrs[0].0, addrs[0].1);
+        let insns = addrs
+            .iter()
+            .map(|&(m, i)| RegionInstruction {
+                addr: addr(m, i),
+                insn: fake_insn(),
+            })
+            .collect();
+        Region {
+            start_addr: start,
+            insns,
+            terminator: crate::cfg::RegionTerminator::Fallthrough,
+        }
+    }
+
+    fn empty_sleigh() -> rsleigh::Sleigh<BufMemReader<Vec<u8>>> {
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+            .expect("create empty Sleigh")
+    }
+
+    // ── real-binary helpers ──────────────────────────────────────────────
+
+    fn real_cfg(case: &str, fn_name: &str) -> Cfg<strider_reader::ElfFileMemReader> {
+        use object::{Object, ObjectSymbol};
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/out/x64")
+            .join(format!("{case}.elf"));
+        assert!(
+            path.exists(),
+            "missing test binary {path:?}; run `make -C fixtures` first"
+        );
+        let obj = strider_reader::load_elf(&path)
+            .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
+        let mem = strider_reader::ElfFileMemReader::from_object(&obj)
+            .expect("ElfFileMemReader::from_object");
+        let arch = SleighArch::x86_64();
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
+            .expect("create Sleigh");
+        let entry_addr = obj
+            .symbol_by_name(fn_name)
+            .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
+            .address();
+        Builder::for_arch(&arch, sleigh, entry_addr, OptionsBuilder::new().build())
+            .build()
+            .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
+    }
+
+    // ── regions / region_ids iteration ───────────────────────────────────
+
+    #[test]
+    fn regions_iterator_count_matches_node_count() {
+        let cfg = real_cfg("control", "sum_to_n");
+        assert_eq!(cfg.regions().count(), cfg.graph.node_count());
+    }
+
+    #[test]
+    fn region_ids_iterator_count_matches_node_count() {
+        let cfg = real_cfg("control", "sum_to_n");
+        assert_eq!(cfg.region_ids().count(), cfg.graph.node_count());
+    }
+
+    // ── region_branch ────────────────────────────────────────────────────
+
+    #[test]
+    fn region_branch_returns_none_for_linear_entry() {
+        let cfg = real_cfg("arithmetic", "add");
+        assert!(cfg.region_branch(cfg.entry).unwrap().is_none());
+    }
+
+    // ── region_if ────────────────────────────────────────────────────────
+
+    #[test]
+    fn region_if_both_successors_present_on_abs_val() {
+        let cfg = real_cfg("control", "abs_val");
+        let has_pair = cfg.region_ids().any(|id| {
+            let s = cfg.region_if(id).unwrap();
+            s.if_true_region.is_some() && s.if_false_region.is_some()
+        });
+        assert!(has_pair, "abs_val: no region with both if-true and if-false successors");
+    }
+
+    #[test]
+    fn region_if_absent_on_linear_entry() {
+        let cfg = real_cfg("arithmetic", "add");
+        let s = cfg.region_if(cfg.entry).unwrap();
+        assert!(s.if_true_region.is_none());
+        assert!(s.if_false_region.is_none());
+    }
+
+    // ── DuplicateEdgeKind error ──────────────────────────────────────────
+
+    #[test]
+    fn duplicate_edge_kind_is_detected_by_region_branch() {
+        // Construct a malformed Cfg with two Branch edges from one node
+        // to distinct destinations.  region_branch (via unique_outgoing)
+        // must error with "more than one outgoing edge".
+        let mut graph: StableDiGraph<Region, RegionEdgeKind> = StableDiGraph::new();
+        let src = graph.add_node(make_region(&[(0x1000, 0)]));
+        let dst1 = graph.add_node(make_region(&[(0x2000, 0)]));
+        let dst2 = graph.add_node(make_region(&[(0x3000, 0)]));
+        graph.add_edge(src, dst1, RegionEdgeKind::Branch);
+        graph.add_edge(src, dst2, RegionEdgeKind::Branch);
+
+        let cfg = Cfg {
+            sleigh: empty_sleigh(),
+            graph,
+            entry: src,
+            start_addr_to_region_id: BTreeMap::new(),
+        };
+
+        let err = cfg.region_branch(src).unwrap_err();
+        assert!(
+            err.to_string().contains("more than one outgoing edge"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn duplicate_if_case_true_is_detected_by_region_if() {
+        let mut graph: StableDiGraph<Region, RegionEdgeKind> = StableDiGraph::new();
+        let src = graph.add_node(make_region(&[(0x1000, 0)]));
+        let dst1 = graph.add_node(make_region(&[(0x2000, 0)]));
+        let dst2 = graph.add_node(make_region(&[(0x3000, 0)]));
+        graph.add_edge(src, dst1, RegionEdgeKind::IfCaseTrue);
+        graph.add_edge(src, dst2, RegionEdgeKind::IfCaseTrue);
+
+        let cfg = Cfg {
+            sleigh: empty_sleigh(),
+            graph,
+            entry: src,
+            start_addr_to_region_id: BTreeMap::new(),
+        };
+
+        let err = cfg
+            .region_if(src)
+            .map(|_| ())
+            .expect_err("region_if must return DuplicateEdgeKind");
+        assert!(
+            err.to_string().contains("more than one outgoing edge"),
+            "got: {err}"
+        );
+    }
+
+    // ── region_id_at_start ───────────────────────────────────────────────
+
+    #[test]
+    fn region_id_at_start_returns_some_for_real_function_entry() {
+        let cfg = real_cfg("arithmetic", "add");
+        let entry_region = cfg
+            .graph
+            .node_weight(cfg.entry)
+            .expect("entry region exists");
+        let entry_addr = entry_region.start_addr.machine_addr;
+        let rid = cfg.region_id_at_start(entry_addr);
+        assert_eq!(
+            rid,
+            Some(cfg.entry),
+            "region_id_at_start must locate the entry region by its start addr"
+        );
+    }
+
+    #[test]
+    fn region_id_at_start_returns_none_for_unknown_machine_addr() {
+        let cfg = real_cfg("arithmetic", "add");
+        let rid = cfg.region_id_at_start(MachineInsnAddr { addr: 0xdead_beef });
+        assert!(rid.is_none(), "unknown addr must return None, got {rid:?}");
+    }
+}
