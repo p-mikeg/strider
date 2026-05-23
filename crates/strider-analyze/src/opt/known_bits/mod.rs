@@ -35,46 +35,24 @@ fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
 /// Both `ones` and `zeros` are masked to the output type's width and must
 /// never overlap (`ones & zeros == 0`).
 ///
-/// External callers construct via [`Kb::try_new`] (validates the
-/// invariant) or [`Kb::default`] (all-unknown, the canonical neutral
-/// value).  Read the bit masks via [`Kb::ones`] / [`Kb::zeros`].
+/// Construct via [`Kb::from_const`] / [`Kb::default`] / [`Kb::merge`],
+/// which preserve the invariant by construction; struct-literal
+/// construction is `pub(crate)` and only used inside the analysis
+/// where the masks are derived from already-validated `Kb` values.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Kb {
     /// Bits that are definitely 1.
     ///
     /// `pub(crate)` because the `ones & zeros == 0` invariant is
-    /// enforced only by [`Kb::merge`] / [`Kb::from_const`] /
-    /// [`Kb::try_new`] — external struct-literal construction
-    /// (`Kb { ones: 0xFF, zeros: 0xFF }`) silently violates it.
+    /// enforced only by [`Kb::merge`] / [`Kb::from_const`] — external
+    /// struct-literal construction (`Kb { ones: 0xFF, zeros: 0xFF }`)
+    /// would silently violate it.
     pub(crate) ones: u64,
     /// Bits that are definitely 0.  Same caveat as [`Self::ones`].
     pub(crate) zeros: u64,
 }
 
 impl Kb {
-    /// Build a `Kb` from `(ones, zeros)` bit masks, validating the
-    /// `ones & zeros == 0` invariant.  Returns `Err` when the masks
-    /// overlap — every bit must be definitely-one, definitely-zero,
-    /// or unknown, never two of those at once.
-    ///
-    /// Prefer this over the struct-literal constructor when the
-    /// caller has computed `ones`/`zeros` from external data (e.g. a
-    /// pattern-match capture or a user-supplied annotation).
-    /// Internal analysis paths that derive `Kb` from a known-correct
-    /// shape (`from_const`, `merge`) skip this check by construction.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` when `ones & zeros != 0`.
-    pub fn try_new(ones: u64, zeros: u64) -> anyhow::Result<Self> {
-        if ones & zeros != 0 {
-            return Err(anyhow::anyhow!(
-                "Kb::try_new: ones & zeros must be 0, got ones={ones:#x} zeros={zeros:#x}",
-            ));
-        }
-        Ok(Self { ones, zeros })
-    }
-
     /// Build the `Kb` for an integer constant.  Returns `None` for
     /// types this analysis doesn't track (`Bool`, floats, U128, U256):
     /// the caller treats `None` as "fully unknown" and skips
@@ -134,17 +112,6 @@ impl Kb {
         (!self.zeros) & type_mask
     }
 
-    /// Bits that are definitely 1.
-    #[must_use]
-    pub fn ones(self) -> u64 {
-        self.ones
-    }
-
-    /// Bits that are definitely 0.
-    #[must_use]
-    pub fn zeros(self) -> u64 {
-        self.zeros
-    }
 }
 
 // ── Per-node known-bits computation ───────────────────────────────────────────

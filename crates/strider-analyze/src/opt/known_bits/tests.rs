@@ -486,28 +486,15 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
 // ── Kb constructor invariant ────────────────────────────────────────────────
 
 #[test]
-fn kb_try_new_rejects_overlapping_ones_zeros() {
-    let res = super::Kb::try_new(0b1, 0b1);
-    assert!(res.is_err(), "Kb::try_new must reject ones&zeros overlap");
-}
-
-#[test]
-fn kb_try_new_accepts_disjoint_ones_zeros() {
-    let kb = super::Kb::try_new(0b01, 0b10).expect("disjoint must succeed");
-    assert_eq!(kb.ones(), 0b01);
-    assert_eq!(kb.zeros(), 0b10);
-}
-
-#[test]
 fn kb_default_is_all_unknown() {
     let kb = super::Kb::default();
-    assert_eq!(kb.ones(), 0);
-    assert_eq!(kb.zeros(), 0);
+    assert_eq!(kb.ones, 0);
+    assert_eq!(kb.zeros, 0);
 }
 
 #[test]
-fn kb_try_new_accepts_all_unknown() {
-    let kb = super::Kb::try_new(0, 0).expect("(0,0) is valid");
-    assert_eq!(kb.ones(), 0);
-    assert_eq!(kb.zeros(), 0);
+fn kb_struct_literal_disjoint_ones_zeros() {
+    let kb = super::Kb { ones: 0b01, zeros: 0b10 };
+    assert_eq!(kb.ones, 0b01);
+    assert_eq!(kb.zeros, 0b10);
 }
