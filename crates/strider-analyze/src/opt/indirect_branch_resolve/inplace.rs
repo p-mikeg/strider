@@ -98,6 +98,21 @@ pub fn apply_link_register(
     placeholder: NodeId,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
+    // Defensive: ret-val outputs must reference ABI register values
+    // produced upstream of the placeholder, never the placeholder's
+    // own outputs.  Including a placeholder output would create a
+    // self-referential edge after detach_placeholder runs (the new
+    // Return node would consume a value produced by the soon-to-be-
+    // zombie placeholder).  Sleigh's contract + the orchestrator's
+    // construction site guarantee this; the assert pins the invariant.
+    debug_assert!(
+        {
+            let placeholder_outs: &[NodeOutputId] =
+                ctx.graph_ref().node_outputs(placeholder);
+            !ret_val_outputs.iter().any(|o| placeholder_outs.contains(o))
+        },
+        "apply_link_register: ret_val_outputs must not reference placeholder's own outputs",
+    );
     let PlaceholderEdit { control_in, memory_in, target_value: _, fingerprint } =
         detach_placeholder(ctx, placeholder)?;
     let graph = ctx.graph_mut();
@@ -148,6 +163,30 @@ pub fn apply_tail_call(
     clobbered_kinds: &[NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
+    // Defensive: arg-passing and ret-val outputs must reference ABI
+    // register values produced upstream of the placeholder, never the
+    // placeholder's own outputs.  Including a placeholder output would
+    // create a self-referential edge after `detach_placeholder` runs
+    // (the new Call / Return would consume a value produced by the
+    // soon-to-be-zombie placeholder).  Sleigh's contract + the
+    // orchestrator's construction site guarantee this; the asserts pin
+    // the invariant.
+    debug_assert!(
+        {
+            let placeholder_outs: &[NodeOutputId] =
+                ctx.graph_ref().node_outputs(placeholder);
+            !arg_passing_outputs.iter().any(|o| placeholder_outs.contains(o))
+        },
+        "apply_tail_call: arg_passing_outputs must not reference placeholder's own outputs",
+    );
+    debug_assert!(
+        {
+            let placeholder_outs: &[NodeOutputId] =
+                ctx.graph_ref().node_outputs(placeholder);
+            !ret_val_outputs.iter().any(|o| placeholder_outs.contains(o))
+        },
+        "apply_tail_call: ret_val_outputs must not reference placeholder's own outputs",
+    );
     let PlaceholderEdit { control_in, memory_in, target_value, fingerprint } =
         detach_placeholder(ctx, placeholder)?;
     let graph = ctx.graph_mut();

@@ -23,6 +23,27 @@ use strider_ir::{BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;
 
+/// Verifies that two p-code input varnodes have equal byte-widths.
+///
+/// Several lowerings (`IntSub`, the three comparison lowerings
+/// `IntLessEqual` / `IntSlessEqual` / `IntNotEqual`) require their two
+/// inputs to share a width.  Sleigh's contract already guarantees this
+/// — but a malformed `.sla` spec or a fuzzer-constructed `Insn` would
+/// produce a width disagreement that the IR's
+/// `build_int_binary_operation` / `build_int_cmp_operation` would
+/// silently width-adapt.  Surfacing the mismatch as a lift-time error
+/// keeps a real spec bug visible instead of papering over it.
+fn require_equal_input_widths(a: &rsleigh::Vn, b: &rsleigh::Vn) -> Result<()> {
+    if a.size != b.size {
+        return Err(anyhow::anyhow!(
+            "p-code input width mismatch: lhs={} rhs={} (Sleigh requires equal widths)",
+            a.size,
+            b.size,
+        ));
+    }
+    Ok(())
+}
+
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a p-code integer unary instruction into an IR unary node and
     /// writes the result to the output varnode.
@@ -79,6 +100,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// width, NOT the output width: the output is a 1-byte bool, the
     /// inputs may be any integer width.
     pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        require_equal_input_widths(&insn.inputs[0], &insn.inputs[1])?;
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
@@ -101,6 +123,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// see one canonical shape (`Less` plus an optional `BoolNeg`) instead
     /// of two.
     pub(super) fn handle_int_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        require_equal_input_widths(&insn.inputs[0], &insn.inputs[1])?;
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
@@ -122,6 +145,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// swap, same `BoolNeg` wrap, but with `IntCmpOp::Sless` for signed
     /// comparison.
     pub(super) fn handle_int_sless_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        require_equal_input_widths(&insn.inputs[0], &insn.inputs[1])?;
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
@@ -149,22 +173,24 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// `Add(a, IntConst(-K))` immediately — no persisted node-count
     /// regression.  Variable-RHS subtractions add one `Neg` node.
     pub(super) fn handle_int_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        // Sleigh's `IntSub` requires `inputs[0].size == inputs[1].size ==
+        // output.size`.  Surface any mismatch as a lift-time error rather
+        // than silently coercing in `build_int_binary_operation`'s width
+        // adaptation — a Sleigh spec emitting widths in disagreement is
+        // a real bug we want to see, not paper over.  The input-width
+        // check is shared with the three comparison lowerings via
+        // [`require_equal_input_widths`]; `IntSub` adds the extra
+        // output-width check (the comparison lowerings produce a Bool
+        // output so the output-width check doesn't apply there).
+        require_equal_input_widths(&insn.inputs[0], &insn.inputs[1])?;
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty = out_vn.size.try_into()?;
-        // Sleigh's `IntSub` requires `inputs[0].size == inputs[1].size ==
-        // output.size`.  Surface a mismatch as a lift-time error rather
-        // than silently coercing in `build_int_binary_operation`'s width
-        // adaptation — a Sleigh spec emitting widths in disagreement is
-        // a real bug we want to see, not paper over.
-        if insn.inputs[0].size != insn.inputs[1].size
-            || insn.inputs[0].size != out_vn.size
-        {
+        if insn.inputs[0].size != out_vn.size {
             return Err(anyhow::anyhow!(
-                "IntSub width mismatch: lhs={} rhs={} out={} (Sleigh requires equal widths)",
+                "IntSub width mismatch: inputs={} out={} (Sleigh requires equal widths)",
                 insn.inputs[0].size,
-                insn.inputs[1].size,
                 out_vn.size,
             ));
         }

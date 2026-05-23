@@ -237,6 +237,32 @@ const MAX_STRIP_LAYERS: usize = 4;
 // truncating `as u64` is preserved verbatim — the prior
 // `int_const_val` returned `u64`, and `get_uint` returns `u128`.
 // Real dispatch masks fit in `u64` on every supported arch.
+//
+// SAFETY / OVER-APPROXIMATION — the `c128 as u64` truncations are
+// sound for the indirect-branch-resolver's purpose:
+//
+//   * The accumulated `mask` is folded into a u64 dispatch-address
+//     mask.  The orchestrator only consults `mask` to bound the
+//     concrete jump-table target addresses (themselves u64 on every
+//     supported arch).  Dropping the upper 64 bits of an AND-mask
+//     produces a STRICT-OVER-APPROXIMATION: the kept low-64 bits are
+//     still a valid superset of the legal target addresses, so the
+//     downstream `match_stack_array_shape` shape match — which
+//     fails closed when the residual isn't a Load — only loses
+//     resolution power, never soundness.
+//   * Similarly, the OR-strip decision (`or_c & mask == 0`) operates
+//     on the low-64 truncated `or_c` and `mask`.  Bits 64..127 of
+//     `or_c` that happen to overlap mask bits 64..127 would mean the
+//     OR is NOT a no-op — truncating both sides could spuriously
+//     conclude the OR is no-op when it isn't.  This still fails
+//     safe because every supported arch's instruction pointer fits
+//     in `u64`, so a u128-shaped OR-constant in this slot would
+//     itself indicate an invariant break upstream (the address
+//     arithmetic doesn't widen past `u64`).
+//
+// If a future arch introduces a >64-bit instruction pointer this
+// truncation would have to be widened (along with the rest of the
+// dispatch-address pipeline that currently uses `u64`).
 fn strip_target_mask(
     ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,

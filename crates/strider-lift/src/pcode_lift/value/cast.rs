@@ -70,6 +70,17 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         } else {
             // safe: byte_offset < input.size <= u32::MAX, so byte_offset * 8 fits in u64
             let bit_shift = byte_offset * 8;
+            // Defensive guard against future Subpiece-width extensions: the
+            // upstream `byte_offset < input_vn.size` check already pins
+            // `bit_shift <= (input_vn.size - 1) * 8` which today caps at
+            // 120 < 128 (max supported `u128` IR width).  If a future
+            // Subpiece variant ever widened past `u128` inputs, the shift
+            // would silently exceed the IR's representable bit-width.
+            debug_assert!(
+                bit_shift < u64::from(input_vn.size) * 8,
+                "Subpiece bit_shift {bit_shift} must be < input bit-width {}",
+                u64::from(input_vn.size) * 8,
+            );
             let shift_const = self
                 .builder
                 .build_int_const(bit_shift, input_vn.size.try_into()?)?;
