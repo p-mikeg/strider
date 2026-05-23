@@ -590,6 +590,85 @@ fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
     Ok(())
 }
 
+/// Helper: construct a register-space Vn for CallOther implicit-write
+/// tests.  CallOther's per-node clobber-override side-table records
+/// these Vns verbatim; they don't need to correspond to any
+/// tracked-variable entry.
+fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
+    rsleigh::Vn {
+        size,
+        addr_off: off,
+        addr_space: rsleigh::VnSpace::REGISTER,
+    }
+}
+
+#[test]
+fn build_call_other_modeled_with_value_emits_value_then_clobbers_in_order() -> Result<()> {
+    // Two synthetic implicit-write kinds; their corresponding Vns are
+    // recorded only on the per-CallOther clobber-override side-table.
+    // No tracked-variable lookup happens in build_call_other_modeled.
+    let mut b = builder_with_region()?;
+    let r0 = reg_vn(0, 4);
+    let r1 = reg_vn(4, 4);
+
+    let (node, value, clobber_outs) = b.build_call_other_modeled(
+        8,
+        "cpuid",
+        &[],
+        Some(NodeOutputType::U32),
+        &[],
+        &[r0, r1],
+        &[
+            NodeOutputKind::OutputType(NodeOutputType::U32),
+            NodeOutputKind::OutputType(NodeOutputType::U32),
+        ],
+    )?;
+    assert!(value.is_some(), "output_ty -> value slot");
+    assert_eq!(
+        clobber_outs.len(),
+        2,
+        "two implicit_writes -> two clobber slots"
+    );
+    let n_outs = b.graph().node_outputs(node).len();
+    assert_eq!(n_outs, 5, "ctrl + mem + value + 2 clobbers");
+    assert_eq!(b.graph().call_other_name(node), Some("cpuid"));
+    Ok(())
+}
+
+#[test]
+fn build_call_other_modeled_rejects_non_value_implicit_write_kind() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let r0 = reg_vn(0, 4);
+    let res = b.build_call_other_modeled(
+        11,
+        "bogus",
+        &[],
+        None,
+        &[],
+        &[r0],
+        &[NodeOutputKind::Control],
+    );
+    let err = res.expect_err("non-value implicit_write kind should be rejected");
+    assert!(
+        err.to_string().contains("not a value kind"),
+        "got: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_call_other_modeled_rejects_arity_mismatch_between_writes_and_kinds() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let r0 = reg_vn(0, 4);
+    let res = b.build_call_other_modeled(12, "bogus", &[], None, &[], &[r0], &[]);
+    let err = res.expect_err("arity mismatch should be rejected");
+    assert!(
+        err.to_string().contains("implicit_writes_vns.len()"),
+        "got: {err}"
+    );
+    Ok(())
+}
+
 #[test]
 fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
     // Pin the contract: create_node_attributed unions every contributor's
