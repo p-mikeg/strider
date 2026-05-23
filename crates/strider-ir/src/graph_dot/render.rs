@@ -144,19 +144,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             .zip(branch_labels.iter())
             .zip(edge_labels.iter())
         {
-            // A consumer rendered before this If may have already
-            // created the virtual node eagerly.  Reuse it to avoid a
-            // duplicate declaration; only emit `node` when creating
-            // for the first time.
-            let virt_id = match state.virtual_nodes.get(&out_id).cloned() {
-                Some(existing) => existing,
-                None => {
-                    let v = state.alloc_virtual_id();
-                    out.node(&v, blabel, "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
-                    state.virtual_nodes.insert(out_id, v.clone());
-                    v
-                }
-            };
+            let virt_id = Self::get_or_create_if_branch_virtual(state, out_id, blabel, out);
             out.edge(
                 cur_id,
                 &virt_id,
@@ -167,6 +155,29 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                     ("fontsize", "9"),
                 ],
             );
+        }
+    }
+
+    /// Get-or-create the per-If-branch "trapezium" virtual node keyed
+    /// by `out_id` in `state.virtual_nodes`.  Either `emit_if_branch_virtuals`
+    /// (driven by phase B when the If itself is rendered) or
+    /// `emit_input_edge` (driven by phase C when a consumer is rendered
+    /// before the producing If) can be the first to materialise the
+    /// virtual; the get-or-create dance lets both paths share state.
+    fn get_or_create_if_branch_virtual(
+        state: &mut GraphDotDumperState,
+        out_id: crate::node::NodeOutputId,
+        blabel: &str,
+        out: &mut ::dot::DotEmitter,
+    ) -> String {
+        match state.virtual_nodes.get(&out_id).cloned() {
+            Some(existing) => existing,
+            None => {
+                let v = state.alloc_virtual_id();
+                out.node(&v, blabel, "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
+                state.virtual_nodes.insert(out_id, v.clone());
+                v
+            }
         }
     }
 
@@ -255,15 +266,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 } else {
                     "if.false"
                 };
-                match state.virtual_nodes.get(&parent_output).cloned() {
-                    Some(existing) => existing,
-                    None => {
-                        let v = state.alloc_virtual_id();
-                        out.node(&v, blabel, "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
-                        state.virtual_nodes.insert(parent_output, v.clone());
-                        v
-                    }
-                }
+                Self::get_or_create_if_branch_virtual(state, parent_output, blabel, out)
             } else {
                 state.get_dot_id(self.graph, parent_id)
             }
