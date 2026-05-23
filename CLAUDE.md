@@ -341,6 +341,12 @@ so the resolver-bearing dependency stays one-way.
     `strider_lift::cfg`).
   - `GraphRewriter` — pattern-rewrite façade over
     `pattern::rewrite_rule`.
+  - `dump_per_region` / `dump_neighborhood` — visualisation helpers
+    re-exported at the crate root.  `dump_per_region` writes one
+    `region_<addr>.html` per region (membership built via
+    `strider_ir::walk::region_membership_from_exit`).
+    `dump_neighborhood` writes a single depth-bounded HTML around a
+    seed node for focused inspection.
   - `errors` — typed error catalogue, including
     `UnresolvedIndirectBranch`.
 
