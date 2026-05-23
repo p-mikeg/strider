@@ -7,9 +7,11 @@ edition.workspace = true
 strider-ir = { workspace = true }
 entity-utils = { workspace = true }
 # strider-lift forward dep: the cfg-time mini-IR indirect-resolver
-# implementation lives here as a concrete `IndirectTargetResolver` impl
-# (see src/indirect_resolver.rs).  Also powers the orchestrator via the
-# lifter/region driver crates re-exported through strider-lift.
+# implementation lives here as a closure wrapped in
+# `strider_lift::cfg::IndirectResolverFn` (see src/indirect_resolver.rs)
+# and is installed via `Builder::with_indirect_resolver`.  Also powers
+# the orchestrator via the lifter / region driver crates re-exported
+# through strider-lift.
 strider-lift = { workspace = true }
 rsleigh.workspace = true
 strider-target.workspace = true

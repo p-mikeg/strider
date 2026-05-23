@@ -72,8 +72,9 @@ Strider crates:
 - `strider-lift` — value-producing pcode→IR lifter **and** CFG builder.
 - `strider-analyze` — orchestrator, optimizer pipeline, pattern matcher,
   indirect-branch resolver, graph rewriter.
-- `strider-pattern-macros` — proc-macro that emits paired Rust + PyO3
-  pattern builders from one annotated `*Def` struct.
+- `strider-pattern-macros` — proc-macro that emits PyO3 mirror
+  builders from one annotated `*Def` struct (the Rust-side
+  `pattern::*Pat` builders remain hand-written in `strider-analyze`).
 - `strider-ir-test-utils` — `make_empty_fn` / `RegisterSet` builders
   and asm-fingerprint-stamping helpers shared by every crate's tests.
 - `strider-py` — PyO3 bindings (`maturin develop` builds a wheel).
@@ -95,8 +96,8 @@ Strider crates:
              ↑
         strider-py
 
-  strider-pattern-macros (proc-macro; consumed by strider-analyze
-    for Pat builders and by strider-py for Py*Pat mirrors)
+  strider-pattern-macros (proc-macro; consumed by strider-py to emit
+    Py*Pat mirrors of the hand-written Rust Pat builders)
 
   strider-ir-test-utils (dev-dep; depends on strider-ir)
 
@@ -142,13 +143,15 @@ so the resolver-bearing dependency stays one-way.
   - `FunctionBuilder::build` returns the populated `Graph` directly —
     `entry` and `cc_metadata` are `Some(_)` after `build` succeeds.
   - `ReadOnlyMemory` trait — `read(&self, addr: u64, size: usize) ->
-    Option<u64>`; returns up to 8 bytes as a little-endian-decoded
-    `u64`, or `None` for unmapped addresses / sizes > 8.  Blanket
-    impls for `Arc<T>` and `Box<T>`.  Defined here (not in
-    `strider-reader`) so optimiser passes can depend on the trait
-    without back-edging through the reader crate.  Concrete impls live
-    in `strider-reader`.  The optimizer's `LoadReadOnly` takes
-    `&dyn ReadOnlyMemory` so it doesn't depend on the reader crate.
+    Option<u64>`; returns up to 8 bytes as a target-endian-decoded
+    `u64` (impl byte-swaps per arch endianness — e.g.
+    `ElfFileMemReader` consults `is_little_endian`), or `None` for
+    unmapped addresses / sizes > 8.  Blanket impls for `Arc<T>` and
+    `Box<T>`.  Defined here (not in `strider-reader`) so optimiser
+    passes can depend on the trait without back-edging through the
+    reader crate.  Concrete impls live in `strider-reader`.  The
+    optimizer's `LoadReadOnly` takes `&dyn ReadOnlyMemory` so it
+    doesn't depend on the reader crate.
   - `NodeOutputKind` — `Control`, `Memory`, `PhiToken`, or
     `OutputType(NodeOutputType)`.
   - `NodeOutputType` — integers `Bool`, `U8`, `U16`, `U32`, `U64`, `U80`
@@ -156,9 +159,10 @@ so the resolver-bearing dependency stays one-way.
     `F80`.  Wide types (`U256` / `U512`) are stored via
     `IntConstWide(WideConstId)` interned in `Graph::wide_consts`;
     `IntConst(u128)` rejects them.
-  - `walk::walk_graph(graph, entry)` — preorder traversal that follows
-    both backward-data and forward-control edges.  Used by the validator
-    and several passes.
+  - `walk::walk_graph(graph, entry)` (`pub(crate)`) — preorder
+    traversal that follows both backward-data and forward-control
+    edges.  Used by the validator and several internal passes; not
+    exposed to downstream crates.
   - `node_signature::{ExpectedOutputKind, expected_signature}` — single
     source of truth for expected input/output slot kinds per `NodeKind`.
   - `validate::validate(&graph, entry) -> Result<(), ValidationErrors>`
@@ -351,13 +355,16 @@ so the resolver-bearing dependency stays one-way.
     `UnresolvedIndirectBranch`.
 
 - **`strider-pattern-macros`** — proc-macro crate (`proc-macro = true`).
-  Emits a Rust pattern builder + `Pat` constructor + PyO3
-  `#[gen_stub_pyclass] #[pyclass]` mirror + stub-gen methods from one
-  annotated `*Def` struct.  10 of 14 pattern builders are macro-emitted;
-  4 stay hand-written: `FunctionArgPat` (enum-dispatch source) plus the
-  three binary-op builders (`IntBinaryOpPat`, `BoolBinaryOpPat`,
-  `FloatBinaryOpPat`) whose required-construction shape doesn't fit the
-  macro's field-based model.
+  Emits the PyO3 mirror only — `#[gen_stub_pyclass] #[pyclass]`
+  wrapper + stub-gen methods — from one annotated `*Def` struct.  The
+  Rust-side `Pat` builders themselves remain hand-written in
+  `strider-analyze::pattern`; the macro's job is to spare you a
+  byte-for-byte duplicate on the Python side.  10 of 14 pattern
+  builders have macro-emitted mirrors; 4 PyO3 mirrors stay
+  hand-written: `PyFunctionArgPat` (enum-dispatch source) plus the
+  three binary-op mirrors (`PyIntBinaryPat`, `PyBoolBinaryPat`,
+  `PyFloatBinaryPat`) whose required-construction shape doesn't fit
+  the macro's field-based model.
 
 - **`strider-ir-test-utils`** — `RegisterSet` (fluent builder over
   `FunctionBuilder::new_raw`), `make_empty_fn`, `make_fn_with_var`,
@@ -438,11 +445,15 @@ truth for every node's input/output shape.  Node kinds, grouped:
 `strider_analyze::pattern` exposes `Pat` / `Capture` / `Matcher` /
 `Match` with fluent builders for every node kind.  Key points:
 
-- 10 of 14 builders are emitted by `strider-pattern-macros` from one
-  annotated `*Def` struct; the macro emits the Rust builder + the PyO3
-  mirror together, so adding a field updates both sides.
-- 4 builders stay hand-written: `FunctionArgPat` (enum-dispatch source)
-  and the three binary-op builders.
+- The Rust-side builders are all hand-written in
+  `strider-analyze::pattern`.  `strider-pattern-macros` emits the
+  matching PyO3 mirror (`Py*Pat`) from the same `*Def` struct, so
+  adding a field on the Python side updates the generated mirror
+  automatically — the Rust builder must still be updated by hand.
+- 10 of 14 builders have macro-emitted PyO3 mirrors; 4 mirrors stay
+  hand-written: `PyFunctionArgPat` (enum-dispatch source) and the
+  three binary-op mirrors (`PyIntBinaryPat`, `PyBoolBinaryPat`,
+  `PyFloatBinaryPat`).
 - **Lift-time canonicalisation** (the lifter applies these so patterns
   match the canonical shape):
   - `IntSub(a, b)` → `Add(a, Neg(b))`.

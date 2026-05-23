@@ -134,15 +134,16 @@ impl NodeOutputType {
         matches!(self.info().category, NodeOutputTypeCategory::Bool)
     }
 
-    /// Returns `true` if this type is one of the unsigned integer variants
-    /// (U8, U16, U32, U64, U128, U256).
+    /// Returns `true` if this type is one of the unsigned integer
+    /// variants (U8, U16, U32, U64, U80, U128, U256, U512).
     #[inline]
     #[must_use]
     pub fn is_integer(self) -> bool {
         matches!(self.info().category, NodeOutputTypeCategory::Int)
     }
 
-    /// Returns `true` if this type is `F32` or `F64`.
+    /// Returns `true` if this type is one of the float variants
+    /// (F32, F64, F80).
     #[inline]
     #[must_use]
     pub fn is_float(self) -> bool {

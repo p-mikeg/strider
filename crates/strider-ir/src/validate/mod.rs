@@ -88,10 +88,11 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 /// Returns whether an actual [`NodeOutputKind`] satisfies the
 /// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
 ///
-/// `AnyInt` matches any integer-typed output (U8, U16, U32, U64, U128, U256);
-/// `AnyFloat` matches F32 or F64; `Bool` matches only `OutputType(Bool)`.
-/// `Control`, `Memory`, and `PhiToken` match their identically-named
-/// [`NodeOutputKind`] variants.
+/// `AnyInt` matches any integer-typed output (U8, U16, U32, U64, U80,
+/// U128, U256, U512); `AnyFloat` matches F32, F64, or F80; `Bool`
+/// matches only `OutputType(Bool)`.  `Control`, `Memory`, and
+/// `PhiToken` match their identically-named [`NodeOutputKind`]
+/// variants.
 fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
     match expected {
         ExpectedOutputKind::Control => matches!(actual, NodeOutputKind::Control),
