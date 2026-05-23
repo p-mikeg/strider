@@ -1127,12 +1127,16 @@ fn edge_set_of(
 ///    `ControlState` join nodes, then the data-ancestor closure).
 /// 2. Build a `strider_ir::graph_dot::GraphDotDumper` limited to that
 ///    membership.
-/// 3. Write `region_<addr>.html` into `out_dir`, where `<addr>` is the
-///    first asm-fingerprint of the exit's producer (zero-padded
-///    16-hex-digit `u64`); regions whose producer carries no
-///    asm-fingerprint (e.g. a region terminator that was synthesised by
-///    a pass without stamping) fall back to a sequential
-///    `region_idx<i>` name so file collisions stay deterministic.
+/// 3. Write `region_<idx>_<addr>.html` into `out_dir`, where `<idx>` is
+///    the region's enumeration index and `<addr>` is the first
+///    asm-fingerprint of the exit's producer (zero-padded 16-hex-digit
+///    `u64`).  The leading `<idx>` is unconditional: two regions sharing
+///    a producer's first asm-fingerprint (e.g. a synthesised region
+///    terminator that was stamped from the same lift address as another
+///    region's exit) would otherwise produce colliding filenames whose
+///    second write silently truncated the first via `std::fs::write`.
+///    Regions whose producer carries no asm-fingerprint fall back to
+///    `region_<idx>_nofp.html`.
 ///
 /// `out_dir` must exist; this function does not create it.
 ///
@@ -1160,11 +1164,14 @@ where
         let dumper = graph.dot_dumper(sleigh)?.with_node_filter(membership);
 
         let producer = graph.get_node_from_output(exit_control);
+        // Include `idx` unconditionally: two regions whose producers
+        // share a first asm-fingerprint would otherwise collide via
+        // `std::fs::write` (silent overwrite).
         let addr_part: String = graph
             .asm_fingerprint(producer)
             .first()
-            .map_or_else(|| format!("idx{idx}"), |a| format!("{a:016x}"));
-        let path = out_dir.join(format!("region_{addr_part}.html"));
+            .map_or_else(|| "nofp".to_string(), |a| format!("{a:016x}"));
+        let path = out_dir.join(format!("region_{idx}_{addr_part}.html"));
         ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
             .dump_as_html(&path)
             .map_err(|e| {
