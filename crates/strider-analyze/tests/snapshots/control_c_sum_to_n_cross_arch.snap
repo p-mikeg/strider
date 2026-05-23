@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/cross_arch_shape.rs
+source: crates/strider-analyze/tests/cross_arch_shape.rs
+assertion_line: 205
 expression: map
 ---
 aarch64:
@@ -16,15 +17,15 @@ aarch64:
   kind_histogram:
     ControlState: 1
     Entry: 1
-    "Extend::ZeroExtend": 2
+    Extend(ZeroExtend): 2
     FunctionArg: 2
     If: 2
     InitialMemory: 1
     InitialVar: 2
-    "IntBinaryOp::Add": 3
-    "IntBinaryOp::And": 1
-    "IntBinaryOp::ShiftRight": 1
-    "IntCmpOp::Equal": 2
+    IntBinaryOp(Add): 3
+    IntBinaryOp(And): 1
+    IntBinaryOp(ShiftRight): 1
+    IntCmpOp(Equal): 2
     IntConst: 4
     Return: 2
     Truncate: 4
@@ -43,13 +44,13 @@ aarch64be:
   kind_histogram:
     ControlState: 1
     Entry: 1
-    "Extend::ZeroExtend": 1
+    Extend(ZeroExtend): 1
     FunctionArg: 2
     If: 1
     InitialMemory: 1
     InitialVar: 3
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Sless): 1
     IntConst: 3
     Load: 1
     MemPhi: 1
@@ -76,10 +77,10 @@ arm:
     If: 2
     InitialMemory: 1
     InitialVar: 2
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Equal": 2
-    "IntCmpOp::Sborrow": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Equal): 2
+    IntCmpOp(Sborrow): 1
+    IntCmpOp(Sless): 1
     IntConst: 2
     Return: 2
     VarPhi: 2
@@ -101,8 +102,8 @@ arm_be:
     If: 1
     InitialMemory: 1
     InitialVar: 3
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Sless): 1
     IntConst: 3
     Load: 1
     MemPhi: 1
@@ -128,10 +129,10 @@ arm_thumb:
     If: 2
     InitialMemory: 1
     InitialVar: 2
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Equal": 2
-    "IntCmpOp::Sborrow": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Equal): 2
+    IntCmpOp(Sborrow): 1
+    IntCmpOp(Sless): 1
     IntConst: 2
     Return: 2
     VarPhi: 2
@@ -153,9 +154,9 @@ mips32be:
     If: 2
     InitialMemory: 1
     InitialVar: 3
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 1
     IntConst: 2
     Return: 2
     VarPhi: 2
@@ -177,9 +178,9 @@ mips32le:
     If: 2
     InitialMemory: 1
     InitialVar: 3
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 1
     IntConst: 2
     Return: 2
     VarPhi: 2
@@ -197,14 +198,14 @@ mips64be:
   kind_histogram:
     ControlState: 1
     Entry: 1
-    "Extend::SignExtend": 3
+    Extend(SignExtend): 3
     FunctionArg: 1
     If: 2
     InitialMemory: 1
     InitialVar: 2
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 1
     IntConst: 2
     Return: 2
     Truncate: 3
@@ -223,14 +224,14 @@ mips64le:
   kind_histogram:
     ControlState: 1
     Entry: 1
-    "Extend::SignExtend": 3
+    Extend(SignExtend): 3
     FunctionArg: 1
     If: 2
     InitialMemory: 1
     InitialVar: 2
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 1
     IntConst: 2
     Return: 2
     Truncate: 3
@@ -255,13 +256,13 @@ ppc32be:
     If: 1
     InitialMemory: 1
     InitialVar: 5
-    "IntBinaryOp::Add": 3
-    "IntBinaryOp::And": 2
-    "IntBinaryOp::Or": 3
-    "IntBinaryOp::ShiftLeft": 3
-    "IntBinaryOp::ShiftRight": 1
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 2
+    IntBinaryOp(Add): 3
+    IntBinaryOp(And): 2
+    IntBinaryOp(Or): 3
+    IntBinaryOp(ShiftLeft): 3
+    IntBinaryOp(ShiftRight): 1
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 2
     IntConst: 6
     Load: 1
     MemPhi: 1
@@ -288,13 +289,13 @@ ppc32le:
     If: 1
     InitialMemory: 1
     InitialVar: 5
-    "IntBinaryOp::Add": 3
-    "IntBinaryOp::And": 2
-    "IntBinaryOp::Or": 3
-    "IntBinaryOp::ShiftLeft": 3
-    "IntBinaryOp::ShiftRight": 1
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 2
+    IntBinaryOp(Add): 3
+    IntBinaryOp(And): 2
+    IntBinaryOp(Or): 3
+    IntBinaryOp(ShiftLeft): 3
+    IntBinaryOp(ShiftRight): 1
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 2
     IntConst: 6
     Load: 1
     MemPhi: 1
@@ -317,19 +318,19 @@ ppc64be:
     CastToInt: 3
     ControlState: 1
     Entry: 1
-    "Extend::SignExtend": 3
-    "Extend::ZeroExtend": 4
+    Extend(SignExtend): 3
+    Extend(ZeroExtend): 4
     FunctionArg: 1
     If: 1
     InitialMemory: 1
     InitialVar: 4
-    "IntBinaryOp::Add": 3
-    "IntBinaryOp::And": 2
-    "IntBinaryOp::Or": 3
-    "IntBinaryOp::ShiftLeft": 3
-    "IntBinaryOp::ShiftRight": 1
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 2
+    IntBinaryOp(Add): 3
+    IntBinaryOp(And): 2
+    IntBinaryOp(Or): 3
+    IntBinaryOp(ShiftLeft): 3
+    IntBinaryOp(ShiftRight): 1
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 2
     IntConst: 6
     Load: 1
     MemPhi: 1
@@ -353,19 +354,19 @@ ppc64le:
     CastToInt: 3
     ControlState: 1
     Entry: 1
-    "Extend::SignExtend": 3
-    "Extend::ZeroExtend": 4
+    Extend(SignExtend): 3
+    Extend(ZeroExtend): 4
     FunctionArg: 1
     If: 1
     InitialMemory: 1
     InitialVar: 4
-    "IntBinaryOp::Add": 3
-    "IntBinaryOp::And": 2
-    "IntBinaryOp::Or": 3
-    "IntBinaryOp::ShiftLeft": 3
-    "IntBinaryOp::ShiftRight": 1
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 2
+    IntBinaryOp(Add): 3
+    IntBinaryOp(And): 2
+    IntBinaryOp(Or): 3
+    IntBinaryOp(ShiftLeft): 3
+    IntBinaryOp(ShiftRight): 1
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 2
     IntConst: 6
     Load: 1
     MemPhi: 1
@@ -387,14 +388,14 @@ x64:
   kind_histogram:
     ControlState: 1
     Entry: 1
-    "Extend::ZeroExtend": 3
+    Extend(ZeroExtend): 3
     FunctionArg: 2
     If: 2
     InitialMemory: 1
     InitialVar: 2
-    "IntBinaryOp::Add": 3
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 3
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 1
     IntConst: 3
     Return: 2
     Truncate: 4
@@ -417,11 +418,11 @@ x86:
     If: 2
     InitialMemory: 1
     InitialVar: 6
-    "IntBinaryOp::Add": 4
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 4
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 1
     IntConst: 3
-    "IntUnaryOp::Neg": 2
+    IntUnaryOp(Neg): 2
     Return: 1
     StackStore: 2
     VarPhi: 5
@@ -443,11 +444,11 @@ x86_kernel:
     If: 2
     InitialMemory: 1
     InitialVar: 5
-    "IntBinaryOp::Add": 4
-    "IntCmpOp::Equal": 1
-    "IntCmpOp::Sless": 1
+    IntBinaryOp(Add): 4
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 1
     IntConst: 3
-    "IntUnaryOp::Neg": 2
+    IntUnaryOp(Neg): 2
     Return: 2
     StackStore: 2
     VarPhi: 3

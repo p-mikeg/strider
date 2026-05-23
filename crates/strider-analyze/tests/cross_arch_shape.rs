@@ -84,55 +84,19 @@ impl Fingerprint {
 /// with the same variant but different payload (e.g. `IntConst(0)` vs
 /// `IntConst(42)`, or `InitialVar(rax)` vs `InitialVar(x0)`) collapse to
 /// the same bucket.  Operator-bearing variants keep the operator name
-/// (e.g. `IntBinaryOp::Add`) since that's a *structural* property of the
+/// (e.g. `IntBinaryOp(Add)`) since that's a *structural* property of the
 /// source program, not a register-renaming artefact.
+///
+/// Delegates to [`NodeKind::as_static_str`] for the common case;
+/// overrides only for `Phi`, which splits into `VarPhi` / `ValuePhi`
+/// based on the per-node side-table `Graph::phi_var_tag` (the
+/// `as_static_str` method has no graph context).
 fn kind_bucket(g: &strider_ir::Graph, nid: strider_ir::node::NodeId) -> String {
     let k = g.node_kind(nid);
     match k {
-        NodeKind::Entry => "Entry".to_string(),
-        NodeKind::InitialMemory => "InitialMemory".to_string(),
-        NodeKind::InitialVar(_) => "InitialVar".to_string(),
-        NodeKind::FunctionArg { .. } => "FunctionArg".to_string(),
-        NodeKind::ControlState => "ControlState".to_string(),
-        NodeKind::MemPhi => "MemPhi".to_string(),
         NodeKind::Phi if g.phi_var_tag(nid).is_some() => "VarPhi".to_string(),
         NodeKind::Phi => "ValuePhi".to_string(),
-        NodeKind::If => "If".to_string(),
-        NodeKind::Call => "Call".to_string(),
-        NodeKind::Return => "Return".to_string(),
-        NodeKind::IndirectBranch => "IndirectBranch".to_string(),
-        NodeKind::Load(_) => "Load".to_string(),
-        NodeKind::Store(_) => "Store".to_string(),
-        NodeKind::StackStore { .. } => "StackStore".to_string(),
-        NodeKind::StackStorePhi { .. } => "StackStorePhi".to_string(),
-        NodeKind::IntConst(_) => "IntConst".to_string(),
-        NodeKind::IntConstWide(_) => "IntConstWide".to_string(),
-        NodeKind::IntUnaryOp(op) => format!("IntUnaryOp::{:?}", op),
-        NodeKind::IntBinaryOp(op) => format!("IntBinaryOp::{:?}", op),
-        NodeKind::IntCmpOp(op) => format!("IntCmpOp::{:?}", op),
-        NodeKind::CastToInt => "CastToInt".to_string(),
-        NodeKind::Truncate => "Truncate".to_string(),
-        NodeKind::Popcount => "Popcount".to_string(),
-        NodeKind::Lzcount => "Lzcount".to_string(),
-        NodeKind::Extend(op) => format!("Extend::{:?}", op),
-        NodeKind::BoolConst(_) => "BoolConst".to_string(),
-        NodeKind::BoolUnaryOp(op) => format!("BoolUnaryOp::{:?}", op),
-        NodeKind::BoolBinaryOp(op) => format!("BoolBinaryOp::{:?}", op),
-        NodeKind::CastToBool => "CastToBool".to_string(),
-        NodeKind::FloatConst(_) => "FloatConst".to_string(),
-        NodeKind::FloatBinaryOp(op) => format!("FloatBinaryOp::{:?}", op),
-        NodeKind::FloatUnaryOp(op) => format!("FloatUnaryOp::{:?}", op),
-        NodeKind::FloatCmpOp(op) => format!("FloatCmpOp::{:?}", op),
-        NodeKind::IntToFloat => "IntToFloat".to_string(),
-        NodeKind::FloatToInt => "FloatToInt".to_string(),
-        NodeKind::FloatToFloat => "FloatToFloat".to_string(),
-        NodeKind::IntBitsToFloat => "IntBitsToFloat".to_string(),
-        NodeKind::FloatBitsToInt => "FloatBitsToInt".to_string(),
-        NodeKind::CastToFloat => "CastToFloat".to_string(),
-        NodeKind::CallOther { .. } => "CallOther".to_string(),
-        NodeKind::SegmentOp { .. } => "SegmentOp".to_string(),
-        NodeKind::CPoolRef => "CPoolRef".to_string(),
-        NodeKind::New => "New".to_string(),
+        _ => k.as_static_str().to_string(),
     }
 }
 

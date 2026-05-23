@@ -425,6 +425,118 @@ impl NodeKind {
         matches!(self.category(), NodeCategory::PureValue)
     }
 
+    /// Returns a stable, human-readable name for this variant.
+    ///
+    /// The name elides scalar payload that's irrelevant to structural
+    /// shape (e.g. the numeric value of an [`Self::IntConst`], or the
+    /// varnode of an [`Self::InitialVar`]) but keeps inner operator
+    /// payload that *is* a structural property of the source program
+    /// (e.g. [`Self::IntBinaryOp(Add)`](Self::IntBinaryOp) →
+    /// `"IntBinaryOp(Add)"`).  Names are stable across releases and
+    /// suitable for use as map keys, snapshot text, and debug logs.
+    ///
+    /// This is the canonical "variant name" function; previously
+    /// duplicated in test code under `cross_arch_shape::kind_bucket`.
+    #[inline]
+    #[must_use]
+    pub fn as_static_str(&self) -> &'static str {
+        use crate::ops::{
+            BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+            IntBinaryOp, IntCmpOp, IntUnaryOp,
+        };
+        match self {
+            Self::Entry => "Entry",
+            Self::InitialMemory => "InitialMemory",
+            Self::InitialVar(_) => "InitialVar",
+            Self::FunctionArg { .. } => "FunctionArg",
+            Self::ControlState => "ControlState",
+            Self::MemPhi => "MemPhi",
+            Self::Phi => "Phi",
+            Self::If => "If",
+            Self::Call => "Call",
+            Self::Return => "Return",
+            Self::IndirectBranch => "IndirectBranch",
+            Self::Load(_) => "Load",
+            Self::Store(_) => "Store",
+            Self::StackStore { .. } => "StackStore",
+            Self::StackStorePhi { .. } => "StackStorePhi",
+            Self::IntConst(_) => "IntConst",
+            Self::IntConstWide(_) => "IntConstWide",
+            Self::IntUnaryOp(op) => match op {
+                IntUnaryOp::BitNot => "IntUnaryOp(BitNot)",
+                IntUnaryOp::Neg => "IntUnaryOp(Neg)",
+            },
+            Self::IntBinaryOp(op) => match op {
+                IntBinaryOp::Add => "IntBinaryOp(Add)",
+                IntBinaryOp::Mul => "IntBinaryOp(Mul)",
+                IntBinaryOp::Div => "IntBinaryOp(Div)",
+                IntBinaryOp::Sdiv => "IntBinaryOp(Sdiv)",
+                IntBinaryOp::Rem => "IntBinaryOp(Rem)",
+                IntBinaryOp::Srem => "IntBinaryOp(Srem)",
+                IntBinaryOp::And => "IntBinaryOp(And)",
+                IntBinaryOp::Or => "IntBinaryOp(Or)",
+                IntBinaryOp::Xor => "IntBinaryOp(Xor)",
+                IntBinaryOp::ShiftLeft => "IntBinaryOp(ShiftLeft)",
+                IntBinaryOp::ShiftRight => "IntBinaryOp(ShiftRight)",
+                IntBinaryOp::SShiftRight => "IntBinaryOp(SShiftRight)",
+            },
+            Self::IntCmpOp(op) => match op {
+                IntCmpOp::Equal => "IntCmpOp(Equal)",
+                IntCmpOp::Less => "IntCmpOp(Less)",
+                IntCmpOp::Sless => "IntCmpOp(Sless)",
+                IntCmpOp::Carry => "IntCmpOp(Carry)",
+                IntCmpOp::Scarry => "IntCmpOp(Scarry)",
+                IntCmpOp::Sborrow => "IntCmpOp(Sborrow)",
+            },
+            Self::CastToInt => "CastToInt",
+            Self::Truncate => "Truncate",
+            Self::Popcount => "Popcount",
+            Self::Lzcount => "Lzcount",
+            Self::Extend(op) => match op {
+                ExtendOp::ZeroExtend => "Extend(ZeroExtend)",
+                ExtendOp::SignExtend => "Extend(SignExtend)",
+            },
+            Self::BoolConst(_) => "BoolConst",
+            Self::BoolUnaryOp(op) => match op {
+                BoolUnaryOp::Neg => "BoolUnaryOp(Neg)",
+            },
+            Self::BoolBinaryOp(op) => match op {
+                BoolBinaryOp::And => "BoolBinaryOp(And)",
+                BoolBinaryOp::Or => "BoolBinaryOp(Or)",
+                BoolBinaryOp::Xor => "BoolBinaryOp(Xor)",
+            },
+            Self::CastToBool => "CastToBool",
+            Self::FloatConst(_) => "FloatConst",
+            Self::FloatBinaryOp(op) => match op {
+                FloatBinaryOp::Add => "FloatBinaryOp(Add)",
+                FloatBinaryOp::Mul => "FloatBinaryOp(Mul)",
+                FloatBinaryOp::Div => "FloatBinaryOp(Div)",
+            },
+            Self::FloatUnaryOp(op) => match op {
+                FloatUnaryOp::Neg => "FloatUnaryOp(Neg)",
+                FloatUnaryOp::Abs => "FloatUnaryOp(Abs)",
+                FloatUnaryOp::Sqrt => "FloatUnaryOp(Sqrt)",
+                FloatUnaryOp::Ceil => "FloatUnaryOp(Ceil)",
+                FloatUnaryOp::Floor => "FloatUnaryOp(Floor)",
+                FloatUnaryOp::Round => "FloatUnaryOp(Round)",
+            },
+            Self::FloatCmpOp(op) => match op {
+                FloatCmpOp::Equal => "FloatCmpOp(Equal)",
+                FloatCmpOp::Less => "FloatCmpOp(Less)",
+            },
+            Self::IntToFloat => "IntToFloat",
+            Self::FloatToInt => "FloatToInt",
+            Self::FloatToFloat => "FloatToFloat",
+            Self::IntBitsToFloat => "IntBitsToFloat",
+            Self::FloatBitsToInt => "FloatBitsToInt",
+            Self::CastToFloat => "CastToFloat",
+            Self::CallOther { .. } => "CallOther",
+            Self::SegmentOp { .. } => "SegmentOp",
+            Self::CPoolRef => "CPoolRef",
+            Self::New => "New",
+        }
+    }
+
     /// Returns `true` if this node kind is commutative under operand swap.
     ///
     /// A binary operator `op(a, b)` is commutative iff `op(a, b) == op(b, a)`
