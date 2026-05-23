@@ -44,7 +44,8 @@ use crate::cfg::Result;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
-/// See `crates/cfg/tests/build_end_to_end.rs` for runnable end-to-end examples.
+/// See `crates/strider-lift/tests/cfg_build_end_to_end.rs` for runnable
+/// end-to-end examples.
 pub struct Builder<R: rsleigh::MemReader> {
     pub(super) sleigh: rsleigh::Sleigh<R>,
     /// Virtual address at which the function entry point begins.

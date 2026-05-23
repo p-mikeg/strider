@@ -420,7 +420,7 @@ fn empty_region_returns_ok_none() {
 /// In production, the BranchIndirect-without-target check in
 /// `RegionBuilder::process_new_insn` short-circuits before we ever call
 /// the resolver — see
-/// `crates/cfg/src/cfg/builder/region_builder.rs`.
+/// `crates/strider-lift/src/cfg/builder/region_builder.rs`.
 #[test]
 fn malformed_branch_indirect_returns_ok_none() {
     let sleigh = make_x86_sleigh();
