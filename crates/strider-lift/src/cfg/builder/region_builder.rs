@@ -1083,5 +1083,237 @@ mod tests {
             "target inside function range must NOT classify as tail call even when start+max overflows"
         );
     }
+
+    // ── process_new_insn / process_insn / finish_current_region ──────────
+    //
+    // Ported from pre-rewrite crates/cfg/tests/{region_builder_process,
+    // region_terminator}.rs.  The pre-rewrite suite carried more tests
+    // (fall-through hot-wire / push_insn helper paths); they require a
+    // `TestRegionBuilder::with_parent_edge` adapter that was scoped to
+    // the test_api module and isn't reintroduced here.  The subset
+    // ported below exercises the per-opcode finish paths and the
+    // empty-inputs error checks — the core process_new_insn contract.
+
+    use crate::cfg::OptionsBuilder as OptsBldr;
+
+    fn make_sleigh_with_bytes(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<TestReader> {
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(bytes, base);
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+            .expect("create x86_64 Sleigh")
+    }
+
+    fn make_builder_with_bytes(bytes: Vec<u8>, start: u64) -> Builder<TestReader> {
+        let arch = SleighArch::x86_64();
+        let sleigh = make_sleigh_with_bytes(bytes, start);
+        Builder::for_arch(&arch, sleigh, start, OptsBldr::new().build())
+    }
+
+    fn lift_at(bytes: Vec<u8>, base: u64, at: u64) -> rsleigh::LiftRes {
+        make_sleigh_with_bytes(bytes, base)
+            .lift_one(at)
+            .expect("lift_one")
+    }
+
+    fn find_pcode(lift: &rsleigh::LiftRes, want: rsleigh::Opcode) -> (u64, rsleigh::Insn) {
+        let (idx, i) = lift
+            .insns
+            .iter()
+            .enumerate()
+            .find(|(_, i)| i.opcode == want)
+            .unwrap_or_else(|| panic!("no pcode op with opcode {want:?}"));
+        (idx as u64, i.clone())
+    }
+
+    #[test]
+    fn non_terminating_insn_keeps_region_open() {
+        let base = 0x1000u64;
+        let bytes = vec![0x31u8, 0xc0]; // xor eax, eax
+        let lift = lift_at(bytes.clone(), base, base);
+        assert!(!lift.insns.is_empty());
+        let first = lift.insns[0].clone();
+        assert!(!matches!(
+            first.opcode,
+            rsleigh::Opcode::Branch | rsleigh::Opcode::CondBranch | rsleigh::Opcode::Return
+        ));
+        let mut b = make_builder_with_bytes(bytes, base);
+        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
+
+        let res = rb.process_new_insn(&first, addr_at(base, 0), &lift).unwrap();
+        assert_eq!(res, ProcessInsnRes::DidntFinishProcessing);
+        assert_eq!(rb.insns.len(), 1);
+    }
+
+    #[test]
+    fn return_ends_region() {
+        let base = 0x1000u64;
+        let bytes = vec![0xc3u8];
+        let lift = lift_at(bytes.clone(), base, base);
+        let (pos, ret_insn) = find_pcode(&lift, rsleigh::Opcode::Return);
+        let mut b = make_builder_with_bytes(bytes, base);
+        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
+
+        let res = rb.process_new_insn(&ret_insn, addr_at(base, pos), &lift).unwrap();
+        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+
+        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].terminator, RegionTerminator::Return);
+    }
+
+    #[test]
+    fn branch_indirect_defers_via_unresolved_indirect_branch() {
+        // `jmp rax`: tier-1 cannot prove the target without an
+        // installed indirect resolver.  process_new_insn must defer
+        // via UnresolvedIndirectBranch rather than error.
+        let base = 0x1000u64;
+        let bytes = vec![0xffu8, 0xe0]; // jmp rax
+        let lift = lift_at(bytes.clone(), base, base);
+        let (pos, indirect) = find_pcode(&lift, rsleigh::Opcode::BranchIndirect);
+        let mut b = make_builder_with_bytes(bytes, base);
+        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
+
+        let res = rb
+            .process_new_insn(&indirect, addr_at(base, pos), &lift)
+            .expect("unresolvable BranchIndirect must defer, not error");
+        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+
+        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        assert_eq!(regions.len(), 1);
+        match &regions[0].terminator {
+            RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
+                assert_eq!(addr.machine_addr.addr, base);
+            }
+            other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cond_branch_finishes_region_and_enqueues_both_cases() {
+        // `je +0; ret; ret`
+        let base = 0x1000u64;
+        let bytes = vec![0x74u8, 0x00, 0xc3, 0xc3];
+        let lift = lift_at(bytes.clone(), base, base);
+        let (pos, cbr) = find_pcode(&lift, rsleigh::Opcode::CondBranch);
+        let mut b = make_builder_with_bytes(bytes, base);
+        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
+
+        let res = rb.process_new_insn(&cbr, addr_at(base, pos), &lift).unwrap();
+        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+
+        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].terminator, RegionTerminator::CondBranch);
+
+        // Both true and false successors enqueued.
+        assert_eq!(
+            b.work_queue.len(),
+            2,
+            "CondBranch must enqueue both true and false targets"
+        );
+        let mut kinds: Vec<RegionEdgeKind> = b
+            .work_queue
+            .iter()
+            .filter_map(|(parent, _)| parent.as_ref().map(|(_, k)| *k))
+            .collect();
+        kinds.sort_by_key(|k| format!("{k:?}"));
+        assert_eq!(
+            kinds,
+            vec![RegionEdgeKind::IfCaseFalse, RegionEdgeKind::IfCaseTrue]
+        );
+    }
+
+    #[test]
+    fn finish_with_branch_terminator_to_distinct_target() {
+        // `jmp +1` -> target 0x1003 (distinct from natural fallthrough 0x1002).
+        let base = 0x1000u64;
+        let bytes = vec![0xebu8, 0x01, 0xc3];
+        let lift = lift_at(bytes.clone(), base, base);
+        let (pos, branch) = find_pcode(&lift, rsleigh::Opcode::Branch);
+        let mut b = make_builder_with_bytes(bytes, base);
+        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
+
+        let res = rb.process_new_insn(&branch, addr_at(base, pos), &lift).unwrap();
+        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+
+        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].terminator, RegionTerminator::Branch);
+    }
+
+    #[test]
+    fn finish_with_tail_call_terminator_targets_below_start() {
+        // `jmp -10` from 0x1000 -> target 0x0ff8 (below function start).
+        let base = 0x1000u64;
+        #[allow(clippy::cast_sign_loss)]
+        let bytes = vec![0xebu8, -10_i8 as u8, 0xc3];
+        let lift = lift_at(bytes.clone(), base, base);
+        let (pos, branch) = find_pcode(&lift, rsleigh::Opcode::Branch);
+        let mut b = make_builder_with_bytes(bytes, base);
+        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
+
+        let res = rb.process_new_insn(&branch, addr_at(base, pos), &lift).unwrap();
+        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+
+        assert_eq!(
+            b.work_queue.len(),
+            0,
+            "tail-call must not enqueue successor"
+        );
+        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(
+            regions[0].terminator,
+            RegionTerminator::TailCall { target: 0x0ff8 }
+        );
+    }
+
+    #[test]
+    fn finish_current_region_empty_insns_returns_error() {
+        let mut b = make_builder(0x1000);
+        let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let err = rb
+            .finish_current_region(RegionTerminator::Return)
+            .unwrap_err();
+        assert!(err.to_string().contains("has no instructions"), "got: {err}");
+    }
+
+    #[test]
+    fn process_new_insn_branch_with_empty_inputs_errors() {
+        let mut b = make_builder(0x1000);
+        let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let lift = fake_lift_res(1);
+        let bad_insn = rsleigh::Insn {
+            opcode: rsleigh::Opcode::Branch,
+            inputs: vec![].into(),
+            output: None,
+        };
+        let err = rb
+            .process_new_insn(&bad_insn, addr_at(0x1000, 0), &lift)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("no target operand"),
+            "expected MissingBranchTarget; got {err}"
+        );
+    }
+
+    #[test]
+    fn process_new_insn_condbranch_with_empty_inputs_errors() {
+        let mut b = make_builder(0x1000);
+        let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+        let lift = fake_lift_res(1);
+        let bad_insn = rsleigh::Insn {
+            opcode: rsleigh::Opcode::CondBranch,
+            inputs: vec![].into(),
+            output: None,
+        };
+        let err = rb
+            .process_new_insn(&bad_insn, addr_at(0x1000, 0), &lift)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("no target operand"),
+            "expected MissingBranchTarget; got {err}"
+        );
+    }
 }
 
