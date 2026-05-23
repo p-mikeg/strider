@@ -165,14 +165,14 @@ fn ir_level_classification_robust_to_destructive_subset() {
 
 #[test]
 fn stable_and_destructive_subsets_are_non_empty() {
-    assert!(stable_default_pipeline().iter().count() > 0);
-    assert!(destructive_default_pipeline().iter().count() > 0);
+    assert!(!stable_default_pipeline().passes().is_empty());
+    assert!(!destructive_default_pipeline().passes().is_empty());
 }
 
 #[test]
 fn full_pipeline_pass_count_equals_stable_plus_destructive() {
-    let stable_count = stable_default_pipeline().iter().count();
-    let destructive_count = destructive_default_pipeline().iter().count();
-    let full_count = strider_analyze::opt::default_pipeline().iter().count();
+    let stable_count = stable_default_pipeline().passes().len();
+    let destructive_count = destructive_default_pipeline().passes().len();
+    let full_count = strider_analyze::opt::default_pipeline().passes().len();
     assert_eq!(stable_count + destructive_count, full_count);
 }

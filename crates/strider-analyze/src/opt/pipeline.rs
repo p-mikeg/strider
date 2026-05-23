@@ -131,7 +131,7 @@ pub trait Optimizer: OptimizerClone + Send + Sync {
 ///
 /// Enables external iteration over the canonical default pipelines:
 /// downstream crates (e.g. `strider-py`) snapshot the pass list via
-/// [`OptimizerPipeline::iter`] / [`OptimizerPipeline::iter_post`] and
+/// [`OptimizerPipeline::passes`] / [`OptimizerPipeline::post_passes`] and
 /// `clone_box` each entry into their own storage, rather than
 /// hand-mirroring the pass list and risking silent drift.
 ///
@@ -192,20 +192,22 @@ impl OptimizerPipeline {
         self.post_passes.push(Box::new(opt));
     }
 
-    /// Iterate the fixed-point passes in registration order.
+    /// Borrow the fixed-point passes as a slice in registration order.
     ///
     /// Lets downstream crates snapshot the canonical pipeline without
     /// hand-mirroring the pass list.  Combine with the
     /// `OptimizerClone::clone_box` supertrait method to materialise an
     /// independent copy of each pass.
-    pub fn iter(&self) -> impl Iterator<Item = &dyn Optimizer> + '_ {
-        self.optimizers.iter().map(|b| &**b)
+    #[must_use]
+    pub fn passes(&self) -> &[Box<dyn Optimizer>] {
+        &self.optimizers
     }
 
-    /// Iterate the post-passes in registration order.  See
-    /// [`OptimizerPipeline::iter`] for the use-case.
-    pub fn iter_post(&self) -> impl Iterator<Item = &dyn Optimizer> + '_ {
-        self.post_passes.iter().map(|b| &**b)
+    /// Borrow the post-passes as a slice in registration order.  See
+    /// [`OptimizerPipeline::passes`] for the use-case.
+    #[must_use]
+    pub fn post_passes(&self) -> &[Box<dyn Optimizer>] {
+        &self.post_passes
     }
 
     /// Runs all registered passes in a fixed-point loop until convergence,

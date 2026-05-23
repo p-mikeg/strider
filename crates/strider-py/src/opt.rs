@@ -75,10 +75,10 @@ impl PipelineState {
     /// `build_destructive_optimizer_pipeline` — structurally impossible.
     fn snapshot_from(pipeline: &strider_analyze::opt::OptimizerPipeline) -> Self {
         let mut s = Self::new();
-        for pass in pipeline.iter() {
+        for pass in pipeline.passes() {
             s.passes.push(pass.clone_box());
         }
-        for pass in pipeline.iter_post() {
+        for pass in pipeline.post_passes() {
             s.post_passes.push(pass.clone_box());
         }
         s
