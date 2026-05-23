@@ -57,3 +57,6 @@ mod memory;
 
 #[path = "pattern_matching/ssa.rs"]
 mod ssa;
+
+#[path = "pattern_matching/casts_and_conversions.rs"]
+mod casts_and_conversions;
