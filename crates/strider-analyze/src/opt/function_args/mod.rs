@@ -37,7 +37,7 @@ use crate::opt::error::Result;
 use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{
-    AliasStep, SpExpr, SpExprMemo, decompose_sp, step_through_stack_store,
+    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_stack_store,
     step_through_stack_store_phi, step_through_store,
 };
 use crate::opt::worklist::seeded_kind;
@@ -393,8 +393,9 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 /// DFS through memory predecessors looking for a store that may shadow the
 /// byte range `[offset, offset + load_size)`.  Treats `MemPhi` as a fork
 /// where **every** value predecessor must be clean; `Call` / `CallOther` as
-/// pass-throughs (a caller cannot alias the callee's incoming stack-arg area
-/// through a nested call).
+/// pass-throughs unless one of the call's value-args is an SP-rooted
+/// pointer that escapes a stack slot into the callee — in that case the
+/// callee may store through the pointer, so the chain is marked dirty.
 ///
 /// Returns `true` if any path through the chain *may* overwrite bytes in the
 /// load's range.  A `StackStore` or `StackStorePhi` whose byte range overlaps
@@ -520,6 +521,57 @@ fn mem_chain_is_dirty(
                             "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
                             graph.node_kind(node),
                         ));
+                    }
+                    // Scan the call's value-args for SP-rooted pointers
+                    // (`Add(InitialVar(sp), Const(K))` / equivalents).
+                    // If any value-arg decomposes to a Terminal sp-rooted
+                    // address, the caller has handed the callee a
+                    // pointer into its own stack frame — the callee may
+                    // store through it, so any subsequent load of any
+                    // stack slot reachable from that pointer is a
+                    // potential shadow.
+                    //
+                    // We don't know the callee's effective store extent,
+                    // so model the escape as a write of `i64::MAX` bytes
+                    // starting at the escaped offset.  `ranges_disjoint`
+                    // saturates and reports "not disjoint" in that case,
+                    // which collapses to: any sp-rooted escape pins the
+                    // chain as dirty for any subsequent stack-arg load.
+                    //
+                    // `SpExpr::Phi` predecessors are checked one-by-one;
+                    // any predecessor offset that is not provably
+                    // disjoint pins the chain.
+                    //
+                    // `Call` inputs are `[CTRL, MEM, TARGET, ...args]`
+                    // (value-args start at index 3); `CallOther` skips
+                    // the explicit target since the user-op identity is
+                    // encoded in the kind (value-args start at index 2).
+                    // The outer match arm gates this branch to those two
+                    // kinds.
+                    let args_start = if matches!(graph.node_kind(node), NodeKind::Call) {
+                        3
+                    } else {
+                        2
+                    };
+                    let load_offset = self.offset;
+                    let load_size = self.load_size;
+                    for arg in inputs.iter().skip(args_start) {
+                        // `decompose_sp` returns `None` for any non-SP-rooted
+                        // value (constants, register-derived integers,
+                        // function-args, etc.).  Those args don't alias the
+                        // caller's stack-arg slots, so we skip past them.
+                        let Some(expr) = decompose_sp(graph, arg, self.sp_vn, self.sp_memo) else {
+                            continue;
+                        };
+                        let offsets: &[i64] = match &expr {
+                            SpExpr::Terminal { offset, .. } => std::slice::from_ref(offset),
+                            SpExpr::Phi { offsets, .. } => offsets.as_slice(),
+                        };
+                        for &k in offsets {
+                            if !ranges_disjoint(k, i64::MAX, load_offset, load_size) {
+                                return Ok(StepResult::Verdict(true));
+                            }
+                        }
                     }
                     Ok(StepResult::Continue(inputs[1]))
                 }

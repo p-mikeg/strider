@@ -1035,3 +1035,73 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     );
     Ok(())
 }
+
+/// Escape-into-callee: the caller takes the address of its own incoming
+/// stack-arg slot and passes it as a value-arg to a `CallOther`.  After
+/// the call, a `Load` from that same slot must NOT be promoted to
+/// `FunctionArg`: the callee may have stored through the passed pointer,
+/// so the slot's post-call value is *not* the caller's incoming arg.
+///
+/// Setup: `CallOther` (with `memory_edge`) takes `sp_val` (i.e.
+/// `InitialVar(sp) + 0`) as its sole value-arg, then `Load[sp + 0]`
+/// reads from the post-call memory.  Convention has stack_arg_offsets =
+/// `[0]`, so without the escape check the Load would be classified
+/// against arg-slot 0 and rewritten to `FunctionArg(0)`.
+#[test]
+fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
+    use crate::opt::{ConstantFold, OptimizerPipeline};
+
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .build_fn_single_region()?;
+
+    // Take the address of stack-arg slot 0 (i.e. sp + 0 = sp itself).
+    let sp_val = b.read_variable(&sp)?;
+
+    // CallOther whose sole value-arg is &arg0 (= sp_val).  No
+    // implicit reads/writes; the modeled CallOther advances ctrl but
+    // not memory, so we must manually advance the memory edge to
+    // simulate a normal `Call`-like memory clobber.
+    let (call_node, _val, _clobs) = b.build_call_other_modeled(
+        42,
+        "escape_helper",
+        &[sp_val],
+        None,
+        &[],
+        &[],
+        &[],
+    )?;
+    let call_mem_out = b.graph().memory_output_of(call_node)?;
+    b.advance_cur_region_memory(call_mem_out)?;
+
+    // After the call, read *(sp + 0).  Its memory chain traces:
+    //   Load.mem  →  CallOther.mem_out  →  CallOther.mem_in (InitialMemory)
+    // The current `mem_chain_is_dirty` walks transparently through
+    // Call/CallOther on the assumption nested callees can't alias the
+    // caller's arg slots.  But the caller just handed the callee
+    // `&arg0`, so that assumption is wrong here.
+    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    // Convention: arg 0 lives at sp+0.
+    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
+    let entry = fg.entry().unwrap();
+    pipeline.run(fg.graph_mut(), entry)?;
+
+    let any_fa = count(
+        crate::pattern::RewriteCtxView::from_built(&fg).unwrap(),
+        |k| matches!(k, NodeKind::FunctionArg { .. }),
+    );
+    assert_eq!(
+        any_fa, 0,
+        "Load[sp+0] after CallOther that received &arg0 as a value-arg \
+         must NOT be promoted: the callee may have stored through the pointer",
+    );
+    Ok(())
+}
