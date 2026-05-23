@@ -6,6 +6,26 @@ use crate::error::Result;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::ops::IntBinaryOp;
 
+/// The per-Call ABI shape resolved by
+/// [`FunctionBuilder::select_call_abi`] — either the function-default
+/// snapshot or the override CC's filtered view.  Threaded through the
+/// rest of [`FunctionBuilder::build_call_with_cc`]'s phases.
+struct CallAbiSelection {
+    arg_vars: SmallVec<[rsleigh::Vn; 4]>,
+    clobber_vars: SmallVec<[rsleigh::Vn; 4]>,
+    ret_stack_pop: i64,
+    no_memory_clobber: bool,
+}
+
+/// The result of [`FunctionBuilder::read_call_value_inputs`]: arg
+/// input ids (in CC order) plus clobber output kinds (one per
+/// `clobber_vars`).  Feeds the `create_node` call in
+/// [`FunctionBuilder::emit_call_node`].
+struct CallValueInputs {
+    arg_passing: SmallVec<[NodeOutputId; 4]>,
+    clobbered_kinds: SmallVec<[NodeOutputKind; 4]>,
+}
+
 impl FunctionBuilder {
     /// Terminates the current region with a `Call` node, using the
     /// function-default calling convention.  Equivalent to
@@ -49,34 +69,73 @@ impl FunctionBuilder {
         call_address: NodeOutputId,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<NodeId> {
-        let ctrl = self.cur_region_control()?;
-        let memory = self.cur_region_memory()?;
+        // Phase 1: resolve the per-call ABI shape (arg list, clobber
+        // list, ret_stack_pop) from either the override CC or the
+        // function-default snapshot stamped at builder construction.
+        let CallAbiSelection {
+            arg_vars,
+            clobber_vars,
+            ret_stack_pop,
+            no_memory_clobber,
+        } = self.select_call_abi(override_cc);
 
-        // Pick the per-call arg-passing list, clobber list, and
-        // ret_stack_pop based on whether an override was supplied.
-        let (arg_vars, clobber_vars, ret_stack_pop): (
-            SmallVec<[rsleigh::Vn; 4]>,
-            SmallVec<[rsleigh::Vn; 4]>,
-            i64,
-        ) = match override_cc {
-            None => (
-                self.arg_passing_vars.iter().copied().collect(),
-                self.call_clobbered_variables.iter().copied().collect(),
-                self.ret_stack_pop,
-            ),
+        // Phase 2: read every arg + clobber variable and verify the
+        // call_address is a value edge.  This also produces the
+        // arg-input id list + the clobber-kind list that feed the
+        // create_node call in phase 4.
+        let CallValueInputs {
+            arg_passing,
+            clobbered_kinds,
+        } = self.read_call_value_inputs(call_address, &arg_vars, &clobber_vars)?;
+
+        // Phase 3: snapshot pre-call SP for the post-call adjust (only
+        // on stack-push ISAs where `ret_stack_pop != 0`).
+        let sp_pre_call = self.snapshot_pre_call_sp(ret_stack_pop)?;
+
+        // Phase 4: create the Call node, advance ctrl (+memory unless
+        // no_memory_clobber), write per-clobber variables, and stamp
+        // the per-call override on the side-table.
+        let call = self.emit_call_node(
+            call_address,
+            arg_passing,
+            clobbered_kinds,
+            &clobber_vars,
+            override_cc.is_some(),
+            no_memory_clobber,
+        )?;
+
+        // Phase 5: apply the post-call SP adjust on stack-push ISAs.
+        self.apply_post_call_sp_adjust(sp_pre_call, ret_stack_pop)?;
+
+        Ok(call)
+    }
+
+    /// Phase 1 helper for [`Self::build_call_with_cc`]: resolve the
+    /// per-call ABI shape from the override CC or the function-default
+    /// snapshot.  Override args are filtered through the function's
+    /// tracked-variable set so reads against unread vars don't fail
+    /// with `VariableNotFound`; override clobbers cover every tracked
+    /// variable that is neither callee-saved nor the SP.
+    fn select_call_abi(
+        &self,
+        override_cc: Option<&strider_target::BuiltCallingConvention>,
+    ) -> CallAbiSelection {
+        let no_memory_clobber =
+            override_cc.map_or(self.no_memory_clobber, |cc| cc.no_memory_clobber);
+        match override_cc {
+            None => CallAbiSelection {
+                arg_vars: self.arg_passing_vars.iter().copied().collect(),
+                clobber_vars: self.call_clobbered_variables.iter().copied().collect(),
+                ret_stack_pop: self.ret_stack_pop,
+                no_memory_clobber,
+            },
             Some(cc) => {
-                // Filter override args through the function's tracked
-                // variables.  Override args that the function never
-                // reads are silently dropped — they would otherwise
-                // produce a `VariableNotFound` error from `read_variable`.
                 let arg_vars: SmallVec<[rsleigh::Vn; 4]> = cc
                     .arg_passing_regs
                     .iter()
                     .copied()
                     .filter(|v| self.variable_to_id.contains_key(v))
                     .collect();
-                // Per-call clobber list: every tracked variable that
-                // is NOT in `callee_saved_regs` and NOT the SP.
                 let callee_saved = &cc.callee_saved_regs;
                 let stack_ptr_vn = self.stack_ptr_vn;
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
@@ -85,10 +144,26 @@ impl FunctionBuilder {
                     .copied()
                     .filter(|v| !callee_saved.contains(v) && Some(*v) != stack_ptr_vn)
                     .collect();
-                (arg_vars, clobber_vars, cc.ret_stack_pop)
+                CallAbiSelection {
+                    arg_vars,
+                    clobber_vars,
+                    ret_stack_pop: cc.ret_stack_pop,
+                    no_memory_clobber,
+                }
             }
-        };
+        }
+    }
 
+    /// Phase 2 helper: read every arg / clobber variable and assert
+    /// the call address is a value edge.  Returns the arg-input id
+    /// list (in CC order) plus the clobber-output-kind list (one entry
+    /// per `clobber_vars` entry, in the same order).
+    fn read_call_value_inputs(
+        &mut self,
+        call_address: NodeOutputId,
+        arg_vars: &[rsleigh::Vn],
+        clobber_vars: &[rsleigh::Vn],
+    ) -> Result<CallValueInputs> {
         let arg_passing: SmallVec<[NodeOutputId; 4]> = arg_vars
             .iter()
             .map(|var| self.read_variable(var))
@@ -96,7 +171,7 @@ impl FunctionBuilder {
         self.validate_value_inputs(&arg_passing)?;
 
         let mut clobbered_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
-        for var in &clobber_vars {
+        for var in clobber_vars {
             let out = self.read_variable(var)?;
             let k = self.graph().output_kind(out);
             if !k.is_value() {
@@ -112,27 +187,53 @@ impl FunctionBuilder {
             ));
         }
 
-        // Snapshot pre-call SP for the post-call adjust.
-        let sp_pre_call = match self.stack_ptr_vn {
-            Some(sp) if ret_stack_pop != 0 => {
-                self.read_variable_optional(&sp)?.map(|out| (sp, out))
-            }
-            _ => None,
-        };
+        Ok(CallValueInputs {
+            arg_passing,
+            clobbered_kinds,
+        })
+    }
 
-        // Per-call effective `no_memory_clobber`: the override CC, if any,
-        // takes precedence; otherwise fall back to the function-default.
-        let no_memory_clobber =
-            override_cc.map_or(self.no_memory_clobber, |cc| cc.no_memory_clobber);
+    /// Phase 3 helper: snapshot the pre-call SP value so the
+    /// post-call SP adjust in phase 5 can wire `pre + ret_stack_pop`
+    /// through `IntBinaryOp::Add`.  Returns `None` on link-register
+    /// ISAs (`ret_stack_pop == 0`) or when the function doesn't track
+    /// the SP.
+    fn snapshot_pre_call_sp(
+        &mut self,
+        ret_stack_pop: i64,
+    ) -> Result<Option<(rsleigh::Vn, NodeOutputId)>> {
+        match self.stack_ptr_vn {
+            Some(sp) if ret_stack_pop != 0 => {
+                Ok(self.read_variable_optional(&sp)?.map(|out| (sp, out)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Phase 4 helper: create the Call node, advance the region's
+    /// control (+memory unless `no_memory_clobber`) edges, write each
+    /// clobber variable, and stamp the per-call override clobber list
+    /// on the graph side-table when this Call carries one.
+    fn emit_call_node(
+        &mut self,
+        call_address: NodeOutputId,
+        arg_passing: SmallVec<[NodeOutputId; 4]>,
+        clobbered_kinds: SmallVec<[NodeOutputKind; 4]>,
+        clobber_vars: &[rsleigh::Vn],
+        is_override: bool,
+        no_memory_clobber: bool,
+    ) -> Result<NodeId> {
+        let ctrl = self.cur_region_control()?;
+        let memory = self.cur_region_memory()?;
 
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
         // The Call node's signature always includes a Memory output
-        // (validator local-typing enforces `[Control, Memory, *clobbers]`).
-        // When the CC
-        // declares no_memory_clobber, we keep the Memory output but leave it
-        // dangling — the region's memory chain is NOT advanced, so subsequent
-        // loads see the pre-call memory edge.  LoadReadOnly / StackLoadForward
-        // can therefore forward through the call.
+        // (validator local-typing enforces `[Control, Memory,
+        // *clobbers]`).  When the CC declares `no_memory_clobber`, we
+        // keep the Memory output but leave it dangling — the region's
+        // memory chain is NOT advanced, so subsequent loads see the
+        // pre-call memory edge.  LoadReadOnly / StackLoadForward can
+        // therefore forward through the call.
         let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
             .into_iter()
             .chain(clobbered_kinds);
@@ -143,20 +244,30 @@ impl FunctionBuilder {
         if !no_memory_clobber {
             self.advance_cur_region_memory(call_outputs[1])?;
         }
-        for (variable, new_val) in core::iter::zip(&clobber_vars, call_outputs.iter().skip(2)) {
+        for (variable, new_val) in core::iter::zip(clobber_vars, call_outputs.iter().skip(2)) {
             self.write_variable(variable, *new_val)?;
         }
 
-        // Record the per-Call override clobber list when an override was used.
-        if override_cc.is_some() {
-            let list: Vec<rsleigh::Vn> = clobber_vars.into_iter().collect();
+        // Record the per-Call override clobber list when an override
+        // was used.
+        if is_override {
+            let list: Vec<rsleigh::Vn> = clobber_vars.to_vec();
             self.graph_mut().set_call_clobbered_override(call, list);
         }
+        Ok(call)
+    }
 
-        // Model the caller-visible effect of the callee's `ret` on SP: on
-        // stack-push ISAs `ret` pops the return-address word, so the
-        // caller's post-call SP is `pre_call_SP + ret_stack_pop`.  On
-        // link-register ISAs `ret_stack_pop == 0` and we skip this entirely.
+    /// Phase 5 helper: model the caller-visible effect of the
+    /// callee's `ret` on SP — on stack-push ISAs `ret` pops the
+    /// return-address word, so the caller's post-call SP is
+    /// `pre_call_SP + ret_stack_pop`.  On link-register ISAs
+    /// `ret_stack_pop == 0` and the phase 3 snapshot is `None`, so
+    /// this is a no-op.
+    fn apply_post_call_sp_adjust(
+        &mut self,
+        sp_pre_call: Option<(rsleigh::Vn, NodeOutputId)>,
+        ret_stack_pop: i64,
+    ) -> Result<()> {
         if let Some((sp, pre)) = sp_pre_call {
             let sp_ty: NodeOutputType = sp.size.try_into()?;
             let const_id = self.build_int_const(ret_stack_pop as u64, sp_ty)?;
@@ -164,7 +275,7 @@ impl FunctionBuilder {
                 self.build_int_binary_operation(pre, const_id, IntBinaryOp::Add, sp_ty)?;
             self.write_variable(&sp, adjusted)?;
         }
-        Ok(call)
+        Ok(())
     }
 
     /// Emit a CallOther node intended as a region terminator (Linux
