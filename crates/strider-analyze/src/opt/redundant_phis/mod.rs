@@ -223,10 +223,6 @@ impl Optimizer for RedundantPhis {
         let _ = crate::opt::worklist::detach_unreachable_nodes(ctx.graph_mut(), entry);
         Ok(res)
     }
-
-    fn clone_box(&self) -> Box<dyn Optimizer> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

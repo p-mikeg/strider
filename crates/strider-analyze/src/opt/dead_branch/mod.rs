@@ -291,8 +291,4 @@ impl Optimizer for DeadBranchElimination {
         }
         Ok(result)
     }
-
-    fn clone_box(&self) -> Box<dyn Optimizer> {
-        Box::new(self.clone())
-    }
 }

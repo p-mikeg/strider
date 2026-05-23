@@ -128,10 +128,6 @@ impl Optimizer for FunctionArgDetect {
         let _ = crate::opt::worklist::detach_unreachable_nodes(ctx.graph_mut(), entry);
         Ok(changed)
     }
-
-    fn clone_box(&self) -> Box<dyn Optimizer> {
-        Box::new(self.clone())
-    }
 }
 
 /// Rule D: for every register in `arg_passing_regs` whose `InitialVar` node

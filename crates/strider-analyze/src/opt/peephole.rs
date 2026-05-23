@@ -126,10 +126,6 @@ macro_rules! impl_optimizer_from_peephole {
                 let mut ctx = $crate::pattern::RewriteCtx::new(graph, entry);
                 $crate::opt::peephole::run_peephole(self, &mut ctx)
             }
-
-            fn clone_box(&self) -> Box<dyn $crate::opt::pipeline::Optimizer> {
-                Box::new(self.clone())
-            }
         }
     };
 }

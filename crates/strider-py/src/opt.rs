@@ -26,6 +26,17 @@ pub(crate) type ErasedPass = Box<dyn strider_analyze::opt::Optimizer + Send + Sy
 /// forwards `optimize` straight through.
 struct ForwardPass(ErasedPass);
 
+impl Clone for ForwardPass {
+    fn clone(&self) -> Self {
+        // The wrapped pass owns its own clone strategy via `OptimizerClone`
+        // (the supertrait of `Optimizer`).  Forwarding to it rather than
+        // cloning the `Box` itself preserves the concrete pass type.
+        // `Optimizer: Send + Sync` so the resulting `Box<dyn Optimizer>`
+        // satisfies `ErasedPass`'s `Send + Sync` bound automatically.
+        ForwardPass(self.0.clone_box())
+    }
+}
+
 impl strider_analyze::opt::Optimizer for ForwardPass {
     fn optimize(
         &self,
@@ -33,13 +44,6 @@ impl strider_analyze::opt::Optimizer for ForwardPass {
         entry: strider_ir::node::NodeId,
     ) -> strider_analyze::opt::Result<strider_analyze::opt::OptimizationResult> {
         self.0.optimize(graph, entry)
-    }
-
-    fn clone_box(&self) -> Box<dyn strider_analyze::opt::Optimizer> {
-        // Forward to the wrapped pass's clone_box rather than trying to
-        // clone the Box itself (the inner trait object is the source of
-        // truth for cloning).
-        self.0.clone_box()
     }
 }
 

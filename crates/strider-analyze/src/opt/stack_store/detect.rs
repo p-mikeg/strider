@@ -147,8 +147,4 @@ impl Optimizer for StackStoreDetect {
         }
         Ok(result)
     }
-
-    fn clone_box(&self) -> Box<dyn Optimizer> {
-        Box::new(self.clone())
-    }
 }

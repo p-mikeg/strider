@@ -112,7 +112,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// needed because several passes walk the reachable-node set
 /// (`graph.preorder(entry)`) or use it directly
 /// (`strider_ir::walk::cfg_reachable(graph, entry)`).
-pub trait Optimizer: Send + Sync {
+pub trait Optimizer: OptimizerClone + Send + Sync {
     /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
     ///
     /// # Errors
@@ -125,18 +125,29 @@ pub trait Optimizer: Send + Sync {
         graph: &mut strider_ir::Graph,
         entry: strider_ir::node::NodeId,
     ) -> crate::opt::Result<OptimizationResult>;
+}
 
+/// Object-safe clone shim for [`Optimizer`].
+///
+/// Enables external iteration over the canonical default pipelines:
+/// downstream crates (e.g. `strider-py`) snapshot the pass list via
+/// [`OptimizerPipeline::iter`] / [`OptimizerPipeline::iter_post`] and
+/// `clone_box` each entry into their own storage, rather than
+/// hand-mirroring the pass list and risking silent drift.
+///
+/// Every concrete `Optimizer + Clone + 'static` gets a blanket
+/// `OptimizerClone` impl for free, so pass authors never write
+/// `clone_box` by hand — `#[derive(Clone)]` on the pass type is
+/// sufficient.  ZST passes get `Clone` via `#[derive(Clone, Copy)]`.
+pub trait OptimizerClone {
     /// Clone the pass behind a `Box<dyn Optimizer>`.
-    ///
-    /// Enables external iteration over the canonical default pipelines:
-    /// downstream crates (e.g. `strider-py`) snapshot the pass list via
-    /// [`OptimizerPipeline::iter`] / [`OptimizerPipeline::iter_post`] and
-    /// `clone_box` each entry into their own storage, rather than
-    /// hand-mirroring the pass list and risking silent drift.
-    ///
-    /// ZST passes return `Box::new(Self)`.  Stateful passes that
-    /// `#[derive(Clone)]` return `Box::new(self.clone())`.
     fn clone_box(&self) -> Box<dyn Optimizer>;
+}
+
+impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
+    fn clone_box(&self) -> Box<dyn Optimizer> {
+        Box::new(self.clone())
+    }
 }
 
 /// An ordered list of `Optimizer` passes that are run in a shared fixed-point
