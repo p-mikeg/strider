@@ -54,3 +54,6 @@ mod asm_fingerprint;
 
 #[path = "pattern_matching/memory.rs"]
 mod memory;
+
+#[path = "pattern_matching/ssa.rs"]
+mod ssa;
