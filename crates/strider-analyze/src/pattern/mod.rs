@@ -219,8 +219,8 @@ pub use pat::{
 
 #[rustfmt::skip]
 pub use pat::{
-    any_bool_const, any_float_const, any_int_const, any_wide_int_const,
-    bool_const, float_const, int_const, int_const_any_of, int_const_wide,
+    any_bool_const, any_float_const, any_int_const,
+    bool_const, float_const, int_const, int_const_any_of,
     signed_int_const,
 };
 

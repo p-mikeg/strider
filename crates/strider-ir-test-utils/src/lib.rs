@@ -228,8 +228,8 @@ pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 ///
 /// Construct one with [`MockRom::strided`], [`MockRom::fixed_table`],
 /// [`MockRom::always_answer`], or [`MockRom::limited`].  Builder-style
-/// modifiers ([`MockRom::with_cutoff`], [`MockRom::with_size_filter`])
-/// cover the small set of additional behaviours real tests need.
+/// modifier [`MockRom::with_cutoff`] covers the additional behaviour
+/// real tests need.
 ///
 /// `RecordingRom` deliberately stays separate — it records reads to a
 /// side log and is not shape-compatible with this helper.
@@ -248,12 +248,8 @@ enum MockRomShape {
         size_filter: Option<usize>,
         cutoff: Option<usize>,
     },
-    /// Lookup table keyed by exact address.  `size_filter` restricts
-    /// matching read sizes (None = any).
-    FixedTable {
-        entries: BTreeMap<u64, u64>,
-        size_filter: Option<usize>,
-    },
+    /// Lookup table keyed by exact address; matches any read size.
+    FixedTable { entries: BTreeMap<u64, u64> },
     /// Single (addr, size) → value mapping; everything else returns
     /// `None`.  Equivalent to `FixedTable` of length 1 with a size
     /// filter, kept as a distinct shape for call-site clarity.
@@ -309,24 +305,8 @@ impl MockRom {
         Self {
             shape: MockRomShape::FixedTable {
                 entries: entries.iter().copied().collect(),
-                size_filter: None,
             },
         }
-    }
-
-    /// Restrict a [`MockRom::fixed_table`] to one read size.  Reads
-    /// at any other size return `None`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` was not constructed via [`MockRom::fixed_table`].
-    #[must_use]
-    pub fn with_size_filter(mut self, size: usize) -> Self {
-        match &mut self.shape {
-            MockRomShape::FixedTable { size_filter, .. } => *size_filter = Some(size),
-            _ => panic!("with_size_filter only supported on MockRom::fixed_table"),
-        }
-        self
     }
 
     /// Single `(addr, size) → value` mapping; every other read
@@ -382,17 +362,7 @@ impl ReadOnlyMemory for MockRom {
                 }
                 entries.get(idx).copied()
             }
-            MockRomShape::FixedTable {
-                entries,
-                size_filter,
-            } => {
-                if let Some(sz) = size_filter
-                    && size != *sz
-                {
-                    return None;
-                }
-                entries.get(&addr).copied()
-            }
+            MockRomShape::FixedTable { entries } => entries.get(&addr).copied(),
             MockRomShape::Limited {
                 addr: a,
                 size: s,

@@ -1,7 +1,9 @@
 //! Handle for a `FunctionArg` IR node accessed through [`Matcher`].
 
+use std::marker::PhantomData;
+
 use strider_ir::Graph;
-use strider_ir::node::{FunctionArgSource, NodeId, NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::node::FunctionArgSource;
 
 /// A cheap reference to a `FunctionArg` node within a specific
 /// [`Graph`].
@@ -12,27 +14,12 @@ use strider_ir::node::{FunctionArgSource, NodeId, NodeOutputId, NodeOutputKind, 
 /// methods are infallible without a runtime `NodeKind` check.
 #[derive(Clone, Copy)]
 pub struct FunctionArgHandle<'g> {
-    pub(super) graph: &'g Graph,
-    pub(super) node_id: NodeId,
     pub(super) source: FunctionArgSource,
     pub(super) index: u32,
+    pub(super) _graph: PhantomData<&'g Graph>,
 }
 
-impl<'g> FunctionArgHandle<'g> {
-    /// The underlying `NodeId` of the `FunctionArg` node.
-    pub fn node_id(&self) -> NodeId {
-        self.node_id
-    }
-
-    /// The `NodeOutputId` of this `FunctionArg`'s single value output.
-    ///
-    /// Returns `None` if the node has no outputs — this cannot happen for a
-    /// correctly-constructed `FunctionArg`, but the method signature surfaces
-    /// the possibility rather than panicking.
-    pub fn output(&self) -> Option<NodeOutputId> {
-        self.graph.node_outputs(self.node_id).iter().copied().next()
-    }
-
+impl FunctionArgHandle<'_> {
     /// The argument's ABI source (register or stack slot).
     pub fn source(&self) -> FunctionArgSource {
         self.source
@@ -41,17 +28,5 @@ impl<'g> FunctionArgHandle<'g> {
     /// The argument's position in the calling convention.
     pub fn index(&self) -> u32 {
         self.index
-    }
-
-    /// The declared output type (width) of this `FunctionArg`'s value.
-    ///
-    /// Returns `None` if the output kind is not a value type — this cannot
-    /// happen for a correctly-constructed `FunctionArg`, but the method
-    /// signature surfaces the possibility rather than panicking.
-    pub fn width(&self) -> Option<NodeOutputType> {
-        match self.graph.output_kind(self.output()?) {
-            NodeOutputKind::OutputType(t) => Some(t),
-            _ => None,
-        }
     }
 }

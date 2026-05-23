@@ -247,37 +247,3 @@ where
     any().when(f)
 }
 
-/// Matches a [`NodeKind::IntConstWide`] node whose stored value (looked
-/// up in [`strider_ir::Graph::wide_consts`]) equals `value`.  Use this for
-/// `U256` / `U512` constants — narrow widths (`U8`..`U128`) go through
-/// [`int_const`].
-///
-/// The discriminant gate prefilters by `IntConstWide` kind; the
-/// post-match check fetches the actual `WideConstStorage` by id and
-/// compares it against `value`.
-#[must_use]
-pub fn int_const_wide(value: strider_ir::wide_const::WideConstStorage) -> Pat {
-    // KindSpec::variant gates by discriminant; we use a sentinel
-    // WideConstId(0) — the discriminant is what matters here.
-    let sentinel_kind = NodeKind::IntConstWide(strider_ir::wide_const::WideConstId::from_u32(0));
-    NodePat::matcher(KindSpec::variant(&sentinel_kind), InputsSpec::None)
-        .with_post_match(Arc::new(move |ctx, node, _b| {
-            let NodeKind::IntConstWide(id) = *ctx.graph.node_kind(node) else {
-                return false;
-            };
-            ctx.graph.wide_const(id) == &value
-        }))
-        .into_pat()
-}
-
-/// Matches any [`NodeKind::IntConstWide`] node, regardless of value, and
-/// binds the matched node to `c`.  Pair with
-/// [`crate::pattern::Match::get_wide_bytes`] to recover the raw little-endian
-/// bytes post-match.
-#[must_use]
-pub fn any_wide_int_const(c: crate::pattern::var::Capture) -> Pat {
-    let sentinel_kind = NodeKind::IntConstWide(strider_ir::wide_const::WideConstId::from_u32(0));
-    NodePat::matcher(KindSpec::variant(&sentinel_kind), InputsSpec::None)
-        .into_pat()
-        .capture(c)
-}

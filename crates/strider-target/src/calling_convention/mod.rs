@@ -266,16 +266,6 @@ pub enum PositionalArg {
     },
 }
 
-impl PositionalArg {
-    /// Returns the canonical positional argument index for this slot.
-    #[must_use]
-    pub fn index(&self) -> u32 {
-        match self {
-            Self::Register { index, .. } | Self::Stack { index, .. } => *index,
-        }
-    }
-}
-
 /// Positional argument slots of a calling convention, enumerated in
 /// ABI order.
 ///

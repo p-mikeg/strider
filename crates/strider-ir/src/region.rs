@@ -260,113 +260,12 @@ impl FunctionBuilder {
         self.link_region(child_region, ctrl, mem, parent_region)
     }
 
-    /// Returns the entry-boundary `ControlState` `NodeId` of `region`.
-    /// Used by the `strider` crate's per-iteration region index to
-    /// look up phi-extension targets across orchestrator iterations.
-    #[must_use]
-    pub fn region_control_node(&self, region: RegionId) -> NodeId {
-        self.regions[region].control_node
-    }
-
-    /// Returns the entry-boundary `MemPhi` `NodeId` of `region`.
-    #[must_use]
-    pub fn region_memory_node(&self, region: RegionId) -> NodeId {
-        self.regions[region].memory_node
-    }
-
     /// Returns the current control-output of `region` — i.e. the
     /// `Control` `NodeOutputId` consumed by the region's terminator.
     /// At cache-population time this is the region's exit control.
     #[must_use]
     pub fn region_cur_ctrl(&self, region: RegionId) -> NodeOutputId {
         self.regions[region].cur_ctrl
-    }
-
-    /// Returns the current memory-output of `region` — the `Memory`
-    /// `NodeOutputId` consumed by the region's terminator.
-    #[must_use]
-    pub fn region_cur_memory(&self, region: RegionId) -> NodeOutputId {
-        self.regions[region].cur_memory
-    }
-
-    /// Returns the entry-boundary control output (the `Control`
-    /// `NodeOutputId` produced by the region's `ControlState`).  Used
-    /// by the cache to pin the entry handle across iterations.
-    ///
-    /// CORRECTNESS: this is the FIRST output (`output_index 0`) of the
-    /// `ControlState` node — the `Control` slot.  The second output
-    /// (`output_index 1`) is the `PhiToken` consumed
-    /// by per-var phis, not the body's control.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ExpectedControl` if `region`'s
-    /// `ControlState` does not have a Control output at index 0
-    /// (graph-construction bug).
-    pub fn region_entry_control(&self, region: RegionId) -> Result<NodeOutputId> {
-        let cs_id = self.regions[region].control_node;
-        self.first_output_matching(cs_id, |k| k.is_control(), "control", region)
-    }
-
-    /// Returns the entry-boundary memory output (the `Memory`
-    /// `NodeOutputId` produced by the region's `MemPhi`).
-    ///
-    /// # Errors
-    ///
-    /// Returns `ExpectedMemory` if `region`'s `MemPhi`
-    /// does not have a Memory output (graph-construction bug).
-    pub fn region_entry_memory(&self, region: RegionId) -> Result<NodeOutputId> {
-        let mp_id = self.regions[region].memory_node;
-        self.first_output_matching(mp_id, |k| k.is_memory(), "memory", region)
-    }
-
-    /// Returns the first output of `node` whose kind satisfies `pred`.
-    /// Shared between [`Self::region_entry_control`] (filter for
-    /// `Control` on the ControlState node) and
-    /// [`Self::region_entry_memory`] (filter for `Memory` on the
-    /// MemPhi node).  `kind_label` and `region` thread through to the
-    /// error message when no matching output exists.
-    fn first_output_matching(
-        &self,
-        node: crate::node::NodeId,
-        pred: impl Fn(&crate::node::NodeOutputKind) -> bool,
-        kind_label: &str,
-        region: RegionId,
-    ) -> Result<NodeOutputId> {
-        let mut first_seen: Option<NodeOutputId> = None;
-        for &out in self.graph().node_outputs(node) {
-            if first_seen.is_none() {
-                first_seen = Some(out);
-            }
-            let kind = self.graph().output_kind(out);
-            if pred(&kind) {
-                return Ok(out);
-            }
-        }
-        match first_seen {
-            Some(first) => {
-                let kind = self.graph().output_kind(first);
-                Err(anyhow!(
-                    "output {first:?} is not a {kind_label} edge (got {kind:?})"
-                ))
-            }
-            None => Err(anyhow!(
-                "region {region:?} node {node:?} has no outputs"
-            )),
-        }
-    }
-
-    /// Returns an iterator over `(VarId, VarPhi NodeOutputId)`
-    /// pairs for `region`'s entry-boundary per-var phi nodes.  Used
-    /// by the cache to pin the per-var phi `NodeOutputId`s.
-    pub fn region_initial_variables(
-        &self,
-        region: RegionId,
-    ) -> impl Iterator<Item = (VarId, NodeOutputId)> + '_ {
-        self.regions[region]
-            .initial_variables
-            .iter()
-            .map(|(var_id, &out)| (var_id, out))
     }
 
     /// Returns an iterator over `(VarId, NodeOutputId)` pairs for

@@ -92,10 +92,6 @@ pub struct InputCursor<'a> {
 }
 
 impl InputCursor<'_> {
-    pub fn graph(&self) -> &Graph {
-        self.graph
-    }
-
     pub fn current(&self) -> Option<(NodeId, u32)> {
         let current = &self.graph.inputs[self.current?];
         Some((current.node_id, current.input_index))

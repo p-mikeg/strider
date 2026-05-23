@@ -540,10 +540,9 @@ impl<'g> Matcher<'g> {
             return None;
         };
         Some(FunctionArgHandle {
-            graph: self.graph,
-            node_id,
             source,
             index,
+            _graph: std::marker::PhantomData,
         })
     }
 

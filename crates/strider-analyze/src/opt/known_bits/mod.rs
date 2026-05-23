@@ -119,7 +119,7 @@ impl Kb {
 /// Computes the known bits contributed by `node_id` toward its single integer
 /// value output.  Returns `(output_id, Kb)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
-pub fn node_known_bits(
+pub(crate) fn node_known_bits(
     ctx: crate::pattern::RewriteCtxView<'_>,
     node_id: NodeId,
     known: &KnownBitsMap,
