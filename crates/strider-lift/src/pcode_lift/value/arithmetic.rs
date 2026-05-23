@@ -44,6 +44,25 @@ fn require_equal_input_widths(a: &rsleigh::Vn, b: &rsleigh::Vn) -> Result<()> {
     Ok(())
 }
 
+/// Verifies a single-input p-code op has matching input and output widths.
+///
+/// Several unary integer opcodes (`IntNeg`, `Int2Comp`, `BoolNeg`, etc.)
+/// require the output varnode width to equal the single input width.
+/// Sleigh's contract already guarantees this — surfacing a mismatch as
+/// a lift-time error keeps a real `.sla` bug visible instead of letting
+/// `build_int_unary_operation`'s width adaptation silently sign- /
+/// zero-extend the operand.
+pub(super) fn require_equal_input_output_width(input: &rsleigh::Vn, output: &rsleigh::Vn) -> Result<()> {
+    if input.size != output.size {
+        return Err(anyhow::anyhow!(
+            "p-code unary op width mismatch: input={} output={} (Sleigh requires equal widths)",
+            input.size,
+            output.size,
+        ));
+    }
+    Ok(())
+}
+
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a p-code integer unary instruction into an IR unary node and
     /// writes the result to the output varnode.
@@ -52,8 +71,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: IntUnaryOp,
     ) -> Result<()> {
-        let input = self.read_vn(&insn.inputs[0])?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        require_equal_input_output_width(&insn.inputs[0], out_vn)?;
+        let input = self.read_vn(&insn.inputs[0])?;
         let out = self
             .builder
             .build_int_unary_operation(input, op, out_vn.size.try_into()?)?;
@@ -62,6 +82,17 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     /// Translates a p-code integer binary instruction into an IR binary node
     /// and writes the result to the output varnode.
+    ///
+    /// Note: this dispatched-table site is intentionally permissive about
+    /// input widths.  Real-world Sleigh on 64-bit arches legitimately
+    /// emits arithmetic ops mixing operand widths (e.g. mixing an 8-byte
+    /// register with a 4-byte spill / immediate around integer-promotion
+    /// boundaries observed in `abi.c` fixtures); the IR's
+    /// `build_int_binary_operation` width-adapts via zero-extension.
+    /// The lift-time equality check is reserved for the lowered forms
+    /// (`handle_int_sub`, `handle_int_not_equal`, `handle_int_less_equal`,
+    /// `handle_int_sless_equal`) whose lowering arithmetic *does* require
+    /// matching widths.
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
@@ -78,6 +109,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     /// Translates a p-code integer comparison instruction into an IR
     /// comparison node and writes the boolean result to the output varnode.
+    ///
+    /// Same width-permissiveness rationale as `process_int_binary_op`
+    /// above — observed Sleigh output on 64-bit arches violates a strict
+    /// equal-input-widths contract here.
     pub(super) fn process_int_cmp_op(
         &mut self,
         insn: &rsleigh::Insn,

@@ -168,8 +168,24 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         ensure_const_space(&insn.inputs[1], insn.opcode, "Extract lsb")?;
         ensure_const_space(&insn.inputs[2], insn.opcode, "Extract bit_count")?;
         let input = self.read_vn(&insn.inputs[0])?;
-        let lsb = insn.inputs[1].addr_off as u8;
-        let len = insn.inputs[2].addr_off as u8;
+        // Bit-position constants live in `addr_off: u64`; the lowering
+        // (`lsb_const`, mask `(1u128 << len) - 1`) caps both at 128.
+        // A spec emitting a value > 255 would have silently wrapped the
+        // older `as u8` cast — surface it as a lift-time error.
+        let lsb = u8::try_from(insn.inputs[1].addr_off).map_err(|_| {
+            anyhow::anyhow!(
+                "Extract lsb {} does not fit in u8 (opcode {:?})",
+                insn.inputs[1].addr_off,
+                insn.opcode,
+            )
+        })?;
+        let len = u8::try_from(insn.inputs[2].addr_off).map_err(|_| {
+            anyhow::anyhow!(
+                "Extract bit_count {} does not fit in u8 (opcode {:?})",
+                insn.inputs[2].addr_off,
+                insn.opcode,
+            )
+        })?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let narrow_ty: NodeOutputType = out_vn.size.try_into()?;
         let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
@@ -218,8 +234,21 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         ensure_const_space(&insn.inputs[3], insn.opcode, "Insert bit_count")?;
         let dest = self.read_vn(&insn.inputs[0])?;
         let src = self.read_vn(&insn.inputs[1])?;
-        let lsb = insn.inputs[2].addr_off as u8;
-        let len = insn.inputs[3].addr_off as u8;
+        // Same u64→u8 narrowing rationale as `handle_extract`.
+        let lsb = u8::try_from(insn.inputs[2].addr_off).map_err(|_| {
+            anyhow::anyhow!(
+                "Insert lsb {} does not fit in u8 (opcode {:?})",
+                insn.inputs[2].addr_off,
+                insn.opcode,
+            )
+        })?;
+        let len = u8::try_from(insn.inputs[3].addr_off).map_err(|_| {
+            anyhow::anyhow!(
+                "Insert bit_count {} does not fit in u8 (opcode {:?})",
+                insn.inputs[3].addr_off,
+                insn.opcode,
+            )
+        })?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty: NodeOutputType = out_vn.size.try_into()?;
 
