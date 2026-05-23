@@ -54,16 +54,25 @@ pat = add(var(c), int_const(8))           # capture is `c`, look it up later
 # pattern.  Re-use the same string for a back-reference (must-be-same).
 pat = xor("v", "v")                       # zero-idiom: must be same value
 
-# Reserved wildcards (silently convert to any_()):
-#   "_" and "any_"
-pat = add("_", "x")                       # second operand captured as "x"
+# Reserved wildcard strings raise PatternError if used as a capture
+# key.  Use `p.any_()` for an unbound wildcard or `p.var(Capture())`
+# explicitly when you need an unnamed capture:
+pat = add(p.any_(), "x")                  # first slot wildcard, second captured as "x"
 
 # Reading captures back from a Match `h`:
-h.uint("x")     # → int  (None if not bound or not an IntConst)
-h.bool_("c")    # → bool
+h.uint("x")        # → int  (None if not bound or not an IntConst)
+h.bool_("c")       # → bool
 h.float_bits("k")  # → u64 bits of a FloatConst
-h.node("v")     # → NodeId of the captured value node
+h.vn("v")          # → Vn of the captured InitialVar / tagged Phi / FunctionArg
+h.has("v")         # → True/False whether the capture is bound
+h.root             # → NodeId (u32) of the top-level match root (getter)
 ```
+
+Note: there is no per-capture `node_id` accessor on `Match` — only the
+top-level `root` getter exposes a raw NodeId.  Per-capture lookup is
+typed (`uint`, `int`, `bool_`, `float_bits`, `vn`, `stack_offset`,
+`stack_phi_offsets`, `asm_fingerprint`, plus the op-variant
+accessors).
 
 ### Available builders
 
@@ -205,7 +214,7 @@ c = p.Capture()
 pat = p.add(p.var(c), p.int_const(8))
 hits = graph.find_all(pat)            # list[Match]
 for h in hits:
-    print(h.uint(c) if h.uint(c) is not None else h.node(c))
+    print(h.uint(c) if h.uint(c) is not None else h.vn(c))
 ```
 
 Multi-pattern join on shared captures:
@@ -315,7 +324,7 @@ op_cap = p.Capture()
 l_cap = p.Capture()
 r_cap = p.Capture()
 pat = p.int_bin_any(op_cap, p.var(l_cap), p.var(r_cap))
-# Then after match: h.int_bin_op(op_cap) → "Add" / "Mul" / …
+# Then after match: h.int_binary_op(op_cap) → "Add" / "Mul" / …
 ```
 
 ### Example 8: "stack store of constant 0 at offset 16, followed by load at same offset"

@@ -19,9 +19,10 @@ x & (C1 & C2)`" / "fold this into ConstantFold" / "rewrite
 - Auditing an existing rewrite's fingerprint propagation →
   `strider-rewrite-rule-multinode-audit`.
 - Adding a brand-new pass type → `strider-opt-pass-author` first.
-- FlagCmpCanonicalize-specific rule shape (different
-  `Rule { rhs_capture: Option<Capture> }` struct) →
-  `strider-flagcmp-rule-author`.
+
+FlagCmpCanonicalize uses the same `rewrite_rule` shape as every other
+pass — add the new rule to its `RULES: LazyLock<Vec<BoxedRule>>`
+slice the same way you'd add to ConstantFold.
 
 ## How to use this skill
 
@@ -147,8 +148,8 @@ sentinel and returns `Ok(false)` (no change, no error).
 
 For conditions the pattern DSL can't express structurally — type
 equality, width comparisons, bit-pattern tests — chain `.when_match`
-on the LHS pattern.  The closure signature is `(&Graph, NodeType,
-&Bindings) -> bool`.
+on the LHS pattern.  The closure signature is `(&Graph,
+NodeOutputType, &Bindings) -> bool`.
 
 ```rust
 // Truncate(ZeroExtend(x)) → x — only when x's type matches the
@@ -167,9 +168,9 @@ let zext_round_trip = {
 };
 ```
 
-The `ctx` parameter is `RewriteCtxView` (`&Graph`-equivalent); `ty`
-is the rule-root's value type; `b: &Bindings` is the partial-match
-binding table.  Use `b.get(c)` to look up a captured `NodeOutputId`.
+The `ctx` parameter is `&Graph`; `ty` is the rule-root's value type
+(`NodeOutputType`); `b: &Bindings` is the partial-match binding
+table.  Use `b.get(c)` to look up a captured `NodeOutputId`.
 
 ## Grouping rules
 
