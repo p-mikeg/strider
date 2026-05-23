@@ -5,7 +5,9 @@
 
 mod common;
 
-use common::dump_helpers::{lift_ret_snippet_x86_64, unique_tmp_dir, VIEWER_JSON_ANCHOR};
+use common::dump_helpers::{
+    lift_add_chain_snippet_x86_64, lift_ret_snippet_x86_64, unique_tmp_dir, VIEWER_JSON_ANCHOR,
+};
 
 #[test]
 fn dump_neighborhood_writes_one_html_for_the_anchor() {
@@ -96,6 +98,79 @@ fn dump_neighborhood_rejects_foreign_node_id() {
     // Sanity reference: `foreign_anchor` exists in graph B (covers
     // the warning-only branch and keeps the variable in use).
     assert!(outcome_b.graph.has_node(foreign_anchor));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Deeper-depth coverage: a snippet with four chained `add rax,rax`
+/// instructions feeding `ret` builds a value chain >= 5 nodes deep.
+/// `dump_neighborhood(anchor, depth=3)` must select EXACTLY the set
+/// returned by [`strider_ir::walk::collect_neighborhood`] (the
+/// underlying BFS frontier walk), and the count must strictly exceed
+/// the depth-1 selection — otherwise the depth parameter is being
+/// silently capped at 1, which is exactly the kind of off-by-one
+/// regression this test catches.
+#[test]
+fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
+    let (outcome, cfg) = lift_add_chain_snippet_x86_64();
+    let entry_node = outcome
+        .graph
+        .entry()
+        .expect("entry should be set after analyze_cfg");
+
+    // Sanity: the chained-add snippet really does produce a deeper
+    // graph than the trivial `ret` snippet — otherwise the test isn't
+    // exercising what its name claims.
+    let total_nodes = outcome.graph.all_node_ids().count();
+    assert!(
+        total_nodes >= 5,
+        "add-chain snippet must produce at least 5 nodes, got {total_nodes}",
+    );
+
+    let near = strider_ir::walk::collect_neighborhood(&outcome.graph, entry_node, 1);
+    let far = strider_ir::walk::collect_neighborhood(&outcome.graph, entry_node, 3);
+
+    let near_count = near.len();
+    let far_count = far.len();
+
+    assert!(
+        far_count > near_count,
+        "depth=3 selection ({far_count}) must include strictly more nodes \
+         than depth=1 ({near_count}); off-by-one cap suspected",
+    );
+
+    // Every depth=1 node must also be reachable at depth=3 — the
+    // expansion is monotonic.
+    for id in outcome.graph.all_node_ids() {
+        if near.contains(id) {
+            assert!(
+                far.contains(id),
+                "depth=3 dropped node {id:?} that depth=1 included; \
+                 neighborhood walk is non-monotonic",
+            );
+        }
+    }
+
+    // Smoke: the renderer accepts the larger selection and produces a
+    // well-formed viewer.
+    let tmp = unique_tmp_dir("dump-neighborhood-depth3");
+    let out = tmp.join("focus.html");
+
+    strider_analyze::dump_neighborhood(
+        &outcome.graph,
+        entry_node,
+        /* depth */ 3,
+        cfg.sleigh(),
+        &out,
+    )
+    .expect("dump_neighborhood depth=3");
+
+    let html = std::fs::read_to_string(&out).expect("read html");
+    assert!(
+        html.contains(VIEWER_JSON_ANCHOR),
+        "viewer JSON script missing from depth=3 dump at {}",
+        out.display(),
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

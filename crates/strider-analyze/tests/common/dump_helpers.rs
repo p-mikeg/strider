@@ -37,6 +37,75 @@ pub fn lift_ret_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>)
     (outcome, cfg)
 }
 
+/// Build an x86_64 [`Cfg`] for a tiny conditional-branch snippet that
+/// fans into two regions, each ending in `ret`:
+///
+/// ```text
+///   1000:  48 85 c0          test rax, rax
+///   1003:  74 01             jz   0x1006        ; taken    → region B
+///   1005:  c3                ret                ; fall-thr → region A
+///   1006:  c3                ret                ;          → region B
+/// ```
+///
+/// Both rets land at distinct machine addresses, so the lifter
+/// produces two `RegionLiftHandles` entries.  Used by
+/// `dump_per_region_writes_one_html_per_region` to verify
+/// multi-region emission without depending on a built ELF fixture.
+pub fn lift_branch_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
+    let strider = strider_x86_64();
+    let arch = SleighArch::x86_64();
+
+    // test rax, rax ; jz +1 ; ret ; ret
+    let bytes = vec![0x48u8, 0x85, 0xc0, 0x74, 0x01, 0xc3, 0xc3];
+    let entry = 0x1000u64;
+    let reader = BufMemReader::new(bytes, entry);
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
+        .build()
+        .expect("cfg");
+
+    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+    (outcome, cfg)
+}
+
+/// Build an x86_64 [`Cfg`] for a straight-line snippet that produces
+/// a deep value chain ending in `ret`:
+///
+/// ```text
+///   1000:  48 01 c0          add rax, rax   ; rax = rax + rax (insn 1)
+///   1003:  48 01 c0          add rax, rax   ;                 (insn 2)
+///   1006:  48 01 c0          add rax, rax   ;                 (insn 3)
+///   1009:  48 01 c0          add rax, rax   ;                 (insn 4)
+///   100c:  c3                ret
+/// ```
+///
+/// Each `add` consumes the previous insn's `rax` value (after register
+/// aliasing lifts it through Phi(Some(rax))), so the IR is a chain of
+/// `IntBinaryOp(Add)` nodes feeding `Return` via the SystemV ret-val
+/// register read.  Used by the depth-3 neighborhood test to verify
+/// that `dump_neighborhood` walks more than one hop.
+pub fn lift_add_chain_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
+    let strider = strider_x86_64();
+    let arch = SleighArch::x86_64();
+
+    let bytes = vec![
+        0x48, 0x01, 0xc0, // add rax, rax
+        0x48, 0x01, 0xc0, // add rax, rax
+        0x48, 0x01, 0xc0, // add rax, rax
+        0x48, 0x01, 0xc0, // add rax, rax
+        0xc3,             // ret
+    ];
+    let entry = 0x1000u64;
+    let reader = BufMemReader::new(bytes, entry);
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
+        .build()
+        .expect("cfg");
+
+    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+    (outcome, cfg)
+}
+
 /// Allocate a per-test scratch directory under the system temp dir
 /// (no `tempfile` crate dependency).  The directory name embeds the
 /// process id + a nanosecond clock so concurrent test invocations do
