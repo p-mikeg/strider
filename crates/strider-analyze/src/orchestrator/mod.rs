@@ -117,7 +117,7 @@ where
 /// `vn_to_value` table.  The map is `Arc`-shared with each
 /// [`RegionLiftHandles::exit_vn_to_value`] entry — never mutated
 /// post-build, so shared ownership is safe.
-type ExitVnToValue = std::sync::Arc<HashMap<rsleigh::Vn, NodeOutputId>>;
+type ExitVnToValue = std::sync::Arc<rustc_hash::FxHashMap<rsleigh::Vn, NodeOutputId>>;
 
 struct RegionIndex {
     by_exit_control: HashMap<NodeOutputId, ExitVnToValue>,

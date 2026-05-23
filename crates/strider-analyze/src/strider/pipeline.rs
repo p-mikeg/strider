@@ -18,7 +18,7 @@ pub(crate) struct RegionLiftHandles {
     /// `RegionIndex::from_handles` can `Arc::clone` instead of
     /// deep-cloning the map (the map is never mutated post-build).
     pub(crate) exit_vn_to_value:
-        std::sync::Arc<std::collections::HashMap<rsleigh::Vn, strider_ir::node::NodeOutputId>>,
+        std::sync::Arc<rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::NodeOutputId>>,
 }
 
 /// The full result of a strider lift, exposing the lifted IR plus the
@@ -449,10 +449,10 @@ impl Strider {
         for &cfg_rid in &cfg_region_ids {
             let ir_region_id = ir_region_of(cfg_rid)?;
 
-            let mut exit_vn_to_value: std::collections::HashMap<
+            let mut exit_vn_to_value: rustc_hash::FxHashMap<
                 rsleigh::Vn,
                 strider_ir::node::NodeOutputId,
-            > = std::collections::HashMap::new();
+            > = rustc_hash::FxHashMap::default();
             for (var_id, val_out) in per_region_driver.builder.region_exit_variables(ir_region_id) {
                 if let Some(vn) = per_region_driver.builder.vn_of_var(var_id) {
                     exit_vn_to_value.insert(vn, val_out);
