@@ -133,18 +133,10 @@ impl RegisterSet {
     /// Propagates any error from `FunctionBuilder::new_raw`,
     /// `create_region`, or `set_entry_region`.
     pub fn build_fn_single_region(self) -> Result<FunctionBuilder> {
-        let mut b = FunctionBuilder::new_raw(
-            self.tracked,
-            &self.arg_passing,
-            &self.callee_saved,
-            &self.ret_val,
-            self.sp,
-            self.ret_stack_pop,
-        )?;
+        let mut b = self.build_fn()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }
 }
