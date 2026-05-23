@@ -232,8 +232,8 @@ impl Strider {
         &self,
         cfg: &strider_lift::cfg::Cfg<R>,
     ) -> Vec<rsleigh::Vn> {
-        let mut all_vns: std::collections::HashSet<rsleigh::Vn> =
-            std::collections::HashSet::new();
+        let mut all_vns: rustc_hash::FxHashSet<rsleigh::Vn> =
+            rustc_hash::FxHashSet::default();
         for region in cfg.regions() {
             for wrapped in region.insns.iter() {
                 for vn in wrapped.insn.all_vns() {

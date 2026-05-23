@@ -193,11 +193,11 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // that never write through it (e.g. `bx lr` with no prior writes
     // to lr); including the link register lets the LR-target
     // classification's `InitialVar(lr)` show up.
-    let mut seen: std::collections::HashSet<rsleigh::Vn> =
-        std::collections::HashSet::new();
+    let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> =
+        rustc_hash::FxHashSet::default();
     let mut all_vns: Vec<rsleigh::Vn> = Vec::new();
     let push_vn = |vn: rsleigh::Vn,
-                       seen: &mut std::collections::HashSet<rsleigh::Vn>,
+                       seen: &mut rustc_hash::FxHashSet<rsleigh::Vn>,
                        all: &mut Vec<rsleigh::Vn>| {
         if seen.insert(vn) {
             all.push(vn);

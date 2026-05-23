@@ -303,7 +303,7 @@ where
     /// original vns stay in the cache even if the original's insn
     /// list got truncated.  Over-tracking a vn allocates one extra
     /// `InitialVar` (cheap) and never miscompiles.
-    vn_cache: std::collections::HashSet<rsleigh::Vn>,
+    vn_cache: rustc_hash::FxHashSet<rsleigh::Vn>,
     /// Region count at the most recent `find_all_unique_vns` call.
     /// `vn_cache` is up-to-date for the first `vn_cache_region_count`
     /// regions in the CFG; later regions need to be scanned and unioned
@@ -356,7 +356,7 @@ where
             lr_vn,
             sp_vn,
             decode_cache: DecodeCache::new(),
-            vn_cache: std::collections::HashSet::new(),
+            vn_cache: rustc_hash::FxHashSet::default(),
             vn_cache_region_count: 0,
             strider: config.strider,
             start_addr: config.start_addr,
@@ -1056,7 +1056,7 @@ where
 /// field doc on `LoopState::vn_cache` for why that's safe.
 fn scan_new_vns<R>(
     cfg: &Cfg<R>,
-    vn_cache: &mut std::collections::HashSet<rsleigh::Vn>,
+    vn_cache: &mut rustc_hash::FxHashSet<rsleigh::Vn>,
     vn_cache_region_count: &mut usize,
 ) -> Vec<rsleigh::Vn>
 where
