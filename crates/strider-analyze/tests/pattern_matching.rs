@@ -42,3 +42,6 @@ mod rewrite;
 
 #[path = "pattern_matching/variant_agnostic.rs"]
 mod variant_agnostic;
+
+#[path = "pattern_matching/if_pat_symmetric.rs"]
+mod if_pat_symmetric;
