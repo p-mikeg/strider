@@ -23,6 +23,44 @@
 //! Per the design constraint that opt-pass cleanup keeps walks O(n) over
 //! reachable mem nodes, the walker uses an explicit `Vec<Frame>` work
 //! stack and an `entity_utils::DenseEntitySet<NodeOutputId>` cycle guard.
+//!
+//! ## Scope: forking walks only
+//!
+//! Two other backward memory-chain walks live elsewhere in this crate
+//! and deliberately do NOT use this primitive:
+//!
+//! * [`crate::opt::stack_store::call_args`]'s
+//!   `collect_stack_args_in_chain_order` walks the chain leading into a
+//!   `Call`, accumulating positional `StackStore` data outputs into a
+//!   dense-prefix slot table.  It treats `MemPhi` as a chain-terminator
+//!   (never branches), and its per-step decision depends on cross-step
+//!   accumulated state (`prefix_top`, `anchor_base`, `anchor_space`,
+//!   `chain_anchor_offset`, `is_first_store`).  A unified trait would
+//!   force it to declare a `JoinPhi` arm that is dead code at every
+//!   call site and a `combine_phi` impl that is never invoked.
+//!
+//! * [`crate::opt::stack_load_forward::find_stack_stored_value_at_offset`]
+//!   walks the chain looking for one `StackStore` at a specific
+//!   SP-relative offset.  It bails on `MemPhi` rather than branching,
+//!   and it memoises EVERY prefix on the way back into a caller-
+//!   supplied `StackStoredValueMemo` — the walker would have to expose
+//!   its internal visited-set order back to the step impl to preserve
+//!   that semantics, which leaks implementation.
+//!
+//! Both excluded walks are linear (non-forking) chains and therefore
+//! never invoke this module's load-bearing machinery (the `Vec<Frame>`
+//! work stack, the `JoinPhi` continuation frame, the results-stack
+//! drain).  Folding them in would trade clarity for a never-taken
+//! `JoinPhi` arm in every step impl plus an unmodelled per-prefix-memo
+//! callback.  Keeping them local also lets each express its
+//! termination-with-partial-result shape directly (`Vec<NodeOutputId>`
+//! dense prefix, `Option<NodeOutputId>` keyed lookup) without an extra
+//! `Verdict` layer.
+//!
+//! If a third forking walker arrives, fold it into [`MemChainStep`].
+//! If a third linear walker arrives, consider extracting a tiny
+//! `walk_mem_chain_linear` helper instead — the design constraints are
+//! disjoint enough that one trait cannot serve both shapes cleanly.
 
 use smallvec::SmallVec;
 use strider_ir::Graph;
