@@ -103,9 +103,8 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 
 /// Anchor-tracking contract: the strider exposes a side-table
 /// mapping each placeholder's pcode address to the `NodeOutputId`
-/// that anchors `target_vn`.  the IR-level orchestrator resolver walks this table.
-///
-/// Pinning the table now keeps the API surface stable for R2.
+/// that anchors `target_vn`.  the IR-level orchestrator resolver
+/// walks this table.
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();

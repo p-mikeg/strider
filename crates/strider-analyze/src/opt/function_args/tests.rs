@@ -987,9 +987,9 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
-    // 10k-store chain pins the iterative form of `mem_chain_is_dirty`
-    // (scale.md A3).  The prior recursive form would stack-overflow
-    // on the default 8 MB Rust stack at this depth.
+    // 10k-store chain pins the iterative form of `mem_chain_is_dirty`.
+    // The prior recursive form would stack-overflow on the default
+    // 8 MB Rust stack at this depth.
     const CHAIN_LEN: usize = 10_000;
 
     let sp = sp32_vn();

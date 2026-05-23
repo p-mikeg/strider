@@ -413,7 +413,8 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 /// `Graph::stack_phi_offsets`.  They are relative to `InitialVar(sp)` by
 /// construction (the only place that populates them is `StackStoreDetect`).
 //
-/// Iterative form of `mem_chain_is_dirty` — was recursive (scale.md A3).
+/// Iterative form of `mem_chain_is_dirty` — the prior recursive form
+/// stack-overflowed on pathological deep prologues.
 /// Walks the memory chain backward via an explicit work stack, with
 /// dedicated frames for `MemPhi` predecessors that join-OR their
 /// per-pred results.  Stack-safe at any chain depth and any phi

@@ -321,8 +321,7 @@ impl Strider {
         cfg: &strider_lift::cfg::Cfg<R>,
         opts: AnalyzeOptions<'_>,
     ) -> Result<AnalyzeOutcome> {
-        // Phase 1: build the per-region driver, allocate IR regions,
-        // and wire the entry region.
+        // Allocate one IR region per CFG region and wire the entry region.
         let all_vns = opts
             .all_vns
             .unwrap_or_else(|| self.find_all_unique_vns(cfg));
@@ -336,24 +335,25 @@ impl Strider {
                 .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))
         };
 
-        // Phase 2: translate every region's instructions + non-trivial
+        // Translate every region's instructions + non-trivial
         // terminator into IR.
         translate_regions(&mut driver, cfg, &cfg_region_ids, &ir_region_of)?;
 
-        // Phase 3: link region edges the per-insn loop didn't reach
+        // Link region edges the per-insn loop didn't reach
         // (fallthrough edges, and Branch edges out of empty regions).
         link_region_edges(&mut driver, cfg, &ir_region_of)?;
 
-        // Phase 4: capture per-region exit handles, then consume the
-        // builder.
+        // Capture per-region exit handles, then consume the builder
+        // and emit the final outcome.
         finalise_outcome(driver, cfg, &cfg_region_ids, &ir_region_of)
     }
 }
 
-/// Phase 1 of [`Strider::analyze_cfg_with`]: build_entry, allocate one
-/// IR region per CFG region, set the entry region.  Returns the
-/// CFG-region-id list (in iteration order) and the
-/// `RegionId.index() -> Option<strider_ir::RegionId>` map.
+/// `init_region_map` — first stage of [`Strider::analyze_cfg_with`]:
+/// build_entry, allocate one IR region per CFG region, set the
+/// entry region.  Returns the CFG-region-id list (in iteration
+/// order) and the `RegionId.index() -> Option<strider_ir::RegionId>`
+/// map.
 fn init_region_map<R: rsleigh::MemReader>(
     driver: &mut PerRegionDriver<'_, R>,
     cfg: &strider_lift::cfg::Cfg<R>,
@@ -379,11 +379,12 @@ fn init_region_map<R: rsleigh::MemReader>(
     Ok((cfg_region_ids, region_map))
 }
 
-/// Phase 2 of [`Strider::analyze_cfg_with`]: translate every region's
-/// instructions + (when present) its special terminator into IR.  The
-/// special terminator's p-code insn is skipped inside the per-insn
-/// loop and lifted via a dedicated handler with asm-fingerprint
-/// attribution to the region's last machine address.
+/// `translate_regions` — second stage of
+/// [`Strider::analyze_cfg_with`]: translate every region's
+/// instructions + (when present) its special terminator into IR.
+/// The special terminator's p-code insn is skipped inside the
+/// per-insn loop and lifted via a dedicated handler with
+/// asm-fingerprint attribution to the region's last machine address.
 fn translate_regions<R, F>(
     driver: &mut PerRegionDriver<'_, R>,
     cfg: &strider_lift::cfg::Cfg<R>,
@@ -466,14 +467,14 @@ where
     Ok(())
 }
 
-/// Phase 3 of [`Strider::analyze_cfg_with`]: wire region edges that the
-/// per-insn loop didn't.  Fallthrough edges always need linking here;
-/// Branch edges out of empty regions (produced by the bounded-lift
-/// CondBranch-OOB collapse) too, since their absent pcode means no
-/// per-insn `handle_branch` call ran.  Non-empty Branch regions are
-/// already wired by the trailing `Branch` p-code insn — re-linking
-/// would double-add the edge and break graph-invariants predecessor
-/// counts.
+/// `link_region_edges` — third stage of [`Strider::analyze_cfg_with`]:
+/// wire region edges that the per-insn loop didn't.  Fallthrough
+/// edges always need linking here; Branch edges out of empty regions
+/// (produced by the bounded-lift CondBranch-OOB collapse) too, since
+/// their absent pcode means no per-insn `handle_branch` call ran.
+/// Non-empty Branch regions are already wired by the trailing
+/// `Branch` p-code insn — re-linking would double-add the edge and
+/// break graph-invariants predecessor counts.
 fn link_region_edges<R, F>(
     driver: &mut PerRegionDriver<'_, R>,
     cfg: &strider_lift::cfg::Cfg<R>,
@@ -513,9 +514,10 @@ where
     Ok(())
 }
 
-/// Phase 4 of [`Strider::analyze_cfg_with`]: capture per-region exit
-/// handles before `build()` consumes the builder, then materialise the
-/// final `AnalyzeOutcome` with the post-build generation snapshot.
+/// `finalise_outcome` — final stage of
+/// [`Strider::analyze_cfg_with`]: capture per-region exit handles
+/// before `build()` consumes the builder, then materialise the final
+/// `AnalyzeOutcome` with the post-build generation snapshot.
 fn finalise_outcome<R, F>(
     mut driver: PerRegionDriver<'_, R>,
     _cfg: &strider_lift::cfg::Cfg<R>,

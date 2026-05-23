@@ -69,8 +69,8 @@ impl FunctionBuilder {
         call_address: NodeOutputId,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<NodeId> {
-        // Phase 1: resolve the per-call ABI shape (arg list, clobber
-        // list, ret_stack_pop) from either the override CC or the
+        // Resolve the per-call ABI shape (arg list, clobber list,
+        // ret_stack_pop) from either the override CC or the
         // function-default snapshot stamped at builder construction.
         let CallAbiSelection {
             arg_vars,
@@ -79,20 +79,20 @@ impl FunctionBuilder {
             no_memory_clobber,
         } = self.select_call_abi(override_cc);
 
-        // Phase 2: read every arg + clobber variable and verify the
+        // Read every arg + clobber variable and verify the
         // call_address is a value edge.  This also produces the
         // arg-input id list + the clobber-kind list that feed the
-        // create_node call in phase 4.
+        // `emit_call_node` create_node call below.
         let CallValueInputs {
             arg_passing,
             clobbered_kinds,
         } = self.read_call_value_inputs(call_address, &arg_vars, &clobber_vars)?;
 
-        // Phase 3: snapshot pre-call SP for the post-call adjust (only
-        // on stack-push ISAs where `ret_stack_pop != 0`).
+        // Snapshot pre-call SP for the post-call adjust (only on
+        // stack-push ISAs where `ret_stack_pop != 0`).
         let sp_pre_call = self.snapshot_pre_call_sp(ret_stack_pop)?;
 
-        // Phase 4: create the Call node, advance ctrl (+memory unless
+        // Create the Call node, advance ctrl (+memory unless
         // no_memory_clobber), write per-clobber variables, and stamp
         // the per-call override on the side-table.
         let call = self.emit_call_node(
@@ -104,18 +104,19 @@ impl FunctionBuilder {
             no_memory_clobber,
         )?;
 
-        // Phase 5: apply the post-call SP adjust on stack-push ISAs.
+        // Apply the post-call SP adjust on stack-push ISAs.
         self.apply_post_call_sp_adjust(sp_pre_call, ret_stack_pop)?;
 
         Ok(call)
     }
 
-    /// Phase 1 helper for [`Self::build_call_with_cc`]: resolve the
-    /// per-call ABI shape from the override CC or the function-default
-    /// snapshot.  Override args are filtered through the function's
-    /// tracked-variable set so reads against unread vars don't fail
-    /// with `VariableNotFound`; override clobbers cover every tracked
-    /// variable that is neither callee-saved nor the SP.
+    /// `select_call_abi` helper for [`Self::build_call_with_cc`]:
+    /// resolve the per-call ABI shape from the override CC or the
+    /// function-default snapshot.  Override args are filtered through
+    /// the function's tracked-variable set so reads against unread
+    /// vars don't fail with `VariableNotFound`; override clobbers
+    /// cover every tracked variable that is neither callee-saved nor
+    /// the SP.
     fn select_call_abi(
         &self,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
@@ -154,10 +155,11 @@ impl FunctionBuilder {
         }
     }
 
-    /// Phase 2 helper: read every arg / clobber variable and assert
-    /// the call address is a value edge.  Returns the arg-input id
-    /// list (in CC order) plus the clobber-output-kind list (one entry
-    /// per `clobber_vars` entry, in the same order).
+    /// `read_call_value_inputs` helper: read every arg / clobber
+    /// variable and assert the call address is a value edge.  Returns
+    /// the arg-input id list (in CC order) plus the
+    /// clobber-output-kind list (one entry per `clobber_vars` entry,
+    /// in the same order).
     fn read_call_value_inputs(
         &mut self,
         call_address: NodeOutputId,
@@ -193,11 +195,11 @@ impl FunctionBuilder {
         })
     }
 
-    /// Phase 3 helper: snapshot the pre-call SP value so the
-    /// post-call SP adjust in phase 5 can wire `pre + ret_stack_pop`
-    /// through `IntBinaryOp::Add`.  Returns `None` on link-register
-    /// ISAs (`ret_stack_pop == 0`) or when the function doesn't track
-    /// the SP.
+    /// `snapshot_pre_call_sp` helper: snapshot the pre-call SP value
+    /// so the post-call SP adjust (`apply_post_call_sp_adjust`) can
+    /// wire `pre + ret_stack_pop` through `IntBinaryOp::Add`.
+    /// Returns `None` on link-register ISAs (`ret_stack_pop == 0`)
+    /// or when the function doesn't track the SP.
     fn snapshot_pre_call_sp(
         &mut self,
         ret_stack_pop: i64,
@@ -210,10 +212,11 @@ impl FunctionBuilder {
         }
     }
 
-    /// Phase 4 helper: create the Call node, advance the region's
-    /// control (+memory unless `no_memory_clobber`) edges, write each
-    /// clobber variable, and stamp the per-call override clobber list
-    /// on the graph side-table when this Call carries one.
+    /// `emit_call_node` helper: create the Call node, advance the
+    /// region's control (+memory unless `no_memory_clobber`) edges,
+    /// write each clobber variable, and stamp the per-call override
+    /// clobber list on the graph side-table when this Call carries
+    /// one.
     fn emit_call_node(
         &mut self,
         call_address: NodeOutputId,
@@ -257,12 +260,12 @@ impl FunctionBuilder {
         Ok(call)
     }
 
-    /// Phase 5 helper: model the caller-visible effect of the
-    /// callee's `ret` on SP — on stack-push ISAs `ret` pops the
-    /// return-address word, so the caller's post-call SP is
+    /// `apply_post_call_sp_adjust` helper: model the caller-visible
+    /// effect of the callee's `ret` on SP — on stack-push ISAs `ret`
+    /// pops the return-address word, so the caller's post-call SP is
     /// `pre_call_SP + ret_stack_pop`.  On link-register ISAs
-    /// `ret_stack_pop == 0` and the phase 3 snapshot is `None`, so
-    /// this is a no-op.
+    /// `ret_stack_pop == 0` and the `snapshot_pre_call_sp` snapshot
+    /// is `None`, so this is a no-op.
     fn apply_post_call_sp_adjust(
         &mut self,
         sp_pre_call: Option<(rsleigh::Vn, NodeOutputId)>,

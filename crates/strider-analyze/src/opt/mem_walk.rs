@@ -498,9 +498,8 @@ mod tests {
 
     #[test]
     fn long_linear_chain_does_not_overflow_or_lose_verdicts() {
-        // 64-deep chain of Stores — exceeds the 32 lower-bound suggested
-        // in the audit and confirms the walker is heap-bounded, not
-        // stack-bounded.
+        // 64-deep chain of Stores — confirms the walker is heap-bounded,
+        // not stack-bounded.
         const DEPTH: usize = 64;
         let (fg, head) = linear_store_chain(DEPTH);
         let mut step = LinearTraceStep { visited: Default::default() };

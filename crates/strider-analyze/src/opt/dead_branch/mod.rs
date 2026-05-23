@@ -71,9 +71,9 @@ fn try_eliminate_dead_branch(
     let dead_uses: Vec<(NodeId, u32)> = ctx.output_uses(dead_ctrl).collect();
     let live_uses_count = ctx.output_uses(live_ctrl).count();
 
-    // Detaching the If's inputs (the old "Step 4") severs the only edge
-    // keeping the now-folded If attached to the live walk.  That's normally
-    // exactly what we want — the outer pipeline stops revisiting the If on
+    // Detaching the If's inputs severs the only edge keeping the
+    // now-folded If attached to the live walk.  That's normally exactly
+    // what we want — the outer pipeline stops revisiting the If on
     // every iteration.  But when the dead-branch subgraph has data outputs
     // consumed by *live* nodes (e.g. a dead `Call`'s `mem_out` flowing into
     // the join's `MemPhi`), backward-data from those live consumers walks

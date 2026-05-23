@@ -263,17 +263,18 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 ///
 /// Before the fix, DBE would:
 ///   1. replace `ctrl_false` with `ctrl_in` (live rewire),
-///   2. skip the `CallOther` consumer of `ctrl_true` (Step 3 only handles
-///      `ControlState`),
-///   3. detach the `If`'s own inputs (Step 4),
+///   2. skip the `CallOther` consumer of `ctrl_true` (the
+///      live-rewire path only handles `ControlState` consumers),
+///   3. detach the `If`'s own inputs unconditionally,
 ///      leaving the `If` with 0 inputs.  The walker then re-reached the
 ///      `If` via `join_CS → CallOther → ctrl_true → If` (backward-data),
 ///      so the validator complained `node N has 0 inputs, expected 2`.
 ///
-/// The fix drops Step 4 and instead returns `NoChange` when no real work
-/// is left, keeping the `If`'s inputs intact and letting the dead-branch
-/// subgraph stay as a structurally-valid zombie until the join's
-/// `MemPhi` collapses through `RedundantPhis`.
+/// The fix drops the unconditional detach and instead returns
+/// `NoChange` when no real work is left, keeping the `If`'s inputs
+/// intact and letting the dead-branch subgraph stay as a
+/// structurally-valid zombie until the join's `MemPhi` collapses
+/// through `RedundantPhis`.
 #[test]
 fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
     let mut fg = {
@@ -329,9 +330,9 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
     fg.update_input(call_ctrl_input_id, dead_ctrl);
 
     // Run DBE in isolation, then validate.  Before the fix DBE detached
-    // the If's inputs (Step 4) but left the non-CS dead consumer wired
-    // to `dead_ctrl`, so the validator's reachability walk visited the
-    // now-zero-input If via backward-data and reported
+    // the If's inputs unconditionally but left the non-CS dead consumer
+    // wired to `dead_ctrl`, so the validator's reachability walk
+    // visited the now-zero-input If via backward-data and reported
     // `NodeInputCountMismatch { expected: 2, actual: 0 }`.
     let entry = fg.entry().unwrap();
     DeadBranchElimination.optimize(fg.graph_mut(), entry)?;

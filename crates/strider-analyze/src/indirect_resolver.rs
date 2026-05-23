@@ -120,10 +120,10 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // against `replace_all_uses` rewires that orphan the original
     // NodeOutputId.
     //
-    // The Return is a fixed graph-construction invariant of step 4
-    // (`build_return(Some(value), &[])`); a missing or duplicate
-    // Return is therefore an internal bug, not a "can't classify"
-    // outcome, and propagates as an error.
+    // The Return is a fixed graph-construction invariant of the
+    // mini-graph builder above (`build_return(Some(value), &[])`);
+    // a missing or duplicate Return is therefore an internal bug,
+    // not a "can't classify" outcome, and propagates as an error.
     let return_node = find_unique_return(&fg)?;
     let inputs = fg.node_inputs(return_node);
     // Layout: [control, memory, value].  `build_return` above passed
@@ -385,9 +385,10 @@ fn resolve_const_loads(
 
 /// Locates the unique `Return` node in `fg`.
 ///
-/// The mini-graph builder emits exactly one `Return` (in
-/// [`resolve_indirect_target`] step 4).  Optimization passes never
-/// add or remove `Return` nodes, so this is well-defined post-fold.
+/// The mini-graph builder emits exactly one `Return` (via the
+/// `build_return` call inside [`resolve_indirect_target`]).
+/// Optimization passes never add or remove `Return` nodes, so this
+/// is well-defined post-fold.
 /// Zero or more than one Return signals a graph-construction bug in
 /// this module and propagates as an error.
 fn find_unique_return(fg: &strider_ir::Graph) -> Result<strider_ir::node::NodeId> {

@@ -541,8 +541,8 @@ pub(crate) fn find_stack_stored_value_at_offset(
     sp_memo: &mut SpExprMemo,
     walk_memo: &mut StackStoredValueMemo,
 ) -> Option<NodeOutputId> {
-    // Iterative form (was recursive — see scale.md A1).  Walks the
-    // memory-chain backward via StackStore.inputs[0] or
+    // Iterative form (was recursive; deep prologues blew the stack).
+    // Walks the memory-chain backward via StackStore.inputs[0] or
     // Store-passthrough's prev_mem.  Stack-safe at any chain depth.
     //
     // Visited stack records every `mem` node we passed through so we

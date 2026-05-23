@@ -66,10 +66,10 @@ pub enum Arch {
 }
 
 /// Every supported `Arch` variant in the same order they appear in
-/// `per_arch_test!`.  Use this from any test that wants to iterate the
-/// full arch matrix (e.g. cross-arch shape baselines, the v3-baseline
-/// dump).  Keeping a single canonical list here prevents drift between
-/// callers and the `Arch` enum.
+/// `per_arch_test!`.  Use this from any test that wants to iterate
+/// the full arch matrix (e.g. cross-arch shape baselines).  Keeping
+/// a single canonical list here prevents drift between callers and
+/// the `Arch` enum.
 pub const ALL_ARCHES: &[Arch] = &[
     Arch::X86,
     Arch::X86Kernel,

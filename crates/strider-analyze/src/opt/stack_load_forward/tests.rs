@@ -62,10 +62,10 @@ fn find_reachable_anonymous_phi(
 fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
 
     // 10k-store chain pins the iterative form of
-    // `find_stack_stored_value_at_offset` (scale.md A1).  The prior
-    // recursive form would stack-overflow on the default 8 MB Rust
-    // stack at this depth.  See the deep-chain regression test below
-    // for a smaller, deterministic check.
+    // `find_stack_stored_value_at_offset`.  The prior recursive form
+    // would stack-overflow on the default 8 MB Rust stack at this
+    // depth.  See the deep-chain regression test below for a smaller,
+    // deterministic check.
     const CHAIN_LEN: usize = 10_000;
 
     let sp = sp32_vn();

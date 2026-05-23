@@ -1956,21 +1956,21 @@ mod build_call_with_cc {
 
         let entry = b.entry();
 
-        // Round 1: synthesize a fresh IntConst via graph_mut().
+        // First mutation: synthesize a fresh IntConst via graph_mut().
         let r1 = b.graph_mut().create_node(
             NodeKind::IntConst(1u128),
             std::iter::empty(),
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        assert_eq!(b.entry(), entry, "entry() stable after round 1");
+        assert_eq!(b.entry(), entry, "entry() stable after first mutation");
 
-        // Round 2: another mutation; round 1's node must persist.
+        // Second mutation: another synthesis; the first node must persist.
         let r2 = b.graph_mut().create_node(
             NodeKind::IntConst(2u128),
             std::iter::empty(),
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        assert_eq!(b.entry(), entry, "entry() stable after round 2");
+        assert_eq!(b.entry(), entry, "entry() stable after second mutation");
         assert_ne!(r1, r2, "consecutive create_node calls produce distinct ids");
 
         // Both synthesized nodes are live in the arena.

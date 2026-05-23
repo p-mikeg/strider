@@ -1,5 +1,5 @@
-//! `PyGraph` — wraps `strider_ir::Graph` and exposes dot
-//! rendering plus (in later tasks) pattern queries and rewrites.
+//! `PyGraph` — wraps `strider_ir::Graph` and exposes dot rendering
+//! plus pattern queries and rewrites.
 //!
 //! The IR graph's dot dumper requires a borrowed `Sleigh` for
 //! register-name resolution.  PyGraph keeps a `Py<PyCfg>` reference
@@ -16,10 +16,10 @@ use crate::dot::dot_style_for;
 
 /// Opaque wrapper over `strider_ir::Graph`.
 ///
-/// The graph is held in `Arc<RwLock<...>>` so optimization passes
-/// (added in phase 3) can mutate it without requiring `&mut self` on
-/// the PyGraph wrapper, and so the same graph can be shared across
-/// multiple Python references.
+/// The graph is held in `Arc<RwLock<...>>` so optimization passes can
+/// mutate it without requiring `&mut self` on the PyGraph wrapper,
+/// and so the same graph can be shared across multiple Python
+/// references.
 #[pyclass(name = "Graph", module = "strider")]
 pub struct PyGraph {
     pub(crate) inner: Arc<RwLock<strider_ir::Graph>>,
