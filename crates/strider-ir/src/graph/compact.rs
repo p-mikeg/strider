@@ -121,6 +121,14 @@ impl Graph {
     /// panicking keeps every error path typed so Python users see a
     /// clean exception.
     pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
+        // 0. Bump the generation counter.  Every pre-call NodeId /
+        // NodeOutputId / NodeInputId is invalidated by the arena
+        // reshuffle below; external callers that captured a snapshot
+        // generation see a mismatch via `Graph::generation()` and can
+        // surface a typed error instead of dereferencing into the
+        // wrong post-compaction slot.
+        self.generation = self.generation.wrapping_add(1);
+
         // 1. Compute reachable set.
         let reachable: Vec<NodeId> = self.walk_from(entry).collect();
 

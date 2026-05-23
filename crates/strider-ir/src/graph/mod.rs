@@ -199,6 +199,14 @@ pub struct Graph {
     /// Calling-convention metadata captured at build time.  `None`
     /// during build; `Some(_)` after.  See [`CcMetadata`].
     pub(crate) cc_metadata: Option<CcMetadata>,
+    /// Monotonic version counter incremented by every operation that
+    /// invalidates pre-existing `NodeId` / `NodeOutputId` /
+    /// `NodeInputId` values — currently [`Self::retain_reachable`] (and
+    /// transitively [`Self::compact`]).  External callers that captured
+    /// node ids before the arena was reshuffled compare snapshots via
+    /// [`Self::generation`] to detect staleness instead of dereferencing
+    /// a recycled id into the wrong node.
+    pub(crate) generation: u64,
 }
 
 impl Default for Graph {
@@ -228,7 +236,36 @@ impl Graph {
             initial_var_index: rustc_hash::FxHashMap::default(),
             entry: None,
             cc_metadata: None,
+            generation: 0,
         }
+    }
+
+    /// Returns the current generation counter.  Bumped by every
+    /// arena-reshuffling operation ([`Self::retain_reachable`] and
+    /// transitively [`Self::compact`]); external callers that captured
+    /// a node id before the bump should not dereference it on the
+    /// post-bump graph.  See the field-level doc on `generation` for
+    /// the lifecycle.
+    #[inline]
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns `true` if `id` corresponds to a live entry in this
+    /// graph's node arena.
+    ///
+    /// Cheap arena-membership check (a `cranelift-entity` PrimaryMap
+    /// lookup).  Used by dump APIs (`dump_neighborhood`) to surface a
+    /// typed error on a stale / foreign node id instead of panicking
+    /// inside the renderer.  Note: a `true` result only proves the id
+    /// is *currently* valid; if the graph is later compacted, the same
+    /// id may map to a different node — compare [`Self::generation`]
+    /// across the boundary if that matters.
+    #[inline]
+    #[must_use]
+    pub fn has_node(&self, id: crate::node::NodeId) -> bool {
+        self.nodes.is_valid(id)
     }
 
     /// Interns `value` and returns its [`crate::wide_const::WideConstId`].

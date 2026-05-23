@@ -1140,14 +1140,22 @@ fn edge_set_of(
 ///
 /// `out_dir` must exist; this function does not create it.
 ///
+/// `lift_generation` is the snapshot of [`strider_ir::Graph::generation`]
+/// taken when the `exit_controls` ids were minted — pass
+/// [`crate::AnalyzeOutcome::lift_generation`].  If the live `graph`'s
+/// generation has advanced since (the graph was compacted), the
+/// `exit_controls` ids are stale and dereferencing them would address
+/// the wrong region; this function returns a typed error instead.
+///
 /// # Errors
 ///
 /// Returns an error if [`strider_ir::Graph::dot_dumper`] fails (graph
-/// not built), if HTML rendering fails, or if a write to `out_dir`
-/// fails.
+/// not built), if HTML rendering fails, if a write to `out_dir` fails,
+/// or if the graph's generation no longer matches `lift_generation`.
 pub fn dump_per_region<R, I>(
     graph: &strider_ir::Graph,
     exit_controls: I,
+    lift_generation: u64,
     sleigh: &rsleigh::Sleigh<R>,
     out_dir: &std::path::Path,
 ) -> Result<()>
@@ -1155,6 +1163,14 @@ where
     R: rsleigh::MemReader,
     I: IntoIterator<Item = NodeOutputId>,
 {
+    if graph.generation() != lift_generation {
+        return Err(anyhow!(
+            "dump_per_region: graph generation {} does not match lift snapshot {}; \
+             the graph was compacted after lift and exit_controls are stale",
+            graph.generation(),
+            lift_generation,
+        ));
+    }
     for (idx, exit_control) in exit_controls.into_iter().enumerate() {
         let membership = strider_ir::walk::region_membership_from_exit(graph, exit_control);
         // Construct a fresh dumper per region via the public
@@ -1194,7 +1210,9 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error when the dumper construction fails (graph not
+/// Returns an error when `anchor` is not a live node in `graph` (e.g.
+/// a stale id from a pre-compaction snapshot, or a foreign id from a
+/// different `Graph`), when dumper construction fails (graph not
 /// built), HTML rendering fails, or the write to `out_path` fails.
 pub fn dump_neighborhood<R>(
     graph: &strider_ir::Graph,
@@ -1206,6 +1224,12 @@ pub fn dump_neighborhood<R>(
 where
     R: rsleigh::MemReader,
 {
+    if !graph.has_node(anchor) {
+        return Err(anyhow!(
+            "dump_neighborhood: anchor {anchor:?} is not a live node in this graph \
+             (stale id from a pre-compaction snapshot, or a foreign id)",
+        ));
+    }
     let visible = strider_ir::walk::collect_neighborhood(graph, anchor, depth);
     let dumper = graph.dot_dumper(sleigh)?.with_node_filter(visible);
     ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())

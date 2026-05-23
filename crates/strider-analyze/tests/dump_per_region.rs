@@ -26,8 +26,14 @@ fn dump_per_region_writes_one_html_per_region() {
     );
 
     let tmp = unique_tmp_dir("dump-per-region");
-    strider_analyze::dump_per_region(&outcome.graph, exit_controls.iter().copied(), cfg.sleigh(), &tmp)
-        .expect("dump_per_region");
+    strider_analyze::dump_per_region(
+        &outcome.graph,
+        exit_controls.iter().copied(),
+        outcome.lift_generation(),
+        cfg.sleigh(),
+        &tmp,
+    )
+    .expect("dump_per_region");
 
     let entries: Vec<_> = std::fs::read_dir(&tmp)
         .expect("read_dir")
@@ -55,5 +61,43 @@ fn dump_per_region_writes_one_html_per_region() {
 
     // Clean up the scratch dir on success — leave it on panic so a
     // developer can inspect the offending HTML.
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Pins the stale-id detection added alongside `Graph::generation`.
+/// Lifting captures a generation snapshot in `AnalyzeOutcome`; a
+/// subsequent `Graph::compact` bumps the live generation and
+/// invalidates the `region_exit_controls` ids.  `dump_per_region` must
+/// surface a typed error rather than silently rendering the wrong
+/// region.
+#[test]
+fn dump_per_region_rejects_post_compaction() {
+    let (mut outcome, cfg) = lift_ret_snippet_x86_64();
+    let exit_controls: Vec<_> = outcome.region_exit_controls().collect();
+    assert!(!exit_controls.is_empty());
+
+    let lift_gen = outcome.lift_generation();
+    outcome.graph.compact().expect("compact");
+    assert_ne!(
+        outcome.graph.generation(),
+        lift_gen,
+        "compact must bump generation",
+    );
+
+    let tmp = unique_tmp_dir("dump-per-region-stale");
+    let err = strider_analyze::dump_per_region(
+        &outcome.graph,
+        exit_controls.iter().copied(),
+        lift_gen,
+        cfg.sleigh(),
+        &tmp,
+    )
+    .expect_err("dump_per_region must reject post-compaction ids");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("does not match lift snapshot"),
+        "unexpected error message: {msg}",
+    );
+
     let _ = std::fs::remove_dir_all(&tmp);
 }
