@@ -33,3 +33,6 @@ mod captures_and_predicates;
 
 #[path = "pattern_matching/matcher_api.rs"]
 mod matcher_api;
+
+#[path = "pattern_matching/cast_mask_walk.rs"]
+mod cast_mask_walk;
