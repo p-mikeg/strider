@@ -321,21 +321,13 @@ impl Strider {
         cfg: &strider_lift::cfg::Cfg<R>,
         opts: AnalyzeOptions<'_>,
     ) -> Result<AnalyzeOutcome> {
+        // Phase 1: build the per-region driver, allocate IR regions,
+        // and wire the entry region.
         let all_vns = opts
             .all_vns
             .unwrap_or_else(|| self.find_all_unique_vns(cfg));
-        let mut per_region_driver = PerRegionDriver::new(self, cfg, all_vns, opts.per_address_ccs)?;
-        per_region_driver.builder.build_entry()?;
-
-        // Map every CFG region id to its newly-allocated IR region id.
-        // Indexed by `RegionId.index()` so the per-instruction loop
-        // can resolve in O(1) without cloning the petgraph.
-        let cfg_region_ids: Vec<strider_lift::cfg::RegionId> = cfg.region_ids().collect();
-        let max_index = cfg_region_ids.iter().map(|r| r.index()).max().unwrap_or(0);
-        let mut region_map: Vec<Option<strider_ir::RegionId>> = vec![None; max_index + 1];
-        for cfg_rid in &cfg_region_ids {
-            region_map[cfg_rid.index()] = Some(per_region_driver.builder.create_region()?);
-        }
+        let mut driver = PerRegionDriver::new(self, cfg, all_vns, opts.per_address_ccs)?;
+        let (cfg_region_ids, region_map) = init_region_map(&mut driver, cfg)?;
         let ir_region_of = |region_id: strider_lift::cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
                 .get(region_id.index())
@@ -344,158 +336,231 @@ impl Strider {
                 .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))
         };
 
-        per_region_driver
-            .builder
-            .set_entry_region(ir_region_of(cfg.entry())?)?;
+        // Phase 2: translate every region's instructions + non-trivial
+        // terminator into IR.
+        translate_regions(&mut driver, cfg, &cfg_region_ids, &ir_region_of)?;
 
-        // Translate instructions for each region.
-        for &cfg_rid in &cfg_region_ids {
-            let ir_region = ir_region_of(cfg_rid)?;
-            per_region_driver.builder.set_region(ir_region);
-            let region = cfg
-                .graph()
-                .node_weight(cfg_rid)
-                .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
-            // Regions with non-trivial terminators have their
-            // terminator p-code insn skipped inside the per-insn loop
-            // and lifted via a dedicated handler post-loop:
-            //   * `UnresolvedIndirectBranch` skips `BranchIndirect`,
-            //     lifts via the placeholder path.
-            //   * `Switch` skips `BranchIndirect`, lifts as an
-            //     If-ladder.
-            //   * `TailCall` skips `Branch`, lifts as
-            //     `Call(IntConst(target)) + Return`.
-            let special_terminator = SpecialTerm::from_terminator(&region.terminator);
-            for wrapped_insn in &region.insns {
-                if special_terminator
-                    .as_ref()
-                    .is_some_and(|s| s.skips_opcode(wrapped_insn.insn.opcode))
-                {
-                    continue;
-                }
-                per_region_driver.process_insn(
-                    cfg_rid,
-                    &wrapped_insn.insn,
-                    wrapped_insn.addr,
-                    ir_region_of,
-                )?;
+        // Phase 3: link region edges the per-insn loop didn't reach
+        // (fallthrough edges, and Branch edges out of empty regions).
+        link_region_edges(&mut driver, cfg, &ir_region_of)?;
+
+        // Phase 4: capture per-region exit handles, then consume the
+        // builder.
+        finalise_outcome(driver, cfg, &cfg_region_ids, &ir_region_of)
+    }
+}
+
+/// Phase 1 of [`Strider::analyze_cfg_with`]: build_entry, allocate one
+/// IR region per CFG region, set the entry region.  Returns the
+/// CFG-region-id list (in iteration order) and the
+/// `RegionId.index() -> Option<strider_ir::RegionId>` map.
+fn init_region_map<R: rsleigh::MemReader>(
+    driver: &mut PerRegionDriver<'_, R>,
+    cfg: &strider_lift::cfg::Cfg<R>,
+) -> Result<(Vec<strider_lift::cfg::RegionId>, Vec<Option<strider_ir::RegionId>>)> {
+    driver.builder.build_entry()?;
+
+    // Map every CFG region id to its newly-allocated IR region id.
+    // Indexed by `RegionId.index()` so the per-instruction loop can
+    // resolve in O(1) without cloning the petgraph.
+    let cfg_region_ids: Vec<strider_lift::cfg::RegionId> = cfg.region_ids().collect();
+    let max_index = cfg_region_ids.iter().map(|r| r.index()).max().unwrap_or(0);
+    let mut region_map: Vec<Option<strider_ir::RegionId>> = vec![None; max_index + 1];
+    for cfg_rid in &cfg_region_ids {
+        region_map[cfg_rid.index()] = Some(driver.builder.create_region()?);
+    }
+
+    let entry_ir = region_map
+        .get(cfg.entry().index())
+        .copied()
+        .flatten()
+        .ok_or_else(|| anyhow!("entry region {:?} missing from region_map", cfg.entry()))?;
+    driver.builder.set_entry_region(entry_ir)?;
+    Ok((cfg_region_ids, region_map))
+}
+
+/// Phase 2 of [`Strider::analyze_cfg_with`]: translate every region's
+/// instructions + (when present) its special terminator into IR.  The
+/// special terminator's p-code insn is skipped inside the per-insn
+/// loop and lifted via a dedicated handler with asm-fingerprint
+/// attribution to the region's last machine address.
+fn translate_regions<R, F>(
+    driver: &mut PerRegionDriver<'_, R>,
+    cfg: &strider_lift::cfg::Cfg<R>,
+    cfg_region_ids: &[strider_lift::cfg::RegionId],
+    ir_region_of: &F,
+) -> Result<()>
+where
+    R: rsleigh::MemReader,
+    F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
+{
+    for &cfg_rid in cfg_region_ids {
+        let ir_region = ir_region_of(cfg_rid)?;
+        driver.builder.set_region(ir_region);
+        let region = cfg
+            .graph()
+            .node_weight(cfg_rid)
+            .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
+        // Regions with non-trivial terminators have their terminator
+        // p-code insn skipped inside the per-insn loop and lifted via
+        // a dedicated handler post-loop:
+        //   * `UnresolvedIndirectBranch` skips `BranchIndirect`,
+        //     lifts via the placeholder path.
+        //   * `Switch` skips `BranchIndirect`, lifts as an If-ladder.
+        //   * `TailCall` skips `Branch`, lifts as
+        //     `Call(IntConst(target)) + Return`.
+        let special_terminator = SpecialTerm::from_terminator(&region.terminator);
+        for wrapped_insn in &region.insns {
+            if special_terminator
+                .as_ref()
+                .is_some_and(|s| s.skips_opcode(wrapped_insn.insn.opcode))
+            {
+                continue;
             }
-            // Asm-fingerprint context for the terminator handlers: every
-            // node born inside one of these handlers is "caused by" the
-            // region's terminator machine instruction.  Use the last
-            // pcode insn's machine address as the contributor; when the
-            // region is empty the field stays None.
-            let term_addr = region
-                .insns
-                .last()
-                .map(|wrapped| wrapped.addr.machine_addr.addr);
-            // Per-terminator funnel: same asm-fingerprint attribution
-            // pattern as `process_insn`.  `term_addr` may be `None`
-            // when the region has zero pcode insns (e.g. empty Branch
-            // regions produced by the bounded-lift CondBranch-OOB
-            // collapse); set_lift_addr accepts `Option<u64>`.
-            per_region_driver.builder.set_lift_addr(term_addr);
-            let term_res = (|| -> Result<()> {
-                match special_terminator {
-                    Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
-                        per_region_driver.handle_unresolved_indirect_branch(&target_vn, addr)?;
-                    }
-                    Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
-                        per_region_driver.handle_switch(
-                            cfg_rid,
-                            &target_vn,
-                            &targets,
-                            target_value,
-                            &ir_region_of,
-                        )?;
-                    }
-                    Some(SpecialTerm::TailCall(target)) => {
-                        per_region_driver.handle_tail_call(target)?;
-                    }
-                    None => {}
-                }
-                Ok(())
-            })();
-            per_region_driver.builder.set_lift_addr(None);
-            term_res?;
+            driver.process_insn(
+                cfg_rid,
+                &wrapped_insn.insn,
+                wrapped_insn.addr,
+                ir_region_of,
+            )?;
         }
+        // Asm-fingerprint context for the terminator handlers: every
+        // node born inside one of these handlers is "caused by" the
+        // region's terminator machine instruction.  Use the last
+        // pcode insn's machine address as the contributor; when the
+        // region is empty the field stays None.
+        let term_addr = region
+            .insns
+            .last()
+            .map(|wrapped| wrapped.addr.machine_addr.addr);
+        // Per-terminator funnel: same asm-fingerprint attribution
+        // pattern as `process_insn`.  `term_addr` may be `None` when
+        // the region has zero pcode insns (e.g. empty Branch regions
+        // produced by the bounded-lift CondBranch-OOB collapse);
+        // `set_lift_addr` accepts `Option<u64>`.
+        driver.builder.set_lift_addr(term_addr);
+        let term_res = (|| -> Result<()> {
+            match special_terminator {
+                Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
+                    driver.handle_unresolved_indirect_branch(&target_vn, addr)?;
+                }
+                Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
+                    driver.handle_switch(
+                        cfg_rid,
+                        &target_vn,
+                        &targets,
+                        target_value,
+                        ir_region_of,
+                    )?;
+                }
+                Some(SpecialTerm::TailCall(target)) => {
+                    driver.handle_tail_call(target)?;
+                }
+                None => {}
+            }
+            Ok(())
+        })();
+        driver.builder.set_lift_addr(None);
+        term_res?;
+    }
+    Ok(())
+}
 
-        // Link fallthrough edges.  Walk the CFG's edges directly —
-        // there's no need to mirror the petgraph.
-        //
-        // Branch edges are wired by `handle_branch` inside the per-insn
-        // loop above when the trailing `Branch` pcode op is processed.
-        // **Empty-insns Branch regions** (produced by the bounded-lift
-        // CondBranch-OOB collapse: a single CondBranch where both
-        // successors are out-of-range collapses to an empty `Branch`
-        // region edge) have no pcode to process, so no per-insn wiring
-        // fires.  Walk the Branch edges here too and only link when the
-        // source region is empty — otherwise we'd double-link the
-        // non-empty case and break graph-invariants predecessor counts.
-        for edge_idx in cfg.graph().edge_indices() {
-            let Some(weight) = cfg.graph().edge_weight(edge_idx) else {
-                continue;
-            };
-            let Some((src, tgt)) = cfg.graph().edge_endpoints(edge_idx) else {
-                continue;
-            };
-            match weight {
-                strider_lift::cfg::RegionEdgeKind::Fallthrough => {
-                    per_region_driver
+/// Phase 3 of [`Strider::analyze_cfg_with`]: wire region edges that the
+/// per-insn loop didn't.  Fallthrough edges always need linking here;
+/// Branch edges out of empty regions (produced by the bounded-lift
+/// CondBranch-OOB collapse) too, since their absent pcode means no
+/// per-insn `handle_branch` call ran.  Non-empty Branch regions are
+/// already wired by the trailing `Branch` p-code insn — re-linking
+/// would double-add the edge and break graph-invariants predecessor
+/// counts.
+fn link_region_edges<R, F>(
+    driver: &mut PerRegionDriver<'_, R>,
+    cfg: &strider_lift::cfg::Cfg<R>,
+    ir_region_of: &F,
+) -> Result<()>
+where
+    R: rsleigh::MemReader,
+    F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
+{
+    for edge_idx in cfg.graph().edge_indices() {
+        let Some(weight) = cfg.graph().edge_weight(edge_idx) else {
+            continue;
+        };
+        let Some((src, tgt)) = cfg.graph().edge_endpoints(edge_idx) else {
+            continue;
+        };
+        match weight {
+            strider_lift::cfg::RegionEdgeKind::Fallthrough => {
+                driver
+                    .builder
+                    .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
+            }
+            strider_lift::cfg::RegionEdgeKind::Branch => {
+                let src_region = cfg
+                    .graph()
+                    .node_weight(src)
+                    .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?;
+                if src_region.insns.is_empty() {
+                    driver
                         .builder
                         .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
                 }
-                strider_lift::cfg::RegionEdgeKind::Branch => {
-                    let src_region = cfg
-                        .graph()
-                        .node_weight(src)
-                        .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?;
-                    if src_region.insns.is_empty() {
-                        per_region_driver
-                            .builder
-                            .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
-                    }
-                }
-                _ => {}
             }
+            _ => {}
         }
-
-        // Capture per-region IR handles BEFORE `build()` consumes the
-        // builder.  `NodeId`/`NodeOutputId` are stable across the
-        // build-time arena move, so the snapshots remain valid for the
-        // returned `Graph`.
-        let mut region_handles: Vec<RegionLiftHandles> = Vec::new();
-        for &cfg_rid in &cfg_region_ids {
-            let ir_region_id = ir_region_of(cfg_rid)?;
-
-            let mut exit_vn_to_value: rustc_hash::FxHashMap<
-                rsleigh::Vn,
-                strider_ir::node::NodeOutputId,
-            > = rustc_hash::FxHashMap::default();
-            for (var_id, val_out) in per_region_driver.builder.region_exit_variables(ir_region_id) {
-                if let Some(vn) = per_region_driver.builder.vn_of_var(var_id) {
-                    exit_vn_to_value.insert(vn, val_out);
-                }
-            }
-
-            let exit_control = per_region_driver.builder.region_cur_ctrl(ir_region_id);
-
-            region_handles.push(RegionLiftHandles {
-                exit_control,
-                exit_vn_to_value: std::sync::Arc::new(exit_vn_to_value),
-            });
-        }
-
-        let unresolved_branches = std::mem::take(&mut per_region_driver.unresolved_branches);
-        let graph = per_region_driver.builder.build()?;
-        let lift_generation = graph.generation();
-        Ok(AnalyzeOutcome {
-            graph,
-            unresolved_branches,
-            region_handles,
-            lift_generation,
-        })
     }
+    Ok(())
+}
+
+/// Phase 4 of [`Strider::analyze_cfg_with`]: capture per-region exit
+/// handles before `build()` consumes the builder, then materialise the
+/// final `AnalyzeOutcome` with the post-build generation snapshot.
+fn finalise_outcome<R, F>(
+    mut driver: PerRegionDriver<'_, R>,
+    _cfg: &strider_lift::cfg::Cfg<R>,
+    cfg_region_ids: &[strider_lift::cfg::RegionId],
+    ir_region_of: &F,
+) -> Result<AnalyzeOutcome>
+where
+    R: rsleigh::MemReader,
+    F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
+{
+    // Capture per-region IR handles BEFORE `build()` consumes the
+    // builder.  `NodeId` / `NodeOutputId` are stable across the
+    // build-time arena move, so the snapshots remain valid for the
+    // returned `Graph`.
+    let mut region_handles: Vec<RegionLiftHandles> = Vec::new();
+    for &cfg_rid in cfg_region_ids {
+        let ir_region_id = ir_region_of(cfg_rid)?;
+
+        let mut exit_vn_to_value: rustc_hash::FxHashMap<
+            rsleigh::Vn,
+            strider_ir::node::NodeOutputId,
+        > = rustc_hash::FxHashMap::default();
+        for (var_id, val_out) in driver.builder.region_exit_variables(ir_region_id) {
+            if let Some(vn) = driver.builder.vn_of_var(var_id) {
+                exit_vn_to_value.insert(vn, val_out);
+            }
+        }
+
+        let exit_control = driver.builder.region_cur_ctrl(ir_region_id);
+
+        region_handles.push(RegionLiftHandles {
+            exit_control,
+            exit_vn_to_value: std::sync::Arc::new(exit_vn_to_value),
+        });
+    }
+
+    let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
+    let graph = driver.builder.build()?;
+    let lift_generation = graph.generation();
+    Ok(AnalyzeOutcome {
+        graph,
+        unresolved_branches,
+        region_handles,
+        lift_generation,
+    })
 }
 
 /// Per-region special-terminator marker the per-instruction loop uses
