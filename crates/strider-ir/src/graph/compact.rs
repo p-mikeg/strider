@@ -353,3 +353,499 @@ impl Graph {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::node::{NodeKind, NodeOutputType};
+
+    /// Builds a minimal graph: `Entry → Return(value, mem)` where
+    /// `value` is the IntConst returned by `value_kind` and `mem` is
+    /// `InitialMemory`.  Returns `(entry, value_node, return_node, mem_node)`.
+    /// Useful for tests that need a small reachable set anchored by Entry
+    /// plus a known value-producing node in that set.
+    fn build_anchor(graph: &mut Graph, value: u128) -> (NodeId, NodeId, NodeId, NodeId) {
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let const_node = graph.create_node(
+            NodeKind::IntConst(value),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
+        let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
+        let ret_node = graph.create_node(
+            NodeKind::Return,
+            [entry_ctrl, mem_out, const_out],
+            [],
+        );
+        graph.entry = Some(entry);
+        (entry, const_node, ret_node, mem)
+    }
+
+    /// `asm_fingerprints` is the project's proof-of-correctness side-table.
+    /// After `retain_reachable`, surviving nodes must keep their exact
+    /// fingerprints; entries previously installed for zombie nodes must be
+    /// dropped (i.e. the new id's `asm_fingerprint` must not surface stale
+    /// addresses from a now-dropped predecessor).
+    #[test]
+    fn asm_fingerprints_remap_through_retain() {
+        let mut graph = Graph::new();
+        let (entry, const_node, ret_node, mem_node) = build_anchor(&mut graph, 0xAB);
+        // Zombie value with its own fingerprint — must be dropped.
+        let zombie = graph.create_node(
+            NodeKind::IntConst(0xDEAD),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        graph.set_asm_fingerprint(entry, vec![0x1000]);
+        graph.set_asm_fingerprint(const_node, vec![0x2000, 0x2004]);
+        graph.set_asm_fingerprint(ret_node, vec![0x3000]);
+        graph.set_asm_fingerprint(mem_node, vec![0x4000]);
+        // Stale fingerprint on a zombie — must not survive.
+        graph.set_asm_fingerprint(zombie, vec![0xBADBAD]);
+
+        let remap = graph.retain_reachable(entry).unwrap();
+
+        let new_entry = remap.node_old_to_new(entry).unwrap();
+        let new_const = remap.node_old_to_new(const_node).unwrap();
+        let new_ret = remap.node_old_to_new(ret_node).unwrap();
+        let new_mem = remap.node_old_to_new(mem_node).unwrap();
+
+        assert_eq!(graph.asm_fingerprint(new_entry), &[0x1000]);
+        assert_eq!(graph.asm_fingerprint(new_const), &[0x2000, 0x2004]);
+        assert_eq!(graph.asm_fingerprint(new_ret), &[0x3000]);
+        assert_eq!(graph.asm_fingerprint(new_mem), &[0x4000]);
+
+        // The zombie's fingerprint must not have leaked onto any
+        // surviving node.  Scan every surviving id.
+        for id in graph.all_node_ids() {
+            assert!(
+                !graph.asm_fingerprint(id).contains(&0xBADBAD),
+                "zombie fingerprint 0xBADBAD leaked onto surviving id {id:?}",
+            );
+        }
+    }
+
+    /// `stack_phi_offsets` is keyed by `StackStorePhi` node id.  Verify
+    /// the side-table is remapped to the new id and that zombie entries
+    /// are dropped.
+    #[test]
+    fn stack_phi_offsets_remap_through_retain() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let const_node = graph.create_node(
+            NodeKind::IntConst(0),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        // Reachable StackStorePhi wired into Return's data inputs (so it
+        // shows up in walk_from(entry) via data-in).
+        let space = rsleigh::VnSpace::RAM;
+        let live_ssp = graph.create_node(
+            NodeKind::StackStorePhi { space },
+            [],
+            [NodeOutputKind::Memory],
+        );
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
+        let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
+        let [live_ssp_out] = graph.node_outputs_exact::<1>(live_ssp).unwrap();
+        let _ret = graph.create_node(
+            NodeKind::Return,
+            [entry_ctrl, mem_out, const_out, live_ssp_out],
+            [],
+        );
+        // Zombie StackStorePhi — never used by anything reachable.
+        let zombie_ssp = graph.create_node(
+            NodeKind::StackStorePhi { space },
+            [],
+            [NodeOutputKind::Memory],
+        );
+
+        graph.set_stack_phi_offsets(live_ssp, vec![0, -4, -8]);
+        graph.set_stack_phi_offsets(zombie_ssp, vec![999, 1000]);
+
+        graph.set_asm_fingerprint(entry, vec![0x1000]);
+        graph.set_asm_fingerprint(mem, vec![0x1004]);
+        graph.set_asm_fingerprint(const_node, vec![0x1008]);
+        graph.set_asm_fingerprint(live_ssp, vec![0x100c]);
+
+        let remap = graph.retain_reachable(entry).unwrap();
+        let new_live = remap.node_old_to_new(live_ssp).unwrap();
+        assert_eq!(graph.stack_phi_offsets(new_live), &[0, -4, -8]);
+        // Zombie must be dropped and its offsets must not surface on
+        // any surviving id.
+        assert!(remap.node_old_to_new(zombie_ssp).is_none());
+        for id in graph.all_node_ids() {
+            assert_ne!(
+                graph.stack_phi_offsets(id),
+                &[999, 1000],
+                "zombie offsets leaked onto surviving id {id:?}",
+            );
+        }
+    }
+
+    /// `call_other_names` is keyed by `CallOther` node id.  Verify remap
+    /// and zombie drop.
+    #[test]
+    fn call_other_names_remap_through_retain() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
+        // Reachable CallOther — chained on control so walk_from picks it up.
+        let live_co = graph.create_node(
+            NodeKind::CallOther { user_op_id: 1 },
+            [entry_ctrl, mem_out],
+            [NodeOutputKind::Control, NodeOutputKind::Memory],
+        );
+        let [co_ctrl, co_mem] = graph.node_outputs_exact::<2>(live_co).unwrap();
+        let _ret = graph.create_node(NodeKind::Return, [co_ctrl, co_mem], []);
+        // Zombie CallOther — isolated, never used.
+        let zombie_co = graph.create_node(
+            NodeKind::CallOther { user_op_id: 99 },
+            [],
+            [NodeOutputKind::Control, NodeOutputKind::Memory],
+        );
+
+        graph.set_call_other_name(live_co, "live_op".to_string());
+        graph.set_call_other_name(zombie_co, "zombie_op".to_string());
+
+        graph.set_asm_fingerprint(entry, vec![0x1000]);
+        graph.set_asm_fingerprint(mem, vec![0x1004]);
+        graph.set_asm_fingerprint(live_co, vec![0x1008]);
+
+        let remap = graph.retain_reachable(entry).unwrap();
+        let new_co = remap.node_old_to_new(live_co).unwrap();
+        assert_eq!(graph.call_other_name(new_co), Some("live_op"));
+        assert!(remap.node_old_to_new(zombie_co).is_none());
+        for id in graph.all_node_ids() {
+            assert_ne!(
+                graph.call_other_name(id),
+                Some("zombie_op"),
+                "zombie call_other_name leaked onto surviving id {id:?}",
+            );
+        }
+    }
+
+    /// `call_clobbered_overrides` is keyed by `Call` node id.  Verify
+    /// remap and zombie drop.
+    #[test]
+    fn call_clobbered_overrides_remap_through_retain() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
+        // Reachable Call wired into the control / memory chain.
+        let live_call = graph.create_node(
+            NodeKind::Call,
+            [entry_ctrl, mem_out],
+            [NodeOutputKind::Control, NodeOutputKind::Memory],
+        );
+        let [call_ctrl, call_mem] = graph.node_outputs_exact::<2>(live_call).unwrap();
+        let _ret = graph.create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+        // Zombie Call — never consumed.
+        let zombie_call = graph.create_node(
+            NodeKind::Call,
+            [],
+            [NodeOutputKind::Control, NodeOutputKind::Memory],
+        );
+
+        let live_clobs = vec![rsleigh::Vn {
+            size: 8,
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        }];
+        let zombie_clobs = vec![rsleigh::Vn {
+            size: 8,
+            addr_off: 0xDEAD,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        }];
+        graph.set_call_clobbered_override(live_call, live_clobs.clone());
+        graph.set_call_clobbered_override(zombie_call, zombie_clobs.clone());
+
+        graph.set_asm_fingerprint(entry, vec![0x1000]);
+        graph.set_asm_fingerprint(mem, vec![0x1004]);
+        graph.set_asm_fingerprint(live_call, vec![0x1008]);
+
+        let remap = graph.retain_reachable(entry).unwrap();
+        let new_call = remap.node_old_to_new(live_call).unwrap();
+        assert_eq!(
+            graph.call_clobbered_override(new_call),
+            Some(live_clobs.as_slice()),
+        );
+        assert!(remap.node_old_to_new(zombie_call).is_none());
+        for id in graph.all_node_ids() {
+            assert_ne!(
+                graph.call_clobbered_override(id),
+                Some(zombie_clobs.as_slice()),
+                "zombie call_clobbered_override leaked onto surviving id {id:?}",
+            );
+        }
+    }
+
+    /// `phi_var_tag` is keyed by `Phi` node id (and is the Vn-tag
+    /// side-table the indirect-branch classifier consults).  Verify
+    /// remap and zombie drop.
+    #[test]
+    fn phi_var_tag_remap_through_retain() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let [entry_ctrl_for_cs] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let cs = graph.create_node(
+            NodeKind::ControlState,
+            [entry_ctrl_for_cs],
+            [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        );
+        let [cs_ctrl, cs_token] = graph.node_outputs_exact::<2>(cs).unwrap();
+        let const_node = graph.create_node(
+            NodeKind::IntConst(7),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
+        // Reachable Phi — consumed by Return.
+        let live_phi = graph.create_node(
+            NodeKind::Phi,
+            [cs_token, const_out],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [phi_out] = graph.node_outputs_exact::<1>(live_phi).unwrap();
+        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
+        let _ret = graph.create_node(NodeKind::Return, [cs_ctrl, mem_out, phi_out], []);
+        // Zombie Phi — never consumed.
+        let zombie_phi = graph.create_node(
+            NodeKind::Phi,
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        let live_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x20,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let zombie_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0xBEEF,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        graph.set_phi_var_tag(live_phi, live_vn);
+        graph.set_phi_var_tag(zombie_phi, zombie_vn);
+
+        graph.set_asm_fingerprint(entry, vec![0x1000]);
+        graph.set_asm_fingerprint(mem, vec![0x1004]);
+        graph.set_asm_fingerprint(const_node, vec![0x1008]);
+
+        let remap = graph.retain_reachable(entry).unwrap();
+        let new_phi = remap.node_old_to_new(live_phi).unwrap();
+        assert_eq!(graph.phi_var_tag(new_phi), Some(live_vn));
+        assert!(remap.node_old_to_new(zombie_phi).is_none());
+        for id in graph.all_node_ids() {
+            assert_ne!(
+                graph.phi_var_tag(id),
+                Some(zombie_vn),
+                "zombie phi_var_tag leaked onto surviving id {id:?}",
+            );
+        }
+    }
+
+    /// `initial_var_index` is Vn-keyed (`FxHashMap<Vn, NodeId>`) and
+    /// inline-remapped by `retain_reachable` — NOT part of the
+    /// SecondaryMap registry.  Verify that reachable mappings survive,
+    /// dropped-NodeId mappings are removed entirely (so callers don't
+    /// see stale Vn→old_id entries pointing into the freshly-rebuilt
+    /// arena).
+    #[test]
+    fn initial_var_index_remap_through_retain() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let live_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x20,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let zombie_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x28,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let live_iv = graph.create_node(
+            NodeKind::InitialVar(live_vn),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let zombie_iv = graph.create_node(
+            NodeKind::InitialVar(zombie_vn),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        graph.register_initial_var(live_vn, live_iv);
+        graph.register_initial_var(zombie_vn, zombie_iv);
+
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
+        let [live_iv_out] = graph.node_outputs_exact::<1>(live_iv).unwrap();
+        // Only live_iv is wired into Return.
+        let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, live_iv_out], []);
+
+        graph.set_asm_fingerprint(entry, vec![0x1000]);
+        graph.set_asm_fingerprint(mem, vec![0x1004]);
+        graph.set_asm_fingerprint(live_iv, vec![0x1008]);
+
+        let remap = graph.retain_reachable(entry).unwrap();
+        let new_live_iv = remap.node_old_to_new(live_iv).unwrap();
+        assert_eq!(graph.initial_var_for(live_vn), Some(new_live_iv));
+        // The zombie Vn→id mapping must be gone (not stale, not None
+        // accidentally pointing into garbage).
+        assert_eq!(graph.initial_var_for(zombie_vn), None);
+        assert!(remap.node_old_to_new(zombie_iv).is_none());
+    }
+
+    /// The `NodeIdRemap` accessors return `None` for old ids whose
+    /// source node was unreachable and therefore dropped during
+    /// compaction.  Surviving ids return `Some(new_id)`.  Verifies the
+    /// translation table is sparse and faithful at the boundary.
+    #[test]
+    fn node_id_remap_returns_none_for_dropped() {
+        let mut graph = Graph::new();
+        let (entry, const_node, ret_node, mem_node) = build_anchor(&mut graph, 1);
+        let [const_old_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
+        // Grab the pre-compaction NodeInputId slots on Return via crate-
+        // private arena access — there's no public accessor for raw
+        // input-slot ids; the `node_inputs` iterator yields the consumed
+        // NodeOutputIds, not the slot ids we want to test against
+        // `input_old_to_new`.
+        let ret_old_input_slots: Vec<NodeInputId> = graph.nodes[ret_node]
+            .inputs
+            .as_slice(&graph.input_pool)
+            .to_vec();
+
+        // Zombie with its own output id and (no) input ids.
+        let zombie = graph.create_node(
+            NodeKind::IntConst(0xC0FFEE),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [zombie_out] = graph.node_outputs_exact::<1>(zombie).unwrap();
+
+        // Stamp fingerprints so the validator's superset-only check
+        // doesn't fire on surviving nodes (we don't run validate here,
+        // but keep the test honest).
+        graph.set_asm_fingerprint(entry, vec![0x1000]);
+        graph.set_asm_fingerprint(const_node, vec![0x1004]);
+        graph.set_asm_fingerprint(ret_node, vec![0x1008]);
+        graph.set_asm_fingerprint(mem_node, vec![0x100c]);
+
+        let remap = graph.retain_reachable(entry).unwrap();
+
+        // Surviving ids resolve to Some(_).
+        assert!(remap.node_old_to_new(entry).is_some());
+        assert!(remap.node_old_to_new(const_node).is_some());
+        assert!(remap.node_old_to_new(ret_node).is_some());
+        assert!(remap.output_old_to_new(const_old_out).is_some());
+        for &input_id in &ret_old_input_slots {
+            assert!(
+                remap.input_old_to_new(input_id).is_some(),
+                "reachable Return input {input_id:?} should remap to Some(_)",
+            );
+        }
+
+        // Dropped ids resolve to None.
+        assert!(remap.node_old_to_new(zombie).is_none());
+        assert!(remap.output_old_to_new(zombie_out).is_none());
+    }
+
+    /// Calling `retain_reachable` a second time on an already-compacted
+    /// graph leaves node count unchanged and produces a remap whose
+    /// every entry is `Some(_)` (no further drops possible).
+    /// Side-tables previously remapped survive the second call intact.
+    #[test]
+    fn retain_reachable_is_idempotent() {
+        let mut graph = Graph::new();
+        let (entry, const_node, ret_node, mem_node) = build_anchor(&mut graph, 0x42);
+        let _zombie = graph.create_node(
+            NodeKind::IntConst(0xDEAD),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        graph.set_asm_fingerprint(entry, vec![0x1000]);
+        graph.set_asm_fingerprint(const_node, vec![0x2000]);
+        graph.set_asm_fingerprint(ret_node, vec![0x3000]);
+        graph.set_asm_fingerprint(mem_node, vec![0x4000]);
+
+        let _ = graph.retain_reachable(entry).unwrap();
+        let post_first_count = graph.all_node_ids().count();
+        let new_entry = graph.entry.unwrap_or_else(|| {
+            // retain_reachable invalidates pre-call ids; re-derive entry
+            // from the unique NodeKind::Entry in the surviving arena.
+            graph
+                .all_node_ids()
+                .find(|&id| matches!(graph.node_kind(id), NodeKind::Entry))
+                .unwrap()
+        });
+        // Snapshot every surviving fingerprint pre-second-call.
+        let pre_fps: Vec<(NodeId, Vec<u64>)> = graph
+            .all_node_ids()
+            .map(|id| (id, graph.asm_fingerprint(id).to_vec()))
+            .collect();
+
+        let remap2 = graph.retain_reachable(new_entry).unwrap();
+        let post_second_count = graph.all_node_ids().count();
+        assert_eq!(
+            post_first_count, post_second_count,
+            "second retain_reachable must not drop further nodes",
+        );
+        // Every pre-second id remaps to Some(_).
+        for (old_id, expected_fp) in &pre_fps {
+            let new_id = remap2.node_old_to_new(*old_id).unwrap_or_else(|| {
+                panic!("second retain_reachable dropped already-compact id {old_id:?}")
+            });
+            assert_eq!(
+                graph.asm_fingerprint(new_id),
+                expected_fp.as_slice(),
+                "fingerprint changed across idempotent retain_reachable on id {old_id:?}",
+            );
+        }
+    }
+
+    /// A graph with no entries in any of the `NodeId`-keyed side-tables
+    /// must compact cleanly — no panic, no garbage entries, surviving
+    /// nodes' accessors return defaults.
+    #[test]
+    fn empty_side_table_compacts_cleanly() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
+        let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+
+        // Deliberately set NOTHING on any side-table.  Compact must
+        // tolerate empty SecondaryMaps and an empty initial_var_index.
+        let remap = graph.retain_reachable(entry).unwrap();
+
+        let new_entry = remap.node_old_to_new(entry).unwrap();
+        let new_mem = remap.node_old_to_new(mem).unwrap();
+        // Default accessors over surviving ids return empty / None.
+        assert_eq!(graph.asm_fingerprint(new_entry), &[] as &[u64]);
+        assert_eq!(graph.stack_phi_offsets(new_entry), &[] as &[i64]);
+        assert_eq!(graph.call_other_name(new_entry), None);
+        assert_eq!(graph.call_clobbered_override(new_entry), None);
+        assert_eq!(graph.phi_var_tag(new_entry), None);
+        assert_eq!(graph.asm_fingerprint(new_mem), &[] as &[u64]);
+        // The Vn-keyed index started empty and stays empty.
+        assert_eq!(graph.initial_var_index.len(), 0);
+    }
+}
