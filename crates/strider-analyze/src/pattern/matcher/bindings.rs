@@ -114,9 +114,8 @@ impl Bindings {
     /// pair on this `Bindings` value, bypassing the matcher.  Same
     /// semantics as [`Self::bind_capture`] (returns `true` on new or
     /// idempotent bind, `false` on conflict).  The `_for_test` suffix
-    /// signals that the caller is hand-building a `Bindings` for use
-    /// with [`crate::pattern::Match::new_for_test`] rather than going through
-    /// [`crate::pattern::Matcher::find_all`].
+    /// signals that the caller is hand-building a `Bindings` rather
+    /// than going through [`crate::pattern::Matcher::find_all`].
     #[allow(dead_code)]
     pub(crate) fn bind_capture_for_test(&mut self, c: Capture, binding: Binding) -> bool {
         self.bind_capture(c, binding)

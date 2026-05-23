@@ -23,16 +23,6 @@ pub struct Match {
 }
 
 impl Match {
-    /// Constructs a `Match` directly from a root and a bindings map.
-    /// Test-only entry point: production matches go through
-    /// [`crate::pattern::Matcher`].  Exposed so external tests (and the
-    /// rewrite-rule interpreter) can synthesise matches without
-    /// running a full pattern walk.
-    #[must_use]
-    pub fn new_for_test(root: NodeId, bindings: super::bindings::Bindings) -> Self {
-        Self { root, bindings }
-    }
-
     /// The root node where the top-level pattern matched.
     #[must_use]
     pub fn root(&self) -> NodeId {
