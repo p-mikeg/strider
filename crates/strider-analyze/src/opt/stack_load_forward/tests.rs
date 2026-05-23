@@ -1,6 +1,7 @@
 use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
+use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::IntBinaryOp;
@@ -59,7 +60,6 @@ fn find_reachable_anonymous_phi(
 /// chain depth.
 #[test]
 fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     // 10k-store chain pins the iterative form of
     // `find_stack_stored_value_at_offset` (scale.md A1).  The prior
@@ -100,11 +100,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -118,7 +114,6 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
 
 #[test]
 fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -132,11 +127,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -150,7 +141,6 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
 /// the earlier `StackStore{+4}`'s value to the load.
 #[test]
 fn forward_skips_non_aliasing_store() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -171,11 +161,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -192,7 +178,6 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
 /// must bail and the load must remain.
 #[test]
 fn bail_on_overlapping_store() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -207,11 +192,7 @@ fn bail_on_overlapping_store() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -228,7 +209,6 @@ fn bail_on_overlapping_store() -> Result<()> {
 /// the load — bail.
 #[test]
 fn bail_on_type_mismatch() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -239,11 +219,7 @@ fn bail_on_type_mismatch() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -263,7 +239,6 @@ fn bail_on_type_mismatch() -> Result<()> {
 /// observation.
 #[test]
 fn forwards_across_non_sp_store_between() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -283,11 +258,7 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -306,7 +277,6 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
 /// through the call, keeping the load's address decomposable.
 #[test]
 fn bail_on_call_between() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut b = RegisterSet::new()
@@ -332,11 +302,7 @@ fn bail_on_call_between() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -355,7 +321,6 @@ fn bail_on_call_between() -> Result<()> {
 /// `MemPhi` (i.e. the merge `ControlState`'s dispatch output).
 #[test]
 fn phi_both_branches_store_same_offset() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -404,11 +369,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     // Skip DeadBranchElimination so the `If(const true)` diamond survives
     // through the pass — otherwise both arms would collapse and there'd
     // be no MemPhi to synthesize a ValuePhi from.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -448,7 +409,6 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
 /// that predecessor and the entire forward must bail — the load stays.
 #[test]
 fn phi_missing_store_on_one_branch_bails() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -486,11 +446,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -516,7 +472,6 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
 /// and return the shared data output directly.
 #[test]
 fn phi_identical_values_no_new_phi() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -569,11 +524,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -648,7 +599,6 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
 /// byte constant when the stored value is itself a constant).
 #[test]
 fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -663,11 +613,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -700,7 +646,6 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
 /// because the analyzer emits both for `struct_test`'s short/char reads.
 #[test]
 fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -714,11 +659,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     let entry = fg.entry().unwrap();
     pipeline.run(fg.graph_mut(), entry)?;
 
@@ -829,7 +770,6 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 /// the graph as an orphan even though the overall walk returns `None`.
 #[test]
 fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -929,7 +869,6 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
 /// returns the stored value's output id.
 #[test]
 fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -984,7 +923,6 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
 /// and finds the requested-offset store.
 #[test]
 fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -1052,7 +990,6 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
 /// at InitialMemory without producing a value).
 #[test]
 fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -1099,7 +1036,6 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
 /// the older one.
 #[test]
 fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -1151,7 +1087,6 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
 /// needs an exact-typed match to safely treat the value as a target address.
 #[test]
 fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -1201,7 +1136,6 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
 /// `ResolvedTargets::Multiple`.
 #[test]
 fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
