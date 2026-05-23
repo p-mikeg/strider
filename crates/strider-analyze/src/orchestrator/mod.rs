@@ -113,19 +113,21 @@ where
 /// region's exit `vn_to_value` table — what
 /// [`crate::opt::AnchorCallingContext::for_anchor`] needs to thread
 /// ABI varnodes through an in-place edit.
-/// Maps a region's exit-control `NodeOutputId` to the region's exit
-/// `vn_to_value` table.  The map is `Arc`-shared with each
-/// [`RegionLiftHandles::exit_vn_to_value`] entry — never mutated
-/// post-build, so shared ownership is safe.
-type ExitVnToValue = std::sync::Arc<rustc_hash::FxHashMap<rsleigh::Vn, NodeOutputId>>;
+///
+/// Owned by value (each `RegionLiftHandles` is consumed once, by
+/// `from_handles`, via `into_iter`).  Keyed by `NodeOutputId` which
+/// impls `EntityRef`, so `FxHashMap` (not `std::HashMap`'s SipHash) is
+/// the appropriate entity-keyed map per CLAUDE.md.
+type ExitVnToValue = rustc_hash::FxHashMap<rsleigh::Vn, NodeOutputId>;
 
 struct RegionIndex {
-    by_exit_control: HashMap<NodeOutputId, ExitVnToValue>,
+    by_exit_control: rustc_hash::FxHashMap<NodeOutputId, ExitVnToValue>,
 }
 
 impl RegionIndex {
     fn from_handles(handles: Vec<RegionLiftHandles>) -> Self {
-        let mut by_exit_control = HashMap::with_capacity(handles.len());
+        let mut by_exit_control =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(handles.len(), Default::default());
         for h in handles.into_iter() {
             by_exit_control.insert(h.exit_control, h.exit_vn_to_value);
         }
@@ -351,7 +353,7 @@ where
             pending_at_iter_0: 0,
             stall_budget: 0,
             region_index: RegionIndex {
-                by_exit_control: HashMap::new(),
+                by_exit_control: rustc_hash::FxHashMap::default(),
             },
             lr_vn,
             sp_vn,

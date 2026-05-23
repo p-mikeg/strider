@@ -14,11 +14,11 @@ pub(crate) struct RegionLiftHandles {
     pub(crate) exit_control: strider_ir::node::NodeOutputId,
     /// Per-var exit-boundary value `NodeOutputId`s, keyed by `Vn`.
     ///
-    /// Wrapped in `Arc` so the orchestrator's per-iteration
-    /// `RegionIndex::from_handles` can `Arc::clone` instead of
-    /// deep-cloning the map (the map is never mutated post-build).
+    /// Moved by value (not `Arc::clone`d) into the orchestrator's
+    /// per-iteration [`crate::orchestrator::RegionIndex`] via
+    /// `into_iter`; never mutated post-build.
     pub(crate) exit_vn_to_value:
-        std::sync::Arc<rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::NodeOutputId>>,
+        rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::NodeOutputId>,
 }
 
 /// The full result of a strider lift, exposing the lifted IR plus the
@@ -548,7 +548,7 @@ where
 
         region_handles.push(RegionLiftHandles {
             exit_control,
-            exit_vn_to_value: std::sync::Arc::new(exit_vn_to_value),
+            exit_vn_to_value,
         });
     }
 
