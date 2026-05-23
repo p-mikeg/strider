@@ -150,3 +150,29 @@ fn ir_level_classification_robust_to_destructive_subset() {
     );
 }
 
+// ── Pass-count smoke contracts ───────────────────────────────────────────────
+//
+// Coarse-grained shape checks that the stable / destructive split is
+// non-trivial: neither subset is empty, and the combined count equals
+// stable + destructive.  These pin a registration-shape contract that
+// does NOT depend on per-pass introspection (the pre-rewrite name-based
+// shape tests in `crates/opt/tests/pipeline_subsets.rs` ran against an
+// `OptimizerPipeline::optimizer_names()` accessor that was removed when
+// the trait surface tightened; the per-pass content contract — which
+// passes are stable vs destructive — is enforced at runtime by the
+// existing tests above (idempotence on stable, phi-preservation on
+// stable, full == stable + destructive node count).
+
+#[test]
+fn stable_and_destructive_subsets_are_non_empty() {
+    assert!(stable_default_pipeline().iter().count() > 0);
+    assert!(destructive_default_pipeline().iter().count() > 0);
+}
+
+#[test]
+fn full_pipeline_pass_count_equals_stable_plus_destructive() {
+    let stable_count = stable_default_pipeline().iter().count();
+    let destructive_count = destructive_default_pipeline().iter().count();
+    let full_count = strider_analyze::opt::default_pipeline().iter().count();
+    assert_eq!(stable_count + destructive_count, full_count);
+}
