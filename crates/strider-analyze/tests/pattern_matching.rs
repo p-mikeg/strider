@@ -72,3 +72,6 @@ mod call_other_arg_ret_slots;
 
 #[path = "pattern_matching/call_other_name_filter.rs"]
 mod call_other_name_filter;
+
+#[path = "pattern_matching/memory_chain.rs"]
+mod memory_chain;
