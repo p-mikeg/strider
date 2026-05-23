@@ -329,15 +329,10 @@ pub const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
 /// statements and `dot` otherwise.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum HtmlEngineChoice {
-    /// Pick `sfdp` when `dot_node_count(src) > threshold`, otherwise `dot`.
+    /// Pick `sfdp` when `dot_node_count(src) > DEFAULT_SFDP_NODE_THRESHOLD`,
+    /// otherwise `dot`.
     #[default]
     Auto,
-    /// Always use `dot` as the initial engine.
-    AlwaysDot,
-    /// Always use `sfdp` as the initial engine.
-    AlwaysSfdp,
-    /// Use [`Self::Auto`] semantics but with a caller-chosen threshold.
-    AutoWithThreshold(usize),
 }
 
 impl HtmlEngineChoice {
@@ -345,13 +340,8 @@ impl HtmlEngineChoice {
     /// name accepted by the viewer's `<select id="engSel">` element.
     #[must_use]
     pub fn resolve(&self, node_count: usize) -> &'static str {
-        let threshold = match self {
-            Self::Auto => DEFAULT_SFDP_NODE_THRESHOLD,
-            Self::AutoWithThreshold(t) => *t,
-            Self::AlwaysDot => return "dot",
-            Self::AlwaysSfdp => return "sfdp",
-        };
-        if node_count > threshold {
+        let Self::Auto = self;
+        if node_count > DEFAULT_SFDP_NODE_THRESHOLD {
             "sfdp"
         } else {
             "dot"
@@ -389,14 +379,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
             name: "G".to_string(),
             engine_choice: HtmlEngineChoice::default(),
         }
-    }
-
-    /// Overrides the HTML viewer's default layout-engine selection
-    /// policy.  See [`HtmlEngineChoice`] for the available variants.
-    #[must_use]
-    pub fn with_engine_choice(mut self, choice: HtmlEngineChoice) -> Self {
-        self.engine_choice = choice;
-        self
     }
 
     fn build_dot(&self) -> anyhow::Result<String> {
@@ -627,16 +609,4 @@ mod engine_choice_tests {
         assert_eq!(choice.resolve(10_000), "sfdp");
     }
 
-    #[test]
-    fn auto_with_threshold_uses_caller_value() {
-        let choice = HtmlEngineChoice::AutoWithThreshold(100);
-        assert_eq!(choice.resolve(100), "dot");
-        assert_eq!(choice.resolve(101), "sfdp");
-    }
-
-    #[test]
-    fn always_variants_ignore_node_count() {
-        assert_eq!(HtmlEngineChoice::AlwaysDot.resolve(1_000_000), "dot");
-        assert_eq!(HtmlEngineChoice::AlwaysSfdp.resolve(0), "sfdp");
-    }
 }
