@@ -217,4 +217,23 @@ impl Graph {
             .filter(move |&n| reachable.contains(n))
             .map(move |n| (n, self.node_kind(n)))
     }
+
+    /// Counts reachable nodes whose [`NodeKind`] satisfies `predicate`.
+    ///
+    /// Walks the graph in pre-order via [`Graph::preorder`] and counts
+    /// matches.  The canonical assertion-vocabulary helper for tests
+    /// that need a kind-count without an entry node — the entry is
+    /// inferred from `self.entry`, falling back to walking from every
+    /// known node-id when no entry is set.
+    pub fn count_kind<F: Fn(&NodeKind) -> bool>(&self, predicate: F) -> usize {
+        self.preorder()
+            .filter(|nid| predicate(self.node_kind(*nid)))
+            .count()
+    }
+
+    /// Returns `true` when at least one reachable node satisfies
+    /// `predicate`.  Short-circuits at the first match.
+    pub fn has_kind<F: Fn(&NodeKind) -> bool>(&self, predicate: F) -> bool {
+        self.preorder().any(|nid| predicate(self.node_kind(nid)))
+    }
 }

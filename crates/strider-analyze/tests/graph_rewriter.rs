@@ -85,20 +85,11 @@ fn analyze_with_known_targets(
 }
 
 fn count_if_nodes(g: &Graph) -> usize {
-    g.preorder()
-        .filter(|nid| matches!(g.node_kind(*nid), NodeKind::If))
-        .count()
+    g.count_kind(|k| matches!(k, NodeKind::If))
 }
 
 fn count_eq_cmps(g: &Graph) -> usize {
-    g.preorder()
-        .filter(|nid| {
-            matches!(
-                g.node_kind(*nid),
-                NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
-            )
-        })
-        .count()
+    g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
 }
 
 /// Build a tiny non-Sleigh function: `fn() -> u64 { return Add(K, 0); }`.
@@ -121,14 +112,7 @@ fn add_k_plus_zero(k: u64) -> Graph {
 }
 
 fn count_adds(g: &Graph) -> usize {
-    g.preorder()
-        .filter(|nid| {
-            matches!(
-                g.node_kind(*nid),
-                NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            )
-        })
-        .count()
+    g.count_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 // ── Test 1 — replace switch selector with const, collapse to one branch ─────

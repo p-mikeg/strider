@@ -291,8 +291,10 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Graph {
 
 use strider_ir::node::NodeKind;
 
+// Re-export the canonical `Graph::count_kind` / `Graph::has_kind` under
+// their bare names so existing test call-sites need no qualification.
 pub fn count_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::Graph, pred: F) -> usize {
-    g.preorder().filter(|nid| pred(g.node_kind(*nid))).count()
+    g.count_kind(pred)
 }
 
 pub fn count_int_binop(g: &strider_ir::Graph, op: strider_ir::IntBinaryOp) -> usize {
@@ -429,7 +431,7 @@ pub fn count_int_consts(g: &strider_ir::Graph) -> usize {
 }
 
 pub fn has_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::Graph, pred: F) -> bool {
-    count_kind(g, pred) > 0
+    g.has_kind(pred)
 }
 
 pub fn has_constant(g: &strider_ir::Graph, value: u64) -> bool {

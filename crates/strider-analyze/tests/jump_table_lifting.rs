@@ -84,31 +84,15 @@ fn analyze_with_known_targets(
 }
 
 fn count_if_nodes(g: &Graph) -> usize {
-    g.preorder()
-        .filter(|nid| matches!(g.node_kind(*nid), NodeKind::If))
-        .count()
+    g.count_kind(|k| matches!(k, NodeKind::If))
 }
 
 fn count_eq_cmps(g: &Graph) -> usize {
-    g.preorder()
-        .filter(|nid| {
-            matches!(
-                g.node_kind(*nid),
-                NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
-            )
-        })
-        .count()
+    g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
 }
 
 fn count_int_consts_eq(g: &Graph, want: u64) -> usize {
-    g.preorder()
-        .filter(|nid| {
-            matches!(
-                g.node_kind(*nid),
-                NodeKind::IntConst(c) if *c == u128::from(want),
-            )
-        })
-        .count()
+    g.count_kind(|k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(want)))
 }
 
 #[test]
