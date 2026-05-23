@@ -105,20 +105,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     }
 
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let id_vn = strider_lift::pcode_lift::first_input_or_err(insn)?;
-        if id_vn.addr_space != rsleigh::VnSpace::CONST {
-            bail!(
-                "opcode {:?} expects a CONST input at position 0",
-                insn.opcode
-            );
-        }
-        let user_op_id = id_vn.addr_off;
-        let user_op_id_u32 = u32::try_from(user_op_id)
-            .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;
-        let name = self.cfg.sleigh().user_op_name(user_op_id_u32).ok_or_else(|| {
-            anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
-        })?;
-
+        let (user_op_id, name) = decode_user_op(insn, self.cfg.sleigh())?;
         let class = strider_target::call_other_abi::classify(self.strider.arch.preset(), name)
             .ok_or_else(|| crate::errors::UnknownCallOtherError {
                 name: name.to_string(),
@@ -133,102 +120,149 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             }
 
             strider_target::call_other_abi::CallOtherClass::Call(abi) => {
-                // 1. Resolve pcode-explicit inputs (args) via the
-                //    aliasing-aware value lifter.
-                let args: Vec<strider_ir::Value> = if insn.inputs.len() > 1 {
-                    insn.inputs[1..]
-                        .iter()
-                        .map(|vn| self.read_vn(vn))
-                        .collect::<Result<_>>()?
-                } else {
-                    Vec::new()
-                };
-                let output_ty: Option<NodeOutputType> = match insn.output.as_ref() {
-                    Some(out_vn) => Some(out_vn.size.try_into()?),
-                    None => None,
-                };
-
-                // 2. Resolve ABI register names -> Vns via Sleigh's
-                //    cached register table on Strider.
-                let regs = &self.strider.sleigh_regs;
-                let resolve = |reg_names: &[&str]| -> Result<Vec<rsleigh::Vn>> {
-                    reg_names
-                        .iter()
-                        .map(|n| {
-                            regs.name_to_vn(n).ok_or_else(|| {
-                                anyhow!(
-                                    "user-op {name:?} ABI references unknown register {n:?}"
-                                )
-                            })
-                        })
-                        .collect()
-                };
-                let implicit_reads_vns = resolve(abi.implicit_reads)?;
-                let implicit_writes_vns = resolve(abi.implicit_writes)?;
-
-                // 3. Read implicit-read register values via the
-                //    aliasing-aware value lifter (so EAX correctly
-                //    reads the low 4 bytes of the RAX-tracked variable).
-                let implicit_read_values: Vec<strider_ir::Value> = implicit_reads_vns
-                    .iter()
-                    .map(|vn| self.read_vn(vn))
-                    .collect::<Result<_>>()?;
-
-                // 4. Derive the slot kind for each implicit-write from
-                //    the Vn's size (clobber slots match the written
-                //    register's exact width — strider's write_vn below
-                //    inserts any necessary insert/extract for aliasing).
-                let implicit_write_kinds: Vec<strider_ir::node::NodeOutputKind> =
-                    implicit_writes_vns
-                        .iter()
-                        .map(|vn| -> Result<strider_ir::node::NodeOutputKind> {
-                            Ok(strider_ir::node::NodeOutputKind::OutputType(vn.size.try_into()?))
-                        })
-                        .collect::<Result<_>>()?;
-
-                // 5. Build the precise CallOther node.
-                let (node, value, clobber_outs) = self.builder.build_call_other_modeled(
-                    user_op_id,
-                    name,
-                    &args,
-                    output_ty,
-                    &implicit_read_values,
-                    &implicit_writes_vns,
-                    &implicit_write_kinds,
-                )?;
-
-                // 6. Memory edge: strider decides whether to advance.
-                if abi.memory_edge {
-                    let mem_out = self.builder.graph().memory_output_of(node)?;
-                    self.builder.advance_cur_region_memory(mem_out)?;
-                }
-
-                // 7. Rebind tracked variables via the aliasing-aware
-                //    write_vn (so EAX clobber updates RAX-tracked
-                //    variable through the appropriate insert/extract).
-                //
-                //    The pcode-explicit output is written first; any
-                //    implicit-writes entry that matches `out_vn` is
-                //    skipped so the clobber-slot doesn't overwrite the
-                //    modeled value.  Concrete case: `rdpkru` emits
-                //    `EAX = rdpkru_u32()` in pcode while the ABI table
-                //    also lists `EAX` as an implicit-write — without
-                //    this skip the modeled CallOther output becomes a
-                //    dead node and pattern queries reading EAX see the
-                //    clobber slot instead.
-                if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), value) {
-                    self.write_vn(out_vn, val)?;
-                }
-                for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
-                    if insn.output.as_ref() == Some(vn) {
-                        continue;
-                    }
-                    self.write_vn(vn, slot)?;
-                }
-
-                Ok(())
+                self.handle_call_other_modeled(insn, user_op_id, name, &abi)
             }
         }
     }
+
+    /// Handle the `CallOtherClass::Call(abi)` arm of
+    /// [`Self::handle_call_other`] — the only modeled form, comprising
+    /// the seven numbered phases below.  Extracted to keep the parent
+    /// dispatch terse.
+    fn handle_call_other_modeled(
+        &mut self,
+        insn: &rsleigh::Insn,
+        user_op_id: u64,
+        name: &str,
+        abi: &strider_target::call_other_abi::CallOtherAbi,
+    ) -> Result<()> {
+        // 1. Resolve pcode-explicit inputs (args) via the aliasing-aware
+        //    value lifter.
+        let args = self.read_call_other_args(insn)?;
+        let output_ty: Option<NodeOutputType> = match insn.output.as_ref() {
+            Some(out_vn) => Some(out_vn.size.try_into()?),
+            None => None,
+        };
+
+        // 2. Resolve ABI register names -> Vns via Sleigh's cached
+        //    register table on Strider.
+        let implicit_reads_vns = self.resolve_abi_regs(name, abi.implicit_reads)?;
+        let implicit_writes_vns = self.resolve_abi_regs(name, abi.implicit_writes)?;
+
+        // 3. Read implicit-read register values via the aliasing-aware
+        //    value lifter (so EAX correctly reads the low 4 bytes of
+        //    the RAX-tracked variable).
+        let implicit_read_values: Vec<strider_ir::Value> = implicit_reads_vns
+            .iter()
+            .map(|vn| self.read_vn(vn))
+            .collect::<Result<_>>()?;
+
+        // 4. Derive the slot kind for each implicit-write from the
+        //    Vn's size (clobber slots match the written register's
+        //    exact width — strider's write_vn below inserts any
+        //    necessary insert/extract for aliasing).
+        let implicit_write_kinds: Vec<strider_ir::node::NodeOutputKind> = implicit_writes_vns
+            .iter()
+            .map(|vn| -> Result<strider_ir::node::NodeOutputKind> {
+                Ok(strider_ir::node::NodeOutputKind::OutputType(vn.size.try_into()?))
+            })
+            .collect::<Result<_>>()?;
+
+        // 5. Build the precise CallOther node.
+        let (node, value, clobber_outs) = self.builder.build_call_other_modeled(
+            user_op_id,
+            name,
+            &args,
+            output_ty,
+            &implicit_read_values,
+            &implicit_writes_vns,
+            &implicit_write_kinds,
+        )?;
+
+        // 6. Memory edge: strider decides whether to advance.
+        if abi.memory_edge {
+            let mem_out = self.builder.graph().memory_output_of(node)?;
+            self.builder.advance_cur_region_memory(mem_out)?;
+        }
+
+        // 7. Rebind tracked variables via the aliasing-aware write_vn
+        //    (so EAX clobber updates RAX-tracked variable through the
+        //    appropriate insert/extract).
+        //
+        //    The pcode-explicit output is written first; any
+        //    implicit-writes entry that matches `out_vn` is skipped so
+        //    the clobber-slot doesn't overwrite the modeled value.
+        //    Concrete case: `rdpkru` emits `EAX = rdpkru_u32()` in
+        //    pcode while the ABI table also lists `EAX` as an
+        //    implicit-write — without this skip the modeled CallOther
+        //    output becomes a dead node and pattern queries reading
+        //    EAX see the clobber slot instead.
+        if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), value) {
+            self.write_vn(out_vn, val)?;
+        }
+        for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
+            if insn.output.as_ref() == Some(vn) {
+                continue;
+            }
+            self.write_vn(vn, slot)?;
+        }
+
+        Ok(())
+    }
+
+    /// Phase-1 helper for [`Self::handle_call_other_modeled`]: read
+    /// every p-code-explicit input past slot 0 (the user-op id) as a
+    /// value via the aliasing-aware value lifter.  Slot 0 is excluded
+    /// because it carries the user-op id, not a real argument.
+    fn read_call_other_args(&mut self, insn: &rsleigh::Insn) -> Result<Vec<strider_ir::Value>> {
+        if insn.inputs.len() > 1 {
+            insn.inputs[1..]
+                .iter()
+                .map(|vn| self.read_vn(vn))
+                .collect()
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Phase-2 helper for [`Self::handle_call_other_modeled`]: resolve
+    /// an ABI-table register-name list against the cached Sleigh
+    /// register table.  Surface an unknown name as a typed error
+    /// referencing the user-op for traceability.
+    fn resolve_abi_regs(&self, op_name: &str, reg_names: &[&str]) -> Result<Vec<rsleigh::Vn>> {
+        let regs = &self.strider.sleigh_regs;
+        reg_names
+            .iter()
+            .map(|n| {
+                regs.name_to_vn(n).ok_or_else(|| {
+                    anyhow!(
+                        "user-op {op_name:?} ABI references unknown register {n:?}"
+                    )
+                })
+            })
+            .collect()
+    }
+}
+
+/// Decode the user-op id + look up its name from a `CallOther` insn.
+/// Extracted from [`PerRegionDriver::handle_call_other`]'s preamble.
+fn decode_user_op<'a, R: rsleigh::MemReader>(
+    insn: &rsleigh::Insn,
+    sleigh: &'a rsleigh::Sleigh<R>,
+) -> Result<(u64, &'a str)> {
+    let id_vn = strider_lift::pcode_lift::first_input_or_err(insn)?;
+    if id_vn.addr_space != rsleigh::VnSpace::CONST {
+        bail!(
+            "opcode {:?} expects a CONST input at position 0",
+            insn.opcode
+        );
+    }
+    let user_op_id = id_vn.addr_off;
+    let user_op_id_u32 = u32::try_from(user_op_id)
+        .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;
+    let name = sleigh.user_op_name(user_op_id_u32).ok_or_else(|| {
+        anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
+    })?;
+    Ok((user_op_id, name))
 }
 
