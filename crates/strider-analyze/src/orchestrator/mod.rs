@@ -1114,6 +1114,66 @@ fn edge_set_of(
     edges
 }
 
+/// Renders one HTML viewer per region into `out_dir`.
+///
+/// `exit_controls` names each region by the `NodeOutputId` that its
+/// terminator consumed at lift time — obtain it from
+/// [`crate::AnalyzeOutcome::region_exit_controls`].  For each exit:
+///
+/// 1. Walk backward from the exit's producer via
+///    [`strider_ir::walk::region_membership_from_exit`] to collect the
+///    region's visualisation membership (control spine, halted at
+///    `ControlState` join nodes, then the data-ancestor closure).
+/// 2. Build a [`strider_ir::graph_dot::GraphDotDumper`] limited to that
+///    membership.
+/// 3. Write `region_<addr>.html` into `out_dir`, where `<addr>` is the
+///    first asm-fingerprint of the exit's producer (zero-padded
+///    16-hex-digit `u64`); regions whose producer carries no
+///    asm-fingerprint (e.g. a region terminator that was synthesised by
+///    a pass without stamping) fall back to a sequential
+///    `region_idx<i>` name so file collisions stay deterministic.
+///
+/// `out_dir` must exist; this function does not create it.
+///
+/// # Errors
+///
+/// Returns an error if [`strider_ir::Graph::dot_dumper`] fails (graph
+/// not built), if HTML rendering fails, or if a write to `out_dir`
+/// fails.
+pub fn dump_per_region<R, I>(
+    graph: &strider_ir::Graph,
+    exit_controls: I,
+    sleigh: &rsleigh::Sleigh<R>,
+    out_dir: &std::path::Path,
+) -> Result<()>
+where
+    R: rsleigh::MemReader,
+    I: IntoIterator<Item = NodeOutputId>,
+{
+    for (idx, exit_control) in exit_controls.into_iter().enumerate() {
+        let membership = strider_ir::walk::region_membership_from_exit(graph, exit_control);
+        // Construct a fresh dumper per region via the public
+        // `Graph::dot_dumper` + `with_node_filter` chain.  The dumper
+        // borrows from `graph` / `sleigh`, so we can't reuse one across
+        // iterations (each `with_node_filter` consumes the value).
+        let dumper = graph.dot_dumper(sleigh)?.with_node_filter(membership);
+
+        let producer = graph.get_node_from_output(exit_control);
+        let addr_part: String = graph
+            .asm_fingerprint(producer)
+            .first()
+            .map(|a| format!("{a:016x}"))
+            .unwrap_or_else(|| format!("idx{idx}"));
+        let path = out_dir.join(format!("region_{addr_part}.html"));
+        let html = ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
+            .as_html_from_dot()?;
+        std::fs::write(&path, html).map_err(|e| {
+            anyhow!("dump_per_region: write {} failed: {e}", path.display())
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

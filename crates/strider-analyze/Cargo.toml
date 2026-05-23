@@ -19,6 +19,10 @@ rustc-hash = "2"
 smallvec.workspace = true
 thiserror.workspace = true
 bitflags = "2"
+# `dot` powers the orchestrator's per-region HTML emission
+# (`dump_per_region`).  It is also pulled in by every dev-dep test that
+# wants to render an IR graph.
+dot.workspace = true
 
 [dev-dependencies]
 strider-reader = { workspace = true }
@@ -26,7 +30,6 @@ object.workspace = true
 strider-ir-test-utils = { workspace = true }
 expect-test.workspace = true
 paste = "1"
-dot.workspace = true
 insta = { version = "1.40", features = ["yaml"] }
 serde = { version = "1", features = ["derive"] }
 criterion = { version = "0.7", features = ["html_reports"] }

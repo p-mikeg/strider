@@ -54,6 +54,17 @@ impl AnalyzeOutcome {
     pub fn region_count(&self) -> usize {
         self.region_handles.len()
     }
+
+    /// Iterates the per-region exit-control `NodeOutputId`s captured at
+    /// lift time, in lift order.
+    ///
+    /// Each `NodeOutputId` identifies the control output a region's
+    /// terminator consumed — sufficient to seed a backward walk that
+    /// collects the region's node set (see
+    /// [`crate::orchestrator::dump_per_region`] for the canonical use).
+    pub fn region_exit_controls(&self) -> impl Iterator<Item = strider_ir::node::NodeOutputId> + '_ {
+        self.region_handles.iter().map(|h| h.exit_control)
+    }
 }
 
 impl std::fmt::Display for AnalyzeOutcome {

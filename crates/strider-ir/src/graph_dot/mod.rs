@@ -132,6 +132,28 @@ pub struct GraphDotDumper<'a, R: MemReader> {
     /// label `Return` input edges at slots 2.. with the register name so
     /// visualising the graph shows which vn each return slot carries.
     pub(crate) ret_val_regs: &'a [rsleigh::Vn],
+    /// Optional node-id filter.  When `Some(set)`, [`Self::iter_nodes`]
+    /// yields only nodes in `set` AND the per-node edge emitter skips
+    /// edges whose producer is not in `set`.  Used by per-region /
+    /// neighborhood dumps that want to render a subgraph rather than
+    /// the whole reachable graph.
+    pub(crate) node_filter: Option<crate::walk::NodeIdSet>,
+}
+
+impl<'a, R: MemReader> GraphDotDumper<'a, R> {
+    /// Returns a copy of this dumper with `node_filter = Some(filter)`.
+    /// See the field doc for the filtering contract.
+    #[must_use]
+    pub fn with_node_filter(mut self, filter: crate::walk::NodeIdSet) -> Self {
+        self.node_filter = Some(filter);
+        self
+    }
+
+    /// Returns `true` when `node` is in the active filter (or there is
+    /// no filter, i.e. every node is visible).
+    pub(crate) fn is_visible(&self, node: NodeId) -> bool {
+        self.node_filter.as_ref().is_none_or(|f| f.contains(node))
+    }
 }
 
 pub struct GraphDotDumperState {

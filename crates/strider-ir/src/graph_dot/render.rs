@@ -39,7 +39,14 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
     }
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        self.graph.walk_from(self.entry)
+        // Walk from `entry`, then drop any node not in the active filter.
+        // When no filter is set, every reachable node passes through.
+        let walk: Vec<_> = self
+            .graph
+            .walk_from(self.entry)
+            .filter(|n| self.is_visible(*n))
+            .collect();
+        walk
     }
 
     fn dump_as_dot(
@@ -48,6 +55,12 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
         out: &mut ::dot::DotEmitter,
         state: &mut Self::State,
     ) -> core::result::Result<(), Self::Error> {
+        // Defense in depth: even though `iter_nodes` filters, a caller
+        // that drives `dump_as_dot` directly (e.g. some tests) might
+        // still hand us an out-of-filter node.
+        if !self.is_visible(node) {
+            return Ok(());
+        }
         if self.graph.node_kind(node).is_const() {
             return Ok(());
         }
@@ -118,6 +131,14 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
 
         for (idx, parent_output) in self.graph.node_inputs(node).into_iter().enumerate() {
             let parent_id = self.graph.get_node_from_output(parent_output);
+            // Skip edges whose producer was filtered out by the active
+            // node filter.  Constants are always re-emitted alongside
+            // their consumers (the `is_const` branch below), so they
+            // bypass the filter check — the filter is for "real" graph
+            // nodes, not inlined per-consumer constants.
+            if !self.graph.node_kind(parent_id).is_const() && !self.is_visible(parent_id) {
+                continue;
+            }
             let parent_kind = *self.graph.node_kind(parent_id);
 
             // Inline the SP `InitialVar` into each StackStore/StackStorePhi

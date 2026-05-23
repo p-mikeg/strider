@@ -429,6 +429,7 @@ impl Graph {
             sleigh,
             call_clobbered: &cc.call_clobbered,
             ret_val_regs: &cc.ret_val_regs,
+            node_filter: None,
         })
     }
 
