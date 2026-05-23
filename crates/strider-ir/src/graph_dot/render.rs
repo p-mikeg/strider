@@ -56,7 +56,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
         state: &mut Self::State,
     ) -> core::result::Result<(), Self::Error> {
         // Phase A: skip-checks + declare this node.
-        let Some(cur_id) = self.try_declare_node(node, out, state) else {
+        let Some(cur_id) = self.try_declare_node(node, out, state)? else {
             return Ok(());
         };
         let kind = *self.graph.node_kind(node);
@@ -78,26 +78,29 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
 
 impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     /// Phase A of [`dump_as_dot`]: apply the skip-checks and emit the
-    /// dot node declaration when the node passes.  Returns `Some(id)`
-    /// (the dot id) when the node was declared, `None` when it was
-    /// filtered out or is a const (rendered inline beside its
-    /// consumers) or an inlined-`InitialVar`.  Callers proceed to
-    /// phases B/C only on `Some`.
+    /// dot node declaration when the node passes.  Returns
+    /// `Ok(Some(id))` (the dot id) when the node was declared,
+    /// `Ok(None)` when it was filtered out or is a const (rendered
+    /// inline beside its consumers) or an inlined-`InitialVar`.  An
+    /// `Err` propagates a `pretty_label` IO failure to the caller
+    /// (e.g. a Sleigh `vn_to_name` lookup that surfaces as
+    /// `io::Error`).  Callers proceed to phases B/C only on
+    /// `Ok(Some(_))`.
     fn try_declare_node(
         &self,
         node: NodeId,
         out: &mut ::dot::DotEmitter,
         state: &mut GraphDotDumperState,
-    ) -> Option<String> {
+    ) -> std::io::Result<Option<String>> {
         // Defense in depth: even though `iter_nodes` filters, a caller
         // that drives `dump_as_dot` directly (e.g. some tests) might
         // still hand us an out-of-filter node.
         if !self.is_visible(node) {
-            return None;
+            return Ok(None);
         }
         let kind = *self.graph.node_kind(node);
         if kind.is_const() {
-            return None;
+            return Ok(None);
         }
         // An `InitialVar` whose sole consumer is a
         // `StackStore`/`StackStorePhi` SP input is rendered inline as
@@ -107,18 +110,18 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         if matches!(kind, NodeKind::InitialVar(_))
             && all_uses_go_through_inline(self.graph, node)
         {
-            return None;
+            return Ok(None);
         }
 
         let cur_id = state.get_dot_id(self.graph, node);
-        let label = self.pretty_label(node).ok()?;
+        let label = self.pretty_label(node)?;
         out.node(
             &cur_id,
             &label,
             node_shape(&kind),
             &[("fillcolor", node_fillcolor(&kind))],
         );
-        Some(cur_id)
+        Ok(Some(cur_id))
     }
 
     /// Phase B of [`dump_as_dot`]: emit "if.true" / "if.false" virtual
