@@ -244,6 +244,60 @@ pub fn region_membership_from_exit(
     visible
 }
 
+/// Collects every node within `depth` hops of `anchor`, following both
+/// forward (use-of-output) and backward (input-from-producer) edges.
+///
+/// `depth = 0` returns the singleton `{anchor}`; `depth = 1` returns
+/// the anchor plus every direct predecessor (input producer) and
+/// successor (output consumer); and so on.  Used by neighborhood-focus
+/// HTML dumps to render a subgraph around a node of interest without
+/// pulling in the whole reachable graph.
+///
+/// Both edge directions are followed because IR debugging typically
+/// wants to see both "what produced this value" (backward) and "what
+/// uses it" (forward) from the anchor.
+#[must_use]
+pub fn collect_neighborhood(
+    graph: &Graph,
+    anchor: NodeId,
+    depth: u32,
+) -> DenseEntitySet<NodeId> {
+    let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
+    visited.insert(anchor);
+    if depth == 0 {
+        return visited;
+    }
+    // BFS-style frontier expansion: at iteration `k`, `frontier`
+    // contains every node first discovered at hop distance `k`.  This
+    // gives a depth-bounded walk in O((depth) * neighborhood_size).
+    let mut frontier: Vec<NodeId> = vec![anchor];
+    for _ in 0..depth {
+        let mut next_frontier: Vec<NodeId> = Vec::new();
+        for node in frontier {
+            // Backward edges: each input's producer.
+            for input in graph.node_inputs(node) {
+                let (producer, _) = graph.output_definition(input);
+                if visited.insert(producer) {
+                    next_frontier.push(producer);
+                }
+            }
+            // Forward edges: each output's consumers.
+            for &output in graph.node_outputs(node) {
+                for (consumer, _) in graph.output_uses(output) {
+                    if visited.insert(consumer) {
+                        next_frontier.push(consumer);
+                    }
+                }
+            }
+        }
+        if next_frontier.is_empty() {
+            break;
+        }
+        frontier = next_frontier;
+    }
+    visited
+}
+
 /// Like [`walk_graph`] but accepts an optional entry: returns an
 /// empty walk when `entry` is `None`.  Used by [`Graph::preorder`] so
 /// pre-build graphs yield no nodes instead of panicking.
@@ -629,6 +683,68 @@ mod tests {
         assert!(!mem.contains(a), "a is on the other side of the ControlState barrier");
         assert!(!mem.contains(b), "b is on the other side of the ControlState barrier");
         assert!(!mem.contains(entry), "entry is upstream of the barrier");
+    }
+
+    // ── collect_neighborhood ──────────────────────────────────────────────────
+
+    /// depth=0 returns the singleton anchor set.
+    #[test]
+    fn collect_neighborhood_depth_zero_is_singleton() {
+        let mut graph = Graph::new();
+        let (entry, _) = make_entry(&mut graph);
+        let nbhd = collect_neighborhood(&graph, entry, 0);
+        assert!(nbhd.contains(entry));
+        // No other nodes should be present.
+        let total: usize = nbhd.iter().count();
+        assert_eq!(total, 1, "depth=0 must yield exactly the anchor");
+    }
+
+    /// depth=1 includes immediate predecessors and successors of the anchor.
+    #[test]
+    fn collect_neighborhood_depth_one_includes_direct_neighbors() {
+        // entry → a → b: anchor = a at depth=1 must include entry, a, b.
+        let mut graph = Graph::new();
+        let (entry, c0) = make_entry(&mut graph);
+        let (a, c1) = make_ctrl_node(&mut graph, c0);
+        let b = make_return(&mut graph, c1);
+
+        let nbhd = collect_neighborhood(&graph, a, 1);
+        assert!(nbhd.contains(a), "anchor must be included");
+        assert!(nbhd.contains(entry), "1-hop predecessor must be included");
+        assert!(nbhd.contains(b), "1-hop successor must be included");
+    }
+
+    /// depth=2 includes 2-hop neighbours.
+    #[test]
+    fn collect_neighborhood_depth_two_extends_one_more_hop() {
+        // entry → a → b → c: anchor = a at depth=2 must include entry,
+        // a, b, AND c (1 hop forward from b, 2 hops from a).
+        let mut graph = Graph::new();
+        let (entry, c0) = make_entry(&mut graph);
+        let (a, c1) = make_ctrl_node(&mut graph, c0);
+        let (b, c2) = make_ctrl_node(&mut graph, c1);
+        let c = make_return(&mut graph, c2);
+
+        let nbhd_1 = collect_neighborhood(&graph, a, 1);
+        assert!(!nbhd_1.contains(c), "depth=1 must NOT reach the 2-hop neighbour");
+
+        let nbhd_2 = collect_neighborhood(&graph, a, 2);
+        assert!(nbhd_2.contains(entry));
+        assert!(nbhd_2.contains(a));
+        assert!(nbhd_2.contains(b));
+        assert!(nbhd_2.contains(c), "depth=2 must include the 2-hop neighbour");
+    }
+
+    /// A high depth stops naturally when the frontier is exhausted.
+    #[test]
+    fn collect_neighborhood_high_depth_terminates_at_reachable_set() {
+        let mut graph = Graph::new();
+        let (entry, c0) = make_entry(&mut graph);
+        let _ret = make_return(&mut graph, c0);
+
+        // depth=100 still terminates because the frontier empties at hop 1.
+        let nbhd = collect_neighborhood(&graph, entry, 100);
+        assert_eq!(nbhd.iter().count(), 2, "frontier exhausted after 1 hop");
     }
 
     /// Data ancestors of every spine node must be included even when

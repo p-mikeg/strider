@@ -1162,8 +1162,7 @@ where
         let addr_part: String = graph
             .asm_fingerprint(producer)
             .first()
-            .map(|a| format!("{a:016x}"))
-            .unwrap_or_else(|| format!("idx{idx}"));
+            .map_or_else(|| format!("idx{idx}"), |a| format!("{a:016x}"));
         let path = out_dir.join(format!("region_{addr_part}.html"));
         let html = ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
             .as_html_from_dot()?;
@@ -1172,6 +1171,40 @@ where
         })?;
     }
     Ok(())
+}
+
+/// Writes an HTML viewer for the subgraph within `depth` hops of
+/// `anchor` (forward + backward) to `out_path`.
+///
+/// Uses [`strider_ir::walk::collect_neighborhood`] to build the visible
+/// node set and renders via [`strider_ir::Graph::dot_dumper`]'s
+/// `with_node_filter` chain.  Useful for "focus on this node" debug
+/// dumps when the whole-graph view is too dense.
+///
+/// `depth = 0` produces a singleton viewer; `depth = 1` includes
+/// immediate predecessors and successors; larger depths walk further.
+///
+/// # Errors
+///
+/// Returns an error when the dumper construction fails (graph not
+/// built), HTML rendering fails, or the write to `out_path` fails.
+pub fn dump_neighborhood<R>(
+    graph: &strider_ir::Graph,
+    anchor: NodeId,
+    depth: u32,
+    sleigh: &rsleigh::Sleigh<R>,
+    out_path: &std::path::Path,
+) -> Result<()>
+where
+    R: rsleigh::MemReader,
+{
+    let visible = strider_ir::walk::collect_neighborhood(graph, anchor, depth);
+    let dumper = graph.dot_dumper(sleigh)?.with_node_filter(visible);
+    let html = ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
+        .as_html_from_dot()?;
+    std::fs::write(out_path, html).map_err(|e| {
+        anyhow!("dump_neighborhood: write {} failed: {e}", out_path.display())
+    })
 }
 
 #[cfg(test)]
