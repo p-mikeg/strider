@@ -36,3 +36,6 @@ mod matcher_api;
 
 #[path = "pattern_matching/cast_mask_walk.rs"]
 mod cast_mask_walk;
+
+#[path = "pattern_matching/rewrite.rs"]
+mod rewrite;
