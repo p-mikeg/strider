@@ -359,40 +359,6 @@ const ARM32_ALL: &[crate::ArchPreset] = &[
 const AARCH64_BOTH: &[crate::ArchPreset] =
     &[crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be];
 
-// ── Shared classification constants ──────────────────────────────────
-//
-// `Option<CallOtherClass>` shorthand for the three repeated shapes
-// every entry below uses.  Lets each table arm be a single line.
-
-/// Empty-ABI Call, **does not** advance the IR memory edge.  Use for
-/// pure compute (cpuid, NEON, SVE, ...) and standalone hints
-/// (Hint_Prefetch, Yield, ExclusiveMonitor*) that don't touch RAM
-/// or pair with a Store.
-const PURE: Option<CallOtherClass> = Some(CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &[],
-    memory_edge: false,
-}));
-
-/// Empty-ABI Call that **does** advance the IR memory edge — for ops
-/// that act as memory-chain markers (LOCK / UNLOCK brackets, standalone
-/// barriers DMB / DSB / ISB / DC_CVAC) so patterns walking the memory
-/// chain can find them, plus ops that may actually write external
-/// state (port I/O, syscall, software_interrupt).
-///
-/// Tradeoff: opt passes that walk the memory chain (e.g.
-/// `StackLoadForward`) cannot forward across these, since the IR
-/// can't prove they don't write RAM.  In practice the affected
-/// patterns target prologue/epilogue field reads, far from atomics.
-const PURE_WITH_MEM_EDGE: Option<CallOtherClass> = Some(CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &[],
-    memory_edge: true,
-}));
-
-const NO_OP: Option<CallOtherClass> = Some(CallOtherClass::NoOp);
-const NO_RETURN: Option<CallOtherClass> = Some(CallOtherClass::NoReturn);
-
 /// Arch-independent entries — names whose meaning is the same on every
 /// arch that emits them.  This is the bulk of the table.
 ///
@@ -403,123 +369,159 @@ const NO_RETURN: Option<CallOtherClass> = Some(CallOtherClass::NoReturn);
 /// `classify_arch_specific` instead.  Memory-edge alone is allowed
 /// here (it's purely an IR concept, not arch-specific).  Enforced by
 /// the `arch_independent_call_entries_have_empty_register_channels`
-/// test — using `PURE` / `PURE_WITH_MEM_EDGE` exclusively here makes
-/// the invariant trivially true at the syntactic level.
-//
-// `match_same_arms`: each name is a separate diffable entry — combining
-// arms via `|` would defeat the table's per-line diff property.
-#[allow(clippy::match_same_arms)]
+/// test — using the `Pure` / `PureMem` table marker exclusively here
+/// makes the invariant trivially true at the syntactic level.
+///
+/// The table is grouped by classification (NoOp / NoReturn / Pure /
+/// PureMem) and ASCII-sorted within each group for diffability — one
+/// entry per line, identical shape, easy to compare across patches.
+/// Lookup is a linear scan; the table is small (~46 entries) and
+/// classification fires once per CallOther at lift time, so a hash
+/// map's setup cost isn't justified.
 #[must_use]
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
-    // ASCII-sorted within each group for diffability.
-    match name {
+    use TableClass::{NoOp, NoReturn, Pure, PureMem};
+    /// Per-table marker for one of the four pre-canned classifications
+    /// — `NoOp` (decoder-context only), `NoReturn` (trap), `Pure`
+    /// (visible marker / pure compute, no memory edge), `PureMem`
+    /// (memory-chain marker / external-state effect).  Resolved to a
+    /// `CallOtherClass` by `TableClass::resolve`.
+    #[derive(Clone, Copy)]
+    enum TableClass {
+        NoOp,
+        NoReturn,
+        Pure,
+        PureMem,
+    }
+    impl TableClass {
+        fn resolve(self) -> CallOtherClass {
+            match self {
+                Self::NoOp => CallOtherClass::NoOp,
+                Self::NoReturn => CallOtherClass::NoReturn,
+                Self::Pure => CallOtherClass::Call(CallOtherAbi {
+                    implicit_reads: &[],
+                    implicit_writes: &[],
+                    memory_edge: false,
+                }),
+                Self::PureMem => CallOtherClass::Call(CallOtherAbi {
+                    implicit_reads: &[],
+                    implicit_writes: &[],
+                    memory_edge: true,
+                }),
+            }
+        }
+    }
+
+    static TABLE: &[(&str, TableClass)] = &[
         // ─── Truly invisible (Sleigh decoder context only) ────────
-        "setEndianState" => NO_OP,
-        "setISAMode"     => NO_OP,
+        ("setEndianState", NoOp),
+        ("setISAMode",     NoOp),
 
         // ─── NoReturn (traps; control flow ends here) ─────────────
         // x86 `sysret` lives in classify_arch_specific so a non-x86
-        // user-op of the same name cannot silently inherit NO_RETURN.
-        "SoftwareBreakpoint"            => NO_RETURN,
-        "UndefinedInstructionException" => NO_RETURN,
-        "invalidInstructionException"   => NO_RETURN,
-        "trap"                          => NO_RETURN,
+        // user-op of the same name cannot silently inherit NoReturn.
+        ("SoftwareBreakpoint",            NoReturn),
+        ("UndefinedInstructionException", NoReturn),
+        ("invalidInstructionException",   NoReturn),
+        ("trap",                          NoReturn),
 
-        // ─── PURE: visible markers / pure compute, no memory edge ─
+        // ─── Pure: visible markers / pure compute, no memory edge ──
 
-        // ARM exclusive-monitor primitives — pair with LDREX/STREX which
-        // already emit pcode loads/stores.  The monitor flag is synthetic.
-        "ExclusiveMonitorPass"     => PURE,
-        "ExclusiveMonitorsStatus"  => PURE,
+        // ARM exclusive-monitor primitives — pair with LDREX/STREX
+        // which already emit pcode loads/stores.  The monitor flag is
+        // synthetic.
+        ("ExclusiveMonitorPass",    Pure),
+        ("ExclusiveMonitorsStatus", Pure),
 
         // CPU hints — non-paired, no memory effect.
-        "Hint_Prefetch" => PURE,
-        "Yield"         => PURE,
+        ("Hint_Prefetch", Pure),
+        ("Yield",         Pure),
 
         // x86 CPUID family — Sleigh's lift returns a tmpptr; the
         // EAX/EBX/ECX/EDX writes appear as ordinary Loads from
         // tmpptr+{0,4,8,12} in subsequent pcode.  The CallOther itself
         // doesn't touch RAM, so memory edge stays put — opt passes can
         // forward through it.
-        "cpuid"                                           => PURE,
-        "cpuid_Architectural_Performance_Monitoring_info" => PURE,
-        "cpuid_Deterministic_Cache_Parameters_info"       => PURE,
-        "cpuid_Direct_Cache_Access_info"                  => PURE,
-        "cpuid_Extended_Feature_Enumeration_info"         => PURE,
-        "cpuid_Extended_Topology_info"                    => PURE,
-        "cpuid_MONITOR_MWAIT_Features_info"               => PURE,
-        "cpuid_Processor_Extended_States_info"            => PURE,
-        "cpuid_Quality_of_Service_info"                   => PURE,
-        "cpuid_Thermal_Power_Management_info"             => PURE,
-        "cpuid_Version_info"                              => PURE,
-        "cpuid_basic_info"                                => PURE,
-        "cpuid_brand_part1_info"                          => PURE,
-        "cpuid_brand_part2_info"                          => PURE,
-        "cpuid_brand_part3_info"                          => PURE,
-        "cpuid_cache_tlb_info"                            => PURE,
-        "cpuid_serial_info"                               => PURE,
+        ("cpuid",                                           Pure),
+        ("cpuid_Architectural_Performance_Monitoring_info", Pure),
+        ("cpuid_Deterministic_Cache_Parameters_info",       Pure),
+        ("cpuid_Direct_Cache_Access_info",                  Pure),
+        ("cpuid_Extended_Feature_Enumeration_info",         Pure),
+        ("cpuid_Extended_Topology_info",                    Pure),
+        ("cpuid_MONITOR_MWAIT_Features_info",               Pure),
+        ("cpuid_Processor_Extended_States_info",            Pure),
+        ("cpuid_Quality_of_Service_info",                   Pure),
+        ("cpuid_Thermal_Power_Management_info",             Pure),
+        ("cpuid_Version_info",                              Pure),
+        ("cpuid_basic_info",                                Pure),
+        ("cpuid_brand_part1_info",                          Pure),
+        ("cpuid_brand_part2_info",                          Pure),
+        ("cpuid_brand_part3_info",                          Pure),
+        ("cpuid_cache_tlb_info",                            Pure),
+        ("cpuid_serial_info",                               Pure),
 
-        // NEON / SVE / multi-precision — Sleigh's pcode carries operand
-        // regs; the user-op itself is pure compute.
-        "MP_INT_ABS"  => PURE,
-        "NEON_rev64"  => PURE,
-        "NEON_sqshl"  => PURE,
-        "NEON_uaddlv" => PURE,
-        "SVE_fnmla"   => PURE,
+        // NEON / SVE / multi-precision — Sleigh's pcode carries
+        // operand regs; the user-op itself is pure compute.
+        ("MP_INT_ABS",  Pure),
+        ("NEON_rev64",  Pure),
+        ("NEON_sqshl",  Pure),
+        ("NEON_uaddlv", Pure),
+        ("SVE_fnmla",   Pure),
 
-        // ARM unmodelled sysreg read — pcode-explicit encoding constant
-        // and destination; opaque value, no RAM effect.
-        "UnkSytemRegRead" => PURE,
+        // ARM unmodelled sysreg read — pcode-explicit encoding
+        // constant and destination; opaque value, no RAM effect.
+        ("UnkSytemRegRead", Pure),
 
         // x86 `swapgs` lives in classify_arch_specific so a non-x86
-        // user-op of the same name cannot silently inherit
-        // PURE_WITH_MEM_EDGE.
+        // user-op of the same name cannot silently inherit PureMem.
 
         // ARM permanently-undefined instruction — Sleigh emits
-        // CALLOTHER + a branch to the trap handler; the user-op itself
-        // doesn't touch state.
-        "software_udf" => PURE,
+        // CALLOTHER + a branch to the trap handler; the user-op
+        // itself doesn't touch state.
+        ("software_udf", Pure),
 
-        // ─── PURE_WITH_MEM_EDGE: memory-chain markers + side-effecting
+        // ─── PureMem: memory-chain markers + side-effecting ───────
 
-        // x86 LOCK / UNLOCK — bracket an atomic memory operation.  On
-        // the memory chain so patterns walking mem from a Store inside
-        // the bracket can find LOCK / UNLOCK as predecessors /
+        // x86 LOCK / UNLOCK — bracket an atomic memory operation.
+        // On the memory chain so patterns walking mem from a Store
+        // inside the bracket can find LOCK / UNLOCK as predecessors /
         // successors.
-        "LOCK"   => PURE_WITH_MEM_EDGE,
-        "UNLOCK" => PURE_WITH_MEM_EDGE,
+        ("LOCK",   PureMem),
+        ("UNLOCK", PureMem),
 
         // ARM standalone memory / cache barriers — explicit ordering
         // markers with no accompanying Store; the only way they're
         // visible to the IR is by being on the memory chain.
-        "DC_CVAC"                           => PURE_WITH_MEM_EDGE,
-        "DataMemoryBarrier"                 => PURE_WITH_MEM_EDGE,
-        "DataSynchronizationBarrier"        => PURE_WITH_MEM_EDGE,
-        "InstructionSynchronizationBarrier" => PURE_WITH_MEM_EDGE,
+        ("DC_CVAC",                           PureMem),
+        ("DataMemoryBarrier",                 PureMem),
+        ("DataSynchronizationBarrier",        PureMem),
+        ("InstructionSynchronizationBarrier", PureMem),
 
         // x86/x86_64 standalone memory fences — explicit ordering
         // primitives with no register channel.  Emitted by Sleigh's
         // x86 spec as the lowercase mnemonic.  Memory-edge so opt
         // passes that walk the memory chain (StackLoadForward,
         // LoadReadOnly) cannot forward across them — matches the
-        // semantic that subsequent loads must observe prior stores
-        // in program order.  Without this entry, any binary using
-        // SSE memory fences would lift to UnknownCallOtherError.
-        "lfence" => PURE_WITH_MEM_EDGE,
-        "mfence" => PURE_WITH_MEM_EDGE,
-        "sfence" => PURE_WITH_MEM_EDGE,
+        // semantic that subsequent loads must observe prior stores in
+        // program order.  Without this entry, any binary using SSE
+        // memory fences would lift to UnknownCallOtherError.
+        ("lfence", PureMem),
+        ("mfence", PureMem),
+        ("sfence", PureMem),
 
         // x86 port I/O — port + value pcode-explicit; the user-op
         // itself affects external (port) state.
-        "in"  => PURE_WITH_MEM_EDGE,
-        "out" => PURE_WITH_MEM_EDGE,
+        ("in",  PureMem),
+        ("out", PureMem),
 
-        // ARM SVC / SWI raised by an immediate — possible syscall path,
-        // kernel can do anything to memory.
-        "software_interrupt" => PURE_WITH_MEM_EDGE,
-
-        _ => None,
-    }
+        // ARM SVC / SWI raised by an immediate — possible syscall
+        // path, kernel can do anything to memory.
+        ("software_interrupt", PureMem),
+    ];
+    TABLE
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, c)| c.resolve())
 }
 
 #[cfg(test)]
