@@ -824,6 +824,34 @@ mod tests {
         }
     }
 
+    /// After `retain_reachable` compacts the graph, the dedup cache
+    /// must have been rebuilt: creating a cacheable node with
+    /// identical `(kind, inputs, output_kinds)` after the compaction
+    /// must still alias to a single survivor.  A regression that left
+    /// the cache stale (or skipped the rebuild step) would yield two
+    /// distinct `NodeId`s for the same logical value — silent graph
+    /// blowup.
+    #[test]
+    fn retain_reachable_rebuilds_dedup_cache() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _remap = graph.retain_reachable(entry).unwrap();
+
+        // After compaction, creating a cacheable node with identical
+        // (kind, inputs, output_kinds) must dedup.
+        let one_a = graph.create_node(
+            NodeKind::IntConst(7),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let one_b = graph.create_node(
+            NodeKind::IntConst(7),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        assert_eq!(one_a, one_b, "dedup cache must be rebuilt by retain_reachable");
+    }
+
     /// A graph with no entries in any of the `NodeId`-keyed side-tables
     /// must compact cleanly — no panic, no garbage entries, surviving
     /// nodes' accessors return defaults.

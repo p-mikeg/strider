@@ -144,6 +144,32 @@ fn cacheable_node_dedup_is_stable_across_many_calls() {
     );
 }
 
+/// Two cacheable nodes with identical kind + inputs but different
+/// `output_kinds` (e.g. `IntConst(0): U32` vs `IntConst(0): U64`)
+/// must NOT dedup.  Pins that the dedup key includes `output_kinds`;
+/// a regression that hashed only `(kind, inputs)` would alias values
+/// of different widths and produce type-incorrect outputs at
+/// consumers.
+#[test]
+fn cacheable_int_const_with_different_type_does_not_dedup() {
+    let mut graph = Graph::new();
+    let a = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let b = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    assert_ne!(
+        a, b,
+        "IntConst(0):U32 must NOT alias IntConst(0):U64 — output_kinds is \
+         part of the dedup key"
+    );
+}
+
 /// Non-cacheable nodes (e.g. `Return`) must always produce fresh ids even
 /// when all arguments are identical.
 #[test]
