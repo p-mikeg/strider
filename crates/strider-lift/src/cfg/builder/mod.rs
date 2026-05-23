@@ -303,3 +303,306 @@ impl<R: rsleigh::MemReader> Builder<R> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    //! Tests for the `Builder`-private helpers `add_region`,
+    //! `find_region_containing_addr`, and `split_region`.  Ported from
+    //! pre-rewrite `crates/cfg/tests/builder_{add_region,find_region,
+    //! split_region}.rs`.  Live inline so the `pub(super)` helpers are
+    //! reachable without re-exporting them via a `test_api`.
+
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use petgraph::visit::{EdgeRef, IntoEdgeReferences};
+    use rsleigh::mem_readers::BufMemReader;
+    use strider_target::SleighArch;
+
+    use super::*;
+    use crate::cfg::types::{
+        MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
+    };
+    use crate::cfg::OptionsBuilder;
+
+    type TestReader = BufMemReader<Vec<u8>>;
+
+    fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
+        PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: machine },
+            insn_index: insn,
+        }
+    }
+
+    fn fake_insn() -> rsleigh::Insn {
+        rsleigh::Insn {
+            opcode: rsleigh::Opcode::Copy,
+            output: None,
+            inputs: vec![].into(),
+        }
+    }
+
+    fn make_region(addrs: &[(u64, u64)]) -> Region {
+        let start = addr(addrs[0].0, addrs[0].1);
+        let insns = addrs
+            .iter()
+            .map(|&(m, i)| RegionInstruction {
+                addr: addr(m, i),
+                insn: fake_insn(),
+            })
+            .collect();
+        Region {
+            start_addr: start,
+            insns,
+            terminator: RegionTerminator::Fallthrough,
+        }
+    }
+
+    fn make_builder(start_addr: u64) -> Builder<TestReader> {
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+            .expect("create empty Sleigh");
+        Builder::for_arch(&arch, sleigh, start_addr, OptionsBuilder::new().build())
+    }
+
+    // ── add_region ───────────────────────────────────────────────────────
+
+    #[test]
+    fn add_region_inserts_into_graph_and_map() {
+        let mut b = make_builder(0x1000);
+        let r = make_region(&[(0x1000, 0), (0x1004, 0)]);
+        let id = b.add_region(r).unwrap();
+
+        assert!(b.graph.node_weight(id).is_some());
+        assert_eq!(b.start_addr_to_region_id.get(&addr(0x1000, 0)), Some(&id));
+    }
+
+    #[test]
+    fn add_region_empty_region_returns_error() {
+        let mut b = make_builder(0x1000);
+        let empty = Region {
+            start_addr: addr(0x1000, 0),
+            insns: Vec::new(),
+            terminator: RegionTerminator::Fallthrough,
+        };
+        let err = b.add_region(empty).unwrap_err();
+        assert!(err.to_string().contains("has no instructions"), "got: {err}");
+    }
+
+    #[test]
+    fn add_region_two_regions_both_present_with_distinct_indices() {
+        let mut b = make_builder(0x1000);
+        let r1 = make_region(&[(0x1000, 0)]);
+        let r2 = make_region(&[(0x1010, 0)]);
+        let id1 = b.add_region(r1).unwrap();
+        let id2 = b.add_region(r2).unwrap();
+
+        assert_ne!(id1, id2);
+        assert_eq!(b.graph.node_count(), 2);
+        assert_eq!(b.start_addr_to_region_id[&addr(0x1000, 0)], id1);
+        assert_eq!(b.start_addr_to_region_id[&addr(0x1010, 0)], id2);
+    }
+
+    // ── find_region_containing_addr ──────────────────────────────────────
+
+    #[test]
+    fn find_region_empty_graph_returns_none() {
+        let b = make_builder(0x1000);
+        assert!(b.find_region_containing_addr(addr(0x1000, 0)).is_none());
+    }
+
+    #[test]
+    fn find_region_at_start_addr() {
+        let mut b = make_builder(0x1000);
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1000, 0)).map(|(i, _)| i),
+            Some(id)
+        );
+    }
+
+    #[test]
+    fn find_region_at_interior_addr() {
+        let mut b = make_builder(0x1000);
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1008, 0)).map(|(i, _)| i),
+            Some(id)
+        );
+    }
+
+    #[test]
+    fn find_region_at_last_insn() {
+        let mut b = make_builder(0x1000);
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x100f, 0)).map(|(i, _)| i),
+            Some(id)
+        );
+    }
+
+    #[test]
+    fn find_region_beyond_end_returns_none() {
+        let mut b = make_builder(0x1000);
+        b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        assert!(b.find_region_containing_addr(addr(0x1020, 0)).is_none());
+    }
+
+    #[test]
+    fn find_region_two_adjacent_regions_route_correctly() {
+        let mut b = make_builder(0x1000);
+        let id1 = b
+            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        let id2 = b
+            .add_region(make_region(&[(0x1010, 0), (0x1020, 0)]))
+            .unwrap();
+
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1004, 0)).map(|(i, _)| i),
+            Some(id1)
+        );
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1010, 0)).map(|(i, _)| i),
+            Some(id2)
+        );
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1018, 0)).map(|(i, _)| i),
+            Some(id2)
+        );
+    }
+
+    // ── split_region ─────────────────────────────────────────────────────
+
+    #[test]
+    fn split_at_start_is_noop() {
+        let mut b = make_builder(0x1000);
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
+            .unwrap();
+        let edges_before = b.graph.edge_references().count();
+        let map_len_before = b.start_addr_to_region_id.len();
+
+        let result = b.split_region(id, addr(0x1000, 0)).unwrap();
+        assert_eq!(result, id);
+        assert_eq!(b.graph.node_count(), 1);
+        assert_eq!(b.graph.edge_references().count(), edges_before);
+        assert_eq!(b.start_addr_to_region_id.len(), map_len_before);
+    }
+
+    #[test]
+    fn split_creates_two_regions_second_keeps_original_id() {
+        let mut b = make_builder(0x1000);
+        let original = b
+            .add_region(make_region(&[
+                (0x1000, 0),
+                (0x1004, 0),
+                (0x1008, 0),
+                (0x100c, 0),
+            ]))
+            .unwrap();
+        let second = b.split_region(original, addr(0x1008, 0)).unwrap();
+        assert_eq!(second, original, "second half retains original NodeIndex");
+        assert_eq!(b.graph.node_count(), 2);
+    }
+
+    #[test]
+    fn split_produces_correct_addr_ranges() {
+        let mut b = make_builder(0x1000);
+        let original = b
+            .add_region(make_region(&[
+                (0x1000, 0),
+                (0x1004, 0),
+                (0x1008, 0),
+                (0x100c, 0),
+            ]))
+            .unwrap();
+        b.split_region(original, addr(0x1008, 0)).unwrap();
+
+        assert_eq!(b.graph[original].start_addr, addr(0x1008, 0));
+        assert_eq!(b.graph[original].insns.len(), 2);
+
+        let first_id = b.start_addr_to_region_id[&addr(0x1000, 0)];
+        assert_eq!(b.graph[first_id].start_addr, addr(0x1000, 0));
+        assert_eq!(b.graph[first_id].insns.len(), 2);
+    }
+
+    #[test]
+    fn split_adds_fallthrough_edge() {
+        let mut b = make_builder(0x1000);
+        let original = b
+            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
+            .unwrap();
+        b.split_region(original, addr(0x1008, 0)).unwrap();
+
+        let edges: Vec<_> = b.graph.edge_references().collect();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(*edges[0].weight(), RegionEdgeKind::Fallthrough);
+        assert_eq!(edges[0].target(), original);
+    }
+
+    #[test]
+    fn split_rewires_incoming_edges_to_first_half() {
+        let mut b = make_builder(0x1000);
+        let a = b.add_region(make_region(&[(0x0ff0, 0)])).unwrap();
+        let b_id = b
+            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
+            .unwrap();
+        b.graph.add_edge(a, b_id, RegionEdgeKind::Branch);
+
+        b.split_region(b_id, addr(0x1004, 0)).unwrap();
+
+        let first = b.start_addr_to_region_id[&addr(0x1000, 0)];
+        let incoming: Vec<_> = b.graph.edges_directed(first, petgraph::Incoming).collect();
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(*incoming[0].weight(), RegionEdgeKind::Branch);
+        assert_eq!(incoming[0].source(), a);
+
+        let second_branch_incoming: Vec<_> = b
+            .graph
+            .edges_directed(b_id, petgraph::Incoming)
+            .filter(|e| *e.weight() == RegionEdgeKind::Branch)
+            .collect();
+        assert!(second_branch_incoming.is_empty());
+    }
+
+    #[test]
+    fn split_addr_in_zero_pcode_hole_rounds_down_to_largest_le() {
+        // Region [(0x1000), (0x1004), (0x100c)] — hole between 0x1004
+        // and 0x100c that 0x1008 falls into.  Mirrors the AArch64 PAC
+        // zero-pcode-op case.
+        let mut b = make_builder(0x1000);
+        let original = b
+            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x100c, 0)]))
+            .unwrap();
+        let second = b.split_region(original, addr(0x1008, 0)).unwrap();
+        assert_eq!(second, original);
+
+        assert_eq!(b.graph[original].start_addr, addr(0x1008, 0));
+        assert_eq!(b.graph[original].insns.len(), 1);
+        assert_eq!(b.graph[original].insns[0].addr, addr(0x100c, 0));
+
+        let first_id = b.start_addr_to_region_id[&addr(0x1000, 0)];
+        assert_eq!(b.graph[first_id].insns.len(), 2);
+        assert_eq!(b.graph[first_id].insns.last().unwrap().addr, addr(0x1004, 0));
+
+        assert_eq!(b.start_addr_to_region_id[&addr(0x1008, 0)], original);
+    }
+
+    #[test]
+    fn split_addr_below_every_insn_returns_error() {
+        let mut b = make_builder(0x1000);
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x1010, 0)]))
+            .unwrap();
+        let err = b.split_region(id, addr(0x0ff0, 0)).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not found"), "got: {msg}");
+    }
+}
