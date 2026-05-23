@@ -1124,7 +1124,7 @@ fn edge_set_of(
 ///    [`strider_ir::walk::region_membership_from_exit`] to collect the
 ///    region's visualisation membership (control spine, halted at
 ///    `ControlState` join nodes, then the data-ancestor closure).
-/// 2. Build a [`strider_ir::graph_dot::GraphDotDumper`] limited to that
+/// 2. Build a `strider_ir::graph_dot::GraphDotDumper` limited to that
 ///    membership.
 /// 3. Write `region_<addr>.html` into `out_dir`, where `<addr>` is the
 ///    first asm-fingerprint of the exit's producer (zero-padded

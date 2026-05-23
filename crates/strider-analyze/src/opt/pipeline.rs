@@ -195,9 +195,9 @@ impl OptimizerPipeline {
     /// Iterate the fixed-point passes in registration order.
     ///
     /// Lets downstream crates snapshot the canonical pipeline without
-    /// hand-mirroring the pass list.  Combine with
-    /// [`Optimizer::clone_box`] to materialise an independent copy of
-    /// each pass.
+    /// hand-mirroring the pass list.  Combine with the
+    /// `OptimizerClone::clone_box` supertrait method to materialise an
+    /// independent copy of each pass.
     pub fn iter(&self) -> impl Iterator<Item = &dyn Optimizer> + '_ {
         self.optimizers.iter().map(|b| &**b)
     }

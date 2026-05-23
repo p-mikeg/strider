@@ -578,10 +578,10 @@ impl FunctionBuilder {
     }
 
     /// Returns the [`rsleigh::Vn`] tracked at the given `VarId`, or
-    /// `None` if `var_id` is not in the variable map.  Used by the
-    /// `strider` crate to convert per-region `(VarId, NodeOutputId)`
-    /// pairs (returned by [`Self::region_initial_variables`]) into the
-    /// `Vn`-keyed maps the per-iteration region index stores.
+    /// `None` if `var_id` is not in the variable map.  Used by
+    /// `strider-analyze` to convert per-region `(VarId, NodeOutputId)`
+    /// pairs into the `Vn`-keyed maps the per-iteration region index
+    /// stores.
     #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
         self.variables.get(var_id).copied()
