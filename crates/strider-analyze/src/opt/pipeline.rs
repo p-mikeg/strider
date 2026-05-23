@@ -298,4 +298,67 @@ mod tests {
         assert!(after <= before, "default pipeline must not GROW the reachable set");
         Ok(())
     }
+
+    /// A non-monotone pass that always claims the graph changed must be
+    /// caught by the pipeline's iteration cap rather than spinning
+    /// forever.  Pins the divergence-guard contract on
+    /// `MAX_ITERS = 1024`.
+    #[test]
+    fn fixed_point_limit_exceeded() {
+        use super::{OptimizationResult, Optimizer, OptimizerPipeline};
+        #[derive(Clone)]
+        struct AlwaysChanged;
+        impl Optimizer for AlwaysChanged {
+            fn optimize(
+                &self,
+                _graph: &mut strider_ir::Graph,
+                _entry: strider_ir::node::NodeId,
+            ) -> crate::opt::Result<OptimizationResult> {
+                Ok(OptimizationResult::Changed)
+            }
+        }
+
+        let mut g = one_const_fn(0);
+        let entry = g.entry().unwrap();
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(AlwaysChanged);
+        let err = pipeline
+            .run(g.graph_mut(), entry)
+            .expect_err("pipeline must bail out on a non-monotone pass");
+        assert!(
+            err.to_string().contains("did not converge"),
+            "expected 'did not converge' error, got {err:?}"
+        );
+    }
+
+    /// A 50-deep chain of `Add(_, 1)` ops must reach fixed point via
+    /// the default pipeline — no premature exit, no infinite loop.
+    /// Pins the convergence side of the fixed-point loop.
+    #[test]
+    fn long_reassoc_chain_converges() -> crate::opt::Result<()> {
+        use strider_ir::IntBinaryOp;
+        let mut g = strider_ir_test_utils::make_empty_fn(|b| {
+            let mut acc = b.build_int_const(0u64, NodeOutputType::U64)?;
+            for _ in 0..50 {
+                let one = b.build_int_const(1u64, NodeOutputType::U64)?;
+                acc = b.build_int_binary_operation(
+                    acc,
+                    one,
+                    IntBinaryOp::Add,
+                    NodeOutputType::U64,
+                )?;
+            }
+            Ok(acc)
+        })?;
+        let entry = g.entry().unwrap();
+        crate::opt::default_pipeline().run(g.graph_mut(), entry)?;
+        // After fixed point, the 50-deep chain has folded to a single
+        // `IntConst(50)`; the reachable set is small.
+        assert!(
+            g.preorder().count() < 20,
+            "50-deep chain should fold; reachable={}",
+            g.preorder().count()
+        );
+        Ok(())
+    }
 }
