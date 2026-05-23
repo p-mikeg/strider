@@ -19,6 +19,37 @@ use strider_ir_test_utils::RegisterSet;
 pub use strider_ir_test_utils::reg_vn;
 pub use strider_ir_test_utils::sp_vn_x86_64 as sp_vn;
 
+/// Shared `RegisterSet` populater for [`Tb::raw`] and [`Tb::bare`].  Both
+/// constructors take the same six DTO-style parameters and feed them
+/// into `RegisterSet` field-by-field; the only difference is whether
+/// the resulting builder pre-creates an entry region or not.
+fn build_rs(
+    vars: Vec<rsleigh::Vn>,
+    arg_passing: &[rsleigh::Vn],
+    callee_saved: &[rsleigh::Vn],
+    ret_regs: &[rsleigh::Vn],
+    sp: Option<rsleigh::Vn>,
+    ret_stack_pop: i64,
+) -> RegisterSet {
+    let mut rs = RegisterSet::new();
+    for v in vars {
+        rs = rs.tracked(v);
+    }
+    for v in arg_passing {
+        rs = rs.arg(*v);
+    }
+    for v in callee_saved {
+        rs = rs.callee_saved(*v);
+    }
+    for v in ret_regs {
+        rs = rs.ret(*v);
+    }
+    if let Some(s) = sp {
+        rs = rs.sp(s);
+    }
+    rs.ret_stack_pop(ret_stack_pop)
+}
+
 // ── Tb ────────────────────────────────────────────────────────────────────────
 
 /// Test graph builder.  Wraps a `FunctionBuilder` with a single active entry
@@ -59,23 +90,7 @@ impl Tb {
         sp: Option<rsleigh::Vn>,
         ret_stack_pop: i64,
     ) -> Self {
-        let mut rs = RegisterSet::new();
-        for v in vars {
-            rs = rs.tracked(v);
-        }
-        for v in arg_passing {
-            rs = rs.arg(*v);
-        }
-        for v in callee_saved {
-            rs = rs.callee_saved(*v);
-        }
-        for v in ret_regs {
-            rs = rs.ret(*v);
-        }
-        if let Some(s) = sp {
-            rs = rs.sp(s);
-        }
-        rs = rs.ret_stack_pop(ret_stack_pop);
+        let rs = build_rs(vars, arg_passing, callee_saved, ret_regs, sp, ret_stack_pop);
         let fb = rs.build_fn_single_region().expect("build_fn_single_region");
         Self { fb }
     }
@@ -91,23 +106,7 @@ impl Tb {
         sp: Option<rsleigh::Vn>,
         ret_stack_pop: i64,
     ) -> Self {
-        let mut rs = RegisterSet::new();
-        for v in vars {
-            rs = rs.tracked(v);
-        }
-        for v in arg_passing {
-            rs = rs.arg(*v);
-        }
-        for v in callee_saved {
-            rs = rs.callee_saved(*v);
-        }
-        for v in ret_regs {
-            rs = rs.ret(*v);
-        }
-        if let Some(s) = sp {
-            rs = rs.sp(s);
-        }
-        rs = rs.ret_stack_pop(ret_stack_pop);
+        let rs = build_rs(vars, arg_passing, callee_saved, ret_regs, sp, ret_stack_pop);
         let fb = rs.build_fn().expect("build_fn");
         Self { fb }
     }
