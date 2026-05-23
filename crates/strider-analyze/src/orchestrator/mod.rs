@@ -1165,11 +1165,11 @@ where
             .first()
             .map_or_else(|| format!("idx{idx}"), |a| format!("{a:016x}"));
         let path = out_dir.join(format!("region_{addr_part}.html"));
-        let html = ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
-            .as_html_from_dot()?;
-        std::fs::write(&path, html).map_err(|e| {
-            anyhow!("dump_per_region: write {} failed: {e}", path.display())
-        })?;
+        ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
+            .dump_as_html(&path)
+            .map_err(|e| {
+                anyhow!("dump_per_region: write {} failed: {e}", path.display())
+            })?;
     }
     Ok(())
 }
@@ -1201,11 +1201,11 @@ where
 {
     let visible = strider_ir::walk::collect_neighborhood(graph, anchor, depth);
     let dumper = graph.dot_dumper(sleigh)?.with_node_filter(visible);
-    let html = ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
-        .as_html_from_dot()?;
-    std::fs::write(out_path, html).map_err(|e| {
-        anyhow!("dump_neighborhood: write {} failed: {e}", out_path.display())
-    })
+    ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
+        .dump_as_html(out_path)
+        .map_err(|e| {
+            anyhow!("dump_neighborhood: write {} failed: {e}", out_path.display())
+        })
 }
 
 #[cfg(test)]
