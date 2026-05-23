@@ -544,7 +544,7 @@ fn bound_from_if_condition_idx_less_than_n_true() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(bound, Some(4));
 }
 
@@ -564,42 +564,93 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ false);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(bound, None);
 }
 
 #[test]
-fn bound_from_if_condition_signed_less_treated_as_unsigned_bound() {
-    // CURRENT BEHAVIOR (intentional, with caveat): `IntCmpOp::Sless`
-    // (signed `<`) on the true branch yields bound = N — the same
-    // result as unsigned `Less`.  This is sound when the dispatch
-    // path also proves `idx >= 0` (typical compiler output is
-    // `cmp idx, 0; jl default` followed by `cmp idx, N; jae default`,
-    // or the equivalent `cmp idx, N; jge default` after a prior
-    // signed-zero test).  When the signed-positive precondition is
-    // missing, this bound is unsound — runtime idx ∈ [-1, N-1] but
-    // we'd enumerate [0, N-1] and miss the negative case.
+fn bound_from_if_condition_signed_less_unknown_sign_bit_returns_none() {
+    // CORRECTNESS: `IntCmpOp::Sless` (signed `<`) on the true branch
+    // bounds `idx` above by `N`, but the implicit *lower* bound is
+    // `INT_MIN`, NOT `0`.  Without a separate proof that `idx >= 0`,
+    // advertising target set `0..N` is unsound — runtime `idx` could
+    // be negative and reach OOB via the wrapped unsigned cast.
     //
-    // Pin the current behavior so any tightening (e.g. requiring a
-    // dominating `Sless 0` test, or limiting to types where the
-    // signed/unsigned ranges coincide) surfaces here.  Documented
-    // limitation; a future tightening pass should require a dominating
-    // signed-positive precondition before tightening this bound.
-    let mut builder = FunctionBuilder::empty().unwrap();
-    let region = builder.create_region().unwrap();
-    builder.set_entry_region(region).unwrap();
-    builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    let n = builder.build_int_const(8u64, NodeOutputType::U32).unwrap();
-    let cmp = builder
+    // The classifier therefore requires KnownBits to prove the high
+    // (sign) bit of `idx` is zero before accepting the `Sless` arm.
+    // Here, `idx` is read from a tracked register varnode whose
+    // KnownBits is fully unknown, so the helper falls through to
+    // `None`.  The orchestrator then surfaces this dispatch as
+    // `UnresolvedIndirectBranch` at fixed point — which is the
+    // sound outcome.
+    let idx_var = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .build_fn_single_region()
+        .unwrap();
+    let idx = b.read_variable(&idx_var).unwrap();
+    let n = b.build_int_const(8u64, NodeOutputType::U32).unwrap();
+    let cmp = b
         .build_int_cmp_operation(idx, n, IntCmpOp::Sless, NodeOutputType::U32)
         .unwrap();
-    builder.build_indirect_branch(idx).unwrap();
-    builder.set_lift_addr(None);
-    let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true);
-    assert_eq!(bound, Some(8), "Sless bounds via N (current behavior)");
+    b.build_indirect_branch(idx).unwrap();
+    b.set_lift_addr(None);
+    let g = b.build().unwrap();
+    let bound = bound_from_if_condition(
+        crate::pattern::RewriteCtxView::from_built(&g).unwrap(),
+        cmp,
+        idx,
+        /* on_true */ true,
+        &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap(),
+    );
+    assert_eq!(bound, None, "Sless without idx>=0 proof must fall through");
+}
+
+#[test]
+fn bound_from_if_condition_signed_less_with_known_nonneg_idx_accepts() {
+    // POSITIVE: when KnownBits proves `idx`'s sign bit is zero (here
+    // via `idx & 0x7F` — masking off the top 25 bits including the
+    // sign bit of a U32), the `Sless` arm is sound and the classifier
+    // accepts the bound `N`.  This pins the success path of the
+    // INT_MIN gate: the bound IS recoverable when the surrounding
+    // IR makes `idx` provably non-negative, matching the typical
+    // compiler pattern of `cmp idx, 0; jl default` upstream of the
+    // bounded compare.
+    use strider_ir::IntBinaryOp;
+    let idx_var = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .build_fn_single_region()
+        .unwrap();
+    let raw = b.read_variable(&idx_var).unwrap();
+    // `raw & 0x7F` — clears the top bits including the sign bit.
+    let mask = b.build_int_const(0x7Fu64, NodeOutputType::U32).unwrap();
+    let idx = b
+        .build_int_binary_operation(raw, mask, IntBinaryOp::And, NodeOutputType::U32)
+        .unwrap();
+    let n = b.build_int_const(8u64, NodeOutputType::U32).unwrap();
+    let cmp = b
+        .build_int_cmp_operation(idx, n, IntCmpOp::Sless, NodeOutputType::U32)
+        .unwrap();
+    b.build_indirect_branch(idx).unwrap();
+    b.set_lift_addr(None);
+    let g = b.build().unwrap();
+    let bound = bound_from_if_condition(
+        crate::pattern::RewriteCtxView::from_built(&g).unwrap(),
+        cmp,
+        idx,
+        /* on_true */ true,
+        &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap(),
+    );
+    assert_eq!(bound, Some(8), "Sless with proven idx>=0 yields bound = N");
 }
 
 #[test]
@@ -627,7 +678,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(bound, Some(5));
 }
 
@@ -767,7 +818,7 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     // The walk hits the innermost If first (closest to dispatch),
     // whose bound is `LOOSE_BOUND` — and `bound_from_if_condition`
     // returns immediately, so it never crawls all the way back.
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(bound, Some(LOOSE_BOUND));
 }
 
@@ -777,7 +828,7 @@ fn bound_via_predecessor_if_walks_one_hop() {
     // region.  bound_via_predecessor_if must follow control back
     // through one hop and surface bound = 4.
     let (g, anchor, idx_in_dispatch) = build_pred_if_graph(4);
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(bound, Some(4));
 }
 
@@ -809,7 +860,7 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(bound, None);
 }
 
@@ -866,7 +917,7 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(bound, None, "If on unrelated var must not bound idx");
 }
 
@@ -892,12 +943,12 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
     assert_eq!(
-        bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true),
+        bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap()),
         None,
         "Equal must NOT yield a 0..N bound — see H2 fix",
     );
     // Same on the false branch (the negation idx != N — also no bound).
-    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, false), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap()), None);
 }
 
 #[test]
@@ -926,12 +977,12 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
     let g = builder.build().unwrap();
     // True branch of `N < idx` ↔ `idx > N` — no upper bound (and
     // the pattern wouldn't bind to the desired `idx_var` anyway).
-    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap()), None);
     // False branch of `N < idx` ↔ `idx <= N` — *would* be
     // soundly bounded by N+1 if the helper looked through the
     // swapped operands, but the current implementation returns
     // None.  Documented limitation.
-    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, false), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap()), None);
 }
 
 #[test]
@@ -951,7 +1002,7 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true);
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(bound, None);
 }
 
@@ -1075,7 +1126,7 @@ fn bound_via_predecessor_if_join_with_multi_input_phi_is_unbounded() {
     // first or `same_value` is taught to look through multi-value
     // phis.  See the `same_value` rationale in `jump_table.rs`.
     let (g, anchor, idx_in_dispatch) = build_diamond_two_bounds(4, 8);
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(
         bound, None,
         "multi-input join phi blocks predecessor-If walk's bound proof",
@@ -1144,7 +1195,7 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
     assert_eq!(
         bound, None,
         "any unbounded predecessor must collapse the join's bound to None",

@@ -80,7 +80,7 @@ pub fn classify_jump_table(
     //       but covers the gcc-emitted "compare-and-branch then
     //       indirect" pattern that has no AND-mask.
     let bound = bound_via_known_bits(ctx, shape.idx_output, known)
-        .or_else(|| bound_via_predecessor_if(ctx, anchor_output, shape.idx_output))?;
+        .or_else(|| bound_via_predecessor_if(ctx, anchor_output, shape.idx_output, known))?;
 
     // Enforce the per-call enumeration cap.  Returning None here is
     // sound: the orchestrator will defer; if a future iteration
@@ -348,6 +348,7 @@ pub fn bound_via_predecessor_if(
     ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     idx_output: NodeOutputId,
+    known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     // Find the placeholder IndirectBranch that consumes the anchor.
     // This is the start of our backward walk.
@@ -361,7 +362,7 @@ pub fn bound_via_predecessor_if(
     // IndirectBranch: `inputs: [CTRL, MEM, TARGET]`.
     let control_in = *graph.node_inputs(placeholder).get(0)?;
 
-    walk_control_for_if_bound_iter(ctx, control_in, idx_output)
+    walk_control_for_if_bound_iter(ctx, control_in, idx_output, known)
 }
 
 /// Locates the (single) [`NodeKind::IndirectBranch`] that consumes
@@ -420,6 +421,7 @@ fn walk_control_for_if_bound_iter(
     ctx: crate::pattern::RewriteCtxView<'_>,
     initial_control_out: NodeOutputId,
     idx_output: NodeOutputId,
+    known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     use strider_ir::walk::NodeIdSet;
 
@@ -470,7 +472,7 @@ fn walk_control_for_if_bound_iter(
                     let cond_out = if_inputs[1];
                     let on_true = output_idx == 0;
                     if let Some(b) =
-                        bound_from_if_condition(ctx, cond_out, idx_output, on_true)
+                        bound_from_if_condition(ctx, cond_out, idx_output, on_true, known)
                     {
                         last_result = Some(b);
                         break;
@@ -625,6 +627,7 @@ fn bound_from_if_condition(
     cond_out: NodeOutputId,
     idx_output: NodeOutputId,
     on_true_branch: bool,
+    known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     if !on_true_branch {
         return None;
@@ -648,7 +651,17 @@ fn bound_from_if_condition(
             let inner = m.output(idx_var)?;
             if same_value(graph, inner, idx_output) {
                 let op = m.get_int_cmp_op(op_var, ctx.graph_ref())?;
-                if matches!(op, IntCmpOp::Less | IntCmpOp::Sless) {
+                let accept = match op {
+                    IntCmpOp::Less => true,
+                    // Signed-less needs a known-non-negative idx; otherwise
+                    // the implicit lower bound is INT_MIN and we'd accept
+                    // negative runtime values as in-range.  Falling through
+                    // to None is the sound choice — the orchestrator
+                    // surfaces UnresolvedIndirectBranch at fixed point.
+                    IntCmpOp::Sless => is_sign_bit_known_zero(ctx, idx_output, known),
+                    _ => false,
+                };
+                if accept {
                     let n = u64::try_from(m.get_uint(n_var, ctx.graph_ref())?).ok()?;
                     return n.checked_add(1);
                 }
@@ -678,9 +691,47 @@ fn bound_from_if_condition(
 
     match op {
         // idx < N (true) → bound = N.
-        IntCmpOp::Less | IntCmpOp::Sless => Some(n),
+        IntCmpOp::Less => Some(n),
+        // Signed-less: see Shape-1 arm for the rationale.  Requires
+        // known-non-negative idx, else fall through to Unresolved.
+        IntCmpOp::Sless if is_sign_bit_known_zero(ctx, idx_output, known) => Some(n),
         _ => None,
     }
+}
+
+/// Returns `true` when [`KnownBits`](crate::opt::KnownBits) proves the
+/// sign (high) bit of `idx_output`'s integer type is `0` at every
+/// runtime execution — i.e. `idx >= 0` reinterpreted as signed.
+///
+/// Used to gate the `IntCmpOp::Sless` arm of
+/// [`bound_from_if_condition`]: without this proof, `Sless`'s implicit
+/// lower bound is `INT_MIN`, not `0`, and we'd advertise target set
+/// `0..N` while a negative runtime `idx` reaches OOB.
+///
+/// Returns `false` for non-integer outputs and for integer types whose
+/// width exceeds the 64-bit `KnownBits` representation — both
+/// conservatively force the fall-through-to-Unresolved path, which is
+/// the sound direction.
+fn is_sign_bit_known_zero(
+    ctx: crate::pattern::RewriteCtxView<'_>,
+    idx_output: NodeOutputId,
+    known: &crate::opt::KnownBitsMap,
+) -> bool {
+    let Some(ty) = ctx.graph_ref().output_kind(idx_output).as_value() else {
+        return false;
+    };
+    if !ty.is_integer() || !ty.fits_u64() {
+        return false;
+    }
+    let bit_width = ty.bit_width();
+    if bit_width == 0 || bit_width > 64 {
+        return false;
+    }
+    let sign_bit_mask: u64 = 1u64 << (bit_width - 1);
+    // Kb defaults to all-unknown for unrecorded outputs, so the check
+    // naturally fails closed when the analyzer hasn't seen `idx_output`.
+    let kb = known[idx_output];
+    kb.zeros & sign_bit_mask == sign_bit_mask
 }
 
 /// Defines value identity for the predecessor-If walk.
