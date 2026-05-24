@@ -284,7 +284,7 @@ impl FunctionBuilder {
 
     /// Infers the float type to use for a value that may be int or float.
     /// If the value is already a float type, that type is used.
-    /// For integers, maps byte size: ≤4 → F32, =10 → F80, otherwise → F64.
+    /// For integers, maps byte size: ≤4 → F32, =8 → F64, =10 → F80.
     ///
     /// The 10-byte case targets x87 ST0/STn registers (which the analyzer
     /// represents as U80 on the int side); inferring F80 keeps the
@@ -293,15 +293,23 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Returns `ExpectedValue` when `input` is not a value edge.
+    /// Returns an error for an integer input whose byte size has no
+    /// corresponding float type (5, 6, 7, 16, 32, 64) — these widths
+    /// don't arise from the lifter in practice, and the prior `_ → F64`
+    /// catch-all silently bit-truncated them.
     pub fn infer_float_type(&self, input: NodeOutputId) -> Result<NodeOutputType> {
         let ty = self.get_output_type(input)?;
         if ty.is_float() {
             return Ok(ty);
         }
-        Ok(match ty.byte_size() {
-            0..=4 => NodeOutputType::F32,
-            10 => NodeOutputType::F80,
-            _ => NodeOutputType::F64,
-        })
+        match ty.byte_size() {
+            0..=4 => Ok(NodeOutputType::F32),
+            8 => Ok(NodeOutputType::F64),
+            10 => Ok(NodeOutputType::F80),
+            other => Err(anyhow!(
+                "infer_float_type: integer byte_size {other} has no corresponding \
+                 float type (input type: {ty:?})"
+            )),
+        }
     }
 }

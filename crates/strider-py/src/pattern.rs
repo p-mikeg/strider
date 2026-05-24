@@ -468,9 +468,13 @@ pub(crate) fn wrap_when(inner: strider_analyze::pattern::Pat, py_func: PyObject)
         Python::with_gil(|py| {
             let proxy = PyPartialMatch::new(bindings.clone(), graph);
             let py_proxy = match Py::new(py, proxy) {
-                Ok(p) => p,
+                Ok(e_err) => e_err,
                 Err(e) => {
-                    eprintln!("strider: .when() predicate proxy alloc failed: {e}");
+                    // Proxy alloc failure — propagate the PyErr via
+                    // PyErr::restore so the matcher's PyErr::take pickup
+                    // surfaces it as an exception in find_all rather
+                    // than silently swallowing it to stderr.
+                    e.restore(py);
                     return false;
                 }
             };
@@ -495,29 +499,26 @@ pub(crate) fn wrap_when(inner: strider_analyze::pattern::Pat, py_func: PyObject)
                 Ok(obj) => match obj.extract::<bool>(py) {
                     Ok(b) => b,
                     Err(e) => {
-                        eprintln!(
-                            "strider: .when() predicate returned non-bool ({e}); treating as no-match"
-                        );
+                        // Propagate type errors through PyErr::restore so
+                        // find_all's PyErr::take pickup surfaces the
+                        // problem to the Python caller (was previously
+                        // silently logged to stderr and treated as
+                        // no-match, which hid predicate bugs).
+                        e.restore(py);
                         false
                     }
                 },
                 Err(e) => {
-                    // control-flow exceptions
-                    // (KeyboardInterrupt, SystemExit) must propagate
-                    // — Ctrl-C in an interactive session must be able
-                    // to interrupt a slow find_all walk.  PyErr::restore
-                    // sets the active exception state; the next time
-                    // Python regains control (typically the next pyo3
-                    // boundary in the matcher), it's re-raised.
-                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
-                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
-                    {
-                        e.restore(py);
-                    } else {
-                        // Ordinary predicate bug: surface to stderr,
-                        // treat as no-match so `find_all` continues.
-                        e.print(py);
-                    }
+                    // Every PyErr from the user predicate — control-flow
+                    // exceptions (KeyboardInterrupt, SystemExit) and
+                    // ordinary predicate bugs alike — gets restored.
+                    // The matcher's `PyErr::take(py)` pickup at the
+                    // `find_all` / `find_all_requirements` boundary
+                    // converts the restored exception into a propagated
+                    // `Err(PyErr)` for Python.  Silently stderr-printing
+                    // an ordinary predicate bug used to hide
+                    // `AttributeError` / `TypeError` regressions.
+                    e.restore(py);
                     false
                 }
             }

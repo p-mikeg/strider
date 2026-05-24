@@ -178,14 +178,18 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         }),
     },
 
-    // x86 RDTSC: no inputs, writes EDX:EAX.  Arch-specific because
-    // EAX/EDX are x86 32-bit register names.
+    // x86 RDTSC.  Sleigh emits
+    //   `tmp:8 = rdtsc(); EDX = tmp(4); EAX = tmp(0);`
+    // so the EDX/EAX writes are explicit pcode ops downstream of the
+    // CALLOTHER and don't need to be re-declared as implicit clobbers
+    // here (double-declaring would over-clobber the call site).  No
+    // memory edge: TSC reads don't observe RAM.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["rdtsc"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
-            implicit_writes: &["EAX", "EDX"],
+            implicit_writes: &[],
             memory_edge:     false,
         }),
     },
@@ -743,13 +747,17 @@ mod tests {
     }
 
     #[test]
-    fn rdtsc_writes_edx_eax_no_memory_edge() {
+    fn rdtsc_has_no_implicit_writes_no_memory_edge() {
+        // Sleigh emits EDX/EAX writes as explicit pcode ops after the
+        // CALLOTHER (`tmp:8 = rdtsc(); EDX = tmp(4); EAX = tmp(0);`),
+        // so re-declaring them as implicit clobbers would double-clobber
+        // the call site.  Implicit-write list is empty by design.
         let class = classify(crate::ArchPreset::X86_64, "rdtsc").expect("rdtsc classified");
         let CallOtherClass::Call(abi) = class else {
             panic!("expected Call, got {class:?}")
         };
         assert_eq!(abi.implicit_reads, &[] as &[&str]);
-        assert_eq!(abi.implicit_writes, &["EAX", "EDX"]);
+        assert_eq!(abi.implicit_writes, &[] as &[&str]);
         assert!(!abi.memory_edge);
     }
 

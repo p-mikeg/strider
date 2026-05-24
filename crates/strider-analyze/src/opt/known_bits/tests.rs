@@ -498,3 +498,27 @@ fn kb_struct_literal_disjoint_ones_zeros() {
     assert_eq!(kb.ones, 0b01);
     assert_eq!(kb.zeros, 0b10);
 }
+
+/// Pin the invariant that `KnownBitsMap` returns `Kb::default()` =
+/// "fully unknown" (both `ones` and `zeros` zero) for an untracked
+/// `NodeOutputId`.  The `Truncate` arm of `node_known_bits` reads
+/// `known[input]` directly and propagates the result through
+/// `& type_mask`; if `Kb::default()` ever drifted to "all ones" or
+/// "all zeros" the Truncate would synthesise spurious known bits on
+/// any input whose KB analysis returned `None` (e.g. U80 / U128 /
+/// U256 chains where `u64_type_mask` gates out).
+#[test]
+fn kb_default_is_fully_unknown_not_all_zero_or_all_one() {
+    let kb = super::Kb::default();
+    assert_eq!(kb.ones, 0, "Kb::default().ones must be 0 (no bit known to be 1)");
+    assert_eq!(kb.zeros, 0, "Kb::default().zeros must be 0 (no bit known to be 0)");
+    // Propagation invariant: AND-ing default with any mask produces
+    // default (i.e. propagating an unknown through Truncate keeps it
+    // unknown).
+    let masked = super::Kb {
+        ones: kb.ones & 0xFFu64,
+        zeros: kb.zeros & 0xFFu64,
+    };
+    assert_eq!(masked.ones, 0);
+    assert_eq!(masked.zeros, 0);
+}

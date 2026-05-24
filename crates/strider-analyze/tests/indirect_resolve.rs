@@ -389,10 +389,15 @@ fn runtime_input_returns_ok_none() {
 }
 
 /// Empty region (no instructions before the BranchIndirect) →
-/// `Ok(None)`.  Equivalent to `runtime_input_returns_ok_none`
-/// but pinning the empty-region path explicitly.
+/// typed `Err`.  Production callers can never produce an empty
+/// region (the BranchIndirect itself is in the region's
+/// instruction list).  The previous behaviour stamped the
+/// synthesised Return with a bogus `{0}` asm-fingerprint, which
+/// made every downstream proof-of-correctness query lie ("the
+/// Return at PC=0 caused…").  Pin that an empty region surfaces
+/// loudly instead.
 #[test]
-fn empty_region_returns_ok_none() {
+fn empty_region_returns_err() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region: Vec<RegionInstruction> = Vec::new();
@@ -403,9 +408,8 @@ fn empty_region_returns_ok_none() {
         None,
         None,
         strider_target::Endianness::Little,
-    )
-    .expect("soft contract: Ok(None) on unresolved");
-    assert!(res.is_none(), "got {res:?}");
+    );
+    assert!(res.is_err(), "expected Err, got {res:?}");
 }
 
 /// Malformed BranchIndirect: caller looks up `inputs[0]` ahead of

@@ -157,16 +157,19 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // Slow fallback for the rare case the reg isn't tracked
         // (defensive — preserves the previous behaviour and lets
         // tests that hand-craft a Vn without registering it still
-        // resolve a containment).
+        // resolve a containment).  `saturating_add` to mirror the
+        // fast path's `largest_container_for` and avoid debug-build
+        // overflow panics when a synthetic Vn pushes addr_off near
+        // u64::MAX.
         let reg_start = reg.addr_off;
-        let reg_end = reg_start + reg.size as u64;
+        let reg_end = reg_start.saturating_add(u64::from(reg.size));
         let mut best: Option<rsleigh::Vn> = None;
         for sleigh_reg in self.builder.variables() {
             if sleigh_reg.addr_space != space {
                 continue;
             }
             let s = sleigh_reg.addr_off;
-            let e = s + sleigh_reg.size as u64;
+            let e = s.saturating_add(u64::from(sleigh_reg.size));
             if s > reg_start || e < reg_end {
                 continue;
             }

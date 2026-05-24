@@ -492,7 +492,9 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 
 /// Python-subclassable abstract base for `LoadReadOnly`.  Subclasses
 /// override `read(addr, size) -> Optional[int]` returning the
-/// little-endian-decoded value or `None` for unmapped.
+/// target-endian-decoded value (the subclass is responsible for
+/// byte-swapping per the binary's arch endianness — see the Rust
+/// `ReadOnlyMemory` trait's contract) or `None` for unmapped.
 #[pyclass(name = "ReadOnlyMemory", module = "strider", subclass)]
 pub struct PyReadOnlyMemory;
 

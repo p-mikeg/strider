@@ -173,18 +173,26 @@ fn collect_stack_args_in_chain_order(
                 // locals (or into args of an earlier, unrelated call —
                 // which would normally be cut off by an intervening
                 // chain-terminator, but defensive here).
-                if prefix_top >= 0 && (slot as i32) > prefix_top + 1 {
+                // `slot` is a `usize` index into the local `slots`
+                // vec.  Use `i32::try_from` to surface overflow
+                // explicitly (the convention's CC table caps slot
+                // counts at a few dozen in practice, so this never
+                // fires; `as i32` would silently wrap on a
+                // future >2^31-slot table).
+                let slot_i32 = i32::try_from(slot)
+                    .unwrap_or(i32::MAX);
+                if prefix_top >= 0 && slot_i32 > prefix_top + 1 {
                     return dense_prefix(slots);
                 }
                 slots[slot] = Some(data);
                 // Extend `prefix_top` as far as the contiguous prefix
                 // now reaches.
-                let mut k = (prefix_top + 1) as usize;
+                let mut k = usize::try_from(prefix_top + 1).unwrap_or(0);
                 while k < slots.len() && slots[k].is_some() {
                     k += 1;
                 }
-                prefix_top = k as i32 - 1;
-                if (prefix_top + 1) as usize == slots.len() {
+                prefix_top = i32::try_from(k).unwrap_or(i32::MAX).saturating_sub(1);
+                if usize::try_from(prefix_top + 1).unwrap_or(0) == slots.len() {
                     return dense_prefix(slots);
                 }
             }

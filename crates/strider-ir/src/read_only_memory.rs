@@ -12,9 +12,13 @@
 /// compile-time constant into the corresponding constant values, eliminating
 /// the load entirely.
 pub trait ReadOnlyMemory: Send + Sync {
-    /// Reads up to `size` bytes from RAM at `addr`, returning the value as a
-    /// little-endian-decoded u64.  Returns `None` if the address is unmapped
-    /// or the size exceeds 8 bytes.
+    /// Reads up to `size` bytes from RAM at `addr`, returning the value
+    /// as a target-endian-decoded `u64`.  The concrete impl is
+    /// responsible for byte-swapping according to the target ISA's
+    /// endianness (for example, `ElfFileMemReader` reads the binary's
+    /// `is_little_endian` flag and uses `from_le_bytes` / `from_be_bytes`
+    /// accordingly).  Returns `None` if the address is unmapped or the
+    /// size is zero or exceeds 8 bytes.
     fn read(&self, addr: u64, size: usize) -> Option<u64>;
 }
 

@@ -746,11 +746,29 @@ fn locate_and_write(
 ///   by [`locate_and_write`] picks a `size_bytes` in `{1, 2, 4, 8}`, so
 ///   this bound is satisfied at every reachable call site.
 fn write_at(bytes: &mut [u8], off: usize, value: u64, size_bytes: usize, endian_le: bool) {
-    debug_assert!(
-        size_bytes <= 8,
-        "write_at: size_bytes={size_bytes} exceeds u64 width; every ELF \
-         relocation kind must select size_bytes in {{1, 2, 4, 8}}"
-    );
+    // Release-build bounds check: silently no-op on a precondition
+    // violation rather than panicking via slice indexing or
+    // out-of-range `v_bytes` reads.  The dispatch in `locate_and_write`
+    // never produces `size_bytes > 8` in production, but a future
+    // RelocationKind addition that forgets to constrain its width
+    // would otherwise surface as a less-helpful slice panic in
+    // release builds.
+    if size_bytes > 8 {
+        debug_assert!(
+            size_bytes <= 8,
+            "write_at: size_bytes={size_bytes} exceeds u64 width; every ELF \
+             relocation kind must select size_bytes in {{1, 2, 4, 8}}"
+        );
+        return;
+    }
+    if off.checked_add(size_bytes).is_none_or(|end| end > bytes.len()) {
+        debug_assert!(
+            false,
+            "write_at: off={off} + size_bytes={size_bytes} > bytes.len()={}",
+            bytes.len()
+        );
+        return;
+    }
     // Truncate `value` to the field width; signed/unsigned doesn't
     // matter for fixed-width 2's-complement bit patterns.
     let v_bytes = value.to_le_bytes();

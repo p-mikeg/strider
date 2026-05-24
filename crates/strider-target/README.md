@@ -101,8 +101,12 @@ misclassifying.
   must restore — these are NOT clobbered by `Call` nodes.
 - `CallOtherAbi::implicit_reads` / `implicit_writes` describe
   registers that Sleigh's pcode does *not* mention but the ISA defines
-  as part of the user-op (e.g. `rdtsc` writes `edx`/`eax` *without* an
-  explicit pcode varnode — that's the implicit-write set).
+  as part of the user-op (e.g. `rdtscp` writes `ECX` as the
+  IA32_TSC_AUX low-32 without a downstream pcode op — that's the
+  implicit-write set).  Be careful **not** to over-declare: many
+  x86 user-ops (`rdtsc`, `rdmsr`) emit the EDX/EAX writes as
+  explicit pcode after the CALLOTHER, and declaring them implicitly
+  on top would double-clobber the call site.
 - `classify` returns `None` for unknown names; the IR builder turns
   this into `UnknownCallOtherError` so the table can grow
   incrementally.

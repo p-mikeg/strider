@@ -362,6 +362,7 @@ impl PyGraph {
             matcher = matcher.ignore_control_states();
         }
         let raw = matcher.find_all(&pat);
+        let generation = graph_guard.generation();
         drop(graph_guard);
         drop(g_borrow);
         // if a `.when()` predicate restored a control-flow
@@ -377,6 +378,7 @@ impl PyGraph {
             out.push(crate::matcher::PyMatch {
                 inner: m,
                 graph: slf.clone_ref(py),
+                generation,
             });
         }
         Ok(out)
@@ -438,6 +440,7 @@ impl PyGraph {
             matcher = matcher.ignore_control_states();
         }
         let raw = matcher.find_all_requirements(&pat_refs);
+        let generation = graph_guard.generation();
         drop(graph_guard);
         drop(g_borrow);
         // same propagation as `find_all` — restored
@@ -452,6 +455,7 @@ impl PyGraph {
                 py_tuple.push(crate::matcher::PyMatch {
                     inner: m,
                     graph: slf.clone_ref(py),
+                    generation,
                 });
             }
             out.push(py_tuple);

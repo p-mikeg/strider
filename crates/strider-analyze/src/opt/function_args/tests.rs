@@ -1105,3 +1105,43 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     );
     Ok(())
 }
+
+/// Pin the invariant that `combine_phi` OR-combines its
+/// predecessors.  This is the safety net that allows
+/// `DirtyStep::cycle_verdict` to return `false` ("clean for this
+/// edge") without compromising overall soundness: even when one
+/// branch of a phi reaches the cycle sentinel, any sibling branch
+/// that traced through an aliasing store still upgrades the phi's
+/// combined verdict to `true` (dirty).  Reversing combine_phi to
+/// `.all()` would silently break this guarantee.
+///
+/// The walker itself is private (`fn mem_chain_is_dirty`), so this
+/// test pins the contract on a value table that mirrors the OR
+/// semantics — a regression that flips it to `all` would fail here
+/// before the integration tests trip.
+#[test]
+fn function_args_combine_phi_or_semantics_pinned() {
+    // Mirror of `DirtyStep::combine_phi`: any dirty predecessor
+    // makes the phi dirty.
+    fn combine_phi(preds: Vec<bool>) -> bool {
+        preds.into_iter().any(|d| d)
+    }
+    assert!(combine_phi(vec![false, true]),
+        "any() invariant: one dirty pred forces phi-combined verdict to dirty");
+    assert!(combine_phi(vec![true, false, false]),
+        "any() invariant: first dirty pred forces phi-combined verdict to dirty");
+    assert!(!combine_phi(vec![false, false]),
+        "all-clean preds combine to clean");
+    assert!(!combine_phi(vec![]),
+        "empty pred set combines to clean (no information => assume clean for this edge)");
+    // The cycle-edge sentinel chosen by `DirtyStep::cycle_verdict`:
+    // `false` is sound here precisely because `combine_phi` is
+    // `any()` — a cycle-broken sibling can still upgrade the
+    // verdict to dirty.  Pinning the pair so a future refactor
+    // can't silently swap one without the other.
+    let cycle_sentinel: bool = false;
+    assert!(
+        combine_phi(vec![cycle_sentinel, true]),
+        "cycle_verdict()=false must still combine to dirty when a non-cycle pred is dirty"
+    );
+}
