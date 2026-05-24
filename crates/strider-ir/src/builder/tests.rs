@@ -1358,7 +1358,7 @@ fn upgrade_to_tracked_returns_exact_match_when_vn_is_tracked() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let map: HashMap<rsleigh::Vn, VarId> =
+    let map: FxHashMap<rsleigh::Vn, VarId> =
         [(rdi, VarId::from_u32(0))].into_iter().collect();
     assert_eq!(upgrade_to_tracked_for(&map, rdi), Some(rdi));
 }
@@ -1379,7 +1379,7 @@ fn upgrade_to_tracked_returns_smallest_covering_tracked_when_vn_is_not_tracked()
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let map: HashMap<rsleigh::Vn, VarId> =
+    let map: FxHashMap<rsleigh::Vn, VarId> =
         [(rdi, VarId::from_u32(0))].into_iter().collect();
     assert_eq!(upgrade_to_tracked_for(&map, edi), Some(rdi));
 }
@@ -1402,7 +1402,7 @@ fn upgrade_to_tracked_returns_largest_contained_sub_when_no_cover_exists() {
         size: 4,
     };
     // Only EDI is tracked; ask for RDI.
-    let map: HashMap<rsleigh::Vn, VarId> =
+    let map: FxHashMap<rsleigh::Vn, VarId> =
         [(edi, VarId::from_u32(0))].into_iter().collect();
     assert_eq!(
         upgrade_to_tracked_for(&map, rdi),
@@ -1426,7 +1426,7 @@ fn upgrade_to_tracked_returns_none_when_no_overlap() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let map: HashMap<rsleigh::Vn, VarId> =
+    let map: FxHashMap<rsleigh::Vn, VarId> =
         [(unrelated, VarId::from_u32(0))].into_iter().collect();
     assert_eq!(upgrade_to_tracked_for(&map, rdi), None);
 }
@@ -1452,7 +1452,7 @@ fn upgrade_to_tracked_chooses_smallest_cover_when_multiple_covers_exist() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let map: HashMap<rsleigh::Vn, VarId> = [
+    let map: FxHashMap<rsleigh::Vn, VarId> = [
         (cover_4, VarId::from_u32(0)),
         (cover_8, VarId::from_u32(1)),
     ]
@@ -1483,7 +1483,7 @@ fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 1,
     };
-    let map: HashMap<rsleigh::Vn, VarId> = [
+    let map: FxHashMap<rsleigh::Vn, VarId> = [
         (ecx, VarId::from_u32(0)),
         (cl, VarId::from_u32(1)),
     ]

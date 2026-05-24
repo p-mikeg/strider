@@ -19,7 +19,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use strider_lift::cfg::{
     Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets,
@@ -70,7 +70,7 @@ fn analyze_with_known_targets(
     // Seed `known_targets` so the cfg builder produces
     // `RegionTerminator::Switch` (not `UnresolvedIndirectBranch`)
     // for the BranchIndirect at `branch_indirect_addr`.
-    let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+    let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     let key = PcodeInsnAddr { machine_addr: MachineInsnAddr::from(branch_indirect_addr), insn_index: 0 };
     known_targets.insert(key, ResolvedTargets::Multiple(targets));
     let opts = OptionsBuilder::new().build();
@@ -190,7 +190,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     let reader = BufMemReader::new(bytes, base);
     let sleigh =
         Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
-    let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+    let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(
         PcodeInsnAddr { machine_addr: MachineInsnAddr::from(branch_indirect_addr), insn_index: 0 },
         ResolvedTargets::Multiple(target_addrs.clone()),

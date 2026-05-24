@@ -63,6 +63,7 @@ strider-reader = { workspace = true }
 strider-target = { workspace = true }
 rsleigh = { workspace = true }
 object = { workspace = true }
+rustc-hash = "2"
 
 [lints]
 workspace = true

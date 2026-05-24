@@ -7,7 +7,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
@@ -41,7 +41,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     // Build the override map against the same Sleigh register table the
     // function-default CC was built against.
     let regs = arch.probe_regs().unwrap();
-    let mut built: HashMap<u64, strider_target::BuiltCallingConvention> = HashMap::new();
+    let mut built: FxHashMap<u64, strider_target::BuiltCallingConvention> = FxHashMap::default();
     built.insert(call_target, TargetCC::x86_64_all_preserving().unwrap().build(&regs).unwrap());
 
     let outcome = strider

@@ -40,7 +40,9 @@
 //! edit.  Inside-the-function `Single(K)` requires a CFG rebuild
 //! because new code becomes reachable.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
+
+use rustc_hash::FxHashMap;
 
 use anyhow::{anyhow, bail, Result};
 
@@ -105,7 +107,7 @@ where
     /// [`strider_target::CallingConvention::x86_64_all_preserving`] (and the
     /// per-arch siblings).  The user supplies raw addresses; symbol
     /// resolution is the caller's responsibility.
-    pub per_address_ccs: HashMap<u64, strider_target::CallingConvention>,
+    pub per_address_ccs: FxHashMap<u64, strider_target::CallingConvention>,
 }
 
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
@@ -248,7 +250,7 @@ where
     /// [`Config::per_address_ccs`] doc.  Resolved once at
     /// `LoopState::new` so any unresolved register name surfaces
     /// before iteration starts.
-    per_address_built_ccs: HashMap<u64, strider_target::BuiltCallingConvention>,
+    per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention>,
     /// Accumulator of IR-level indirect-branch resolver resolutions across iterations.
     /// Monotonically grows: once an anchor's targets land here, the
     /// CFG-rebuild path keeps using them.  Per-iteration classifications
@@ -258,7 +260,7 @@ where
     /// list (because the previous Rebuild lowered them to switch
     /// edges) MUST stay — wiping them re-introduces the placeholder
     /// on the next rebuild and the loop diverges.
-    known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
+    known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// The Sleigh handle we thread through every iteration.  Initialised
     /// from `Config::sleigh` at construction; consumed by
     /// `Builder::for_arch` per iteration and harvested back from the
@@ -322,9 +324,9 @@ where
         let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
         // Pre-resolve per-address CC overrides against the same Sleigh
         // register table the function-default CC was built against.
-        let per_address_built_ccs: HashMap<u64, strider_target::BuiltCallingConvention> =
+        let per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
             if config.per_address_ccs.is_empty() {
-                HashMap::new()
+                FxHashMap::default()
             } else {
                 let sleigh_regs = config
                     .sleigh
@@ -345,7 +347,7 @@ where
             };
         Ok(Self {
             sleigh: Some(config.sleigh),
-            known_targets: HashMap::new(),
+            known_targets: FxHashMap::default(),
             // Empty placeholder; overwritten by `build_initial_iteration`
             // before any consumer reads it.
             graph: strider_ir::Graph::new(),
@@ -582,7 +584,7 @@ where
     fn classify_and_partition(
         &mut self,
     ) -> Result<(
-        HashMap<PcodeInsnAddr, ResolvedTargets>,
+        FxHashMap<PcodeInsnAddr, ResolvedTargets>,
         Vec<(NodeId, ResolvedTargets)>,
     )> {
         let graph = &self.graph;
@@ -592,7 +594,7 @@ where
         // the known_targets map.  Wiping them would re-introduce the
         // BranchIndirect on the next rebuild and the loop would
         // oscillate between resolved and unresolved.
-        let mut next_known: HashMap<PcodeInsnAddr, ResolvedTargets> = self.known_targets.clone();
+        let mut next_known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = self.known_targets.clone();
         let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
         // Compute known-bits once across all anchors: the graph doesn't
         // change between iterations of this loop, so a single pass
@@ -707,7 +709,7 @@ fn apply_in_place_edit(
     region_index: &RegionIndex,
     placeholder: NodeId,
     resolved: &ResolvedTargets,
-    per_address_built_ccs: &HashMap<u64, strider_target::BuiltCallingConvention>,
+    per_address_built_ccs: &FxHashMap<u64, strider_target::BuiltCallingConvention>,
 ) -> Result<()> {
     match resolved {
         ResolvedTargets::LinkRegister => {
@@ -1000,7 +1002,7 @@ fn build_cfg<R>(
     rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
-    known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
+    known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     decode_cache: &DecodeCache,
 ) -> Result<Cfg<R>>
 where
@@ -1096,7 +1098,7 @@ where
 /// (replaces the `EdgeKind { LinkRegister, Target(u64) }` enum + Vec
 /// sort+dedup pair).
 fn edge_set_of(
-    map: &HashMap<PcodeInsnAddr, ResolvedTargets>,
+    map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 ) -> BTreeSet<(PcodeInsnAddr, Option<u64>)> {
     let mut edges: BTreeSet<(PcodeInsnAddr, Option<u64>)> = BTreeSet::new();
     for (addr, resolved) in map {
@@ -1338,13 +1340,13 @@ mod tests {
 
     #[test]
     fn edge_set_of_empty_map_is_empty() {
-        let map: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+        let map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         assert!(edge_set_of(&map).is_empty());
     }
 
     #[test]
     fn edge_set_of_single_link_register_resolution() {
-        let mut map: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+        let mut map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         map.insert(pcode_addr(0x1000), ResolvedTargets::LinkRegister);
         let edges = edge_set_of(&map);
         assert_eq!(edges.len(), 1);
@@ -1353,7 +1355,7 @@ mod tests {
 
     #[test]
     fn edge_set_of_single_resolution_matches_single_edge() {
-        let mut map: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+        let mut map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         map.insert(pcode_addr(0x1000), ResolvedTargets::Single(0x2000));
         let edges = edge_set_of(&map);
         let expected: BTreeSet<(PcodeInsnAddr, Option<u64>)> =
@@ -1363,7 +1365,7 @@ mod tests {
 
     #[test]
     fn edge_set_of_multiple_resolution_matches_n_edges() {
-        let mut map: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+        let mut map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         map.insert(
             pcode_addr(0x1000),
             ResolvedTargets::Multiple(vec![0x2000, 0x3000, 0x4000]),
@@ -1374,10 +1376,10 @@ mod tests {
 
     #[test]
     fn edge_set_is_order_independent() {
-        let mut a: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+        let mut a: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         a.insert(pcode_addr(0x1000), ResolvedTargets::Single(0x2000));
         a.insert(pcode_addr(0x3000), ResolvedTargets::Single(0x4000));
-        let mut b: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+        let mut b: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         b.insert(pcode_addr(0x3000), ResolvedTargets::Single(0x4000));
         b.insert(pcode_addr(0x1000), ResolvedTargets::Single(0x2000));
         assert_eq!(edge_set_of(&a), edge_set_of(&b));
@@ -1385,7 +1387,7 @@ mod tests {
 
     #[test]
     fn edge_set_dedups_duplicate_targets_in_multiple() {
-        let mut map: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+        let mut map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         map.insert(
             pcode_addr(0x1000),
             ResolvedTargets::Multiple(vec![0x2000, 0x2000, 0x2000]),

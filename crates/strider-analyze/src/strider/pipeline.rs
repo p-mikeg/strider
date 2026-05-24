@@ -120,7 +120,7 @@ pub struct AnalyzeOptions<'a> {
     /// against.  `None` by default — every direct `Call` uses the
     /// function-default CC.
     pub per_address_ccs:
-        Option<&'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>>,
+        Option<&'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 }
 
 /// Architecture-level binary analyser that lifts a [`strider_lift::cfg::Cfg`] to an IR

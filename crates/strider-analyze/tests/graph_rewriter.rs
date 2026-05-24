@@ -25,7 +25,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeKind, NodeOutputType};
@@ -68,7 +68,7 @@ fn analyze_with_known_targets(
     let reader = BufMemReader::new(bytes, base);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create x86_64 sleigh");
-    let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+    let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(
         PcodeInsnAddr { machine_addr: MachineInsnAddr::from(branch_indirect_addr), insn_index: 0 },
         ResolvedTargets::Multiple(targets),

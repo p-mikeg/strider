@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use cranelift_entity::packed_option::ReservedValue;
 use cranelift_entity::{PrimaryMap, entity_impl};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::error::Result;
 use crate::graph::Graph;
@@ -49,7 +49,7 @@ fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
 /// Returns `None` for non-aliasable spaces (CONST, code) or when no
 /// tracked variable overlaps `vn` at all.
 fn upgrade_to_tracked_for(
-    variable_to_id: &HashMap<rsleigh::Vn, VarId>,
+    variable_to_id: &FxHashMap<rsleigh::Vn, VarId>,
     vn: rsleigh::Vn,
 ) -> Option<rsleigh::Vn> {
     if variable_to_id.contains_key(&vn) {
@@ -169,7 +169,7 @@ pub struct FunctionBuilder {
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
     pub(crate) cur_region: Option<crate::region::RegionId>,
     pub(crate) variables: PrimaryMap<VarId, rsleigh::Vn>,
-    pub(crate) variable_to_id: HashMap<rsleigh::Vn, VarId>,
+    pub(crate) variable_to_id: FxHashMap<rsleigh::Vn, VarId>,
     /// Variables clobbered by any call instruction (everything not
     /// callee-saved, and excluding the stack pointer which is rebound
     /// separately with the `ret_stack_pop` adjust).
@@ -202,7 +202,7 @@ pub struct FunctionBuilder {
     /// the variable set is fixed at construction so caching is safe.
     /// Lookup turns the per-call O(V) linear scan in
     /// `strider_lift::pcode_lift::ValueLifter::find_largest_fitting_register` into O(1).
-    pub(crate) largest_container: std::cell::OnceCell<HashMap<rsleigh::Vn, rsleigh::Vn>>,
+    pub(crate) largest_container: std::cell::OnceCell<FxHashMap<rsleigh::Vn, rsleigh::Vn>>,
     /// Asm-instruction address attributed to every node `create_node`
     /// produces while this is `Some`.  The lifter / strider region driver
     /// sets it to `Some(addr)` immediately before each pcode insn (see
@@ -412,7 +412,7 @@ impl FunctionBuilder {
             &all_variables,
         );
         let mut variables = PrimaryMap::new();
-        let mut variable_to_id = HashMap::new();
+        let mut variable_to_id = FxHashMap::default();
         for variable in all_variables {
             let var_id = variables.push(variable);
             variable_to_id.insert(variable, var_id);
@@ -541,36 +541,85 @@ impl FunctionBuilder {
     pub fn largest_container_for(&self, reg: &rsleigh::Vn) -> Option<rsleigh::Vn> {
         let map = self.largest_container.get_or_init(|| {
             // For each tracked variable, find its largest container
-            // among all tracked variables in the same space.  O(V²)
-            // up front; amortised across every subsequent lookup.
+            // among all tracked variables in the same space.
+            //
+            // Algorithm: bucket variables by `addr_space`, sort each
+            // bucket by `(addr_off ascending, size descending)`, then
+            // single-pass an "open enclosures" stack — at each var,
+            // pop enclosures whose end is to the left of the current
+            // var's start, then the deepest remaining enclosure (the
+            // first pushed, since later pushes are nested-or-equal
+            // inside it under the sort order) is the largest container.
+            //
+            // Complexity: O(V log V) sort + O(V) stack pass per space.
             //
             // Range arithmetic uses `saturating_add` because some
             // Sleigh varnodes (notably ppc64 / aarch64be CR slices)
             // sit at very high offsets where `off + size` would
             // overflow `u64`.  Saturation is safe: a saturated
             // endpoint can only fail the containment test (it's the
-            // weakest possible upper bound), never spuriously
-            // succeed.
-            let vars: Vec<&rsleigh::Vn> = self.variable_to_id.keys().collect();
-            let mut out: HashMap<rsleigh::Vn, rsleigh::Vn> = HashMap::with_capacity(vars.len());
-            for v in &vars {
-                let v_start = v.addr_off;
-                let v_end = v_start.saturating_add(u64::from(v.size));
-                let mut best: rsleigh::Vn = **v;
-                for other in &vars {
-                    if other.addr_space != v.addr_space {
-                        continue;
+            // weakest possible upper bound), never spuriously succeed.
+            let vars: Vec<rsleigh::Vn> = self.variable_to_id.keys().copied().collect();
+            let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
+                FxHashMap::with_capacity_and_hasher(vars.len(), Default::default());
+
+            // Bucket by addr_space (FxHashMap iteration order is
+            // stable per insertion in single-threaded code; the per-
+            // space loop sorts deterministically afterwards).
+            let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> =
+                FxHashMap::default();
+            for v in vars {
+                by_space.entry(v.addr_space).or_default().push(v);
+            }
+
+            for (_space, mut bucket) in by_space {
+                // Sort: addr_off ascending, then size descending so
+                // that for equal starts the wider container precedes
+                // narrower ones (and pops correctly later).
+                bucket.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
+
+                // `open` holds (end, vn) pairs for enclosures whose
+                // range still strictly extends past the current
+                // start.  The bottom of the stack is the deepest /
+                // largest container thanks to the sort order.
+                let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
+                for v in &bucket {
+                    let v_start = v.addr_off;
+                    let v_end = v_start.saturating_add(u64::from(v.size));
+                    // Pop enclosures whose end is strictly to the left
+                    // of `v`'s start — they can no longer contain `v`.
+                    while let Some(&(end, _)) = open.last() {
+                        if end < v_end {
+                            // The top enclosure doesn't reach as far
+                            // as `v`'s end either, so it's no longer a
+                            // candidate enclosure for things following.
+                            open.pop();
+                        } else {
+                            break;
+                        }
                     }
-                    let s = other.addr_off;
-                    let e = s.saturating_add(u64::from(other.size));
-                    if s > v_start || e < v_end {
-                        continue;
-                    }
-                    if other.size > best.size {
-                        best = **other;
-                    }
+                    // The bottom of `open` (the first entry) is the
+                    // largest container reaching across `v` — by the
+                    // sort order it was pushed when the widest start-
+                    // tied entry appeared first.
+                    let best = open
+                        .first()
+                        .map(|(_, vn)| *vn)
+                        .filter(|cand| {
+                            // Validate end: cand.end >= v_end already
+                            // (we popped otherwise) and cand.start <=
+                            // v.start (sort order guarantees).  But a
+                            // candidate at the SAME start with a SAME
+                            // size is `v` itself; only count it as a
+                            // larger container if its size strictly
+                            // exceeds `v`'s.
+                            cand.size > v.size
+                                || (cand.size == v.size && cand.addr_off < v.addr_off)
+                        });
+                    let chosen = best.unwrap_or(*v);
+                    out.insert(*v, chosen);
+                    open.push((v_end, *v));
                 }
-                out.insert(**v, best);
             }
             out
         });

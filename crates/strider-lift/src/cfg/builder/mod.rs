@@ -6,7 +6,9 @@ pub use indirect_resolver::{IndirectResolverFn, ResolvedTargets};
 
 use region_builder::RegionBuilder;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+
+use rustc_hash::FxHashMap;
 
 use petgraph::graph::NodeIndex;
 
@@ -266,7 +268,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     #[must_use]
     pub fn with_known_targets(
         mut self,
-        known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
+        known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     ) -> Self {
         self.options.known_targets = known_targets;
         self

@@ -1,5 +1,5 @@
 use rsleigh::MemReader;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::{GraphDotDumper, GraphDotDumperState, edge_style, node_fillcolor, node_shape};
 use crate::graph::Graph;
@@ -32,8 +32,8 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
 
     fn create_initial_state(&self) -> Self::State {
         Self::State {
-            visited_node_id: HashMap::new(),
-            virtual_nodes: HashMap::new(),
+            visited_node_id: FxHashMap::default(),
+            virtual_nodes: FxHashMap::default(),
             next_unique_id: 0,
         }
     }

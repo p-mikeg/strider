@@ -1,5 +1,6 @@
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 
 use strider_ir::ReadOnlyMemory;
 
@@ -51,7 +52,7 @@ pub struct Options {
     ///
     /// Default is empty (no known targets).  Populated by the
     /// orchestrator via [`super::Builder::with_known_targets`].
-    pub(super) known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
+    pub(super) known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 }
 
 // Manual `Debug` impl: `dyn ReadOnlyMemory` doesn't implement `Debug`,

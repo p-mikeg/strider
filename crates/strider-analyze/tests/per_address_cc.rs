@@ -4,7 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
@@ -38,7 +38,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
-    let mut overrides: HashMap<u64, TargetCC> = HashMap::new();
+    let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
 
     let config = Config {
@@ -102,7 +102,7 @@ fn call_without_override_uses_function_default_clobber_set() {
         fn_max_size: None,
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: HashMap::new(),
+        per_address_ccs: FxHashMap::default(),
     };
     let bfg = strider_analyze::run(config).unwrap();
 

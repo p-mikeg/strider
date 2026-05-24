@@ -203,16 +203,26 @@ impl Graph {
 
     /// Unions the fingerprint of `src` into `dst`.  Equivalent to
     /// `extend_asm_fingerprint(dst, &asm_fingerprint(src).to_vec())` but
-    /// avoids the intermediate allocation.  Self-extension (`src == dst`)
-    /// is a no-op.
+    /// avoids the intermediate heap allocation in the common case.
+    /// Self-extension (`src == dst`) is a no-op.
+    ///
+    /// The intermediate buffer is a `SmallVec<[u64; 4]>` because
+    /// fingerprints are dominated by single-instruction contributors;
+    /// the inline-4 capacity covers the overwhelming majority of
+    /// rewrites without heap-allocating.  The underlying side-table
+    /// storage remains `Vec<u64>` — converting that would ripple
+    /// through 200+ accessor call sites for negligible benefit, since
+    /// most fingerprints live for the lifetime of the graph.
     pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
         if dst == src {
             return;
         }
-        // SAFETY-WORKAROUND: SecondaryMap doesn't allow simultaneous
-        // borrows.  Snapshot the source slice into a tiny stack-friendly
-        // buffer.  Fingerprints are typically small.
-        let src_slice = self.asm_fingerprints[src].clone();
+        // SecondaryMap doesn't allow simultaneous borrows on different
+        // indices.  Snapshot the source slice into a small inline
+        // buffer to avoid the heap roundtrip for the common case
+        // (single-asm-insn contributor).
+        let src_slice: smallvec::SmallVec<[u64; 4]> =
+            self.asm_fingerprints[src].iter().copied().collect();
         self.extend_asm_fingerprint(dst, &src_slice);
     }
 

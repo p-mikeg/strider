@@ -10,7 +10,7 @@
 //! Ported from pre-rewrite `crates/cfg/tests/{build_end_to_end,
 //! sleigh_reuse,region_terminates_on_noreturn_callother}.rs`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use petgraph::visit::IntoEdgeReferences;
 use rsleigh::mem_readers::BufMemReader;
@@ -308,7 +308,7 @@ fn with_known_targets_link_register_overrides_to_return() {
     let reader = BufMemReader::new(bytes, base);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
 
-    let mut known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(unresolved_addr, ResolvedTargets::LinkRegister);
 
     let cfg_v2 = Builder::for_arch(&arch, sleigh, base, OptionsBuilder::new().build())
@@ -339,7 +339,7 @@ fn with_known_targets_empty_map_falls_through_to_tier_1() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
 
     let cfg = Builder::for_arch(&arch, sleigh, base, OptionsBuilder::new().build())
-        .with_known_targets(HashMap::new())
+        .with_known_targets(FxHashMap::default())
         .build()
         .expect("build with empty known_targets");
 
@@ -362,7 +362,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     let cfg_v1 = build_unresolved_jmp_rax_cfg();
     let unresolved_addr = locate_unresolved_addr(&cfg_v1);
 
-    let mut known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         unresolved_addr,
         ResolvedTargets::Multiple(vec![0x1004, 0x9000]),
@@ -402,7 +402,7 @@ fn known_multiple_in_range_targets_produces_switch() {
     let cfg_v1 = build_unresolved_jmp_rax_cfg();
     let unresolved_addr = locate_unresolved_addr(&cfg_v1);
 
-    let mut known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         unresolved_addr,
         ResolvedTargets::Multiple(vec![0x1004, 0x1008]),

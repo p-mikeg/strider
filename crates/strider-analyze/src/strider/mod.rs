@@ -25,7 +25,7 @@ pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     /// Per-target-address CC override map.  `None` when the caller has
     /// no overrides; lookups become `and_then(|m| m.get(addr))`.
     pub(crate) per_address_ccs:
-        Option<&'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>>,
+        Option<&'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 }
 
 impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
@@ -41,7 +41,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         cfg: &'a strider_lift::cfg::Cfg<R>,
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: Option<
-            &'a std::collections::HashMap<u64, strider_target::BuiltCallingConvention>,
+            &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
         >,
     ) -> Result<Self> {
         let builder = strider_ir::FunctionBuilder::new(

@@ -357,6 +357,14 @@ fn probe(
 /// `Result<_, _>` is needed only because `make_int_const` can fail when
 /// the IR rejects the requested constant; structurally the realization
 /// is a deterministic walk over the shape tree.
+///
+/// Recursion-depth cap (`MAX_RESOLVE_DEPTH`): `probe` already snaps a
+/// `Cycle` verdict on revisited MemPhi tokens via its `seen` set, so
+/// the shape tree the realize walk consumes is always finite.  But a
+/// pathological adversarial graph with thousands of nested
+/// MemPhi-of-MemPhi shapes would blow the Rust stack before the
+/// per-test wallclock budget triggers.  Surface an error at the cap
+/// instead of UB-ing the host process.
 fn realize(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     shape: ResolveShape,
@@ -364,6 +372,25 @@ fn realize(
     endianness: Endianness,
     load: strider_ir::node::NodeId,
 ) -> crate::opt::Result<NodeOutputId> {
+    realize_with_depth(ctx, shape, load_ty, endianness, load, 0)
+}
+
+const MAX_RESOLVE_DEPTH: usize = 512;
+
+fn realize_with_depth(
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    shape: ResolveShape,
+    load_ty: strider_ir::node::NodeOutputType,
+    endianness: Endianness,
+    load: strider_ir::node::NodeId,
+    depth: usize,
+) -> crate::opt::Result<NodeOutputId> {
+    if depth > MAX_RESOLVE_DEPTH {
+        return Err(anyhow::anyhow!(
+            "stack_load_forward::realize exceeded MAX_RESOLVE_DEPTH={MAX_RESOLVE_DEPTH} \
+             — refusing to recurse on pathological nested-MemPhi shape"
+        ));
+    }
     match shape {
         ResolveShape::Existing(out) => Ok(out),
         ResolveShape::Narrow { data, data_ty } => {
@@ -423,7 +450,7 @@ fn realize(
         ResolveShape::Phi { phi_token, preds } => {
             let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(preds.len());
             for p in preds {
-                resolved.push(realize(ctx, p, load_ty, endianness, load)?);
+                resolved.push(realize_with_depth(ctx, p, load_ty, endianness, load, depth + 1)?);
             }
             // Dedup: if all per-predecessor results coincide, skip the
             // ValuePhi — returning the common value keeps the graph

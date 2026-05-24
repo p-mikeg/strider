@@ -168,23 +168,55 @@ fn detect_register_args(
         }
     }
 
+    // Per-space bucket sorted by `(addr_off ascending, size descending)`.
+    // Lets `largest_sub_in` binary-search to the first vn with
+    // `addr_off >= lo` and then scan forward while `addr_off < hi`
+    // — the sort order means the first vn with `addr_off == lo` is
+    // the widest one (size-descending), and the scan terminates as
+    // soon as we walk past `hi`.  Hot-loop complexity becomes
+    // O(log V + matches) per arg slot instead of O(V).
+    let initial_vars_by_space: rustc_hash::FxHashMap<rsleigh::VnSpace, Vec<(rsleigh::Vn, NodeId)>> = {
+        let mut by_space: rustc_hash::FxHashMap<rsleigh::VnSpace, Vec<(rsleigh::Vn, NodeId)>> =
+            rustc_hash::FxHashMap::default();
+        for (&vn, &n) in &initial_vars {
+            by_space.entry(vn.addr_space).or_default().push((vn, n));
+        }
+        for bucket in by_space.values_mut() {
+            bucket.sort_by_key(|(vn, _)| (vn.addr_off, std::cmp::Reverse(vn.size)));
+        }
+        by_space
+    };
+
     /// Find the largest `(Vn, NodeId)` whose Vn is fully contained
     /// in `reg`'s byte range.  Returns `None` if nothing's contained.
+    ///
+    /// Binary-searches the pre-sorted per-space bucket to the first
+    /// candidate at `addr_off >= reg.addr_off`, then scans forward
+    /// while the candidate's `addr_off` stays below `reg`'s end.
     fn largest_sub_in(
-        initial_vars: &rustc_hash::FxHashMap<rsleigh::Vn, NodeId>,
+        initial_vars_by_space: &rustc_hash::FxHashMap<rsleigh::VnSpace, Vec<(rsleigh::Vn, NodeId)>>,
         reg: rsleigh::Vn,
     ) -> Option<(rsleigh::Vn, NodeId)> {
+        let bucket = initial_vars_by_space.get(&reg.addr_space)?;
         let lo = reg.addr_off;
-        let hi = reg.addr_off + (reg.size as u64);
-        initial_vars
-            .iter()
-            .filter(|(vn, _)| {
-                vn.addr_space == reg.addr_space
-                    && vn.addr_off >= lo
-                    && vn.addr_off + (vn.size as u64) <= hi
-            })
-            .max_by_key(|(vn, _)| vn.size)
-            .map(|(vn, n)| (*vn, *n))
+        let hi = reg.addr_off.checked_add(u64::from(reg.size))?;
+        // First index whose `addr_off >= lo`.
+        let start_idx = bucket.partition_point(|(vn, _)| vn.addr_off < lo);
+        let mut best: Option<(rsleigh::Vn, NodeId)> = None;
+        for (vn, n) in &bucket[start_idx..] {
+            if vn.addr_off >= hi {
+                break;
+            }
+            // Containment: `vn.addr_off >= lo` (guaranteed by start_idx)
+            // and `vn.addr_off + vn.size <= hi`.
+            if vn.addr_off.checked_add(u64::from(vn.size)).is_some_and(|e| e <= hi) {
+                match best {
+                    Some((b, _)) if b.size >= vn.size => {}
+                    _ => best = Some((*vn, *n)),
+                }
+            }
+        }
+        best
     }
 
     let mut result = OptimizationResult::NoChange;
@@ -193,7 +225,7 @@ fn detect_register_args(
         // contained in `reg`'s byte range.
         let (effective_vn, initial_var) = if let Some(&n) = initial_vars.get(reg) {
             (*reg, n)
-        } else if let Some((sub_vn, sub_n)) = largest_sub_in(&initial_vars, *reg) {
+        } else if let Some((sub_vn, sub_n)) = largest_sub_in(&initial_vars_by_space, *reg) {
             (sub_vn, sub_n)
         } else {
             continue;

@@ -1,5 +1,5 @@
 use rsleigh::MemReader;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId};
@@ -157,10 +157,10 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 }
 
 pub struct GraphDotDumperState {
-    pub(super) visited_node_id: HashMap<NodeId, String>,
+    pub(super) visited_node_id: FxHashMap<NodeId, String>,
     /// Synthetic (virtual) DOT nodes inserted between a producer output and
     /// its consumers.  Keyed by the `NodeOutputId` they represent.
-    pub(super) virtual_nodes: HashMap<NodeOutputId, String>,
+    pub(super) virtual_nodes: FxHashMap<NodeOutputId, String>,
     pub(super) next_unique_id: u32,
 }
 

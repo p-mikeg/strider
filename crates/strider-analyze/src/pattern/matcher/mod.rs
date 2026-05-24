@@ -606,6 +606,38 @@ impl<'g> Matcher<'g> {
         pat: &Pat,
         b: &mut Bindings,
     ) -> bool {
+        // Recursion-depth guard for the mutual recursion with
+        // `walk_through::try_walk_through_control_state`.  ControlState
+        // walk-through fans out across region predecessors and each
+        // alternative re-enters `match_output_with_walk_through`; nesting
+        // depth equals the IR's CS-nesting depth in practice, which is
+        // bounded by CFG structure.  An adversarial graph with thousands
+        // of nested joins would blow the stack before the per-test
+        // wallclock budget triggers — the cap surfaces a clean false
+        // (no match) instead.
+        struct DepthGuard;
+        thread_local! {
+            static MATCH_DEPTH: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+        }
+        const MAX_WALK_THROUGH_DEPTH: usize = 512;
+        if MATCH_DEPTH.with(|d| {
+            let v = d.get();
+            if v > MAX_WALK_THROUGH_DEPTH {
+                true
+            } else {
+                d.set(v + 1);
+                false
+            }
+        }) {
+            return false;
+        }
+        impl Drop for DepthGuard {
+            fn drop(&mut self) {
+                MATCH_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            }
+        }
+        let _guard = DepthGuard;
+
         // Iterative cast-chain unwrapping.  Each iteration tries direct
         // match at the current `out`; on failure, if the producer is a
         // walk-through cast, advance `out` to its value input and

@@ -239,8 +239,19 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.link_control_regions(region, control)?;
         self.link_memory_regions(region, memory)?;
-        let source = self.regions[cur_region].variables.clone();
-        self.link_region_variables(region, &source)?;
+        // Avoid cloning `cur_region.variables`: `link_region_variables`
+        // doesn't mutate the `variables` map (it only adds inputs to
+        // `region.initial_variables` phi nodes via `graph_mut`).  Use
+        // `mem::take` to move the map out, link against the borrowed
+        // map, then restore — saves an `O(num_vars)` allocation per
+        // region link on functions with many tracked variables.
+        // `cur_region != region` is a structural invariant of every
+        // call site (a region can't be its own successor's predecessor
+        // via this path), so the temporary empty slot is never read.
+        let source = std::mem::take(&mut self.regions[cur_region].variables);
+        let res = self.link_region_variables(region, &source);
+        self.regions[cur_region].variables = source;
+        res?;
         Ok(())
     }
 

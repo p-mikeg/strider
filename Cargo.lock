@@ -1380,6 +1380,7 @@ dependencies = [
  "pyo3",
  "pyo3-stub-gen",
  "rsleigh",
+ "rustc-hash",
  "strider-analyze",
  "strider-ir",
  "strider-lift",
