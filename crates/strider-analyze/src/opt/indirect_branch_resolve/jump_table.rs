@@ -44,9 +44,10 @@
 #![allow(clippy::module_name_repetitions)]
 
 
-use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
+use super::MAX_TABLE_ENTRIES;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use strider_ir::{Graph, IntCmpOp};
+use strider_lift::cfg::ResolvedTargets;
 use crate::opt::ReadOnlyMemory;
 #[cfg(test)]
 use rsleigh::VnSpace;

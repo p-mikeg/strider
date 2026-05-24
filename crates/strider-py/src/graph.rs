@@ -60,7 +60,6 @@ impl PyGraph {
 
     /// Borrow the inner graph for write.  Returns an `anyhow::Error`
     /// when the lock is poisoned.
-    #[allow(dead_code)]
     pub(crate) fn write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Graph>> {
         self.inner
             .write()

@@ -68,10 +68,6 @@ use crate::opt::pipeline::OptimizationResult;
 pub struct FlagCmpCanonicalize;
 
 impl PeepholePass for FlagCmpCanonicalize {
-    fn name(&self) -> &'static str {
-        "FlagCmpCanonicalize"
-    }
-
     /// Rules walk arbitrary boolean / arith subtrees; no useful kind
     /// filter at the root — defer to the per-rule matcher.
     fn matches_kind(&self, _kind: &NodeKind) -> bool {

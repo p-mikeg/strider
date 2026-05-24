@@ -12,7 +12,8 @@
 
 use strider_ir::node::{NodeKind, NodeOutputId};
 
-use super::ResolvedTargets;
+use strider_lift::cfg::ResolvedTargets;
+
 use super::jump_table::classify_jump_table;
 use crate::opt::ReadOnlyMemory;
 

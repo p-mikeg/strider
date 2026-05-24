@@ -587,13 +587,6 @@ impl FunctionBuilder {
         self.variables.get(var_id).copied()
     }
 
-    /// Returns the `VarId` for `vn`, or `None` if `vn` is not a
-    /// tracked variable.  The inverse of [`Self::vn_of_var`].
-    #[must_use]
-    pub fn var_of_vn(&self, vn: &rsleigh::Vn) -> Option<VarId> {
-        self.variable_to_id.get(vn).copied()
-    }
-
     /// Returns the calling convention's return-value registers, in ABI order.
     /// Empty for synthetic test builds that didn't supply a convention.
     #[must_use] 

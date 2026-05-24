@@ -24,12 +24,6 @@ use crate::opt::pipeline::OptimizationResult;
 
 /// A kind-filtered, per-node rewrite pass.  See module docs.
 pub(crate) trait PeepholePass {
-    /// Concrete pass name, for debug / tracing only.  Held in the trait
-    /// surface (not just on the concrete pass type) so `dyn`-erased
-    /// drivers can attribute failures to the originating pass.
-    #[allow(dead_code)]
-    fn name(&self) -> &'static str;
-
     /// Which `NodeKind`s does this pass care about?  Seeded into the
     /// worklist by [`run_peephole`] via `ctx.preorder_kind`.
     fn matches_kind(&self, kind: &NodeKind) -> bool;
@@ -151,11 +145,6 @@ mod tests {
     /// the tests below to assert ordering / propagation behaviour without
     /// pulling in a real opt pass.
     struct ScriptedPass {
-        // The trait contract requires implementing `name()`; the test
-        // driver doesn't surface it back but the field documents intent
-        // when a fixture is read in isolation.
-        #[allow(dead_code)]
-        name: &'static str,
         match_kind: fn(&NodeKind) -> bool,
         do_rewrite: bool,
         propagate: bool,
@@ -166,9 +155,6 @@ mod tests {
     const REPLACEMENT_K: u64 = 0xABCD_1234;
 
     impl PeepholePass for ScriptedPass {
-        fn name(&self) -> &'static str {
-            self.name
-        }
         fn matches_kind(&self, k: &NodeKind) -> bool {
             (self.match_kind)(k)
         }
@@ -225,7 +211,6 @@ mod tests {
     fn run_peephole_on_minimal_graph_no_match() {
         let mut fg = one_const_fn();
         let pass = ScriptedPass {
-            name: "Empty",
             match_kind: match_nothing,
             do_rewrite: false,
             propagate: false,
@@ -244,7 +229,6 @@ mod tests {
         // Graph has an Add but the pass kind-filter rejects everything.
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
-            name: "MissAll",
             match_kind: match_nothing,
             do_rewrite: true,
             propagate: true,
@@ -262,7 +246,6 @@ mod tests {
     fn run_peephole_rewrites_and_reports_changed() {
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
-            name: "RewriteAdd",
             match_kind: match_add,
             do_rewrite: true,
             propagate: false,
@@ -301,7 +284,6 @@ mod tests {
         })
         .unwrap();
         let pass = ScriptedPass {
-            name: "RewriteAddNoProp",
             match_kind: match_add,
             do_rewrite: true,
             propagate: false,
@@ -326,7 +308,6 @@ mod tests {
         })
         .unwrap();
         let pass = ScriptedPass {
-            name: "RewriteAddProp",
             match_kind: match_add,
             do_rewrite: true,
             propagate: true,
@@ -348,7 +329,6 @@ mod tests {
     fn run_peephole_propagates_pass_internal_error() {
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
-            name: "Erroring",
             match_kind: match_add,
             do_rewrite: false,
             propagate: false,

@@ -64,7 +64,6 @@ pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use function_args::FunctionArgDetect;
 pub use if_cond_inversion::IfCondInversion;
 pub use indirect_branch_resolve::{
-    ResolvedTargets,
     apply_link_register,
     apply_tail_call,
     classify_anchor,

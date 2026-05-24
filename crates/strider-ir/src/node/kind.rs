@@ -437,8 +437,12 @@ impl NodeKind {
     ///
     /// This is the canonical "variant name" function; previously
     /// duplicated in test code under `cross_arch_shape::kind_bucket`.
+    /// Kept `pub` only so the cross-arch-shape integration test
+    /// (separate compilation unit) can reach it; not part of the
+    /// stable public API.
     #[inline]
     #[must_use]
+    #[doc(hidden)]
     pub fn as_static_str(&self) -> &'static str {
         use crate::ops::{
             BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,

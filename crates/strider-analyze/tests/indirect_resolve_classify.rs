@@ -16,9 +16,10 @@
 
 mod common;
 
-use strider_analyze::opt::{ResolvedTargets, classify_anchor};
+use strider_analyze::opt::classify_anchor;
 use strider_analyze::opt::analyze_known_bits;
 use strider_analyze::pattern::RewriteCtxView;
+use strider_lift::cfg::ResolvedTargets;
 
 /// Test helper: recomputes `analyze_known_bits` and calls
 /// `classify_anchor` with no rom and no SP varnode.  Mirrors the

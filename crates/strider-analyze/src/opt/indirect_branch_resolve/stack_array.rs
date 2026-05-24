@@ -44,9 +44,10 @@
 //! Failing either gate returns `None`; the orchestrator defers the
 //! branch.  No panic, no partial commitment, no over-approximation.
 
-use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
+use super::MAX_TABLE_ENTRIES;
 use strider_ir::node::{NodeKind, NodeOutputId};
 use strider_ir::{Graph, IntBinaryOp};
+use strider_lift::cfg::ResolvedTargets;
 use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 use crate::opt::stack_load_forward::{StackStoredValueMemo, find_stack_stored_value_at_offset};
 

@@ -59,10 +59,6 @@ fn try_lower_cast_to_float(
 pub struct ConstantFold;
 
 impl PeepholePass for ConstantFold {
-    fn name(&self) -> &'static str {
-        "ConstantFold"
-    }
-
     /// Constant-fold rule groups cover most node kinds (int / bool / float
     /// arithmetic + cmp, casts, truncate / extend, identity rewrites on
     /// just about any binary op).  Seeding the worklist with every

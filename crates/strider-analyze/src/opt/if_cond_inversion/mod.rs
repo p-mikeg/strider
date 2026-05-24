@@ -57,10 +57,6 @@ use crate::opt::pipeline::OptimizationResult;
 pub struct IfCondInversion;
 
 impl crate::opt::peephole::PeepholePass for IfCondInversion {
-    fn name(&self) -> &'static str {
-        "IfCondInversion"
-    }
-
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::If)
     }

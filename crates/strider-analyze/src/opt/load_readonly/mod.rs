@@ -63,10 +63,6 @@ impl LoadReadOnly {
 }
 
 impl PeepholePass for LoadReadOnly {
-    fn name(&self) -> &'static str {
-        "LoadReadOnly"
-    }
-
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Load(_))
     }

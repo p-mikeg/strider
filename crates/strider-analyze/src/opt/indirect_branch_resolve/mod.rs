@@ -11,19 +11,18 @@
 //! ## Submodules
 //!
 //! - [`classify`] — producer-shape classifier returning
-//!   [`ResolvedTargets`] ([`classify_anchor`]).
+//!   [`strider_lift::cfg::ResolvedTargets`] ([`classify_anchor`]).
 //! - [`inplace`] — in-place IR edits for `LinkRegister` returns and
 //!   `Single` tail calls (`apply_link_register`, `apply_tail_call`).
 //! - [`jump_table`] — rodata jump-table arm.
 //! - [`stack_array`] — stack-array-of-labels arm.
 //!
-//! ## Where [`ResolvedTargets`] lives
+//! ## Where `ResolvedTargets` lives
 //!
 //! Defined in `strider_lift::cfg::builder::indirect_resolver` (the
 //! lowest layer that needs the enum: it's the return type of the
 //! [`strider_lift::cfg::IndirectResolverFn`] callback the cfg builder
-//! hands to its installed resolver).  Re-exported here so pre-existing
-//! call sites that import `opt::ResolvedTargets` keep working.
+//! hands to its installed resolver).  Import it directly from there.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -51,12 +50,6 @@ pub use classify::classify_anchor;
 pub use inplace::{apply_link_register, apply_tail_call};
 pub use jump_table::classify_jump_table;
 pub use stack_array::classify_stack_array;
-
-/// Re-export of the canonical [`ResolvedTargets`] enum, which now lives
-/// in `strider-lift` so the cfg builder's
-/// [`strider_lift::cfg::IndirectResolverFn`] callback can return it
-/// without forming a dep cycle.
-pub use strider_lift::cfg::ResolvedTargets;
 
 /// Per-anchor calling-convention snapshot consumed by the in-place
 /// editors ([`apply_link_register`] / [`apply_tail_call`]).  The

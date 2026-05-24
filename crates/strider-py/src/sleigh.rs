@@ -13,10 +13,10 @@ use crate::reader::{AnyMemReader, MemInput};
 
 /// A constructed Sleigh keyed off a (SleighArch, reader) pair.
 ///
-/// The inner `Sleigh<AnyMemReader>` is held in an `Option` so it can be
-/// moved out (into a `strider_lift::cfg::Builder`, for example) and put back later
-/// via `put_inner`.  While the inner is `None` the wrapper is "in use"
-/// by some downstream consumer; further moves fail with `LiftError`.
+/// The inner `Sleigh<AnyMemReader>` is held in an `Option` so it can
+/// be moved out (into a `strider_lift::cfg::Builder`, for example).
+/// While the inner is `None` the wrapper is "in use" by some
+/// downstream consumer; further moves fail with `LiftError`.
 #[pyclass(name = "Sleigh", module = "strider")]
 pub struct PySleigh {
     pub(crate) inner: Option<rsleigh::Sleigh<AnyMemReader>>,
@@ -38,13 +38,6 @@ impl PySleigh {
     /// Returns `None` if it is already in use.
     pub(crate) fn take_inner(&mut self) -> Option<rsleigh::Sleigh<AnyMemReader>> {
         self.inner.take()
-    }
-
-    /// Restore the inner Sleigh, typically the one harvested out of
-    /// `Cfg::sleigh` when a consumer hands it back.
-    #[allow(dead_code)]
-    pub(crate) fn put_inner(&mut self, sleigh: rsleigh::Sleigh<AnyMemReader>) {
-        self.inner = Some(sleigh);
     }
 
     /// Internal constructor (mirrors `#[new]`).  Lets the run-style
