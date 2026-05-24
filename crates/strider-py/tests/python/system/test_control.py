@@ -65,7 +65,7 @@ def test_nested_loops(arch_id, fixtures_dir):
 def test_early_return(arch_id, fixtures_dir):
     g = analyze(arch_id, "control", "early_return", fixtures_dir=fixtures_dir)
     assert count_loops(g) >= 1
-    # The Rust suite uses `count_return_paths` (ControlState fan-in at
+    # The Rust suite uses `count_return_paths` (Region fan-in at
     # each Return) so PPC's shared epilogue still counts both source
     # returns.  Python doesn't expose `node_inputs` directly, so we
     # accept either ≥2 Return nodes (typical) or a single Return whose

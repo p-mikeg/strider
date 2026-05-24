@@ -272,6 +272,12 @@ After Phase 2 completes, `Graph` is a structural arena only (nodes/inputs/output
 - Prerequisites audit (this branch's state): `reviews/rewrite-strdier-v16-prerequisites.md`
 - Lessons from simplification/ai1 attempt: this document (above)
 
+## Post-v16 follow-up: sunset the v3_baseline snapshot suite
+
+Decided 2026-05-25 after Phase 1 regeneration cost (417 .snap files updated for a pure rename): after `v16-final` is tagged, delete `crates/strider-analyze/tests/snapshots/v3__*.snap` + the `v3_baseline_snapshots` test. Per-arch integration tests (`arithmetic.rs`, `control.rs`, `cross_arch.rs`) + pattern matcher tests + the validator already cover the contract surface. The snapshot suite was useful during v1 → v3 rewrite drift detection; that phase is done.
+
+Separate commit after `v16-final` — don't fold into v16 itself. Keep v16 history focused on structural changes.
+
 ## Final merge
 
 After all 4 phases complete on `rewrite/ai` and `v16-final` is tagged, merge back into `rewrite/strdier`:

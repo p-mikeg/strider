@@ -200,7 +200,7 @@ def count_stores(g) -> int:
 
 
 def count_loops(g) -> int:
-    # Counts CFG loop headers (ControlStates with a back-edge predecessor).
+    # Counts CFG loop headers (Regions with a back-edge predecessor).
     # Robust to RedundantPhis collapsing loop-invariant tracked variables —
     # a real loop with no surviving VarPhi at its header still counts.
     return g.count_loop_headers()
