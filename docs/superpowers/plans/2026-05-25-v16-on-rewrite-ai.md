@@ -106,6 +106,15 @@ If there are failures: edit this plan to list them. Future phases' gate runs wil
 
 If clean: note "baseline 100% green" for the rest of the plan.
 
+**ESTABLISHED 2026-05-25 on commit `b48f2523`:**
+
+```
+PRE-EXISTING TOLERATED FAILURES on rewrite/ai baseline:
+  - control_c_sum_to_n_cross_arch_shape (1 test)
+```
+
+Build / clippy / doc all clean. 1700+ tests pass. Only the one cross-arch shape test fails — treat as pre-existing for every subsequent v16 commit's gate run.
+
 ---
 
 ## Phase 1 — Rename `ControlState` → `Region`
