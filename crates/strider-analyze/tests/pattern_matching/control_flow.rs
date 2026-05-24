@@ -184,9 +184,9 @@ fn ret_without_value_rejects_ret_val_constraint() {
 #[test]
 fn ret_preceded_by_call() {
     let g = shapes::call_at(0x1234);
-    // The Return's ctrl predecessor is a ControlState at the call region;
+    // The Return's ctrl predecessor is a Region at the call region;
     // a call() pattern matches the Call node whose ctrl output this state
-    // consumes.  `preceded_by(call())` follows the Ret ctrl → ControlState,
+    // consumes.  `preceded_by(call())` follows the Ret ctrl → Region,
     // so it will not match directly.  Instead: use `any()` as a smoke test
     // that `.preceded_by` doesn't error.
     a::matches(&g, ret().preceded_by(any()), 1);
@@ -230,7 +230,7 @@ fn if_node_cond_matches() {
 #[test]
 fn if_node_true_and_false_branches() {
     let g = shapes::if_cmp_then_return(4);
-    // Single consumer of the true-branch output is the `ControlState` at
+    // Single consumer of the true-branch output is the `Region` at
     // the true region — `any()` always matches a real node.
     a::matches(&g, if_node().true_branch(any()).false_branch(any()), 1);
 }
@@ -280,29 +280,29 @@ fn call_only_matches_present_branch_via_find_all() {
     a::none(&g, call().at(0xDEAD));
 }
 
-/// `if_node().false_branch(p)` traverses the `ControlState` join when
-/// the matcher's `ignore_control_states` flag is set.  Without the
+/// `if_node().false_branch(p)` traverses the `Region` join when
+/// the matcher's `ignore_regions` flag is set.  Without the
 /// walk-through, the strict matcher fails because the If's false-branch
-/// output feeds the ControlState header of the false region, not the
+/// output feeds the Region header of the false region, not the
 /// Call directly.
 #[test]
-fn if_node_branch_walks_through_control_state_when_flag_set() {
+fn if_node_branch_walks_through_region_when_flag_set() {
     let g = graph_if_with_call_in_false_branch();
     let pat: Pat = if_node().false_branch(call().at(0x9999)).into();
-    // Strict semantics: the False-branch consumer is a ControlState,
+    // Strict semantics: the False-branch consumer is a Region,
     // not the Call — direct match should fail.
     let strict = Matcher::try_new(&g).unwrap();
     assert!(
         strict.find_all(&pat).is_empty(),
-        "without ignore_control_states the strict if_node().false_branch(call) match must fail"
+        "without ignore_regions the strict if_node().false_branch(call) match must fail"
     );
-    // With ignore_control_states, the matcher walks through the
-    // ControlState region-join and finds the Call.
-    let lenient = Matcher::try_new(&g).unwrap().ignore_control_states();
+    // With ignore_regions, the matcher walks through the
+    // Region region-join and finds the Call.
+    let lenient = Matcher::try_new(&g).unwrap().ignore_regions();
     assert_eq!(
         lenient.find_all(&pat).len(),
         1,
-        "ignore_control_states must let if_node().false_branch(call) reach the Call"
+        "ignore_regions must let if_node().false_branch(call) reach the Call"
     );
 }
 

@@ -19,12 +19,12 @@ mod tests;
 ///   control directly without going through the `If`.
 /// * When the dead-branch subgraph is self-contained (no data outputs flow
 ///   to live consumers), the **dead** control output is removed from the
-///   successor `ControlState`'s input list, the corresponding position is
+///   successor `Region`'s input list, the corresponding position is
 ///   removed from every `VarPhi` of that region, and the If's own inputs
 ///   are detached so the outer fixed-point loop stops re-visiting it.
 /// * When the dead-branch subgraph escapes (e.g. a dead `Call`'s
 ///   `mem_out` flows into the join's `MemPhi`), the dead branch is left
-///   wired untouched.  Detaching the If or stripping its `ControlState`
+///   wired untouched.  Detaching the If or stripping its `Region`
 ///   predecessor would create zero-input zombies that the walker
 ///   re-reaches through backward-data from the live consumers, breaking
 ///   local-typing / graph-invariants rules.  `RedundantPhis` is responsible for
@@ -32,7 +32,7 @@ mod tests;
 ///   a later DBE pass then sees a non-escaping subgraph and finishes
 ///   the job.
 ///
-/// After this pass, dead `ControlState` nodes end up with zero control inputs
+/// After this pass, dead `Region` nodes end up with zero control inputs
 /// and `VarPhi` nodes with a single value input; `RedundantPhis` then
 /// cleans those up.
 fn try_eliminate_dead_branch(
@@ -79,7 +79,7 @@ fn try_eliminate_dead_branch(
     // the join's `MemPhi`), backward-data from those live consumers walks
     // back into the dead subgraph and reaches the now-zero-input If, which
     // makes the validator's local-typing check fire `expected: 2, actual: 0`
-    // (see `dead_branch_with_non_control_state_dead_consumer`).
+    // (see `dead_branch_with_non_region_dead_consumer`).
     //
     // To stay correct in both cases: forward-control walk the dead subgraph
     // starting from each non-CS dead consumer, then check whether any data
@@ -94,7 +94,7 @@ fn try_eliminate_dead_branch(
     // Idempotency:
     //   * `live_uses_count == 0` ⇒ live side already rewired.
     //   * Either there's no dead-side work to do (`dead_uses` empty or every
-    //     CS already stripped), or the dead subgraph escapes — in which
+    //     Region already stripped), or the dead subgraph escapes — in which
     //     case we deliberately won't strip / detach this iteration so
     //     re-visiting can't make further progress.
     if live_uses_count == 0
@@ -105,7 +105,7 @@ fn try_eliminate_dead_branch(
 
     // ── Replace live ctrl with ctrl_in (bypass the If) ──────────────────────
     // Absorb the If's asm-fingerprint into the surviving control producer
-    // (typically a ControlState — exempt from the non-empty check, but
+    // (typically a Region — exempt from the non-empty check, but
     // unioning the address there preserves the contributing-asm-instruction
     // history so consumers can recover it from the side-table later).
     let if_node = ctx.get_node_from_output(live_ctrl);
@@ -114,16 +114,16 @@ fn try_eliminate_dead_branch(
     ctx.replace_all_uses(live_ctrl, ctrl_in)?;
 
     // The dead-side cleanup is **all-or-nothing** based on whether the dead
-    // subgraph escapes.  When it doesn't escape we strip every CS predecessor
+    // subgraph escapes.  When it doesn't escape we strip every Region predecessor
     // slot and detach the If; the resulting zero-input zombies are
     // unreachable from the live walk, so the validator never sees them.
     //
     // When it *does* escape (the kernel-bug case: a dead `Call`'s `mem_out`
-    // flows into the join's `MemPhi`), we leave every dead `ControlState`'s
+    // flows into the join's `MemPhi`), we leave every dead `Region`'s
     // input alone and leave the If attached.  Stripping would create
-    // zero-input `ControlState`s that the walker still reaches through
+    // zero-input `Region`s that the walker still reaches through
     // backward-data from a live `MemPhi` → dead `Call` → dead phi token,
-    // tripping the graph-invariants `EmptyControlStatePredecessors` check.  Letting
+    // tripping the graph-invariants `EmptyRegionPredecessors` check.  Letting
     // `RedundantPhis` collapse the live join's phis on subsequent iterations
     // tears the live ↔ dead data edges apart; once they're gone a future
     // DBE iteration sees a non-escaping subgraph and finishes the job.
@@ -131,11 +131,11 @@ fn try_eliminate_dead_branch(
         for (cs_node, dead_idx) in &dead_uses {
             let cs_node = *cs_node;
             let dead_idx = *dead_idx;
-            if !matches!(*ctx.node_kind(cs_node), NodeKind::ControlState) {
+            if !matches!(*ctx.node_kind(cs_node), NodeKind::Region) {
                 continue;
             }
 
-            // ControlState outputs: [ctrl_out, phi_out].
+            // Region outputs: [ctrl_out, phi_out].
             let cs_outputs = ctx.node_outputs(cs_node);
             if cs_outputs.len() < 2 {
                 continue;
@@ -150,7 +150,7 @@ fn try_eliminate_dead_branch(
 
             // Remove the dead variable-value input from each VarPhi.
             // VarPhi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
-            // So the variable value for predecessor at ControlState index
+            // So the variable value for predecessor at Region index
             // `dead_idx` lives at VarPhi index `dead_idx + 1`.  Removals at
             // different consumers don't interact (each `remove_node_input`
             // only shifts its own later indices), and the
@@ -205,14 +205,14 @@ fn dead_uses_all_zero_input(
     dead_uses: &[(NodeId, u32)],
 ) -> bool {
     dead_uses.iter().all(|(n, _)| {
-        !matches!(*ctx.node_kind(*n), NodeKind::ControlState)
+        !matches!(*ctx.node_kind(*n), NodeKind::Region)
             || ctx.node_inputs(*n).is_empty()
     })
 }
 
-/// Forward-control walk from each non-`ControlState` dead consumer to
+/// Forward-control walk from each non-`Region` dead consumer to
 /// collect every node that lies in the dead subgraph downstream of the If.
-/// `ControlState`s mark merge points and are *not* recursed through — they
+/// `Region`s mark merge points and are *not* recursed through — they
 /// are part of the "boundary" where dead and live control flow can rejoin.
 fn collect_dead_subgraph(
     ctx: crate::pattern::RewriteCtxView<'_>,
@@ -221,7 +221,7 @@ fn collect_dead_subgraph(
     let mut subgraph: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
     let mut worklist: Vec<NodeId> = dead_uses
         .iter()
-        .filter(|(n, _)| !matches!(*ctx.node_kind(*n), NodeKind::ControlState))
+        .filter(|(n, _)| !matches!(*ctx.node_kind(*n), NodeKind::Region))
         .map(|(n, _)| *n)
         .collect();
     while let Some(node) = worklist.pop() {
@@ -233,7 +233,7 @@ fn collect_dead_subgraph(
                 continue;
             }
             for (consumer, _) in ctx.output_uses(output) {
-                if matches!(*ctx.node_kind(consumer), NodeKind::ControlState) {
+                if matches!(*ctx.node_kind(consumer), NodeKind::Region) {
                     continue; // Boundary — don't walk past joins.
                 }
                 worklist.push(consumer);
@@ -267,7 +267,7 @@ fn dead_subgraph_has_live_data_consumer(
 /// Eliminates branches whose condition is a compile-time boolean constant.
 ///
 /// Works together with [`crate::opt::RedundantPhis`]: after dead-branch elimination
-/// the previously-live successor region may have a single-input `ControlState`
+/// the previously-live successor region may have a single-input `Region`
 /// and `VarPhi` nodes, which `RedundantPhis` can then collapse.
 #[derive(Clone)]
 pub struct DeadBranchElimination;

@@ -13,7 +13,7 @@
 //! Variadic arity is modelled by [`SlotList::tail`]: a `None` tail means
 //! the slot list is fixed-arity (equal to `head.len()`), while `Some(tail)`
 //! means any index past the head repeats `tail`.  Variadic kinds include
-//! [`NodeKind::ControlState`], [`NodeKind::MemPhi`],
+//! [`NodeKind::Region`], [`NodeKind::MemPhi`],
 //! [`NodeKind::Phi`], [`NodeKind::Call`], [`NodeKind::CallOther`],
 //! [`NodeKind::Return`], [`NodeKind::CPoolRef`], and [`NodeKind::New`].
 
@@ -304,8 +304,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         | NodeKind::IntConstWide(_) => sig!(inputs: [], outputs: [INT_VAL]),
 
         // ── Region / join nodes (variadic inputs) ───────────────────────────
-        // ControlState: one Control input per predecessor (variadic).
-        NodeKind::ControlState => sig!(inputs: []; in_tail: CTRL, outputs: [CTRL, PHI]),
+        // Region: one Control input per predecessor (variadic).
+        NodeKind::Region => sig!(inputs: []; in_tail: CTRL, outputs: [CTRL, PHI]),
         // MemPhi: [phi_token, ...per-predecessor Memory tokens].
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
         // Phi: SSA φ.  The optional source-level varnode tag lives in
@@ -569,8 +569,8 @@ mod tests {
     }
 
     #[test]
-    fn expected_signature_control_state() {
-        let (inputs, outputs) = kinds(&NodeKind::ControlState);
+    fn expected_signature_region() {
+        let (inputs, outputs) = kinds(&NodeKind::Region);
         assert_eq!(inputs, vec![]);
         assert_eq!(
             outputs,
@@ -686,7 +686,7 @@ mod tests {
                 source: FunctionArgSource::Register(vn),
                 index: 0,
             },
-            NodeKind::ControlState,
+            NodeKind::Region,
             NodeKind::MemPhi,
             NodeKind::Phi,
             NodeKind::If,
@@ -753,7 +753,7 @@ mod tests {
     fn variadic_tail_kinds_match_intent() {
         use ExpectedOutputKind as K;
         let cases: &[(NodeKind, K)] = &[
-            (NodeKind::ControlState, K::Control),
+            (NodeKind::Region, K::Control),
             (NodeKind::MemPhi, K::Memory),
             (NodeKind::Phi, K::AnyValue),
             (NodeKind::Call, K::AnyValue),

@@ -148,7 +148,7 @@ pub trait IntoPat: Into<Pat> + Sized {
     ///
     /// **Zero-value-output kinds.**  `f` receives the matched root's
     /// single value output.  Roots that produce zero value outputs
-    /// (control-flow nodes — `If`, `Return`, `ControlState`, …) cannot
+    /// (control-flow nodes — `If`, `Return`, `Region`, …) cannot
     /// satisfy this signature; the guard silently fails (no match) on
     /// such roots.  Use [`Pat::when_match`] (which receives the full
     /// bindings instead) when guarding control-flow patterns.

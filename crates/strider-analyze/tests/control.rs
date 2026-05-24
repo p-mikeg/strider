@@ -18,11 +18,11 @@ per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);
 // resolver's `LinkRegister` arm once `StackLoadForward` simplifies the
 // loaded target back to `InitialVar(lr)`.
 per_arch_test!("control", "nested_loops", nested_loops_has_two_loops);
-// early_return uses count_return_paths (sum of ControlState fan-in at
+// early_return uses count_return_paths (sum of Region fan-in at
 // each Return) instead of bare Return-node count.  PPC + aarch64be
 // share the function epilogue at `-O0` (one `blr`/`ret` for all
 // source-level returns) so they have a single Return fed by a 2-input
-// ControlState — `count_return_paths` reports 2 there, matching the 2
+// Region — `count_return_paths` reports 2 there, matching the 2
 // separate Return nodes on x86/MIPS/ARM.
 per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns);
 

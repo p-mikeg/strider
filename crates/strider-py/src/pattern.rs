@@ -704,7 +704,7 @@ pub struct PhiPatDef {
 
     /// Constrain the value arriving from predecessor slot `idx`
     /// (0-based; the builder shifts onto raw input slot `idx + 1` to
-    /// skip the phi-token edge from the owning `ControlState`).
+    /// skip the phi-token edge from the owning `Region`).
     #[field(multi, accepts = "Pat", arg = "idx")]
     input: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
 }
@@ -1486,7 +1486,7 @@ pub fn call_other() -> PyCallOtherPat {
 
 /// Typed builder for `Return` node patterns.  Chain `.preceded_by(p)`
 /// to match Returns whose direct ctrl predecessor is `p` (typically a
-/// `ControlState` after a Call), and `.ret_val(idx, p)` to constrain
+/// `Region` after a Call), and `.ret_val(idx, p)` to constrain
 /// the value returned at ABI position `idx`.
 #[strider_pattern(
     rust_name = "PyRetPat",
@@ -1497,7 +1497,7 @@ pub fn call_other() -> PyCallOtherPat {
 )]
 pub struct RetPatDef {
     /// Match `p` against the Return's direct ctrl predecessor (the
-    /// node producing input slot 0 — typically a `ControlState` at a
+    /// node producing input slot 0 — typically a `Region` at a
     /// region header).  Single-step match, not a backward walk.
     #[field(accepts = "Pat", arg = "p")]
     preceded_by: Option<strider_analyze::pattern::Pat>,

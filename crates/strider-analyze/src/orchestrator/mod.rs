@@ -777,18 +777,18 @@ fn apply_in_place_edit(
 ///
 /// Walks two levels to handle both shapes the splicer can produce:
 ///   * `Call -> Return` (direct): one walk hop.
-///   * `Call -> ControlState -> Return` (region-join): two walk hops.
+///   * `Call -> Region -> Return` (region-join): two walk hops.
 fn locate_spliced_call(graph: &strider_ir::Graph, ret: NodeId) -> Option<NodeId> {
     let ctrl_in = graph.nth_input(ret, 0)?;
     let (producer, _slot) = graph.output_definition(ctrl_in);
     if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
         return Some(producer);
     }
-    // ControlState bridge: walk the ControlState's first control input
+    // Region bridge: walk the Region's first control input
     // and check if THAT producer is a Call.  Mirrors the splice shape
     // when `apply_tail_call`'s freshly-spliced Call feeds an existing
-    // ControlState that the new Return then consumes.
-    if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::ControlState) {
+    // Region that the new Return then consumes.
+    if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Region) {
         for cs_in in graph.node_inputs(producer) {
             let (cs_producer, _) = graph.output_definition(cs_in);
             if matches!(graph.node_kind(cs_producer), strider_ir::node::NodeKind::Call) {
@@ -1128,7 +1128,7 @@ fn edge_set_of(
 /// 1. Walk backward from the exit's producer via
 ///    [`strider_ir::walk::region_membership_from_exit`] to collect the
 ///    region's visualisation membership (control spine, halted at
-///    `ControlState` join nodes, then the data-ancestor closure).
+///    `Region` join nodes, then the data-ancestor closure).
 /// 2. Build a `strider_ir::graph_dot::GraphDotDumper` limited to that
 ///    membership.
 /// 3. Write `region_<idx>_<addr>.html` into `out_dir`, where `<idx>` is

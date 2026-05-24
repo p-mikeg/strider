@@ -113,12 +113,12 @@ fn mem_phi_single_pred_eliminated() -> crate::opt::Result<()> {
     Ok(())
 }
 
-/// Two-region function (entry → body → return). The body's ControlState has
+/// Two-region function (entry → body → return). The body's Region has
 /// one reachable predecessor; RedundantPhis must report `Changed` and either
-/// detach the body CS or bypass its ctrl edge so the Return reads from the
+/// detach the body Region or bypass its ctrl edge so the Return reads from the
 /// entry's ctrl output directly.
 #[test]
-fn control_state_single_pred_collapses() -> crate::opt::Result<()> {
+fn region_single_pred_collapses() -> crate::opt::Result<()> {
     let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let body = b.create_region()?;
@@ -133,7 +133,7 @@ fn control_state_single_pred_collapses() -> crate::opt::Result<()> {
     let entry = fg.entry().unwrap();
     assert!(
         RedundantPhis.optimize(fg.graph_mut(), entry)?.changed(),
-        "single-pred CS must be simplified"
+        "single-pred Region must be simplified"
     );
     Ok(())
 }
@@ -234,7 +234,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
 
 /// Transient mid-opt arity violation: a peer pass running in the same
 /// fixed-point loop can momentarily leave a `Phi` whose value-input
-/// arity does not match its owning `ControlState`'s ctrl-edge count.
+/// arity does not match its owning `Region`'s ctrl-edge count.
 /// `RedundantPhis` must surface this as a typed error (`Err`) rather than
 /// panicking on slice indexing — the fixed-point loop will rerun and
 /// the next iteration sees the repaired arity.
@@ -266,14 +266,14 @@ fn transient_arity_mismatch_surfaces_as_error_not_panic() -> crate::opt::Result<
     let phi_token = fg.node_inputs(phi_node)[0];
     let cs_node = fg.output_definition(phi_token).0;
 
-    // Surgery: append a new ctrl input to the CS WITHOUT appending the
+    // Surgery: append a new ctrl input to the Region WITHOUT appending the
     // matching value to the VarPhi.  This simulates a peer pass that
     // attached a new predecessor's ctrl edge but had not yet wired
     // value/MemPhi inputs.
     let cs_ctrl_out = fg.node_outputs(cs_node)[0];
     fg.add_node_input(cs_node, cs_ctrl_out)?;
 
-    // Sanity: the CS now has 2 ctrl inputs, but the phi only has token + 1
+    // Sanity: the Region now has 2 ctrl inputs, but the phi only has token + 1
     // value (2 inputs total), so accessing `inputs[2]` would panic.
     assert_eq!(
         fg.node_inputs(cs_node).len(),
@@ -344,12 +344,12 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     let cs_node = fg.output_definition(phi_token).0;
 
     // Surgery: append a second, *distinct* control predecessor to the
-    // join CS — the join's own ctrl_out, modelling a direct self-loop
+    // join Region — the join's own ctrl_out, modelling a direct self-loop
     // back-edge (the simplest loop shape that gets us two distinct
     // reachable predecessors so the existing
     // "all-data-inputs-identical" rule cannot fire by collapsing the
     // ctrl-set first).  Then append a matching second value to *every*
-    // phi owned by that CS — the VarPhi gets its own output (the
+    // phi owned by that Region — the VarPhi gets its own output (the
     // loop-back self-ref the test exercises), and any MemPhi gets
     // *its* own output (so the graph keeps the per-predecessor arity
     // invariant `remove_phis` relies on).

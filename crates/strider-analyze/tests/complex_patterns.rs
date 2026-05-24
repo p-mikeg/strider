@@ -4,7 +4,7 @@
 //!
 //! Conventions:
 //!   * Every `Matcher` instance opts into `ignore_casts_mask(EXTEND |
-//!     TRUNCATE)` and `ignore_control_states()` so tests don't break on
+//!     TRUNCATE)` and `ignore_regions()` so tests don't break on
 //!     arch-specific width-cast / region-join noise.
 //!   * Bit-mask values are captured (never hardcoded) via a `Capture` and
 //!     a `.when_match()` predicate that checks `count_ones() == 1`.
@@ -49,7 +49,7 @@ use strider_ir::node::{NodeId, NodeKind};
 ///   `CastToBool` (back at the branch consumer).  Without walking
 ///   through these, structural patterns like
 ///   `if_node().cond(int_cmp(...))` never match across arches.
-/// * `ControlState` region-join nodes.
+/// * `Region` region-join nodes.
 fn matcher(g: &strider_ir::Graph) -> Matcher<'_> {
     Matcher::try_new(g).unwrap()
         .ignore_casts_mask(
@@ -58,7 +58,7 @@ fn matcher(g: &strider_ir::Graph) -> Matcher<'_> {
                 | CastMask::CAST_TO_BOOL
                 | CastMask::CAST_TO_INT,
         )
-        .ignore_control_states()
+        .ignore_regions()
 }
 
 /// Pattern that matches `IntConst` whose value is a single-bit mask
@@ -514,7 +514,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Graph) {
             "call_uses_call_return must have ≥2 Calls; got {}", count_calls(g));
 
     // For each Call, walk every input slot back through any chain of
-    // {Store, StackStore, Load, StackLoad, ControlState, ValuePhi}.
+    // {Store, StackStore, Load, StackLoad, Region, ValuePhi}.
     // If we hit another Call, the test passes — that's proof of
     // Call→Call dataflow.
     let calls: Vec<NodeId> = g.preorder()
@@ -554,7 +554,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Graph) {
                         let Some(&data) = inps.get(2) else { break; };
                         producer = g.get_node_from_output(data);
                     }
-                    NodeKind::ControlState => {
+                    NodeKind::Region => {
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };

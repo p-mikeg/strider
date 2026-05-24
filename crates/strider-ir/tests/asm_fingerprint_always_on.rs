@@ -43,10 +43,10 @@ fn default_validate_flags_missing_asm_fingerprint() {
     );
     let add_out = g.node_outputs(add).iter().copied().next().unwrap();
 
-    // Wire reachability: Entry → ControlState → Return(Add).
+    // Wire reachability: Entry → Region → Return(Add).
     let entry_out = g.node_outputs(entry).iter().copied().next().unwrap();
     let cs = g.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );

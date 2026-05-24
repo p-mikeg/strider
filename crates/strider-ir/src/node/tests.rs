@@ -164,7 +164,7 @@ fn non_cacheable_kinds_are_not_cacheable() {
         NodeKind::Entry,
         NodeKind::InitialMemory,
         NodeKind::Return,
-        NodeKind::ControlState,
+        NodeKind::Region,
         NodeKind::MemPhi,
         NodeKind::Phi,
         NodeKind::Call,
@@ -376,7 +376,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
             index: 0,
         },
         // Region
-        NodeKind::ControlState,
+        NodeKind::Region,
         // Phi
         NodeKind::MemPhi,
         NodeKind::Phi,
@@ -440,7 +440,7 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
             | NodeKind::FunctionArg { .. }
             | NodeKind::Return
             | NodeKind::IndirectBranch
-            | NodeKind::ControlState
+            | NodeKind::Region
             | NodeKind::MemPhi
             | NodeKind::Phi
             | NodeKind::Call
@@ -459,7 +459,7 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
             | NodeKind::InitialMemory
             | NodeKind::InitialVar(_)
             | NodeKind::FunctionArg { .. }
-            | NodeKind::ControlState
+            | NodeKind::Region
             | NodeKind::MemPhi
             | NodeKind::Phi
             | NodeKind::StackStorePhi { .. }

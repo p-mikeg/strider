@@ -31,7 +31,7 @@ pub enum FunctionArgSource {
 /// about which structural bucket the new variant lives in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeCategory {
-    /// Region header (`ControlState`).  Inputs grow dynamically as
+    /// Region header (`Region`).  Inputs grow dynamically as
     /// CFG predecessors are wired in, so identity must be preserved.
     Region,
     /// Initial-state nodes synthesised at function entry: `Entry`,
@@ -90,13 +90,13 @@ pub enum NodeKind {
     // ── Region / join nodes ────────────────────────────────────────────────────
     /// Region header.  Consumes incoming control edges (one per predecessor)
     /// and produces a fresh `Control` output plus a `PhiToken`.
-    ControlState,
+    Region,
     /// Memory phi: selects the live memory token at a join point.
     MemPhi,
     /// SSA φ at a join point.  Inputs: `[phi_token, val_0, val_1, …]`
     /// where `phi_token` is the `PhiToken` output of the joining
-    /// `ControlState` and the rest are one value per CFG predecessor
-    /// in the same order as the `ControlState`'s `Control` inputs.
+    /// `Region` and the rest are one value per CFG predecessor
+    /// in the same order as the `Region`'s `Control` inputs.
     /// Output: `[value]`.
     ///
     /// Some phis carry a source-level varnode tag (lifter-emitted SSA
@@ -305,7 +305,7 @@ impl NodeKind {
             | Self::InitialMemory
             | Self::InitialVar(..)
             | Self::FunctionArg { .. }
-            | Self::ControlState
+            | Self::Region
             | Self::MemPhi
             | Self::Phi
             | Self::If
@@ -356,7 +356,7 @@ impl NodeKind {
     pub fn category(&self) -> NodeCategory {
         match self {
             // Region header.
-            Self::ControlState => NodeCategory::Region,
+            Self::Region => NodeCategory::Region,
 
             // Initial state at function entry.
             Self::Entry
@@ -416,7 +416,7 @@ impl NodeKind {
     /// cache.
     ///
     /// Nodes whose inputs are added incrementally after construction (e.g.
-    /// `ControlState`, `Phi`) or that must always produce a fresh node
+    /// `Region`, `Phi`) or that must always produce a fresh node
     /// (e.g. `Return`) are not cacheable.  Derived from [`Self::category`]:
     /// only [`NodeCategory::PureValue`] nodes are cacheable.
     #[inline]
@@ -453,7 +453,7 @@ impl NodeKind {
             Self::InitialMemory => "InitialMemory",
             Self::InitialVar(_) => "InitialVar",
             Self::FunctionArg { .. } => "FunctionArg",
-            Self::ControlState => "ControlState",
+            Self::Region => "Region",
             Self::MemPhi => "MemPhi",
             Self::Phi => "Phi",
             Self::If => "If",

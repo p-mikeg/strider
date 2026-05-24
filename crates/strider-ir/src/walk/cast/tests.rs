@@ -173,7 +173,7 @@ fn cast_mask_of_non_cast_kinds_is_empty() {
         NodeKind::IntConst(0),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::FloatToFloat,
-        NodeKind::ControlState,
+        NodeKind::Region,
     ];
     for k in non_casts {
         assert_eq!(
@@ -223,7 +223,7 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
         NodeKind::FloatToInt,
         NodeKind::IntToFloat,
         NodeKind::Return,
-        NodeKind::ControlState,
+        NodeKind::Region,
         NodeKind::MemPhi,
         NodeKind::If,
         NodeKind::Call,

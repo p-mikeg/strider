@@ -519,7 +519,7 @@ mod tests {
         let visited = step.visited.borrow().clone();
         // At least DEPTH Stores + 1 InitialMemory.  The builder may
         // emit additional memory-edge wiring (e.g. a region join
-        // ControlState-mem path), so we don't pin the exact count.
+        // Region-mem path), so we don't pin the exact count.
         assert!(
             visited.len() > DEPTH,
             "every chain node visited at least once, got {}",
@@ -535,18 +535,18 @@ mod tests {
         fg: &mut strider_ir::Graph,
         n_arms: usize,
     ) -> NodeOutputId {
-        // Find InitialMemory and ControlState; use them to build a MemPhi.
+        // Find InitialMemory and Region; use them to build a MemPhi.
         let im_node = fg
             .preorder()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
             .expect("InitialMemory must exist");
         let cs_node = fg
             .preorder()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
-            .expect("ControlState must exist");
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+            .expect("Region must exist");
         let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
         let phi_token = {
-            // ControlState's outputs are [Control, PhiToken].
+            // Region's outputs are [Control, PhiToken].
             let outs = fg.node_outputs(cs_node);
             outs[1]
         };
@@ -569,9 +569,9 @@ mod tests {
         // Build the IM-only function and graft a 3-arm MemPhi all routing
         // to InitialMemory.  All arms verdict false → combine_phi → false.
         // The MemPhi must be reachable from `entry` so `make_empty_fn`
-        // produces a ControlState we can borrow the phi-token from.
+        // produces a Region we can borrow the phi-token from.
         // To ensure that, build an Add-chain function with a single Store
-        // so a ControlState exists in the graph.
+        // so a Region exists in the graph.
         let mut fg = make_empty_fn(|b| {
             let addr = b.build_int_const(0x100u64, NodeOutputType::U64)?;
             let v = b.build_int_const(0x42u64, NodeOutputType::U64)?;
@@ -606,7 +606,7 @@ mod tests {
             b.build_int_const(7u64, NodeOutputType::U64)
         })
         .unwrap();
-        // Locate IM, Store, CS, then build a MemPhi[token, im_out, store_mem_out].
+        // Locate IM, Store, Region, then build a MemPhi[token, im_out, store_mem_out].
         let im_node = fg
             .preorder()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
@@ -617,7 +617,7 @@ mod tests {
             .unwrap();
         let cs_node = fg
             .preorder()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
             .unwrap();
         let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
         let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];

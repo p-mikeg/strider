@@ -8,7 +8,7 @@
 //!     consistency between inputs and the outputs' use-lists
 //!     (reachability-scoped on the source side).
 //!   - **Graph invariants** (`graph_invariants`): whole-graph rules —
-//!     Entry/InitialMemory uniqueness, ControlState predecessor kinds,
+//!     Entry/InitialMemory uniqueness, Region predecessor kinds,
 //!     phi-token ownership, phi per-predecessor arity, FunctionArg
 //!     uniqueness, wide-const consistency, and non-empty asm-fingerprints
 //!     on every reachable non-exempt node.
@@ -29,7 +29,7 @@ mod use_list_consistency;
 mod tests;
 
 use graph_invariants::{
-    check_graph_invariants_asm_fingerprints, check_graph_invariants_control_state,
+    check_graph_invariants_asm_fingerprints, check_graph_invariants_region,
     check_graph_invariants_function_arg_uniqueness, check_graph_invariants_phis,
     check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
 };
@@ -72,7 +72,7 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     check_use_list_consistency(graph, &reachable, &mut errs);
 
     check_graph_invariants_uniqueness(graph, &mut errs);
-    check_graph_invariants_control_state(graph, &reachable, &mut errs);
+    check_graph_invariants_region(graph, &reachable, &mut errs);
     check_graph_invariants_phis(graph, &reachable, &mut errs);
     check_graph_invariants_function_arg_uniqueness(graph, &reachable, &mut errs);
     check_graph_invariants_wide_consts(graph, &reachable, &mut errs);
@@ -179,36 +179,36 @@ pub enum ValidationError {
     MissingInitialMemoryNode,
 
     #[error(
-        "ControlState {control_state:?} input[{input_idx}] producer {producer:?} \
+        "Region {region:?} input[{input_idx}] producer {producer:?} \
          has kind {producer_kind:?}, expected Control"
     )]
-    ControlStateNonControlPredecessor {
-        control_state: NodeId,
+    RegionNonControlPredecessor {
+        region: NodeId,
         input_idx: usize,
         producer: NodeId,
         producer_kind: NodeOutputKind,
     },
 
-    #[error("ControlState {control_state:?} has zero predecessors")]
-    EmptyControlStatePredecessors { control_state: NodeId },
+    #[error("Region {region:?} has zero predecessors")]
+    EmptyRegionPredecessors { region: NodeId },
 
     #[error(
         "phi node {phi:?} input[0] token producer {producer:?} has kind \
-         {producer_kind:?}; expected PhiToken from a ControlState"
+         {producer_kind:?}; expected PhiToken from a Region"
     )]
-    PhiTokenNotFromControlState {
+    PhiTokenNotFromRegion {
         phi: NodeId,
         producer: NodeId,
         producer_kind: NodeOutputKind,
     },
 
     #[error(
-        "phi {phi:?} has {actual_values} value inputs but its ControlState \
-         owner {owner_control_state:?} has {expected_predecessors} predecessors"
+        "phi {phi:?} has {actual_values} value inputs but its Region \
+         owner {owner_region:?} has {expected_predecessors} predecessors"
     )]
     PhiValueArityMismatch {
         phi: NodeId,
-        owner_control_state: NodeId,
+        owner_region: NodeId,
         expected_predecessors: usize,
         actual_values: usize,
     },

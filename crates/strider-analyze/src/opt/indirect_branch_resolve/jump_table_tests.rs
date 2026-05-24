@@ -1006,10 +1006,10 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
     assert_eq!(bound, None);
 }
 
-// ── ControlState multi-predecessor join behaviour ────────────────────────
+// ── Region multi-predecessor join behaviour ────────────────────────
 //
 // `walk_control_for_if_bound` takes the **max** over every predecessor's
-// proved bound at a `ControlState` join.  If even one predecessor cannot
+// proved bound at a `Region` join.  If even one predecessor cannot
 // prove a bound, the join's combined bound is `None` (fail closed).  The
 // tests below pin both directions:
 //
@@ -1030,7 +1030,7 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
 //
 // where `path_a` is reached via `if (idx < bound_a)` (taken-true) and
 // `path_b` via `if (idx < bound_b)` (taken-true).  Both paths
-// `build_branch` to `dispatch`, giving `dispatch`'s `ControlState` two
+// `build_branch` to `dispatch`, giving `dispatch`'s `Region` two
 // control inputs.
 
 /// Build a diamond where both predecessors of the dispatch region prove

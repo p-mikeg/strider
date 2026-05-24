@@ -487,7 +487,7 @@ fn realize_with_depth(
 //
 // The indirect-branch classifier needs to enumerate per-i values without rewriting
 // the load (no IR primitive expresses "value depends on idx" without a
-// `ControlState` for ValuePhi to bind to).  This helper exposes the
+// `Region` for ValuePhi to bind to).  This helper exposes the
 // `StackStore`-chain walk as a pub function: given a memory chain root
 // and a concrete offset, return the `NodeOutputId` of the value stored
 // there (or `None` when the chain has no matching store, has an aliasing

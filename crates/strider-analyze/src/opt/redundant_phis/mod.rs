@@ -36,12 +36,12 @@ fn remove_phis(
         // Phi and MemPhi have identical input layouts after the builder
         // links phi_token as inputs[0] for both:
         //
-        //   inputs[0]   = PhiToken from the owning ControlState
+        //   inputs[0]   = PhiToken from the owning Region
         //   inputs[1..] = one value/memory per predecessor, same order as
-        //                 ControlState.inputs[0..]
+        //                 Region.inputs[0..]
         //
         // Reachability is determined positionally: predecessor j is live iff
-        // ControlState.inputs[j]'s producer is in the CFG-reachable set.
+        // Region.inputs[j]'s producer is in the CFG-reachable set.
         // We deduplicate by NodeOutputId so that two edges from the same
         // predecessor (unusual but valid) count as one.
         NodeKind::Phi | NodeKind::MemPhi => {
@@ -50,8 +50,8 @@ fn remove_phis(
                 return Ok(OptimizationResult::NoChange);
             }
             let phi_token = inputs[0];
-            let control_state_id = ctx.output_definition(phi_token).0;
-            let ctrl_inputs = ctx.node_inputs(control_state_id);
+            let region_id = ctx.output_definition(phi_token).0;
+            let ctrl_inputs = ctx.node_inputs(region_id);
             let phi_self_output = ctx.node_outputs_exact::<1>(node_id)?[0];
 
             // Single pass: gather both the deduplicated reachable ctrl edges
@@ -74,17 +74,17 @@ fn remove_phis(
                     // Defend against transient mid-opt arity mismatch: a
                     // peer pass running in the same fixed-point loop can
                     // momentarily leave a phi with fewer value inputs than
-                    // its owning ControlState has ctrl edges.  Surface as a
+                    // its owning Region has ctrl edges.  Surface as a
                     // typed error instead of panicking on slice indexing —
                     // the fixed-point loop will rerun and the next
                     // iteration sees the repaired arity.
                     let value = inputs.get(j + 1).copied().ok_or_else(|| {
                         anyhow::anyhow!(
                             "redundant_phis: phi {node_id:?} value-input arity \
-                             ({}) does not match owning ControlState ctrl-edge \
+                             ({}) does not match owning Region ctrl-edge \
                              count ({}); transient mid-opt invariant violation",
                             inputs.len().saturating_sub(1),
-                            ctx.node_inputs(control_state_id).len()
+                            ctx.node_inputs(region_id).len()
                         )
                     })?;
                     if value != phi_self_output {
@@ -103,7 +103,7 @@ fn remove_phis(
                 (Some(unique_ctrl), None) => {
                     // Find position j such that ctrl_inputs[j] == unique_ctrl, then
                     // take inputs[j + 1] (skipping the phi_token at inputs[0]).
-                    let ctrl_inputs2 = ctx.node_inputs(control_state_id);
+                    let ctrl_inputs2 = ctx.node_inputs(region_id);
                     let Some(j) = ctrl_inputs2.into_iter().position(|c| c == unique_ctrl)
                     else {
                         bail!("unique control edge not found in control-state inputs");
@@ -129,7 +129,7 @@ fn remove_phis(
                 _ => match (value_iter.next(), value_iter.next()) {
                     // Distinct live ctrl predecessors all feed the same data
                     // value: the phi is a no-op.  Replace uses with that single
-                    // value.  (The ControlState still has multiple real
+                    // value.  (The Region still has multiple real
                     // predecessors, so we don't touch it here.)
                     (Some(value), None) => {
                         let [output] = ctx.node_outputs_exact::<1>(node_id)?;
@@ -148,7 +148,7 @@ fn remove_phis(
                 Ok(try_detach_dead_inputs(ctx, node_id))
             }
         }
-        NodeKind::ControlState => {
+        NodeKind::Region => {
             let node_inputs = ctx.node_inputs(node_id);
             let reachable_inputs: DenseEntitySet<NodeOutputId> = node_inputs
                 .into_iter()
@@ -160,7 +160,7 @@ fn remove_phis(
                 (Some(input), None) => {
                     let [output, _phi_token] =
                         ctx.node_outputs_exact::<2>(node_id)?;
-                    // ControlState is exempt-empty by default; absorb its
+                    // Region is exempt-empty by default; absorb its
                     // fingerprint into the surviving control producer for
                     // the same reason as the phi-collapse path above.
                     let input_node = ctx.get_node_from_output(input);
@@ -170,7 +170,7 @@ fn remove_phis(
                 _ => false,
             };
 
-            // For ControlState we can only detach when BOTH outputs are unused.
+            // For Region we can only detach when BOTH outputs are unused.
             // try_detach_dead_inputs handles this check.
             if simplified {
                 Ok(try_detach_dead_inputs(ctx, node_id) | OptimizationResult::Changed)
@@ -182,7 +182,7 @@ fn remove_phis(
     }
 }
 
-/// Eliminates `Phi`, `MemPhi`, and `ControlState` nodes that have only
+/// Eliminates `Phi`, `MemPhi`, and `Region` nodes that have only
 /// one reachable predecessor, replacing them with that predecessor's value.
 /// Also detaches the inputs of any node that is not reachable from the entry.
 ///
@@ -207,7 +207,7 @@ impl Optimizer for RedundantPhis {
             .filter(|&n| {
                 matches!(
                     ctx.node_kind(n),
-                    NodeKind::Phi | NodeKind::MemPhi | NodeKind::ControlState
+                    NodeKind::Phi | NodeKind::MemPhi | NodeKind::Region
                 )
             })
             .collect();

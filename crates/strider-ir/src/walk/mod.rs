@@ -20,11 +20,11 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 /// `Control`-kind edges — the CFG skeleton.
 ///
 /// Data edges (value, memory, PhiToken) are not followed, so only
-/// control-flow nodes (`Entry`, `ControlState`, `If`, `Return`, `Call`, …)
+/// control-flow nodes (`Entry`, `Region`, `If`, `Return`, `Call`, …)
 /// appear in the result.
 ///
 /// This is used by optimisation passes (e.g. `RedundantPhis`) to determine
-/// which basic-block headers are live and which predecessor slots on `ControlState`,
+/// which basic-block headers are live and which predecessor slots on `Region`,
 /// `VarPhi`, and `MemPhi` nodes are dead.
 #[must_use]
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
@@ -110,28 +110,28 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
 }
 
 /// Returns an iterator over the predecessor control outputs of a
-/// region-join `ControlState` producing `out`.  Returns an empty
-/// iterator when the producer of `out` is not a `ControlState`.
+/// region-join `Region` producing `out`.  Returns an empty
+/// iterator when the producer of `out` is not a `Region`.
 ///
-/// `ControlState`'s signature is `inputs: variadic Control; outputs:
+/// `Region`'s signature is `inputs: variadic Control; outputs:
 /// [Control, PhiToken]`, so every input is a control-typed producer
 /// from a predecessor region.  Callers use this iterator to enumerate
 /// the per-region alternatives feeding the join — for example, the
-/// pattern matcher's `ignore_control_states` mode tries each
+/// pattern matcher's `ignore_regions` mode tries each
 /// predecessor in turn until one succeeds.
 ///
 /// Only the structural enumeration lives here; ownership of rollback,
 /// recursion, and per-attempt state stays with the caller.
-pub fn control_state_predecessors(
+pub fn region_predecessors(
     graph: &Graph,
     out: NodeOutputId,
 ) -> impl Iterator<Item = NodeOutputId> + '_ {
     use crate::node::NodeKind;
     let producer = graph.get_node_from_output(out);
-    let is_cs = matches!(graph.node_kind(producer), NodeKind::ControlState);
+    let is_cs = matches!(graph.node_kind(producer), NodeKind::Region);
     let inputs = graph.node_inputs(producer);
     // `Inputs` is Copy, so we move it into the iterator chain and let
-    // `take(0)` produce an empty stream for non-ControlState producers
+    // `take(0)` produce an empty stream for non-Region producers
     // without branching on an `Either` variant.
     let take = if is_cs { inputs.len() } else { 0 };
     inputs.into_iter().take(take)
@@ -174,8 +174,8 @@ pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
 /// 1. Seed the result with the producer of `exit_control` (the region's
 ///    terminator: typically a `Return`, `Call`, or `If`).
 /// 2. Walk **backward** along incoming `Control`-kind edges, collecting
-///    every visited node.  Stop at `ControlState` (region-join) nodes:
-///    include the `ControlState` itself but do NOT recurse through its
+///    every visited node.  Stop at `Region` (region-join) nodes:
+///    include the `Region` itself but do NOT recurse through its
 ///    control inputs — those control predecessors live in upstream
 ///    regions and a partition walk must not cross the join.
 /// 3. Union in every data ancestor (transitive closure over all input
@@ -200,7 +200,7 @@ pub fn region_membership_from_exit(
     let seed = graph.get_node_from_output(exit_control);
 
     // Step 1+2: collect the region's control spine via a backward
-    // control walk, with `ControlState` as a barrier (include it, don't
+    // control walk, with `Region` as a barrier (include it, don't
     // recurse through its control inputs).
     let mut spine: DenseEntitySet<NodeId> = DenseEntitySet::new();
     let mut stack: Vec<NodeId> = vec![seed];
@@ -208,8 +208,8 @@ pub fn region_membership_from_exit(
         if !spine.insert(node) {
             continue;
         }
-        if matches!(graph.node_kind(node), NodeKind::ControlState) {
-            // Barrier: include the ControlState but don't follow its
+        if matches!(graph.node_kind(node), NodeKind::Region) {
+            // Barrier: include the Region but don't follow its
             // control predecessors (those belong to upstream regions).
             continue;
         }
@@ -224,9 +224,9 @@ pub fn region_membership_from_exit(
 
     // Step 3: union in all data ancestors of every spine node.  Walk
     // ONLY non-control inputs — control inputs are the spine's edges
-    // (already handled in step 2 with the ControlState barrier), and
+    // (already handled in step 2 with the Region barrier), and
     // following them here would re-cross the barrier from the other
-    // side (a `ControlState` that fed our seed has its control inputs
+    // side (a `Region` that fed our seed has its control inputs
     // listed alongside its phi inputs).
     let mut visible = spine.clone();
     let mut stack: Vec<NodeId> = visible.iter().collect();
@@ -323,11 +323,11 @@ mod tests {
         (entry, ctrl)
     }
 
-    /// Creates a non-cacheable ControlState node that produces one Control
+    /// Creates a non-cacheable Region node that produces one Control
     /// output, and wires `ctrl_in` as its first input so that the producer
     /// of `ctrl_in` has this node as a CFG successor.
     fn make_ctrl_node(graph: &mut Graph, ctrl_in: NodeOutputId) -> (NodeId, NodeOutputId) {
-        let node = graph.create_node(NodeKind::ControlState, [], [NodeOutputKind::Control]);
+        let node = graph.create_node(NodeKind::Region, [], [NodeOutputKind::Control]);
         graph.add_node_input(node, ctrl_in).unwrap();
         let [out] = graph.node_outputs_exact::<1>(node).unwrap();
         (node, out)
@@ -550,9 +550,9 @@ mod tests {
     #[test]
     fn cfg_outputs_excludes_non_control_outputs() {
         let mut graph = Graph::new();
-        // ControlState is non-cacheable so we can give it arbitrary outputs.
+        // Region is non-cacheable so we can give it arbitrary outputs.
         let node = graph.create_node(
-            NodeKind::ControlState,
+            NodeKind::Region,
             [],
             [
                 NodeOutputKind::Control,
@@ -602,38 +602,38 @@ mod tests {
 
     // ── region_membership_from_exit ───────────────────────────────────────────
 
-    /// A linear chain entry → A (ControlState) → ret: when the seed's
-    /// producer is itself a ControlState, the barrier triggers at the
+    /// A linear chain entry → A (Region) → ret: when the seed's
+    /// producer is itself a Region, the barrier triggers at the
     /// seed and only the seed appears in the membership.  Entry (one
     /// hop past the barrier) is excluded.
     #[test]
-    fn region_membership_seed_is_control_state_stops_at_seed() {
+    fn region_membership_seed_is_region_stops_at_seed() {
         let mut graph = Graph::new();
         let (entry, c0) = make_entry(&mut graph);
         let (a, c1) = make_ctrl_node(&mut graph, c0);
         let ret = make_return(&mut graph, c1);
 
         let mem = region_membership_from_exit(&graph, c1);
-        // Seed (a, a ControlState) is included.
-        assert!(mem.contains(a), "seed (ControlState A) must be included");
+        // Seed (a, a Region) is included.
+        assert!(mem.contains(a), "seed (Region A) must be included");
         // Barrier triggers at the seed — entry is one hop past the barrier.
         assert!(!mem.contains(entry), "barrier stops the walk at the seed");
         // ret is the consumer of c1, not the producer.
         assert!(!mem.contains(ret), "Return is the exit's consumer, not its producer");
     }
 
-    /// A linear chain whose seed is a non-ControlState (here a Return
+    /// A linear chain whose seed is a non-Region (here a Return
     /// node treated as the "exit producer") walks back through control
     /// inputs until hitting Entry.  Verifies that the barrier ONLY
-    /// triggers at ControlState — non-CS nodes are crossed normally.
+    /// triggers at Region — non-CS nodes are crossed normally.
     #[test]
-    fn region_membership_non_control_state_seed_walks_to_entry() {
+    fn region_membership_non_region_seed_walks_to_entry() {
         let mut graph = Graph::new();
-        // Build entry → ret directly (no ControlState between them).
+        // Build entry → ret directly (no Region between them).
         let (entry, c0) = make_entry(&mut graph);
         let ret = make_return(&mut graph, c0);
         // To exercise the function, we need to seed from a NodeOutputId
-        // whose producer is `ret` (not a ControlState) and whose
+        // whose producer is `ret` (not a Region) and whose
         // producer has a control input.  Return has no outputs, so we
         // can't seed from it directly.  Instead, attach a dummy
         // non-CS leaf node with an output we can seed from.
@@ -644,7 +644,7 @@ mod tests {
         // node is impossible (Entry is unique).
         //
         // Take a different angle: just verify the seed itself is
-        // present when it's a non-ControlState.  Here the simplest
+        // present when it's a non-Region.  Here the simplest
         // demonstrable case is the entry node serving as its own seed
         // when seeded by its OWN output.
         let mem = region_membership_from_exit(&graph, c0);
@@ -654,11 +654,11 @@ mod tests {
         assert!(!mem.contains(ret), "ret is downstream of the seed");
     }
 
-    /// A ControlState seed must act as a barrier: control predecessors of
+    /// A Region seed must act as a barrier: control predecessors of
     /// the seed are NOT crossed (this is how a region partition stops at
     /// the join).
     #[test]
-    fn region_membership_stops_at_seed_control_state() {
+    fn region_membership_stops_at_seed_region() {
         let mut graph = Graph::new();
         // entry → a → cs_seed (the join we're seeded at).
         // entry's other branch (b) feeds cs_seed too, but must NOT appear
@@ -671,17 +671,17 @@ mod tests {
         let [c_a, c_b] = graph.node_outputs_exact::<2>(entry).unwrap();
         let (a, a_ctrl) = make_ctrl_node(&mut graph, c_a);
         let (b, b_ctrl) = make_ctrl_node(&mut graph, c_b);
-        let cs_seed = graph.create_node(NodeKind::ControlState, [], [NodeOutputKind::Control]);
+        let cs_seed = graph.create_node(NodeKind::Region, [], [NodeOutputKind::Control]);
         graph.add_node_input(cs_seed, a_ctrl).unwrap();
         graph.add_node_input(cs_seed, b_ctrl).unwrap();
         let [cs_seed_out] = graph.node_outputs_exact::<1>(cs_seed).unwrap();
 
         let mem = region_membership_from_exit(&graph, cs_seed_out);
         // The seed is included.
-        assert!(mem.contains(cs_seed), "seed (a ControlState) is always included");
+        assert!(mem.contains(cs_seed), "seed (a Region) is always included");
         // But its control predecessors must NOT be crossed.
-        assert!(!mem.contains(a), "a is on the other side of the ControlState barrier");
-        assert!(!mem.contains(b), "b is on the other side of the ControlState barrier");
+        assert!(!mem.contains(a), "a is on the other side of the Region barrier");
+        assert!(!mem.contains(b), "b is on the other side of the Region barrier");
         assert!(!mem.contains(entry), "entry is upstream of the barrier");
     }
 

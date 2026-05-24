@@ -328,7 +328,7 @@ pub fn bound_via_known_bits(
 ///
 ///   * No `If` on the path tests `idx_output`.
 ///   * The walk reaches the function entry (no more predecessors).
-///   * A multi-predecessor `ControlState` (a join point) is reached
+///   * A multi-predecessor `Region` (a join point) is reached
 ///     where any incoming path doesn't have the bound.  Joining
 ///     mixed-bound paths fails closed: the runtime path could be
 ///     either, so we can't soundly assume the bound holds.
@@ -393,7 +393,7 @@ fn find_anchor_consumer_placeholder(
 /// **Frame model:**
 /// * `Frame::Visit { control_out }` — cycle-check, classify producer,
 ///   either emit a result or schedule child visits.
-/// * `Frame::JoinNext { … }` — at a `ControlState`, after each
+/// * `Frame::JoinNext { … }` — at a `Region`, after each
 ///   predecessor's sub-walk completes, this frame pops its result,
 ///   rolls back the visited additions made by that pred, and either
 ///   schedules the next pred or finalises the join with the running
@@ -412,7 +412,7 @@ fn find_anchor_consumer_placeholder(
 /// impl) is a full implementation leak — the rollback IS the walker.
 /// Add to that the classifier-driven specific-predecessor selection
 /// (`If` picks `inputs[0]`, default picks slot-0 if control, multi-pred
-/// `ControlState` forks, etc.) and a hypothetical
+/// `Region` forks, etc.) and a hypothetical
 /// `BackwardCfgVerdict` would carry the entire current body verbatim.
 /// The mem-chain walker in `crate::opt::mem_walk` is the right
 /// abstraction for the pure-DAG / no-trail-rollback case; this walker
@@ -426,9 +426,9 @@ fn walk_control_for_if_bound_iter(
 ) -> Option<u64> {
     use strider_ir::walk::NodeIdSet;
 
-    /// JoinNext frame: the multi-predecessor `ControlState` is the only
+    /// JoinNext frame: the multi-predecessor `Region` is the only
     /// case that needs a continuation.  Linear chains (If's transparent
-    /// walk, generic transparent walk, single-pred `ControlState`) are
+    /// walk, generic transparent walk, single-pred `Region`) are
     /// handled by re-entering the inner loop with an updated
     /// `control_out`, so they cost zero heap allocation.
     struct JoinNext {
@@ -441,7 +441,7 @@ fn walk_control_for_if_bound_iter(
     let graph = ctx.graph_ref();
     let mut visited: NodeIdSet = NodeIdSet::new();
     let mut trail: Vec<NodeId> = Vec::new();
-    // CS continuations form a stack; preallocate to avoid the first
+    // Region continuations form a stack; preallocate to avoid the first
     // few growth-realloc round trips on graphs with several joins.
     let mut work: Vec<JoinNext> = Vec::with_capacity(8);
 
@@ -482,7 +482,7 @@ fn walk_control_for_if_bound_iter(
                     control_out = if_inputs[0];
                     continue;
                 }
-                NodeKind::ControlState => {
+                NodeKind::Region => {
                     let preds_iter = graph.node_inputs(producer);
                     let pred_count = preds_iter.len();
                     if pred_count == 0 {

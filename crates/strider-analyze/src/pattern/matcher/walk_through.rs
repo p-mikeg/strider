@@ -1,17 +1,17 @@
-//! `ControlState` walk-through helper for
-//! [`MatcherOptions::ignore_control_states`].
+//! `Region` walk-through helper for
+//! [`MatcherOptions::ignore_regions`].
 //!
 //! When the flag is set, the matcher's input-walking layer falls
 //! through this helper if a direct match fails: instead of giving up,
 //! it tries the inner pattern against each predecessor of the
-//! region-join `ControlState`.
+//! region-join `Region`.
 //!
 //! Direct match is always tried first — the fallback runs only after a
 //! direct attempt and bindings rollback, so strict patterns keep
 //! matching unchanged.
 //!
 //! The structural enumeration of predecessors lives in
-//! [`strider_ir::walk::control_state_predecessors`]; this helper owns
+//! [`strider_ir::walk::region_predecessors`]; this helper owns
 //! only the per-attempt bindings-rollback policy and the recursion back
 //! into the matcher.
 //!
@@ -22,36 +22,36 @@
 //! tail-loop than a recursive call.
 
 use strider_ir::node::NodeOutputId;
-use strider_ir::walk::control_state_predecessors;
+use strider_ir::walk::region_predecessors;
 
 use crate::pattern::matcher::Bindings;
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::traits::MatchCtx;
 
-/// Backward walk-through of a `ControlState` (region-join) node.  If
-/// `target`'s producer is a `ControlState`, try matching `pat` against
-/// each of the ControlState's control-typed inputs (one per
+/// Backward walk-through of a `Region` (region-join) node.  If
+/// `target`'s producer is a `Region`, try matching `pat` against
+/// each of the Region's control-typed inputs (one per
 /// predecessor region).  Returns true on first success.
 ///
 /// Iterates predecessors via the structural enumerator in
 /// `strider_ir::walk` and rolls back bindings between failed attempts
 /// via `b.mark()` / `b.restore()`.  Recurses via the walk-through entry
-/// point so chained ControlStates (region joins of region joins) also
+/// point so chained Regions (region joins of region joins) also
 /// resolve.
 ///
 /// Used to implement `ret(call(...))` against IR shapes where a region
-/// join (`Return ← ControlState ← Call`) sits between the Return and
+/// join (`Return ← Region ← Call`) sits between the Return and
 /// the Call — the strict matcher would fail because `Return.input[0]`
-/// is the ControlState, not the Call directly.
+/// is the Region, not the Call directly.
 #[must_use]
-pub(crate) fn try_walk_through_control_state(
+pub(crate) fn try_walk_through_region(
     ctx: &MatchCtx,
     target: NodeOutputId,
     pat: &Pat,
     b: &mut Bindings,
 ) -> bool {
     let mark = b.mark();
-    for input in control_state_predecessors(ctx.graph, target) {
+    for input in region_predecessors(ctx.graph, target) {
         if ctx.matcher.match_output_with_walk_through(input, pat, b) {
             return true;
         }
@@ -62,12 +62,12 @@ pub(crate) fn try_walk_through_control_state(
 
 #[cfg(test)]
 mod tests {
-    //! White-box tests for `try_walk_through_control_state` and the
-    //! `ignore_control_states` path it implements.
+    //! White-box tests for `try_walk_through_region` and the
+    //! `ignore_regions` path it implements.
     //!
     //! These tests construct realistic multi-region IRs and exercise
     //! the walk-through helper through the public `Matcher` API
-    //! (`Matcher::for_graph(...).ignore_control_states()`).  Direct
+    //! (`Matcher::for_graph(...).ignore_regions()`).  Direct
     //! invocation isn't useful here — the helper needs a `MatchCtx`
     //! anchored on a real `Matcher`, and the matcher's own
     //! `match_output_with_walk_through` is the only legitimate caller.
@@ -78,8 +78,8 @@ mod tests {
     use strider_ir::node::{NodeKind, NodeOutputType};
     use strider_ir_test_utils::RegisterSet;
 
-    /// Single-region function whose Return has no preceding ControlState
-    /// join — `try_walk_through_control_state` is called against a non-CS
+    /// Single-region function whose Return has no preceding Region
+    /// join — `try_walk_through_region` is called against a non-CS
     /// producer and must return false (the `take(0)` branch).
     #[test]
     fn no_controlstate_input_returns_false() {
@@ -89,23 +89,23 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build().unwrap();
 
-        // Without a ControlState between Return and the inner value,
+        // Without a Region between Return and the inner value,
         // `ret().preceded_by(call())` shouldn't match (no Call exists)
         // even with walk-through enabled.  Pins the "non-CS producer →
         // no fan-out" behaviour.
         let pat: Pat = ret().preceded_by(call()).into();
         let hits = Matcher::for_graph(fg.graph(), fg.entry().unwrap())
-            .ignore_control_states()
+            .ignore_regions()
             .find_all(&pat);
         assert!(hits.is_empty(), "no Call in graph: no match");
     }
 
-    /// Single-predecessor ControlState (a region join with one input).
+    /// Single-predecessor Region (a region join with one input).
     /// The walk-through tries the lone predecessor and that's it.
     #[test]
     fn single_predecessor_controlstate_walks_through() {
         // entry: Call → branch to tail.  tail: Return (single predecessor
-        // CS at tail).  ret().preceded_by(call()) must match through the
+        // Region at tail).  ret().preceded_by(call()) must match through the
         // walk-through.
         let mut b = RegisterSet::new().build_fn().unwrap();
         let head = b.create_region().unwrap();
@@ -122,12 +122,12 @@ mod tests {
 
         let pat: Pat = ret().preceded_by(call()).into();
         let hits = Matcher::for_graph(fg.graph(), fg.entry().unwrap())
-            .ignore_control_states()
+            .ignore_regions()
             .find_all(&pat);
-        assert_eq!(hits.len(), 1, "ret(call) through 1-pred CS must match");
+        assert_eq!(hits.len(), 1, "ret(call) through 1-pred Region must match");
     }
 
-    /// Two-predecessor ControlState where both predecessors are Calls.
+    /// Two-predecessor Region where both predecessors are Calls.
     /// The walk-through tries each predecessor — first success wins, so
     /// exactly one match is reported per Return.
     #[test]
@@ -164,7 +164,7 @@ mod tests {
 
         let pat: Pat = ret().preceded_by(call()).into();
         let hits = Matcher::for_graph(fg.graph(), fg.entry().unwrap())
-            .ignore_control_states()
+            .ignore_regions()
             .find_all(&pat);
         assert_eq!(
             hits.len(),
@@ -173,7 +173,7 @@ mod tests {
         );
     }
 
-    /// Two-predecessor ControlState where ONLY one arm has a Call —
+    /// Two-predecessor Region where ONLY one arm has a Call —
     /// the other arm just branches through.  The walk-through must
     /// keep trying after the first failure and find the second arm.
     /// Pins the rollback-between-failures contract.
@@ -209,16 +209,16 @@ mod tests {
 
         let pat: Pat = ret().preceded_by(call()).into();
         let hits = Matcher::for_graph(fg.graph(), fg.entry().unwrap())
-            .ignore_control_states()
+            .ignore_regions()
             .find_all(&pat);
         // One Return, but the walk-through must reach into the Call arm
         // (after failing on the branch-through arm) — exactly one match.
         assert_eq!(hits.len(), 1, "rollback then success on the other arm");
     }
 
-    /// Without `ignore_control_states`, the same multi-region graph
+    /// Without `ignore_regions`, the same multi-region graph
     /// fails to match `ret().preceded_by(call())` even when a Call is
-    /// reachable upstream through the CS — confirms the helper is only
+    /// reachable upstream through the Region — confirms the helper is only
     /// engaged when the flag is set.
     #[test]
     fn flag_off_disables_walk_through() {
@@ -237,13 +237,13 @@ mod tests {
         let fg = b.build().unwrap();
 
         let pat: Pat = ret().preceded_by(call()).into();
-        // No `.ignore_control_states()` — direct match through the CS
+        // No `.ignore_regions()` — direct match through the Region
         // fails, and the helper is gated off.
         let hits = Matcher::for_graph(fg.graph(), fg.entry().unwrap()).find_all(&pat);
         assert!(hits.is_empty(), "flag off: no walk-through");
     }
 
-    /// Chained ControlStates: head → mid (CS via branch) → tail (CS via
+    /// Chained Regions: head → mid (Region via branch) → tail (Region via
     /// branch).  The walk-through must recurse through nested joins.
     /// Confirms the recursive walk via `match_output_with_walk_through`
     /// reaches the upstream Call across multiple region joins.
@@ -268,18 +268,18 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build().unwrap();
 
-        // Sanity: at least two ControlState nodes are reachable (mid +
+        // Sanity: at least two Region nodes are reachable (mid +
         // tail) before we run the matcher.
         let cs_count = fg
             .preorder()
-            .filter(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
+            .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
             .count();
-        assert!(cs_count >= 2, "chain produces >=2 ControlState nodes (got {cs_count})");
+        assert!(cs_count >= 2, "chain produces >=2 Region nodes (got {cs_count})");
 
         let pat: Pat = ret().preceded_by(call()).into();
         let hits = Matcher::for_graph(fg.graph(), fg.entry().unwrap())
-            .ignore_control_states()
+            .ignore_regions()
             .find_all(&pat);
-        assert_eq!(hits.len(), 1, "chained CS walk-through must reach Call");
+        assert_eq!(hits.len(), 1, "chained Region walk-through must reach Call");
     }
 }

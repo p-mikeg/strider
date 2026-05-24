@@ -310,7 +310,7 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
-    // CS = bare CY = `BoolNeg(IntLess(a, b))`.  Already in `(a, b)` form;
+    // Region = bare CY = `BoolNeg(IntLess(a, b))`.  Already in `(a, b)` form;
     // `IfCondInversion` (a separate pass) handles the outer BoolNeg.
     let (mut fg, if_node, _a, _b) =
         build_if_with_flag_cond(|_fb, _zr, _ng, cy, _ov| Ok(cy))?;

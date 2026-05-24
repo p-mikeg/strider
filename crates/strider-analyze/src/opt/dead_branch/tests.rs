@@ -6,11 +6,11 @@ use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use crate::opt::pipeline::Optimizer;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
-// Helper: count ControlState nodes with N ctrl inputs.
+// Helper: count Region nodes with N ctrl inputs.
 fn count_cs_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
     fg.all_node_ids()
         .filter(|&node| {
-            matches!(fg.node_kind(node), NodeKind::ControlState)
+            matches!(fg.node_kind(node), NodeKind::Region)
                 && fg.node_inputs(node).len() == n
         })
         .count()
@@ -47,7 +47,7 @@ fn make_if_fn(cond_val: bool) -> Result<strider_ir::Graph> {
 fn dead_branch_false() -> Result<()> {
     let mut fg = make_if_fn(false)?;
 
-    // Before: three ControlState nodes with 1 ctrl input each
+    // Before: three Region nodes with 1 ctrl input each
     // (entry, true-branch, false-branch).
     assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
 
@@ -55,17 +55,17 @@ fn dead_branch_false() -> Result<()> {
     let result = DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
     assert!(result.changed());
 
-    // After: true region's CS loses its input (dead branch removed).
-    // Entry CS and false region's CS each still have 1 input.
+    // After: true region's Region loses its input (dead branch removed).
+    // Entry Region and false region's Region each still have 1 input.
     assert_eq!(
         count_cs_with_n_inputs(&fg, 0),
         1,
-        "dead branch CS should have 0 inputs"
+        "dead branch Region should have 0 inputs"
     );
     assert_eq!(
         count_cs_with_n_inputs(&fg, 1),
         2,
-        "entry and live branch CS should have 1 input"
+        "entry and live branch Region should have 1 input"
     );
     Ok(())
 }
@@ -83,12 +83,12 @@ fn dead_branch_true() -> Result<()> {
     assert_eq!(
         count_cs_with_n_inputs(&fg, 0),
         1,
-        "dead (false) branch CS should have 0 inputs"
+        "dead (false) branch Region should have 0 inputs"
     );
     assert_eq!(
         count_cs_with_n_inputs(&fg, 1),
         2,
-        "entry and live (true) branch CS should have 1 input"
+        "entry and live (true) branch Region should have 1 input"
     );
     Ok(())
 }
@@ -172,12 +172,12 @@ fn nested_if_true_eliminated() -> Result<()> {
 }
 
 /// Edge case: if the dead_ctrl output of an `If` is wired into the SAME
-/// `ControlState` at *multiple* input slots, the previous code processed
+/// `Region` at *multiple* input slots, the previous code processed
 /// `output_uses(dead_ctrl)` in arbitrary order and removed by the index
 /// captured before mutation. After the first removal, indices shifted left,
 /// so the second `remove_node_input` either:
 ///  - hit the `dead_idx < cs_len` guard and silently skipped (leaving a stale
-///    dead reference in the ControlState), or
+///    dead reference in the Region), or
 ///  - was still in-bounds but pointed at the wrong (now live) predecessor and
 ///    removed it instead.
 ///
@@ -186,7 +186,7 @@ fn nested_if_true_eliminated() -> Result<()> {
 /// pointing at their original slots. Different consumers don't interact.
 ///
 /// Construction: build the standard `if(true)` skeleton, then wire `ctrl_false`
-/// (the dead output) into the false-branch ControlState a second time via
+/// (the dead output) into the false-branch Region a second time via
 /// `Graph::add_node_input`. `FunctionBuilder::build()` finishes before this
 /// surgery, so its validator never sees the duplicate; we call
 /// `DeadBranchElimination::optimize` directly (not the pipeline) for the same
@@ -204,7 +204,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     assert_eq!(if_outputs.len(), 2, "If must have 2 control outputs");
     let ctrl_false = if_outputs[1];
 
-    // Find the false-branch ControlState (the unique consumer of ctrl_false).
+    // Find the false-branch Region (the unique consumer of ctrl_false).
     let consumers: Vec<_> = fg.output_uses(ctrl_false).collect();
     assert_eq!(
         consumers.len(),
@@ -212,9 +212,9 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
         "ctrl_false should have exactly one consumer in the standard make_if_fn shape"
     );
     let false_cs = consumers[0].0;
-    assert!(matches!(fg.node_kind(false_cs), NodeKind::ControlState));
+    assert!(matches!(fg.node_kind(false_cs), NodeKind::Region));
 
-    // Wire ctrl_false into the same CS a second time, producing the bad shape.
+    // Wire ctrl_false into the same Region a second time, producing the bad shape.
     fg.add_node_input(false_cs, ctrl_false)?;
     let pre_inputs: Vec<_> = fg.node_inputs(false_cs).into_iter().collect();
     assert_eq!(pre_inputs.len(), 2);
@@ -245,8 +245,8 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 }
 
 /// Regression: when an `If`'s dead control output is consumed *directly*
-/// by a non-`ControlState` node (e.g. a `CallOther` that lost its
-/// intermediate `ControlState` after `RedundantPhis` collapsed it), DBE
+/// by a non-`Region` node (e.g. a `CallOther` that lost its
+/// intermediate `Region` after `RedundantPhis` collapsed it), DBE
 /// must not detach the `If`'s inputs and leave it as a 0-input zombie
 /// reachable from the live graph via backward-data.
 ///
@@ -263,7 +263,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 /// Before the fix, DBE would:
 ///   1. replace `ctrl_false` with `ctrl_in` (live rewire),
 ///   2. skip the `CallOther` consumer of `ctrl_true` (the
-///      live-rewire path only handles `ControlState` consumers),
+///      live-rewire path only handles `Region` consumers),
 ///   3. detach the `If`'s own inputs unconditionally,
 ///      leaving the `If` with 0 inputs.  The walker then re-reached the
 ///      `If` via `join_CS → CallOther → ctrl_true → If` (backward-data),
@@ -275,7 +275,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 /// structurally-valid zombie until the join's `MemPhi` collapses
 /// through `RedundantPhis`.
 #[test]
-fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
+fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     let mut fg = {
         let mut b = FunctionBuilder::empty()?;
         let entry = b.create_region()?;
@@ -312,7 +312,7 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
     // Surgery: rewire the CallOther's ctrl input from CS_true.ctrl_out to
     // the If's dead_ctrl (= ctrl_true) directly, simulating the shape
     // RedundantPhis produces when it collapses an intermediate
-    // single-predecessor ControlState.
+    // single-predecessor Region.
     let if_node = fg
         .all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::If))

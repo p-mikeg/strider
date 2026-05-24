@@ -139,17 +139,17 @@ mod tests {
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // We'll synthesise a StackStorePhi node directly in the graph
         // by making three placeholder inputs.  Use the builder's region
-        // ControlState's PhiToken slot, the builder's InitialMemory,
+        // Region's PhiToken slot, the builder's InitialMemory,
         // and a fresh IntConst as DATA.
         let data = b.build_int_const(0xCAFE_u64, NodeOutputType::U64)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        // Locate the ControlState (it owns the PhiToken).
+        // Locate the Region (it owns the PhiToken).
         let cs = fg
             .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
-            .expect("ControlState present");
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+            .expect("Region present");
         let cs_outs = fg.node_outputs(cs).to_vec();
         let phi_token = *cs_outs
             .iter()

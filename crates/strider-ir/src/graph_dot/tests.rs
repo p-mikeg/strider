@@ -65,7 +65,7 @@ fn dot_output_is_deterministic() {
     let [ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
 
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [ctrl],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -176,7 +176,7 @@ fn all_edge_endpoints_are_declared() {
     }
 }
 
-/// A linear chain (Entry → ControlState → Return) must produce exactly
+/// A linear chain (Entry → Region → Return) must produce exactly
 /// those three node declarations and two edges.
 #[test]
 fn linear_chain_node_and_edge_count() {
@@ -184,7 +184,7 @@ fn linear_chain_node_and_edge_count() {
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let [ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [ctrl],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -287,7 +287,7 @@ fn int_const_label_contains_value_and_type() {
 ///
 /// This is the ordering scenario that used to produce a dangling "if.true"
 /// trapezium with no outgoing edge and a spurious direct edge from the `If`
-/// diamond to the true-branch ControlState (3 children on the `If` node).
+/// diamond to the true-branch Region (3 children on the `If` node).
 #[test]
 fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     let mut graph = Graph::new();
@@ -307,7 +307,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     let [true_ctrl, false_ctrl] = graph.node_outputs_exact::<2>(if_node).unwrap();
 
     let cs_true = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -315,7 +315,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     let [cs_true_ctrl, _] = graph.node_outputs_exact::<2>(cs_true).unwrap();
 
     let cs_false = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );

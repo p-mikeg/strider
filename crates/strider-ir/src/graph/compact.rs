@@ -614,7 +614,7 @@ mod tests {
         let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let [entry_ctrl_for_cs] = graph.node_outputs_exact::<1>(entry).unwrap();
         let cs = graph.create_node(
-            NodeKind::ControlState,
+            NodeKind::Region,
             [entry_ctrl_for_cs],
             [NodeOutputKind::Control, NodeOutputKind::PhiToken],
         );

@@ -700,7 +700,7 @@ impl FunctionBuilder {
     /// Emits a `Phi` node tagged with varnode `var` via the
     /// `phi_var_tag` side-table.
     ///
-    /// `phi_token` must be the `PhiToken` output of the owning `ControlState`.
+    /// `phi_token` must be the `PhiToken` output of the owning `Region`.
     /// `incoming_values` are the data inputs, one per predecessor (may be empty
     /// when first created; filled in later via `add_region_predecessor`).
     pub(super) fn build_control_phi(

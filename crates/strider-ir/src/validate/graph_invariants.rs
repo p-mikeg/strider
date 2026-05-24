@@ -51,26 +51,26 @@ pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<Va
     }
 }
 
-/// Graph invariant: every input of a `ControlState` node must be a
-/// `Control`-kinded output. Emits `ControlStateNonControlPredecessor`
+/// Graph invariant: every input of a `Region` node must be a
+/// `Control`-kinded output. Emits `RegionNonControlPredecessor`
 /// per offending input.
-pub(super) fn check_graph_invariants_control_state(
+pub(super) fn check_graph_invariants_region(
     graph: &Graph,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
     // Reachability is gated by `Graph::reachable_kind_iter` (see its
-    // doc for why we skip detached `ControlState` zombies — they may
+    // doc for why we skip detached `Region` zombies — they may
     // carry stale non-Control inputs left by an unscrubbed surgical
     // edit).
     for (node, kind) in graph.reachable_kind_iter(reachable) {
-        if !matches!(kind, NodeKind::ControlState) {
+        if !matches!(kind, NodeKind::Region) {
             continue;
         }
         let inputs = graph.node_inputs(node);
         if inputs.is_empty() {
-            errs.push(ValidationError::EmptyControlStatePredecessors {
-                control_state: node,
+            errs.push(ValidationError::EmptyRegionPredecessors {
+                region: node,
             });
             continue;
         }
@@ -78,8 +78,8 @@ pub(super) fn check_graph_invariants_control_state(
             let kind = graph.output_kind(target);
             if kind != NodeOutputKind::Control {
                 let (producer, _) = graph.output_definition(target);
-                errs.push(ValidationError::ControlStateNonControlPredecessor {
-                    control_state: node,
+                errs.push(ValidationError::RegionNonControlPredecessor {
+                    region: node,
                     input_idx: idx,
                     producer,
                     producer_kind: kind,
@@ -90,11 +90,11 @@ pub(super) fn check_graph_invariants_control_state(
 }
 
 /// Graph invariant: every phi node (`Phi`, `MemPhi`, `StackStorePhi`)
-/// must take its dispatch token (input[0]) from a `ControlState`'s
+/// must take its dispatch token (input[0]) from a `Region`'s
 /// `PhiToken` output.
 ///
 /// For `Phi` and `MemPhi` (variadic phis), the number of value inputs
-/// must match the owning `ControlState`'s predecessor count.  `StackStorePhi`
+/// must match the owning `Region`'s predecessor count.  `StackStorePhi`
 /// has fixed arity `[token, memory, data]` (local-typing enforces this) — its
 /// per-predecessor information lives in the side-table
 /// `Graph::stack_phi_offsets`, not in its inputs, so the per-predecessor
@@ -107,7 +107,7 @@ pub(super) fn check_graph_invariants_phis(
     // Reachability is gated by `Graph::reachable_kind_iter`.
     // `RedundantPhis` and `DeadBranchElimination` leave zero-input phi
     // zombies in the arena; reaching one here would falsely trip
-    // `PhiTokenNotFromControlState` (input[0] is gone).
+    // `PhiTokenNotFromRegion` (input[0] is gone).
     for (node, kind) in graph.reachable_kind_iter(reachable) {
         let is_phi = matches!(
             kind,
@@ -128,7 +128,7 @@ pub(super) fn check_graph_invariants_phis(
         let token_kind = graph.output_kind(token);
         if token_kind != NodeOutputKind::PhiToken {
             let (producer, _) = graph.output_definition(token);
-            errs.push(ValidationError::PhiTokenNotFromControlState {
+            errs.push(ValidationError::PhiTokenNotFromRegion {
                 phi: node,
                 producer,
                 producer_kind: token_kind,
@@ -137,8 +137,8 @@ pub(super) fn check_graph_invariants_phis(
         }
 
         let (owner, _idx) = graph.output_definition(token);
-        if !matches!(graph.node_kind(owner), NodeKind::ControlState) {
-            errs.push(ValidationError::PhiTokenNotFromControlState {
+        if !matches!(graph.node_kind(owner), NodeKind::Region) {
+            errs.push(ValidationError::PhiTokenNotFromRegion {
                 phi: node,
                 producer: owner,
                 producer_kind: token_kind,
@@ -157,7 +157,7 @@ pub(super) fn check_graph_invariants_phis(
         if expected_preds != actual_values {
             errs.push(ValidationError::PhiValueArityMismatch {
                 phi: node,
-                owner_control_state: owner,
+                owner_region: owner,
                 expected_predecessors: expected_preds,
                 actual_values,
             });

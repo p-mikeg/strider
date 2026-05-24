@@ -12,7 +12,7 @@ pub enum NodeOutputKind {
     /// Control-flow token.  Every region consumes one control edge per
     /// predecessor and every branch node produces one per successor.
     Control,
-    /// Synchronisation edge produced by `ControlState` and consumed by
+    /// Synchronisation edge produced by `Region` and consumed by
     /// every `VarPhi`/`MemPhi`/`StackStorePhi` in the same join.
     /// Carries no data — it says "fire your phi for this region."
     PhiToken,

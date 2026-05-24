@@ -28,7 +28,7 @@
 //!
 //! Conventions:
 //!   * Every `Matcher` opts into `ignore_casts_mask(EXTEND | TRUNCATE
-//!     | CAST_TO_BOOL | CAST_TO_INT)` and `ignore_control_states()` so
+//!     | CAST_TO_BOOL | CAST_TO_INT)` and `ignore_regions()` so
 //!     tests don't break on arch-specific width-cast / region-join noise.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
@@ -58,7 +58,7 @@ fn matcher(g: &strider_ir::Graph) -> Matcher<'_> {
                 | CastMask::CAST_TO_BOOL
                 | CastMask::CAST_TO_INT,
         )
-        .ignore_control_states()
+        .ignore_regions()
 }
 
 /// Returns the set of `index` values present on `FunctionArg` nodes in `g`.
@@ -316,7 +316,7 @@ fn uses_return_assertions(g: &strider_ir::Graph) {
             "uses_return must have ≥1 Call; got {}", calls.len());
 
     // For each Call, walk every input slot back through any chain of
-    // {Store, StackStore, Load, ControlState, ValuePhi}.
+    // {Store, StackStore, Load, Region, ValuePhi}.
     // If we hit another Call, the test passes.
     let chained = calls.iter().any(|&outer| {
         let outer_inputs: Vec<_> = g.node_inputs(outer).into_iter().collect();
@@ -326,10 +326,10 @@ fn uses_return_assertions(g: &strider_ir::Graph) {
                 match g.node_kind(producer) {
                     NodeKind::Call if producer != outer => return true,
                     NodeKind::Load(_)
-                    | NodeKind::ControlState => {
+                    | NodeKind::Region => {
                         // Walk the first input — Load[memory, addr] gives the
                         // memory predecessor (producing store/Call), and
-                        // ControlState passes through its first input.
+                        // Region passes through its first input.
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
@@ -360,7 +360,7 @@ fn uses_return_assertions(g: &strider_ir::Graph) {
         assert!(chained,
                 "uses_return: with {} Calls, expected one Call's input to \
                  trace back to another Call (through any chain of \
-                 Load/Store/ControlState/ValuePhi)",
+                 Load/Store/Region/ValuePhi)",
                 calls.len());
     }
 }

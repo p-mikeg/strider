@@ -126,9 +126,9 @@ impl IfPattern {
 }
 
 /// Match `pat` against the single forward-step consumer of the If's
-/// output at `output_index`.  Honors `ignore_control_states` via
+/// output at `output_index`.  Honors `ignore_regions` via
 /// [`crate::pattern::pat::node_pat::match_consumer_node`]: the helper walks
-/// through an immediate `ControlState` header when the flag is set.
+/// through an immediate `Region` header when the flag is set.
 fn match_branch_consumer(
     ctx: &MatchCtx,
     if_node: NodeId,

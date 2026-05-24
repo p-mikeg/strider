@@ -46,7 +46,7 @@ fn try_detect_stack_store(
         }
         SpExpr::Phi { phi_node, offsets } => {
             // The VarPhi's inputs[0] is the dispatch token from its
-            // owning ControlState — the same token `StackStorePhi` will
+            // owning Region — the same token `StackStorePhi` will
             // consume so that `RedundantPhis` collapses it when only one
             // predecessor is live.
             let phi_inputs = ctx.node_inputs(phi_node);

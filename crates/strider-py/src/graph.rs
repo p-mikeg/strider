@@ -193,23 +193,23 @@ impl PyGraph {
         self.with_read_value(|graph| graph.all_node_ids().count())
     }
 
-    /// Returns the count of `ControlState` join nodes reachable from
+    /// Returns the count of `Region` join nodes reachable from
     /// entry.  Despite its name and historical docstring, this method
     /// is **not** a true loop-header detector: the previous
     /// implementation ran a per-predecessor forward-CFG DFS looking for
     /// a back-edge, but because the predecessor's direct Control edge
     /// into the join node is itself "a Control output whose consumer is
     /// the join node", the inner DFS returned `true` on its very first
-    /// iteration for every reachable `ControlState`.  The observable
+    /// iteration for every reachable `Region`.  The observable
     /// behaviour is therefore equivalent to "count reachable
-    /// `ControlState` nodes", which is what the existing test suite
+    /// `Region` nodes", which is what the existing test suite
     /// (`count_loops(g) >= 1` on `early_return`, `clamp`, etc.) depends
     /// on — those fixtures have no actual back-edge after `-O2`
     /// loop-rotation, yet the assertion holds because the count is
     /// driven by join arity, not loop topology.
     ///
     /// Preserve that contract while collapsing the
-    /// O(|ControlState| x |graph|) cost — and the per-call
+    /// O(|Region| x |graph|) cost — and the per-call
     /// `HashSet<NodeId>` allocation — into a single linear pre-order
     /// sweep using the IR's own kind-filtered walker.  The walker's
     /// visited-set is already a `DenseEntitySet<NodeId>` (see
@@ -220,7 +220,7 @@ impl PyGraph {
         use strider_ir::node::NodeKind;
         self.with_read_value(|graph| {
             graph
-                .preorder_kind(|k| matches!(k, NodeKind::ControlState))
+                .preorder_kind(|k| matches!(k, NodeKind::Region))
                 .count()
         })
     }
@@ -250,7 +250,7 @@ impl PyGraph {
     /// addresses whose lift contributed to the node's value.
     ///
     /// Empty for "structural" node kinds (Entry, InitialMemory, phis,
-    /// ControlState, FunctionArg) whose existence is synthesised by
+    /// Region, FunctionArg) whose existence is synthesised by
     /// the IR builder rather than tied to a specific asm instruction.
     fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
         self.with_read(|graph| {
@@ -368,16 +368,16 @@ impl PyGraph {
     ///   Compose via `CastMask.extend() | CastMask.truncate()`.
     ///   Mutually exclusive with `ignore_casts`; passing both is an
     ///   error.
-    /// * `ignore_control_states=True` — walk through `ControlState`
+    /// * `ignore_regions=True` — walk through `Region`
     ///   region-join nodes between an `If`'s output and the
     ///   matched consumer.
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_control_states=false, ignore_casts_mask=None))]
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
     fn find_all(
         slf: Py<Self>,
         py: Python<'_>,
         pat: crate::pattern::PatLike<'_>,
         ignore_casts: bool,
-        ignore_control_states: bool,
+        ignore_regions: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
         if ignore_casts && ignore_casts_mask.is_some() {
@@ -395,8 +395,8 @@ impl PyGraph {
         } else if let Some(m) = ignore_casts_mask {
             matcher = matcher.ignore_casts_mask(m.inner);
         }
-        if ignore_control_states {
-            matcher = matcher.ignore_control_states();
+        if ignore_regions {
+            matcher = matcher.ignore_regions();
         }
         let raw = matcher.find_all(&pat);
         let generation = graph_guard.generation();
@@ -443,15 +443,15 @@ impl PyGraph {
     /// * Any pattern with zero matches → empty result.
     ///
     /// The matcher walk-through flags (`ignore_casts`,
-    /// `ignore_casts_mask`, `ignore_control_states`) apply uniformly
+    /// `ignore_casts_mask`, `ignore_regions`) apply uniformly
     /// to every pattern, mirroring `find_all`.
-    #[pyo3(signature = (pats, ignore_casts=false, ignore_control_states=false, ignore_casts_mask=None))]
+    #[pyo3(signature = (pats, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
     fn find_all_requirements(
         slf: Py<Self>,
         py: Python<'_>,
         pats: Vec<crate::pattern::PatLike<'_>>,
         ignore_casts: bool,
-        ignore_control_states: bool,
+        ignore_regions: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<Vec<crate::matcher::PyMatch>>> {
         if ignore_casts && ignore_casts_mask.is_some() {
@@ -473,8 +473,8 @@ impl PyGraph {
         } else if let Some(m) = ignore_casts_mask {
             matcher = matcher.ignore_casts_mask(m.inner);
         }
-        if ignore_control_states {
-            matcher = matcher.ignore_control_states();
+        if ignore_regions {
+            matcher = matcher.ignore_regions();
         }
         let raw = matcher.find_all_requirements(&pat_refs);
         let generation = graph_guard.generation();

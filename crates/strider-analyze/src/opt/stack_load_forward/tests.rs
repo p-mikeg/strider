@@ -311,7 +311,7 @@ fn bail_on_call_between() -> Result<()> {
 /// then the merge loads `sp+4`.  After the pass the load must be gone
 /// and a single `ValuePhi` synthesized in its place; the phi-token of
 /// that `ValuePhi` must be the same token fed into the underlying
-/// `MemPhi` (i.e. the merge `ControlState`'s dispatch output).
+/// `MemPhi` (i.e. the merge `Region`'s dispatch output).
 #[test]
 fn phi_both_branches_store_same_offset() -> Result<()> {
 
@@ -377,7 +377,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     );
 
     // The ValuePhi's phi-token (input 0) must come from the same
-    // ControlState as the MemPhi's phi-token.
+    // Region as the MemPhi's phi-token.
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
         fg.preorder().collect();
     let value_phi = find_reachable_anonymous_phi(&fg)

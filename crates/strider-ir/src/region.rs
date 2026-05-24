@@ -14,7 +14,7 @@ entity_impl!(RegionId);
 /// All state associated with a single basic-block region.
 ///
 /// A region owns:
-/// - A `ControlState` node (and its output) that acts as the region header.
+/// - A `Region` node (and its output) that acts as the region header.
 /// - A `MemPhi` node (and its output) that selects the memory token at the join.
 /// - A current variable map (`variables`) that is updated by writes.
 /// - An initial variable map (`initial_variables`) recording the
@@ -24,7 +24,7 @@ entity_impl!(RegionId);
 pub(crate) struct Region {
     /// `true` once a terminator (branch / return) has been emitted.
     terminated: bool,
-    /// The `ControlState` node that represents the entry of this region.
+    /// The `Region` node that represents the entry of this region.
     control_node: NodeId,
     /// The `MemPhi` node that selects the memory token for this region.
     memory_node: NodeId,
@@ -207,7 +207,7 @@ impl FunctionBuilder {
         Ok(self.regions[region_id].variables[var_id])
     }
 
-    /// Adds `control` as an incoming control edge to `region`'s `ControlState` node.
+    /// Adds `control` as an incoming control edge to `region`'s `Region` node.
     pub(crate) fn link_control_regions(
         &mut self,
         region: RegionId,

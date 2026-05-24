@@ -26,7 +26,7 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
 
     // Arity: fixed lists demand exact length; variadic lists demand at
     // least the head length.  Variadic CTRL lists with `head_len = 0`
-    // (e.g. `ControlState`) trivially pass this check at zero
+    // (e.g. `Region`) trivially pass this check at zero
     // predecessors; the per-kind "must be reachable with >= 1
     // predecessor" rule for those cases is enforced by the
     // graph-invariants checks.
@@ -64,7 +64,7 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
     // tail slot. The signature table is the source of truth: tails that
     // need to accept any value type declare AnyValue (or AnyInt for
     // integer-only tails); honest narrow tails like `MemPhi`'s MEM and
-    // `ControlState`'s CTRL are caught here when violated, regardless of
+    // `Region`'s CTRL are caught here when violated, regardless of
     // what the graph-invariants checks do.
     for (idx, &input) in actual_inputs.iter().enumerate() {
         let Some(slot) = sig.inputs.at(idx) else {

@@ -33,10 +33,10 @@ struct FunctionArgIndex(HashMap<u32, NodeId>);
 /// producer / consumer nodes during input or control-chain matching.
 ///
 /// Defaults are strict exact-walk semantics: `ignore_cast_mask` is empty
-/// and `ignore_control_states` is `false`.  Enable selective cast
+/// and `ignore_regions` is `false`.  Enable selective cast
 /// walk-through via [`Matcher::ignore_casts_mask`] /
 /// [`Matcher::ignore_casts`], and control-state walk-through via
-/// [`Matcher::ignore_control_states`].
+/// [`Matcher::ignore_regions`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct MatcherOptions {
     /// Mask of value-passthrough cast `NodeKind`s the matcher walks
@@ -51,10 +51,10 @@ pub(crate) struct MatcherOptions {
     /// `add_mul_pattern_does_not_match_through_extend_by_default`
     /// regression test for the canonical case.
     pub ignore_cast_mask: CastMask,
-    /// Walk through `ControlState` (region-join) nodes when traversing
+    /// Walk through `Region` (region-join) nodes when traversing
     /// control chains.  Lets `ret(call(...))`, `if_node().true_branch(p)`
     /// etc. cross region joins without intermediate awareness.
-    pub ignore_control_states: bool,
+    pub ignore_regions: bool,
 }
 
 /// Executes pattern queries against a [`Graph`].
@@ -175,12 +175,12 @@ impl<'g> Matcher<'g> {
         self
     }
 
-    /// Enables transparent walk-through of `ControlState` (region-join)
+    /// Enables transparent walk-through of `Region` (region-join)
     /// nodes when traversing control chains.  See
-    /// `MatcherOptions::ignore_control_states`.
+    /// `MatcherOptions::ignore_regions`.
     #[must_use]
-    pub fn ignore_control_states(mut self) -> Self {
-        self.options.ignore_control_states = true;
+    pub fn ignore_regions(mut self) -> Self {
+        self.options.ignore_regions = true;
         self
     }
 
@@ -595,8 +595,8 @@ impl<'g> Matcher<'g> {
     /// match before unwrapping further, exactly matching the
     /// semantics of the previous recursive helper.
     ///
-    /// **ControlState walk-through stays recursive** through
-    /// [`walk_through::try_walk_through_control_state`]: each branch
+    /// **Region walk-through stays recursive** through
+    /// [`walk_through::try_walk_through_region`]: each branch
     /// of a region join is tried as a separate alternative, and the
     /// recursion depth equals the nested-join depth (bounded by CFG
     /// structure, not graph size).
@@ -607,7 +607,7 @@ impl<'g> Matcher<'g> {
         b: &mut Bindings,
     ) -> bool {
         // Recursion-depth guard for the mutual recursion with
-        // `walk_through::try_walk_through_control_state`.  ControlState
+        // `walk_through::try_walk_through_region`.  Region
         // walk-through fans out across region predecessors and each
         // alternative re-enters `match_output_with_walk_through`; nesting
         // depth equals the IR's CS-nesting depth in practice, which is
@@ -677,12 +677,12 @@ impl<'g> Matcher<'g> {
             // value), and on failure unwrap further.
         }
 
-        // ControlState walk-through fan-out — try each region join
+        // Region walk-through fan-out — try each region join
         // input as an alternative.  Recursion here is bounded by the
         // CS-nesting depth of the IR, not by graph size, so the
         // helper stays recursive.
-        if self.options.ignore_control_states
-            && walk_through::try_walk_through_control_state(&self.ctx(), out, pat, b)
+        if self.options.ignore_regions
+            && walk_through::try_walk_through_region(&self.ctx(), out, pat, b)
         {
             return true;
         }
@@ -719,7 +719,7 @@ mod tests {
     //! The 9 tests below pin the chaining algebra of the matcher's
     //! ignore-flags: defaults, mask widening, mask union across
     //! repeated calls, and the independence of `ignore_casts` /
-    //! `ignore_control_states`.  Restored from the pre-rewrite
+    //! `ignore_regions`.  Restored from the pre-rewrite
     //! `crates/pattern/tests/matching/matcher_api.rs` builder-state
     //! suite.
 
@@ -742,8 +742,8 @@ mod tests {
             "ignore_cast_mask must default to empty"
         );
         assert!(
-            !m.options.ignore_control_states,
-            "ignore_control_states must default to false"
+            !m.options.ignore_regions,
+            "ignore_regions must default to false"
         );
     }
 
@@ -819,24 +819,24 @@ mod tests {
             "ignore_casts() must set the mask to CastMask::all()"
         );
         assert!(
-            !m.options.ignore_control_states,
-            "ignore_casts() must not touch ignore_control_states"
+            !m.options.ignore_regions,
+            "ignore_casts() must not touch ignore_regions"
         );
     }
 
     #[test]
-    fn ignore_control_states_chains_and_flips_flag() {
+    fn ignore_regions_chains_and_flips_flag() {
         let g = trivial_graph();
         let m = Matcher::try_new(&g)
             .expect("matcher")
-            .ignore_control_states();
+            .ignore_regions();
         assert!(
-            m.options.ignore_control_states,
-            "ignore_control_states() must enable the flag"
+            m.options.ignore_regions,
+            "ignore_regions() must enable the flag"
         );
         assert!(
             m.options.ignore_cast_mask.is_empty(),
-            "ignore_control_states() must not touch ignore_cast_mask"
+            "ignore_regions() must not touch ignore_cast_mask"
         );
     }
 
@@ -846,8 +846,8 @@ mod tests {
         let m = Matcher::try_new(&g)
             .expect("matcher")
             .ignore_casts()
-            .ignore_control_states();
+            .ignore_regions();
         assert_eq!(m.options.ignore_cast_mask, CastMask::all());
-        assert!(m.options.ignore_control_states);
+        assert!(m.options.ignore_regions);
     }
 }

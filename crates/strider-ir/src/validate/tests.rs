@@ -316,13 +316,13 @@ fn graph_invariants_duplicate_initial_memory() {
 }
 
 #[test]
-fn graph_invariants_control_state_bad_predecessor() {
-    // The bad ControlState must be **reachable** from entry — otherwise
-    // the reachability gate in `check_graph_invariants_control_state`
+fn graph_invariants_region_bad_predecessor() {
+    // The bad Region must be **reachable** from entry — otherwise
+    // the reachability gate in `check_graph_invariants_region`
     // correctly skips it as an unreachable zombie.  Build a 2-predecessor
-    // ControlState: input[0] = entry's Control (well-formed) so the walk
+    // Region: input[0] = entry's Control (well-formed) so the walk
     // reaches it via cfg-succs, input[1] = InitialMemory's Memory (the
-    // bad input the test pins).  The ControlState's Control output then
+    // bad input the test pins).  The Region's Control output then
     // feeds a Return so it stays in the reachable set even after the
     // walk's forward-control phase.
     let mut graph = Graph::new();
@@ -331,9 +331,9 @@ fn graph_invariants_control_state_bad_predecessor() {
     let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
     let mem_out = graph.node_outputs(mem).iter().copied().next().unwrap();
 
-    // ControlState with [Control, Memory] inputs — input[1] is wrong.
+    // Region with [Control, Memory] inputs — input[1] is wrong.
     let bad_cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_ctrl, mem_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -344,7 +344,7 @@ fn graph_invariants_control_state_bad_predecessor() {
     assert!(
         errs.0.iter().any(|e| matches!(
             e,
-            ValidationError::ControlStateNonControlPredecessor { input_idx: 1, .. }
+            ValidationError::RegionNonControlPredecessor { input_idx: 1, .. }
         )),
         "got: {errs:?}"
     );
@@ -365,7 +365,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
     let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_out = graph.node_outputs(entry).iter().copied().next().unwrap();
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -382,7 +382,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
     assert!(
         errs.0
             .iter()
-            .any(|e| matches!(e, ValidationError::PhiTokenNotFromControlState { .. })),
+            .any(|e| matches!(e, ValidationError::PhiTokenNotFromRegion { .. })),
         "got: {errs:?}"
     );
 }
@@ -395,7 +395,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let entry_out = graph.node_outputs(entry).iter().copied().next().unwrap();
 
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -423,7 +423,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
 
     // V-2: graph_invariants_phis is reachability-scoped, so the phi must be
     // attached to something reachable from the entry.  Wire its value
-    // output through a Return that consumes the ControlState's Control
+    // output through a Return that consumes the Region's Control
     // output too — this puts the phi on the cfg-reachable spine.
     let cs_ctrl_out = graph.node_outputs(cs).iter().copied().next().unwrap();
     let phi_val_out = graph.node_outputs(phi).iter().copied().next().unwrap();
@@ -448,9 +448,9 @@ fn graph_invariants_phi_value_arity_mismatch() {
 #[test]
 fn graph_invariants_stack_store_phi_does_not_fire_arity_mismatch() {
     // StackStorePhi has fixed arity [token, memory, data] regardless of
-    // how many predecessors the owning ControlState has.  The
+    // how many predecessors the owning Region has.  The
     // per-predecessor arity rule that applies to Phi/MemPhi must
-    // not fire on it.  Here the owning ControlState has 1 predecessor;
+    // not fire on it.  Here the owning Region has 1 predecessor;
     // before the fix this produced a spurious
     // PhiValueArityMismatch { expected_predecessors: 1, actual_values: 2 }.
     let mut graph = Graph::new();
@@ -460,7 +460,7 @@ fn graph_invariants_stack_store_phi_does_not_fire_arity_mismatch() {
     let mem_out = graph.node_outputs(mem).iter().copied().next().unwrap();
 
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -498,7 +498,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     // V-2 regression: opt passes (RedundantPhis, DeadBranchElimination)
     // detach phi inputs and leave the zero-input zombie node in the
     // arena.  The validator must not falsely fire
-    // PhiTokenNotFromControlState on these — the phi is no longer on
+    // PhiTokenNotFromRegion on these — the phi is no longer on
     // the reachable spine.  Exercise the contract by creating a
     // detached Phi (zero inputs) alongside an otherwise-valid
     // function and asserting validate() succeeds.
@@ -682,9 +682,9 @@ fn local_typing_mem_phi_variadic_tail_must_be_memory() {
     let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
     let init_mem = graph.node_outputs(mem).iter().copied().next().unwrap();
 
-    // ControlState with one valid Control predecessor (entry).
+    // Region with one valid Control predecessor (entry).
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_ctrl],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -727,7 +727,7 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     let mem = graph.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_ctrl],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -766,14 +766,14 @@ fn graph_invariants_mem_phi_arity_mismatch() {
     let init_mem_out = graph.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_phi_out = graph.node_outputs(cs).iter().copied().nth(1).unwrap();
     let cs_ctrl_out = graph.node_outputs(cs).iter().copied().next().unwrap();
 
-    // MemPhi with two memory inputs but the owning ControlState has one predecessor.
+    // MemPhi with two memory inputs but the owning Region has one predecessor.
     let mem_phi = graph.create_node(
         NodeKind::MemPhi,
         [cs_phi_out, init_mem_out, init_mem_out],
@@ -805,7 +805,7 @@ fn graph_invariants_value_phi_arity_mismatch() {
     let init_mem_out = graph.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -819,7 +819,7 @@ fn graph_invariants_value_phi_arity_mismatch() {
     );
     let c1_out = graph.node_outputs(c1).iter().copied().next().unwrap();
 
-    // Anonymous Phi with two value inputs but the owning ControlState has one predecessor.
+    // Anonymous Phi with two value inputs but the owning Region has one predecessor.
     let vp = graph.create_node(
         NodeKind::Phi,
         [cs_phi_out, c1_out, c1_out],
@@ -871,44 +871,44 @@ fn local_typing_rejects_wrong_output_count() {
 }
 
 #[test]
-fn graph_invariants_rejects_control_state_with_zero_predecessors() {
-    // ControlState has a variadic head_len of 0, so the local-typing check's count check
+fn graph_invariants_rejects_region_with_zero_predecessors() {
+    // Region has a variadic head_len of 0, so the local-typing check's count check
     // (>= 0) accepts zero inputs and the graph-invariants check's per-predecessor loop is a
     // no-op. Without an explicit check, a *reachable* zero-pred
-    // ControlState slips through validation entirely.
+    // Region slips through validation entirely.
     //
     // Walk semantics: graph_walk_succs follows forward-control + backward-data,
-    // so we make the zero-pred ControlState reachable by having a downstream
+    // so we make the zero-pred Region reachable by having a downstream
     // Return consume *both* Entry's control (so walk reaches Return) and the
-    // ControlState's control (so walking back from Return hits the CS).
+    // Region's control (so walking back from Return hits the CS).
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
     let mem = graph.node_outputs(init_mem).iter().copied().next().unwrap();
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_ctrl = graph.node_outputs(cs).iter().copied().next().unwrap();
     // Return consumes entry's control (reaches Return via cfg_succs of Entry)
-    // and cs_ctrl as a "ret value" (reaches CS via Return's backward-data).
+    // and cs_ctrl as a "ret value" (reaches Region via Return's backward-data).
     graph.create_node(NodeKind::Return, [entry_ctrl, mem, cs_ctrl], []);
 
     let errs = validate(&graph, entry).unwrap_err();
     assert!(
         errs.0.iter().any(|e| matches!(
             e,
-            ValidationError::EmptyControlStatePredecessors { control_state } if *control_state == cs
+            ValidationError::EmptyRegionPredecessors { region } if *region == cs
         )),
-        "expected EmptyControlStatePredecessors, got: {errs:?}"
+        "expected EmptyRegionPredecessors, got: {errs:?}"
     );
 }
 
 #[test]
-fn graph_invariants_tolerates_unreachable_zero_predecessor_control_state() {
-    // Zombie ControlState with zero inputs left behind by RedundantPhis is
+fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
+    // Zombie Region with zero inputs left behind by RedundantPhis is
     // expected; the validator must not flag it (this happens routinely on
     // real binaries after dead-branch elimination).
     let mut graph = Graph::new();
@@ -916,16 +916,16 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_control_state() {
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
     let mem = graph.node_outputs(init_mem).iter().copied().next().unwrap();
-    // Zombie CS that nothing references — not reachable from entry.
+    // Zombie Region that nothing references — not reachable from entry.
     let _zombie_cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem], []);
     stamp(&mut graph, ret);
 
-    validate(&graph, entry).expect("zombie ControlState must not trigger validation error");
+    validate(&graph, entry).expect("zombie Region must not trigger validation error");
 }
 
 /// IndirectBranch consumes (control, memory, target_value) and produces no
@@ -1002,14 +1002,14 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
 
 #[test]
 fn asm_fingerprint_check_exempts_phis_and_initials() {
-    // Build a tiny join: Entry → ControlState ← (mem? no, just one pred);
-    // verify that ControlState/InitialMemory are exempt from the check.
+    // Build a tiny join: Entry → Region ← (mem? no, just one pred);
+    // verify that Region/InitialMemory are exempt from the check.
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = graph.node_outputs(entry).iter().copied().next().unwrap();
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [entry_ctrl],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
@@ -1018,7 +1018,7 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
     let _ret = graph.create_node(NodeKind::Return, [cs_ctrl, mem_out], []);
     let res = validate(&graph, entry);
     // The Return is reachable and non-exempt — it must be flagged.  But
-    // ControlState / Entry / InitialMemory must NOT be flagged.
+    // Region / Entry / InitialMemory must NOT be flagged.
     let errs = res.unwrap_err();
     for e in &errs.0 {
         if let ValidationError::MissingAsmFingerprint { kind, .. } = e {
@@ -1027,7 +1027,7 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
                     kind,
                     NodeKind::Entry
                         | NodeKind::InitialMemory
-                        | NodeKind::ControlState
+                        | NodeKind::Region
                 ),
                 "exempt kind {kind:?} was flagged"
             );
@@ -1043,12 +1043,12 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
 }
 
 /// regression: a non-reachable
-/// `ControlState` zombie with stale non-Control inputs must not
-/// produce a false-positive `ControlStateNonControlPredecessor`
+/// `Region` zombie with stale non-Control inputs must not
+/// produce a false-positive `RegionNonControlPredecessor`
 /// error.  Pre-fix, the empty-input branch was correctly
 /// reachability-gated but the non-empty-input branch was not.
 #[test]
-fn unreachable_control_state_with_non_control_input_does_not_fire() {
+fn unreachable_region_with_non_control_input_does_not_fire() {
     let mut graph = Graph::new();
     // Reachable spine: Entry → Return.
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
@@ -1058,7 +1058,7 @@ fn unreachable_control_state_with_non_control_input_does_not_fire() {
     let ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
     stamp(&mut graph, ret);
 
-    // Detached zombie: a ControlState whose input is a non-Control output
+    // Detached zombie: a Region whose input is a non-Control output
     // (an IntConst's value output).  This shape can be left behind by a
     // future pass that surgery-edits without scrubbing inputs.  The
     // node IS in the arena but is NOT reachable from `entry`.
@@ -1069,17 +1069,17 @@ fn unreachable_control_state_with_non_control_input_does_not_fire() {
     );
     let bogus_input = graph.node_outputs(int_const).iter().copied().next().unwrap();
     let _zombie_cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [bogus_input],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
 
     // The unreachable zombie must be skipped by the reachability gate;
-    // the validator must not flag a `ControlStateNonControlPredecessor`
+    // the validator must not flag a `RegionNonControlPredecessor`
     // error.  (Pre-fix this would have fired.)
     validate(&graph, entry).expect(
-        "unreachable ControlState zombies must not produce \
-         ControlStateNonControlPredecessor errors",
+        "unreachable Region zombies must not produce \
+         RegionNonControlPredecessor errors",
     );
 }
 

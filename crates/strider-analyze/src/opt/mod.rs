@@ -18,7 +18,7 @@
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
 //! | [`FlagCmpCanonicalize`] | Flag-tree → single `IntCmpOp` rewrite (AArch64 NZCV-style flag chains) |
 //! | [`IfCondInversion`] | `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}` |
-//! | [`RedundantPhis`] | Eliminates `Phi` / `MemPhi` / `ControlState` with a single reachable predecessor |
+//! | [`RedundantPhis`] | Eliminates `Phi` / `MemPhi` / `Region` with a single reachable predecessor |
 //! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
 //!
 //! Layered on top by `Strider::build_optimizer_pipeline` (not in
@@ -88,7 +88,7 @@ pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 ///
 /// Every pass listed here MUST produce IR that is robust against a
 /// future predecessor arriving at any region — i.e. it rewrites nodes
-/// in place but never *removes* phi / `ControlState` / `If` nodes that
+/// in place but never *removes* phi / `Region` / `If` nodes that
 /// the strider orchestrator's per-iteration `RegionIndex` pins by
 /// `NodeId`.  Adding a pass here that detaches dependents would
 /// invalidate cached body references in the next iteration.
@@ -151,7 +151,7 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 ///
 /// Passes (in order):
 /// 1. [`RedundantPhis`] — eliminates `Phi` / `MemPhi` /
-///    `ControlState` nodes with a single reachable predecessor.
+///    `Region` nodes with a single reachable predecessor.
 ///    Detaches inputs and rewires consumers — destructive.
 /// 2. [`DeadBranchElimination`] — removes `If(const)` branches and
 ///    strips dead control edges.  A later iteration could re-make the
@@ -183,7 +183,7 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
 /// 3. [`FlagCmpCanonicalize`] — flag-tree → single `IntCmpOp` rewrite
 /// 4. [`IfCondInversion`] — `If(BoolNeg(C)) → If(C)` with branches swapped
-/// 5. [`RedundantPhis`] — `Phi` / `MemPhi` / `ControlState` elimination
+/// 5. [`RedundantPhis`] — `Phi` / `MemPhi` / `Region` elimination
 /// 6. [`DeadBranchElimination`] — `If(const)` branch pruning
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {

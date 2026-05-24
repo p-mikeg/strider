@@ -135,7 +135,7 @@ so the resolver-bearing dependency stays one-way.
       "Initial state" / "Region / join" bullets below).
   - `FunctionBuilder` — builds the IR with SSA-like variable tracking.
     Variables map `rsleigh::Vn` → `VarId`.  Each region gets a
-    `ControlState` node and per-variable `Phi` nodes whose source
+    `Region` node and per-variable `Phi` nodes whose source
     varnode tag is recorded in the `Graph::phi_var_tag` side-table.
     Carries `lift_addr: Option<u64>` for centralised lift-time
     fingerprint attribution.  `FunctionBuilder::new` accepts
@@ -172,7 +172,7 @@ so the resolver-bearing dependency stays one-way.
     - `validate/use_list_consistency.rs` — bidirectional consistency
       between inputs and outputs' use-lists.
     - `validate/graph_invariants.rs` — whole-graph rules:
-      Entry/InitialMemory uniqueness, ControlState predecessor kinds,
+      Entry/InitialMemory uniqueness, Region predecessor kinds,
       phi-token ownership and per-predecessor arity, FunctionArg
       uniqueness, wide-const consistency, and the always-on
       asm-fingerprint check (every reachable non-exempt node MUST carry
@@ -192,7 +192,7 @@ so the resolver-bearing dependency stays one-way.
     ancestor's addresses.  Two structurally identical (cacheable) nodes
     share one entry that is the **union** of every contributor's
     address.  Region / phi / initial-state kinds (`Entry`,
-    `InitialMemory`, `InitialVar`, `FunctionArg`, `ControlState`,
+    `InitialMemory`, `InitialVar`, `FunctionArg`, `Region`,
     `MemPhi`, `Phi`, `StackStorePhi`) are exempt from the non-empty
     check.  Public API on `Graph`: `asm_fingerprint(id)`,
     `set_asm_fingerprint`, `extend_asm_fingerprint`,
@@ -295,7 +295,7 @@ so the resolver-bearing dependency stays one-way.
       (AArch64 NZCV-style chains).
     - `IfCondInversion` — `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}`.
     - `RedundantPhis` — eliminates `Phi` (tagged or anonymous) /
-      `MemPhi` / `ControlState` with a single reachable predecessor.
+      `MemPhi` / `Region` with a single reachable predecessor.
     - `DeadBranchElimination` — removes `If(const)` branches and strips
       dead control edges.
     - `LoadReadOnly` — folds constant-address loads via
@@ -399,7 +399,7 @@ truth for every node's input/output shape.  Node kinds, grouped:
 
 - **Initial state:** `Entry`, `InitialMemory`, `InitialVar(Vn)`,
   `FunctionArg { source, index }` (introduced by `FunctionArgDetect`).
-- **Region / join:** `ControlState` (variadic Control inputs; outputs
+- **Region / join:** `Region` (variadic Control inputs; outputs
   `Control` + `PhiToken`), `MemPhi` (φ for the memory token), `Phi`
   (unit-variant node kind covering both tagged and anonymous forms).
   The optional source-varnode tag lives in the

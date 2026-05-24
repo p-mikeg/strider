@@ -311,7 +311,7 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
     assert_eq!(hits.len(), 1);
 }
 
-// ── ignore_control_states walk-through ──────────────────────────────────────
+// ── ignore_regions walk-through ──────────────────────────────────────
 
 /// Two-region graph: entry region runs `Call`; tail region runs `Return`.
 fn graph_ret_via_controlstate_after_call() -> strider_ir::Graph {
@@ -344,10 +344,10 @@ fn ret_call_does_not_match_through_controlstate_by_default() {
 }
 
 #[test]
-fn ret_call_matches_through_controlstate_with_ignore_control_states() {
+fn ret_call_matches_through_controlstate_with_ignore_regions() {
     let g = graph_ret_via_controlstate_after_call();
     let pat: Pat = ret().preceded_by(call()).into();
-    let hits = Matcher::try_new(&g).unwrap().ignore_control_states().find_all(&pat);
+    let hits = Matcher::try_new(&g).unwrap().ignore_regions().find_all(&pat);
     assert_eq!(hits.len(), 1);
 }
 
@@ -357,7 +357,7 @@ fn both_flags_together_do_not_interfere_with_value_walk_through() {
     let pat: Pat = add(mul(any(), any()), any()).into();
     let hits = Matcher::try_new(&g).unwrap()
         .ignore_casts()
-        .ignore_control_states()
+        .ignore_regions()
         .find_all(&pat);
     assert_eq!(hits.len(), 1);
 }

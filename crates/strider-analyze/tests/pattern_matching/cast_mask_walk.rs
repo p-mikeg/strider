@@ -15,7 +15,7 @@ use strider_ir::{Graph, ExtendOp, FunctionBuilder, IntBinaryOp};
 
 use strider_ir_test_utils::RegisterSet;
 
-/// Collapses single-predecessor `Phi(Some(_))` / `MemPhi` / `ControlState`
+/// Collapses single-predecessor `Phi(Some(_))` / `MemPhi` / `Region`
 /// nodes the FunctionBuilder inserts at the entry region for every tracked
 /// variable.  Without this pass, `read_variable(vn)` returns the
 /// `Phi(Some(vn))` output (with `InitialVar(vn)` as its sole input),

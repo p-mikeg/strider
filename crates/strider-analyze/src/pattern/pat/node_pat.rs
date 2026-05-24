@@ -506,16 +506,16 @@ fn try_once(
 /// matcher's `match_output_with_walk_through` so the walk-through
 /// behavior (gated on `MatcherOptions`) is consistent across every
 /// recursion path — direct match first, then cast walk-through, then
-/// ControlState walk-through.
+/// Region walk-through.
 fn match_one(ctx: &MatchCtx, out: NodeOutputId, pat: &crate::pattern::pat::Pat, b: &mut Bindings) -> bool {
     ctx.matcher.match_output_with_walk_through(out, pat, b)
 }
 
 /// Match `pat` against a forward-step consumer node (used by
 /// `IfPattern` for `IfPat::true_branch` / `false_branch`).  Honors
-/// [`crate::pattern::matcher::MatcherOptions::ignore_control_states`]: if the
-/// direct match fails and the consumer is a `ControlState`, retry
-/// against the single consumer of the ControlState's control output.
+/// [`crate::pattern::matcher::MatcherOptions::ignore_regions`]: if the
+/// direct match fails and the consumer is a `Region`, retry
+/// against the single consumer of the Region's control output.
 pub(crate) fn match_consumer_node(
     ctx: &MatchCtx,
     node: NodeId,
@@ -527,12 +527,12 @@ pub(crate) fn match_consumer_node(
         return true;
     }
     b.restore(mark);
-    if !ctx.matcher.options.ignore_control_states {
+    if !ctx.matcher.options.ignore_regions {
         return false;
     }
-    // ControlState's outputs are [Control, PhiToken]; the Control
+    // Region's outputs are [Control, PhiToken]; the Control
     // output is the one consumed by the next region's body.
-    if !matches!(ctx.graph.node_kind(node), NodeKind::ControlState) {
+    if !matches!(ctx.graph.node_kind(node), NodeKind::Region) {
         return false;
     }
     let outputs = ctx.graph.node_outputs(node);

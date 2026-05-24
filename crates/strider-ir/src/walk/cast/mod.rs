@@ -60,7 +60,7 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::InitialMemory
         | NodeKind::InitialVar(_)
         | NodeKind::FunctionArg { .. }
-        | NodeKind::ControlState
+        | NodeKind::Region
         | NodeKind::Phi
         | NodeKind::MemPhi
         | NodeKind::If

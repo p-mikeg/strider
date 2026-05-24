@@ -108,7 +108,7 @@ fn kind_bucket(g: &strider_ir::Graph, nid: strider_ir::node::NodeId) -> String {
 ///   * total edge counts by kind (Control / Memory / Value), where an
 ///     "edge" is one input slot — counted by the kind of that input's
 ///     producer-output,
-///   * region count (one per `ControlState` reachable node — matches
+///   * region count (one per `Region` reachable node — matches
 ///     how `strider_lift::cfg::Cfg` regions are projected into the IR),
 ///   * per-kind phi counts (broken out for sensitivity to kind drift).
 fn structural_fingerprint(g: &strider_ir::Graph) -> Fingerprint {
@@ -128,7 +128,7 @@ fn structural_fingerprint(g: &strider_ir::Graph) -> Fingerprint {
         let kind = g.node_kind(nid);
         *kind_histogram.entry(kind_bucket(g, nid)).or_insert(0) += 1;
         match kind {
-            NodeKind::ControlState => regions += 1,
+            NodeKind::Region => regions += 1,
             NodeKind::Phi if g.phi_var_tag(nid).is_some() => var_phis += 1,
             NodeKind::Phi => value_phis += 1,
             NodeKind::MemPhi => mem_phis += 1,

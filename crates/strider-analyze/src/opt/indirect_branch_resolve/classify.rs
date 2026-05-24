@@ -394,7 +394,7 @@ mod tests {
     }
 
     /// Helper for the ValuePhi tests: build a minimal graph
-    /// containing a ControlState (to provide the phi token), a set
+    /// containing a Region (to provide the phi token), a set
     /// of value-producing nodes (each one fed in as a per-pred
     /// input), and a `ValuePhi` whose first input is the phi token
     /// and whose remaining inputs are the per-pred values.
@@ -403,7 +403,7 @@ mod tests {
     /// Synthesises the ValuePhi via `graph.create_node` directly
     /// after `build()` has returned — bypassing the validator's
     /// per-predecessor-arity check (the graph-invariants phi check requires phi inputs
-    /// to match `ControlState`'s predecessor count, which we don't
+    /// to match `Region`'s predecessor count, which we don't
     /// satisfy here).  This is intentional: the unit tests
     /// exercise `classify_anchor` against fully synthetic shapes
     /// that the validator would reject in production.  The

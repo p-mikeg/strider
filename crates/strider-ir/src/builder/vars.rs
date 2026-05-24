@@ -93,13 +93,13 @@ impl FunctionBuilder {
         self.link_region_variables(region_id, &initial_variables)
     }
 
-    /// Creates a new region in the graph with fresh `ControlState`,
+    /// Creates a new region in the graph with fresh `Region`,
     /// `MemPhi`, and per-variable `VarPhi` nodes.
     ///
     /// # Errors
     ///
     /// Returns `WrongOutputCount` if the freshly created
-    /// `ControlState` or `MemPhi` does not have its expected output shape
+    /// `Region` or `MemPhi` does not have its expected output shape
     /// (this would indicate a graph-construction bug, not a user error).
     /// Other variants from `build_control_phi` propagate.
     pub fn create_region(&mut self) -> Result<RegionId> {
@@ -107,7 +107,7 @@ impl FunctionBuilder {
         let [memory] = self.graph().node_outputs_exact(memory_node)?;
 
         let control_node = self.create_node(
-            NodeKind::ControlState,
+            NodeKind::Region,
             [],
             [NodeOutputKind::Control, NodeOutputKind::PhiToken],
         );
@@ -115,7 +115,7 @@ impl FunctionBuilder {
 
         // Wire the PhiToken as MemPhi.inputs[0], mirroring how
         // VarPhi nodes are linked.  This gives MemPhi a direct back-reference to
-        // its ControlState so that dead-branch elimination and redundant-phi removal
+        // its Region so that dead-branch elimination and redundant-phi removal
         // can treat MemPhi and VarPhi identically (same positional logic, same
         // automatic discovery via output_uses(cs_phi_out)).
         self.graph_mut().add_node_input(memory_node, phi_token)?;

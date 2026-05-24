@@ -35,7 +35,7 @@ mod tests {
 
     use crate::pattern::matcher::Matcher;
 
-    /// Entry → Call → Return, single region (no `ControlState` between
+    /// Entry → Call → Return, single region (no `Region` between
     /// Entry and Call nor between Call and Return).
     fn graph_call_return() -> strider_ir::Result<strider_ir::Graph> {
         let mut b = FunctionBuilder::empty()?;
@@ -62,11 +62,11 @@ mod tests {
     fn next_control_node_returns_single_consumer() -> strider_ir::Result<()> {
         let g = graph_call_return()?;
         let m = Matcher::try_new(&g).unwrap();
-        // Entry.ctrl feeds the region's `ControlState` header directly —
+        // Entry.ctrl feeds the region's `Region` header directly —
         // it is the single consumer. The walk helper does not skip it;
-        // the caller's pattern decides whether to match a ControlState.
+        // the caller's pattern decides whether to match a Region.
         let got = next_control_node(&m, entry_ctrl_out(&g)).expect("one consumer");
-        assert!(matches!(g.node_kind(got), NodeKind::ControlState));
+        assert!(matches!(g.node_kind(got), NodeKind::Region));
         Ok(())
     }
 

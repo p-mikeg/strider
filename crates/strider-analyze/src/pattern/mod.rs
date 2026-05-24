@@ -102,7 +102,7 @@
 //!   only the cast kinds whose [`CastMask`] bits are set.  Multiple
 //!   calls union.  Use this when you want to skip e.g. width casts but
 //!   not bitcasts.
-//! * [`Matcher::ignore_control_states`] — walk through `ControlState`
+//! * [`Matcher::ignore_regions`] — walk through `Region`
 //!   (region-join) nodes when traversing control chains.  Lets
 //!   `ret(call(...))` cross region joins between the Return and the Call.
 //!
@@ -126,7 +126,7 @@
 //!
 //! let m = Matcher::try_new(&graph).unwrap()
 //!     .ignore_casts()
-//!     .ignore_control_states();
+//!     .ignore_regions();
 //! # let _ = m;
 //! ```
 

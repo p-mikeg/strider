@@ -997,7 +997,7 @@ fn update_input_self_redirect_preserves_use_list_order() {
 fn remove_node_input_returns_error_on_out_of_bounds() {
     let mut graph = Graph::new();
     let cs = graph.create_node(
-        NodeKind::ControlState,
+        NodeKind::Region,
         [],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );

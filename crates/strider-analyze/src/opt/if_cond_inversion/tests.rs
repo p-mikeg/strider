@@ -108,7 +108,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
 fn swap_consumers_preserves_value_semantics() -> Result<()> {
     // The pass must swap the consumers of the two `If` control outputs
     // alongside dropping the `BoolNeg`.  Pin this by recording the
-    // `ControlState` consumer of each output before the pass and
+    // `Region` consumer of each output before the pass and
     // verifying they are now consumed in the swapped slots.
     let (mut fg, if_node) = build_if_with_neg_cond()?;
     let consumer_of = |fg: &strider_ir::Graph, out: strider_ir::node::NodeOutputId| -> strider_ir::node::NodeId {
@@ -123,7 +123,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     let pre_false_consumer = consumer_of(&fg, out1_pre);
     assert_ne!(
         pre_true_consumer, pre_false_consumer,
-        "pre-pass consumers must be distinct ControlState nodes"
+        "pre-pass consumers must be distinct Region nodes"
     );
 
     let entry = fg.entry().unwrap();

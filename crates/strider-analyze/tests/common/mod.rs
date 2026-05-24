@@ -334,7 +334,7 @@ pub fn count_returns(g: &strider_ir::Graph) -> usize { count_kind(g, |k| matches
 ///
 /// Some ABIs (PPC, aarch64) share the function epilogue: at `-O0` the compiler
 /// still routes every source-level `return` through a single `blr`/`ret`, so
-/// the IR has one `Return` node fed by a `ControlState` that merges the
+/// the IR has one `Return` node fed by a `Region` that merges the
 /// individual paths.  `count_returns` reports `1` here even though there are
 /// two source-level return statements.  This helper counts those merged
 /// predecessors instead, giving a compiler-independent lower bound on the
@@ -342,9 +342,9 @@ pub fn count_returns(g: &strider_ir::Graph) -> usize { count_kind(g, |k| matches
 ///
 /// Algorithm: for each `Return` node, look at its first input (the Control
 /// predecessor — see `node_signature::expected_signature` for `Return`).  If
-/// that producer is a `ControlState`, contribute its *immediate* fan-in;
+/// that producer is a `Region`, contribute its *immediate* fan-in;
 /// otherwise contribute 1.  Sum across all reachable Return nodes.  Deeper
-/// joins (a `ControlState` whose own predecessor is another `ControlState`)
+/// joins (a `Region` whose own predecessor is another `Region`)
 /// are not transitively expanded — the result is therefore a lower bound on
 /// the number of source-level return paths, sufficient for the
 /// "≥ 2 return paths" assertions in this suite.
@@ -365,10 +365,10 @@ pub fn count_return_paths(g: &strider_ir::Graph) -> usize {
         };
         let pred = g.get_node_from_output(ctrl_out);
         match g.node_kind(pred) {
-            // ControlState's control inputs form the leading run of its input
+            // Region's control inputs form the leading run of its input
             // list (see node_signature: `inputs: []; in_tail: CTRL`), so the
             // total input count IS the predecessor count.
-            NodeKind::ControlState => total += g.node_inputs(pred).len(),
+            NodeKind::Region => total += g.node_inputs(pred).len(),
             _ => total += 1,
         }
     }
@@ -376,9 +376,9 @@ pub fn count_return_paths(g: &strider_ir::Graph) -> usize {
 }
 /// Counts loop headers in the lifted CFG.
 ///
-/// A "loop header" here is a `ControlState` whose predecessor set contains
+/// A "loop header" here is a `Region` whose predecessor set contains
 /// at least one back-edge — a predecessor that is itself reachable from
-/// the `ControlState` via forward control flow.  This is independent of
+/// the `Region` via forward control flow.  This is independent of
 /// any `VarPhi` count, which can drop to zero when *every* tracked
 /// variable is loop-invariant (e.g. a register that's read in the loop
 /// header but never modified by the body — `RedundantPhis`'s self-ref
@@ -391,7 +391,7 @@ pub fn count_loops(g: &strider_ir::Graph) -> usize {
         if !reachable.contains(&n) {
             continue;
         }
-        if !matches!(g.node_kind(n), NodeKind::ControlState) {
+        if !matches!(g.node_kind(n), NodeKind::Region) {
             continue;
         }
         // Back-edge detection: from each predecessor, walk forward

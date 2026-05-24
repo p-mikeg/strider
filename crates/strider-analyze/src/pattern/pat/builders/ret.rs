@@ -19,12 +19,12 @@ impl RetPat {
         Self { preceded_by: None, ret_vals: Vec::new() }
     }
     /// Match `p` against the Return's **direct** ctrl predecessor (the node
-    /// producing input slot 0 — typically a `ControlState` at a region
+    /// producing input slot 0 — typically a `Region` at a region
     /// header).  This is a single-step match, not a backward walk through
     /// the CFG; to reach a non-adjacent ancestor the caller must structure
     /// `p` accordingly.  When the matcher's
-    /// [`crate::pattern::Matcher::ignore_control_states`] flag is set, the match
-    /// transparently walks through `ControlState` join nodes when looking
+    /// [`crate::pattern::Matcher::ignore_regions`] flag is set, the match
+    /// transparently walks through `Region` join nodes when looking
     /// for `p`.
     pub fn preceded_by(mut self, p: impl Into<Pat>) -> Self {
         self.preceded_by = Some(p.into());
