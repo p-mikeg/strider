@@ -1,4 +1,3 @@
-use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use strider_ir::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
@@ -174,7 +173,7 @@ impl Match {
     /// Returns `None` for unbound captures or producers without a
     /// well-defined varnode mapping.
     #[must_use]
-    pub fn get_vn(&self, c: Capture, graph: &Graph) -> Option<rsleigh::Vn> {
+    pub fn get_vn(&self, c: Capture, graph: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
         if let Some(out) = binding.1 {
             let (node, slot) = graph.output_definition(out);

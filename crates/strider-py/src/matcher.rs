@@ -62,7 +62,7 @@ impl PyMatch {
     /// → check the generation hasn't drifted).
     fn with_graph<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
     where
-        F: FnOnce(strider_analyze::pattern::Capture, &strider_ir::Graph) -> R,
+        F: FnOnce(strider_analyze::pattern::Capture, &strider_ir::Function) -> R,
     {
         let cap = key.resolve()?;
         let g = self.graph.borrow(py);

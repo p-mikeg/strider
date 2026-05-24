@@ -816,7 +816,7 @@ impl crate::opt::AnchorCallingContext {
     /// computation through `cc` (per-target-address override);
     /// `None` uses the strider's function-default convention.
     fn for_anchor(
-        graph: &mut strider_ir::Graph,
+        graph: &mut strider_ir::Function,
         placeholder: NodeId,
         strider: &Strider,
         region_index: &RegionIndex,
@@ -916,7 +916,7 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Nod
 /// `set_call_clobbered_override`, or iterate directly to feed
 /// `clobbered_kinds`).
 fn override_clobber_vars<'a>(
-    graph: &'a strider_ir::Graph,
+    graph: &'a strider_ir::Function,
     cc: &'a strider_target::BuiltCallingConvention,
     strider: &'a Strider,
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {

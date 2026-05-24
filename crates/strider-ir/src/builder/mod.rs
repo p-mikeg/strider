@@ -674,9 +674,10 @@ impl FunctionBuilder {
             call_other_clobbered,
             no_memory_clobber: self.no_memory_clobber,
         };
-        let mut graph = self.graph;
-        graph.cc_metadata = Some(cc_metadata);
+        let graph = self.graph;
         crate::validate::validate(&graph, entry)?;
-        Ok(crate::Function::from_built_graph(graph, entry))
+        let mut function = crate::Function::from_built_graph(graph, entry);
+        function.set_cc_metadata(cc_metadata);
+        Ok(function)
     }
 }

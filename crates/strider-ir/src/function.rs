@@ -15,7 +15,7 @@
 //! [`Graph`] methods are available on a `&Function` / `&mut Function`
 //! without going through the explicit `.graph()` accessor.
 
-use crate::graph::{Graph, NodeIdRemap};
+use crate::graph::{CcMetadata, Graph, NodeIdRemap};
 use crate::node::NodeId;
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
@@ -32,6 +32,9 @@ use crate::node::NodeId;
 pub struct Function {
     graph: Graph,
     entry: Option<NodeId>,
+    /// Calling-convention metadata.  `None` before `FunctionBuilder::build`
+    /// completes; `Some(_)` on every fully-built function returned to callers.
+    cc_metadata: Option<CcMetadata>,
 }
 
 impl std::ops::Deref for Function {
@@ -67,6 +70,7 @@ impl Function {
         Self {
             graph,
             entry: Some(entry),
+            cc_metadata: None,
         }
     }
 
@@ -94,6 +98,63 @@ impl Function {
     #[inline]
     pub fn set_entry(&mut self, entry: NodeId) {
         self.entry = Some(entry);
+    }
+
+    /// Read-only access to the calling-convention metadata, or `None` if
+    /// the function has not yet been finalised by [`crate::FunctionBuilder::build`].
+    #[inline]
+    #[must_use]
+    pub fn cc_metadata(&self) -> Option<&CcMetadata> {
+        self.cc_metadata.as_ref()
+    }
+
+    /// Sets the calling-convention metadata.  Called by
+    /// [`crate::FunctionBuilder::build`] to populate the field.
+    #[inline]
+    pub fn set_cc_metadata(&mut self, cc: CcMetadata) {
+        self.cc_metadata = Some(cc);
+    }
+
+    /// Read the calling convention's call-clobbered varnode list.
+    /// Convenience for `function.cc_metadata().call_clobbered`.  Returns
+    /// an empty slice when `cc_metadata` is `None`.
+    #[inline]
+    #[must_use]
+    pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
+        self.cc_metadata
+            .as_ref()
+            .map_or(&[], |cc| &cc.call_clobbered)
+    }
+
+    /// Function-default `no_memory_clobber` flag.  Returns `false` when
+    /// `cc_metadata` is `None`.
+    #[inline]
+    #[must_use]
+    pub fn no_memory_clobber(&self) -> bool {
+        self.cc_metadata
+            .as_ref()
+            .is_some_and(|cc| cc.no_memory_clobber)
+    }
+
+    /// Read the function-default CallOther clobber list.
+    /// Convenience for `function.cc_metadata().call_other_clobbered`.
+    /// Returns an empty slice when `cc_metadata` is `None`.
+    #[inline]
+    #[must_use]
+    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
+        self.cc_metadata
+            .as_ref()
+            .map_or(&[], |cc| &cc.call_other_clobbered)
+    }
+
+    /// Read the `VarId → Vn` map for tracked variables.
+    /// Returns `None` when `cc_metadata` is `None`.
+    #[inline]
+    #[must_use]
+    pub fn variables_map(
+        &self,
+    ) -> Option<&cranelift_entity::PrimaryMap<crate::builder::VarId, rsleigh::Vn>> {
+        self.cc_metadata.as_ref().map(|cc| &cc.variables)
     }
 
     /// Returns the asm-fingerprint addresses attributed to `id`.
@@ -183,7 +244,7 @@ impl Function {
         let entry = self.entry.ok_or_else(|| {
             anyhow::anyhow!("Function::dot_dumper: entry node is not set")
         })?;
-        let cc = self.graph.cc_metadata().ok_or_else(|| {
+        let cc = self.cc_metadata().ok_or_else(|| {
             anyhow::anyhow!("Function::dot_dumper: cc_metadata is not set")
         })?;
         Ok(crate::graph_dot::GraphDotDumper {
@@ -251,7 +312,7 @@ mod compact_tests {
             [NodeOutputKind::OutputType(crate::node::NodeOutputType::U64)],
         );
         f.set_entry(entry);
-        f.graph_mut().cc_metadata = Some(CcMetadata {
+        f.set_cc_metadata(CcMetadata {
             variables: PrimaryMap::new(),
             call_clobbered: Box::new([]),
             ret_val_regs: Box::new([]),

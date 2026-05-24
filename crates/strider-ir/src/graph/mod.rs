@@ -189,9 +189,6 @@ pub struct Graph {
     /// creation site; remapped through [`NodeIdRemap`] by
     /// [`Self::retain_reachable`].
     pub(crate) initial_var_index: rustc_hash::FxHashMap<rsleigh::Vn, NodeId>,
-    /// Calling-convention metadata captured at build time.  `None`
-    /// during build; `Some(_)` after.  See [`CcMetadata`].
-    pub(crate) cc_metadata: Option<CcMetadata>,
     /// Monotonic version counter incremented by every operation that
     /// invalidates pre-existing `NodeId` / `NodeOutputId` /
     /// `NodeInputId` values — currently [`Self::retain_reachable`] (and
@@ -227,7 +224,6 @@ impl Graph {
             wide_consts: PrimaryMap::new(),
             wide_const_dedup: rustc_hash::FxHashMap::default(),
             initial_var_index: rustc_hash::FxHashMap::default(),
-            cc_metadata: None,
             generation: 0,
         }
     }
@@ -286,64 +282,6 @@ impl Graph {
         id: crate::wide_const::WideConstId,
     ) -> &crate::wide_const::WideConstStorage {
         &self.wide_consts[id]
-    }
-
-    /// Read-only access to the calling-convention metadata captured at
-    /// build time, or `None` if the graph has not yet been finalised by
-    /// [`crate::FunctionBuilder::build`].  See [`CcMetadata`].
-    ///
-    /// Callers in `Result`-returning code typically bubble via `?`:
-    /// ```ignore
-    /// let cc = graph.cc_metadata().ok_or_else(|| anyhow::anyhow!(
-    ///     "Graph is not fully built: cc_metadata missing"
-    /// ))?;
-    /// ```
-    #[inline]
-    #[must_use]
-    pub fn cc_metadata(&self) -> Option<&CcMetadata> {
-        self.cc_metadata.as_ref()
-    }
-
-    /// Read the calling convention's call-clobbered varnode list.
-    /// Convenience for `graph.cc_metadata().call_clobbered`.  Returns
-    /// an empty slice on a pre-build graph (when `cc_metadata` is
-    /// `None`); callers needing to distinguish should use
-    /// [`Self::cc_metadata`] directly.
-    #[must_use]
-    pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        self.cc_metadata
-            .as_ref()
-            .map_or(&[], |cc| &cc.call_clobbered)
-    }
-
-    /// Function-default `no_memory_clobber` flag — whether calls under
-    /// this convention preserve memory (zero-side-effect hooks like
-    /// `__fentry__` / `mcount`).  When `true`, `LoadReadOnly` and
-    /// `StackLoadForward` may forward across calls.  Returns `false`
-    /// on a pre-build graph (the safe, memory-clobbering default).
-    #[must_use]
-    pub fn no_memory_clobber(&self) -> bool {
-        self.cc_metadata
-            .as_ref()
-            .is_some_and(|cc| cc.no_memory_clobber)
-    }
-
-    /// Read the function-default CallOther clobber list.
-    /// Convenience for `graph.cc_metadata().call_other_clobbered`.
-    /// Returns an empty slice on a pre-build graph.
-    #[must_use]
-    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        self.cc_metadata
-            .as_ref()
-            .map_or(&[], |cc| &cc.call_other_clobbered)
-    }
-
-    /// Read the `VarId → Vn` map for tracked variables.
-    /// Convenience for `graph.cc_metadata().variables`.  Returns
-    /// `None` on a pre-build graph (when `cc_metadata` is `None`).
-    #[must_use]
-    pub fn variables_map(&self) -> Option<&PrimaryMap<crate::builder::VarId, rsleigh::Vn>> {
-        self.cc_metadata.as_ref().map(|cc| &cc.variables)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
