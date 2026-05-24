@@ -28,6 +28,25 @@ pub struct PyGraph {
     pub(crate) cfg: Py<PyCfg>,
 }
 
+/// Discriminator for [`PyGraph::dispatch_dot`].  Each variant carries
+/// the per-op arguments the public accessor `to_html` / `to_dot` /
+/// `html_str` would otherwise duplicate the cfg-borrow / graph-borrow
+/// / dumper-construction ritual for.
+enum DotOp<'a> {
+    DumpHtml(&'a str),
+    DumpDot(&'a str),
+    HtmlStr,
+}
+
+/// Return shape of [`PyGraph::dispatch_dot`].  Returning a sum lets a
+/// single helper cover both unit-returning dump methods and the
+/// string-returning `html_str` without separate variants per
+/// dispatch.
+enum DotResult {
+    Unit,
+    Html(String),
+}
+
 /// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
 /// returning `StriderError` on lookup failure.
 fn node_id_from_u32(graph: &strider_ir::Graph, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
@@ -108,48 +127,66 @@ impl PyGraph {
         let g = self.read_inner().map_err(crate::errors::into_strider_err)?;
         Ok(f(&g))
     }
+
+    /// Enum tagging the three dot-rendering operations the public
+    /// surface needs.  Lets [`Self::dispatch_dot`] funnel them
+    /// through a single helper that builds the `GraphDot` once and
+    /// dispatches to the right `dot::GraphDot` method, instead of
+    /// repeating the borrow / dumper / GraphDot construction at every
+    /// caller (the dumper type is `pub(crate)` in `strider-ir` and
+    /// can't be named from this crate's closures).
+    fn dispatch_dot(
+        &self,
+        py: Python<'_>,
+        style: Option<&str>,
+        op: DotOp<'_>,
+    ) -> PyResult<DotResult> {
+        let cfg_borrow = self.cfg.borrow(py);
+        self.with_read(|graph| {
+            let dumper = graph
+                .dot_dumper(cfg_borrow.inner.sleigh())
+                .map_err(crate::errors::into_strider_err)?;
+            let d = dot::GraphDot::new(dumper, dot_style_for(style));
+            match op {
+                DotOp::DumpHtml(p) => d
+                    .dump_as_html(Path::new(p))
+                    .map(|()| DotResult::Unit)
+                    .map_err(crate::errors::into_strider_err),
+                DotOp::DumpDot(p) => d
+                    .dump_as_dot(Path::new(p))
+                    .map(|()| DotResult::Unit)
+                    .map_err(crate::errors::into_strider_err),
+                DotOp::HtmlStr => d
+                    .as_html_from_dot()
+                    .map(DotResult::Html)
+                    .map_err(crate::errors::into_strider_err),
+            }
+        })
+    }
 }
 
 #[pymethods]
 impl PyGraph {
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
-        let style = style.unwrap_or("dark");
-        let cfg_borrow = self.cfg.borrow(py);
-        self.with_read(|graph| {
-            let dumper = graph
-                .dot_dumper(cfg_borrow.inner.sleigh())
-                .map_err(crate::errors::into_strider_err)?;
-            let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
-            d.dump_as_html(Path::new(path))
-                .map_err(crate::errors::into_strider_err)
-        })
+        self.dispatch_dot(py, Some(style.unwrap_or("dark")), DotOp::DumpHtml(path))
+            .map(|_| ())
     }
 
     #[pyo3(signature = (path,))]
     fn to_dot(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        let cfg_borrow = self.cfg.borrow(py);
-        self.with_read(|graph| {
-            let dumper = graph
-                .dot_dumper(cfg_borrow.inner.sleigh())
-                .map_err(crate::errors::into_strider_err)?;
-            let d = dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
-            d.dump_as_dot(Path::new(path))
-                .map_err(crate::errors::into_strider_err)
-        })
+        self.dispatch_dot(py, Some("dark"), DotOp::DumpDot(path))
+            .map(|_| ())
     }
 
     #[pyo3(signature = (style=None))]
     fn html_str(&self, py: Python<'_>, style: Option<&str>) -> PyResult<String> {
-        let style = style.unwrap_or("dark");
-        let cfg_borrow = self.cfg.borrow(py);
-        self.with_read(|graph| {
-            let dumper = graph
-                .dot_dumper(cfg_borrow.inner.sleigh())
-                .map_err(crate::errors::into_strider_err)?;
-            let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
-            d.as_html_from_dot().map_err(crate::errors::into_strider_err)
-        })
+        match self.dispatch_dot(py, Some(style.unwrap_or("dark")), DotOp::HtmlStr)? {
+            DotResult::Html(s) => Ok(s),
+            DotResult::Unit => Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "internal: DotOp::HtmlStr returned DotResult::Unit"
+            ))),
+        }
     }
 
     fn node_count(&self) -> PyResult<usize> {
