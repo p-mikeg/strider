@@ -273,28 +273,43 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion);
 // ── CC/arch-aware passes ──────────────────────────────────────────────────
 //
 // Each takes (sleigh, cc) — or (sleigh, cc, arch) — at construction
-// time, builds a strider_target::BuiltCallingConvention against the Sleigh's
-// register table, and stores the concrete pre-configured pass.
+// time, builds a strider_target::BuiltCallingConvention against the
+// Sleigh's register table, and stores the concrete pre-configured
+// pass.
+//
+// `cc_aware_pass_class!` collapses the 17-line boilerplate that the
+// (sleigh, cc) -> from_convention shape would otherwise repeat
+// verbatim for every CC-aware pass.  The sibling `pure_pass_class!`
+// macro above covers the zero-arg pass shape; CC + extra-arg passes
+// (e.g. StackLoadForward's `arch` param) stay hand-written below.
 
-/// `StackStoreDetect(sleigh, cc)`
-#[pyclass(name = "StackStoreDetect", module = "strider.opt")]
-pub struct PyStackStoreDetect {
-    pub(crate) inner: strider_analyze::opt::StackStoreDetect,
+macro_rules! cc_aware_pass_class {
+    ($pyname:literal => $rust:ident, $analyze:ty) => {
+        #[pyclass(name = $pyname, module = "strider.opt")]
+        pub struct $rust {
+            pub(crate) inner: $analyze,
+        }
+        #[pymethods]
+        impl $rust {
+            #[new]
+            fn new(
+                py: Python<'_>,
+                sleigh: Py<crate::sleigh::PySleigh>,
+                cc: crate::cc::PyCallingConvention,
+            ) -> PyResult<Self> {
+                let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
+                Ok(Self {
+                    inner: <$analyze>::from_convention(&built_cc),
+                })
+            }
+        }
+    };
 }
-#[pymethods]
-impl PyStackStoreDetect {
-    #[new]
-    fn new(
-        py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
-        cc: crate::cc::PyCallingConvention,
-    ) -> PyResult<Self> {
-        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
-        Ok(Self {
-            inner: strider_analyze::opt::StackStoreDetect::from_convention(&built_cc),
-        })
-    }
-}
+
+cc_aware_pass_class!(
+    "StackStoreDetect" => PyStackStoreDetect,
+    strider_analyze::opt::StackStoreDetect
+);
 
 /// `StackLoadForward(sleigh, cc, arch)`
 #[pyclass(name = "StackLoadForward", module = "strider.opt")]
@@ -317,45 +332,15 @@ impl PyStackLoadForward {
     }
 }
 
-/// `FunctionArgDetect(sleigh, cc)`
-#[pyclass(name = "FunctionArgDetect", module = "strider.opt")]
-pub struct PyFunctionArgDetect {
-    pub(crate) inner: strider_analyze::opt::FunctionArgDetect,
-}
-#[pymethods]
-impl PyFunctionArgDetect {
-    #[new]
-    fn new(
-        py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
-        cc: crate::cc::PyCallingConvention,
-    ) -> PyResult<Self> {
-        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
-        Ok(Self {
-            inner: strider_analyze::opt::FunctionArgDetect::from_convention(&built_cc),
-        })
-    }
-}
+cc_aware_pass_class!(
+    "FunctionArgDetect" => PyFunctionArgDetect,
+    strider_analyze::opt::FunctionArgDetect
+);
 
-/// `CallStackArgCollect(sleigh, cc)`
-#[pyclass(name = "CallStackArgCollect", module = "strider.opt")]
-pub struct PyCallStackArgCollect {
-    pub(crate) inner: strider_analyze::opt::CallStackArgCollect,
-}
-#[pymethods]
-impl PyCallStackArgCollect {
-    #[new]
-    fn new(
-        py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
-        cc: crate::cc::PyCallingConvention,
-    ) -> PyResult<Self> {
-        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
-        Ok(Self {
-            inner: strider_analyze::opt::CallStackArgCollect::from_convention(&built_cc),
-        })
-    }
-}
+cc_aware_pass_class!(
+    "CallStackArgCollect" => PyCallStackArgCollect,
+    strider_analyze::opt::CallStackArgCollect
+);
 
 /// `LoadReadOnly(rom)` — `rom` is a `MemoryMap` or any
 /// `ReadOnlyMemory` subclass (callback path).  Internally stored as
