@@ -15,7 +15,7 @@ aarch64:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     Extend(ZeroExtend): 2
     FunctionArg: 2
@@ -42,7 +42,7 @@ aarch64be:
   value_phis: 5
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     Extend(ZeroExtend): 1
     FunctionArg: 2
@@ -71,7 +71,7 @@ arm:
   stack_store_phis: 0
   kind_histogram:
     CastToInt: 2
-    ControlState: 1
+    Region: 1
     Entry: 1
     FunctionArg: 2
     If: 2
@@ -96,7 +96,7 @@ arm_be:
   value_phis: 5
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     FunctionArg: 1
     If: 1
@@ -123,7 +123,7 @@ arm_thumb:
   stack_store_phis: 0
   kind_histogram:
     CastToInt: 2
-    ControlState: 1
+    Region: 1
     Entry: 1
     FunctionArg: 2
     If: 2
@@ -148,7 +148,7 @@ mips32be:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     FunctionArg: 1
     If: 2
@@ -172,7 +172,7 @@ mips32le:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     FunctionArg: 1
     If: 2
@@ -196,7 +196,7 @@ mips64be:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     Extend(SignExtend): 3
     FunctionArg: 1
@@ -222,7 +222,7 @@ mips64le:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     Extend(SignExtend): 3
     FunctionArg: 1
@@ -250,7 +250,7 @@ ppc32be:
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
-    ControlState: 1
+    Region: 1
     Entry: 1
     FunctionArg: 2
     If: 1
@@ -283,7 +283,7 @@ ppc32le:
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
-    ControlState: 1
+    Region: 1
     Entry: 1
     FunctionArg: 1
     If: 1
@@ -316,7 +316,7 @@ ppc64be:
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
-    ControlState: 1
+    Region: 1
     Entry: 1
     Extend(SignExtend): 3
     Extend(ZeroExtend): 4
@@ -352,7 +352,7 @@ ppc64le:
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
-    ControlState: 1
+    Region: 1
     Entry: 1
     Extend(SignExtend): 3
     Extend(ZeroExtend): 4
@@ -386,7 +386,7 @@ x64:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     Extend(ZeroExtend): 3
     FunctionArg: 2
@@ -412,7 +412,7 @@ x86:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 2
+    Region: 2
     Entry: 1
     FunctionArg: 1
     If: 2
@@ -438,7 +438,7 @@ x86_kernel:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    ControlState: 1
+    Region: 1
     Entry: 1
     FunctionArg: 2
     If: 2
