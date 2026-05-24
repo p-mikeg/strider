@@ -1,5 +1,5 @@
 use crate::graph::Graph;
-use crate::node::{NodeCategory, NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 use crate::walk::NodeIdSet;
 
 use super::ValidationError;
@@ -169,14 +169,8 @@ pub(super) fn check_graph_invariants_phis(
 /// even when reachable from the entry.  Region / phi / initial-state
 /// nodes are synthesised by the lifter without a contributing machine
 /// instruction; their fingerprint legitimately stays empty.
-///
-/// Derived from [`NodeKind::category`]: exempt iff the category is
-/// `Region`, `InitialState`, or `Phi`.
 fn asm_fingerprint_exempt(kind: &NodeKind) -> bool {
-    matches!(
-        kind.category(),
-        NodeCategory::Region | NodeCategory::InitialState | NodeCategory::Phi
-    )
+    kind.asm_fingerprint_exempt()
 }
 
 /// Graph invariant: every reachable, non-exempt node must carry at

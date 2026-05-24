@@ -347,12 +347,13 @@ fn try_from_u32_size_to_node_output_type() {
     }
 }
 
-// ── NodeCategory ─────────────────────────────────────────────────────────
+// ── NodeKind predicates ───────────────────────────────────────────────────
 
 /// Returns one constructor for every [`NodeKind`] variant.  Hand-maintained;
-/// adding a new variant requires appending it here so the equivalence test
-/// continues to cover every kind.  The `category()` match is exhaustive at
-/// compile time, but a forgotten append here would silently shrink coverage.
+/// adding a new variant requires appending it here so the equivalence tests
+/// below continue to cover every kind.  The exhaustive matches in
+/// `is_cacheable` and `asm_fingerprint_exempt` catch new variants at compile
+/// time, but a forgotten append here would silently shrink runtime coverage.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
     use crate::node::FunctionArgSource;
     use crate::ops::{
@@ -466,10 +467,10 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
     )
 }
 
-/// Derived `category()`-based `is_cacheable` must agree with the
-/// legacy hand-written predicate on every NodeKind variant.
+/// `NodeKind::is_cacheable` must agree with the legacy hand-written
+/// predicate on every NodeKind variant.
 #[test]
-fn category_matches_legacy_is_cacheable() {
+fn is_cacheable_matches_legacy() {
     for k in every_node_kind_smoke() {
         assert_eq!(
             k.is_cacheable(),
@@ -479,18 +480,13 @@ fn category_matches_legacy_is_cacheable() {
     }
 }
 
-/// Derived `category()`-based `asm_fingerprint_exempt` (Region |
-/// InitialState | Phi) must agree with the legacy hand-written
-/// predicate on every NodeKind variant.
+/// `NodeKind::asm_fingerprint_exempt` must agree with the legacy
+/// hand-written predicate on every NodeKind variant.
 #[test]
-fn category_matches_legacy_asm_fingerprint_exempt() {
+fn asm_fingerprint_exempt_matches_legacy() {
     for k in every_node_kind_smoke() {
-        let derived = matches!(
-            k.category(),
-            NodeCategory::Region | NodeCategory::InitialState | NodeCategory::Phi
-        );
         assert_eq!(
-            derived,
+            k.asm_fingerprint_exempt(),
             legacy_asm_fingerprint_exempt(&k),
             "asm_fingerprint_exempt disagrees with legacy for {k:?}"
         );

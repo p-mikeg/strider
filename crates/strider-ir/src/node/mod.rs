@@ -14,7 +14,7 @@ mod tests;
 
 pub(crate) use data::{Node, NodeInput, NodeOutput};
 pub use ids::{NodeId, NodeInputId, NodeOutputId};
-pub use kind::{FunctionArgSource, NodeCategory, NodeKind};
+pub use kind::{FunctionArgSource, NodeKind};
 pub use output_kind::NodeOutputKind;
 pub use output_type::NodeOutputType;
 
