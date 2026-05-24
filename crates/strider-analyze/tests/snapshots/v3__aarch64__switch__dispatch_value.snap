@@ -61,7 +61,7 @@ digraph "G" {
   "17" -> "v19" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "v15" -> "17" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "20" -> "17" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "21" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "21" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v19" -> "21" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v22" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v22" -> "21" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -158,7 +158,7 @@ digraph "G" {
   "v62" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v62" -> "60" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "63" -> "60" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "64" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "64" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v10" -> "64" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v14" -> "64" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v18" -> "64" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

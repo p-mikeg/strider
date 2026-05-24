@@ -33,7 +33,7 @@ digraph "G" {
   "1" -> "v3" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "4" -> "1" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "5" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "5" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v3" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v2" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "6" [label="If", shape=diamond, fillcolor="#3a2a10"];
@@ -50,7 +50,7 @@ digraph "G" {
   "9" -> "v11" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "v8" -> "9" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "12" -> "9" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "13" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "13" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v7" -> "13" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v11" -> "13" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v10" -> "13" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

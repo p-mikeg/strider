@@ -26,7 +26,7 @@ digraph "G" {
   ];
 
   "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "1" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "1" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v2" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v2" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -36,7 +36,7 @@ digraph "G" {
   "3" -> "v2" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "1" -> "3" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "5" -> "3" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "6" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "6" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v4" -> "6" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v7" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v7" -> "6" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -47,11 +47,11 @@ digraph "G" {
   "8" -> "v10" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "6" -> "8" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "11" -> "8" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "12" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "12" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v10" -> "12" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v13" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
   "v13" -> "12" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
-  "14" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "14" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "12" -> "14" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v15" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v15" -> "14" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

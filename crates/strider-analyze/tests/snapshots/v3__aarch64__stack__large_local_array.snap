@@ -26,7 +26,7 @@ digraph "G" {
   ];
 
   "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "1" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "1" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v2" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v2" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -43,7 +43,7 @@ digraph "G" {
   "6" -> "v8" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "v4" -> "6" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "9" -> "6" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "10" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "10" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v11" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
   "v11" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v8" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -54,7 +54,7 @@ digraph "G" {
   "12" -> "v14" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "10" -> "12" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "15" -> "12" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "16" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "16" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v14" -> "16" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v13" -> "16" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "17" [label="If", shape=diamond, fillcolor="#3a2a10"];
@@ -63,10 +63,10 @@ digraph "G" {
   "17" -> "v18" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "16" -> "17" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "19" -> "17" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "20" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "20" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v7" -> "20" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v18" -> "20" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
-  "21" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "21" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v22" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v22" -> "21" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "20" -> "21" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

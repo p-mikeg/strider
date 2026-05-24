@@ -40,7 +40,7 @@ digraph "G" {
   "5" -> "v7" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "v3" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "8" -> "5" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "9" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "9" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "10" -> "9" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v7" -> "9" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "11" [label="Return", shape=doublecircle, fillcolor="#103a10"];
@@ -95,7 +95,7 @@ digraph "G" {
   "v31" -> "28" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
   "32" -> "28" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "32" [label="const 0xffffffff:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "10" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "10" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v2" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v6" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "8" [label="Equal\nu8 → bool", shape=box, fillcolor="#2d2d2d"];

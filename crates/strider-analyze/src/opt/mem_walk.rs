@@ -540,14 +540,14 @@ mod tests {
             .preorder()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
             .expect("InitialMemory must exist");
-        let cs_node = fg
+        let region_node = fg
             .preorder()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
             .expect("Region must exist");
         let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
         let phi_token = {
             // Region's outputs are [Control, PhiToken].
-            let outs = fg.node_outputs(cs_node);
+            let outs = fg.node_outputs(region_node);
             outs[1]
         };
         // Synthesise inputs: [phi_token, im_out, im_out, …] (n_arms times).
@@ -615,13 +615,13 @@ mod tests {
             .preorder()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
             .unwrap();
-        let cs_node = fg
+        let region_node = fg
             .preorder()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
             .unwrap();
         let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
         let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
-        let phi_token = fg.node_outputs(cs_node)[1];
+        let phi_token = fg.node_outputs(region_node)[1];
         let phi = fg.graph_mut().create_node(
             NodeKind::MemPhi,
             [phi_token, store_mem, im_out],

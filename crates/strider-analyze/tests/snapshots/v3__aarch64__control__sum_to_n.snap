@@ -45,7 +45,7 @@ digraph "G" {
   "9" [label="init\nq0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "8" [label="arg[1] ← x1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "6" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "11" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "11" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v12" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v12" -> "11" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v2" -> "11" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

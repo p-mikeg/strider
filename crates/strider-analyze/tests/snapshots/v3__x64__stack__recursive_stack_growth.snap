@@ -167,7 +167,7 @@ digraph "G" {
   "65" -> "58" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "65" [label="init\nRBX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "63" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "66" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "66" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v2" -> "66" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v67" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v67" -> "66" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

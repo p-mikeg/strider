@@ -26,7 +26,7 @@ digraph "G" {
   ];
 
   "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "1" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "1" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v2" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v2" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -129,7 +129,7 @@ digraph "G" {
   "46" -> "47" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
   "49" -> "47" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
   "49" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "39" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "39" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v50" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
   "v50" -> "39" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v4" -> "39" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

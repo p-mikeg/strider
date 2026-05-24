@@ -49,7 +49,7 @@ digraph "G" {
   "v14" [label="Post Call\nRDX", shape=box, fillcolor="#28102a", style="filled,dashed"];
   "5" -> "v14" [color="#888888", style=dashed];
   "v14" -> "10" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
-  "15" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "15" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v2" -> "15" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "10" -> "15" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "16" [label="Return", shape=doublecircle, fillcolor="#103a10"];

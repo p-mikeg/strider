@@ -55,7 +55,7 @@ digraph "G" {
   "v17" [label="Post Call\nr0", shape=box, fillcolor="#28102a", style="filled,dashed"];
   "5" -> "v17" [color="#888888", style=dashed];
   "v17" -> "13" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
-  "18" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "18" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v2" -> "18" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "13" -> "18" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "19" [label="Return", shape=doublecircle, fillcolor="#103a10"];

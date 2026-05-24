@@ -26,7 +26,7 @@ digraph "G" {
   ];
 
   "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "1" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "1" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "2" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "3" [label="If", shape=diamond, fillcolor="#3a2a10"];

@@ -314,7 +314,7 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
 // ── ignore_regions walk-through ──────────────────────────────────────
 
 /// Two-region graph: entry region runs `Call`; tail region runs `Return`.
-fn graph_ret_via_controlstate_after_call() -> strider_ir::Graph {
+fn graph_ret_via_region_after_call() -> strider_ir::Graph {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let head = t.fb_mut().create_region().expect("head");
     t.fb_mut().set_entry_region(head).expect("entry head");
@@ -336,8 +336,8 @@ fn graph_ret_via_controlstate_after_call() -> strider_ir::Graph {
 }
 
 #[test]
-fn ret_call_does_not_match_through_controlstate_by_default() {
-    let g = graph_ret_via_controlstate_after_call();
+fn ret_call_does_not_match_through_region_by_default() {
+    let g = graph_ret_via_region_after_call();
     let pat: Pat = ret().preceded_by(call()).into();
     let hits = Matcher::try_new(&g).unwrap().find_all(&pat);
     assert!(hits.is_empty());
@@ -345,7 +345,7 @@ fn ret_call_does_not_match_through_controlstate_by_default() {
 
 #[test]
 fn ret_call_matches_through_controlstate_with_ignore_regions() {
-    let g = graph_ret_via_controlstate_after_call();
+    let g = graph_ret_via_region_after_call();
     let pat: Pat = ret().preceded_by(call()).into();
     let hits = Matcher::try_new(&g).unwrap().ignore_regions().find_all(&pat);
     assert_eq!(hits.len(), 1);

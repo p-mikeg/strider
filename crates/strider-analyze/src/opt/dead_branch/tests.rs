@@ -7,7 +7,7 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
 // Helper: count Region nodes with N ctrl inputs.
-fn count_cs_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
+fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
     fg.all_node_ids()
         .filter(|&node| {
             matches!(fg.node_kind(node), NodeKind::Region)
@@ -49,7 +49,7 @@ fn dead_branch_false() -> Result<()> {
 
     // Before: three Region nodes with 1 ctrl input each
     // (entry, true-branch, false-branch).
-    assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
+    assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
 
     let entry = fg.entry().unwrap();
     let result = DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
@@ -58,12 +58,12 @@ fn dead_branch_false() -> Result<()> {
     // After: true region's Region loses its input (dead branch removed).
     // Entry Region and false region's Region each still have 1 input.
     assert_eq!(
-        count_cs_with_n_inputs(&fg, 0),
+        count_regions_with_n_inputs(&fg, 0),
         1,
         "dead branch Region should have 0 inputs"
     );
     assert_eq!(
-        count_cs_with_n_inputs(&fg, 1),
+        count_regions_with_n_inputs(&fg, 1),
         2,
         "entry and live branch Region should have 1 input"
     );
@@ -74,19 +74,19 @@ fn dead_branch_false() -> Result<()> {
 fn dead_branch_true() -> Result<()> {
     let mut fg = make_if_fn(true)?;
 
-    assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
+    assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
 
     let entry = fg.entry().unwrap();
     let result = DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
     assert!(result.changed());
 
     assert_eq!(
-        count_cs_with_n_inputs(&fg, 0),
+        count_regions_with_n_inputs(&fg, 0),
         1,
         "dead (false) branch Region should have 0 inputs"
     );
     assert_eq!(
-        count_cs_with_n_inputs(&fg, 1),
+        count_regions_with_n_inputs(&fg, 1),
         2,
         "entry and live (true) branch Region should have 1 input"
     );
@@ -176,7 +176,7 @@ fn nested_if_true_eliminated() -> Result<()> {
 /// `output_uses(dead_ctrl)` in arbitrary order and removed by the index
 /// captured before mutation. After the first removal, indices shifted left,
 /// so the second `remove_node_input` either:
-///  - hit the `dead_idx < cs_len` guard and silently skipped (leaving a stale
+///  - hit the `dead_idx < region_len` guard and silently skipped (leaving a stale
 ///    dead reference in the Region), or
 ///  - was still in-bounds but pointed at the wrong (now live) predecessor and
 ///    removed it instead.
@@ -211,12 +211,12 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
         1,
         "ctrl_false should have exactly one consumer in the standard make_if_fn shape"
     );
-    let false_cs = consumers[0].0;
-    assert!(matches!(fg.node_kind(false_cs), NodeKind::Region));
+    let false_region = consumers[0].0;
+    assert!(matches!(fg.node_kind(false_region), NodeKind::Region));
 
     // Wire ctrl_false into the same Region a second time, producing the bad shape.
-    fg.add_node_input(false_cs, ctrl_false)?;
-    let pre_inputs: Vec<_> = fg.node_inputs(false_cs).into_iter().collect();
+    fg.add_node_input(false_region, ctrl_false)?;
+    let pre_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
     assert_eq!(pre_inputs.len(), 2);
     assert_eq!(
         pre_inputs[0], ctrl_false,
@@ -233,7 +233,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     let entry = fg.entry().unwrap();
     DeadBranchElimination.optimize(fg.graph_mut(), entry)?;
 
-    let post_inputs: Vec<_> = fg.node_inputs(false_cs).into_iter().collect();
+    let post_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
     assert_eq!(
         post_inputs.len(),
         0,

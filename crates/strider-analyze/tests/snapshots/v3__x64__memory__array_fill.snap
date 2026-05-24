@@ -33,7 +33,7 @@ digraph "G" {
   "1" -> "v3" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "4" -> "1" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "5" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "5" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v6" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v6" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v3" -> "5" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -43,7 +43,7 @@ digraph "G" {
   "7" -> "v6" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "5" -> "7" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "9" -> "7" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "10" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "10" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v2" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v8" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "11" [label="Return", shape=doublecircle, fillcolor="#103a10"];

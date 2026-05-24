@@ -264,19 +264,19 @@ fn transient_arity_mismatch_surfaces_as_error_not_panic() -> crate::opt::Result<
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.phi_var_tag(n) == Some(var))
         .expect("VarPhi(var) at join");
     let phi_token = fg.node_inputs(phi_node)[0];
-    let cs_node = fg.output_definition(phi_token).0;
+    let region_node = fg.output_definition(phi_token).0;
 
     // Surgery: append a new ctrl input to the Region WITHOUT appending the
     // matching value to the VarPhi.  This simulates a peer pass that
     // attached a new predecessor's ctrl edge but had not yet wired
     // value/MemPhi inputs.
-    let cs_ctrl_out = fg.node_outputs(cs_node)[0];
-    fg.add_node_input(cs_node, cs_ctrl_out)?;
+    let cs_ctrl_out = fg.node_outputs(region_node)[0];
+    fg.add_node_input(region_node, cs_ctrl_out)?;
 
     // Sanity: the Region now has 2 ctrl inputs, but the phi only has token + 1
     // value (2 inputs total), so accessing `inputs[2]` would panic.
     assert_eq!(
-        fg.node_inputs(cs_node).len(),
+        fg.node_inputs(region_node).len(),
         2,
         "CS has 2 ctrl edges after surgery"
     );
@@ -341,7 +341,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     let phi_inputs_pre = fg.node_inputs(phi_node);
     let phi_token = phi_inputs_pre[0];
     let initial_value = phi_inputs_pre[1];
-    let cs_node = fg.output_definition(phi_token).0;
+    let region_node = fg.output_definition(phi_token).0;
 
     // Surgery: append a second, *distinct* control predecessor to the
     // join Region — the join's own ctrl_out, modelling a direct self-loop
@@ -353,13 +353,13 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     // loop-back self-ref the test exercises), and any MemPhi gets
     // *its* own output (so the graph keeps the per-predecessor arity
     // invariant `remove_phis` relies on).
-    let cs_outputs = fg.node_outputs(cs_node);
-    let cs_ctrl_out = cs_outputs[0];
-    let cs_phi_out = cs_outputs[1];
-    fg.add_node_input(cs_node, cs_ctrl_out)?;
+    let region_outputs = fg.node_outputs(region_node);
+    let cs_ctrl_out = region_outputs[0];
+    let region_phi_out = region_outputs[1];
+    fg.add_node_input(region_node, cs_ctrl_out)?;
 
     let phi_consumers: Vec<strider_ir::node::NodeId> = fg
-        .output_uses(cs_phi_out)
+        .output_uses(region_phi_out)
         .map(|(n, _)| n)
         .collect();
     for phi in phi_consumers {

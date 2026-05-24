@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {

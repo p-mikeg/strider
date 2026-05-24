@@ -369,7 +369,7 @@ class Analysis:
         """Run a pattern against this function's IR.  Returns the
         list of `Match` objects.  Forwards every kwarg to
         `Graph.find_all` (`ignore_casts`, `ignore_casts_mask`,
-        `ignore_control_states`)."""
+        `ignore_regions`)."""
         return self._result.graph.find_all(pattern, **matcher_options)
 
     def find_all_requirements(self, patterns, **matcher_options) -> list:
@@ -393,7 +393,7 @@ class Analysis:
         * A `Match` object — the match's root is used.
 
         Returns an empty list for "structural" node kinds
-        (Entry, InitialMemory, phis, ControlState, FunctionArg).
+        (Entry, InitialMemory, phis, Region, FunctionArg).
         See `ir::Graph::asm_fingerprint` for the full contract.
         """
         if isinstance(node, int):

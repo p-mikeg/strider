@@ -60,7 +60,7 @@ digraph "G" {
   "15" -> "v17" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "v2" -> "15" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "18" -> "15" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "19" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "19" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v17" -> "19" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v16" -> "19" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "20" [label="Return", shape=doublecircle, fillcolor="#103a10"];

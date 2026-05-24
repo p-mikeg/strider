@@ -82,7 +82,7 @@ mod tests {
     /// join — `try_walk_through_region` is called against a non-CS
     /// producer and must return false (the `take(0)` branch).
     #[test]
-    fn no_controlstate_input_returns_false() {
+    fn no_region_input_returns_false() {
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
         let v = b.build_int_const(0xCAFEu64, NodeOutputType::U64).unwrap();
         b.build_return(Some(v), &[]).unwrap();
@@ -103,7 +103,7 @@ mod tests {
     /// Single-predecessor Region (a region join with one input).
     /// The walk-through tries the lone predecessor and that's it.
     #[test]
-    fn single_predecessor_controlstate_walks_through() {
+    fn single_predecessor_region_walks_through() {
         // entry: Call → branch to tail.  tail: Return (single predecessor
         // Region at tail).  ret().preceded_by(call()) must match through the
         // walk-through.

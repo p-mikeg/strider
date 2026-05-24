@@ -432,7 +432,7 @@ fn walk_control_for_if_bound_iter(
     /// handled by re-entering the inner loop with an updated
     /// `control_out`, so they cost zero heap allocation.
     struct JoinNext {
-        cs_node: NodeId,
+        region_node: NodeId,
         next_idx: u32,
         pre_pred_trail_len: u32,
         combined: u64,
@@ -511,7 +511,7 @@ fn walk_control_for_if_bound_iter(
                         break;
                     };
                     work.push(JoinNext {
-                        cs_node: producer,
+                        region_node: producer,
                         next_idx: 1,
                         pre_pred_trail_len,
                         combined: 0,
@@ -559,7 +559,7 @@ fn walk_control_for_if_bound_iter(
                 }
                 Some(b) => {
                     let new_combined = top.combined.max(b);
-                    let preds = graph.node_inputs(top.cs_node);
+                    let preds = graph.node_inputs(top.region_node);
                     let pred_count = preds.len();
                     if (top.next_idx as usize) >= pred_count {
                         // All preds processed; pop this join.
@@ -573,7 +573,7 @@ fn walk_control_for_if_bound_iter(
                     // just checked, so `.nth` is in range; we still
                     // bail conservatively rather than `unwrap`.
                     let Some(next_pred) = graph
-                        .node_inputs(top.cs_node)
+                        .node_inputs(top.region_node)
                         .into_iter()
                         .nth(top.next_idx as usize)
                     else {

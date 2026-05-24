@@ -26,7 +26,7 @@ digraph "G" {
   ];
 
   "0" [label="Entry", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "1" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "1" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v2" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v2" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "0" -> "1" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -43,7 +43,7 @@ digraph "G" {
   "6" -> "v8" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "v4" -> "6" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "9" -> "6" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "10" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "10" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v11" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
   "v11" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v8" -> "10" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
@@ -54,12 +54,12 @@ digraph "G" {
   "12" -> "v14" [color="#00cccc", label=false, fontcolor="#cccccc", fontsize=9];
   "10" -> "12" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "15" -> "12" [color="#ff44ff", label=cond, fontcolor="#cccccc", fontsize=9];
-  "16" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "16" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v7" -> "16" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v14" -> "16" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "v17" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v17" -> "16" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
-  "18" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "18" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "v19" [label="if.false", shape=trapezium, fillcolor="#3a2a10"];
   "v19" -> "18" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "16" -> "18" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

@@ -43,7 +43,7 @@ digraph "G" {
   "10" -> "5" [color="#ff8800", label=arg2, fontcolor="#cccccc", fontsize=9];
   "11" -> "5" [color="#ff8800", label=arg3, fontcolor="#cccccc", fontsize=9];
   "12" -> "5" [color="#ff8800", label=arg4, fontcolor="#cccccc", fontsize=9];
-  "13" [label="ControlState", shape=invhouse, fillcolor="#2a1a4a"];
+  "13" [label="Region", shape=invhouse, fillcolor="#2a1a4a"];
   "5" -> "13" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "14" -> "13" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "15" [label="Return", shape=doublecircle, fillcolor="#103a10"];
