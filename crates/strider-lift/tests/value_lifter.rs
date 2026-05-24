@@ -74,127 +74,75 @@ fn make_builder() -> FunctionBuilder {
 /// Default endianness used by the ValueLifter constructor in these tests.
 const TEST_ENDIAN: strider_target::Endianness = strider_target::Endianness::Little;
 
+/// Shared scaffold for the smoke-test shape "build sleigh + builder +
+/// lifter, construct an `Insn { opcode, output, inputs }`, assert the
+/// lift returns `Ok(true)`".  Migrating each smoke test to this
+/// helper collapses 6 lines of setup ritual to a single line and
+/// surfaces the per-test variance (the opcode + i/o varnodes) at the
+/// call site.  Tests that need to inspect the resulting graph keep
+/// their hand-written setup.
+fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let insn = Insn {
+        opcode,
+        output,
+        inputs: inputs.into(),
+    };
+    assert!(lifter.lift(&insn).unwrap(),
+        "lift returned Ok(false) for {opcode:?} — expected Ok(true)");
+}
+
 // ── Boolean family ──────────────────────────────────────────────────────────
 
 #[test]
 fn lift_bool_and_of_consts() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::BoolAnd,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(1, 1), const_vn(1, 1)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::BoolAnd, Some(reg(0)), vec![const_vn(1, 1), const_vn(1, 1)]);
 }
 
 #[test]
 fn lift_bool_or_of_consts() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::BoolOr,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(0, 1), const_vn(1, 1)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::BoolOr, Some(reg(0)), vec![const_vn(0, 1), const_vn(1, 1)]);
 }
 
 #[test]
 fn lift_bool_neg_of_const() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::BoolNeg,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(0, 1)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::BoolNeg, Some(reg(0)), vec![const_vn(0, 1)]);
 }
 
 // ── Integer family (Copy + Sext/Zext) ───────────────────────────────────────
 
 #[test]
 fn lift_int_copy_from_const() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::Copy,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(42, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::Copy, Some(reg(0)), vec![const_vn(42, 4)]);
 }
 
 #[test]
 fn lift_int_zext_extends_const() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::IntZext,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(0xff, 1)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::IntZext, Some(reg(0)), vec![const_vn(0xff, 1)]);
 }
 
 #[test]
 fn lift_int_sext_extends_const() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::IntSext,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(0xff, 1)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::IntSext, Some(reg(0)), vec![const_vn(0xff, 1)]);
 }
 
 // ── Arithmetic family ───────────────────────────────────────────────────────
 
 #[test]
 fn lift_int_add_of_consts() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::IntAdd,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(7, 4), const_vn(35, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::IntAdd, Some(reg(0)), vec![const_vn(7, 4), const_vn(35, 4)]);
 }
 
 #[test]
 fn lift_int_sub_of_consts() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::IntSub,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::IntSub, Some(reg(0)), vec![const_vn(50, 4), const_vn(8, 4)]);
 }
 
 #[test]
 fn lift_int_mul_of_consts() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::IntMul,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(6, 4), const_vn(7, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::IntMul, Some(reg(0)), vec![const_vn(6, 4), const_vn(7, 4)]);
 }
 
 // ── Cast family ─────────────────────────────────────────────────────────────
@@ -202,68 +150,28 @@ fn lift_int_mul_of_consts() {
 #[test]
 fn lift_truncate_extracts_low_bits() {
     // Subpiece(value, byte_offset, out_size).
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::Subpiece,
-        output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
-        inputs: vec![const_vn(0x1234_5678, 4), const_vn(0, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::Subpiece, Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }), vec![const_vn(0x1234_5678, 4), const_vn(0, 4)]);
 }
 
 #[test]
 fn lift_piece_concatenates() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::Piece,
-        output: Some(Vn { size: 4, addr_off: 0, addr_space: VnSpace::REGISTER }),
-        inputs: vec![const_vn(0xAA, 2), const_vn(0xBB, 2)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::Piece, Some(Vn { size: 4, addr_off: 0, addr_space: VnSpace::REGISTER }), vec![const_vn(0xAA, 2), const_vn(0xBB, 2)]);
 }
 
 #[test]
 fn lift_extract_returns_slice() {
     // Extract(value, lsb, bit_count).
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::Extract,
-        output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
-        inputs: vec![const_vn(0xFF00, 4), const_vn(8, 4), const_vn(8, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::Extract, Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }), vec![const_vn(0xFF00, 4), const_vn(8, 4), const_vn(8, 4)]);
 }
 
 #[test]
 fn lift_popcount() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::Popcount,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(0b1011, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::Popcount, Some(reg(0)), vec![const_vn(0b1011, 4)]);
 }
 
 #[test]
 fn lift_lzcount() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::Lzcount,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(0xF, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::Lzcount, Some(reg(0)), vec![const_vn(0xF, 4)]);
 }
 
 // ── Float family ────────────────────────────────────────────────────────────
@@ -285,15 +193,7 @@ fn lift_float_add_of_consts() {
 
 #[test]
 fn lift_float_neg() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::FloatNeg,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(0, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::FloatNeg, Some(reg(0)), vec![const_vn(0, 4)]);
 }
 
 // ── mem_load family ─────────────────────────────────────────────────────────
@@ -309,15 +209,7 @@ fn lift_float_neg() {
 
 #[test]
 fn lift_segment_op_recognised() {
-    let sleigh = make_sleigh();
-    let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn {
-        opcode: Opcode::SegmentOp,
-        output: Some(reg(0)),
-        inputs: vec![const_vn(0, 4), const_vn(0, 2), const_vn(0, 4)].into(),
-    };
-    assert!(lifter.lift(&insn).unwrap());
+    assert_lifts_one(Opcode::SegmentOp, Some(reg(0)), vec![const_vn(0, 4), const_vn(0, 2), const_vn(0, 4)]);
 }
 
 // ── Lift-time canonicalisation shape checks ─────────────────────────────────
