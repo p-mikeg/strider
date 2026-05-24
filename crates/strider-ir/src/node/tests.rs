@@ -368,7 +368,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         size: 8,
     };
     vec![
-        // InitialState
+        // initial state
         NodeKind::Entry,
         NodeKind::InitialMemory,
         NodeKind::InitialVar(vn),
@@ -376,23 +376,23 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
             source: FunctionArgSource::Register(vn),
             index: 0,
         },
-        // Region
+        // region
         NodeKind::Region,
-        // Phi
+        // phis
         NodeKind::MemPhi,
         NodeKind::Phi,
         NodeKind::StackStorePhi { space },
-        // Terminator
+        // terminator
         NodeKind::If,
         NodeKind::Call,
         NodeKind::Return,
         NodeKind::IndirectBranch,
         NodeKind::CallOther { user_op_id: 0 },
-        // PureValue: memory
+        // pure value: memory
         NodeKind::Load(space),
         NodeKind::Store(space),
         NodeKind::StackStore { space, offset: 0 },
-        // PureValue: integer
+        // pure value: integer
         NodeKind::IntConst(0),
         NodeKind::IntConstWide(crate::wide_const::WideConstId::new(0)),
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
@@ -403,34 +403,34 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Popcount,
         NodeKind::Lzcount,
         NodeKind::CastToInt,
-        // PureValue: bool
+        // pure value: bool
         NodeKind::BoolConst(false),
         NodeKind::BoolUnaryOp(BoolUnaryOp::Neg),
         NodeKind::BoolBinaryOp(BoolBinaryOp::And),
         NodeKind::CastToBool,
-        // PureValue: float
+        // pure value: float
         NodeKind::FloatConst(0),
         NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
         NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
         NodeKind::FloatCmpOp(FloatCmpOp::Equal),
-        // PureValue: conversions
+        // pure value: conversions
         NodeKind::IntToFloat,
         NodeKind::IntBitsToFloat,
         NodeKind::FloatToInt,
         NodeKind::FloatBitsToInt,
         NodeKind::FloatToFloat,
         NodeKind::CastToFloat,
-        // PureValue: Sleigh pure user-op
+        // pure value: sleigh pure user-op
         NodeKind::SegmentOp { op_id: 0 },
-        // If is pure-value above; opaque user-ops left:
-        // OpaqueCall
+        // if is pure-value above; opaque user-ops left:
+        // opaque call
         NodeKind::CPoolRef,
         NodeKind::New,
     ]
 }
 
 /// Original (pre-refactor) hand-written `is_cacheable` predicate.  Pinned
-/// here so the derived `category()`-based predicate can be checked for
+/// here so the new direct implementation can be checked for
 /// byte-identical behaviour on every NodeKind variant.
 fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     !matches!(

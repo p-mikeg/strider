@@ -165,14 +165,6 @@ pub(super) fn check_graph_invariants_phis(
     }
 }
 
-/// Returns `true` if `kind` is allowed to carry an empty asm-fingerprint
-/// even when reachable from the entry.  Region / phi / initial-state
-/// nodes are synthesised by the lifter without a contributing machine
-/// instruction; their fingerprint legitimately stays empty.
-fn asm_fingerprint_exempt(kind: &NodeKind) -> bool {
-    kind.asm_fingerprint_exempt()
-}
-
 /// Graph invariant: every reachable, non-exempt node must carry at
 /// least one asm-fingerprint contributor.  See
 /// [`crate::graph::Graph::asm_fingerprint`] for the full contract.
@@ -182,7 +174,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     errs: &mut Vec<ValidationError>,
 ) {
     for (node, kind) in graph.reachable_kind_iter(reachable) {
-        if asm_fingerprint_exempt(kind) {
+        if kind.asm_fingerprint_exempt() {
             continue;
         }
         if graph.asm_fingerprint(node).is_empty() {

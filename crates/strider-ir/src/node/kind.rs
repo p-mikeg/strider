@@ -22,7 +22,6 @@ pub enum FunctionArgSource {
     },
 }
 
-
 /// The operation or role of a node in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
