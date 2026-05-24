@@ -164,8 +164,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let if_count = fg.count_kind(|k| matches!(k, NodeKind::If));
     assert_eq!(if_count, 0, "both If nodes must be eliminated");

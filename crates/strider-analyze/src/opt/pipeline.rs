@@ -252,6 +252,24 @@ impl OptimizerPipeline {
         Ok(())
     }
 
+    /// Convenience wrapper around [`Self::run`] for graphs already in
+    /// their built form (i.e. `entry` is populated).  Collapses the
+    /// idiomatic
+    /// `let entry = graph.entry().unwrap(); pipeline.run(graph, entry)`
+    /// two-liner into a single call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `graph.entry()` is `None` (the graph has
+    /// not been built), or any error [`Self::run`] would propagate.
+    pub fn run_built(&self, graph: &mut strider_ir::Graph) -> crate::opt::Result<()> {
+        let entry = graph.entry().ok_or_else(|| {
+            anyhow::anyhow!(
+                "OptimizerPipeline::run_built: graph has not been built (entry is None)"
+            )
+        })?;
+        self.run(graph, entry)
+    }
 }
 
 #[cfg(test)]

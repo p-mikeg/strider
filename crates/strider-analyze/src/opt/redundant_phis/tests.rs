@@ -55,8 +55,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
@@ -167,8 +166,7 @@ fn unreachable_store_inputs_detached() -> crate::opt::Result<()> {
     pipeline.add(crate::opt::ConstantFold);
     pipeline.add(crate::opt::DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
     // Validation runs at the end of `pipeline.run`, so reaching here means
     // the unreachable store didn't leave an invalid graph.
     Ok(())

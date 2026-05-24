@@ -101,8 +101,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -128,8 +127,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
@@ -162,8 +160,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -193,8 +190,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -220,8 +216,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
@@ -259,8 +254,7 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -303,8 +297,7 @@ fn bail_on_call_between() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -370,8 +363,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     // through the pass — otherwise both arms would collapse and there'd
     // be no MemPhi to synthesize a ValuePhi from.
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -447,8 +439,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -525,8 +516,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load must be forwarded");
@@ -568,8 +558,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -614,8 +603,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -660,8 +648,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
@@ -712,8 +699,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Big));
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -892,8 +878,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     // Reach the surviving Load and use its memory-input as the chain root.
     let load = fg
@@ -947,8 +932,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let load = fg
         .all_node_ids()
@@ -1007,8 +991,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let load = fg
         .all_node_ids()
@@ -1056,8 +1039,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let load = fg
         .all_node_ids()
@@ -1105,8 +1087,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let load = fg
         .all_node_ids()
@@ -1163,8 +1144,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry)?;
+    pipeline.run_built(fg.graph_mut())?;
 
     let load = fg
         .all_node_ids()
