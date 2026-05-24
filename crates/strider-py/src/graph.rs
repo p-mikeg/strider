@@ -1,4 +1,4 @@
-//! `PyGraph` — wraps `strider_ir::Graph` and exposes dot rendering
+//! `PyGraph` — wraps `strider_ir::Function` and exposes dot rendering
 //! plus pattern queries and rewrites.
 //!
 //! The IR graph's dot dumper requires a borrowed `Sleigh` for
@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use crate::cfg::PyCfg;
 use crate::dot::dot_style_for;
 
-/// Opaque wrapper over `strider_ir::Graph`.
+/// Opaque wrapper over `strider_ir::Function`.
 ///
 /// The graph is held in `Arc<RwLock<...>>` so optimization passes can
 /// mutate it without requiring `&mut self` on the PyGraph wrapper,
@@ -22,7 +22,7 @@ use crate::dot::dot_style_for;
 /// references.
 #[pyclass(name = "Graph", module = "strider")]
 pub struct PyGraph {
-    pub(crate) inner: Arc<RwLock<strider_ir::Graph>>,
+    pub(crate) inner: Arc<RwLock<strider_ir::Function>>,
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for
     /// dot rendering and ensures destruction order is graph-then-cfg.
     pub(crate) cfg: Py<PyCfg>,
@@ -49,7 +49,7 @@ enum DotResult {
 
 /// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
 /// returning `StriderError` on lookup failure.
-fn node_id_from_u32(graph: &strider_ir::Graph, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
+fn node_id_from_u32(graph: &strider_ir::Function, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
     let nid = graph
         .all_node_ids()
         .find(|n| n.as_u32() == node_id)
@@ -62,7 +62,7 @@ fn node_id_from_u32(graph: &strider_ir::Graph, node_id: u32) -> PyResult<strider
 }
 
 impl PyGraph {
-    pub(crate) fn new(graph: strider_ir::Graph, cfg: Py<PyCfg>) -> Self {
+    pub(crate) fn new(graph: strider_ir::Function, cfg: Py<PyCfg>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(graph)),
             cfg,
@@ -71,7 +71,7 @@ impl PyGraph {
 
     /// Borrow the inner graph for read.  Returns an `anyhow::Error`
     /// when the lock is poisoned.
-    pub(crate) fn read_inner(&self) -> anyhow::Result<std::sync::RwLockReadGuard<'_, strider_ir::Graph>> {
+    pub(crate) fn read_inner(&self) -> anyhow::Result<std::sync::RwLockReadGuard<'_, strider_ir::Function>> {
         self.inner
             .read()
             .map_err(|_| anyhow::anyhow!("Graph lock poisoned"))
@@ -79,7 +79,7 @@ impl PyGraph {
 
     /// Borrow the inner graph for write.  Returns an `anyhow::Error`
     /// when the lock is poisoned.
-    pub(crate) fn write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Graph>> {
+    pub(crate) fn write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
         self.inner
             .write()
             .map_err(|_| anyhow::anyhow!("Graph lock poisoned"))
@@ -90,7 +90,7 @@ impl PyGraph {
     /// re-entrant call from inside a `.when()` predicate (which holds the
     /// read lock for the duration of `find_all`) surfaces a typed error
     /// rather than deadlocking the thread.
-    pub(crate) fn try_write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Graph>> {
+    pub(crate) fn try_write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
         use std::sync::TryLockError;
         self.inner.try_write().map_err(|e| match e {
             TryLockError::Poisoned(_) => anyhow::anyhow!("Graph lock poisoned"),
@@ -111,7 +111,7 @@ impl PyGraph {
     /// `?` from `node_id_from_u32` or builds an error from graph state).
     fn with_read<R>(
         &self,
-        f: impl FnOnce(&strider_ir::Graph) -> PyResult<R>,
+        f: impl FnOnce(&strider_ir::Function) -> PyResult<R>,
     ) -> PyResult<R> {
         let g = self.read_inner().map_err(crate::errors::into_strider_err)?;
         f(&g)
@@ -122,7 +122,7 @@ impl PyGraph {
     /// per-site `Ok(...)` wrapping.
     fn with_read_value<R>(
         &self,
-        f: impl FnOnce(&strider_ir::Graph) -> R,
+        f: impl FnOnce(&strider_ir::Function) -> R,
     ) -> PyResult<R> {
         let g = self.read_inner().map_err(crate::errors::into_strider_err)?;
         Ok(f(&g))

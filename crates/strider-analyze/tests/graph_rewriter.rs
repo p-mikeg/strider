@@ -29,7 +29,7 @@ use rustc_hash::FxHashMap;
 
 use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::{Graph, FunctionBuilder, IntBinaryOp};
+use strider_ir::{Function, FunctionBuilder, IntBinaryOp};
 use strider_analyze::pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -63,7 +63,7 @@ fn analyze_with_known_targets(
     base: u64,
     branch_indirect_addr: u64,
     targets: Vec<u64>,
-) -> (Graph, Strider) {
+) -> (Function, Strider) {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
@@ -84,18 +84,18 @@ fn analyze_with_known_targets(
     (graph, strider)
 }
 
-fn count_if_nodes(g: &Graph) -> usize {
+fn count_if_nodes(g: &Function) -> usize {
     g.count_kind(|k| matches!(k, NodeKind::If))
 }
 
-fn count_eq_cmps(g: &Graph) -> usize {
+fn count_eq_cmps(g: &Function) -> usize {
     g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
 }
 
 /// Build a tiny non-Sleigh function: `fn() -> u64 { return Add(K, 0); }`.
 /// Uses [`FunctionBuilder::new_raw`] directly so the test doesn't depend
 /// on any Sleigh fixtures.
-fn add_k_plus_zero(k: u64) -> Graph {
+fn add_k_plus_zero(k: u64) -> Function {
     let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
@@ -111,7 +111,7 @@ fn add_k_plus_zero(k: u64) -> Graph {
     b.build().unwrap()
 }
 
-fn count_adds(g: &Graph) -> usize {
+fn count_adds(g: &Function) -> usize {
     g.count_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 

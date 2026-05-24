@@ -186,7 +186,7 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     sleigh: &rsleigh::Sleigh<R>,
     cc_link_register_vn: Option<rsleigh::Vn>,
     endianness: Endianness,
-) -> Result<strider_ir::Graph> {
+) -> Result<strider_ir::Function> {
     // Collect every varnode the region touches plus `target_vn` and
     // `cc_link_register_vn` so the IR builder can pre-declare them.
     // Including `target_vn` lets us read its value even on regions
@@ -331,7 +331,7 @@ fn make_resolver_pipeline() -> OptimizerPipeline {
 /// lifetime so it can't be wrapped in `LoadReadOnly` and registered
 /// directly.  Must stay in lockstep with [`crate::opt::LoadReadOnly`]'s impl.
 fn resolve_const_loads(
-    fg: &mut strider_ir::Graph,
+    fg: &mut strider_ir::Function,
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
     let nodes: Vec<_> = fg.preorder().collect();
@@ -396,7 +396,7 @@ fn resolve_const_loads(
 /// is well-defined post-fold.
 /// Zero or more than one Return signals a graph-construction bug in
 /// this module and propagates as an error.
-fn find_unique_return(fg: &strider_ir::Graph) -> Result<strider_ir::node::NodeId> {
+fn find_unique_return(fg: &strider_ir::Function) -> Result<strider_ir::node::NodeId> {
     let mut iter = fg.preorder_kind(|k| matches!(k, strider_ir::node::NodeKind::Return));
     let first = iter
         .next()

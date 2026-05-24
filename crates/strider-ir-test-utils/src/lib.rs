@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use strider_ir::{Graph, FunctionBuilder, ReadOnlyMemory, Result, Value};
+use strider_ir::{Function, FunctionBuilder, ReadOnlyMemory, Result, Value};
 
 /// Sentinel asm-fingerprint address used by every helper in this
 /// module.  Distinct from any real machine address so debug output
@@ -157,7 +157,7 @@ impl RegisterSet {
     ///
     /// Propagates any error from `FunctionBuilder::new_raw`, region /
     /// IR construction, the closure, or `FunctionBuilder::build`.
-    pub fn build_if_then_else_returns<F, T>(self, cond_builder: F) -> Result<(Graph, strider_ir::node::NodeId, T)>
+    pub fn build_if_then_else_returns<F, T>(self, cond_builder: F) -> Result<(Function, strider_ir::node::NodeId, T)>
     where
         F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::Value, T)>,
     {
@@ -202,7 +202,7 @@ impl RegisterSet {
 /// # Errors
 ///
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
-pub fn make_empty_fn<F>(f: F) -> Result<Graph>
+pub fn make_empty_fn<F>(f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
 {
@@ -237,7 +237,7 @@ where
 pub fn make_fn_with_var<F>(
     vn: rsleigh::Vn,
     f: F,
-) -> Result<(Graph, Value)>
+) -> Result<(Function, Value)>
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<Value>,
 {
@@ -445,7 +445,7 @@ pub fn sp_vn_x86_64() -> rsleigh::Vn {
 /// # Errors
 ///
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
-pub fn make_sp_fn<F>(sp_vn: rsleigh::Vn, f: F) -> Result<Graph>
+pub fn make_sp_fn<F>(sp_vn: rsleigh::Vn, f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<()>,
 {

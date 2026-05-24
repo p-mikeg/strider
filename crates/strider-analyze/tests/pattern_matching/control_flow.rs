@@ -83,7 +83,7 @@ fn call_captures_node() {
 }
 
 /// Call with one argument register pre-loaded with a constant value.
-fn graph_call_with_single_arg() -> strider_ir::Graph {
+fn graph_call_with_single_arg() -> strider_ir::Function {
     let arg = reg_vn(0, 8);
     let mut t = Tb::raw(vec![arg], &[arg], &[], &[], None, 0);
     let c = t.u64(42);
@@ -102,7 +102,7 @@ fn call_arg_by_index() {
 }
 
 /// Two argument registers, pre-loaded with 11 and 22 respectively.
-fn graph_call_with_two_args() -> strider_ir::Graph {
+fn graph_call_with_two_args() -> strider_ir::Function {
     let a0 = reg_vn(0, 8);
     let a1 = reg_vn(8, 8);
     let mut t = Tb::raw(vec![a0, a1], &[a0, a1], &[], &[], None, 0);
@@ -131,7 +131,7 @@ fn call_multiple_args() {
 
 /// Call that produces a return value in `ret_reg`; the returned value is
 /// piped into the function's own Return.
-fn graph_call_then_return_ret_reg() -> (strider_ir::Graph, rsleigh::Vn) {
+fn graph_call_then_return_ret_reg() -> (strider_ir::Function, rsleigh::Vn) {
     let ret = reg_vn(0, 8);
     let mut t = Tb::raw(vec![ret], &[], &[], &[ret], None, 0);
     t.call_at(0xCAFE);
@@ -248,7 +248,7 @@ fn if_node_captures() {
 }
 
 /// Graph: `if (a < b) { return 10 } else { call(0x9999); return }`.
-fn graph_if_with_call_in_false_branch() -> strider_ir::Graph {
+fn graph_if_with_call_in_false_branch() -> strider_ir::Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let entry = t.region();
     let true_r = t.region();
@@ -310,7 +310,7 @@ fn if_node_branch_walks_through_region_when_flag_set() {
 
 /// `return(call_other(user_op_id, [IntConst(7)]))` — reused across
 /// CallOther tests.
-fn graph_call_other(user_op_id: u64) -> strider_ir::Graph {
+fn graph_call_other(user_op_id: u64) -> strider_ir::Function {
     let mut t = Tb::empty();
     let arg = t.u64(7);
     t.call_other(

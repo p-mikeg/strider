@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::opt::analyze_known_bits;
-use strider_ir::Graph;
+use strider_ir::Function;
 use strider_ir::FunctionBuilder;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::NodeOutputType;
@@ -41,7 +41,7 @@ impl ReadOnlyMemory for RecordingRom {
 /// caller-supplied closure builds the anchor's producer subtree.
 fn build_with_anchor(
     anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> NodeOutputId,
-) -> (Graph, NodeOutputId) {
+) -> (Function, NodeOutputId) {
     let mut builder = FunctionBuilder::empty()
         .expect("FunctionBuilder::new_raw");
     let region = builder.create_region().expect("create_region");
@@ -64,7 +64,7 @@ fn build_jt_load(
     commute_add: bool,
     commute_mul: bool,
     idx_provider: impl FnOnce(&mut FunctionBuilder) -> NodeOutputId,
-) -> (Graph, NodeOutputId) {
+) -> (Function, NodeOutputId) {
     build_with_anchor(|fb| {
         let idx = idx_provider(fb);
         let stride_c = fb.build_int_const(stride, NodeOutputType::U32).unwrap();
@@ -152,7 +152,7 @@ fn build_jt_load_shl(
     shift: u64,
     commute_add: bool,
     idx_provider: impl FnOnce(&mut FunctionBuilder) -> NodeOutputId,
-) -> (Graph, NodeOutputId) {
+) -> (Function, NodeOutputId) {
     build_with_anchor(|fb| {
         let idx = idx_provider(fb);
         let shift_c = fb.build_int_const(shift, NodeOutputType::U32).unwrap();
@@ -691,7 +691,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
 /// value-input), and the dispatch's view of idx.
 fn build_pred_if_graph(
     bound: u64,
-) -> (Graph, NodeOutputId, NodeOutputId) {
+) -> (Function, NodeOutputId, NodeOutputId) {
     use strider_ir::IntCmpOp;
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
@@ -1039,7 +1039,7 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
 fn build_diamond_two_bounds(
     bound_a: u64,
     bound_b: u64,
-) -> (Graph, NodeOutputId, NodeOutputId) {
+) -> (Function, NodeOutputId, NodeOutputId) {
     use strider_ir::IntCmpOp;
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,

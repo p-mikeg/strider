@@ -414,33 +414,33 @@ impl Tb {
     // ── Finalisation ──────────────────────────────────────────────────────────
 
     /// Emits `Return(v)` in the current region and finalises the graph.
-    pub fn ret_val(mut self, v: NodeOutputId) -> strider_ir::Graph {
+    pub fn ret_val(mut self, v: NodeOutputId) -> strider_ir::Function {
         self.fb.build_return(Some(v), &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 
     /// `return(IntConst(v) : U64)` — convenience for the one-constant graph.
-    pub fn ret_const(mut self, v: u64) -> strider_ir::Graph {
+    pub fn ret_const(mut self, v: u64) -> strider_ir::Function {
         let c = self.u64(v);
         self.ret_val(c)
     }
 
     /// Emits `Return()` with no data value and finalises the graph.
-    pub fn ret_nothing(mut self) -> strider_ir::Graph {
+    pub fn ret_nothing(mut self) -> strider_ir::Function {
         self.fb.build_return(None, &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 
     /// Emits `Return()` in the current region, plus return registers, and
     /// finalises the graph.
-    pub fn ret_regs(mut self, regs: &[rsleigh::Vn]) -> strider_ir::Graph {
+    pub fn ret_regs(mut self, regs: &[rsleigh::Vn]) -> strider_ir::Function {
         self.fb.build_return(None, regs).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 
     /// Finalises the graph without emitting any extra instructions — caller
     /// has already emitted the terminator(s) themselves.
-    pub fn finish(self) -> strider_ir::Graph {
+    pub fn finish(self) -> strider_ir::Function {
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 }

@@ -191,13 +191,13 @@ impl<'g> RewriteCtx<'g> {
     /// Returns an error if the graph has not been built (i.e. `entry`
     /// is `None`).  Use [`Self::new`] when you already have an explicit
     /// `(graph, entry)` pair.
-    pub fn try_for_built(graph: &'g mut Graph) -> anyhow::Result<Self> {
-        let entry = graph.entry().ok_or_else(|| {
+    pub fn try_for_built(fn_graph: &'g mut strider_ir::Function) -> anyhow::Result<Self> {
+        let entry = fn_graph.entry().ok_or_else(|| {
             anyhow::anyhow!(
-                "RewriteCtx::try_for_built: graph has not been built (entry is None)"
+                "RewriteCtx::try_for_built: entry node is not set"
             )
         })?;
-        Ok(Self { graph, entry })
+        Ok(Self { graph: fn_graph.graph_mut(), entry })
     }
 
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
@@ -302,11 +302,11 @@ impl<'g> RewriteCtxView<'g> {
     ///
     /// Returns an error if the graph has not been built (i.e. `entry`
     /// is `None`).
-    pub fn from_built(graph: &'g strider_ir::Graph) -> anyhow::Result<Self> {
-        let entry = graph.entry().ok_or_else(|| {
-            anyhow::anyhow!("RewriteCtxView::from_built: graph has not been built (entry is None)")
+    pub fn from_built(fn_graph: &'g strider_ir::Function) -> anyhow::Result<Self> {
+        let entry = fn_graph.entry().ok_or_else(|| {
+            anyhow::anyhow!("RewriteCtxView::from_built: entry node is not set")
         })?;
-        Ok(Self { graph, entry })
+        Ok(Self { graph: fn_graph.graph(), entry })
     }
 }
 
@@ -337,7 +337,7 @@ pub trait GraphRewriteCtxExt {
         F: FnOnce(&mut RewriteCtx<'_>) -> anyhow::Result<T>;
 }
 
-impl GraphRewriteCtxExt for strider_ir::Graph {
+impl GraphRewriteCtxExt for strider_ir::Function {
     fn with_rewrite_ctx<F, T>(&mut self, f: F) -> anyhow::Result<T>
     where
         F: FnOnce(&mut RewriteCtx<'_>) -> anyhow::Result<T>,
@@ -461,12 +461,12 @@ mod tests {
     use strider_ir_test_utils::{make_empty_fn, SENTINEL_LIFT_ADDR};
 
     /// `fn() -> u64 { return 7; }` — no Add node, used by no-match tests.
-    fn just_const() -> strider_ir::Graph {
+    fn just_const() -> strider_ir::Function {
         make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
     }
 
     /// `fn() -> u64 { return Add(11, 0); }` — exactly one Add with `0` RHS.
-    fn add_x_zero() -> strider_ir::Graph {
+    fn add_x_zero() -> strider_ir::Function {
         make_empty_fn(|b| {
             let a = b.build_int_const(11u64, NodeOutputType::U64)?;
             let z = b.build_int_const(0u64, NodeOutputType::U64)?;
@@ -476,7 +476,7 @@ mod tests {
     }
 
     /// Returns the unique Add node in `fg`, or panics.
-    fn unique_add(fg: &strider_ir::Graph) -> strider_ir::node::NodeId {
+    fn unique_add(fg: &strider_ir::Function) -> strider_ir::node::NodeId {
         fg.preorder()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
             .expect("unique Add must exist")
@@ -497,7 +497,7 @@ mod tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .unwrap();
-        let mut ctx = RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = rule(&mut ctx, ret).unwrap();
         assert!(!r, "no match → returns false");
         assert_eq!(fg.preorder().count(), pre_count, "graph unchanged");
@@ -513,7 +513,7 @@ mod tests {
         let x = Capture::new();
         let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
-        let mut ctx = RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let changed = rule(&mut ctx, add_node).unwrap();
         assert!(changed, "match + single-use rewire → true");
 
@@ -563,7 +563,7 @@ mod tests {
         let x = Capture::new();
         let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
-        let mut ctx = RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let changed = rule(&mut ctx, inner_add).unwrap();
         assert!(changed, "match + multi-use → true");
 
@@ -601,7 +601,7 @@ mod tests {
         let rhs = int_const_with_fn(|_ctx| Err(crate::pattern::error::skip()));
         let rule = rewrite_rule(add(var(x), int_const(0)), rhs);
 
-        let mut ctx = RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let changed = rule(&mut ctx, add_node).unwrap();
         assert!(!changed, "RHS skip → Ok(false)");
         assert_eq!(fg.preorder().count(), pre_count, "graph unchanged after skip");
@@ -617,7 +617,7 @@ mod tests {
         let rhs = int_const_with_fn(|_ctx| Err(anyhow::anyhow!("forced rhs error")));
         let rule = rewrite_rule(add(var(x), int_const(0)), rhs);
 
-        let mut ctx = RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = rule(&mut ctx, add_node);
         let err = r.expect_err("forced rhs error must propagate");
         let msg = format!("{err:?}");
@@ -645,7 +645,7 @@ mod tests {
         let x = Capture::new();
         let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
-        let mut ctx = RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let changed = rule(&mut ctx, add_node).unwrap();
         assert!(changed);
 
@@ -675,7 +675,7 @@ mod tests {
         let x = Capture::new();
         let r: BoxedRule = boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x)));
 
-        let mut ctx = RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let changed = r(&mut ctx, add_node).unwrap();
         assert!(changed);
         // Sentinel-stamped const → fingerprint includes the sentinel.
@@ -696,7 +696,7 @@ mod tests {
 
     /// `Add(5, 3)` fixture — the same one used by the historical
     /// `crates/pattern/tests/matching/rewrite.rs::graph_add_const_const`.
-    fn add_const_const(a: u64, b: u64) -> strider_ir::Graph {
+    fn add_const_const(a: u64, b: u64) -> strider_ir::Function {
         make_empty_fn(|b_| {
             let ca = b_.build_int_const(a, NodeOutputType::U64)?;
             let cb = b_.build_int_const(b, NodeOutputType::U64)?;
@@ -717,7 +717,7 @@ mod tests {
         ];
         let apply = apply_rules_in_order(&rules);
         let add_node = unique_add(&g);
-        let mut ctx = RewriteCtx::try_for_built(g.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
         assert!(!apply(&mut ctx, add_node).unwrap());
     }
 
@@ -738,7 +738,7 @@ mod tests {
         ];
         let apply = apply_rules_in_order(&rules);
         let add_node = unique_add(&g);
-        let mut ctx = RewriteCtx::try_for_built(g.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
         let fired = apply(&mut ctx, add_node).unwrap();
         assert!(fired, "second rule should have fired");
     }
@@ -760,7 +760,7 @@ mod tests {
         ];
         let apply = apply_rules_in_order(&rules);
         let nodes: Vec<_> = g.preorder().collect();
-        let mut ctx = RewriteCtx::try_for_built(g.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
         let mut any_fired = false;
         for n in nodes {
             if apply(&mut ctx, n).unwrap() {
@@ -786,7 +786,7 @@ mod tests {
             int_const_with!([a_v: uint, b_v: uint] => a_v.wrapping_add(b_v)),
         );
         let add_node = unique_add(&g);
-        let mut ctx = RewriteCtx::try_for_built(g.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
         assert!(rule(&mut ctx, add_node).unwrap());
 
         // After the rewrite the Return consumes IntConst(8).
@@ -825,7 +825,7 @@ mod tests {
             int_const_with!([v: uint, ty] => { let _ = ty; v }),
         );
         let nodes: Vec<_> = g.preorder().collect();
-        let mut ctx = RewriteCtx::try_for_built(g.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
         for n in nodes {
             // Rule should not fire (input is an Add, not an IntConst),
             // but the build-side compiles.  Pin no-error.
@@ -860,7 +860,7 @@ mod tests {
             int_const_with!([unbound: uint] => unbound),
         );
         let add_node = unique_add(&g);
-        let mut ctx = RewriteCtx::try_for_built(g.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
         let err = rule(&mut ctx, add_node)
             .expect_err("missing binding expected");
         let mb = err.downcast_ref::<PatternBuildError>();
@@ -889,7 +889,7 @@ mod tests {
         // legal no-op that returns false.
         let rule = rewrite_rule(lhs, var(c));
 
-        let mut ctx = RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let changed = rule(&mut ctx, c_node).unwrap();
         // Whether `changed` is true or false depends on whether the
         // dedup cache returns the same NodeOutputId for the capture;

@@ -189,13 +189,6 @@ pub struct Graph {
     /// creation site; remapped through [`NodeIdRemap`] by
     /// [`Self::retain_reachable`].
     pub(crate) initial_var_index: rustc_hash::FxHashMap<rsleigh::Vn, NodeId>,
-    /// The `Entry` node of the function, once
-    /// [`crate::FunctionBuilder::build`] has finalised the graph.
-    /// `None` during build; `Some(_)` after.  Consumers go through
-    /// [`Self::entry`], which returns the `Option<NodeId>` as-is —
-    /// `Result`-returning callers bubble the un-built case via `?`
-    /// (see the accessor's doc comment for the canonical idiom).
-    pub(crate) entry: Option<NodeId>,
     /// Calling-convention metadata captured at build time.  `None`
     /// during build; `Some(_)` after.  See [`CcMetadata`].
     pub(crate) cc_metadata: Option<CcMetadata>,
@@ -234,7 +227,6 @@ impl Graph {
             wide_consts: PrimaryMap::new(),
             wide_const_dedup: rustc_hash::FxHashMap::default(),
             initial_var_index: rustc_hash::FxHashMap::default(),
-            entry: None,
             cc_metadata: None,
             generation: 0,
         }
@@ -296,27 +288,6 @@ impl Graph {
         &self.wide_consts[id]
     }
 
-    /// Returns the `Entry` node id of the function, or `None` if the
-    /// graph has not yet been finalised by
-    /// [`crate::FunctionBuilder::build`].
-    ///
-    /// Callers in `Result`-returning code typically bubble via `?`:
-    /// ```ignore
-    /// let entry = graph.entry().ok_or_else(|| anyhow::anyhow!(
-    ///     "Graph is not fully built: entry node missing"
-    /// ))?;
-    /// ```
-    ///
-    /// Opt passes and analyses run only against built graphs, so the
-    /// `None` arm represents an invariant violation at their boundary;
-    /// returning `Option` (instead of panicking) keeps the failure mode
-    /// honest and typed.
-    #[inline]
-    #[must_use]
-    pub fn entry(&self) -> Option<crate::node::NodeId> {
-        self.entry
-    }
-
     /// Read-only access to the calling-convention metadata captured at
     /// build time, or `None` if the graph has not yet been finalised by
     /// [`crate::FunctionBuilder::build`].  See [`CcMetadata`].
@@ -376,32 +347,11 @@ impl Graph {
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
-    /// starting from [`Self::entry`].  Yields an empty walk on a graph
-    /// that has not yet been built (i.e. `entry` is `None`).
-    #[must_use]
-    pub fn preorder(&self) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph_opt(self, self.entry)
-    }
-
-    /// Returns an iterator that visits all reachable nodes in pre-order,
-    /// starting from the given `entry` (which need not be `self.entry`).
+    /// starting from the given `entry`.
     /// Used by opt passes that take `(graph, entry)` explicitly.
     #[must_use]
     pub fn walk_from(&self, entry: crate::node::NodeId) -> crate::walk::GraphWalk<'_> {
         crate::walk::walk_graph(self, entry)
-    }
-
-    /// Reachable preorder filtered by a predicate over the node's
-    /// [`crate::node::NodeKind`].  Convenience for the common
-    /// `.preorder().filter(|n| matches!(graph.node_kind(n), …))` pattern.
-    pub fn preorder_kind<'a, P>(
-        &'a self,
-        mut pred: P,
-    ) -> impl Iterator<Item = crate::node::NodeId> + 'a
-    where
-        P: FnMut(&crate::node::NodeKind) -> bool + 'a,
-    {
-        self.preorder().filter(move |&n| pred(self.node_kind(n)))
     }
 
     /// Iterates over **every** node id in the graph, including nodes that are
@@ -411,70 +361,11 @@ impl Graph {
         self.nodes.keys()
     }
 
-    /// Rebuilds the graph to retain only nodes reachable from
-    /// [`Self::entry`] via [`Self::walk_from`].  The entry node
-    /// id is remapped; CC metadata is vn-keyed and stays valid as-is.
-    ///
-    /// External callers that hold any pre-compaction `NodeId` /
-    /// `NodeOutputId` / `NodeInputId` MUST rewrite them through the
-    /// returned remap (or drop them).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the graph has not been built (i.e. `entry`
-    /// is `None`), or if `retain_reachable`'s remap doesn't contain
-    /// the entry node.  The latter can never fire by construction —
-    /// `retain_reachable` walks forward from `entry`, so the entry is
-    /// always reachable from itself — but propagating as `Err` rather
-    /// than panicking keeps every error path typed so Python users see
-    /// a clean exception.
-    pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
-        let entry = self.entry.ok_or_else(|| {
-            anyhow::anyhow!("Graph::compact: graph has not been built (entry is None)")
-        })?;
-        let remap = self.retain_reachable(entry)?;
-        let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Graph::compact: entry {:?} missing from retain_reachable remap (invariant violation)",
-                entry
-            )
-        })?;
-        self.entry = Some(new_entry);
-        Ok(remap)
-    }
-
-    /// Returns a `crate::graph_dot::GraphDotDumper` that can render
-    /// this function graph to a `.dot` / `.html` file.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the graph has not been built (i.e. `entry`
-    /// or `cc_metadata` is `None`).
-    pub fn dot_dumper<'a, R: rsleigh::MemReader>(
-        &'a self,
-        sleigh: &'a rsleigh::Sleigh<R>,
-    ) -> crate::Result<crate::graph_dot::GraphDotDumper<'a, R>> {
-        let entry = self.entry.ok_or_else(|| {
-            anyhow::anyhow!("Graph::dot_dumper: graph has not been built (entry is None)")
-        })?;
-        let cc = self.cc_metadata.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Graph::dot_dumper: graph has not been built (cc_metadata is None)")
-        })?;
-        Ok(crate::graph_dot::GraphDotDumper {
-            entry,
-            graph: self,
-            sleigh,
-            call_clobbered: &cc.call_clobbered,
-            ret_val_regs: &cc.ret_val_regs,
-            node_filter: None,
-        })
-    }
-
-    /// Identity self-reference — no-op now that the
-    /// `Graph` wrapper was collapsed into `Graph`.  Kept
-    /// so call sites that were written against the wrapper continue to
-    /// compile.
+    /// Identity self-reference — kept so call sites written against the
+    /// old `Graph`-as-wrapper shape continue to compile while callers
+    /// migrate to `Function`.
     #[doc(hidden)]
+    #[inline]
     #[must_use]
     pub fn graph(&self) -> &Graph {
         self
@@ -482,6 +373,7 @@ impl Graph {
 
     /// Identity self-reference (mut).  See [`Self::graph`].
     #[doc(hidden)]
+    #[inline]
     #[must_use]
     pub fn graph_mut(&mut self) -> &mut Graph {
         self

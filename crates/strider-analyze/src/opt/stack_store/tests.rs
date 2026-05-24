@@ -31,7 +31,7 @@ fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let stack_stores = count(&fg, |k| {
         matches!(k, NodeKind::StackStore { offset: -4, .. })
@@ -73,7 +73,7 @@ fn add_sp_with_negative_unsigned_constant_becomes_stack_store() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let stack_stores = count(&fg, |k| {
         matches!(k, NodeKind::StackStore { offset: -4, .. })
@@ -112,7 +112,7 @@ fn phi_sp_collapses_to_stack_store() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: 0, .. }));
     assert_eq!(
@@ -173,7 +173,7 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let phis: Vec<NodeId> = fg
         .all_node_ids()
@@ -242,7 +242,7 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let stack_store_phis = count(&fg, |k| matches!(k, NodeKind::StackStorePhi { .. }));
     assert_eq!(
@@ -339,7 +339,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
     ));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -435,7 +435,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -488,7 +488,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -539,7 +539,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     pipeline.add(StackStoreDetect::new(sp));
     // x86 cdecl-style: ret addr at offset 0, args at +4 and +8.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -572,7 +572,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8], sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let after_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
     assert_eq!(
@@ -609,7 +609,7 @@ fn detect_mixed_add_sub_reduces() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: 8, .. }));
     assert_eq!(
@@ -707,7 +707,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -781,7 +781,7 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
     pipeline.add(StackStoreDetect::new(sp));
     // cdecl-style offsets: ret-addr at 0, args at +4, +8, +12.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -852,7 +852,7 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
     // arg1 at sp - 8 (= anchor + 4), arg2 at sp - 12 (= anchor + 8),
     // arg3 at sp - 16 (= anchor + 12).  AArch64-style table starting at 0.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -930,7 +930,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
     ));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -1003,7 +1003,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
     ));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -1069,7 +1069,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
     ));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -1142,7 +1142,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     pipeline.add(StackStoreDetect::new(sp));
     // 2-slot cdecl table: anchor at +0 (ret-addr), arg0 at +4, arg1 at +8.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();

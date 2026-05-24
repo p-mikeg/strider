@@ -4,13 +4,13 @@
 //! (`ctrl`, `mem`, `ctrl_out`, `mem_out`) are thin shortcuts.
 
 use strider_analyze::pattern::{Capture, IntoPat, Matcher, any, call_other};
-use strider_ir::{FunctionBuilder, Graph};
+use strider_ir::{Function, FunctionBuilder};
 use strider_ir_test_utils::RegisterSet;
 
 /// Build a graph with a single `cpuid` CallOther whose pcode-explicit
 /// inputs/outputs are bound through real Vns so we can pattern-match
 /// each slot.
-fn build_cpuid_graph() -> Graph {
+fn build_cpuid_graph() -> Function {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");

@@ -17,7 +17,7 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{NodeOutputType, NodeOutputKind};
-use strider_ir::{Graph, FunctionBuilder, IntBinaryOp};
+use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
 use strider_analyze::opt::{
     ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
@@ -46,7 +46,7 @@ fn binary_path(arch_name: &str, case: &str) -> PathBuf {
         .join(format!("{case}.elf"))
 }
 
-fn analyze_case(c: Case) -> strider_ir::Graph {
+fn analyze_case(c: Case) -> strider_ir::Function {
     let path = binary_path(c.arch_name, c.case);
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = match c.arch_name {
@@ -155,7 +155,7 @@ mod synthetic {
     /// returned graph is ready to feed into `StackLoadForward` for
     /// the bench.  Pre-pass: `StackStoreDetect` is run inside the
     /// helper so the bench measures `StackLoadForward` in isolation.
-    pub fn build_stack_store_chain(n: usize) -> Graph {
+    pub fn build_stack_store_chain(n: usize) -> strider_ir::Function {
         let sp = sp_vn();
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -206,7 +206,7 @@ mod synthetic {
     /// next branches; the merge varphi count grows linearly in `n`.
     /// Used to bench scaling of the validator + optimiser loop on
     /// merge-heavy IRs.
-    pub fn run_diamond_cfg(n: usize) -> Graph {
+    pub fn run_diamond_cfg(n: usize) -> strider_ir::Function {
         let sp = sp_vn();
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -274,7 +274,7 @@ mod synthetic {
     /// must be a power of 2.  The bench measures the full lift +
     /// stable-subset cost; the indirect-branch resolver isn't run
     /// here — callers can layer it on top if they want the resolve cost.
-    pub fn run_jump_table_scenario(n: usize) -> Graph {
+    pub fn run_jump_table_scenario(n: usize) -> strider_ir::Function {
         assert!(
             n.is_power_of_two(),
             "jump-table fixture requires n = power of 2",
@@ -347,7 +347,7 @@ mod synthetic {
     /// Build a function with `n` distinct `IntConst` nodes added
     /// together.  Used to bench pattern-matcher cross-product joins
     /// (`find_all_requirements`) with shared captures.
-    pub fn build_many_int_consts(n: usize) -> Graph {
+    pub fn build_many_int_consts(n: usize) -> strider_ir::Function {
         let mut b = FunctionBuilder::empty().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();

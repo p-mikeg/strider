@@ -45,7 +45,7 @@ use strider_ir::node::NodeKind;
 /// For hardware-FPU targets the `FloatBinaryOp` assertion is the right check,
 /// but those arches are currently ignored because ConstantFold collapses
 /// the register-merge chain; they are not part of this regression guard.
-fn f32_arith_graph_is_valid(g: &strider_ir::Graph) {
+fn f32_arith_graph_is_valid(g: &strider_ir::Function) {
     // The function returns a float; there must be a Return node.
     assert!(count_returns(g) >= 1, "f32_arith must have a Return");
 

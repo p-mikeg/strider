@@ -290,7 +290,7 @@ impl FunctionBuilder {
 
     /// Returns the recorded entry [`NodeId`] of the function being
     /// built — the same id that [`Self::build`] would record on the
-    /// produced [`crate::graph::Graph`]'s `entry` field.
+    /// produced [`crate::Function`]'s entry.
     ///
     /// CORRECTNESS — pairs with [`Self::graph_mut`]: opt passes that
     /// take `(graph, entry)` get a stable handle here.  The entry node
@@ -643,7 +643,7 @@ impl FunctionBuilder {
         &self.ret_val_vars
     }
 
-    /// Finalises and returns the completed [`crate::graph::Graph`],
+    /// Finalises and returns the completed [`crate::Function`],
     /// after running structural validation.
     ///
     /// # Errors
@@ -653,7 +653,7 @@ impl FunctionBuilder {
     /// any of validate's three layers (local typing, use-list consistency,
     /// graph-level invariants).  Recover the bundle via
     /// `err.downcast_ref::<crate::validate::ValidationErrors>()`.
-    pub fn build(self) -> crate::Result<crate::graph::Graph> {
+    pub fn build(self) -> crate::Result<crate::Function> {
         // Conservative CallOther clobber default: every tracked variable
         // except the stack pointer.  The order here matches the iteration
         // order used by `build_call_other_modeled` / `build_call_other_terminal`
@@ -675,9 +675,8 @@ impl FunctionBuilder {
             no_memory_clobber: self.no_memory_clobber,
         };
         let mut graph = self.graph;
-        graph.entry = Some(entry);
         graph.cc_metadata = Some(cc_metadata);
         crate::validate::validate(&graph, entry)?;
-        Ok(graph)
+        Ok(crate::Function::from_built_graph(graph, entry))
     }
 }

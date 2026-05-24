@@ -110,7 +110,7 @@ fn function_arg_apis_on_graph_without_args() {
 // ── Multi-match iteration & distinct bindings ────────────────────────────────
 
 /// Graph with three distinct Add nodes at different operand values.
-fn graph_three_adds() -> strider_ir::Graph {
+fn graph_three_adds() -> strider_ir::Function {
     let mut t = Tb::empty();
     let a = t.u64(1);
     let b = t.u64(2);
@@ -233,7 +233,7 @@ fn existing_pattern_unchanged_with_default_options() {
 
 /// Returns a graph whose return value is `Add(ZeroExt(Mul(2,3)), 4)` at U64,
 /// where the Mul is at U32.
-fn graph_add_zext_mul() -> strider_ir::Graph {
+fn graph_add_zext_mul() -> strider_ir::Function {
     let mut t = Tb::empty();
     let two = t.u32(2);
     let three = t.u32(3);
@@ -314,7 +314,7 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
 // ── ignore_regions walk-through ──────────────────────────────────────
 
 /// Two-region graph: entry region runs `Call`; tail region runs `Return`.
-fn graph_ret_via_region_after_call() -> strider_ir::Graph {
+fn graph_ret_via_region_after_call() -> strider_ir::Function {
     let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
     let head = t.fb_mut().create_region().expect("head");
     t.fb_mut().set_entry_region(head).expect("entry head");

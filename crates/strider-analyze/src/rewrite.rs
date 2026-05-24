@@ -77,9 +77,9 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// Returns an error if the graph has not been built (i.e. `entry`
     /// is `None`).
-    pub fn try_wrap_built(built: &'a mut Graph) -> Result<Self> {
+    pub fn try_wrap_built(built: &'a mut strider_ir::Function) -> Result<Self> {
         let entry = built.entry().ok_or_else(|| {
-            anyhow::anyhow!("GraphRewriter::try_wrap_built: graph has not been built (entry is None)")
+            anyhow::anyhow!("GraphRewriter::try_wrap_built: entry node is not set")
         })?;
         Ok(Self {
             graph: built.graph_mut(),

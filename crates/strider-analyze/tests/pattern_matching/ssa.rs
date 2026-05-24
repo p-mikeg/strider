@@ -43,7 +43,7 @@ fn initial_var_capture_binds_value() {
 
 /// `if (reg == 0) { reg = 1 } else { reg = 2 }` — after merge, a phi
 /// materialises the new value of `reg`.
-fn graph_phi_for_reg() -> (strider_ir::Graph, rsleigh::Vn) {
+fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
     let reg = reg_vn(0, 8);
     let mut t = Tb::bare(vec![reg], &[], &[reg], &[], None, 0);
     let entry = t.region();
@@ -98,7 +98,7 @@ fn phi_for_wrong_vn_rejects() {
 // ── FunctionArg ──────────────────────────────────────────────────────────────
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
-fn graph_fn_arg_stack() -> strider_ir::Graph {
+fn graph_fn_arg_stack() -> strider_ir::Function {
     use strider_analyze::opt::{FunctionArgDetect, Optimizer};
     let sp = sp_vn();
     let mut t = Tb::raw(vec![sp], &[], &[sp], &[], None, 0);

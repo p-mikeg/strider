@@ -18,24 +18,24 @@ per_arch_test!("stack", "inplace_swap",          swap_has_two_loads_and_two_stor
 // fixtures/Makefile to keep the tail call from being elided.
 per_arch_test!("stack", "recursive_stack_growth", rec_stack_has_call_and_stores);
 
-fn volatile_preserves_three_stores(g: &strider_ir::Graph) {
+fn volatile_preserves_three_stores(g: &strider_ir::Function) {
     // *p = v; *p = v+1; *p = v+2  — opt must not collapse these.
     assert!(count_stores(g) >= 3,
             "volatile must preserve 3 stores; got {}", count_stores(g));
 }
-fn escape_has_stack_store_and_call(g: &strider_ir::Graph) {
+fn escape_has_stack_store_and_call(g: &strider_ir::Function) {
     assert!(count_stores(g) >= 1, "&local forces a stack write");
     assert!(count_calls(g) >= 1, "external_take_ptr is called");
 }
-fn large_local_has_stack_store_and_loop(g: &strider_ir::Graph) {
+fn large_local_has_stack_store_and_loop(g: &strider_ir::Function) {
     assert!(count_stores(g) >= 1, "buf[i] = i*i is a stack store");
     assert!(count_loops(g) >= 1);
 }
-fn swap_has_two_loads_and_two_stores(g: &strider_ir::Graph) {
+fn swap_has_two_loads_and_two_stores(g: &strider_ir::Function) {
     assert!(count_loads(g) >= 2, "expected ≥2 Loads; got {}", count_loads(g));
     assert!(count_stores(g) >= 2, "expected ≥2 Stores; got {}", count_stores(g));
 }
-fn rec_stack_has_call_and_stores(g: &strider_ir::Graph) {
+fn rec_stack_has_call_and_stores(g: &strider_ir::Function) {
     assert!(count_calls(g) >= 1, "self-recursive call");
     assert!(count_stores(g) >= 1, "buf[i] writes");
 }

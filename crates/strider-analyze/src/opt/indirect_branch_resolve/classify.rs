@@ -183,7 +183,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_ir::Graph;
     use strider_ir::FunctionBuilder;
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
     use strider_ir_test_utils::{reg_vn as fake_reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
@@ -216,7 +215,7 @@ mod tests {
     /// the classifier sees a real, validation-passing graph.
     fn empty_graph_returning(
         anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> NodeOutputId,
-    ) -> (Graph, NodeOutputId) {
+    ) -> (strider_ir::Function, NodeOutputId) {
         // No tracked variables, no calling convention plumbing.
         let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
@@ -411,7 +410,7 @@ mod tests {
     /// validation-passing path end-to-end.
     fn build_value_phi_graph(
         per_pred_consts: &[u64],
-    ) -> (Graph, NodeOutputId) {
+    ) -> (strider_ir::Function, NodeOutputId) {
         let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");

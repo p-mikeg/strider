@@ -43,26 +43,26 @@ per_arch_test!("arithmetic", "lshr",    has_lshr);
 per_arch_test!("arithmetic", "ashr",    has_ashr);
 per_arch_test!("arithmetic", "negate",  has_neg);
 
-fn has_add(g: &strider_ir::Graph) {
+fn has_add(g: &strider_ir::Function) {
     assert!(count_int_binop(g, IntBinaryOp::Add) >= 1, "expected ≥1 Add");
 }
 // `IntBinaryOp::Sub` is no longer a primitive: pcode-lift lowers `IntSub`
 // to `Add(_, Neg(_))` at lift time.  An honest "has subtraction" check
 // looks for the `IntUnaryOp::Neg` produced by the lowering — every real
 // subtraction in the binary contributes at least one Neg.
-fn has_sub(g: &strider_ir::Graph) {
+fn has_sub(g: &strider_ir::Function) {
     assert!(
         count_int_unop(g, IntUnaryOp::Neg) >= 1,
         "expected ≥1 IntUnaryOp::Neg (the lowered Sub form)"
     );
 }
-fn has_mul(g: &strider_ir::Graph) {
+fn has_mul(g: &strider_ir::Function) {
     assert!(count_int_binop(g, IntBinaryOp::Mul) >= 1, "expected ≥1 Mul");
 }
 
 // Unsigned divide.  Most arches emit a native Div node.  ARM soft-float
 // targets emit a library call instead, so we accept Call as evidence.
-fn has_div(g: &strider_ir::Graph) {
+fn has_div(g: &strider_ir::Function) {
     assert!(
         count_int_binop(g, IntBinaryOp::Div) >= 1 || count_calls(g) >= 1,
         "expected ≥1 Div or a library Call for udiv"
@@ -71,7 +71,7 @@ fn has_div(g: &strider_ir::Graph) {
 
 // Unsigned remainder.  x86/x64 produce Rem; AArch64 synthesises it as
 // a - (a/b)*b so only Div is present; ARM uses a library call.
-fn has_rem(g: &strider_ir::Graph) {
+fn has_rem(g: &strider_ir::Function) {
     assert!(
         count_int_binop(g, IntBinaryOp::Rem) >= 1
             || count_int_binop(g, IntBinaryOp::Div) >= 1
@@ -81,7 +81,7 @@ fn has_rem(g: &strider_ir::Graph) {
 }
 
 // Signed divide.  Most arches emit Sdiv; ARM uses a library call.
-fn has_sdiv(g: &strider_ir::Graph) {
+fn has_sdiv(g: &strider_ir::Function) {
     assert!(
         count_int_binop(g, IntBinaryOp::Sdiv) >= 1 || count_calls(g) >= 1,
         "expected ≥1 Sdiv or a library Call for sdiv"
@@ -90,7 +90,7 @@ fn has_sdiv(g: &strider_ir::Graph) {
 
 // Signed remainder.  x86/x64 produce Srem; AArch64 synthesises it as
 // a - (a/b)*b so only Sdiv is present; ARM uses a library call.
-fn has_srem(g: &strider_ir::Graph) {
+fn has_srem(g: &strider_ir::Function) {
     assert!(
         count_int_binop(g, IntBinaryOp::Srem) >= 1
             || count_int_binop(g, IntBinaryOp::Sdiv) >= 1
@@ -99,28 +99,28 @@ fn has_srem(g: &strider_ir::Graph) {
     );
 }
 
-fn has_and(g: &strider_ir::Graph) {
+fn has_and(g: &strider_ir::Function) {
     assert!(count_int_binop(g, IntBinaryOp::And) >= 1, "expected ≥1 And");
 }
-fn has_or(g: &strider_ir::Graph) {
+fn has_or(g: &strider_ir::Function) {
     assert!(count_int_binop(g, IntBinaryOp::Or) >= 1, "expected ≥1 Or");
 }
-fn has_xor(g: &strider_ir::Graph) {
+fn has_xor(g: &strider_ir::Function) {
     assert!(count_int_binop(g, IntBinaryOp::Xor) >= 1, "expected ≥1 Xor");
 }
 
 // Bitwise complement (~a).  Sleigh's `IntNeg` opcode lifts to `IntUnaryOp::BitNot`.
-fn has_not(g: &strider_ir::Graph) {
+fn has_not(g: &strider_ir::Function) {
     assert!(count_int_unop(g, IntUnaryOp::BitNot) >= 1, "expected ≥1 BitNot (bitwise complement)");
 }
 
-fn has_shl(g: &strider_ir::Graph) {
+fn has_shl(g: &strider_ir::Function) {
     assert!(count_int_binop(g, IntBinaryOp::ShiftLeft) >= 1, "expected ≥1 ShiftLeft");
 }
-fn has_lshr(g: &strider_ir::Graph) {
+fn has_lshr(g: &strider_ir::Function) {
     assert!(count_int_binop(g, IntBinaryOp::ShiftRight) >= 1, "expected ≥1 ShiftRight");
 }
-fn has_ashr(g: &strider_ir::Graph) {
+fn has_ashr(g: &strider_ir::Function) {
     assert!(count_int_binop(g, IntBinaryOp::SShiftRight) >= 1, "expected ≥1 SShiftRight");
 }
 
@@ -129,7 +129,7 @@ fn has_ashr(g: &strider_ir::Graph) {
 // to `Add(0, Neg(a))` and collapses to `Neg(a)` via the `x + 0 → x` identity
 // rule.  Either path produces an `IntUnaryOp::Neg`, so a single check
 // covers both arches.
-fn has_neg(g: &strider_ir::Graph) {
+fn has_neg(g: &strider_ir::Function) {
     assert!(
         count_int_unop(g, IntUnaryOp::Neg) >= 1,
         "expected ≥1 Neg (two's-complement; ARM/MIPS 0-a synthesis collapses to the same shape)"

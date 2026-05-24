@@ -21,7 +21,7 @@ use strider_analyze::pattern::GraphRewriteCtxExt;
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.
-fn locate_placeholder_return(graph: &strider_ir::Graph) -> NodeId {
+fn locate_placeholder_return(graph: &strider_ir::Function) -> NodeId {
     let mut found: Option<NodeId> = None;
     for nid in graph.preorder() {
         if !matches!(graph.node_kind(nid), NodeKind::IndirectBranch) {
@@ -39,7 +39,7 @@ fn locate_placeholder_return(graph: &strider_ir::Graph) -> NodeId {
 /// Locate the (unique) freshly-created Return — the one that's NOT the
 /// placeholder.  The placeholder has been detached so finding the
 /// reachable Return is sufficient.
-fn locate_fresh_return(graph: &strider_ir::Graph) -> NodeId {
+fn locate_fresh_return(graph: &strider_ir::Function) -> NodeId {
     let mut found: Option<NodeId> = None;
     for nid in graph.preorder() {
         if !matches!(graph.node_kind(nid), NodeKind::Return) {

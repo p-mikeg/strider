@@ -30,7 +30,7 @@ pub(crate) struct RegionLiftHandles {
 /// callers read `unresolved_branches` and `region_handles`.
 pub struct AnalyzeOutcome {
     /// The lifted IR ready for the optimiser pipeline.
-    pub graph: strider_ir::Graph,
+    pub graph: strider_ir::Function,
     /// One entry per region whose CFG terminator was
     /// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode

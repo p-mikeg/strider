@@ -186,12 +186,12 @@ mod tests {
     }
 
     /// `fn() -> u64 { return 7; }` — minimal reachable graph.
-    fn one_const_fn() -> strider_ir::Graph {
+    fn one_const_fn() -> strider_ir::Function {
         make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
     }
 
     /// `fn() -> u64 { return Add(11, 13); }`.
-    fn add_two_consts() -> strider_ir::Graph {
+    fn add_two_consts() -> strider_ir::Function {
         make_empty_fn(|b| {
             let a = b.build_int_const(11u64, NodeOutputType::U64)?;
             let bb = b.build_int_const(13u64, NodeOutputType::U64)?;
@@ -217,7 +217,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -234,7 +234,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -250,7 +250,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
@@ -287,7 +287,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let _ = run_peephole(&pass, &mut ctx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
@@ -310,7 +310,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // Each Add visited at least once; propagate-true allows extra
@@ -330,7 +330,7 @@ mod tests {
             return_error: true,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(fg.graph_mut()).unwrap();
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());

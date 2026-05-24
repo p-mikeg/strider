@@ -94,7 +94,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let n_fa = count(&fg, |k| {
         matches!(
@@ -157,7 +157,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     // Only arg 0 emitted; arg 1 absent (gap) and arg 2 MUST NOT be emitted.
     let arg0 = count(&fg, |k| {
@@ -226,7 +226,7 @@ fn prior_stackstore_shadows() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
@@ -298,7 +298,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
@@ -345,7 +345,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     // Exactly one FunctionArg at offset 0.
     let fa_count = count(&fg, |k| {
@@ -418,7 +418,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi], sp, vec![]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let n_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
@@ -467,7 +467,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi, rsi], sp, vec![8]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let fa_reg0 = count(&fg, |k| {
         matches!(
@@ -534,7 +534,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
@@ -574,7 +574,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let fa_at_4 = count(&fg, |k| {
         matches!(
@@ -653,7 +653,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
@@ -679,7 +679,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
@@ -715,7 +715,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let fa = count(&fg, |k| {
         matches!(
@@ -777,7 +777,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
@@ -823,7 +823,7 @@ fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let fa = count(&fg, |k| {
         matches!(
@@ -871,7 +871,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let fa = count(&fg, |k| {
         matches!(
@@ -957,7 +957,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
@@ -1001,7 +1001,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let fa = count(&fg, |k| {
         matches!(
@@ -1074,7 +1074,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     pipeline.add(ConstantFold);
     // Convention: arg 0 lives at sp+0.
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let any_fa = count(
         &fg,

@@ -259,7 +259,7 @@ mod tests {
     use strider_ir::FunctionBuilder;
     use strider_ir::node::NodeOutputType;
 
-    fn build_placeholder_graph() -> (strider_ir::Graph, NodeId) {
+    fn build_placeholder_graph() -> (strider_ir::Function, NodeId) {
         let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");

@@ -25,7 +25,7 @@ use strider_lift::cfg::{
     Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets,
 };
 use strider_ir::node::NodeKind;
-use strider_ir::Graph;
+use strider_ir::Function;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_target::SleighArch;
@@ -62,7 +62,7 @@ fn analyze_with_known_targets(
     base: u64,
     branch_indirect_addr: u64,
     targets: Vec<u64>,
-) -> Graph {
+) -> Function {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
     let sleigh =
@@ -83,15 +83,15 @@ fn analyze_with_known_targets(
     strider.analyze_cfg(&cfg).expect("analyze_cfg").graph
 }
 
-fn count_if_nodes(g: &Graph) -> usize {
+fn count_if_nodes(g: &Function) -> usize {
     g.count_kind(|k| matches!(k, NodeKind::If))
 }
 
-fn count_eq_cmps(g: &Graph) -> usize {
+fn count_eq_cmps(g: &Function) -> usize {
     g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
 }
 
-fn count_int_consts_eq(g: &Graph, want: u64) -> usize {
+fn count_int_consts_eq(g: &Function, want: u64) -> usize {
     g.count_kind(|k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(want)))
 }
 

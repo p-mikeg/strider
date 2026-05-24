@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::pattern::pat::Pat;
@@ -106,11 +105,11 @@ impl<'g> Matcher<'g> {
     ///
     /// Returns an error if the graph has not been built (i.e. `entry`
     /// is `None`).
-    pub fn try_new(fn_graph: &'g Graph) -> anyhow::Result<Self> {
+    pub fn try_new(fn_graph: &'g strider_ir::Function) -> anyhow::Result<Self> {
         let entry = fn_graph.entry().ok_or_else(|| {
-            anyhow::anyhow!("Matcher::try_new: graph has not been built (entry is None)")
+            anyhow::anyhow!("Matcher::try_new: entry node is not set")
         })?;
-        Ok(Self::for_graph(fn_graph, entry))
+        Ok(Self::for_graph(fn_graph.graph(), entry))
     }
 
     /// Creates a new `Matcher` over a raw `(graph, entry)` pair —
@@ -726,7 +725,7 @@ mod tests {
     use super::*;
     use strider_ir::node::NodeOutputType;
 
-    fn trivial_graph() -> strider_ir::Graph {
+    fn trivial_graph() -> strider_ir::Function {
         strider_ir_test_utils::make_empty_fn(|b| {
             b.build_int_const(0u64, NodeOutputType::U64)
         })

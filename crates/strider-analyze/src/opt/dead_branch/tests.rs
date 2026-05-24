@@ -17,7 +17,7 @@ fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
 }
 
 /// Build a function with `if(cond)`, two branches each ending in `return`.
-fn make_if_fn(cond_val: bool) -> Result<strider_ir::Graph> {
+fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
     let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let true_region = b.create_region()?;
@@ -164,7 +164,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    pipeline.run_built(fg.graph_mut())?;
+    pipeline.run_built(&mut fg)?;
 
     let if_count = fg.count_kind(|k| matches!(k, NodeKind::If));
     assert_eq!(if_count, 0, "both If nodes must be eliminated");

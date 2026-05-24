@@ -30,7 +30,7 @@ use proptest::prelude::*;
 use strider_analyze::opt::{OptimizerPipeline, default_pipeline};
 use strider_ir::node::{NodeId, NodeOutputType};
 use strider_ir::{
-    Graph, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    Function, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
 /// Sentinel lift-address base; per-step `lift_off` is added on top.
@@ -191,7 +191,7 @@ impl Pools {
     }
 }
 
-fn replay(steps: &[Step]) -> Option<Graph> {
+fn replay(steps: &[Step]) -> Option<Function> {
     let mut b = FunctionBuilder::empty().ok()?;
     let region = b.create_region().ok()?;
     b.set_entry_region(region).ok()?;
@@ -308,7 +308,7 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /// Collects every node-id → asm-fingerprint mapping, indexed by `NodeId`.
-fn collect_fingerprints(g: &strider_ir::Graph) -> HashMap<NodeId, Vec<u64>> {
+fn collect_fingerprints(g: &strider_ir::Function) -> HashMap<NodeId, Vec<u64>> {
     g.all_node_ids()
         .map(|id| (id, g.asm_fingerprint(id).to_vec()))
         .collect()
@@ -337,17 +337,17 @@ proptest! {
             return Ok(());
         };
 
-        let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(fg.graph());
+        let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg);
 
         let pipeline: OptimizerPipeline = default_pipeline();
-        let run_res = pipeline.run_built(fg.graph_mut());
+        let run_res = pipeline.run_built(&mut fg);
         prop_assert!(
             run_res.is_ok(),
             "default_pipeline should not error on strategy-generated graph: {:?}",
             run_res.err()
         );
 
-        let post: HashMap<NodeId, Vec<u64>> = collect_fingerprints(fg.graph());
+        let post: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg);
 
         for (id, pre_fp) in &pre {
             if pre_fp.is_empty() {

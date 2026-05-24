@@ -18,7 +18,7 @@ use super::support::{Tb, assertions as a};
 
 /// `return(add(x, 0))` where `x` is `add(7, 1)` so the outer Add has a
 /// non-const LHS — useful for testing `add(var(x), int_const(0))` rewrites.
-fn graph_add_x_zero() -> strider_ir::Graph {
+fn graph_add_x_zero() -> strider_ir::Function {
     let mut t = Tb::empty();
     let c7 = t.u64(7);
     let c1 = t.u64(1);
@@ -29,7 +29,7 @@ fn graph_add_x_zero() -> strider_ir::Graph {
 }
 
 /// `return(sub(x, x))` — prime candidate for `sub(var(x), var(x)) → 0`.
-fn graph_sub_x_x() -> strider_ir::Graph {
+fn graph_sub_x_x() -> strider_ir::Function {
     let mut t = Tb::empty();
     let c7 = t.u64(7);
     let c1 = t.u64(1);
@@ -40,7 +40,7 @@ fn graph_sub_x_x() -> strider_ir::Graph {
 
 /// `return(add(IntConst(a), IntConst(b)))` — prime candidate for
 /// constant folding.
-fn graph_add_const_const(a: u64, b: u64) -> strider_ir::Graph {
+fn graph_add_const_const(a: u64, b: u64) -> strider_ir::Function {
     let mut t = Tb::empty();
     let ca = t.u64(a);
     let cb = t.u64(b);
@@ -51,17 +51,17 @@ fn graph_add_const_const(a: u64, b: u64) -> strider_ir::Graph {
 // ── Assertion helpers local to this module ──────────────────────────────────
 
 #[track_caller]
-fn find_add(g: &strider_ir::Graph) -> NodeId {
+fn find_add(g: &strider_ir::Function) -> NodeId {
     a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 #[track_caller]
-fn find_sub(g: &strider_ir::Graph) -> NodeId {
+fn find_sub(g: &strider_ir::Function) -> NodeId {
     a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 /// Returns the `NodeKind` of the node producing the Return's data input.
-fn return_data_input_kind(g: &strider_ir::Graph) -> NodeKind {
+fn return_data_input_kind(g: &strider_ir::Function) -> NodeKind {
     let ret = a::find_node(g, |k| matches!(k, NodeKind::Return));
     let inputs: Vec<NodeOutputId> = g.node_inputs(ret).into_iter().collect();
     // Return inputs: [ctrl(0), mem(1), retval0(2), ...].
@@ -70,7 +70,7 @@ fn return_data_input_kind(g: &strider_ir::Graph) -> NodeKind {
 }
 
 /// Helper: run rule on every node, OR-ing results.
-fn fire_anywhere<F>(g: &mut strider_ir::Graph, rule: F) -> bool
+fn fire_anywhere<F>(g: &mut strider_ir::Function, rule: F) -> bool
 where
     F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<bool>,
 {

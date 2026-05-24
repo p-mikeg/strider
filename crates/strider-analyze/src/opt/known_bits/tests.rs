@@ -255,7 +255,7 @@ fn merge_returns_err_on_contradiction() {
 /// can read it via `read_variable` to obtain a non-constant `InitialVar`
 /// output — used by tests that want to model an unknown source value (such
 /// as a freshly-entered architectural register).
-fn make_fn_with_var<F>(f: F) -> Result<strider_ir::Graph>
+fn make_fn_with_var<F>(f: F) -> Result<strider_ir::Function>
 where
     F: FnOnce(&mut FunctionBuilder, rsleigh::Vn) -> Result<strider_ir::Value>,
 {

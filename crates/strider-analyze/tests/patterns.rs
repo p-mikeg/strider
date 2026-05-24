@@ -35,7 +35,7 @@ per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern
 // fixtures/Makefile to keep the tail call from being elided.
 per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call);
 
-fn mac_pattern_finds_match(g: &strider_ir::Graph) {
+fn mac_pattern_finds_match(g: &strider_ir::Function) {
     // Pattern: add(mul(?, ?), ?).  We use `.ignore_casts()` because some
     // arches (notably x64) lower this as `Add(Extend_zext(Mul@W), arg)`
     // — the Mul is one hop deeper than the matcher's exact-walk would
@@ -48,7 +48,7 @@ fn mac_pattern_finds_match(g: &strider_ir::Graph) {
             "expected ≥1 match of add(mul(_,_), _); got {} matches", hits.len());
 }
 
-fn xor_chain_pattern_finds_match(g: &strider_ir::Graph) {
+fn xor_chain_pattern_finds_match(g: &strider_ir::Function) {
     // ConstantFold collapses (x ^ k1) & m1 ^ k2  →  (x & m1) ^ (k1^k2)
     // before pattern matching — the inner xor disappears, so the original
     // three-deep xor(and(xor)) query never matches.  The post-fold shape
@@ -65,7 +65,7 @@ fn xor_chain_pattern_finds_match(g: &strider_ir::Graph) {
             common::count_int_binop(g, IntBinaryOp::And));
 }
 
-fn if_const_pattern_finds_two_consts(g: &strider_ir::Graph) {
+fn if_const_pattern_finds_two_consts(g: &strider_ir::Function) {
     // After RedundantPhis, both arms of the If feed a Phi resolving to either
     // IntConst(100) or IntConst(-50).  Pin both constants.
     //
@@ -84,7 +84,7 @@ fn if_const_pattern_finds_two_consts(g: &strider_ir::Graph) {
             "expected IntConst(-50) — false-branch return value (any of {neg50_u32}, {neg50_u64})");
 }
 
-fn invariant_load_pattern_finds_load(g: &strider_ir::Graph) {
+fn invariant_load_pattern_finds_load(g: &strider_ir::Function) {
     // Pattern: any Load.
     let m = Matcher::try_new(g).unwrap();
     let pat: Pat = strider_analyze::pattern::load().into();
@@ -93,7 +93,7 @@ fn invariant_load_pattern_finds_load(g: &strider_ir::Graph) {
     assert!(count_loops(g) >= 1, "loop must remain");
 }
 
-fn recursive_pattern_finds_self_call(g: &strider_ir::Graph) {
+fn recursive_pattern_finds_self_call(g: &strider_ir::Function) {
     // Pattern: any Call.
     let m = Matcher::try_new(g).unwrap();
     let pat: Pat = call().into();

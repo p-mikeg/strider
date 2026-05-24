@@ -12,7 +12,7 @@ use strider_ir_test_utils::RegisterSet;
 /// Builds `if (!cond) { return 1 } else { return 2 }`, where `cond` is a
 /// fresh boolean variable read from a register.  Returns the graph and
 /// the `If` node id for downstream assertions.
-fn build_if_with_neg_cond() -> Result<(strider_ir::Graph, strider_ir::node::NodeId)> {
+fn build_if_with_neg_cond() -> Result<(strider_ir::Function, strider_ir::node::NodeId)> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
     let (fg, if_node, ()) = RegisterSet::new()
         .tracked(cond_vn)

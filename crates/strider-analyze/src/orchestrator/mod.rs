@@ -153,7 +153,7 @@ impl RegionIndex {
 /// Returns an error when the iteration cap is hit, when unresolved
 /// branches remain at fixed point, or any error propagated from
 /// strider / cfg / opt.
-pub fn run<R>(config: Config<'_, R>) -> Result<strider_ir::Graph>
+pub fn run<R>(config: Config<'_, R>) -> Result<strider_ir::Function>
 where
     R: rsleigh::MemReader,
 {
@@ -274,7 +274,7 @@ where
     /// construction.  No `Option` wrapper because the post-init
     /// invariant is "always populated" — paying `as_ref().ok_or_else`
     /// on every read for an unreachable `None` branch is pure cost.
-    graph: strider_ir::Graph,
+    graph: strider_ir::Function,
     /// Pending placeholder anchors for the current iteration.
     unresolved: Vec<(PcodeInsnAddr, strider_ir::Value)>,
     /// Pending count at iter 0; sets the cap.
@@ -350,7 +350,7 @@ where
             known_targets: FxHashMap::default(),
             // Empty placeholder; overwritten by `build_initial_iteration`
             // before any consumer reads it.
-            graph: strider_ir::Graph::new(),
+            graph: strider_ir::Function::new(),
             unresolved: Vec::new(),
             pending_at_iter_0: 0,
             stall_budget: 0,
@@ -418,7 +418,7 @@ where
         &mut self,
         sleigh: rsleigh::Sleigh<R>,
     ) -> Result<(
-        strider_ir::Graph,
+        strider_ir::Function,
         Vec<(PcodeInsnAddr, strider_ir::Value)>,
         RegionIndex,
         rsleigh::Sleigh<R>,
@@ -467,7 +467,7 @@ where
 
         let pipeline = self.strider.build_stable_optimizer_pipeline();
         let entry = graph.entry().ok_or_else(|| {
-            anyhow::anyhow!("seat: graph has not been built (entry is None)")
+            anyhow::anyhow!("seat: entry node is not set")
         })?;
         pipeline.run(graph.graph_mut(), entry)?;
 
@@ -539,7 +539,7 @@ where
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.strider.build_stable_optimizer_pipeline();
         let entry = self.graph.entry().ok_or_else(|| {
-            anyhow::anyhow!("run_stable_only: graph has not been built (entry is None)")
+            anyhow::anyhow!("run_stable_only: entry node is not set")
         })?;
         pipeline.run(self.graph.graph_mut(), entry)?;
         Ok(())
@@ -565,7 +565,7 @@ where
 
     /// Run the destructive subset and consume `self`, returning the
     /// final graph.
-    fn finalize(mut self) -> Result<strider_ir::Graph> {
+    fn finalize(mut self) -> Result<strider_ir::Function> {
         let pipeline = self.strider.build_destructive_optimizer_pipeline();
         let compact = self.compact;
         let entry = self.graph.entry().ok_or_else(|| {
@@ -704,7 +704,7 @@ fn is_tail_call(
 }
 
 fn apply_in_place_edit(
-    graph: &mut strider_ir::Graph,
+    graph: &mut strider_ir::Function,
     strider: &Strider,
     region_index: &RegionIndex,
     placeholder: NodeId,
@@ -1157,7 +1157,7 @@ fn edge_set_of(
 /// not built), if HTML rendering fails, if a write to `out_dir` fails,
 /// or if the graph's generation no longer matches `lift_generation`.
 pub fn dump_per_region<R, I>(
-    graph: &strider_ir::Graph,
+    graph: &strider_ir::Function,
     exit_controls: I,
     lift_generation: u64,
     sleigh: &rsleigh::Sleigh<R>,
@@ -1219,7 +1219,7 @@ where
 /// different `Graph`), when dumper construction fails (graph not
 /// built), HTML rendering fails, or the write to `out_path` fails.
 pub fn dump_neighborhood<R>(
-    graph: &strider_ir::Graph,
+    graph: &strider_ir::Function,
     anchor: NodeId,
     depth: u32,
     sleigh: &rsleigh::Sleigh<R>,

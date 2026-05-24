@@ -32,9 +32,10 @@
 //!
 //! # Key types
 //!
-//! - [`Graph`] — sea-of-nodes IR store; after [`FunctionBuilder::build`]
-//!   has run, its `entry` / `cc_metadata` fields are populated and it
-//!   serves as the finished function graph for optimization and querying
+//! - [`Function`] — lifted function: [`Graph`] plus per-function state
+//!   (`entry`, `cc_metadata`); produced by [`FunctionBuilder::build`] and
+//!   consumed by optimizer passes and pattern queries
+//! - [`Graph`] — sea-of-nodes IR store (structural state only; no entry/CC)
 //! - [`FunctionBuilder`] — constructs the graph with SSA variable tracking
 //! - [`RegionId`] — identifies a basic block within the function
 //! - [`node::NodeOutputType`] — `Bool`, integers `U8`/`U16`/`U32`/`U64`/`U80`/`U128`/`U256`/`U512`,

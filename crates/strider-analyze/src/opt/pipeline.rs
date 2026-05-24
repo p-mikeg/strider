@@ -262,13 +262,13 @@ impl OptimizerPipeline {
     ///
     /// Returns an error if `graph.entry()` is `None` (the graph has
     /// not been built), or any error [`Self::run`] would propagate.
-    pub fn run_built(&self, graph: &mut strider_ir::Graph) -> crate::opt::Result<()> {
+    pub fn run_built(&self, graph: &mut strider_ir::Function) -> crate::opt::Result<()> {
         let entry = graph.entry().ok_or_else(|| {
             anyhow::anyhow!(
-                "OptimizerPipeline::run_built: graph has not been built (entry is None)"
+                "OptimizerPipeline::run_built: entry node is not set"
             )
         })?;
-        self.run(graph, entry)
+        self.run(graph.graph_mut(), entry)
     }
 }
 
@@ -283,7 +283,7 @@ mod tests {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
-    fn one_const_fn(k: u64) -> strider_ir::Graph {
+    fn one_const_fn(k: u64) -> strider_ir::Function {
         let mut b = FunctionBuilder::empty().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();

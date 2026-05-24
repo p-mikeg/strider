@@ -77,13 +77,13 @@ mod tests {
 
     /// A minimal function `fn() -> u64 { return 7; }` — Entry + Return chain,
     /// no orphans, single IntConst.
-    fn trivial_const_fn() -> strider_ir::Graph {
+    fn trivial_const_fn() -> strider_ir::Function {
         make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
     }
 
     /// Helper: count nodes whose `inputs.is_empty()` is false in the full
     /// arena (reachable or not).
-    fn count_nodes_with_inputs(g: &Graph) -> usize {
+    fn count_nodes_with_inputs(g: &strider_ir::Graph) -> usize {
         g.all_node_ids()
             .filter(|n| !g.node_inputs(*n).is_empty())
             .count()

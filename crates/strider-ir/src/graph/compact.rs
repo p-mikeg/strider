@@ -394,7 +394,6 @@ mod tests {
             [entry_ctrl, mem_out, const_out],
             [],
         );
-        graph.entry = Some(entry);
         (entry, const_node, ret_node, mem)
     }
 
@@ -799,14 +798,12 @@ mod tests {
 
         let _ = graph.retain_reachable(entry).unwrap();
         let post_first_count = graph.all_node_ids().count();
-        let new_entry = graph.entry.unwrap_or_else(|| {
-            // retain_reachable invalidates pre-call ids; re-derive entry
-            // from the unique NodeKind::Entry in the surviving arena.
-            graph
-                .all_node_ids()
-                .find(|&id| matches!(graph.node_kind(id), NodeKind::Entry))
-                .unwrap()
-        });
+        // retain_reachable invalidates pre-call ids; re-derive the entry
+        // from the unique NodeKind::Entry in the surviving arena.
+        let new_entry = graph
+            .all_node_ids()
+            .find(|&id| matches!(graph.node_kind(id), NodeKind::Entry))
+            .unwrap();
         // Snapshot every surviving fingerprint pre-second-call.
         let pre_fps: Vec<(NodeId, Vec<u64>)> = graph
             .all_node_ids()

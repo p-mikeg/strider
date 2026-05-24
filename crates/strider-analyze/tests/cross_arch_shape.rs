@@ -91,7 +91,7 @@ impl Fingerprint {
 /// overrides only for `Phi`, which splits into `VarPhi` / `ValuePhi`
 /// based on the per-node side-table `Graph::phi_var_tag` (the
 /// `as_static_str` method has no graph context).
-fn kind_bucket(g: &strider_ir::Graph, nid: strider_ir::node::NodeId) -> String {
+fn kind_bucket(g: &strider_ir::Function, nid: strider_ir::node::NodeId) -> String {
     let k = g.node_kind(nid);
     match k {
         NodeKind::Phi if g.phi_var_tag(nid).is_some() => "VarPhi".to_string(),
@@ -111,7 +111,7 @@ fn kind_bucket(g: &strider_ir::Graph, nid: strider_ir::node::NodeId) -> String {
 ///   * region count (one per `Region` reachable node — matches
 ///     how `strider_lift::cfg::Cfg` regions are projected into the IR),
 ///   * per-kind phi counts (broken out for sensitivity to kind drift).
-fn structural_fingerprint(g: &strider_ir::Graph) -> Fingerprint {
+fn structural_fingerprint(g: &strider_ir::Function) -> Fingerprint {
     let mut kind_histogram: BTreeMap<String, usize> = BTreeMap::new();
     let mut reachable_nodes = 0usize;
     let mut regions = 0usize;

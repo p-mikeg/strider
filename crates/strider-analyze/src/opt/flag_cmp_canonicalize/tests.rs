@@ -45,7 +45,7 @@ fn build_cmp_flags(
 /// region pair and return the graph + the unique If node id + the two
 /// leaves `a`, `b` (so tests can assert the rewritten cond points at
 /// them).
-fn build_if_with_flag_cond<F>(make_cond: F) -> Result<(Graph, NodeId, NodeOutputId, NodeOutputId)>
+fn build_if_with_flag_cond<F>(make_cond: F) -> Result<(strider_ir::Function, NodeId, NodeOutputId, NodeOutputId)>
 where
     F: FnOnce(
         &mut FunctionBuilder,

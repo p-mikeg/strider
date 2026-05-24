@@ -1067,7 +1067,7 @@ fn build_unary_with_wide_const_input(
     kind: NodeKind,
     wide_ty: NodeOutputType,
     out_ty: NodeOutputType,
-) -> Result<strider_ir::Graph> {
+) -> Result<strider_ir::Function> {
     use strider_ir::node::NodeOutputKind;
     let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, NodeOutputType::U64).unwrap()))?;
     let placeholder = return_value(&fg)?;
