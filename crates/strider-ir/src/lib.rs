@@ -45,6 +45,7 @@
 mod builder;
 pub mod error;
 mod function;
+pub use function::Function;
 pub mod graph;
 pub use graph::Graph;
 /// IR-specific Graphviz/dot rendering (implements the [`dot::GraphDotDumper`]
