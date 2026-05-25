@@ -333,6 +333,10 @@ enum FieldKind {
     VnSpace,
     /// `PyVn` — reads `.inner` to get the underlying `rsleigh::Vn`.
     Vn,
+    /// `#[field(accepts = "OffsetCapture")]` — accepts a
+    /// `PyOffsetCapture` and reads `.inner` to get the underlying
+    /// `strider_analyze::pattern::OffsetCapture`.
+    OffsetCapture,
     /// `#[field(multi, accepts = "Pat")]` — accumulating `(idx, p)`
     /// setter that pushes onto a `Vec<(usize, Pat)>` (or
     /// `Vec<(u32, Pat)>`).  The carried type is the **tuple-inner**
@@ -351,6 +355,14 @@ enum FieldKind {
     /// applies via `b.<py_name>()` (the underlying builder's method
     /// takes no args).
     TerminalBool,
+    /// `#[field(no_arg_toggle)]` — a no-arg chainable setter that
+    /// toggles the underlying `Option<bool>` to `Some(true)` and
+    /// returns `PyRef<Self>` so further builder methods may be chained.
+    /// Finalise applies via `b = b.<py_name>()` (no args), same as
+    /// `TerminalBool`, but the Python setter stays chainable rather
+    /// than immediately finalising.  Used by `stack_only()` on
+    /// `LoadPat` / `StorePat`.
+    NoArgToggle,
 }
 
 /// One field of the annotated `*Def` struct.  The macro emits one
@@ -382,6 +394,7 @@ struct FieldAttrBag {
     doc: Option<String>,
     multi: bool,
     terminal: bool,
+    no_arg_toggle: bool,
 }
 
 /// Parse the inner `#[field(...)]` meta items into a [`FieldAttrBag`].
@@ -404,12 +417,13 @@ fn parse_field_inner_attrs(attr: &syn::Attribute) -> syn::Result<FieldAttrBag> {
                 match s.as_str() {
                     "multi" => bag.multi = true,
                     "terminal" => bag.terminal = true,
+                    "no_arg_toggle" => bag.no_arg_toggle = true,
                     other => {
                         return Err(syn::Error::new_spanned(
                             &ident,
                             format!(
                                 "unknown #[field(...)] flag `{other}`; expected one of \
-                                 `multi`, `terminal`",
+                                 `multi`, `terminal`, `no_arg_toggle`",
                             ),
                         ));
                     }
@@ -460,6 +474,24 @@ fn field_kind_from_bag(
             "`#[field(terminal)]` does not accept `accepts = ...` — the setter is no-arg",
         ));
     }
+    if bag.no_arg_toggle && bag.multi {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`#[field(no_arg_toggle)]` and `#[field(multi)]` are mutually exclusive",
+        ));
+    }
+    if bag.no_arg_toggle && bag.accepts.is_some() {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`#[field(no_arg_toggle)]` does not accept `accepts = ...` — the setter is no-arg",
+        ));
+    }
+    if bag.terminal && bag.no_arg_toggle {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`#[field(terminal)]` and `#[field(no_arg_toggle)]` are mutually exclusive",
+        ));
+    }
     if bag.terminal {
         // The inner type must be `bool` so the toggle is well-typed.
         // (The macro doesn't strictly enforce this — anything that
@@ -467,6 +499,10 @@ fn field_kind_from_bag(
         // that terminal setters are no-arg toggles backed by an
         // `Option<bool>` field.)
         return Ok(FieldKind::TerminalBool);
+    }
+    if bag.no_arg_toggle {
+        // Like TerminalBool but returns `PyRef<Self>` (chainable).
+        return Ok(FieldKind::NoArgToggle);
     }
     if bag.multi {
         // `multi` requires `accepts = "Pat"` and the field must be
@@ -494,11 +530,12 @@ fn field_kind_from_bag(
         Some("Pat") => Ok(FieldKind::PatLike),
         Some("VnSpace") => Ok(FieldKind::VnSpace),
         Some("Vn") => Ok(FieldKind::Vn),
+        Some("OffsetCapture") => Ok(FieldKind::OffsetCapture),
         Some(other) => Err(syn::Error::new_spanned(
             attr,
             format!(
                 "unknown #[field(accepts = \"{other}\")] target; expected one of \
-                 \"Pat\", \"VnSpace\", \"Vn\"",
+                 \"Pat\", \"VnSpace\", \"Vn\", \"OffsetCapture\"",
             ),
         )),
     }
@@ -857,6 +894,14 @@ fn build_finalise_impl(
                     }
                 }
             }
+            FieldKind::OffsetCapture => {
+                // `OffsetCapture` is `Copy`; forward by value like VnSpace/Vn.
+                quote! {
+                    if let ::core::option::Option::Some(v) = guard.#rust_ident {
+                        b = b.#py_name(v);
+                    }
+                }
+            }
             FieldKind::MultiPat { .. } => {
                 // The vec entries are `(idx, Pat)`.  We can't move out
                 // of the MutexGuard, so iterate-by-reference and clone
@@ -873,6 +918,15 @@ fn build_finalise_impl(
                 // `b.ordered()` (or whichever method) — no-arg toggle.
                 // Only call when the flag is `Some(true)`; treat `None`
                 // and `Some(false)` as "not requested".
+                quote! {
+                    if ::core::matches!(guard.#rust_ident, ::core::option::Option::Some(true)) {
+                        b = b.#py_name();
+                    }
+                }
+            }
+            FieldKind::NoArgToggle => {
+                // Same finalise behaviour as TerminalBool — call the
+                // no-arg builder method when the flag is `Some(true)`.
                 quote! {
                     if ::core::matches!(guard.#rust_ident, ::core::option::Option::Some(true)) {
                         b = b.#py_name();
@@ -1249,6 +1303,23 @@ fn emit_field_method(_rust_name: &Ident, field: &Field) -> TokenStream2 {
                 }
             }
         }
+        FieldKind::OffsetCapture => {
+            quote! {
+                #(#doc_attrs)*
+                fn #py_name(
+                    slf: ::pyo3::PyRef<'_, Self>,
+                    #arg_name: crate::pattern::PyOffsetCapture,
+                ) -> ::pyo3::PyRef<'_, Self> {
+                    let mut guard = slf
+                        .inner
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    guard.#rust_ident = ::core::option::Option::Some(#arg_name.inner);
+                    ::core::mem::drop(guard);
+                    slf
+                }
+            }
+        }
         FieldKind::MultiPat { idx_ty } => {
             // Accumulating two-arg setter: `.method(idx, p)` pushes
             // `(idx, p)` onto the inner `Vec<(IDX, Pat)>`.  The Vec is
@@ -1293,6 +1364,26 @@ fn emit_field_method(_rust_name: &Ident, field: &Field) -> TokenStream2 {
                         guard.#rust_ident = ::core::option::Option::Some(true);
                     }
                     crate::pattern::PyPat::from_pat(self.finalise())
+                }
+            }
+        }
+        FieldKind::NoArgToggle => {
+            // No-arg chainable setter: toggle the inner Option<bool>
+            // to `Some(true)` and return `PyRef<Self>` so further
+            // builder methods may be chained.  Unlike `TerminalBool`
+            // this does NOT call `finalise()` immediately.
+            quote! {
+                #(#doc_attrs)*
+                fn #py_name<'py>(
+                    slf: ::pyo3::PyRef<'py, Self>,
+                ) -> ::pyo3::PyRef<'py, Self> {
+                    let mut guard = slf
+                        .inner
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    guard.#rust_ident = ::core::option::Option::Some(true);
+                    ::core::mem::drop(guard);
+                    slf
                 }
             }
         }

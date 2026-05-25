@@ -157,7 +157,7 @@ pub use pat::{IntoPat, Pat};
 
 // ── Capture variable ─────────────────────────────────────────────────────────
 
-pub use var::Capture;
+pub use var::{Capture, OffsetCapture};
 
 // ── Builder structs ──────────────────────────────────────────────────────────
 //

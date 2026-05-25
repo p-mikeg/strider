@@ -12,6 +12,7 @@ use strider_ir::node::NodeKind;
 
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat};
+use crate::pattern::var::OffsetCapture;
 
 // ── StackOffsetFilter ─────────────────────────────────────────────────────────
 
@@ -48,6 +49,12 @@ pub struct LoadPat {
     mem_in: Option<Pat>,
     bit_width: Option<u32>,
     stack_offset_filter: Option<StackOffsetFilter>,
+    /// When `true`, rejects matches where `Function::stack_offset` is `None`.
+    stack_only: bool,
+    /// When `Some(oc)`, records the matched node's stack offset in the
+    /// match's offset-capture map keyed by `oc`.  Implies `stack_only`:
+    /// a non-stack Load cannot bind an offset.
+    offset_capture: Option<OffsetCapture>,
 }
 
 impl LoadPat {
@@ -58,6 +65,8 @@ impl LoadPat {
             mem_in: None,
             bit_width: None,
             stack_offset_filter: None,
+            stack_only: false,
+            offset_capture: None,
         }
     }
     /// Restrict the match to loads in address space `s`.
@@ -104,11 +113,33 @@ impl LoadPat {
         self.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
         self
     }
+    /// Reject matches where `Function::stack_offset(node)` is `None`.
+    ///
+    /// Use this when you want to find any SP-relative load without
+    /// constraining the exact offset.  Combine with `.stack_offset(k)`
+    /// or `.offset_capture(c)` to further restrict or capture the offset.
+    #[must_use]
+    pub fn stack_only(mut self) -> Self {
+        self.stack_only = true;
+        self
+    }
+    /// Capture the matched load's SP-relative offset into `c`.  At query
+    /// time, `match_.captured_offset(c)` returns the `i64` offset.
+    ///
+    /// Implies `stack_only`: if `Function::stack_offset(node)` is `None`
+    /// (i.e. the load is not SP-relative) the match fails.
+    ///
+    /// Requires that `AliasSplit` has run before the matcher is invoked.
+    #[must_use]
+    pub fn offset_capture(mut self, c: OffsetCapture) -> Self {
+        self.offset_capture = Some(c);
+        self
+    }
 }
 
 impl From<LoadPat> for Pat {
     fn from(b: LoadPat) -> Pat {
-        let LoadPat { space, addr, mem_in, bit_width, stack_offset_filter } = b;
+        let LoadPat { space, addr, mem_in, bit_width, stack_offset_filter, stack_only, offset_capture } = b;
         // Load inputs = [mem(0), addr(1)]; outputs = [value(0)] (single output).
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
         if let Some(p) = mem_in {
@@ -126,13 +157,18 @@ impl From<LoadPat> for Pat {
         };
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
-        // Combined post-match closure: bit_width AND stack_offset checks.
-        // `with_post_match` replaces the existing closure (single slot),
-        // so both checks must live in one callback.
-        if bit_width.is_some() || stack_offset_filter.is_some() {
+        // Combined post-match closure: bit_width, stack_offset, stack_only,
+        // and offset_capture checks.  `with_post_match` replaces the existing
+        // closure (single slot), so all checks must live in one callback.
+        let needs_post = bit_width.is_some()
+            || stack_offset_filter.is_some()
+            || stack_only
+            || offset_capture.is_some();
+        if needs_post {
             let want_width = bit_width;
             let off_filter = stack_offset_filter;
-            pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
+            let do_stack_only = stack_only || offset_capture.is_some();
+            pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(want) = want_width {
                     let outs = ctx.graph.node_outputs(node);
                     let Some(&value_out) = outs.first() else {
@@ -145,11 +181,18 @@ impl From<LoadPat> for Pat {
                         return false;
                     }
                 }
-                if let Some(ref f) = off_filter {
+                if do_stack_only || off_filter.is_some() {
                     let Some(offset) = ctx.graph.stack_offset(node) else {
                         return false;
                     };
-                    if !f.matches(offset) {
+                    if let Some(ref f) = off_filter
+                        && !f.matches(offset)
+                    {
+                        return false;
+                    }
+                    if let Some(oc) = offset_capture
+                        && !b.bind_offset(oc, offset)
+                    {
                         return false;
                     }
                 }
@@ -172,6 +215,11 @@ pub struct StorePat {
     next_mem: Option<Pat>,
     bit_width: Option<u32>,
     stack_offset_filter: Option<StackOffsetFilter>,
+    /// When `true`, rejects matches where `Function::stack_offset` is `None`.
+    stack_only: bool,
+    /// When `Some(oc)`, records the matched node's stack offset in the
+    /// match's offset-capture map keyed by `oc`.  Implies `stack_only`.
+    offset_capture: Option<OffsetCapture>,
 }
 
 impl StorePat {
@@ -184,6 +232,8 @@ impl StorePat {
             next_mem: None,
             bit_width: None,
             stack_offset_filter: None,
+            stack_only: false,
+            offset_capture: None,
         }
     }
     /// Restrict the match to stores in address space `s`.
@@ -241,6 +291,28 @@ impl StorePat {
         self.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
         self
     }
+    /// Reject matches where `Function::stack_offset(node)` is `None`.
+    ///
+    /// Use this when you want to find any SP-relative store without
+    /// constraining the exact offset.  Combine with `.stack_offset(k)`
+    /// or `.offset_capture(c)` to further restrict or capture the offset.
+    #[must_use]
+    pub fn stack_only(mut self) -> Self {
+        self.stack_only = true;
+        self
+    }
+    /// Capture the matched store's SP-relative offset into `c`.  At query
+    /// time, `match_.captured_offset(c)` returns the `i64` offset.
+    ///
+    /// Implies `stack_only`: if `Function::stack_offset(node)` is `None`
+    /// (i.e. the store is not SP-relative) the match fails.
+    ///
+    /// Requires that `AliasSplit` has run before the matcher is invoked.
+    #[must_use]
+    pub fn offset_capture(mut self, c: OffsetCapture) -> Self {
+        self.offset_capture = Some(c);
+        self
+    }
 }
 
 impl From<StorePat> for Pat {
@@ -253,6 +325,8 @@ impl From<StorePat> for Pat {
             next_mem,
             bit_width,
             stack_offset_filter,
+            stack_only,
+            offset_capture,
         } = b;
         // Store inputs = [mem(0), addr(1), data(2)]; outputs = [mem(0)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
@@ -274,13 +348,20 @@ impl From<StorePat> for Pat {
         };
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
-        // Combined post-match closure: bit_width, next_mem, and
-        // stack_offset checks.  `with_post_match` replaces the existing
-        // closure (single slot), so all checks must live in one callback.
-        if bit_width.is_some() || next_mem.is_some() || stack_offset_filter.is_some() {
+        // Combined post-match closure: bit_width, next_mem, stack_offset,
+        // stack_only, and offset_capture checks.  `with_post_match`
+        // replaces the existing closure (single slot), so all checks must
+        // live in one callback.
+        let needs_post = bit_width.is_some()
+            || next_mem.is_some()
+            || stack_offset_filter.is_some()
+            || stack_only
+            || offset_capture.is_some();
+        if needs_post {
             let want_width = bit_width;
             let next_mem_pat = next_mem;
             let off_filter = stack_offset_filter;
+            let do_stack_only = stack_only || offset_capture.is_some();
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(w) = want_width {
                     // Store's data input is at `inputs[2]`; its producer's
@@ -301,11 +382,18 @@ impl From<StorePat> for Pat {
                 {
                     return false;
                 }
-                if let Some(ref f) = off_filter {
+                if do_stack_only || off_filter.is_some() {
                     let Some(offset) = ctx.graph.stack_offset(node) else {
                         return false;
                     };
-                    if !f.matches(offset) {
+                    if let Some(ref f) = off_filter
+                        && !f.matches(offset)
+                    {
+                        return false;
+                    }
+                    if let Some(oc) = offset_capture
+                        && !b.bind_offset(oc, offset)
+                    {
                         return false;
                     }
                 }

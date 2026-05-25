@@ -5,7 +5,7 @@ use strider_ir::{
     IntUnaryOp,
 };
 
-use crate::pattern::var::Capture;
+use crate::pattern::var::{Capture, OffsetCapture};
 
 // ── Bindings ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,12 @@ pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
 /// atomic counter), so the overlay is `FxHashMap` rather than
 /// `SecondaryMap`.
 ///
+/// A parallel journal `offset_entries: Vec<(OffsetCapture, i64)>` and
+/// `offset_index: FxHashMap<OffsetCapture, usize>` stores `i64` values
+/// bound by [`LoadPat::offset_capture`] / [`StorePat::offset_capture`].
+/// The mark/restore scheme covers both journals atomically via
+/// [`BindingsMark`], which carries cursors for both.
+///
 /// External callers see `Bindings` as read-only: construction is via
 /// `Default::default()`, and the production mutation path
 /// (`Self::bind_capture`) is `pub(crate)`.  The `mark` / `restore`
@@ -55,19 +61,31 @@ pub struct Bindings {
     /// O(1) `Capture → index-into-entries` overlay.  Kept in sync with
     /// `entries` on every push and on `restore`.
     index: rustc_hash::FxHashMap<Capture, usize>,
+    /// Parallel journal for `OffsetCapture → i64` bindings (SP-relative
+    /// offsets captured from `LoadPat::offset_capture` /
+    /// `StorePat::offset_capture`).
+    offset_entries: Vec<(OffsetCapture, i64)>,
+    /// O(1) `OffsetCapture → index-into-offset_entries` overlay.
+    offset_index: rustc_hash::FxHashMap<OffsetCapture, usize>,
 }
 
 /// Opaque marker returned by [`Bindings::mark`] and consumed by
 /// [`Bindings::restore`].  Represents "the binding state at the moment of
 /// marking"; rolling back discards entries appended after the mark.
+///
+/// Carries cursors for both the node-binding journal and the
+/// offset-capture journal so both are rolled back atomically.
 #[derive(Clone, Copy)]
-pub struct BindingsMark(usize);
+pub struct BindingsMark(usize, usize);
 
 impl Bindings {
     /// Snapshot the current state in O(1) with no allocations.
     /// Use with [`Self::restore`] to roll back failed match attempts.
+    ///
+    /// The returned mark covers both the node-binding journal and the
+    /// offset-capture journal; [`Self::restore`] rolls back both atomically.
     pub(crate) fn mark(&self) -> BindingsMark {
-        BindingsMark(self.entries.len())
+        BindingsMark(self.entries.len(), self.offset_entries.len())
     }
 
     /// Discard every entry appended after `mark` was taken.  Idempotent:
@@ -76,15 +94,21 @@ impl Bindings {
     /// Iterates the dropped tail to evict the matching overlay entries
     /// — every overlay key is also in the journal at exactly one index,
     /// so dropping `entries[mark.0..]` and removing each `Capture` from
-    /// `index` keeps the two views in sync.
+    /// `index` keeps the two views in sync.  The offset journal is
+    /// rolled back analogously using `mark.1`.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
-        if mark.0 >= self.entries.len() {
-            return;
+        if mark.0 < self.entries.len() {
+            for (c, _) in &self.entries[mark.0..] {
+                self.index.remove(c);
+            }
+            self.entries.truncate(mark.0);
         }
-        for (c, _) in &self.entries[mark.0..] {
-            self.index.remove(c);
+        if mark.1 < self.offset_entries.len() {
+            for (c, _) in &self.offset_entries[mark.1..] {
+                self.offset_index.remove(c);
+            }
+            self.offset_entries.truncate(mark.1);
         }
-        self.entries.truncate(mark.0);
     }
 
     /// Bind `c` to `binding`.  Returns `true` on new or idempotent
@@ -111,6 +135,32 @@ impl Bindings {
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
         let idx = *self.index.get(&c)?;
         Some(self.entries[idx].1)
+    }
+
+    // ── Offset-capture accessors ──────────────────────────────────────
+
+    /// Bind `oc` to the `i64` stack offset `value`.  Returns `true` on new
+    /// or idempotent (same value) bind, `false` on conflict (no mutation).
+    ///
+    /// O(1) via the `offset_index` overlay.
+    pub(crate) fn bind_offset(&mut self, oc: OffsetCapture, value: i64) -> bool {
+        if let Some(&idx) = self.offset_index.get(&oc) {
+            return self.offset_entries[idx].1 == value;
+        }
+        let idx = self.offset_entries.len();
+        self.offset_entries.push((oc, value));
+        self.offset_index.insert(oc, idx);
+        true
+    }
+
+    /// Returns the `i64` offset bound to `oc`, or `None` if `oc` was not
+    /// captured in this match.
+    ///
+    /// O(1) via the `offset_index` overlay.
+    #[must_use]
+    pub fn get_offset(&self, oc: OffsetCapture) -> Option<i64> {
+        let idx = *self.offset_index.get(&oc)?;
+        Some(self.offset_entries[idx].1)
     }
 
     /// Convenience: returns the value `NodeOutputId` bound to `c`, or

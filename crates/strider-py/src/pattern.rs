@@ -72,6 +72,39 @@ impl PyCapture {
     }
 }
 
+// ── OffsetCapture ─────────────────────────────────────────────────────────
+
+/// An opaque capture variable that binds an `i64` SP-relative stack offset
+/// from a [`LoadPat.offset_capture`] or [`StorePat.offset_capture`] match.
+///
+/// After a successful match, retrieve the bound offset via
+/// `match_.captured_offset(c)`.  Each `OffsetCapture()` call produces
+/// a globally unique id.
+#[pyo3_stub_gen::derive::gen_stub_pyclass]
+#[pyclass(name = "OffsetCapture", module = "strider.pattern", frozen)]
+#[derive(Clone)]
+pub struct PyOffsetCapture {
+    pub(crate) inner: strider_analyze::pattern::OffsetCapture,
+}
+
+#[pymethods]
+impl PyOffsetCapture {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: strider_analyze::pattern::OffsetCapture::new(),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("OffsetCapture({:?})", self.inner)
+    }
+
+    fn __hash__(&self) -> isize {
+        self.inner.id() as i64 as isize
+    }
+}
+
 // ── String → Capture interning ───────────────────────────────────────────
 //
 // The plan calls for per-pattern interning tables, but since each
@@ -1128,6 +1161,17 @@ pub struct LoadPatDef {
     /// bit_width(32), etc.).
     #[field(arg = "n")]
     bit_width: Option<u32>,
+
+    /// Reject matches where `Function::stack_offset(node)` is `None`.
+    /// Chain with `.offset_capture(c)` to also bind the offset value.
+    #[field(no_arg_toggle)]
+    stack_only: Option<bool>,
+
+    /// Capture the matched load's SP-relative offset into `c`.
+    /// `match_.captured_offset(c)` returns the `int` offset after the
+    /// match.  Implies `stack_only()`.
+    #[field(accepts = "OffsetCapture", arg = "c")]
+    offset_capture: Option<strider_analyze::pattern::OffsetCapture>,
 }
 
 #[pyfunction]
@@ -1177,6 +1221,17 @@ pub struct StorePatDef {
     /// bit_width(32), etc.).
     #[field(arg = "n")]
     bit_width: Option<u32>,
+
+    /// Reject matches where `Function::stack_offset(node)` is `None`.
+    /// Chain with `.offset_capture(c)` to also bind the offset value.
+    #[field(no_arg_toggle)]
+    stack_only: Option<bool>,
+
+    /// Capture the matched store's SP-relative offset into `c`.
+    /// `match_.captured_offset(c)` returns the `int` offset after the
+    /// match.  Implies `stack_only()`.
+    #[field(accepts = "OffsetCapture", arg = "c")]
+    offset_capture: Option<strider_analyze::pattern::OffsetCapture>,
 }
 
 #[pyfunction]
@@ -1682,6 +1737,7 @@ pub fn float_cmp_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) ->
 pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(py, "pattern")?;
     m.add_class::<PyCapture>()?;
+    m.add_class::<PyOffsetCapture>()?;
     m.add_class::<PyPat>()?;
     m.add_class::<PyPartialMatch>()?;
     m.add_class::<PyIntBinaryPat>()?;
