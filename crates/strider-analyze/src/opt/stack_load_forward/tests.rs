@@ -1380,3 +1380,67 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
     );
     Ok(())
 }
+
+/// Regression: StackLoadForward must NOT forward a Stack-class Load across a
+/// LOCK barrier.
+///
+/// Before the soundness fix, LOCK was `PureMem` (MEM_CLOBBER_HEAP_UNKNOWN),
+/// which placed it only on the Unknown chain.  AliasSplit would build:
+///
+///   Stack chain:  MemProject[Stack] → Store(sp-4) ──────────────→ Load(sp-4)
+///   Unknown chain: MemProject[Unknown] → LOCK(mem-clobber) → MemProject[Unknown]
+///
+/// and StackLoadForward would forward Load(sp-4) directly from Store(sp-4),
+/// bypassing LOCK — unsound when another CPU could have modified the stack
+/// slot via the locked operation.
+///
+/// After the fix, LOCK is `FullClobber` (MEM_CLOBBER_FULL), so AliasSplit
+/// inserts a MemProject[Stack] RE-PROJECTION after LOCK on the Stack chain:
+///
+///   Stack chain:  MP[Stack] → Store(sp-4) → MemUnion → LOCK → MP[Stack] → Load(sp-4)
+///
+/// StackLoadForward's backward walk stops at LOCK's re-projection boundary
+/// and the Load remains (cannot forward across a full-clobber barrier).
+#[test]
+fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x99u64, NodeOutputType::U32)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        // Emit a LOCK CallOther.  LOCK is now FullClobber, so AliasSplit
+        // must break the Stack chain here.
+        let (lock_node, _v, _w) = b.build_call_other_modeled(
+            0x1234, "LOCK", &[], None, &[], &[], &[],
+        )?;
+        let lock_mem_out = b.graph().memory_output_of(lock_node)?;
+        b.advance_cur_region_memory(lock_mem_out)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    // Pipeline: ConstantFold → RedundantPhis → AliasSplit → StackLoadForward.
+    // AliasSplit must break the Stack chain at LOCK (FullClobber).
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+
+    let entry = fg.entry().unwrap();
+    pipeline.run(&mut fg, entry)?;
+
+    // The Load must NOT be forwarded — LOCK is a full-clobber barrier.
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 1,
+        "Load[sp-4] must NOT be forwarded across a LOCK barrier; \
+         LOCK is FullClobber and breaks the Stack chain"
+    );
+    Ok(())
+}

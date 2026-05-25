@@ -351,6 +351,62 @@ fn callother_with_full_clobber_breaks_stack_chain() {
         .expect("post-AliasSplit IR with CallOther full clobber must validate");
 }
 
+// ─── LOCK breaks the Stack chain (regression for widened clobber set) ────────
+
+#[test]
+fn lock_callother_breaks_stack_chain() {
+    // store sp-4; LOCK (now FullClobber); load sp-4 —
+    // LOCK's ABI is now MEM_CLOBBER_FULL (widened from MEM_CLOBBER_HEAP_UNKNOWN),
+    // so the Stack chain IS broken across it.  The Load's mem-input must trace
+    // through a CallOther-emitted MemProject[Stack], not directly back to the Store.
+    //
+    // Prior to the soundness fix, LOCK was PureMem (HEAP_UNKNOWN only) and the
+    // Stack Load would forward past LOCK — incorrect in a concurrent / aliased
+    // scenario where another CPU could have modified the stack slot through the
+    // locked instruction.
+    let sp = sp_vn_x86();
+    let mut f = make_sp_fn(sp, |b, sp_v| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let (call_other, _v, _w) = b.build_call_other_modeled(
+            0x1234, "LOCK", &[], None, &[], &[], &[],
+        )?;
+        let co_mem_out = b.graph().memory_output_of(call_other)?;
+        b.advance_cur_region_memory(co_mem_out)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })
+    .unwrap();
+
+    let pass = AliasSplit::new(sp, ArchPreset::X86);
+    let entry = f.entry().unwrap();
+    let r = pass.optimize(&mut f, entry).expect("AliasSplit must not error");
+    assert_eq!(r, OptimizationResult::Changed);
+
+    use strider_ir::node::NodeOutputKind;
+    let load = unique_node(&f, |k| matches!(k, NodeKind::Load(_)));
+    let mem_in = f.node_inputs(load).into_iter().next().unwrap();
+    let producer = f.get_node_from_output(mem_in);
+    let producer_kind = f.node_kind(producer);
+    assert!(
+        matches!(producer_kind, NodeKind::MemProject),
+        "after LOCK (full-clobber), the Stack load must re-enter via a fresh \
+         MemProject; got {producer_kind:?}",
+    );
+    assert!(
+        matches!(f.output_kind(mem_in), NodeOutputKind::Memory(Some(AliasClass::Stack))),
+        "the MemProject output feeding the Stack load must be Stack-tagged; \
+         got {:?}", f.output_kind(mem_in),
+    );
+
+    strider_ir::validate::validate(&f, entry)
+        .expect("post-AliasSplit IR with LOCK full-clobber must validate");
+}
+
 // ─── Idempotency ──────────────────────────────────────────────────────────
 
 #[test]

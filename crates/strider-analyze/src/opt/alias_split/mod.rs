@@ -408,6 +408,22 @@ fn classify_all(
 /// `decompose_sp` directly).
 ///
 /// Everything non-SP-rooted falls back to Unknown.
+///
+/// SOUNDNESS NOTE: the `None → AliasClass::Unknown` branch is sound only
+/// when no SP-derived pointer escapes into the `addr` expression tree.
+/// For example, `p = *(sp+8); store(*p, v)` lifts as a Store whose address
+/// is a Load result (Unknown class).  If `p` happens to point at another
+/// stack slot, AliasSplit places the Store on the Unknown chain, but the
+/// Store physically writes to a Stack-class address.  A subsequent
+/// Stack-class Load at that same address would bypass this Unknown Store
+/// and forward from an earlier Stack-chain value — incorrect.
+///
+/// The CALL_DEFAULT_CLOBBERS (`[Stack, Unknown]`) mitigates the common
+/// case: if the escaping pointer was passed to a callee, the Call barrier
+/// breaks both chains.  But in-function pointer manipulation that does not
+/// cross a Call is not covered.  Closing the gap requires escape analysis
+/// (verifying that no non-SP-rooted value was derived from an SP-rooted
+/// source within the same function body) — not yet implemented.
 fn address_class_with_offset(
     function: &Function,
     addr: NodeOutputId,

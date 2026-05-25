@@ -268,8 +268,26 @@ fn probe(
                             Ok(StepResult::Verdict(None))
                         }
                         None => {
-                            // Non-SP-rooted address: provably non-aliasing with
-                            // the SP-relative query range — pass through.
+                            // Non-SP-rooted address: classified as Unknown,
+                            // passed through without breaking the Stack chain.
+                            //
+                            // SOUNDNESS NOTE: this is sound only when no
+                            // SP-derived pointer has escaped into user code
+                            // in a way that could make a non-SP-rooted Store
+                            // alias a Stack-class slot.  Concretely:
+                            //   p = *(sp+8);   // p is Unknown-class
+                            //   *p = v;        // Store with Unknown addr
+                            //   // if p == &local (a stack slot), StackLoadForward
+                            //   // will forward from the BEFORE-store value — WRONG.
+                            //
+                            // The default `CALL_DEFAULT_CLOBBERS = [Stack, Unknown]`
+                            // mitigates the most common form of this (a callee that
+                            // holds a pointer to a local variable will clobber the
+                            // Stack chain at the Call barrier), but in-function
+                            // pointer manipulation that doesn't cross a Call is not
+                            // covered.  Closing this gap requires escape analysis
+                            // (tracking whether any non-SP-rooted value was derived
+                            // from an SP-rooted source) — not yet implemented.
                             Ok(StepResult::Continue(inputs[0]))
                         }
                     }

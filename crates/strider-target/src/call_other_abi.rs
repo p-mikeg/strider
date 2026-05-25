@@ -549,37 +549,81 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
 
         // ─── PureMem: memory-chain markers + side-effecting ───────
 
-        // x86 LOCK / UNLOCK — bracket an atomic memory operation.
-        // On the memory chain so patterns walking mem from a Store
-        // inside the bracket can find LOCK / UNLOCK as predecessors /
-        // successors.
-        ("LOCK",   PureMem),
-        ("UNLOCK", PureMem),
-
-        // ARM standalone memory / cache barriers — explicit ordering
-        // markers with no accompanying Store; the only way they're
-        // visible to the IR is by being on the memory chain.
-        ("DC_CVAC",                           PureMem),
-        ("DataMemoryBarrier",                 PureMem),
-        ("DataSynchronizationBarrier",        PureMem),
-        ("InstructionSynchronizationBarrier", PureMem),
-
-        // x86/x86_64 standalone memory fences — explicit ordering
-        // primitives with no register channel.  Emitted by Sleigh's
-        // x86 spec as the lowercase mnemonic.  Memory-edge so opt
-        // passes that walk the memory chain (StackLoadForward,
-        // LoadReadOnly) cannot forward across them — matches the
-        // semantic that subsequent loads must observe prior stores in
-        // program order.  Without this entry, any binary using SSE
-        // memory fences would lift to UnknownCallOtherError.
-        ("lfence", PureMem),
-        ("mfence", PureMem),
-        ("sfence", PureMem),
-
         // x86 port I/O — port + value pcode-explicit; the user-op
         // itself affects external (port) state.
         ("in",  PureMem),
         ("out", PureMem),
+
+        // ─── FullClobber: memory / ordering barriers ──────────────
+        //
+        // All of these act as serialization or visibility barriers
+        // across ALL reachable memory — including the SP-relative stack
+        // frame.  A concurrent writer (another CPU, DMA, the kernel
+        // after a mode-switch) may have modified the current thread's
+        // stack before the barrier completes, so forwarding a
+        // Stack-class load across any of them is unsound.
+        //
+        // Conservative choice: clobber Stack + Unknown.  This prevents
+        // StackLoadForward from forwarding a value that a prior barrier
+        // has made stale from the point of view of any aliased observer.
+        // Precision loss is acceptable — these primitives appear in
+        // synchronisation code where forwarding is rarely beneficial.
+
+        // x86 LOCK / UNLOCK — bracket a full hardware-lock prefix.
+        // The LOCK prefix implements a full memory barrier (all prior
+        // stores made globally visible; all subsequent loads see the
+        // latest value from ALL CPUs).  Stack + Unknown are both
+        // observable by other CPUs in the presence of shared-stack
+        // scenarios, so clobber both.
+        ("LOCK",   FullClobber),
+        ("UNLOCK", FullClobber),
+
+        // ARM standalone memory / cache barriers.  DSB / DMB are data
+        // memory barriers; ISB flushes the instruction pipeline and,
+        // conservatively, both instruction and data stream.  On a
+        // multicore AArch64/ARM system the stack frame is accessible to
+        // other cores if the address escaped (via a pointer argument or
+        // a shared data structure), so all three get FullClobber.
+        // DC_CVAC (Data Cache operation to Point of Coherency) interacts
+        // with the cache subsystem, not with register-side data; it is
+        // kept at PureMem (heap+unknown only).
+        ("DC_CVAC",                           PureMem),
+        ("DataMemoryBarrier",                 FullClobber),
+        ("DataSynchronizationBarrier",        FullClobber),
+        ("InstructionSynchronizationBarrier", FullClobber),
+
+        // x86/x86_64 standalone memory fences.  Emitted by Sleigh's x86
+        // spec as lowercase mnemonics.  All three are ordering barriers:
+        // MFENCE serialises all prior / subsequent loads and stores;
+        // SFENCE serialises prior stores; LFENCE serialises prior loads.
+        // Like LOCK, these can make a remote core's prior writes visible,
+        // so Stack + Unknown are both reachable.
+        ("lfence", FullClobber),
+        ("mfence", FullClobber),
+        ("sfence", FullClobber),
+
+        // PowerPC memory barriers.
+        // `sync` (SYNC / lwsync / hwsync — the `L` field selects the
+        // variant but Sleigh folds all three to the same user-op name).
+        // `enforceInOrderExecutionIO` (EIEIO — I/O barrier, also acts
+        // as a full data-memory barrier on Power ISA).
+        // `instructionSynchronize` (ISYNC — instruction-pipeline flush;
+        // treated conservatively as FullClobber for data).
+        // Without these entries any PowerPC binary containing a fence
+        // would fail with UnknownCallOtherError at the IR layer.
+        ("enforceInOrderExecutionIO", FullClobber),
+        ("instructionSynchronize",    FullClobber),
+        ("sync",                      FullClobber),
+
+        // MIPS memory barriers.
+        // `SYNC` — GHIDRA's MIPS32 spec emits this for the SYNC
+        //   instruction (instruction-stream sync / data-memory barrier).
+        // `synch` — GHIDRA's mips.sinc uses this alternate spelling for
+        //   the same SYNC mnemonic in the common include.
+        // Without these entries any MIPS binary containing SYNC would
+        // fail with UnknownCallOtherError at the IR layer.
+        ("SYNC",  FullClobber),
+        ("synch", FullClobber),
 
         // ARM SVC / SWI raised by an immediate — possible syscall
         // path, kernel can do anything to memory including the user
@@ -619,21 +663,57 @@ mod tests {
     }
 
     #[test]
-    fn memory_chain_markers_classify_as_pure_with_mem_edge() {
-        // LOCK / UNLOCK and standalone barriers must be on the IR
-        // memory chain so patterns walking mem can find them.  Tradeoff:
-        // StackLoadForward stops at these (acceptable — they appear in
-        // sync code, not in bsdfinder's offset patterns).
+    fn memory_chain_markers_have_mem_edge_and_empty_register_channels() {
+        // All memory / ordering barriers must be on the IR memory chain
+        // (so patterns walking mem can find them) and must have empty
+        // implicit register channels (arch-independent entries may not
+        // carry arch-specific register names).
         for n in [
             "LOCK", "UNLOCK",
             "DataMemoryBarrier", "DataSynchronizationBarrier",
             "InstructionSynchronizationBarrier", "DC_CVAC",
+            "lfence", "mfence", "sfence",
+            "enforceInOrderExecutionIO", "instructionSynchronize", "sync",
+            "SYNC", "synch",
         ] {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
-            assert!(abi.implicit_reads.is_empty(), "{n}");
-            assert!(abi.implicit_writes.is_empty(), "{n}");
+            assert!(abi.implicit_reads.is_empty(), "{n}: implicit_reads must be empty");
+            assert!(abi.implicit_writes.is_empty(), "{n}: implicit_writes must be empty");
             assert!(abi.has_memory_edge(), "{n}: must advance mem edge for chain visibility");
+        }
+    }
+
+    /// LOCK, UNLOCK, and all memory / instruction fences must clobber
+    /// BOTH Stack and Unknown partitions.  Rationale: these are full
+    /// serialization barriers that make all prior stores (including
+    /// another CPU's writes to an escaped stack pointer) visible across
+    /// the barrier.  Using only MEM_CLOBBER_HEAP_UNKNOWN would allow
+    /// StackLoadForward to forward a Stack-class value across a barrier,
+    /// which is unsound in the presence of shared-stack / aliased-frame
+    /// patterns.
+    #[test]
+    fn full_memory_barriers_clobber_stack_and_unknown() {
+        use crate::alias_class::{AliasClass, MEM_CLOBBER_FULL};
+        for n in [
+            "LOCK", "UNLOCK",
+            "DataMemoryBarrier", "DataSynchronizationBarrier",
+            "InstructionSynchronizationBarrier",
+            "lfence", "mfence", "sfence",
+            "enforceInOrderExecutionIO", "instructionSynchronize", "sync",
+            "SYNC", "synch",
+        ] {
+            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
+            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
+            assert_eq!(
+                abi.mem_clobbers, MEM_CLOBBER_FULL,
+                "{n}: must clobber [Stack, Unknown]; got {:?}",
+                abi.mem_clobbers,
+            );
+            assert!(
+                abi.mem_clobbers.contains(&AliasClass::Stack),
+                "{n}: must clobber Stack partition",
+            );
         }
     }
 
@@ -988,6 +1068,12 @@ mod tests {
             "cpuid_cache_tlb_info", "cpuid_serial_info",
             "in", "out", "software_interrupt", "software_udf",
             "swapgs",
+            // PowerPC barriers
+            "enforceInOrderExecutionIO", "instructionSynchronize", "sync",
+            // MIPS barriers
+            "SYNC", "synch",
+            // x86 fences
+            "lfence", "mfence", "sfence",
         ];
         // Use any preset for the lookup — by definition these resolve
         // identically on every arch.
@@ -1136,13 +1222,13 @@ mod tests {
         }
     }
 
-    /// Regression: x86/x86_64 memory fences (mfence,
-    /// sfence, lfence) MUST classify as PURE_WITH_MEM_EDGE so any binary
-    /// using SSE memory fences lifts cleanly.  Without this entry, the
-    /// CallOther emitted by Sleigh would raise UnknownCallOtherError at
-    /// the IR layer.
+    /// x86/x86_64 memory fences (mfence, sfence, lfence) must classify
+    /// as Call with a full-clobber memory set.  Without these entries,
+    /// any binary using SSE memory fences would lift to
+    /// UnknownCallOtherError at the IR layer.
     #[test]
-    fn x86_memory_fences_classify_as_pure_with_mem_edge() {
+    fn x86_memory_fences_classify_with_full_clobber() {
+        use crate::alias_class::MEM_CLOBBER_FULL;
         for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
             for name in ["mfence", "sfence", "lfence"] {
                 let cls = classify(preset, name)
@@ -1162,6 +1248,73 @@ mod tests {
                 assert!(
                     abi.has_memory_edge(),
                     "({preset:?}, {name}) must advance memory edge — fences are ordering primitives"
+                );
+                assert_eq!(
+                    abi.mem_clobbers, MEM_CLOBBER_FULL,
+                    "({preset:?}, {name}) must clobber [Stack, Unknown]"
+                );
+            }
+        }
+    }
+
+    /// PowerPC memory barriers — `sync`, `enforceInOrderExecutionIO`,
+    /// `instructionSynchronize` — must classify as Call with full-clobber
+    /// memory set so they are visible on the IR memory chain.  Without
+    /// these entries any PowerPC binary containing a barrier instruction
+    /// would fail with UnknownCallOtherError at the IR layer.
+    #[test]
+    fn powerpc_barriers_classify_with_full_clobber() {
+        use crate::alias_class::MEM_CLOBBER_FULL;
+        for preset in [
+            crate::ArchPreset::Ppc32Be,
+            crate::ArchPreset::Ppc32Le,
+            crate::ArchPreset::Ppc64Be,
+            crate::ArchPreset::Ppc64Le,
+        ] {
+            for name in ["sync", "enforceInOrderExecutionIO", "instructionSynchronize"] {
+                let cls = classify(preset, name)
+                    .unwrap_or_else(|| panic!("({preset:?}, {name}) must classify"));
+                let abi = match cls {
+                    CallOtherClass::Call(abi) => abi,
+                    other => panic!("({preset:?}, {name}) classified as {other:?}, expected Call"),
+                };
+                assert!(abi.implicit_reads.is_empty(), "({preset:?}, {name}) implicit_reads");
+                assert!(abi.implicit_writes.is_empty(), "({preset:?}, {name}) implicit_writes");
+                assert!(abi.has_memory_edge(), "({preset:?}, {name}) must advance mem edge");
+                assert_eq!(
+                    abi.mem_clobbers, MEM_CLOBBER_FULL,
+                    "({preset:?}, {name}) must clobber [Stack, Unknown]"
+                );
+            }
+        }
+    }
+
+    /// MIPS memory barriers — `SYNC` and `synch` — must classify as
+    /// Call with full-clobber memory set.  Without these entries any
+    /// MIPS binary containing a SYNC instruction would fail with
+    /// UnknownCallOtherError.
+    #[test]
+    fn mips_barriers_classify_with_full_clobber() {
+        use crate::alias_class::MEM_CLOBBER_FULL;
+        for preset in [
+            crate::ArchPreset::MipsBe32,
+            crate::ArchPreset::MipsLe32,
+            crate::ArchPreset::MipsBe64,
+            crate::ArchPreset::MipsLe64,
+        ] {
+            for name in ["SYNC", "synch"] {
+                let cls = classify(preset, name)
+                    .unwrap_or_else(|| panic!("({preset:?}, {name}) must classify"));
+                let abi = match cls {
+                    CallOtherClass::Call(abi) => abi,
+                    other => panic!("({preset:?}, {name}) classified as {other:?}, expected Call"),
+                };
+                assert!(abi.implicit_reads.is_empty(), "({preset:?}, {name}) implicit_reads");
+                assert!(abi.implicit_writes.is_empty(), "({preset:?}, {name}) implicit_writes");
+                assert!(abi.has_memory_edge(), "({preset:?}, {name}) must advance mem edge");
+                assert_eq!(
+                    abi.mem_clobbers, MEM_CLOBBER_FULL,
+                    "({preset:?}, {name}) must clobber [Stack, Unknown]"
                 );
             }
         }
