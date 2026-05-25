@@ -36,6 +36,60 @@ fn ensure_const_space(
     Ok(())
 }
 
+/// Reads a bit-position constant from `vn.addr_off` and narrows it to `u8`.
+///
+/// Both [`ValueLifter::handle_extract`] and [`ValueLifter::handle_insert`]
+/// read `lsb` and `bit_count` from CONST-space varnodes this way.
+/// A value > 255 would have silently wrapped the older `as u8` cast; surfacing
+/// it as a typed error enables accurate diagnostics for malformed `.sla` specs.
+fn extract_bit_pos_u8(
+    vn: &rsleigh::Vn,
+    opcode: rsleigh::Opcode,
+    label: &'static str,
+) -> Result<u8> {
+    u8::try_from(vn.addr_off).map_err(|_| {
+        anyhow::anyhow!(
+            "{label} {} does not fit in u8 (opcode {:?})",
+            vn.addr_off,
+            opcode,
+        )
+    })
+}
+
+/// Constructs the bit-field-insert IR: `Or(And(dest, !mask_shifted), ShiftLeft(And(src, mask_raw), lsb))`.
+///
+/// Extracted from [`ValueLifter::handle_insert`] to isolate the mask-and-position
+/// IR construction from the input-preparation steps.
+fn build_bit_field_insert(
+    builder: &mut strider_ir::FunctionBuilder,
+    dest: strider_ir::Value,
+    src: strider_ir::Value,
+    lsb: u8,
+    len: u8,
+    out_ty: NodeOutputType,
+) -> Result<strider_ir::Value> {
+    // Compute masks in u128 so a U128 (or U80) `out_ty` with
+    // `lsb + len > 64` produces correct bits in slots 64..127.
+    let mask_raw: u128 = if (len as usize) >= 128 { u128::MAX } else { (1u128 << len) - 1 };
+    let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
+    let not_mask_shifted = !mask_shifted;
+
+    let not_m_const = builder.build_int_const(not_mask_shifted, out_ty)?;
+    let cleared = builder.build_int_binary_operation(dest, not_m_const, IntBinaryOp::And, out_ty)?;
+
+    let mask_const = builder.build_int_const(mask_raw, out_ty)?;
+    let src_masked = builder.build_int_binary_operation(src, mask_const, IntBinaryOp::And, out_ty)?;
+
+    let src_positioned = if lsb == 0 {
+        src_masked
+    } else {
+        let lsb_const = builder.build_int_const(lsb as u64, out_ty)?;
+        builder.build_int_binary_operation(src_masked, lsb_const, IntBinaryOp::ShiftLeft, out_ty)?
+    };
+
+    builder.build_int_binary_operation(cleared, src_positioned, IntBinaryOp::Or, out_ty)
+}
+
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a no-op `Cast` instruction.
     ///
@@ -161,31 +215,15 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         self.write_vn(out_vn, out)
     }
 
-    pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // inputs[0] = value, inputs[1] = lsb (CONST), inputs[2] = bit_count (CONST)
         // Lowered to: Truncate(ShiftRight(x, lsb), narrow_ty), with an extra
         // And mask when len < narrow_ty.bit_width() to preserve "upper bits zero".
         ensure_const_space(&insn.inputs[1], insn.opcode, "Extract lsb")?;
         ensure_const_space(&insn.inputs[2], insn.opcode, "Extract bit_count")?;
         let input = self.read_vn(&insn.inputs[0])?;
-        // Bit-position constants live in `addr_off: u64`; the lowering
-        // (`lsb_const`, mask `(1u128 << len) - 1`) caps both at 128.
-        // A spec emitting a value > 255 would have silently wrapped the
-        // older `as u8` cast — surface it as a lift-time error.
-        let lsb = u8::try_from(insn.inputs[1].addr_off).map_err(|_| {
-            anyhow::anyhow!(
-                "Extract lsb {} does not fit in u8 (opcode {:?})",
-                insn.inputs[1].addr_off,
-                insn.opcode,
-            )
-        })?;
-        let len = u8::try_from(insn.inputs[2].addr_off).map_err(|_| {
-            anyhow::anyhow!(
-                "Extract bit_count {} does not fit in u8 (opcode {:?})",
-                insn.inputs[2].addr_off,
-                insn.opcode,
-            )
-        })?;
+        let lsb = extract_bit_pos_u8(&insn.inputs[1], insn.opcode, "Extract lsb")?;
+        let len = extract_bit_pos_u8(&insn.inputs[2], insn.opcode, "Extract bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let narrow_ty: NodeOutputType = out_vn.size.try_into()?;
         let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
@@ -234,21 +272,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         ensure_const_space(&insn.inputs[3], insn.opcode, "Insert bit_count")?;
         let dest = self.read_vn(&insn.inputs[0])?;
         let src = self.read_vn(&insn.inputs[1])?;
-        // Same u64→u8 narrowing rationale as `handle_extract`.
-        let lsb = u8::try_from(insn.inputs[2].addr_off).map_err(|_| {
-            anyhow::anyhow!(
-                "Insert lsb {} does not fit in u8 (opcode {:?})",
-                insn.inputs[2].addr_off,
-                insn.opcode,
-            )
-        })?;
-        let len = u8::try_from(insn.inputs[3].addr_off).map_err(|_| {
-            anyhow::anyhow!(
-                "Insert bit_count {} does not fit in u8 (opcode {:?})",
-                insn.inputs[3].addr_off,
-                insn.opcode,
-            )
-        })?;
+        let lsb = extract_bit_pos_u8(&insn.inputs[2], insn.opcode, "Insert lsb")?;
+        let len = extract_bit_pos_u8(&insn.inputs[3], insn.opcode, "Insert bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty: NodeOutputType = out_vn.size.try_into()?;
 
@@ -260,52 +285,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;
         let src_wide = self.builder.convert_to_int_if_needed(src_int, out_ty)?;
 
-        // Compute masks in u128 so a U128 (or U80) `out_ty` with
-        // `lsb + len > 64` produces correct bits in slots 64..127.
-        // Using u64 here would silently zero those slots through
-        // `build_int_const`'s u64→u128 zero-extension.
-        let mask_raw: u128 = if (len as usize) >= 128 {
-            u128::MAX
-        } else {
-            (1u128 << len) - 1
-        };
-        let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
-        let not_mask_shifted = !mask_shifted;
-
-        let not_m_const = self.builder.build_int_const(not_mask_shifted, out_ty)?;
-        let cleared = self.builder.build_int_binary_operation(
-            dest_wide,
-            not_m_const,
-            IntBinaryOp::And,
-            out_ty,
-        )?;
-
-        let mask_const = self.builder.build_int_const(mask_raw, out_ty)?;
-        let src_masked = self.builder.build_int_binary_operation(
-            src_wide,
-            mask_const,
-            IntBinaryOp::And,
-            out_ty,
-        )?;
-
-        let src_positioned = if lsb == 0 {
-            src_masked
-        } else {
-            let lsb_const = self.builder.build_int_const(lsb as u64, out_ty)?;
-            self.builder.build_int_binary_operation(
-                src_masked,
-                lsb_const,
-                IntBinaryOp::ShiftLeft,
-                out_ty,
-            )?
-        };
-
-        let out = self.builder.build_int_binary_operation(
-            cleared,
-            src_positioned,
-            IntBinaryOp::Or,
-            out_ty,
-        )?;
+        let out = build_bit_field_insert(self.builder, dest_wide, src_wide, lsb, len, out_ty)?;
         self.write_vn(out_vn, out)
     }
 

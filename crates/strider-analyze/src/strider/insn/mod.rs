@@ -145,18 +145,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             None => None,
         };
 
-        // 2. Resolve ABI register names -> Vns via Sleigh's cached
-        //    register table on Strider.
-        let implicit_reads_vns = self.resolve_abi_regs(name, abi.implicit_reads)?;
+        // 2+3. Resolve ABI register names → Vns, then read their current values.
         let implicit_writes_vns = self.resolve_abi_regs(name, abi.implicit_writes)?;
-
-        // 3. Read implicit-read register values via the aliasing-aware
-        //    value lifter (so EAX correctly reads the low 4 bytes of
-        //    the RAX-tracked variable).
-        let implicit_read_values: Vec<strider_ir::Value> = implicit_reads_vns
-            .iter()
-            .map(|vn| self.read_vn(vn))
-            .collect::<Result<_>>()?;
+        let implicit_read_values = self.resolve_abi_reg_values(name, abi.implicit_reads)?;
 
         // 4. Derive the slot kind for each implicit-write from the
         //    Vn's size (clobber slots match the written register's
@@ -191,27 +182,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             self.builder.advance_cur_region_memory(mem_out)?;
         }
 
-        // 7. Rebind tracked variables via the aliasing-aware write_vn
-        //    (so EAX clobber updates RAX-tracked variable through the
-        //    appropriate insert/extract).
-        //
-        //    The pcode-explicit output is written first; any
-        //    implicit-writes entry that matches `out_vn` is skipped so
-        //    the clobber-slot doesn't overwrite the modeled value.
-        //    Concrete case: `rdpkru` emits `EAX = rdpkru_u32()` in
-        //    pcode while the ABI table also lists `EAX` as an
-        //    implicit-write — without this skip the modeled CallOther
-        //    output becomes a dead node and pattern queries reading
-        //    EAX see the clobber slot instead.
-        if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), value) {
-            self.write_vn(out_vn, val)?;
-        }
-        for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
-            if insn.output.as_ref() == Some(vn) {
-                continue;
-            }
-            self.write_vn(vn, slot)?;
-        }
+        // 7. Rebind tracked variables via the aliasing-aware write_vn.
+        self.write_implicit_clobbers(insn, value, &implicit_writes_vns, clobber_outs)?;
 
         Ok(())
     }
@@ -229,6 +201,46 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         } else {
             Ok(Vec::new())
         }
+    }
+
+    /// Phases 2+3 for [`Self::handle_call_other_modeled`]: resolve ABI
+    /// register names to Vns, then read their current values via the
+    /// aliasing-aware value lifter (so EAX reads the low 4 bytes of RAX).
+    fn resolve_abi_reg_values(
+        &mut self,
+        op_name: &str,
+        reg_names: &[&str],
+    ) -> Result<Vec<strider_ir::Value>> {
+        let vns = self.resolve_abi_regs(op_name, reg_names)?;
+        vns.iter().map(|vn| self.read_vn(vn)).collect()
+    }
+
+    /// Phase-7 helper for [`Self::handle_call_other_modeled`]: rebind
+    /// tracked variables for the pcode-explicit output and each implicit-write
+    /// clobber slot.  The pcode-explicit output is written first; any
+    /// implicit-writes entry that matches `out_vn` is skipped so the
+    /// clobber-slot doesn't overwrite the modeled value.
+    ///
+    /// Concrete case: `rdpkru` emits `EAX = rdpkru_u32()` in pcode while
+    /// the ABI table also lists `EAX` as an implicit-write — without this
+    /// skip the modeled CallOther output becomes a dead node.
+    fn write_implicit_clobbers(
+        &mut self,
+        insn: &rsleigh::Insn,
+        modeled_value: Option<strider_ir::Value>,
+        implicit_writes_vns: &[rsleigh::Vn],
+        clobber_outs: Vec<strider_ir::Value>,
+    ) -> Result<()> {
+        if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), modeled_value) {
+            self.write_vn(out_vn, val)?;
+        }
+        for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
+            if insn.output.as_ref() == Some(vn) {
+                continue;
+            }
+            self.write_vn(vn, slot)?;
+        }
+        Ok(())
     }
 
     /// Phase-2 helper for [`Self::handle_call_other_modeled`]: resolve
