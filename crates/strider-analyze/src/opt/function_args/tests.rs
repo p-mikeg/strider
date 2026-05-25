@@ -989,14 +989,26 @@ fn function_args_combine_phi_or_semantics_pinned() {
 /// the load from being registered as arg 0.  With the fix, the walk passes
 /// through to the single unified-memory predecessor (`InitialMemory`) and
 /// correctly returns `dirty=false`.
+///
+/// The fixture stores to an Unknown address (0x1000) before the load so
+/// there are ≥2 distinct-partition memory ops — triggering AliasSplit's
+/// MemProject / MemUnion insertion (single-op functions are skipped).
 #[test]
 fn function_arg_detect_walks_through_mempartition() -> Result<()> {
     use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
 
-    // Build: load sp+4; return loaded — no stores, so the chain should be clean.
+    // Build: store *0x1000 = 0; load sp+4; return loaded.
+    // The Unknown store + Stack load gives addr_class.len() == 2, so AliasSplit
+    // inserts MemProject / MemUnion.  The Load's chain walks through a
+    // MemProject(Stack) node on the way back to InitialMemory.
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        // Unknown store so AliasSplit fires (2 distinct-partition ops).
+        let unk_addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+        b.build_store(unk_addr, zero, rsleigh::VnSpace::RAM)?;
+        // Stack load at sp+4 — must be clean (no prior SP-relative store).
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;

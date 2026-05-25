@@ -215,6 +215,20 @@ impl Optimizer for AliasSplit {
             return Ok(OptimizationResult::NoChange);
         }
 
+        // Skip MemProject / MemUnion wrapping when ≤1 Store/Load exists.
+        // A single memory operation cannot alias with anything else in the
+        // function, so splitting into per-partition chains is pure overhead.
+        // Barriers (Call, Return) and MemPhis are not counted — they need
+        // unified Memory regardless of partitioning and are still correct
+        // when they read Memory(None) directly.
+        // The stack_offsets side-table is still populated for the single op.
+        if classified.addr_class.len() <= 1 {
+            for (node, offset) in &classified.concrete_stack_offsets {
+                function.set_stack_offset(*node, *offset);
+            }
+            return Ok(OptimizationResult::NoChange);
+        }
+
         // Build per-partition chains.  Returns Changed iff at least one
         // boundary was inserted.
         let result = build_forked_chains(

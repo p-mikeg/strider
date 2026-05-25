@@ -130,19 +130,20 @@ fn entry_projects_both_active_partitions() {
 }
 
 #[test]
-fn empty_chain_with_return_partitions_for_terminator() {
-    // No Stores/Loads/Calls but Return consumes the memory chain.
-    // Pass should still fire (terminator clobbers all partitions).
+fn empty_chain_with_return_is_skipped() {
+    // No Stores/Loads at all — bare Return only.  With 0 memory ops the
+    // partition split is pure overhead, so the pass must bail (NoChange)
+    // and emit neither MemProject nor MemUnion.  The Return reads unified
+    // Memory(None) directly.
     let sp = sp_vn_x86();
     let mut f = empty_chain_return(sp);
     let r = run_split(&mut f, sp);
-    assert_eq!(r, OptimizationResult::Changed);
+    assert_eq!(r, OptimizationResult::NoChange);
 
-    // 1 MemProject node (2 outputs) + 1 MemUnion at Return.
     let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject));
     let n_union = count_reachable(&f, |k| matches!(k, NodeKind::MemUnion));
-    assert_eq!(n_part, 1, "1 MemProject node with 2 outputs (Stack/Unknown)");
-    assert_eq!(n_union, 1, "1 MemUnion at Return");
+    assert_eq!(n_part, 0, "no MemProject when 0 memory ops");
+    assert_eq!(n_union, 0, "no MemUnion when 0 memory ops");
 
     let entry = f.entry().unwrap();
     strider_ir::validate::validate(&f, entry).expect("must validate");
@@ -795,10 +796,10 @@ fn partition_inactive_on_branch_uses_entry_default() {
     }
 }
 
-/// Sanity: a function with a multi-pred MemPhi that previously
-/// triggered the `has_multi_pred_mem_phi` bail now partitions
-/// successfully — `OptimizationResult::Changed` and at least one
-/// `MemProject[Stack]` node appears.
+/// Sanity: a function with a multi-pred MemPhi (diamond CFG) with ≥2
+/// reachable memory ops partitions successfully — `OptimizationResult::Changed`
+/// and at least one `MemProject[Stack]` node appears.  The Load is wired to
+/// the Return so it is reachable and counted toward the 2-op threshold.
 #[test]
 fn previously_bailed_functions_now_partition() {
     use strider_ir_test_utils::RegisterSet;
@@ -826,11 +827,13 @@ fn previously_bailed_functions_now_partition() {
     b.build_branch(join).unwrap();
     b.set_region(join);
     let sp_j = b.read_variable(&sp).unwrap();
-    let _ = b
+    // Wire the Load to the Return so it's reachable (addr_class.len() == 2
+    // → 1 Store + 1 Load → partition split fires).
+    let loaded = b
         .build_load(sp_j, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    b.build_return(None, &[]).unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
     b.set_lift_addr(None);
     let mut f = b.build().unwrap();
 
@@ -842,4 +845,94 @@ fn previously_bailed_functions_now_partition() {
     );
     let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject));
     assert!(n_part >= 1, "≥1 MemProject node must be emitted");
+}
+
+// ─── ≤1-op skip: no MemProject/MemUnion for 0 or 1 memory ops ─────────────
+
+/// 0 memory ops: a function with no Stores or Loads must emit no
+/// MemProject and no MemUnion regardless of barriers.  The Return reads
+/// unified Memory(None) directly.
+#[test]
+fn zero_memory_ops_emits_no_project_or_union() {
+    let sp = sp_vn_x86();
+    let mut f = empty_chain_return(sp);
+    let r = run_split(&mut f, sp);
+    assert_eq!(r, OptimizationResult::NoChange, "0-op function must not be partitioned");
+    assert_eq!(
+        count_reachable(&f, |k| matches!(k, NodeKind::MemProject)),
+        0,
+        "0-op: no MemProject expected",
+    );
+    assert_eq!(
+        count_reachable(&f, |k| matches!(k, NodeKind::MemUnion)),
+        0,
+        "0-op: no MemUnion expected",
+    );
+    let entry = f.entry().unwrap();
+    strider_ir::validate::validate(&f, entry).expect("must validate");
+}
+
+/// 1 memory op: a function with exactly one Store (no Load) must emit no
+/// MemProject and no MemUnion.  The single Store sees unified Memory(None)
+/// directly — one op can't alias with anything else.
+#[test]
+fn one_memory_op_emits_no_project_or_union() {
+    let sp = sp_vn_x86();
+    let mut f = make_sp_fn(sp, |b, sp_v| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        b.build_return(None, &[])?;
+        Ok(())
+    })
+    .unwrap();
+
+    let r = run_split(&mut f, sp);
+    assert_eq!(r, OptimizationResult::NoChange, "1-op function must not be partitioned");
+    assert_eq!(
+        count_reachable(&f, |k| matches!(k, NodeKind::MemProject)),
+        0,
+        "1-op: no MemProject expected",
+    );
+    assert_eq!(
+        count_reachable(&f, |k| matches!(k, NodeKind::MemUnion)),
+        0,
+        "1-op: no MemUnion expected",
+    );
+
+    // The single Store's mem-output must still be unified Memory(None).
+    let store = unique_node(&f, |k| matches!(k, NodeKind::Store(_)));
+    let mem_out = f.memory_output_of(store).unwrap();
+    assert!(
+        matches!(f.output_kind(mem_out), NodeOutputKind::Memory(None)),
+        "1-op Store's mem-output must remain unified Memory(None); got {:?}",
+        f.output_kind(mem_out),
+    );
+
+    let entry = f.entry().unwrap();
+    strider_ir::validate::validate(&f, entry).expect("must validate");
+}
+
+/// 2 memory ops: a function with one Store + one Load (2 total) MUST emit
+/// MemProject and MemUnion — this is the ≥2 baseline that verifies the
+/// skip is conditional, not unconditional.
+#[test]
+fn two_memory_ops_does_emit_project_and_union() {
+    let sp = sp_vn_x86();
+    // stack_store_load_return has 1 Store + 1 Load = 2 addr_class entries.
+    let mut f = stack_store_load_return(sp);
+    let r = run_split(&mut f, sp);
+    assert_eq!(r, OptimizationResult::Changed, "2-op function must be partitioned");
+    assert!(
+        count_reachable(&f, |k| matches!(k, NodeKind::MemProject)) >= 1,
+        "2-op: ≥1 MemProject expected",
+    );
+    assert!(
+        count_reachable(&f, |k| matches!(k, NodeKind::MemUnion)) >= 1,
+        "2-op: ≥1 MemUnion expected",
+    );
+    let entry = f.entry().unwrap();
+    strider_ir::validate::validate(&f, entry).expect("must validate");
 }

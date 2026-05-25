@@ -1,13 +1,14 @@
 ---
 source: crates/strider-analyze/tests/cross_arch_shape.rs
+assertion_line: 304
 expression: map
 ---
 aarch64:
   status: OK
-  reachable_nodes: 33
+  reachable_nodes: 30
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 34
   var_phis: 2
   mem_phis: 0
@@ -23,8 +24,6 @@ aarch64:
     IntBinaryOp(ShiftRight): 1
     IntCmpOp(Equal): 2
     IntConst: 4
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     Truncate: 4
@@ -58,10 +57,10 @@ aarch64be:
     Truncate: 1
 arm:
   status: OK
-  reachable_nodes: 27
+  reachable_nodes: 24
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 30
   var_phis: 2
   mem_phis: 0
@@ -77,8 +76,6 @@ arm:
     IntCmpOp(Sborrow): 1
     IntCmpOp(Sless): 1
     IntConst: 2
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     VarPhi: 2
@@ -109,10 +106,10 @@ arm_be:
     Store: 5
 arm_thumb:
   status: OK
-  reachable_nodes: 27
+  reachable_nodes: 24
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 30
   var_phis: 2
   mem_phis: 0
@@ -128,17 +125,15 @@ arm_thumb:
     IntCmpOp(Sborrow): 1
     IntCmpOp(Sless): 1
     IntConst: 2
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     VarPhi: 2
 mips32be:
   status: OK
-  reachable_nodes: 23
+  reachable_nodes: 20
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 24
   var_phis: 2
   mem_phis: 0
@@ -152,17 +147,15 @@ mips32be:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     VarPhi: 2
 mips32le:
   status: OK
-  reachable_nodes: 23
+  reachable_nodes: 20
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 24
   var_phis: 2
   mem_phis: 0
@@ -176,17 +169,15 @@ mips32le:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     VarPhi: 2
 mips64be:
   status: OK
-  reachable_nodes: 28
+  reachable_nodes: 25
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 30
   var_phis: 2
   mem_phis: 0
@@ -201,18 +192,16 @@ mips64be:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     Truncate: 3
     VarPhi: 2
 mips64le:
   status: OK
-  reachable_nodes: 28
+  reachable_nodes: 25
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 30
   var_phis: 2
   mem_phis: 0
@@ -227,8 +216,6 @@ mips64le:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     Truncate: 3
@@ -369,10 +356,10 @@ ppc64le:
     Truncate: 3
 x64:
   status: OK
-  reachable_nodes: 31
+  reachable_nodes: 28
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 31
   var_phis: 2
   mem_phis: 0
@@ -387,18 +374,16 @@ x64:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 3
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     Truncate: 4
     VarPhi: 2
 x86:
   status: OK
-  reachable_nodes: 25
+  reachable_nodes: 22
   regions: 1
   edges_control: 6
-  edges_memory: 8
+  edges_memory: 3
   edges_value: 27
   var_phis: 2
   mem_phis: 0
@@ -413,17 +398,15 @@ x86:
     IntCmpOp(Sless): 1
     IntConst: 3
     Load: 1
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     VarPhi: 2
 x86_kernel:
   status: OK
-  reachable_nodes: 23
+  reachable_nodes: 20
   regions: 1
   edges_control: 6
-  edges_memory: 7
+  edges_memory: 2
   edges_value: 24
   var_phis: 2
   mem_phis: 0
@@ -437,8 +420,6 @@ x86_kernel:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
-    MemProject: 1
-    MemUnion: 2
     Region: 1
     Return: 2
     VarPhi: 2
