@@ -1061,3 +1061,124 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
     );
     Ok(())
 }
+
+// ── Per-call CC override stack-arg-offsets tests ──────────────────────────
+
+/// When no per-call override is present, `CallStackArgCollect` uses the
+/// function-default CC's `stack_arg_offsets` table.
+///
+/// Builds a function with one store at offset +4 from SP (matching the
+/// default table `[4, 8]`) and a Call with no override entry on the
+/// `Function` side-table.  Asserts the arg is collected.
+#[test]
+fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
+        // Store arg0 = 77 at sp + 4.
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let sp_plus_4 = b.build_int_binary_operation(
+            sp_v0,
+            four,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )?;
+        let arg0 = b.build_int_const(77u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
+
+        // Anchor store at sp + 0 (ret-addr-push role).
+        let anchor = b.build_int_const(0xABCDu64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x2000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    // No side-table entry for the Call — pass uses default offsets [4, 8].
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
+    pipeline.run_built(&mut fg)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + arg0 = 4 inputs.
+    assert_eq!(
+        inputs.len(),
+        4,
+        "default-CC arg at offset +4 must be collected; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(77)),
+        "arg0 should be IntConst(77), got {arg0_kind:?}"
+    );
+    Ok(())
+}
+
+/// When a per-call override is recorded on the `Function` side-table,
+/// `CallStackArgCollect` uses the override's `stack_arg_offsets` table
+/// rather than the function-default.
+///
+/// The function-default table is `[4, 8]` (no slot at offset 0).  The
+/// override table is `[0, 4]` (slot 0 at offset 0).  One store places
+/// `IntConst(66)` at `sp + 0` — slot 0 under the override, outside
+/// the default table.
+///
+/// Without the override the pass collects 0 args (offset 0 is not in
+/// `[4, 8]`).  With the override stamped on the Call's side-table entry
+/// the pass collects `IntConst(66)` as arg 0.
+#[test]
+fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
+    #![allow(clippy::unwrap_used)]
+
+    let sp = sp_vn();
+
+    // Store IntConst(66) at sp + 0 (offset 0 — slot 0 under the override
+    // table [0, 4], but NOT in the default table [4, 8]).
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
+        let arg0 = b.build_int_const(66u64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x5000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    // Stamp the override [0, 4] on the Call's side-table entry.
+    let entry = fg.entry().unwrap();
+    let call_id = fg
+        .walk_from(entry)
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+        .expect("Call node must exist");
+    fg.set_call_stack_arg_offsets_override(call_id, vec![0, 4]);
+
+    // Run optimization with the default table [4, 8].  The pass must read
+    // the per-call override [0, 4] and collect the arg at offset 0.
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
+    pipeline.run_built(&mut fg)?;
+
+    let call_id_post = fg
+        .walk_from(fg.entry().unwrap())
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+        .expect("Call node must still exist");
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id_post).into_iter().collect();
+    // ctrl + mem + target + arg0_at_+0 = 4 inputs.
+    assert_eq!(
+        inputs.len(),
+        4,
+        "override CC [0,4] must collect arg at offset +0; got {inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(66)),
+        "arg0 should be IntConst(66) from override table, got {arg0_kind:?}"
+    );
+    Ok(())
+}

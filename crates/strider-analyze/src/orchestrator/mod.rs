@@ -758,6 +758,7 @@ fn apply_in_place_edit(
                 let clobber_vars: Vec<rsleigh::Vn> =
                     override_clobber_vars(graph, cc, strider).collect();
                 graph.set_call_clobbered_override(call_id, clobber_vars);
+                graph.set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
             }
             Ok(())
         }

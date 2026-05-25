@@ -58,6 +58,10 @@ pub struct Function {
     /// Source-level varnode tag for lift-time [`crate::node::NodeKind::Phi`]
     /// nodes.  `Some(vn)` = register-identity phi; `None` = anonymous phi.
     pub(crate) phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>,
+    /// Per-Call override of stack-arg offsets when the orchestrator
+    /// pre-resolved a per-address CC override.  `None` (or no entry)
+    /// means use the function-default CC's offsets.
+    pub(crate) call_stack_arg_offsets_overrides: SecondaryMap<NodeId, Option<Vec<i64>>>,
 
     /// Maps each calling-convention argument index to the [`NodeId`](s) of the
     /// underlying carrier nodes: [`crate::node::NodeKind::InitialVar`] for
@@ -116,6 +120,7 @@ impl Function {
             asm_fingerprints: SecondaryMap::new(),
             call_clobbered_overrides: SecondaryMap::new(),
             phi_var_tag: SecondaryMap::new(),
+            call_stack_arg_offsets_overrides: SecondaryMap::new(),
             arg_index_to_nodes: FxHashMap::default(),
             stack_offsets: SecondaryMap::new(),
         }
@@ -253,6 +258,21 @@ impl Function {
     #[inline]
     pub fn set_call_clobbered_override(&mut self, node_id: NodeId, clobbered: Vec<rsleigh::Vn>) {
         self.call_clobbered_overrides[node_id] = Some(clobbered);
+    }
+
+    /// Returns the per-Call stack-arg offsets override for `node_id`, or
+    /// `None` if the Call uses the function-default CC's stack-arg offsets.
+    #[inline]
+    #[must_use]
+    pub fn call_stack_arg_offsets_override(&self, node_id: NodeId) -> Option<&[i64]> {
+        self.call_stack_arg_offsets_overrides[node_id].as_deref()
+    }
+
+    /// Records `offsets` as the per-Call stack-arg offsets override for
+    /// `node_id`.  Replaces any prior value.
+    #[inline]
+    pub fn set_call_stack_arg_offsets_override(&mut self, node_id: NodeId, offsets: Vec<i64>) {
+        self.call_stack_arg_offsets_overrides[node_id] = Some(offsets);
     }
 
     // ── arg_index_to_nodes accessors ─────────────────────────────────────
@@ -452,6 +472,7 @@ impl Function {
         self.asm_fingerprints.remap_node_keyed(&remap);
         self.call_clobbered_overrides.remap_node_keyed(&remap);
         self.phi_var_tag.remap_node_keyed(&remap);
+        self.call_stack_arg_offsets_overrides.remap_node_keyed(&remap);
         self.stack_offsets.remap_node_keyed(&remap);
         Ok(remap)
     }

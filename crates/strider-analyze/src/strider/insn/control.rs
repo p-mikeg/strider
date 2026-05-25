@@ -243,9 +243,12 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target_addr));
-        self.builder
-            .build_call_with_cc(call_address, override_cc)
-            .map(|_| ())?;
+        let call_id = self.builder.build_call_with_cc(call_address, override_cc)?;
+        if let Some(cc) = override_cc {
+            self.builder
+                .graph_mut()
+                .set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
+        }
         Ok(())
     }
 
@@ -276,9 +279,12 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             .build_int_const(target, space_info.addr_size().try_into()?)?;
         // Per-address CC override applies to lift-time tail calls too.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target));
-        self.builder
-            .build_call_with_cc(call_address, override_cc)
-            .map(|_| ())?;
+        let call_id = self.builder.build_call_with_cc(call_address, override_cc)?;
+        if let Some(cc) = override_cc {
+            self.builder
+                .graph_mut()
+                .set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
+        }
         let ret_regs = self.builder.ret_val_vars().to_vec();
         self.builder.build_return(None, &ret_regs)?;
         Ok(())

@@ -360,13 +360,23 @@ impl Optimizer for CallStackArgCollect {
         // when the function has many calls or many stack args.
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        let stack_arg_offsets = self.layout.stack_arg_offsets();
+        let default_offsets = self.layout.stack_arg_offsets();
         let stack_ptr_vn = self.cc.stack_ptr_vn;
         for call_id in calls {
+            // Consult the per-Call stack-arg-offsets override recorded at
+            // lift time when a per-address CC was in effect.  Falls back to
+            // the function-default layout when no override is present.
+            let override_offsets: Option<Vec<i64>> = ctx
+                .function_ref()
+                .call_stack_arg_offsets_override(call_id)
+                .map(|s| s.to_vec());
+            let stack_arg_offsets: &[i64] = override_offsets
+                .as_deref()
+                .unwrap_or(&default_offsets);
             result |= try_collect_stack_args(
                 &mut ctx,
                 call_id,
-                &stack_arg_offsets,
+                stack_arg_offsets,
                 stack_ptr_vn,
                 &mut sp_memo,
             )?;
