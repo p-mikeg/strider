@@ -25,7 +25,7 @@ pub enum AliasClass {
 impl AliasClass {
     /// Short human-readable name for rendering (e.g. in dot labels).
     #[must_use]
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             AliasClass::Stack => "Stack",
             AliasClass::Unknown => "Unknown",

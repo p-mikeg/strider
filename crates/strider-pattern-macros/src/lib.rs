@@ -304,9 +304,9 @@ impl Parse for FieldArg {
         if input.peek(Token![=]) {
             let _eq: Token![=] = input.parse()?;
             let value: LitStr = input.parse()?;
-            Ok(FieldArg::KeyValue(KeyValue { key, value }))
+            Ok(Self::KeyValue(KeyValue { key, value }))
         } else {
-            Ok(FieldArg::Flag(key))
+            Ok(Self::Flag(key))
         }
     }
 }

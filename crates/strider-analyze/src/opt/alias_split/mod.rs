@@ -453,10 +453,10 @@ type OutgoingHeadsMap = FxHashMap<NodeOutputId, PartitionHeads>;
 
 /// Maps an active partition to its index in [`PartitionHeads`].
 #[inline]
-fn partition_index(p: AliasClass) -> Result<usize> {
+fn partition_index(p: AliasClass) -> usize {
     match p {
-        AliasClass::Stack => Ok(0),
-        AliasClass::Unknown => Ok(1),
+        AliasClass::Stack => 0,
+        AliasClass::Unknown => 1,
     }
 }
 
@@ -465,7 +465,7 @@ fn partition_index(p: AliasClass) -> Result<usize> {
 /// partition's head is seeded at entry by `build_forked_chains`).
 #[inline]
 fn head_for(heads: &PartitionHeads, p: AliasClass) -> Result<NodeOutputId> {
-    let idx = partition_index(p)?;
+    let idx = partition_index(p);
     heads[idx].ok_or_else(|| {
         anyhow::anyhow!(
             "AliasSplit: partition {p:?}'s head was not initialised at entry"
@@ -474,10 +474,9 @@ fn head_for(heads: &PartitionHeads, p: AliasClass) -> Result<NodeOutputId> {
 }
 
 #[inline]
-fn set_head(heads: &mut PartitionHeads, p: AliasClass, value: NodeOutputId) -> Result<()> {
-    let idx = partition_index(p)?;
+fn set_head(heads: &mut PartitionHeads, p: AliasClass, value: NodeOutputId) {
+    let idx = partition_index(p);
     heads[idx] = Some(value);
-    Ok(())
 }
 
 /// A back-edge deferred during pass 1 of [`build_forked_chains`]: at
@@ -559,11 +558,11 @@ fn build_forked_chains(
     );
     let mp_entry_outs = function.node_outputs(mp_entry).to_vec();
     for &p in &ACTIVE_PARTITIONS {
-        let idx = partition_index(p)?;
+        let idx = partition_index(p);
         let mp_out = *mp_entry_outs
             .get(idx)
             .ok_or_else(|| anyhow::anyhow!("AliasSplit: MemProject output {idx} missing"))?;
-        set_head(&mut entry_heads, p, mp_out)?;
+        set_head(&mut entry_heads, p, mp_out);
     }
     let mut outgoing_heads: OutgoingHeadsMap = FxHashMap::default();
     outgoing_heads.insert(chain_root_out, entry_heads);
@@ -598,7 +597,7 @@ fn build_forked_chains(
                     &outgoing_heads,
                     producer_value,
                     entry_heads,
-                )?;
+                );
                 let cur_head = head_for(&producer_heads, p)?;
                 replace_specific_input(function, consumer, 0, cur_head)?;
                 let mem_out = function.memory_output_of(consumer)?;
@@ -606,7 +605,7 @@ fn build_forked_chains(
                     .graph_mut()
                     .set_memory_partition(mem_out, Some(p))?;
                 let mut store_heads = producer_heads;
-                set_head(&mut store_heads, p, mem_out)?;
+                set_head(&mut store_heads, p, mem_out);
                 outgoing_heads.insert(mem_out, store_heads);
             }
             NodeKind::Load(_) => {
@@ -622,7 +621,7 @@ fn build_forked_chains(
                     &outgoing_heads,
                     producer_value,
                     entry_heads,
-                )?;
+                );
                 let cur_head = head_for(&producer_heads, p)?;
                 replace_specific_input(function, consumer, 0, cur_head)?;
                 // Load produces no mem-output; no entry to record.
@@ -643,7 +642,7 @@ fn build_forked_chains(
                     &outgoing_heads,
                     producer_value,
                     entry_heads,
-                )?;
+                );
                 let mut heads = producer_heads;
                 splice_barrier(function, consumer, clobbers, &mut heads)?;
                 if let Ok(mem_out) = function.memory_output_of(consumer) {
@@ -699,11 +698,11 @@ fn lookup_outgoing_or_seed(
     outgoing_heads: &OutgoingHeadsMap,
     producer_value: NodeOutputId,
     entry_heads: PartitionHeads,
-) -> Result<PartitionHeads> {
+) -> PartitionHeads {
     if let Some(h) = outgoing_heads.get(&producer_value) {
-        return Ok(*h);
+        return *h;
     }
-    Ok(entry_heads)
+    entry_heads
 }
 
 /// Emit per-partition mirror MemPhi nodes for the unified `mem_phi`.
@@ -773,7 +772,7 @@ fn splice_mem_phi_join(
             }
         }
         let [mirror_out] = function.node_outputs_exact::<1>(mirror)?;
-        set_head(&mut new_heads, p, mirror_out)?;
+        set_head(&mut new_heads, p, mirror_out);
     }
 
     // The unified MemPhi's mem-output now maps to the per-partition
@@ -1019,11 +1018,11 @@ fn splice_barrier(
         );
         let mp_outs = function.node_outputs(mp).to_vec();
         for &p in clobbers {
-            let idx = partition_index(p)?;
+            let idx = partition_index(p);
             let mp_out = *mp_outs
                 .get(idx)
                 .ok_or_else(|| anyhow::anyhow!("AliasSplit: MemProject output {idx} missing"))?;
-            set_head(heads, p, mp_out)?;
+            set_head(heads, p, mp_out);
         }
     }
     // For terminal barriers (no mem output), the relevant heads stay

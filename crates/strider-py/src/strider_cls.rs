@@ -75,18 +75,18 @@ impl PyStrider {
     /// the convention-aware StackLoadForward fixed-point pass plus
     /// CallStackArgCollect / FunctionArgDetect post passes on top of the
     /// default pipeline.
-    fn build_optimizer_pipeline(&self) -> PyResult<crate::opt::PyOptimizerPipeline> {
-        Ok(crate::opt::PyOptimizerPipeline::new_full_default(&self.inner))
+    fn build_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
+        crate::opt::PyOptimizerPipeline::new_full_default(&self.inner)
     }
 
     /// Mirror of `strider_analyze::Strider::build_stable_optimizer_pipeline`.
-    fn build_stable_optimizer_pipeline(&self) -> PyResult<crate::opt::PyOptimizerPipeline> {
-        Ok(crate::opt::PyOptimizerPipeline::new_stable_default(&self.inner))
+    fn build_stable_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
+        crate::opt::PyOptimizerPipeline::new_stable_default(&self.inner)
     }
 
     /// Mirror of `strider_analyze::Strider::build_destructive_optimizer_pipeline`.
-    fn build_destructive_optimizer_pipeline(&self) -> PyResult<crate::opt::PyOptimizerPipeline> {
-        Ok(crate::opt::PyOptimizerPipeline::new_destructive_default(&self.inner))
+    fn build_destructive_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
+        crate::opt::PyOptimizerPipeline::new_destructive_default(&self.inner)
     }
 }
 
