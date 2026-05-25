@@ -15,8 +15,7 @@ delay-slot pair `beq + nop`".
 
 **Do NOT use** for:
 - IR-shape-first authoring (the user already knows the IR shape) →
-  `strider-pattern-author` / `strider-py-pattern`.
-- Debugging a pattern that returns zero matches → `strider-debug-pattern`.
+  `strider-py-pattern`.
 - Writing the inverse rewrite (pattern → replacement) →
   `strider-rewrite-rule-author`.
 
@@ -31,8 +30,8 @@ delay-slot pair `beq + nop`".
    - **Quick:** the user already has a fixture binary in `fixtures/out/<arch>/…`.
      Run `cargo run -p strider-analyze --example orchestrator_demo`
      (defaults to `fixtures/out/x86/arithmetic.elf::add`).
-   - **Custom:** add a one-off fixture with the strider-fixture-author
-     skill; lift; dump.
+   - **Custom:** add a one-off fixture under `fixtures/<arch>/` and
+     extend `fixtures/Makefile`; rebuild fixtures; lift; dump.
 3. **Read the graph dump** for the lifted shape.  Identify
    (a) the value-flow root (load? add? cmp?), (b) the operand kinds
    (`InitialVar` / `IntConst` / nested op), (c) any phi join points.
@@ -63,7 +62,8 @@ lifter and constant-folder collapse it to a self-AND and then to
 a zero-check via the flag-tree decomposition.
 
 `mov eax, [rsp+8]` → `Load(Add(InitialVar(rsp), IntConst(8)))`.
-After `StackStoreDetect` and `StackLoadForward`, a same-offset
+After `AliasSplit` (which annotates stack-relative `Store`/`Load`
+in `Function::stack_offsets`) and `StackLoadForward`, a same-offset
 preceding store forwards through.
 
 `call <imm>` → `Call(at=<imm>)` (resolved jump-target).  Indirect
@@ -141,7 +141,7 @@ asm → Sleigh pcode → ValueLifter::lift → IR nodes (+ side-tables)
                                        optimizer pipeline
                                          (FlagCmpCanonicalize,
                                           ConstantFold, KnownBits,
-                                          StackStoreDetect, …)
+                                          AliasSplit, …)
                                          ↓
                                        canonical IR shape (Pat targets this)
 ```
@@ -153,19 +153,19 @@ For pattern authoring, decide which layer you're querying:
   Useful for debugging the lifter itself.
 - **Stable-opt-output IR** (after `build_stable_optimizer_pipeline`)
   — most patterns target this.  Constant fold, dead branch, flag-
-  cmp canonicalisation, redundant phi removal have all run.
+  cmp canonicalisation, redundant phi removal, alias-split have all
+  run.
 - **Destructive-opt-output IR** (after the full pipeline) —
-  `FunctionArgDetect`, `CallStackArgCollect`, `StackStoreDetect`,
-  `StackLoadForward` have all run.  Stack offsets are visible;
-  function args are canonicalised.
+  `FunctionArgDetect`, `CallStackArgCollect`, `StackLoadForward`
+  have all run as post-passes.  Function args are canonicalised via
+  `Function::arg_index_to_nodes`; stack offsets are visible via
+  `Function::stack_offsets`.
 
 The `strider.run(...)` Python API and the `orchestrator::run()` Rust
 API both yield the post-destructive-pipeline IR.  This is what
 `Graph.find_all` queries by default.
 
 ## Dumping for visual confirmation
-
-[Sketch — second half of skill]
 
 - `cargo run -p strider-analyze --example orchestrator_demo` —
   defaults to `fixtures/out/x86/arithmetic.elf::add`, writes
@@ -174,7 +174,9 @@ API both yield the post-destructive-pipeline IR.  This is what
 - `cargo run -p strider-analyze --example dump_arch_cmps` — per-
   arch IR cmp shapes for the FlagCmpCanonicalize spec.
 - Python: `Graph.to_dot()` / `Graph.to_html()`.
-- For new fixtures, follow `strider-fixture-author`.
+- For new fixtures, add a source file under `fixtures/<arch>/` and
+  extend `fixtures/Makefile`; rebuild fixtures with `make` from the
+  fixtures dir.
 
 **Dump APIs (v12+):**
 
@@ -196,15 +198,19 @@ API both yield the post-destructive-pipeline IR.  This is what
   node N in this dump" links into bug reports / chat without
   walking the renderer's pan-and-zoom by hand.
 
-## Worked examples
-
-[Sketch — second half]
+## Worked examples (sketch list — flesh out as users hit each case)
 
 1. x86_64 `add eax, 8 ; cmp eax, 0 ; je L` → pattern for the if-cmp
-   chain.
+   chain.  Match shape: `if_node().cond(int_eq(add(any(), int_const(8)), int_const(0)))`.
 2. AArch64 `ldr x0, [sp, #16] ; cbz x0, L` → pattern for the
-   load-then-zero-check.
+   load-then-zero-check.  Match shape: `if_node().cond(int_eq(load().addr(add(initial_var(sp_vn), int_const(16))), int_const(0)))`.
 3. MIPS32 `lw $a0, 16($sp) ; mul $v0, $a0, $a1 ; jr $ra` → pattern
-   for the mul-of-loaded-arg.
-4. PowerPC64 ELF V2 leaf function epilogue → pattern for the
-   register-restore + return.
+   for the mul-of-loaded-arg (use `function_arg(1)` to capture the
+   second positional arg after `CallStackArgCollect` runs).
+4. PowerPC64 ELF V2 leaf function epilogue → match the `Return` with
+   its `ret_val_regs` slots; cross-check against the `cc_metadata`'s
+   ret-val list.
+
+For an end-to-end walk-through of an arbitrary new arch idiom: dump
+the IR (`Graph.to_html`), look at the lifted shape, then pick the
+pattern root by following lift-time canonicalisations.

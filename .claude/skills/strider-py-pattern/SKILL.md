@@ -16,8 +16,9 @@ shape.
 **Use when** the user asks "give me a pattern that matches X" / "how do I find all loads where the
 address is sp+const" / "write a pattern for the indexed-array-load shape" and similar.
 
-**Do NOT use** for Rust-side patterns (use `strider-pattern-author` instead) or for graph rewriting
-(use `strider-rewrite-rule-multinode-audit`).
+**Do NOT use** for Rust-side patterns (write them by hand against
+`strider_analyze::pattern`) or for graph rewriting (use the
+`strider-rewrite-rule-author` skill).
 
 ## How to use this skill
 
@@ -460,8 +461,11 @@ hits = graph.find_all(p.load().stack_only(), ignore_mem_boundaries=True)
 
 ## When to defer to other skills
 
-- Rust-side pattern authoring → `strider-pattern-author`.
-- Debugging a pattern that returns zero matches → `strider-debug-pattern`.
-- Writing a rewrite rule (RHS-builds-new-graph) → `strider-rewrite-rule-multinode-audit`.
-- Adding a new pattern builder to the surface → `strider-py-binding` + `strider-pattern-author`.
+- Rust-side pattern authoring → write by hand against
+  `strider_analyze::pattern` (the Rust builder surface).
+- Writing a rewrite rule (RHS-builds-new-graph) →
+  `strider-rewrite-rule-author`.
+- Adding a new pattern builder to the surface → extend the Rust-side
+  builder in `strider-analyze::pattern`, then update the PyO3 mirror
+  (or its emission via `strider-pattern-macros`) in `strider-py`.
 - Assembly → IR → pattern translation → `strider-asm-to-pattern`.

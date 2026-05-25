@@ -6,19 +6,16 @@ description: Use when authoring a new pattern-based IR rewrite rule (typically i
 # strider-rewrite-rule-author
 
 Author a new `pattern::rewrite_rule(lhs, rhs)` for an existing
-optimization pass, or for a new pass you're scaffolding (use
-`strider-opt-pass-author` for the pass-level scaffold first).
+optimization pass, or for a new pass you're scaffolding.
 
 **Use when** the user says "add a rewrite for `(x & C1) & C2 →
 x & (C1 & C2)`" / "fold this into ConstantFold" / "rewrite
 `Truncate(ZeroExtend(x))` to `x`" / similar lhs→rhs prescriptions.
 
 **Do NOT use** for:
-- Matching-only patterns (no replacement) → `strider-pattern-author`
-  or `strider-py-pattern`.
-- Auditing an existing rewrite's fingerprint propagation →
-  `strider-rewrite-rule-multinode-audit`.
-- Adding a brand-new pass type → `strider-opt-pass-author` first.
+- Matching-only patterns (no replacement) → write directly against
+  `strider_analyze::pattern` (Rust) or use the `strider-py-pattern`
+  skill (Python).
 
 FlagCmpCanonicalize uses the same `rewrite_rule` shape as every other
 pass — add the new rule to its `RULES: LazyLock<Vec<BoxedRule>>`
@@ -55,7 +52,7 @@ slice the same way you'd add to ConstantFold.
 `crates/strider-analyze/src/pattern/rewrite.rs:36-43` states the
 contract: the LHS root must have exactly one value output.  Rooting
 on `Call`, `Load`, `Store`, or any control-flow node (`If`,
-`ControlState`, `Return`, `Phi`) returns an `IrError` from
+`Region`, `Return`, `Phi`) returns an `IrError` from
 `node_outputs_exact::<1>()`.  Workaround: match the slot-consumer,
 not the producer.
 
@@ -91,7 +88,9 @@ Two edge cases require manual attribution:
 
 If your rule materialises a node that doesn't appear in any
 captured input chain AND doesn't go through the builder DSL, audit
-with `strider-rewrite-rule-multinode-audit`.
+the new node's fingerprint by hand — call
+`extend_asm_fingerprint_from(new_node, root)` explicitly so the
+contributor-asm chain stays a superset.
 
 ## Anatomy of a rewrite rule
 
@@ -189,20 +188,17 @@ The `apply_all_rules` driver runs every group via
 
 ## Tests
 
-[Sketch — second half of skill]
-
-- Mock-graph tests using `TestGraph` from `strider-ir-test-utils`.
-- Assert: the rule fires (returns `Ok(true)`), and the resulting
-  graph passes `validate(&graph, entry)`.
+- Mock-graph tests using `make_empty_fn` / `make_fn_with_var` /
+  `RegisterSet` from `strider-ir-test-utils`.
+- Assert: the rule fires (returns `Ok(true)` from `optimize`), and
+  the resulting graph passes `validate(&graph, entry)`.
 - Assert: the RHS root carries the rewritten root's fingerprint
   (use `graph.asm_fingerprint(new_node)` and check the original
   asm address is present).
-- Cross-arch coverage via `per_arch_test!` if the rule is arch-
+- Cross-arch coverage via per-arch tests if the rule is arch-
   sensitive (most arithmetic identities are not).
 
 ## Common pitfalls
-
-[Sketch — second half]
 
 - Forgetting `boxed_rule(…)` wrapper — `rewrite_rule` returns
   `impl Fn(...) -> Result<bool>`, not `BoxedRule`.
@@ -214,11 +210,8 @@ The `apply_all_rules` driver runs every group via
 - Forgetting `c.into()` when the rule shape is heterogeneous (the
   builders take `impl Into<Pat>`).
 
-## When to defer to other skills
+## Python parity
 
-- Adding a brand-new opt pass → `strider-opt-pass-author`.
-- FlagCmpCanonicalize rule (different `Rule` struct) →
-  `strider-flagcmp-rule-author`.
-- Auditing a multi-node RHS for fingerprint coverage →
-  `strider-rewrite-rule-multinode-audit`.
-- Python parity (none needed — rewrite rules are Rust-only) — n/a.
+Rewrite rules are Rust-only.  No corresponding Python authoring
+surface.  (Patterns + matching DO mirror to Python; rewrite rules
+do not, by design.)
