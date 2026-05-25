@@ -1534,13 +1534,15 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
 fn entry_returns_recorded_entry_node_id() -> Result<()> {
     let b = empty_builder()?;
     let entry_via_accessor = b.entry();
-    // The builder's `entry` field carries the same id that `build()` would
-    // copy into the produced `Graph`.  Access via the field directly to
-    // assert the accessor delegates to it.
-    let entry_via_field = b.entry;
+    // The builder delegates entry() to the underlying Function's entry,
+    // which is set atomically in build_entry().
+    let entry_via_function = b
+        .graph()
+        .entry()
+        .expect("entry is always set after new_raw()");
     assert_eq!(
-        entry_via_accessor, entry_via_field,
-        "FunctionBuilder::entry() must match the recorded `entry` field"
+        entry_via_accessor, entry_via_function,
+        "FunctionBuilder::entry() must match Function::entry()"
     );
     Ok(())
 }

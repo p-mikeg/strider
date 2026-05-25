@@ -454,10 +454,8 @@ impl FunctionBuilder {
         // entry/InitialMemory pair as nodes 0/1.
         self.graph = crate::function::Function::new();
 
-        self.entry = self.create_node(NodeKind::Entry, [], vec![NodeOutputKind::Control]);
-        self.graph.set_entry(self.entry);
-        let [control] = self.graph().node_outputs_exact(self.entry)?;
-        self.entry_control = control;
+        let entry_node = self.create_node(NodeKind::Entry, [], vec![NodeOutputKind::Control]);
+        self.graph.set_entry(entry_node);
 
         let memory_node =
             self.create_node(NodeKind::InitialMemory, [], vec![NodeOutputKind::Memory(None)]);

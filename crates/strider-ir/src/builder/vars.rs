@@ -69,7 +69,12 @@ impl FunctionBuilder {
     /// `link_memory_regions` / `link_region_variables` also
     /// propagate.
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
-        let entry_control = self.entry_control;
+        #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
+        let entry_node = self
+            .graph
+            .entry()
+            .expect("entry is always set by build_entry(), which new_raw() calls unconditionally");
+        let [entry_control] = self.graph().node_outputs_exact(entry_node)?;
         let entry_memory = self.entry_memory;
         self.link_control_regions(region_id, entry_control)?;
         self.link_memory_regions(region_id, entry_memory)?;

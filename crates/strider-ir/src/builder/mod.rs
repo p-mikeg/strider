@@ -158,12 +158,6 @@ fn build_call_clobbered_list(
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
     pub(crate) graph: Function,
-    /// The `Entry` node that serves as the root of the function.
-    /// Set to a reserved sentinel before [`Self::build_entry`] runs;
-    /// `build()` will refuse to finalise if it remains reserved.
-    pub(crate) entry: NodeId,
-    /// The single `Control` output of the `Entry` node.
-    pub(crate) entry_control: NodeOutputId,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: NodeOutputId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
@@ -296,8 +290,11 @@ impl FunctionBuilder {
     /// id never changes once the builder's first region is registered,
     /// so callers may cache it across iterations.
     #[must_use]
+    #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
     pub fn entry(&self) -> NodeId {
-        self.entry
+        self.graph
+            .entry()
+            .expect("entry is always set by build_entry(), which new_raw() calls unconditionally")
     }
 
     pub(super) fn validate_value_inputs(&self, inputs: &[NodeOutputId]) -> Result<()> {
@@ -446,8 +443,6 @@ impl FunctionBuilder {
 
         let mut fb = FunctionBuilder {
             graph: Function::new(),
-            entry: NodeId::reserved_value(),
-            entry_control: NodeOutputId::reserved_value(),
             entry_memory: NodeOutputId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
@@ -665,7 +660,6 @@ impl FunctionBuilder {
             .copied()
             .filter(|v| Some(*v) != stack_ptr_vn)
             .collect();
-        let entry = self.entry;
         let cc_metadata = crate::graph::CcMetadata {
             variables: self.variables,
             call_clobbered: self.call_clobbered_variables.into_boxed_slice(),
@@ -674,6 +668,10 @@ impl FunctionBuilder {
             no_memory_clobber: self.no_memory_clobber,
         };
         let mut function = self.graph;
+        #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
+        let entry = function
+            .entry()
+            .expect("entry is always set by build_entry(), which new_raw() calls unconditionally");
         function.set_cc_metadata(cc_metadata);
         crate::validate::validate(&function, entry)?;
         Ok(function)
