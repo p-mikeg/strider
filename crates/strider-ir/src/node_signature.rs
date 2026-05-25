@@ -744,4 +744,38 @@ mod tests {
             .expect("Call output tail is variadic (clobbered registers)");
         assert_eq!(tail.kind, K::AnyValue);
     }
+
+    #[test]
+    fn expected_signature_mem_project() {
+        let sig = expected_signature(&NodeKind::MemProject);
+        // MemProject: 1 Memory input → 2 Memory outputs (Stack, Unknown).
+        assert_eq!(sig.inputs.head_len(), 1, "MemProject has 1 input");
+        assert_eq!(
+            sig.outputs.head_len(), 2,
+            "MemProject has 2 outputs (Stack + Unknown)"
+        );
+        // Both outputs must be Memory.
+        for i in 0..2 {
+            let slot = sig.outputs.at(i).expect("output slot present");
+            assert_eq!(slot.kind, ExpectedOutputKind::Memory, "output {i} must be Memory");
+        }
+    }
+
+    #[test]
+    fn expected_signature_mem_union() {
+        let sig = expected_signature(&NodeKind::MemUnion);
+        // MemUnion: variadic Memory inputs → 1 Memory output.
+        assert_eq!(
+            sig.outputs.head_len(), 1,
+            "MemUnion has 1 unified Memory output"
+        );
+        assert_eq!(
+            sig.outputs.at(0).expect("output slot").kind,
+            ExpectedOutputKind::Memory,
+        );
+        // Inputs are variadic (tail is Memory-kinded).
+        assert!(sig.inputs.is_variadic(), "MemUnion inputs are variadic");
+        let tail = sig.inputs.tail.expect("MemUnion variadic input tail");
+        assert_eq!(tail.kind, ExpectedOutputKind::Memory);
+    }
 }

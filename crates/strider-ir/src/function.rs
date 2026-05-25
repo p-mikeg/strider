@@ -609,4 +609,135 @@ mod compact_tests {
         assert_eq!(outs.len(), 1);
         assert!(f.output_kind(outs[0]).is_control());
     }
+
+    /// A cacheable zombie node that has no live uses must be absent after
+    /// `Function::compact`.  Regression guard against compaction skipping
+    /// detached-but-still-arena-present nodes.
+    #[test]
+    fn retain_reachable_drops_zombie_node() {
+        use crate::node::NodeOutputType;
+        use crate::graph::NodeIdRemap;
+
+        let mut f = Function::new();
+        f.set_cc_metadata(CcMetadata {
+            variables: PrimaryMap::new(),
+            call_clobbered: Box::new([]),
+            ret_val_regs: Box::new([]),
+            call_other_clobbered: Box::new([]),
+            no_memory_clobber: false,
+        });
+        // Entry + InitialMemory + a Return (minimal reachable graph).
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+        let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+        f.set_entry(entry);
+
+        // Zombie: a cacheable IntConst not connected to anything reachable.
+        let zombie = f.graph_mut().create_node(
+            NodeKind::IntConst(0xC0FFEE_u64 as u128),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        // Zombie must be in the arena before compact.
+        let pre_ids: Vec<_> = f.all_node_ids().collect();
+        assert!(pre_ids.contains(&zombie), "zombie must be present before compact");
+
+        let _remap: NodeIdRemap = f.compact().expect("compact must succeed");
+
+        // After compact the zombie NodeId is invalid; verify by checking
+        // that the remap returns None for it (it was dropped).
+        assert!(_remap.node_old_to_new(zombie).is_none(), "zombie must be dropped by compact");
+        // Node count must decrease.
+        assert!(
+            f.all_node_ids().count() < pre_ids.len(),
+            "compact must remove unreachable nodes"
+        );
+    }
+
+    /// The `phi_var_tag` and `stack_offsets` side-tables must NOT contain
+    /// stale entries pointing to zombie (dropped) NodeIds after compaction.
+    #[test]
+    fn retain_reachable_drops_side_table_entry_for_dropped_node() {
+        use crate::node::NodeOutputType;
+
+        let mut f = Function::new();
+        f.set_cc_metadata(CcMetadata {
+            variables: PrimaryMap::new(),
+            call_clobbered: Box::new([]),
+            ret_val_regs: Box::new([]),
+            call_other_clobbered: Box::new([]),
+            no_memory_clobber: false,
+        });
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+        let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+        f.set_entry(entry);
+
+        // Zombie Phi node with a phi_var_tag entry.
+        let zombie_phi = f.graph_mut().create_node(
+            NodeKind::Phi,
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let dead_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x88,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        f.set_phi_var_tag(zombie_phi, dead_vn);
+        assert_eq!(
+            f.phi_var_tag(zombie_phi),
+            Some(dead_vn),
+            "tag must be set before compact"
+        );
+
+        // Zombie IntConst node with a stack_offsets entry.
+        let zombie_stack = f.graph_mut().create_node(
+            NodeKind::IntConst(0xBEEF_u64 as u128),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        f.set_stack_offset(zombie_stack, -8);
+        assert_eq!(
+            f.stack_offset(zombie_stack),
+            Some(-8),
+            "offset must be set before compact"
+        );
+
+        let remap = f.compact().expect("compact must succeed");
+
+        // Both zombies must have been dropped.
+        assert!(remap.node_old_to_new(zombie_phi).is_none());
+        assert!(remap.node_old_to_new(zombie_stack).is_none());
+
+        // Side-table entries for dropped nodes must not exist.
+        // After compact the old NodeIds are invalid; the secondary maps
+        // were rebuilt over only surviving nodes, so querying the OLD id
+        // would index into a fresh map that has no entry for that slot
+        // (secondary maps default-initialise to the Default::default() which
+        // is None for Option<Vn> / None for Option<i64>).
+        //
+        // `phi_var_tag` and `stack_offset` use SecondaryMap<NodeId, Option<_>>;
+        // after remap the old zombie ids are not present in the new map.
+        // We verify indirectly: neither surviving node carries the tag/offset.
+        let surviving_with_tag = f
+            .all_node_ids()
+            .any(|n| f.phi_var_tag(n) == Some(dead_vn));
+        assert!(
+            !surviving_with_tag,
+            "dead_vn phi_var_tag must not survive compaction"
+        );
+        let surviving_with_offset = f
+            .all_node_ids()
+            .any(|n| f.stack_offset(n) == Some(-8));
+        assert!(
+            !surviving_with_offset,
+            "stack_offset -8 must not survive compaction on a surviving node"
+        );
+    }
 }

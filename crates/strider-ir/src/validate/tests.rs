@@ -1013,3 +1013,48 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
         "expected WideConstWidthMismatch, got: {errs:?}"
     );
 }
+
+/// Build: Entry → InitialMemory → MemProject → (Stack lane, Unknown lane)
+///        → MemUnion → Return.  The happy-path chain for the AliasSplit
+///        partition-boundary nodes must pass validate without errors.
+#[test]
+fn validate_accepts_mem_project_and_union_chain() {
+    use crate::AliasClass;
+
+    let mut graph = Function::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    graph.set_entry(entry);
+    let mem_node = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+    let [mem_out] = graph.node_outputs_exact::<1>(mem_node).unwrap();
+
+    // MemProject: 1 unified memory in → 2 partition lanes out.
+    let mp = graph.create_node(
+        NodeKind::MemProject,
+        [mem_out],
+        [
+            NodeOutputKind::Memory(Some(AliasClass::Stack)),
+            NodeOutputKind::Memory(Some(AliasClass::Unknown)),
+        ],
+    );
+    let mp_outs = graph.node_outputs(mp).to_vec();
+    let stack_out = mp_outs[0];
+    let unknown_out = mp_outs[1];
+
+    // MemUnion: 2 partition lanes in → 1 unified memory out.
+    let mu = graph.create_node(
+        NodeKind::MemUnion,
+        [stack_out, unknown_out],
+        [NodeOutputKind::Memory(None)],
+    );
+    let [unified_out] = graph.node_outputs_exact::<1>(mu).unwrap();
+
+    // Return consumes the reunified memory.
+    let ret = graph.create_node(NodeKind::Return, [entry_ctrl, unified_out], []);
+    stamp(&mut graph, ret);
+
+    assert!(
+        validate(&graph, entry).is_ok(),
+        "MemProject → MemUnion chain must pass validate"
+    );
+}

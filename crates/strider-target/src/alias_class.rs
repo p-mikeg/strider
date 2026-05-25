@@ -49,3 +49,21 @@ pub const MEM_CLOBBER_HEAP_UNKNOWN: &[AliasClass] = &[AliasClass::Unknown];
 /// path that can mutate the user-mode stack frame.
 pub const MEM_CLOBBER_FULL: &[AliasClass] =
     &[AliasClass::Stack, AliasClass::Unknown];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alias_class_as_str_stack_and_unknown() {
+        assert_eq!(AliasClass::Stack.as_str(), "Stack");
+        assert_eq!(AliasClass::Unknown.as_str(), "Unknown");
+    }
+
+    #[test]
+    fn mem_clobber_full_contains_stack_and_unknown() {
+        assert!(MEM_CLOBBER_FULL.contains(&AliasClass::Stack));
+        assert!(MEM_CLOBBER_FULL.contains(&AliasClass::Unknown));
+        assert_eq!(MEM_CLOBBER_FULL.len(), 2);
+    }
+}
