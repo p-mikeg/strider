@@ -72,6 +72,10 @@ pub struct Function {
     ///
     /// Populated by `FunctionArgDetect`; empty until that pass runs.
     arg_index_to_nodes: FxHashMap<u32, Vec<NodeId>>,
+
+    /// Per-function table of memory partitions.  Created empty by
+    /// [`Function::new`]; populated by the AliasSplit pass.
+    partition_table: crate::mem_partition::PartitionTable,
 }
 
 impl std::ops::Deref for Function {
@@ -114,6 +118,7 @@ impl Function {
             call_clobbered_overrides: SecondaryMap::new(),
             phi_var_tag: SecondaryMap::new(),
             arg_index_to_nodes: FxHashMap::default(),
+            partition_table: crate::mem_partition::PartitionTable::default(),
         }
     }
 
@@ -301,6 +306,22 @@ impl Function {
     #[inline]
     pub fn arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
         self.arg_index_to_nodes.keys().copied()
+    }
+
+    // ── Memory partition table accessors ─────────────────────────────────
+
+    /// Read-only access to the function's memory partition table.
+    #[inline]
+    #[must_use]
+    pub fn partitions(&self) -> &crate::mem_partition::PartitionTable {
+        &self.partition_table
+    }
+
+    /// Mutable access to the function's memory partition table.  Used by
+    /// the AliasSplit pass to create new partitions on demand.
+    #[inline]
+    pub fn partitions_mut(&mut self) -> &mut crate::mem_partition::PartitionTable {
+        &mut self.partition_table
     }
 
     /// Returns the asm-instruction-address fingerprint of `node_id` as a
@@ -508,6 +529,14 @@ mod function_skeleton_tests {
         let f = Function::new();
         assert!(f.arg_index_to_nodes(0).is_empty());
         assert!(f.arg_index_to_nodes(99).is_empty());
+    }
+
+    #[test]
+    fn function_carries_partition_table() {
+        use crate::mem_partition::AliasClass;
+        let mut f = Function::new();
+        let p = f.partitions_mut().create(AliasClass::Stack);
+        assert_eq!(f.partitions().info(p).alias_class, AliasClass::Stack);
     }
 
     #[test]
