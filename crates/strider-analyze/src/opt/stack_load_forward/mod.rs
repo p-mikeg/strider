@@ -9,6 +9,7 @@
 //! varnode and the target's endianness (see [`StackLoadForward::new`]).
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::AliasClass;
 use strider_target::Endianness;
 
 use crate::opt::error::Result;
@@ -303,6 +304,32 @@ fn probe(
                         preds,
                     })
                 }
+                NodeKind::MemPartition { .. } => {
+                    // MemPartition: [unified_memory] → [Memory(Some(p))].
+                    // Pass through to the single unified-memory predecessor.
+                    let inputs = graph.node_inputs(node);
+                    if inputs.is_empty() {
+                        return Ok(StepResult::Verdict(None));
+                    }
+                    Ok(StepResult::Continue(inputs[0]))
+                }
+                NodeKind::MemUnion => {
+                    // MemUnion: [...partition_memories] → [Memory(None)].
+                    // Walk through the Stack-partition input — the only one
+                    // StackLoadForward cares about.  Identify it by looking
+                    // for an input whose NodeOutputKind carries a Stack-class
+                    // MemPartitionId.
+                    let inputs = graph.node_inputs(node);
+                    let stack_input = inputs
+                        .iter()
+                        .find(|&inp| is_stack_partition_input(graph, inp));
+                    match stack_input {
+                        Some(inp) => Ok(StepResult::Continue(inp)),
+                        // No Stack-partition input in this MemUnion (all
+                        // inputs are Unknown / Heap / etc.) — bail.
+                        None => Ok(StepResult::Verdict(None)),
+                    }
+                }
                 _ => Ok(StepResult::Verdict(None)),
             }
         }
@@ -527,6 +554,17 @@ fn realize_with_depth(
 // narrow case shows up as a wide-typed IntConst-valued store that the
 // classifier can read directly.
 
+/// Returns `true` if `inp` is a `Memory(Some(p))` edge whose partition
+/// has [`AliasClass::Stack`].  Used by the `MemUnion` arms of both the
+/// forking probe walk and the linear `find_stack_stored_value_at_offset`
+/// walk to identify the Stack-partition input to pass through.
+fn is_stack_partition_input(graph: &strider_ir::Function, inp: NodeOutputId) -> bool {
+    let Some(partition_id) = graph.output_kind(inp).memory_partition() else {
+        return false;
+    };
+    graph.partitions().info(partition_id).alias_class == AliasClass::Stack
+}
+
 /// Per-call memo for `find_stack_stored_value_at_offset`, keyed on
 /// `(memory_token, offset, value_type)`.  Threaded through the
 /// indirect-branch classifier loops so repeated lookups across
@@ -620,6 +658,29 @@ pub(crate) fn find_stack_stored_value_at_offset(
                         cur_mem = prev_mem;
                         continue;
                     }
+                }
+            }
+            NodeKind::MemPartition { .. } => {
+                // Pass through to the single unified-memory predecessor.
+                let inputs = graph.node_inputs(node);
+                if inputs.is_empty() {
+                    break None;
+                }
+                cur_mem = inputs[0];
+                continue;
+            }
+            NodeKind::MemUnion => {
+                // Walk through the Stack-partition input only.
+                let inputs = graph.node_inputs(node);
+                let stack_input = inputs
+                    .iter()
+                    .find(|&inp| is_stack_partition_input(graph, inp));
+                match stack_input {
+                    Some(inp) => {
+                        cur_mem = inp;
+                        continue;
+                    }
+                    None => break None,
                 }
             }
             // MemPhi / InitialMemory / anything else: bail.  See module
