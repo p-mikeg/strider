@@ -1290,3 +1290,144 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     );
     Ok(())
 }
+
+// ── Fast-path tests (partitioned graph) ────────────────────────────────────
+
+/// `CallStackArgCollect` fast path on a partitioned function gives the same
+/// answer as the unified-form walk.
+///
+/// Builds a simple cdecl-style function: store arg0=11 at sp+4, anchor at
+/// sp+0, then a Call.  Runs `AliasSplit` so the graph is partitioned.  The
+/// fast path should walk the Stack-only chain via MemUnion routing, find
+/// the two stores, and append IntConst(11) as arg 0.
+///
+/// This test validates that the partitioned fast path in
+/// `collect_stack_args_partitioned` produces the same result as the
+/// unified-form walker for the basic cdecl-push scenario.
+#[test]
+fn call_stack_arg_collect_fast_path_on_partitioned_function() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
+        // arg0 = 11 stored at sp + 4 (farther from Call — stored first).
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let sp_plus_4 = b.build_int_binary_operation(
+            sp_v0,
+            four,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )?;
+        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
+
+        // Anchor store at sp + 0 (ret-addr-push role — triggers is_first_store
+        // exception for offset 0 not in the slot table {4}).
+        let anchor = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    // AliasSplit partitions the graph; fast path uses side-table offsets.
+    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
+    pipeline.run_built(&mut fg)?;
+
+    // Confirm the graph IS partitioned (fast path was eligible).
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
+    assert!(n_part >= 1, "AliasSplit must have inserted MemPartition nodes; got {n_part}");
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + arg0 = 4 inputs.
+    assert_eq!(
+        inputs.len(),
+        4,
+        "fast path: arg0 must be collected on partitioned function; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(11)),
+        "fast path: arg0 should be IntConst(11), got {arg0_kind:?}"
+    );
+    Ok(())
+}
+
+/// `CallStackArgCollect` fast path collects multiple args correctly on a
+/// partitioned function.
+///
+/// Two stores at sp+4 and sp+8 (in program order), then anchor at sp+0.
+/// After `AliasSplit` partitions the graph, the fast path walks the
+/// Stack chain through MemUnion and collects both args in positional order.
+#[test]
+fn call_stack_arg_collect_fast_path_two_args_on_partitioned_function() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
+
+        // arg1 = 22 at sp + 8.
+        let sp_plus_8 = b.build_int_binary_operation(
+            sp_v0,
+            eight,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )?;
+        let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_8, arg1, rsleigh::VnSpace::RAM)?;
+
+        // arg0 = 11 at sp + 4.
+        let sp_plus_4 = b.build_int_binary_operation(
+            sp_v0,
+            four,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )?;
+        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
+
+        // Anchor store at sp + 0.
+        let anchor = b.build_int_const(0xABCDu64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x2000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8, 12], sp));
+    pipeline.run_built(&mut fg)?;
+
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
+    assert!(n_part >= 1, "AliasSplit must have inserted MemPartition nodes; got {n_part}");
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + arg0 + arg1 = 5 inputs.
+    assert_eq!(
+        inputs.len(),
+        5,
+        "fast path: both args must be collected on partitioned function; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.kind_of_output(inputs[4]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(11)),
+        "fast path: arg0 should be 11, got {arg0_kind:?}"
+    );
+    assert!(
+        matches!(arg1_kind, NodeKind::IntConst(22)),
+        "fast path: arg1 should be 22, got {arg1_kind:?}"
+    );
+    Ok(())
+}

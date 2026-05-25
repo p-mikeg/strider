@@ -6,6 +6,7 @@
 //! appends them as additional Call inputs.
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::AliasClass;
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -14,6 +15,138 @@ use crate::opt::stack_load_forward::is_stack_partition_input;
 
 #[cfg(test)]
 mod tests;
+
+/// Returns `true` when the function contains at least one `MemPartition`
+/// node — the sign that `AliasSplit` successfully partitioned this function.
+/// Pre-computed once per pass invocation to gate the fast path in
+/// [`collect_stack_args_in_chain_order`].
+#[inline]
+fn was_partitioned(function: &strider_ir::Function) -> bool {
+    function.has_kind(|k| matches!(k, NodeKind::MemPartition { .. }))
+}
+
+/// Fast-path stack-arg collection for functions partitioned by `AliasSplit`.
+///
+/// Walks backward along the `Memory(Some(Stack))` chain starting from `mem`.
+/// Unlike the unified-form walker, this path:
+///
+/// * Relies on `Function::stack_offsets` for O(1) offset lookup — no
+///   `decompose_sp` call per Store.
+/// * Terminates at `MemPartition(Stack)` (the entry boundary inserted by
+///   `AliasSplit`).
+/// * Falls back to `None` for any unexpected node kind (MemPhi within the
+///   Stack chain, a Store without a side-table entry, etc.), letting the
+///   caller use the unified-form walker instead.
+///
+/// Applies the same anchor + prefix-monotonicity rules as the unified-form
+/// walker so collection semantics are identical.
+///
+/// Returns `Some(args)` when the fast path succeeds, or `None` when it
+/// encounters a shape it cannot handle (caller falls back to unified form).
+fn collect_stack_args_partitioned(
+    ctx: crate::pattern::RewriteCtxView<'_>,
+    mem: NodeOutputId,
+    stack_arg_offsets: &[i64],
+) -> Option<Vec<NodeOutputId>> {
+    if stack_arg_offsets.is_empty() {
+        return Some(Vec::new());
+    }
+
+    // Resolve the starting point on the Stack partition chain.
+    // The Call's mem input may be:
+    //   (a) directly `Memory(Some(Stack))` — walk from there.
+    //   (b) `Memory(None)` from a MemUnion — route through the MemUnion
+    //       to find the Stack-partition input.
+    //   (c) Something else — fall back.
+    let start = {
+        use strider_ir::node::NodeOutputKind;
+        match ctx.function_ref().output_kind(mem) {
+            NodeOutputKind::Memory(Some(AliasClass::Stack)) => mem,
+            NodeOutputKind::Memory(None) => {
+                let union_node = ctx.function_ref().get_node_from_output(mem);
+                if !matches!(ctx.function_ref().node_kind(union_node), NodeKind::MemUnion) {
+                    return None;
+                }
+                ctx.function_ref()
+                    .node_inputs(union_node)
+                    .iter()
+                    .find(|&inp| is_stack_partition_input(ctx.function_ref(), inp))?
+            }
+            _ => return None,
+        }
+    };
+
+    let mut cur = start;
+    let mut anchor_space: Option<rsleigh::VnSpace> = None;
+    let mut chain_anchor_offset: Option<i64> = None;
+    let mut slots: Vec<Option<NodeOutputId>> = vec![None; stack_arg_offsets.len()];
+    let mut prefix_top: i32 = -1;
+
+    loop {
+        let node = ctx.function_ref().get_node_from_output(cur);
+        match *ctx.function_ref().node_kind(node) {
+            NodeKind::MemPartition { class: AliasClass::Stack } => {
+                // Reached the function-entry Stack boundary — chain exhausted cleanly.
+                return Some(dense_prefix(slots));
+            }
+            NodeKind::MemPartition { .. } | NodeKind::MemPhi => {
+                // Unexpected non-Stack partition or control-flow join inside the
+                // Stack chain — not produced by v1 AliasSplit; fall back.
+                return None;
+            }
+            NodeKind::Store(space) => {
+                // Use the side-table offset — AliasSplit records it for every
+                // SP-relative store when it partitions the function.
+                let offset = ctx.function_ref().stack_offset(node)?;
+                let inputs = ctx.function_ref().node_inputs(node);
+                if inputs.len() != 3 {
+                    return Some(dense_prefix(slots));
+                }
+                let data = inputs[2];
+
+                // Space consistency check (same as unified-form walker).
+                match anchor_space {
+                    None => anchor_space = Some(space),
+                    Some(s) if s == space => {}
+                    _ => return Some(dense_prefix(slots)),
+                }
+
+                let is_first_store = chain_anchor_offset.is_none();
+                let anchor = *chain_anchor_offset.get_or_insert(offset);
+                let rel = offset - anchor;
+
+                match stack_arg_offsets.iter().position(|&o| o == rel) {
+                    Some(slot) if slots[slot].is_none() => {
+                        let slot_i32 = i32::try_from(slot).unwrap_or(i32::MAX);
+                        if prefix_top >= 0 && slot_i32 > prefix_top + 1 {
+                            return Some(dense_prefix(slots));
+                        }
+                        slots[slot] = Some(data);
+                        let mut k = usize::try_from(prefix_top + 1).unwrap_or(0);
+                        while k < slots.len() && slots[k].is_some() {
+                            k += 1;
+                        }
+                        prefix_top =
+                            i32::try_from(k).unwrap_or(i32::MAX).saturating_sub(1);
+                        if usize::try_from(prefix_top + 1).unwrap_or(0) == slots.len() {
+                            return Some(dense_prefix(slots));
+                        }
+                    }
+                    Some(_) => { /* slot already filled — stale write, skip */ }
+                    None if is_first_store => { /* anchor outside slot table — continue */ }
+                    None => return Some(dense_prefix(slots)),
+                }
+
+                cur = inputs[0]; // Store mem-predecessor is slot 0.
+            }
+            _ => {
+                // InitialMemory, Call re-projection, or anything else —
+                // terminate collection cleanly.
+                return Some(dense_prefix(slots));
+            }
+        }
+    }
+}
 
 /// Walks memory backward from `mem`, collecting `StackStore` data outputs as
 /// positional call arguments by matching each store's offset against the
@@ -98,15 +231,31 @@ mod tests;
 /// slot in that range got a value, stopping at the first hole.  Patterns
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
+///
+/// When `partitioned` is `true` (the function was processed by `AliasSplit`),
+/// this function first attempts the fast path via
+/// [`collect_stack_args_partitioned`] which walks the Stack-only chain using
+/// O(1) side-table offset lookups.  If the fast path bails (returns `None` for
+/// an edge-case shape), the unified-form walker runs as fallback.
 fn collect_stack_args_in_chain_order(
     ctx: crate::pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
+    partitioned: bool,
 ) -> Vec<NodeOutputId> {
     if stack_arg_offsets.is_empty() {
         return Vec::new();
+    }
+    // When the function has been partitioned by AliasSplit, attempt the
+    // simplified Stack-chain-only walk first.  If it returns `None` (an
+    // edge case it cannot handle), fall through to the unified-form walker.
+    if let Some(fast_args) = partitioned
+        .then(|| collect_stack_args_partitioned(ctx, mem, stack_arg_offsets))
+        .flatten()
+    {
+        return fast_args;
     }
     let mut cur = mem;
     // `anchor_base` tracks the SP root node used by decompose_sp-path stores.
@@ -293,6 +442,7 @@ fn try_collect_stack_args(
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
+    partitioned: bool,
 ) -> Result<OptimizationResult> {
     if !matches!(ctx.node_kind(call_id), NodeKind::Call) {
         return Ok(OptimizationResult::NoChange);
@@ -306,8 +456,14 @@ fn try_collect_stack_args(
     }
     let mem_in = inputs[1];
 
-    let args =
-        collect_stack_args_in_chain_order(ctx.as_view(), mem_in, stack_arg_offsets, stack_ptr_vn, sp_memo);
+    let args = collect_stack_args_in_chain_order(
+        ctx.as_view(),
+        mem_in,
+        stack_arg_offsets,
+        stack_ptr_vn,
+        sp_memo,
+        partitioned,
+    );
     if args.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
@@ -378,6 +534,12 @@ impl Optimizer for CallStackArgCollect {
         function: &mut strider_ir::Function,
         entry: NodeId,
     ) -> Result<OptimizationResult> {
+        // Pre-compute once: did AliasSplit partition this function?
+        // When true, each Call's memory chain is routed through a MemUnion
+        // (or arrives directly on the Stack-partition chain), and every
+        // stack Store has a concrete offset in `Function::stack_offsets`.
+        // The fast path in `collect_stack_args_partitioned` exploits this.
+        let partitioned = was_partitioned(function);
         let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         let calls: Vec<NodeId> = ctx
             .preorder()
@@ -410,6 +572,7 @@ impl Optimizer for CallStackArgCollect {
                 stack_arg_offsets,
                 stack_ptr_vn,
                 &mut sp_memo,
+                partitioned,
             )?;
         }
         Ok(result)

@@ -32,7 +32,8 @@
 //! offset (potentially at different widths) is registered into the side-table
 //! for that arg index — the `Vec<NodeId>` per entry accommodates this.
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use strider_ir::AliasClass;
 
 use crate::opt::error::Result;
 use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
@@ -238,6 +239,130 @@ fn detect_register_args(
     Ok(())
 }
 
+/// Returns `true` when the function's graph contains at least one
+/// `MemPartition` node — the sign that `AliasSplit` successfully
+/// partitioned this function into per-alias-class chains.  Pre-computed
+/// once per pass invocation to gate the fast paths in
+/// [`detect_stack_args`] and the caller's partition-aware shadow check.
+#[inline]
+fn was_partitioned(function: &strider_ir::Function) -> bool {
+    function.has_kind(|k| matches!(k, NodeKind::MemPartition { .. }))
+}
+
+/// Fast-path shadow check for functions partitioned by `AliasSplit`.
+///
+/// Walks backward along the `Memory(Some(Stack))` chain starting from
+/// `mem` (the memory input of a candidate `Load[sp+K]`).  At each node:
+///
+/// * `MemPartition { class: Stack }` — reached the function-entry
+///   boundary without finding a shadow: the load IS an incoming arg.
+///   Returns `Ok(false)` (chain is NOT dirty).
+/// * `Store` — consults `Function::stack_offset`.  If `Some(K)` with
+///   the same offset as the load, this store **shadows** the load's
+///   slot.  Returns `Ok(true)` (dirty).  A different offset skips past
+///   and continues walking.
+/// * `MemPhi` — multi-predecessor join within the Stack chain (emitted
+///   by a future per-partition MemPhi pass, not by v1 `AliasSplit`).
+///   Falls back to the unified-form shadow check to stay sound.
+/// * Anything else unexpected — falls back to the unified-form check.
+///
+/// When `mem`'s kind is NOT `Memory(Some(Stack))` (e.g. the Load is
+/// not on the Stack partition chain), falls back to the unified-form
+/// check immediately — the Load may be in a not-yet-partitioned region.
+///
+/// The function's `stack_offsets` side-table must be populated by
+/// `AliasSplit` for the offset comparisons to work.  If the side-table
+/// is missing an entry for a Store on the chain, the size-based overlap
+/// check is not available, so the store is treated as a conservative
+/// shadow (dirty).
+// Same context-threading rationale as `mem_chain_is_dirty` above —
+// all parameters are needed to thread the SP memo and shadow memo through
+// without bundling them into an intermediate struct.
+#[allow(clippy::too_many_arguments)]
+fn check_no_shadow_partitioned(
+    ctx: crate::pattern::RewriteCtxView<'_>,
+    _load_id: NodeId,
+    mem: NodeOutputId,
+    offset: i64,
+    load_size: i64,
+    sp_vn: rsleigh::Vn,
+    sp_memo: &mut SpExprMemo,
+    seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
+    shadow_memo: &mut ShadowMemo,
+) -> Result<bool> {
+    // Verify the Load's mem input is on the Stack partition chain.
+    // If not (e.g. Load is still on unified Memory(None)), fall back.
+    if !matches!(
+        ctx.function_ref().output_kind(mem),
+        NodeOutputKind::Memory(Some(AliasClass::Stack))
+    ) {
+        return mem_chain_is_dirty(ctx, mem, offset, load_size, sp_vn, sp_memo, seen, shadow_memo);
+    }
+
+    let mut cur = mem;
+    loop {
+        let node = ctx.function_ref().get_node_from_output(cur);
+        match *ctx.function_ref().node_kind(node) {
+            NodeKind::MemPartition { class: AliasClass::Stack } => {
+                // Reached the function-entry Stack boundary — no shadow found.
+                return Ok(false);
+            }
+            NodeKind::Store(_) => {
+                // Use the side-table offset if available for an exact and
+                // size-aware comparison.  If missing, fall back conservatively.
+                match ctx.function_ref().stack_offset(node) {
+                    Some(store_offset) => {
+                        let store_size = {
+                            // Derive store size from its data output type.
+                            let inputs = ctx.function_ref().node_inputs(node);
+                            if inputs.len() >= 3 {
+                                let data_out = inputs[2];
+                                ctx.function_ref()
+                                    .output_kind(data_out)
+                                    .as_value()
+                                    .map_or(8i64, |t| t.byte_size() as i64)
+                            } else {
+                                8i64 // conservative default
+                            }
+                        };
+                        if !crate::opt::sp_expr::ranges_disjoint(
+                            store_offset,
+                            store_size,
+                            offset,
+                            load_size,
+                        ) {
+                            // Overlapping store — shadow found.
+                            return Ok(true);
+                        }
+                        // Disjoint — continue walking backward.
+                        let inputs = ctx.function_ref().node_inputs(node);
+                        if inputs.is_empty() {
+                            // Malformed Store — conservative.
+                            return Ok(true);
+                        }
+                        cur = inputs[0];
+                    }
+                    None => {
+                        // No side-table entry — this Store was not recorded by
+                        // AliasSplit (phi-of-offsets or non-SP Store on the
+                        // Stack chain).  Conservative: treat as shadow.
+                        return Ok(true);
+                    }
+                }
+            }
+            NodeKind::MemPartition { .. } => {
+                // Wrong partition class on the chain (unexpected) — conservative.
+                return Ok(true);
+            }
+            // MemPhi (multi-predecessor join inside the Stack partition) and all
+            // other unexpected nodes fall back to the unified-form DFS.
+            _ => {
+                return mem_chain_is_dirty(ctx, mem, offset, load_size, sp_vn, sp_memo, seen, shadow_memo);
+            }
+        }
+    }
+}
+
 /// Rule (stack args): collect every `Load` node whose address decomposes to
 /// `InitialVar(sp) + K` where `K` is one of the convention's stack-arg
 /// offsets.  Group by `K`, then apply **strict contiguity** from position 0:
@@ -257,6 +382,13 @@ fn detect_stack_args(
     if stack_arg_offsets.is_empty() {
         return Ok(());
     }
+
+    // Pre-compute the partition flag once — gates the fast-path shadow
+    // check below.  When `AliasSplit` has run, every Stack-partition
+    // Load has a `Memory(Some(Stack))` mem input and side-table offsets
+    // on every Store on that chain, so the fast path avoids `decompose_sp`
+    // entirely.  When AliasSplit bailed, the unified-form DFS is used.
+    let partitioned = was_partitioned(ctx.function_ref());
 
     // Group candidate loads by their position `j` in `stack_arg_offsets`.
     // A load qualifies only if (a) its address decomposes to `sp + K` where
@@ -289,16 +421,33 @@ fn detect_stack_args(
         }
         let mut seen: entity_utils::DenseEntitySet<NodeOutputId> =
             entity_utils::DenseEntitySet::new();
-        if mem_chain_is_dirty(
-            ctx.as_view(),
-            memory,
-            offset,
-            load_size,
-            sp_vn,
-            &mut memo,
-            &mut seen,
-            &mut shadow_memo,
-        )? {
+        // Use the partition-aware fast path when AliasSplit has run;
+        // fall back to the unified-form DFS otherwise.
+        let dirty = if partitioned {
+            check_no_shadow_partitioned(
+                ctx.as_view(),
+                node_id,
+                memory,
+                offset,
+                load_size,
+                sp_vn,
+                &mut memo,
+                &mut seen,
+                &mut shadow_memo,
+            )?
+        } else {
+            mem_chain_is_dirty(
+                ctx.as_view(),
+                memory,
+                offset,
+                load_size,
+                sp_vn,
+                &mut memo,
+                &mut seen,
+                &mut shadow_memo,
+            )?
+        };
+        if dirty {
             disqualified.insert(j);
             groups.remove(&j);
             continue;

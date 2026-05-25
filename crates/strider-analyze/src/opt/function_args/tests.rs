@@ -1152,3 +1152,113 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
     );
     Ok(())
 }
+
+// ── Fast-path tests (partitioned graph) ────────────────────────────────────
+
+/// `FunctionArgDetect` fast path on a partitioned function gives the same
+/// answer as the unified-form walk.
+///
+/// Builds a function with a `Load[sp+4]` (clean — no prior SP-relative
+/// stores), then runs `AliasSplit` so the graph is partitioned (MemPartition
+/// nodes inserted, `Function::stack_offsets` populated).  The fast path in
+/// `check_no_shadow_partitioned` should walk the Stack-only chain to the
+/// `MemPartition(Stack)` entry boundary and register the Load as arg 0.
+///
+/// Implicitly validates that the partitioned fast path agrees with the
+/// unified-form result by checking the same assertions as
+/// `function_arg_detect_walks_through_mempartition`.
+#[test]
+fn function_arg_detect_fast_path_on_partitioned_function() -> Result<()> {
+    use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
+
+    let sp = sp32_vn();
+
+    // Build: store at sp+8 (disjoint from arg slot sp+4), then load sp+4.
+    // The disjoint store exercises the fast-path "skip past" branch; the
+    // Load at sp+4 should still be registered as arg 0.
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        // Disjoint store at sp+8 — covers [8, 12), disjoint from [4, 8).
+        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
+        let addr8 =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let data = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        b.build_store(addr8, data, rsleigh::VnSpace::RAM)?;
+
+        // Load at sp+4 — should not be shadowed by the sp+8 store.
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    // AliasSplit partitions the graph and populates Function::stack_offsets.
+    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
+    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.run_built(&mut fg)?;
+
+    // Confirm the graph IS partitioned (fast path was eligible).
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
+    assert!(n_part >= 1, "AliasSplit must have inserted MemPartition nodes; got {n_part}");
+
+    // Load[sp+4] is not shadowed by Store[sp+8] — must be registered as arg 0.
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        !arg0_nodes.is_empty(),
+        "fast path: disjoint Store[sp+8] must not shadow Load[sp+4]; arg 0 should be registered"
+    );
+    assert!(
+        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        "carrier for arg 0 must be a Load node"
+    );
+    Ok(())
+}
+
+/// Shadow detection in the fast path: a `Store[sp+4]` on the Stack partition
+/// chain prior to `Load[sp+4]` must cause the load to be rejected.
+///
+/// This verifies that the fast path's offset-equality check works correctly
+/// on a partitioned function, matching the unified-form result for the
+/// `prior_stackstore_shadows` scenario.
+#[test]
+fn function_arg_detect_fast_path_shadow_rejected_on_partitioned_function() -> Result<()> {
+    use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
+
+    let sp = sp32_vn();
+
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        // Store at sp+4 (same offset as the load's arg slot).
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        // Load from the same slot — should be shadowed.
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
+    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.run_built(&mut fg)?;
+
+    // Confirm the graph IS partitioned.
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
+    assert!(n_part >= 1, "AliasSplit must have inserted MemPartition nodes; got {n_part}");
+
+    // Store[sp+4] shadows Load[sp+4] — must NOT be registered as arg.
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
+        "fast path: Store[sp+4] must shadow Load[sp+4] on partitioned function; no arg registered"
+    );
+    Ok(())
+}
