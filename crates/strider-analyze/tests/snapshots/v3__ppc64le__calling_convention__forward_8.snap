@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -152,42 +153,42 @@ digraph "G" {
   "57" -> "11" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "57" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "58" -> "57" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "58" [label="arg[7] ← r10", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "58" [label="init\nr10", shape=Mdiamond, fillcolor="#1a3a5c"];
   "10" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "59" -> "10" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "59" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "60" -> "59" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "60" [label="arg[6] ← r9", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "60" [label="init\nr9", shape=Mdiamond, fillcolor="#1a3a5c"];
   "9" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "61" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "61" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "62" -> "61" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "62" [label="arg[5] ← r8", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "62" [label="init\nr8", shape=Mdiamond, fillcolor="#1a3a5c"];
   "8" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "63" -> "8" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "63" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "64" -> "63" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "64" [label="arg[4] ← r7", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "64" [label="init\nr7", shape=Mdiamond, fillcolor="#1a3a5c"];
   "7" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "65" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "65" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "66" -> "65" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "66" [label="arg[3] ← r6", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "66" [label="init\nr6", shape=Mdiamond, fillcolor="#1a3a5c"];
   "6" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "67" -> "6" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "67" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "68" -> "67" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "68" [label="arg[2] ← r5", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "68" [label="init\nr5", shape=Mdiamond, fillcolor="#1a3a5c"];
   "5" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "69" -> "5" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "69" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "70" -> "69" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "70" [label="arg[1] ← r4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "70" [label="init\nr4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "71" -> "4" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "71" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "72" -> "71" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "72" [label="arg[0] ← r3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "72" [label="init\nr3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "73" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "74" -> "2" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];

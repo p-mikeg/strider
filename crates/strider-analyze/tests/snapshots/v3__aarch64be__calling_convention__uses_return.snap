@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -78,12 +79,12 @@ digraph "G" {
   "v23" [label="init\nsp", shape=Mdiamond, fillcolor="#1a3a5c"];
   "v23" -> "16" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
   "14" -> "16" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "5" [label="arg[1] ← x1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="init\nx1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "24" -> "4" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "24" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "25" -> "24" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "25" [label="arg[0] ← x0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "25" [label="init\nx0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "26" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "27" -> "2" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];

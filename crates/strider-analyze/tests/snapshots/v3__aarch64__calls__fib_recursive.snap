@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -78,7 +79,7 @@ digraph "G" {
   "v26" [label="Post Call\nx1", shape=box, fillcolor="#28102a", style="filled,dashed"];
   "11" -> "v26" [color="#888888", style=dashed];
   "v26" -> "19" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
-  "9" [label="arg[1] ← x1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "9" [label="init\nx1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "18" [label="φ x0", shape=house, fillcolor="#163030"];
   "15" -> "18" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
   "27" -> "18" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
@@ -96,7 +97,7 @@ digraph "G" {
   "v33" [label="Post Call\nx0", shape=box, fillcolor="#28102a", style="filled,dashed"];
   "5" -> "v33" [color="#888888", style=dashed];
   "v33" -> "30" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "27" [label="arg[0] ← x0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "27" [label="init\nx0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "17" [label="φ Mem", shape=house, fillcolor="#163030"];
   "15" -> "17" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
   "6" -> "17" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];

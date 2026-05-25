@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -49,12 +50,12 @@ digraph "G" {
   "13" -> "12" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "13" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "3" -> "13" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "3" [label="arg[0] ← r0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "3" [label="init\nr0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "7" [label="And:u64", shape=box, fillcolor="#2d2d2d"];
   "14" -> "7" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "14" [label="const 0xffffffff00000000:u64", shape=ellipse, fillcolor="#2d2d2d"];
   "15" -> "7" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "15" [label="init\nd0", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "4" [label="arg[1] ← r1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

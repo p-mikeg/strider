@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -57,8 +58,8 @@ digraph "G" {
   "9" -> "12" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
   "16" -> "12" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
   "17" -> "12" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
-  "17" [label="arg[1] ← a1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "16" [label="arg[2] ← a2", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "17" [label="init\na1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "16" [label="init\na2", shape=Mdiamond, fillcolor="#1a3a5c"];
   "11" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "8" [label="Equal\nu64 → bool", shape=box, fillcolor="#2d2d2d"];
   "18" -> "8" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
@@ -68,7 +69,7 @@ digraph "G" {
   "20" -> "18" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "21" -> "18" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "21" [label="const 0x1:u64", shape=ellipse, fillcolor="#2d2d2d"];
-  "20" [label="arg[3] ← a3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "20" [label="init\na3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "22" [label="Return", shape=doublecircle, fillcolor="#103a10"];
   "v2" -> "22" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];
   "11" -> "22" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
@@ -76,7 +77,7 @@ digraph "G" {
   "13" -> "22" [color="#88cc88", label=v1, fontcolor="#cccccc", fontsize=9];
   "14" -> "22" [color="#88cc88", label=f0, fontcolor="#cccccc", fontsize=9];
   "15" -> "22" [color="#88cc88", label=f2, fontcolor="#cccccc", fontsize=9];
-  "23" [label="arg[0] ← a0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "23" [label="init\na0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="Equal\nu64 → bool", shape=box, fillcolor="#2d2d2d"];
   "20" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "24" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];

@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -74,23 +75,37 @@ digraph "G" {
   "20" -> "22" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "23" -> "22" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "23" [label="const 0xffffffff:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "12" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "12" [label="MemUnion", shape=trapezium, fillcolor="#3a1a4a"];
+  "24" -> "12" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "24" [label="MemPartition[MemPartitionId(0)]", shape=trapezium, fillcolor="#3a1a4a"];
+  "25" -> "24" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "25" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "9" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
-  "24" -> "9" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "25" -> "9" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "25" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "24" [label="ShiftRight:u32", shape=box, fillcolor="#2d2d2d"];
-  "26" -> "24" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "20" -> "24" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "26" [label="arg[0] ← ram[sp + 4]", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "26" -> "9" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "27" -> "9" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "27" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "26" [label="ShiftRight:u32", shape=box, fillcolor="#2d2d2d"];
+  "28" -> "26" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "20" -> "26" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "28" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "24" -> "28" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "29" -> "28" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "29" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "30" -> "29" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "30" [label="const 0x4:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "31" -> "29" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "31" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="Equal\nu8 → bool", shape=box, fillcolor="#2d2d2d"];
-  "27" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "28" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "28" [label="const 0x1:u8", shape=ellipse, fillcolor="#2d2d2d"];
-  "27" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
-  "29" -> "27" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "29" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
-  "26" -> "29" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "30" -> "29" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "30" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "32" -> "4" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "33" -> "4" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "33" [label="const 0x1:u8", shape=ellipse, fillcolor="#2d2d2d"];
+  "32" [label="Cast → u8\nfrom bool", shape=box, fillcolor="#2d2d2d"];
+  "34" -> "32" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
+  "34" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
+  "35" -> "34" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "36" -> "34" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "36" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "35" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "24" -> "35" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "29" -> "35" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
 }

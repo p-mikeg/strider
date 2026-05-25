@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -185,7 +186,7 @@ digraph "G" {
   "v76" [label="init\nsp", shape=Mdiamond, fillcolor="#1a3a5c"];
   "v76" -> "72" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
   "77" -> "72" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "77" [label="arg[0] ← r0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "77" [label="init\nr0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "75" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "70" [label="StackStore u32\n→ ram[sp - 72]", shape=box3d, fillcolor="#20182a"];
   "78" -> "70" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];

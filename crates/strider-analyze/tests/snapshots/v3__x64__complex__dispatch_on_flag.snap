@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -42,7 +43,7 @@ digraph "G" {
   "10" -> "5" [color="#88cc88", label=XMM1, fontcolor="#cccccc", fontsize=9];
   "10" [label="init\nXMM1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "9" [label="init\nXMM0", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "8" [label="arg[2] ← RDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "8" [label="init\nRDX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "7" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "11" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "11" [label="And:u32", shape=box, fillcolor="#2d2d2d"];
@@ -56,7 +57,7 @@ digraph "G" {
   "15" -> "14" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "16" -> "14" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "16" [label="const 0xc:u64", shape=ellipse, fillcolor="#2d2d2d"];
-  "15" [label="arg[0] ← RDI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "15" [label="init\nRDI", shape=Mdiamond, fillcolor="#1a3a5c"];
   "6" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "17" [label="Call", shape=rarrow, fillcolor="#3a1010"];
   "v2" -> "17" [color="#00cccc", label=ctrl, fontcolor="#cccccc", fontsize=9];

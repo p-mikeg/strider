@@ -983,3 +983,171 @@ fn function_args_combine_phi_or_semantics_pinned() {
         "cycle_verdict()=false must still combine to dirty when a non-cycle pred is dirty"
     );
 }
+
+// ── MemPartition / MemUnion boundary traversal ─────────────────────────────
+
+/// `mem_chain_is_dirty` walks through a `MemPartition` boundary.
+///
+/// After `AliasSplit` runs, the memory chain leading to a `Load[sp+4]`
+/// candidate contains a `MemPartition(Stack)` node between `InitialMemory`
+/// and the load.  Without the new arm the `_` catch-all treated `MemPartition`
+/// as an unknown producer and conservatively returned `dirty=true`, blocking
+/// the load from being registered as arg 0.  With the fix, the walk passes
+/// through to the single unified-memory predecessor (`InitialMemory`) and
+/// correctly returns `dirty=false`.
+#[test]
+fn function_arg_detect_walks_through_mempartition() -> Result<()> {
+    use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = sp32_vn();
+
+    // Build: load sp+4; return loaded — no stores, so the chain should be clean.
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    // Pipeline: ConstantFold → RedundantPhis → StackStoreDetect → AliasSplit
+    //           (inserts MemPartition + MemUnion) → FunctionArgDetect.
+    // After AliasSplit the Load's memory chain passes through a MemPartition
+    // node.  Without the fix, mem_chain_is_dirty treats MemPartition as
+    // unknown and returns dirty=true, suppressing arg registration.
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add(AliasSplit::new(sp));
+    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.run_built(&mut fg)?;
+
+    // AliasSplit must have inserted MemPartition.
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
+    assert_eq!(n_part, 1, "AliasSplit must insert exactly one MemPartition");
+
+    // FunctionArgDetect must have registered the load as arg 0.
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        !arg0_nodes.is_empty(),
+        "mem_chain_is_dirty must pass through MemPartition: Load[sp+4] should be registered as arg 0"
+    );
+    assert!(
+        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        "carrier for arg 0 must be a Load node"
+    );
+    Ok(())
+}
+
+/// `mem_chain_is_dirty` walks through a `MemUnion` to the Stack-partition input.
+///
+/// `MemUnion` merges N partition-typed edges back into unified memory.  The
+/// backward walk must identify the Stack-partition input (via
+/// `is_stack_partition_input`) and follow it, ignoring the other partitions.
+///
+/// Graph structure (manually wired after StackStoreDetect):
+///
+///   `InitialMemory → MemPartition(Stack) → MemUnion → Load[sp+4]`
+///
+/// The `MemUnion` has a single Stack-partition input (from `MemPartition`).
+/// The `Load`'s memory input is the `MemUnion` output (`Memory(None)`).
+/// Without the new arm the `_` catch-all returned dirty=true, blocking
+/// registration.  With the fix the walk routes through `MemUnion` to
+/// `MemPartition` and then to `InitialMemory`, confirming cleanliness.
+#[test]
+fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use strider_ir::{AliasClass};
+    use strider_ir::node::NodeOutputKind;
+
+    let sp = sp32_vn();
+
+    // Step 1: build a simple function with only a Load — no stores.
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    // Step 2: run ConstantFold + RedundantPhis so the graph is clean.
+    {
+        use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
+        let mut prep = OptimizerPipeline::new();
+        prep.add(ConstantFold);
+        prep.add(RedundantPhis);
+        prep.run_built(&mut fg)?;
+    }
+
+    // Step 3: manually wire MemPartition + MemUnion so the Load's memory
+    //         input passes through MemUnion rather than going directly to
+    //         InitialMemory.
+    //
+    //   Before:  InitialMemory → Load[sp+4]
+    //   After:   InitialMemory → MemPartition(Stack) → MemUnion → Load[sp+4]
+    {
+        let im_node = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+            .expect("InitialMemory must exist");
+        let load_node = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+            .expect("Load must exist");
+
+        let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
+
+        // Create a Stack partition.
+        let stack_part = fg.partitions_mut().create(AliasClass::Stack);
+
+        // Create MemPartition(stack_part) consuming InitialMemory output.
+        let part_node = fg.create_node_attributed(
+            NodeKind::MemPartition { partition: stack_part },
+            [im_out],
+            [NodeOutputKind::Memory(Some(stack_part))],
+            &[im_node],
+        );
+        let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
+
+        // Create MemUnion consuming the MemPartition output.
+        let union_node = fg.create_node_attributed(
+            NodeKind::MemUnion,
+            [part_out],
+            [NodeOutputKind::Memory(None)],
+            &[part_node],
+        );
+        let [union_out] = fg.node_outputs_exact::<1>(union_node).unwrap();
+
+        // Rewire the Load's memory input (slot 0) to consume MemUnion output.
+        let load_mem_input_id = fg.graph().node_input_id_at(load_node, 0).unwrap();
+        fg.graph_mut().update_input(load_mem_input_id, union_out);
+    }
+
+    // Step 4: confirm the graph validates before running the pass.
+    let entry = fg.entry().unwrap();
+    strider_ir::validate::validate(&fg, entry)
+        .expect("manually-wired graph must pass IR validation before FunctionArgDetect");
+
+    // Step 5: run FunctionArgDetect.  Without the MemUnion arm the walk
+    //         hits MemUnion's _ arm and returns dirty=true, suppressing
+    //         arg registration.  With the fix the walk routes through
+    //         MemUnion to MemPartition to InitialMemory, returning dirty=false.
+    let pass = FunctionArgDetect::new(vec![], sp, vec![4]);
+    pass.optimize(&mut fg, entry)?;
+
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        !arg0_nodes.is_empty(),
+        "mem_chain_is_dirty must pass through MemUnion to Stack-partition input: \
+         Load[sp+4] should be registered as arg 0"
+    );
+    assert!(
+        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        "carrier for arg 0 must be a Load node"
+    );
+    Ok(())
+}

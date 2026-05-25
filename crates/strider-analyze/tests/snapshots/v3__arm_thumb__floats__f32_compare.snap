@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -43,7 +44,7 @@ digraph "G" {
   "10" -> "5" [color="#88cc88", label=d1, fontcolor="#cccccc", fontsize=9];
   "10" [label="init\nd1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "9" [label="init\nd0", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "8" [label="arg[1] ← r1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "8" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "6" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "11" [label="If", shape=diamond, fillcolor="#3a2a10"];
   "v12" [label="if.true", shape=trapezium, fillcolor="#3a2a10"];
@@ -82,7 +83,7 @@ digraph "G" {
   "25" -> "23" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
   "26" -> "23" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
   "26" [label="const 0x1:u32", shape=ellipse, fillcolor="#2d2d2d"];
-  "25" [label="arg[0] ← r0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "25" [label="init\nr0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "19" [label="Or:bool", shape=box, fillcolor="#2d2d2d"];
   "27" -> "19" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "28" -> "19" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];

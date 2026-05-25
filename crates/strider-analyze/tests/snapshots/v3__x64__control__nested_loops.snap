@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -111,7 +112,7 @@ digraph "G" {
   "30" -> "40" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
   "41" -> "40" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
   "41" [label="const 0x0:u64", shape=ellipse, fillcolor="#2d2d2d"];
-  "27" [label="arg[2] ← RDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "27" [label="init\nRDX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "23" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "42" -> "23" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "42" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
@@ -145,7 +146,7 @@ digraph "G" {
   "19" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
   "52" -> "19" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "37" -> "19" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "52" [label="arg[0] ← EDI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "52" [label="init\nEDI", shape=Mdiamond, fillcolor="#1a3a5c"];
   "15" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
   "53" -> "15" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "54" -> "15" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
@@ -162,7 +163,7 @@ digraph "G" {
   "59" [label="const 0x0:u64", shape=ellipse, fillcolor="#2d2d2d"];
   "58" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "54" -> "58" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "53" [label="arg[1] ← ESI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "53" [label="init\nESI", shape=Mdiamond, fillcolor="#1a3a5c"];
   "10" [label="Or:bool", shape=box, fillcolor="#2d2d2d"];
   "60" -> "10" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "61" -> "10" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];

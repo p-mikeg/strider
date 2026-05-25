@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -50,10 +51,10 @@ digraph "G" {
   "v12" [label="Post Call\nXMM1", shape=box, fillcolor="#28102a", style="filled,dashed"];
   "1" -> "v12" [color="#888888", style=dashed];
   "v12" -> "8" [color="#88cc88", label=XMM1, fontcolor="#cccccc", fontsize=9];
-  "7" [label="arg[3] ← ECX", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "6" [label="arg[2] ← RDX", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "5" [label="arg[1] ← RSI", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "4" [label="arg[0] ← RDI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "7" [label="init\nECX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "6" [label="init\nRDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="init\nRSI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="init\nRDI", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="StackStore u64\n→ ram[sp - 8]", shape=box3d, fillcolor="#20182a"];
   "13" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "v14" [label="init\nRSP", shape=Mdiamond, fillcolor="#1a3a5c"];

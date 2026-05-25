@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -56,28 +57,28 @@ digraph "G" {
   "14" -> "13" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "14" [label="Truncate\nu64 → u16", shape=box, fillcolor="#2d2d2d"];
   "15" -> "14" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "15" [label="arg[3] ← RCX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "15" [label="init\nRCX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "6" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "16" -> "6" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "16" [label="SignExtend\nu16 → u32", shape=box, fillcolor="#2d2d2d"];
   "17" -> "16" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "17" [label="Truncate\nu64 → u16", shape=box, fillcolor="#2d2d2d"];
   "18" -> "17" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "18" [label="arg[2] ← RDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "18" [label="init\nRDX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "5" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "19" -> "5" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "19" [label="ZeroExtend\nu8 → u32", shape=box, fillcolor="#2d2d2d"];
   "20" -> "19" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "20" [label="Truncate\nu64 → u8", shape=box, fillcolor="#2d2d2d"];
   "21" -> "20" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "21" [label="arg[1] ← RSI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "21" [label="init\nRSI", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "22" -> "4" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "22" [label="SignExtend\nu8 → u32", shape=box, fillcolor="#2d2d2d"];
   "23" -> "22" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "23" [label="Truncate\nu64 → u8", shape=box, fillcolor="#2d2d2d"];
   "24" -> "23" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "24" [label="arg[0] ← RDI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "24" [label="init\nRDI", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="StackStore u64\n→ ram[sp - 8]", shape=box3d, fillcolor="#20182a"];
   "25" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "v26" [label="init\nRSP", shape=Mdiamond, fillcolor="#1a3a5c"];

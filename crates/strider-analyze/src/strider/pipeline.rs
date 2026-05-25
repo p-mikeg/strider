@@ -196,19 +196,13 @@ impl Strider {
         p.add(crate::opt::StackStoreDetect::from_convention(
             &self.calling_convention,
         ));
+        p.add(crate::opt::AliasSplit::from_convention(
+            &self.calling_convention,
+        ));
         p.add(crate::opt::StackLoadForward::from_convention(
             &self.calling_convention,
             &self.arch,
         ));
-        // NOTE: [`crate::opt::AliasSplit`] is NOT yet wired into the
-        // production pipeline.  Inserting it here breaks
-        // `FunctionArgDetect` / `CallStackArgCollect` / `StackLoadForward`
-        // — none of those passes walk through `MemPartition` /
-        // `MemUnion` boundaries yet.  The follow-up migrations teach
-        // those passes about partitions; once each migration lands,
-        // it becomes safe to enable AliasSplit here.  The pass itself
-        // ships now (with white-box tests) so the migrations have a
-        // stable target to integrate against.
         p.add_post_pass(crate::opt::CallStackArgCollect::from_convention(
             &self.calling_convention,
         ));
@@ -233,6 +227,9 @@ impl Strider {
     pub fn build_stable_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::stable_default_pipeline();
         p.add(crate::opt::StackStoreDetect::from_convention(
+            &self.calling_convention,
+        ));
+        p.add(crate::opt::AliasSplit::from_convention(
             &self.calling_convention,
         ));
         p.add(crate::opt::StackLoadForward::from_convention(

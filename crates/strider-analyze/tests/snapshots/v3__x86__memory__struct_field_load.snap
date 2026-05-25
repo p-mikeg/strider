@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -42,13 +43,20 @@ digraph "G" {
   "8" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
   "2" -> "8" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "9" -> "8" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
-  "9" [label="arg[0] ← ram[sp + 4]", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "9" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "2" -> "9" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "10" -> "9" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "10" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "11" -> "10" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "11" [label="const 0x4:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "12" -> "10" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "12" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "7" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
   "2" -> "7" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "10" -> "7" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
-  "10" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "9" -> "10" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "11" -> "10" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "11" [label="const 0x4:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "13" -> "7" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "13" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "9" -> "13" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "14" -> "13" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "14" [label="const 0x4:u32", shape=ellipse, fillcolor="#2d2d2d"];
 }

@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -74,7 +75,7 @@ digraph "G" {
   "28" -> "23" [color="#88cc88", label=q1, fontcolor="#cccccc", fontsize=9];
   "28" [label="init\nq1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "27" [label="init\nq0", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "26" [label="arg[1] ← x1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "26" [label="init\nx1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "25" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "29" -> "25" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "29" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
@@ -125,8 +126,8 @@ digraph "G" {
   "50" [label="const 0x7:u32", shape=ellipse, fillcolor="#2d2d2d"];
   "49" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "51" -> "49" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "51" [label="arg[0] ← x0", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "40" [label="arg[2] ← x2", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "51" [label="init\nx0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "40" [label="init\nx2", shape=Mdiamond, fillcolor="#1a3a5c"];
   "39" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "52" -> "39" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "52" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];

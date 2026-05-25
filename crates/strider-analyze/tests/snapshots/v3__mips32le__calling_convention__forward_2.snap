@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -50,8 +51,8 @@ digraph "G" {
   "v11" [label="Post Call\nf2", shape=box, fillcolor="#28102a", style="filled,dashed"];
   "1" -> "v11" [color="#888888", style=dashed];
   "v11" -> "7" [color="#88cc88", label=f2, fontcolor="#cccccc", fontsize=9];
-  "5" [label="arg[1] ← a1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "4" [label="arg[0] ← a0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="init\na1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="init\na0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "12" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "13" -> "2" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];

@@ -15,45 +15,45 @@ aarch64:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
     Extend(ZeroExtend): 2
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 1
     IntBinaryOp(ShiftRight): 1
     IntCmpOp(Equal): 2
     IntConst: 4
+    Region: 1
     Return: 2
     Truncate: 4
     VarPhi: 2
 aarch64be:
   status: OK
-  reachable_nodes: 31
+  reachable_nodes: 33
   regions: 1
   edges_control: 4
-  edges_memory: 9
+  edges_memory: 11
   edges_value: 36
   var_phis: 0
   mem_phis: 1
   value_phis: 5
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
     Extend(ZeroExtend): 1
-    FunctionArg: 2
     If: 1
     InitialMemory: 1
-    InitialVar: 3
+    InitialVar: 5
     IntBinaryOp(Add): 3
     IntCmpOp(Sless): 1
     IntConst: 3
     Load: 1
+    MemPartition: 1
     MemPhi: 1
+    MemUnion: 1
+    Region: 1
     Return: 1
     StackStore: 5
     Truncate: 1
@@ -71,42 +71,42 @@ arm:
   stack_store_phis: 0
   kind_histogram:
     CastToInt: 2
-    Region: 1
     Entry: 1
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 2
     IntCmpOp(Sborrow): 1
     IntCmpOp(Sless): 1
     IntConst: 2
+    Region: 1
     Return: 2
     VarPhi: 2
 arm_be:
   status: OK
-  reachable_nodes: 28
+  reachable_nodes: 30
   regions: 1
   edges_control: 4
-  edges_memory: 9
+  edges_memory: 11
   edges_value: 34
   var_phis: 0
   mem_phis: 1
   value_phis: 5
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
-    FunctionArg: 1
     If: 1
     InitialMemory: 1
-    InitialVar: 3
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Sless): 1
     IntConst: 3
     Load: 1
+    MemPartition: 1
     MemPhi: 1
+    MemUnion: 1
+    Region: 1
     Return: 1
     StackStore: 5
     ValuePhi: 5
@@ -123,17 +123,16 @@ arm_thumb:
   stack_store_phis: 0
   kind_histogram:
     CastToInt: 2
-    Region: 1
     Entry: 1
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 2
     IntCmpOp(Sborrow): 1
     IntCmpOp(Sless): 1
     IntConst: 2
+    Region: 1
     Return: 2
     VarPhi: 2
 mips32be:
@@ -148,16 +147,15 @@ mips32be:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 3
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
+    Region: 1
     Return: 2
     VarPhi: 2
 mips32le:
@@ -172,16 +170,15 @@ mips32le:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 3
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
+    Region: 1
     Return: 2
     VarPhi: 2
 mips64be:
@@ -196,17 +193,16 @@ mips64be:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
     Extend(SignExtend): 3
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 3
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
+    Region: 1
     Return: 2
     Truncate: 3
     VarPhi: 2
@@ -222,26 +218,25 @@ mips64le:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
     Extend(SignExtend): 3
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 3
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 2
+    Region: 1
     Return: 2
     Truncate: 3
     VarPhi: 2
 ppc32be:
   status: OK
-  reachable_nodes: 51
+  reachable_nodes: 53
   regions: 1
   edges_control: 4
-  edges_memory: 11
+  edges_memory: 13
   edges_value: 64
   var_phis: 0
   mem_phis: 1
@@ -250,12 +245,10 @@ ppc32be:
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
-    Region: 1
     Entry: 1
-    FunctionArg: 2
     If: 1
     InitialMemory: 1
-    InitialVar: 5
+    InitialVar: 7
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -265,16 +258,19 @@ ppc32be:
     IntCmpOp(Sless): 2
     IntConst: 6
     Load: 1
+    MemPartition: 1
     MemPhi: 1
+    MemUnion: 1
+    Region: 1
     Return: 1
     StackStore: 7
     ValuePhi: 5
 ppc32le:
   status: OK
-  reachable_nodes: 50
+  reachable_nodes: 52
   regions: 1
   edges_control: 4
-  edges_memory: 11
+  edges_memory: 13
   edges_value: 64
   var_phis: 0
   mem_phis: 1
@@ -283,12 +279,10 @@ ppc32le:
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
-    Region: 1
     Entry: 1
-    FunctionArg: 1
     If: 1
     InitialMemory: 1
-    InitialVar: 5
+    InitialVar: 6
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -298,16 +292,19 @@ ppc32le:
     IntCmpOp(Sless): 2
     IntConst: 6
     Load: 1
+    MemPartition: 1
     MemPhi: 1
+    MemUnion: 1
+    Region: 1
     Return: 1
     StackStore: 7
     ValuePhi: 5
 ppc64be:
   status: OK
-  reachable_nodes: 57
+  reachable_nodes: 59
   regions: 1
   edges_control: 4
-  edges_memory: 9
+  edges_memory: 11
   edges_value: 70
   var_phis: 0
   mem_phis: 1
@@ -316,14 +313,12 @@ ppc64be:
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
-    Region: 1
     Entry: 1
     Extend(SignExtend): 3
     Extend(ZeroExtend): 4
-    FunctionArg: 1
     If: 1
     InitialMemory: 1
-    InitialVar: 4
+    InitialVar: 5
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -333,17 +328,20 @@ ppc64be:
     IntCmpOp(Sless): 2
     IntConst: 6
     Load: 1
+    MemPartition: 1
     MemPhi: 1
+    MemUnion: 1
+    Region: 1
     Return: 1
     StackStore: 5
     Truncate: 3
     ValuePhi: 5
 ppc64le:
   status: OK
-  reachable_nodes: 58
+  reachable_nodes: 60
   regions: 1
   edges_control: 4
-  edges_memory: 10
+  edges_memory: 12
   edges_value: 72
   var_phis: 0
   mem_phis: 1
@@ -352,14 +350,12 @@ ppc64le:
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
-    Region: 1
     Entry: 1
     Extend(SignExtend): 3
     Extend(ZeroExtend): 4
-    FunctionArg: 1
     If: 1
     InitialMemory: 1
-    InitialVar: 4
+    InitialVar: 5
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -369,7 +365,10 @@ ppc64le:
     IntCmpOp(Sless): 2
     IntConst: 6
     Load: 1
+    MemPartition: 1
     MemPhi: 1
+    MemUnion: 1
+    Region: 1
     Return: 1
     StackStore: 6
     Truncate: 3
@@ -386,69 +385,65 @@ x64:
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
     Extend(ZeroExtend): 3
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 3
+    Region: 1
     Return: 2
     Truncate: 4
     VarPhi: 2
 x86:
   status: OK
-  reachable_nodes: 32
-  regions: 2
-  edges_control: 7
-  edges_memory: 3
-  edges_value: 34
-  var_phis: 5
-  mem_phis: 0
-  value_phis: 0
-  stack_store_phis: 0
-  kind_histogram:
-    Region: 2
-    Entry: 1
-    FunctionArg: 1
-    If: 2
-    InitialMemory: 1
-    InitialVar: 6
-    IntBinaryOp(Add): 4
-    IntCmpOp(Equal): 1
-    IntCmpOp(Sless): 1
-    IntConst: 3
-    IntUnaryOp(Neg): 2
-    Return: 1
-    StackStore: 2
-    VarPhi: 5
-x86_kernel:
-  status: OK
-  reachable_nodes: 30
+  reachable_nodes: 25
   regions: 1
   edges_control: 6
-  edges_memory: 4
-  edges_value: 34
-  var_phis: 3
+  edges_memory: 6
+  edges_value: 27
+  var_phis: 2
   mem_phis: 0
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
-    Region: 1
     Entry: 1
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 5
+    InitialVar: 3
     IntBinaryOp(Add): 4
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
     IntConst: 3
-    IntUnaryOp(Neg): 2
+    Load: 1
+    MemPartition: 1
+    MemUnion: 2
+    Region: 1
     Return: 2
-    StackStore: 2
-    VarPhi: 3
+    VarPhi: 2
+x86_kernel:
+  status: OK
+  reachable_nodes: 20
+  regions: 1
+  edges_control: 6
+  edges_memory: 2
+  edges_value: 24
+  var_phis: 2
+  mem_phis: 0
+  value_phis: 0
+  stack_store_phis: 0
+  kind_histogram:
+    Entry: 1
+    If: 2
+    InitialMemory: 1
+    InitialVar: 4
+    IntBinaryOp(Add): 3
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 1
+    IntConst: 2
+    Region: 1
+    Return: 2
+    VarPhi: 2

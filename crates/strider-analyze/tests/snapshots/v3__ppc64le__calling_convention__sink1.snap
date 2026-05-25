@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -35,16 +36,20 @@ digraph "G" {
   "6" -> "1" [color="#88cc88", label=f2, fontcolor="#cccccc", fontsize=9];
   "6" [label="init\nf2", shape=Mdiamond, fillcolor="#1a3a5c"];
   "5" [label="init\nf1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "4" [label="arg[1] ← r4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="init\nr4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "3" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "7" -> "3" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "7" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "8" -> "7" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "8" [label="arg[0] ← r3", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "2" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "8" [label="init\nr3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "2" [label="MemUnion", shape=trapezium, fillcolor="#3a1a4a"];
   "9" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v10" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v10" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "7" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "9" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "9" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
+  "10" -> "9" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v11" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v11" -> "9" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "7" -> "9" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "10" [label="MemPartition[MemPartitionId(0)]", shape=trapezium, fillcolor="#3a1a4a"];
+  "12" -> "10" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "12" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

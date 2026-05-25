@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -290,7 +291,7 @@ digraph "G" {
   "112" -> "107" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "112" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "113" -> "112" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "113" [label="arg[7] ← x7", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "113" [label="init\nx7", shape=Mdiamond, fillcolor="#1a3a5c"];
   "110" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "114" -> "110" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "115" -> "110" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
@@ -298,7 +299,7 @@ digraph "G" {
   "116" -> "110" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "116" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "117" -> "116" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "117" [label="arg[6] ← x6", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "117" [label="init\nx6", shape=Mdiamond, fillcolor="#1a3a5c"];
   "114" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "118" -> "114" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "119" -> "114" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
@@ -306,7 +307,7 @@ digraph "G" {
   "120" -> "114" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "120" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "121" -> "120" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "121" [label="arg[5] ← x5", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "121" [label="init\nx5", shape=Mdiamond, fillcolor="#1a3a5c"];
   "118" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "122" -> "118" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "123" -> "118" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
@@ -314,7 +315,7 @@ digraph "G" {
   "124" -> "118" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "124" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "125" -> "124" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "125" [label="arg[4] ← x4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "125" [label="init\nx4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "122" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "126" -> "122" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "127" -> "122" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
@@ -322,7 +323,7 @@ digraph "G" {
   "128" -> "122" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "128" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "129" -> "128" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "129" [label="arg[3] ← x3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "129" [label="init\nx3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "126" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "130" -> "126" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "131" -> "126" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
@@ -330,7 +331,7 @@ digraph "G" {
   "132" -> "126" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "132" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "133" -> "132" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "133" [label="arg[2] ← x2", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "133" [label="init\nx2", shape=Mdiamond, fillcolor="#1a3a5c"];
   "130" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "134" -> "130" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "135" -> "130" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
@@ -338,7 +339,7 @@ digraph "G" {
   "136" -> "130" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "136" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "137" -> "136" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "137" [label="arg[1] ← x1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "137" [label="init\nx1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "134" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "138" -> "134" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "139" -> "134" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
@@ -346,7 +347,7 @@ digraph "G" {
   "140" -> "134" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
   "140" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "141" -> "140" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "141" [label="arg[0] ← x0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "141" [label="init\nx0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "138" [label="StackStore u32\n→ ram[sp - 48]", shape=box3d, fillcolor="#20182a"];
   "142" -> "138" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "v143" [label="init\nsp", shape=Mdiamond, fillcolor="#1a3a5c"];

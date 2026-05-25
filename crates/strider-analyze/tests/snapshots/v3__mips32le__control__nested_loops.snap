@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -98,7 +99,7 @@ digraph "G" {
   "33" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
   "34" -> "33" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "26" -> "33" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "34" [label="arg[1] ← a1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "34" [label="init\na1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "25" [label="φ v1", shape=house, fillcolor="#163030"];
   "11" -> "25" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
   "24" -> "25" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
@@ -139,7 +140,7 @@ digraph "G" {
   "21" [label="Equal\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
   "46" -> "21" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "42" -> "21" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "46" [label="arg[0] ← a0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "46" [label="init\na0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "16" [label="Sless\nu32 → bool", shape=box, fillcolor="#2d2d2d"];
   "47" -> "16" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "47" [label="const 0x0:u32", shape=ellipse, fillcolor="#2d2d2d"];

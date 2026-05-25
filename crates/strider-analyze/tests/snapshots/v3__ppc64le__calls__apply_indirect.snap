@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -57,49 +58,53 @@ digraph "G" {
   "14" -> "5" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "14" [label="const 0x100000000000181a0:u64", shape=ellipse, fillcolor="#2d2d2d"];
   "13" [label="init\nr12", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "3" [label="arg[0] ← r3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "3" [label="init\nr3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "15" -> "4" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "15" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "16" -> "15" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "16" [label="arg[1] ← r4", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "2" [label="StackStore u64\n→ ram[sp - 40]", shape=box3d, fillcolor="#20182a"];
+  "16" [label="init\nr4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "2" [label="MemUnion", shape=trapezium, fillcolor="#3a1a4a"];
   "17" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v18" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v18" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "5" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "19" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "17" [label="StackStore u32\n→ ram[sp - 20]", shape=box3d, fillcolor="#20182a"];
-  "20" -> "17" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v21" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v21" -> "17" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "15" -> "17" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "20" [label="StackStore u64\n→ ram[sp - 16]", shape=box3d, fillcolor="#20182a"];
-  "22" -> "20" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v23" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v23" -> "20" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "3" -> "20" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "22" [label="StackStore u64\n→ ram[sp - 32]", shape=box3d, fillcolor="#20182a"];
-  "24" -> "22" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v25" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v25" -> "22" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "16" -> "22" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "24" [label="StackStore u64\n→ ram[sp - 64]", shape=box3d, fillcolor="#20182a"];
-  "26" -> "24" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v27" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v27" -> "24" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "19" -> "24" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "26" [label="StackStore u64\n→ ram[sp + 16]", shape=box3d, fillcolor="#20182a"];
-  "28" -> "26" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v29" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v29" -> "26" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "30" -> "26" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "30" [label="init\nLR", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "28" [label="StackStore u64\n→ ram[sp - 8]", shape=box3d, fillcolor="#20182a"];
-  "31" -> "28" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v32" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v32" -> "28" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "33" -> "28" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "33" [label="init\nr31", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "31" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "17" [label="StackStore u64\n→ ram[sp - 40]", shape=box3d, fillcolor="#20182a"];
+  "18" -> "17" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v19" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v19" -> "17" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "5" -> "17" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "20" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "18" [label="StackStore u32\n→ ram[sp - 20]", shape=box3d, fillcolor="#20182a"];
+  "21" -> "18" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v22" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v22" -> "18" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "15" -> "18" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "21" [label="StackStore u64\n→ ram[sp - 16]", shape=box3d, fillcolor="#20182a"];
+  "23" -> "21" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v24" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v24" -> "21" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "3" -> "21" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "23" [label="StackStore u64\n→ ram[sp - 32]", shape=box3d, fillcolor="#20182a"];
+  "25" -> "23" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v26" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v26" -> "23" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "16" -> "23" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "25" [label="StackStore u64\n→ ram[sp - 64]", shape=box3d, fillcolor="#20182a"];
+  "27" -> "25" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v28" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v28" -> "25" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "20" -> "25" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "27" [label="StackStore u64\n→ ram[sp + 16]", shape=box3d, fillcolor="#20182a"];
+  "29" -> "27" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v30" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v30" -> "27" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "31" -> "27" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "31" [label="init\nLR", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "29" [label="StackStore u64\n→ ram[sp - 8]", shape=box3d, fillcolor="#20182a"];
+  "32" -> "29" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v33" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v33" -> "29" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "34" -> "29" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "34" [label="init\nr31", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "32" [label="MemPartition[MemPartitionId(0)]", shape=trapezium, fillcolor="#3a1a4a"];
+  "35" -> "32" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "35" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

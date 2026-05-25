@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -74,12 +75,12 @@ digraph "G" {
   "25" -> "23" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "25" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "26" -> "25" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "26" [label="arg[0] ← r3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "26" [label="init\nr3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "21" [label="ShiftLeft:u64", shape=box, fillcolor="#2d2d2d"];
   "23" -> "21" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "27" -> "21" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "27" [label="const 0x2:u64", shape=ellipse, fillcolor="#2d2d2d"];
-  "17" [label="arg[1] ← r4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "17" [label="init\nr4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "13" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "28" -> "13" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "28" [label="φ Val", shape=house, fillcolor="#163030"];

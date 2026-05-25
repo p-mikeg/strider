@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -40,7 +41,7 @@ digraph "G" {
   "7" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
   "2" -> "7" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "8" -> "7" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
-  "8" [label="arg[5] ← x5", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "8" [label="init\nx5", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "3" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "9" -> "3" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
@@ -53,24 +54,24 @@ digraph "G" {
   "12" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
   "2" -> "12" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "13" -> "12" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
-  "13" [label="arg[4] ← x4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "13" [label="init\nx4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "11" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
   "14" -> "11" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "15" -> "11" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "15" [label="arg[3] ← w3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "15" [label="init\nw3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "14" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
   "16" -> "14" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "17" -> "14" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "17" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "18" -> "17" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "18" [label="arg[2] ← x2", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "18" [label="init\nx2", shape=Mdiamond, fillcolor="#1a3a5c"];
   "16" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
   "19" -> "16" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "20" -> "16" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "20" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "21" -> "20" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "21" [label="arg[1] ← x1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "21" [label="init\nx1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "19" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "22" -> "19" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "22" [label="arg[0] ← x0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "22" [label="init\nx0", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

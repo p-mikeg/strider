@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -35,34 +36,69 @@ digraph "G" {
   "6" -> "1" [color="#88cc88", label=XMM0, fontcolor="#cccccc", fontsize=9];
   "6" [label="init\nXMM0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "5" [label="init\nST0", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "4" [label="arg[1] ← EDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="init\nEDX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "3" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
   "7" -> "3" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "8" -> "3" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "8" [label="arg[7] ← ram[sp + 20]", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "8" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "9" -> "8" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "10" -> "8" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "10" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "11" -> "10" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "11" [label="const 0x14:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "12" -> "10" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "12" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "9" [label="MemPartition[MemPartitionId(0)]", shape=trapezium, fillcolor="#3a1a4a"];
+  "13" -> "9" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "13" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
   "7" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "9" -> "7" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "10" -> "7" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "10" [label="arg[6] ← ram[sp + 16]", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "9" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "11" -> "9" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "12" -> "9" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "12" [label="arg[5] ← ram[sp + 12]", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "11" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "13" -> "11" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "14" -> "11" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "14" [label="arg[4] ← ram[sp + 8]", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "13" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "15" -> "13" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "16" -> "13" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "16" [label="arg[3] ← ram[sp + 4]", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "15" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "17" -> "15" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "18" -> "15" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "18" [label="arg[2] ← ECX", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "17" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
-  "19" -> "17" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
-  "4" -> "17" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
-  "19" [label="arg[0] ← EAX", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "14" -> "7" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "15" -> "7" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "15" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "9" -> "15" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "16" -> "15" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "16" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "17" -> "16" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "17" [label="const 0x10:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "12" -> "16" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "14" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "18" -> "14" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "19" -> "14" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "19" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "9" -> "19" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "20" -> "19" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "20" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "21" -> "20" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "21" [label="const 0xc:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "12" -> "20" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "18" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "22" -> "18" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "23" -> "18" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "23" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "9" -> "23" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "24" -> "23" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "24" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "25" -> "24" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "25" [label="const 0x8:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "12" -> "24" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "22" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "26" -> "22" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "27" -> "22" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "27" [label="Load u32\n← ram", shape=box3d, fillcolor="#102030"];
+  "9" -> "27" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "28" -> "27" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
+  "28" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "29" -> "28" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "29" [label="const 0x4:u32", shape=ellipse, fillcolor="#2d2d2d"];
+  "12" -> "28" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "26" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "30" -> "26" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "31" -> "26" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "31" [label="init\nECX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "30" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
+  "32" -> "30" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
+  "4" -> "30" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
+  "32" [label="init\nEAX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "2" [label="MemUnion", shape=trapezium, fillcolor="#3a1a4a"];
+  "13" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
 }

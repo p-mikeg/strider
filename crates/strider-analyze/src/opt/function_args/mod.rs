@@ -41,6 +41,7 @@ use crate::opt::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_stack_store,
     step_through_stack_store_phi, step_through_store,
 };
+use crate::opt::stack_load_forward::is_stack_partition_input;
 use crate::opt::worklist::seeded_kind;
 
 /// Detects register-passed and stack-passed argument reads and records their
@@ -538,6 +539,32 @@ fn mem_chain_is_dirty(
                         }
                     }
                     Ok(StepResult::Continue(inputs[1]))
+                }
+                NodeKind::MemPartition { .. } => {
+                    // MemPartition: synthetic boundary tagging a unified
+                    // memory edge with a single partition.  Pass through to
+                    // the single unified-memory predecessor (input 0).
+                    let inputs = graph.node_inputs(node);
+                    if inputs.is_empty() {
+                        // Malformed node — conservatively dirty.
+                        return Ok(StepResult::Verdict(true));
+                    }
+                    Ok(StepResult::Continue(inputs[0]))
+                }
+                NodeKind::MemUnion => {
+                    // MemUnion merges N partition-typed edges back into a
+                    // single unified memory edge.  Only the Stack-partition
+                    // input is relevant for the shadow walk; follow it and
+                    // ignore the rest.  If no Stack-partition input exists
+                    // the chain is opaque — conservatively dirty.
+                    let inputs = graph.node_inputs(node);
+                    match inputs
+                        .iter()
+                        .find(|&inp| is_stack_partition_input(graph, inp))
+                    {
+                        Some(stack_input) => Ok(StepResult::Continue(stack_input)),
+                        None => Ok(StepResult::Verdict(true)),
+                    }
                 }
                 _ => {
                     // Unknown memory-producing node: be conservative.

@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v2_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -35,7 +36,7 @@ digraph "G" {
   "6" -> "1" [color="#88cc88", label=XMM1, fontcolor="#cccccc", fontsize=9];
   "6" [label="init\nXMM1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "5" [label="init\nXMM0", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "4" [label="arg[2] ← RDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="init\nRDX", shape=Mdiamond, fillcolor="#1a3a5c"];
   "3" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "7" -> "3" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "7" [label="Add:u32", shape=box, fillcolor="#2d2d2d"];
@@ -43,7 +44,7 @@ digraph "G" {
   "9" -> "7" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "9" [label="Neg\nu32 → u32", shape=box, fillcolor="#2d2d2d"];
   "10" -> "9" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "10" [label="arg[1] ← ESI", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "8" [label="arg[0] ← EDI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "10" [label="init\nESI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "8" [label="init\nEDI", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

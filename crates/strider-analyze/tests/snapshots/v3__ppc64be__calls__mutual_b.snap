@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -56,7 +57,7 @@ digraph "G" {
   "16" [label="const 0x100102b4:u64", shape=ellipse, fillcolor="#2d2d2d"];
   "17" -> "6" [color="#ff8800", label=arg0, fontcolor="#cccccc", fontsize=9];
   "18" -> "6" [color="#ff8800", label=arg1, fontcolor="#cccccc", fontsize=9];
-  "18" [label="arg[1] ← r4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "18" [label="init\nr4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "17" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "19" -> "17" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "19" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
@@ -69,7 +70,7 @@ digraph "G" {
   "23" -> "21" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "23" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "24" -> "23" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "24" [label="arg[0] ← r3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "24" [label="init\nr3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "15" [label="StackStore u32\n→ ram[sp - 12]", shape=box3d, fillcolor="#20182a"];
   "25" -> "15" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "v26" [label="init\nr1", shape=Mdiamond, fillcolor="#1a3a5c"];

@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -61,7 +62,7 @@ digraph "G" {
   "20" -> "19" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "20" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "21" -> "20" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "21" [label="arg[0] ← r3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "21" [label="init\nr3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "18" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "22" -> "18" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "22" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
@@ -73,7 +74,7 @@ digraph "G" {
   "25" -> "24" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "25" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "26" -> "25" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "26" [label="arg[1] ← r4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "26" [label="init\nr4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "17" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "27" -> "17" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "27" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];

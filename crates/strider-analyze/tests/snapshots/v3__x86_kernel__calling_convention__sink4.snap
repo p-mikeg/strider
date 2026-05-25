@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -35,13 +36,17 @@ digraph "G" {
   "6" -> "1" [color="#88cc88", label=XMM0, fontcolor="#cccccc", fontsize=9];
   "6" [label="init\nXMM0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "5" [label="init\nST0", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "4" [label="arg[1] ← EDX", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "3" [label="arg[0] ← EAX", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "2" [label="StackStore u32\n→ ram[sp - 4]", shape=box3d, fillcolor="#20182a"];
+  "4" [label="init\nEDX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "3" [label="init\nEAX", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "2" [label="MemUnion", shape=trapezium, fillcolor="#3a1a4a"];
   "7" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
-  "v8" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "v8" -> "2" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
-  "9" -> "2" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "9" [label="init\nESI", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "7" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "7" [label="StackStore u32\n→ ram[sp - 4]", shape=box3d, fillcolor="#20182a"];
+  "8" -> "7" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "v9" [label="init\nESP", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "v9" -> "7" [color="#cc88ff", label=sp, fontcolor="#cccccc", fontsize=9];
+  "10" -> "7" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
+  "10" [label="init\nESI", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "8" [label="MemPartition[MemPartitionId(0)]", shape=trapezium, fillcolor="#3a1a4a"];
+  "11" -> "8" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
+  "11" [label="InitialMemory", shape=Mdiamond, fillcolor="#1a3a5c"];
 }

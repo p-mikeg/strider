@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -85,7 +86,7 @@ digraph "G" {
   "27" [label="const 0xffff:u32", shape=ellipse, fillcolor="#2d2d2d"];
   "26" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "28" -> "26" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "28" [label="arg[3] ← x3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "28" [label="init\nx3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "6" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "29" -> "6" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "29" [label="SignExtend\nu16 → u32", shape=box, fillcolor="#2d2d2d"];
@@ -94,7 +95,7 @@ digraph "G" {
   "31" -> "30" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "31" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "32" -> "31" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "32" [label="arg[2] ← x2", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "32" [label="init\nx2", shape=Mdiamond, fillcolor="#1a3a5c"];
   "5" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "33" -> "5" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "33" [label="And:u32", shape=box, fillcolor="#2d2d2d"];
@@ -103,7 +104,7 @@ digraph "G" {
   "35" [label="const 0xff:u32", shape=ellipse, fillcolor="#2d2d2d"];
   "34" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "36" -> "34" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "36" [label="arg[1] ← x1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "36" [label="init\nx1", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="ZeroExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "37" -> "4" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "37" [label="SignExtend\nu8 → u32", shape=box, fillcolor="#2d2d2d"];
@@ -112,7 +113,7 @@ digraph "G" {
   "39" -> "38" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "39" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
   "40" -> "39" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "40" [label="arg[0] ← x0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "40" [label="init\nx0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "41" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "42" -> "2" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];

@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -66,10 +67,10 @@ digraph "G" {
   "1" -> "v19" [color="#888888", style=dashed];
   "v19" -> "18" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "8" [label="init\nra", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "7" [label="arg[3] ← a3_lo", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "6" [label="arg[2] ← a2_lo", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "5" [label="arg[1] ← a1_lo", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "4" [label="arg[0] ← a0_lo", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "7" [label="init\na3_lo", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "6" [label="init\na2_lo", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "5" [label="init\na1_lo", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "4" [label="init\na0_lo", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "20" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "21" -> "2" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];

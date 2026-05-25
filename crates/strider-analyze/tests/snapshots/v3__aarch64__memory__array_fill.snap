@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -66,8 +67,8 @@ digraph "G" {
   "17" -> "20" [color="#4488ff", label=lhs, fontcolor="#cccccc", fontsize=9];
   "21" -> "20" [color="#ff4444", label=rhs, fontcolor="#cccccc", fontsize=9];
   "21" [label="const 0x2:u64", shape=ellipse, fillcolor="#2d2d2d"];
-  "17" [label="arg[1] ← x1", shape=Mdiamond, fillcolor="#1a3a5c"];
-  "19" [label="arg[0] ← x0", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "17" [label="init\nx1", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "19" [label="init\nx0", shape=Mdiamond, fillcolor="#1a3a5c"];
   "13" [label="φ x0", shape=house, fillcolor="#163030"];
   "10" -> "13" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
   "19" -> "13" [color="#dddddd", label=in, fontcolor="#cccccc", fontsize=9];
@@ -88,7 +89,7 @@ digraph "G" {
   "27" -> "26" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "23" -> "26" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
   "28" -> "26" [color="#ff8800", label=data, fontcolor="#cccccc", fontsize=9];
-  "28" [label="arg[2] ← w2", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "28" [label="init\nw2", shape=Mdiamond, fillcolor="#1a3a5c"];
   "27" [label="φ Mem", shape=house, fillcolor="#163030"];
   "5" -> "27" [color="#dddddd", label=phi, fontcolor="#cccccc", fontsize=9];
   "26" -> "27" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];

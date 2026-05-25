@@ -1,5 +1,6 @@
 ---
-source: crates/strider/tests/v3_baseline.rs
+source: crates/strider-analyze/tests/v3_baseline.rs
+assertion_line: 177
 expression: snapshot_body
 ---
 digraph "G" {
@@ -104,7 +105,7 @@ digraph "G" {
   "35" -> "34" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "35" [label="Truncate\nu64 → u16", shape=box, fillcolor="#2d2d2d"];
   "36" -> "35" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "36" [label="arg[3] ← r6", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "36" [label="init\nr6", shape=Mdiamond, fillcolor="#1a3a5c"];
   "6" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "37" -> "6" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "37" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
@@ -113,7 +114,7 @@ digraph "G" {
   "39" -> "38" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "39" [label="Truncate\nu64 → u16", shape=box, fillcolor="#2d2d2d"];
   "40" -> "39" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "40" [label="arg[2] ← r5", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "40" [label="init\nr5", shape=Mdiamond, fillcolor="#1a3a5c"];
   "5" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "41" -> "5" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "41" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
@@ -122,7 +123,7 @@ digraph "G" {
   "43" -> "42" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "43" [label="Truncate\nu64 → u8", shape=box, fillcolor="#2d2d2d"];
   "44" -> "43" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "44" [label="arg[1] ← r4", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "44" [label="init\nr4", shape=Mdiamond, fillcolor="#1a3a5c"];
   "4" [label="SignExtend\nu32 → u64", shape=box, fillcolor="#2d2d2d"];
   "45" -> "4" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "45" [label="Truncate\nu64 → u32", shape=box, fillcolor="#2d2d2d"];
@@ -131,7 +132,7 @@ digraph "G" {
   "47" -> "46" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
   "47" [label="Truncate\nu64 → u8", shape=box, fillcolor="#2d2d2d"];
   "48" -> "47" [color="#88cc88", label=val, fontcolor="#cccccc", fontsize=9];
-  "48" [label="arg[0] ← r3", shape=Mdiamond, fillcolor="#1a3a5c"];
+  "48" [label="init\nr3", shape=Mdiamond, fillcolor="#1a3a5c"];
   "2" [label="Store u32\n→ ram", shape=box3d, fillcolor="#102030"];
   "49" -> "2" [color="#cc88aa", label=mem, fontcolor="#cccccc", fontsize=9];
   "50" -> "2" [color="#cc88ff", label=addr, fontcolor="#cccccc", fontsize=9];
