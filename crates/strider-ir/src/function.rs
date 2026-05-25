@@ -70,6 +70,12 @@ pub struct Function {
     /// Populated by `FunctionArgDetect`; empty until that pass runs.
     arg_index_to_nodes: FxHashMap<u32, Vec<NodeId>>,
 
+    /// Stack offset for Store/Load nodes whose address decomposes to
+    /// `sp + K` for a single concrete `K`.  Populated by the
+    /// `AliasSplit` classifier.  The phi-of-offsets case (address is a
+    /// phi of different constants per branch) is not recorded — consumers
+    /// can re-decompose via `decompose_sp` if needed.
+    stack_offsets: SecondaryMap<NodeId, Option<i64>>,
 }
 
 impl std::ops::Deref for Function {
@@ -111,6 +117,7 @@ impl Function {
             call_clobbered_overrides: SecondaryMap::new(),
             phi_var_tag: SecondaryMap::new(),
             arg_index_to_nodes: FxHashMap::default(),
+            stack_offsets: SecondaryMap::new(),
         }
     }
 
@@ -283,6 +290,31 @@ impl Function {
         self.arg_index_to_nodes.keys().copied()
     }
 
+    // ── stack_offsets accessors ───────────────────────────────────────────
+
+    /// Returns the stack offset recorded for a Store/Load node, or `None`
+    /// if the node has no recorded offset (non-stack node, or a phi-of-
+    /// offsets address whose single concrete offset cannot be named).
+    #[must_use]
+    #[inline]
+    pub fn stack_offset(&self, id: NodeId) -> Option<i64> {
+        self.stack_offsets[id]
+    }
+
+    /// Records a concrete stack offset for a Store/Load node.
+    #[inline]
+    pub fn set_stack_offset(&mut self, id: NodeId, offset: i64) {
+        self.stack_offsets[id] = Some(offset);
+    }
+
+    /// Iterates over all `(NodeId, offset)` pairs in the side-table.
+    #[inline]
+    pub fn stack_offsets(&self) -> impl Iterator<Item = (NodeId, i64)> + '_ {
+        self.stack_offsets
+            .iter()
+            .filter_map(|(id, o)| o.map(|off| (id, off)))
+    }
+
     /// Returns the asm-instruction-address fingerprint of `node_id` as a
     /// sorted-deduplicated slice.  Returns an empty slice when no
     /// contributors have been recorded.
@@ -414,12 +446,13 @@ impl Function {
             )
         })?;
         self.entry = Some(new_entry);
-        // Remap the four NodeId-keyed overlay tables through the
+        // Remap the NodeId-keyed overlay tables through the
         // old→new translation table produced by `retain_reachable`.
         self.call_other_names.remap_node_keyed(&remap);
         self.asm_fingerprints.remap_node_keyed(&remap);
         self.call_clobbered_overrides.remap_node_keyed(&remap);
         self.phi_var_tag.remap_node_keyed(&remap);
+        self.stack_offsets.remap_node_keyed(&remap);
         Ok(remap)
     }
 

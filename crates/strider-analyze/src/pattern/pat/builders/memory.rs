@@ -13,6 +13,27 @@ use strider_ir::node::NodeKind;
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat};
 
+// ── StackOffsetFilter ─────────────────────────────────────────────────────────
+
+/// Filter applied at match time by looking up `Function::stack_offset`
+/// on the matched node (O(1) — no re-decomposition of the address).
+#[derive(Clone, Debug)]
+enum StackOffsetFilter {
+    /// Match exactly one concrete offset.
+    Exact(i64),
+    /// Match any offset in the provided set.
+    Set(Vec<i64>),
+}
+
+impl StackOffsetFilter {
+    fn matches(&self, offset: i64) -> bool {
+        match self {
+            Self::Exact(k) => offset == *k,
+            Self::Set(ks) => ks.contains(&offset),
+        }
+    }
+}
+
 // ── LoadPat ───────────────────────────────────────────────────────────────────
 
 /// Builder for `Load` node patterns.  Created by [`crate::pattern::pat::load`].
@@ -26,11 +47,18 @@ pub struct LoadPat {
     addr: Option<Pat>,
     mem_in: Option<Pat>,
     bit_width: Option<u32>,
+    stack_offset_filter: Option<StackOffsetFilter>,
 }
 
 impl LoadPat {
     pub(crate) fn new() -> Self {
-        Self { space: None, addr: None, mem_in: None, bit_width: None }
+        Self {
+            space: None,
+            addr: None,
+            mem_in: None,
+            bit_width: None,
+            stack_offset_filter: None,
+        }
     }
     /// Restrict the match to loads in address space `s`.
     #[must_use]
@@ -58,11 +86,29 @@ impl LoadPat {
         self.bit_width = Some(n);
         self
     }
+    /// Restrict the match to loads whose address decomposes to exactly
+    /// `sp + k`.  Reads `Function::stack_offset` in O(1) — no
+    /// per-match address re-decomposition.
+    ///
+    /// Requires that `AliasSplit` has run before the matcher is invoked
+    /// (the side-table is populated by that pass).
+    #[must_use]
+    pub fn stack_offset(mut self, k: i64) -> Self {
+        self.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
+        self
+    }
+    /// Restrict the match to loads whose address decomposes to `sp + k`
+    /// for some `k` in `ks`.  Reads `Function::stack_offset` in O(1).
+    #[must_use]
+    pub fn stack_offset_any(mut self, ks: impl Into<Vec<i64>>) -> Self {
+        self.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
+        self
+    }
 }
 
 impl From<LoadPat> for Pat {
     fn from(b: LoadPat) -> Pat {
-        let LoadPat { space, addr, mem_in, bit_width } = b;
+        let LoadPat { space, addr, mem_in, bit_width, stack_offset_filter } = b;
         // Load inputs = [mem(0), addr(1)]; outputs = [value(0)] (single output).
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
         if let Some(p) = mem_in {
@@ -80,18 +126,34 @@ impl From<LoadPat> for Pat {
         };
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
-        // Bit-width post-match: `outputs[0]` is the value (Load is a
-        // single-output node — see node_signature::expected_signature).
-        if let Some(want) = bit_width {
+        // Combined post-match closure: bit_width AND stack_offset checks.
+        // `with_post_match` replaces the existing closure (single slot),
+        // so both checks must live in one callback.
+        if bit_width.is_some() || stack_offset_filter.is_some() {
+            let want_width = bit_width;
+            let off_filter = stack_offset_filter;
             pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
-                let outs = ctx.graph.node_outputs(node);
-                let Some(&value_out) = outs.first() else {
-                    return false;
-                };
-                let Some(ty) = ctx.graph.output_kind(value_out).as_value() else {
-                    return false;
-                };
-                ty.bit_width() == want as usize
+                if let Some(want) = want_width {
+                    let outs = ctx.graph.node_outputs(node);
+                    let Some(&value_out) = outs.first() else {
+                        return false;
+                    };
+                    let Some(ty) = ctx.graph.output_kind(value_out).as_value() else {
+                        return false;
+                    };
+                    if ty.bit_width() != want as usize {
+                        return false;
+                    }
+                }
+                if let Some(ref f) = off_filter {
+                    let Some(offset) = ctx.graph.stack_offset(node) else {
+                        return false;
+                    };
+                    if !f.matches(offset) {
+                        return false;
+                    }
+                }
+                true
             }));
         }
 
@@ -109,6 +171,7 @@ pub struct StorePat {
     mem_in: Option<Pat>,
     next_mem: Option<Pat>,
     bit_width: Option<u32>,
+    stack_offset_filter: Option<StackOffsetFilter>,
 }
 
 impl StorePat {
@@ -120,6 +183,7 @@ impl StorePat {
             mem_in: None,
             next_mem: None,
             bit_width: None,
+            stack_offset_filter: None,
         }
     }
     /// Restrict the match to stores in address space `s`.
@@ -159,6 +223,24 @@ impl StorePat {
         self.bit_width = Some(n);
         self
     }
+    /// Restrict the match to stores whose address decomposes to exactly
+    /// `sp + k`.  Reads `Function::stack_offset` in O(1) — no
+    /// per-match address re-decomposition.
+    ///
+    /// Requires that `AliasSplit` has run before the matcher is invoked
+    /// (the side-table is populated by that pass).
+    #[must_use]
+    pub fn stack_offset(mut self, k: i64) -> Self {
+        self.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
+        self
+    }
+    /// Restrict the match to stores whose address decomposes to `sp + k`
+    /// for some `k` in `ks`.  Reads `Function::stack_offset` in O(1).
+    #[must_use]
+    pub fn stack_offset_any(mut self, ks: impl Into<Vec<i64>>) -> Self {
+        self.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
+        self
+    }
 }
 
 impl From<StorePat> for Pat {
@@ -170,6 +252,7 @@ impl From<StorePat> for Pat {
             mem_in,
             next_mem,
             bit_width,
+            stack_offset_filter,
         } = b;
         // Store inputs = [mem(0), addr(1), data(2)]; outputs = [mem(0)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
@@ -191,12 +274,13 @@ impl From<StorePat> for Pat {
         };
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
-        // Combined post-match closure: bit_width AND next_mem checks.
-        // `with_post_match` replaces the existing closure (single slot),
-        // so both checks must live in one callback.
-        if bit_width.is_some() || next_mem.is_some() {
+        // Combined post-match closure: bit_width, next_mem, and
+        // stack_offset checks.  `with_post_match` replaces the existing
+        // closure (single slot), so all checks must live in one callback.
+        if bit_width.is_some() || next_mem.is_some() || stack_offset_filter.is_some() {
             let want_width = bit_width;
             let next_mem_pat = next_mem;
+            let off_filter = stack_offset_filter;
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(w) = want_width {
                     // Store's data input is at `inputs[2]`; its producer's
@@ -217,6 +301,14 @@ impl From<StorePat> for Pat {
                 {
                     return false;
                 }
+                if let Some(ref f) = off_filter {
+                    let Some(offset) = ctx.graph.stack_offset(node) else {
+                        return false;
+                    };
+                    if !f.matches(offset) {
+                        return false;
+                    }
+                }
                 true
             }));
         }
@@ -224,4 +316,3 @@ impl From<StorePat> for Pat {
         pat.into_pat()
     }
 }
-

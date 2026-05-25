@@ -135,13 +135,23 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::Load(space) => {
                 let space = self.pretty_vnspace(*space);
                 let ty = self.out_type_suffix(node, " ");
-                format!("Load{ty}\n← {space}")
+                let base = format!("Load{ty}\n← {space}");
+                match self.function.stack_offset(node) {
+                    Some(k) if k < 0 => format!("[sp-{}]\n{base}", -k),
+                    Some(k) => format!("[sp+{k}]\n{base}"),
+                    None => base,
+                }
             }
             NodeKind::Store(space) => {
                 let space = self.pretty_vnspace(*space);
                 // data is input 2; memory and addr are 0 and 1
                 let ty = self.input_type_suffix(node, 2, " ");
-                format!("Store{ty}\n→ {space}")
+                let base = format!("Store{ty}\n→ {space}");
+                match self.function.stack_offset(node) {
+                    Some(k) if k < 0 => format!("[sp-{}]\n{base}", -k),
+                    Some(k) => format!("[sp+{k}]\n{base}"),
+                    None => base,
+                }
             }
             // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => {

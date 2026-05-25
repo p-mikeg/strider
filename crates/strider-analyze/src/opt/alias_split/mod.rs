@@ -85,7 +85,7 @@ use strider_target::call_other_abi::{CallOtherClass, classify};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use crate::opt::sp_expr::{SpExprMemo, decompose_sp};
+use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 
 /// Per-call default clobber set: a bare `Call` clobbers `[Heap,
 /// Unknown]` so the Stack chain flows through it.  Future calling-
@@ -223,7 +223,18 @@ impl Optimizer for AliasSplit {
 
         // Build per-partition chains.  Returns Changed iff at least one
         // boundary was inserted.
-        build_forked_chains(function, chain_root_out, initial_memory, &classified)
+        let result =
+            build_forked_chains(function, chain_root_out, initial_memory, &classified)?;
+
+        // Populate Function::stack_offsets for every Store/Load whose
+        // address decomposed to a single concrete sp+K.  Done after the
+        // chain rewrite so AliasSplit's structural changes don't race
+        // with the side-table writes.
+        for (node, offset) in &classified.concrete_stack_offsets {
+            function.set_stack_offset(*node, *offset);
+        }
+
+        Ok(result)
     }
 }
 
@@ -257,6 +268,12 @@ struct Classified {
     /// (i.e. reachable from `entry`).  Drives the topological walk in
     /// [`build_forked_chains`].
     mem_chain_consumers: Vec<NodeId>,
+    /// Concrete stack offsets for Store/Load nodes whose address
+    /// decomposes to `sp + K` (single Terminal).  Phi-of-offsets
+    /// addresses are not recorded.  Applied to
+    /// `Function::stack_offsets` by the `optimize` driver after
+    /// `build_forked_chains` runs.
+    concrete_stack_offsets: Vec<(NodeId, i64)>,
 }
 
 /// Walk the function once and classify every memory-touching node.
@@ -269,20 +286,27 @@ fn classify_all(
     let mut addr_class: FxHashMap<NodeId, AliasClass> = FxHashMap::default();
     let mut barriers: FxHashMap<NodeId, &'static [AliasClass]> = FxHashMap::default();
     let mut mem_chain_consumers: Vec<NodeId> = Vec::new();
+    let mut concrete_stack_offsets: Vec<(NodeId, i64)> = Vec::new();
 
     for node in function.preorder() {
         let kind = *function.node_kind(node);
         match kind {
             NodeKind::Store(_) => {
                 let [_, addr, _] = function.node_inputs_exact::<3>(node)?;
-                let cls = address_class(function, addr, sp_vn, memo);
+                let (cls, offset) = address_class_with_offset(function, addr, sp_vn, memo);
                 addr_class.insert(node, cls);
+                if let Some(off) = offset {
+                    concrete_stack_offsets.push((node, off));
+                }
                 mem_chain_consumers.push(node);
             }
             NodeKind::Load(_) => {
                 let [_, addr] = function.node_inputs_exact::<2>(node)?;
-                let cls = address_class(function, addr, sp_vn, memo);
+                let (cls, offset) = address_class_with_offset(function, addr, sp_vn, memo);
                 addr_class.insert(node, cls);
+                if let Some(off) = offset {
+                    concrete_stack_offsets.push((node, off));
+                }
                 mem_chain_consumers.push(node);
             }
             NodeKind::Call => {
@@ -329,23 +353,29 @@ fn classify_all(
         addr_class,
         barriers,
         mem_chain_consumers,
+        concrete_stack_offsets,
     })
 }
 
-/// Address classifier — single source of truth used by both
-/// `Store` and `Load` paths.  SP-relative ⇒ Stack; everything else
-/// ⇒ Unknown (Heap detection would require address-range analysis
-/// which is out of scope for this pass).
-fn address_class(
+/// Address classifier — single source of truth used by both `Store` and
+/// `Load` paths.  Returns the `AliasClass` and, when the address is a
+/// `SpExpr::Terminal`, the concrete `i64` stack offset.  The
+/// phi-of-offsets case (`SpExpr::Phi`) produces `AliasClass::Stack` but
+/// no offset (consumers that need per-branch offsets can call
+/// `decompose_sp` directly).
+///
+/// Heap detection would require address-range analysis; that is out of
+/// scope for this pass, so everything non-SP-rooted falls back to Unknown.
+fn address_class_with_offset(
     function: &Function,
     addr: NodeOutputId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-) -> AliasClass {
-    if decompose_sp(function, addr, sp_vn, memo).is_some() {
-        AliasClass::Stack
-    } else {
-        AliasClass::Unknown
+) -> (AliasClass, Option<i64>) {
+    match decompose_sp(function, addr, sp_vn, memo) {
+        Some(SpExpr::Terminal { offset, .. }) => (AliasClass::Stack, Some(offset)),
+        Some(SpExpr::Phi { .. }) => (AliasClass::Stack, None),
+        None => (AliasClass::Unknown, None),
     }
 }
 
