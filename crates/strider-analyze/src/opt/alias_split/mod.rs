@@ -173,12 +173,26 @@ impl Optimizer for AliasSplit {
             return Ok(OptimizationResult::NoChange);
         };
 
-        // Bail on functions with an `IndirectBranch` placeholder: the
-        // indirect-branch resolver's stack-array classifier walks the
-        // memory chain backward from the dispatching Load to find
-        // stored target values and is sensitive to chain shape.  This
-        // bail predates the multi-pred MemPhi work; a separate audit
-        // tracks lifting it.
+        // Bail on functions with an `IndirectBranch` placeholder.
+        //
+        // Load-bearing, not just conservative: the orchestrator's
+        // indirect-branch resolver runs BETWEEN iterations of the
+        // stable pipeline.  Its stack-array classifier walks memory
+        // backward from the dispatching Load (typically `Unknown`
+        // class, because the address is `sp + base + idx*stride` and
+        // the symbolic index defeats `decompose_sp`) to find the
+        // Stack-class stores that populate the jump table.  If we
+        // partition first, the dispatch Load and the table entries
+        // end up on different per-class chains and the backward walk
+        // can't cross.  Resolution fails and the function is left
+        // with unresolved indirect branches.
+        //
+        // The user never observes the bail because `IndirectBranch`
+        // is a transient placeholder: the resolver rewrites it away
+        // (jump-table → known control edges, link-register → return,
+        // tail-call → call+return) before the fixed point converges.
+        // The next iteration of the pipeline sees a graph without
+        // `IndirectBranch` and partitions normally.
         if function.has_kind(|k| matches!(k, NodeKind::IndirectBranch)) {
             return Ok(OptimizationResult::NoChange);
         }
