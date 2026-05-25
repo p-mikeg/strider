@@ -73,8 +73,13 @@ mod tests {
     #[test]
     fn next_control_node_returns_none_when_no_consumer() -> strider_ir::Result<()> {
         let mut g = graph_call_return()?;
+        // Region is non-cacheable, so this always creates a fresh node.  The
+        // resulting Control output has no consumer, which is the condition
+        // being exercised.  (Entry can no longer be used for this purpose
+        // because it is now cacheable — a second `create_node(Entry, …)` call
+        // returns the existing Entry whose output *does* have a consumer.)
         let detached = g.create_node(
-            NodeKind::Entry,
+            NodeKind::Region,
             [],
             [strider_ir::node::NodeOutputKind::Control],
         );
@@ -83,7 +88,7 @@ mod tests {
             .iter()
             .copied()
             .next()
-            .expect("Entry has one output");
+            .expect("Region has a Control output");
         let m = Matcher::try_new(&g).unwrap();
         assert_eq!(next_control_node(&m, out), None);
         Ok(())

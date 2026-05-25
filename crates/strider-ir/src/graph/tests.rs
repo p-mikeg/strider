@@ -184,6 +184,51 @@ fn non_cacheable_node_is_never_deduplicated() {
     );
 }
 
+/// `Entry` is now cacheable — repeated `create_node` calls with the same
+/// signature must return the same `NodeId` (only one Entry per function).
+#[test]
+fn entry_node_kind_dedupes_on_repeated_create() {
+    let mut graph = Function::new();
+    let e1 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let e2 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    assert_eq!(e1, e2, "Entry must dedupe — only one per function");
+}
+
+/// `InitialMemory` is now cacheable — repeated `create_node` calls must
+/// return the same `NodeId`.
+#[test]
+fn initial_memory_dedupes_on_repeated_create() {
+    let mut graph = Function::new();
+    let m1 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let m2 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    assert_eq!(m1, m2, "InitialMemory must dedupe — only one per function");
+}
+
+/// `InitialVar` is now cacheable — the `Vn` is part of the node kind, so
+/// two calls with the **same** `Vn` dedup and two calls with **different**
+/// `Vn`s produce distinct nodes.
+#[test]
+fn initial_var_dedupes_per_vn() {
+    let mut graph = Function::new();
+    let vn_a = rsleigh::Vn {
+        addr_off: 0,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let vn_b = rsleigh::Vn {
+        addr_off: 8,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let output_kind = NodeOutputKind::OutputType(NodeOutputType::U64);
+    let v1 = graph.create_node(NodeKind::InitialVar(vn_a), [], [output_kind]);
+    let v2 = graph.create_node(NodeKind::InitialVar(vn_a), [], [output_kind]);
+    assert_eq!(v1, v2, "InitialVar with the same Vn must dedupe");
+
+    let v3 = graph.create_node(NodeKind::InitialVar(vn_b), [], [output_kind]);
+    assert_ne!(v1, v3, "InitialVar with a different Vn must NOT dedupe");
+}
+
 /// Two adjacent `Call` nodes with identical target and argument outputs
 /// must stay distinct — Call is non-cacheable because `CallStackArgCollect`
 /// mutates its inputs after construction.

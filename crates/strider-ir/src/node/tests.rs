@@ -424,10 +424,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
 fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     !matches!(
         kind,
-        NodeKind::Entry
-            | NodeKind::InitialMemory
-            | NodeKind::InitialVar(..)
-            | NodeKind::Return
+        NodeKind::Return
             | NodeKind::IndirectBranch
             | NodeKind::Region
             | NodeKind::MemPhi

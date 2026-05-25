@@ -310,8 +310,15 @@ impl NodeKind {
     #[must_use]
     pub fn is_cacheable(&self) -> bool {
         match self {
+            // Initial-state singletons: immutable post-construction; identity
+            // is fully determined by NodeKind fields (Vn for InitialVar;
+            // nothing for Entry/InitialMemory).  Dedup catches accidental
+            // double-construction and enforces the one-per-function invariant.
+            Self::Entry
+            | Self::InitialMemory
+            | Self::InitialVar(..)
             // Pure value-producing computation: cacheable.
-            Self::If
+            | Self::If
             | Self::Load(..)
             | Self::Store(..)
             | Self::IntConst(..)
@@ -342,10 +349,6 @@ impl NodeKind {
 
             // Region header (inputs grow dynamically post-construction).
             Self::Region
-            // Initial state (function-entry singletons).
-            | Self::Entry
-            | Self::InitialMemory
-            | Self::InitialVar(..)
             // Phis (per-region identity matters; inputs added incrementally).
             | Self::Phi
             | Self::MemPhi
