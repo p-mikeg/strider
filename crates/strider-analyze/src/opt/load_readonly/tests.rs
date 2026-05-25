@@ -165,7 +165,7 @@ fn load_readonly_fires_after_alias_split() -> Result<()> {
     let entry = fg.entry().unwrap();
 
     // AliasSplit fires on the pre-Call Stack segment: Changed.
-    let split_result = AliasSplit::new(sp).optimize(&mut fg, entry)?;
+    let split_result = AliasSplit::new(sp, strider_target::ArchPreset::X86).optimize(&mut fg, entry)?;
     assert!(split_result.changed(), "AliasSplit must partition the stack segment");
 
     // The ROM Load must still be present before LoadReadOnly runs.

@@ -196,6 +196,7 @@ impl Strider {
         let mut p = crate::opt::default_pipeline();
         p.add(crate::opt::AliasSplit::from_convention(
             &self.calling_convention,
+            &self.arch,
         ));
         p.add(crate::opt::StackLoadForward::from_convention(
             &self.calling_convention,
@@ -226,6 +227,7 @@ impl Strider {
         let mut p = crate::opt::stable_default_pipeline();
         p.add(crate::opt::AliasSplit::from_convention(
             &self.calling_convention,
+            &self.arch,
         ));
         p.add(crate::opt::StackLoadForward::from_convention(
             &self.calling_convention,

@@ -854,7 +854,7 @@ fn call_stack_args_collected_through_mempartition() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(AliasSplit::new(sp));
+    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     // x86-cdecl-style table: ret-addr at offset 0, arg0 at +4.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run_built(&mut fg)?;

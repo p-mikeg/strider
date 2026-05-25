@@ -1206,15 +1206,22 @@ fn stack_load_forward_walks_through_mempartition() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(AliasSplit::new(sp));
+    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
 
     let entry = fg.entry().unwrap();
     pipeline.run(&mut fg, entry)?;
 
-    // AliasSplit must have inserted the boundary nodes.
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
-    assert_eq!(n_part, 1, "AliasSplit must insert exactly one MemPartition");
+    // AliasSplit must have inserted MemPartition nodes (one per
+    // active partition; the Stack one is the load-bearing one for
+    // this test).
+    let stack_parts = fg.count_kind(
+        |k| matches!(k, NodeKind::MemPartition { class: strider_ir::AliasClass::Stack }),
+    );
+    assert!(
+        stack_parts >= 1,
+        "AliasSplit must insert at least one Stack MemPartition; got {stack_parts}",
+    );
 
     // The Load should be forwarded: no reachable Load nodes remain.
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));

@@ -1013,13 +1013,24 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(AliasSplit::new(sp));
+    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    // AliasSplit must have inserted MemPartition.
+    // AliasSplit must have inserted MemPartition nodes at function
+    // entry — one per active partition (Stack / Heap / Unknown).
     let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
-    assert_eq!(n_part, 1, "AliasSplit must insert exactly one MemPartition");
+    assert!(
+        n_part >= 1,
+        "AliasSplit must insert at least one MemPartition; got {n_part}"
+    );
+    let stack_parts = fg.count_kind(
+        |k| matches!(k, NodeKind::MemPartition { class: strider_ir::AliasClass::Stack }),
+    );
+    assert!(
+        stack_parts >= 1,
+        "AliasSplit must insert at least one Stack MemPartition; got {stack_parts}",
+    );
 
     // FunctionArgDetect must have registered the load as arg 0.
     let arg0_nodes = fg.arg_index_to_nodes(0);
