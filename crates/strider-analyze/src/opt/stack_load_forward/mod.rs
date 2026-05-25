@@ -301,8 +301,7 @@ fn probe(
                     // MemUnion: [...partition_memories] → [Memory(None)].
                     // Walk through the Stack-partition input — the only one
                     // StackLoadForward cares about.  Identify it by looking
-                    // for an input whose NodeOutputKind carries a Stack-class
-                    // MemPartitionId.
+                    // for an input whose NodeOutputKind is Memory(Some(Stack)).
                     let inputs = graph.node_inputs(node);
                     let stack_input = inputs
                         .iter()
@@ -538,16 +537,16 @@ fn realize_with_depth(
 // narrow case shows up as a wide-typed IntConst-valued store that the
 // classifier can read directly.
 
-/// Returns `true` if `inp` is a `Memory(Some(p))` edge whose partition
-/// has [`AliasClass::Stack`].  Used by the `MemUnion` arms of both the
-/// forking probe walk and the linear `find_stack_stored_value_at_offset`
-/// walk to identify the Stack-partition input to pass through.
+/// Returns `true` if `inp` is a `Memory(Some(AliasClass::Stack))` edge.
+/// Used by the `MemUnion` arms of both the forking probe walk and the
+/// linear `find_stack_stored_value_at_offset` walk to identify the
+/// Stack-partition input to pass through.
 /// Also used by [`super::stack_store::call_args`] for the same purpose.
 pub(crate) fn is_stack_partition_input(graph: &strider_ir::Function, inp: NodeOutputId) -> bool {
-    let Some(partition_id) = graph.output_kind(inp).memory_partition() else {
-        return false;
-    };
-    graph.partitions().info(partition_id).alias_class == AliasClass::Stack
+    matches!(
+        graph.output_kind(inp),
+        NodeOutputKind::Memory(Some(AliasClass::Stack))
+    )
 }
 
 /// Per-call memo for `find_stack_stored_value_at_offset`, keyed on

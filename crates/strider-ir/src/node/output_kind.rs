@@ -19,8 +19,8 @@ pub enum NodeOutputKind {
     /// Memory token tracking the current state of memory through the graph.
     ///
     /// `None` = unified memory (the default until `AliasSplit` promotes it to a
-    /// partition).  `Some(p)` = memory restricted to partition `p`.
-    Memory(Option<crate::mem_partition::MemPartitionId>),
+    /// partition).  `Some(c)` = memory restricted to alias class `c`.
+    Memory(Option<crate::mem_partition::AliasClass>),
 }
 
 impl NodeOutputKind {
@@ -89,13 +89,13 @@ impl NodeOutputKind {
         matches!(self, Self::Memory(_))
     }
 
-    /// Returns the partition id if this is a partition-typed memory output.
+    /// Returns the alias class if this is a partition-typed memory output.
     /// Returns `None` for unified `Memory` (or non-memory).
     #[inline]
     #[must_use]
-    pub fn memory_partition(self) -> Option<crate::mem_partition::MemPartitionId> {
-        if let NodeOutputKind::Memory(Some(p)) = self {
-            Some(p)
+    pub fn memory_partition(self) -> Option<crate::mem_partition::AliasClass> {
+        if let NodeOutputKind::Memory(Some(c)) = self {
+            Some(c)
         } else {
             None
         }
@@ -127,21 +127,19 @@ impl NodeOutputKind {
 #[cfg(test)]
 mod tests {
     use super::NodeOutputKind;
-    use crate::mem_partition::{AliasClass, PartitionTable};
+    use crate::mem_partition::AliasClass;
 
     #[test]
-    fn memory_variant_carries_optional_partition() {
+    fn memory_variant_carries_optional_alias_class() {
         // Unified memory (the default)
         let m_unified = NodeOutputKind::Memory(None);
         assert!(m_unified.is_memory());
         assert_eq!(m_unified.memory_partition(), None);
 
         // Partitioned memory
-        let mut pt = PartitionTable::default();
-        let p = pt.create(AliasClass::Stack);
-        let m_part = NodeOutputKind::Memory(Some(p));
+        let m_part = NodeOutputKind::Memory(Some(AliasClass::Stack));
         assert!(m_part.is_memory());
-        assert_eq!(m_part.memory_partition(), Some(p));
+        assert_eq!(m_part.memory_partition(), Some(AliasClass::Stack));
 
         // Non-memory variants
         assert!(!NodeOutputKind::Control.is_memory());

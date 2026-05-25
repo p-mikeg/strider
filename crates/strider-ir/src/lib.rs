@@ -50,7 +50,7 @@ pub use function::Function;
 pub mod graph;
 pub use graph::Graph;
 pub mod mem_partition;
-pub use mem_partition::{AliasClass, MemPartitionId, PartitionInfo, PartitionTable};
+pub use mem_partition::AliasClass;
 /// IR-specific Graphviz/dot rendering (implements the [`dot::GraphDotDumper`]
 /// trait for the IR [`Graph`]).  Internal: external callers should use
 /// [`Graph::dot_dumper`] instead of naming this module directly.

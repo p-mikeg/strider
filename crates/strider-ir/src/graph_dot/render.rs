@@ -120,10 +120,8 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         };
 
         // Per-class fillcolor override for MemPartition nodes.
-        let fillcolor = if let NodeKind::MemPartition { partition } = kind {
-            mem_partition_fillcolor(
-                self.function.partitions().info(partition).alias_class,
-            )
+        let fillcolor = if let NodeKind::MemPartition { class } = kind {
+            mem_partition_fillcolor(class)
         } else {
             node_fillcolor(&kind)
         };

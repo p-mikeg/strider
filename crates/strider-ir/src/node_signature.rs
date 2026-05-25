@@ -641,15 +641,13 @@ mod tests {
     /// time, but a forgotten append here would silently shrink coverage.
     #[test]
     fn expected_signature_covers_every_node_kind() {
-        use crate::mem_partition::{AliasClass, PartitionTable};
+        use crate::mem_partition::AliasClass;
         use crate::ops::{
             BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
             IntBinaryOp, IntCmpOp, IntUnaryOp,
         };
         let space = rsleigh::VnSpace::RAM;
         let vn = smoke_vn();
-        let mut pt = PartitionTable::default();
-        let partition = pt.create(AliasClass::Stack);
         let kinds: Vec<NodeKind> = vec![
             NodeKind::Entry,
             NodeKind::InitialMemory,
@@ -663,7 +661,7 @@ mod tests {
             NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
-            NodeKind::MemPartition { partition },
+            NodeKind::MemPartition { class: AliasClass::Stack },
             NodeKind::MemUnion,
             NodeKind::IntConst(0),
             NodeKind::IntUnaryOp(IntUnaryOp::BitNot),

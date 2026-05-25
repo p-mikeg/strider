@@ -959,14 +959,11 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
 
         let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
 
-        // Create a Stack partition.
-        let stack_part = fg.partitions_mut().create(AliasClass::Stack);
-
-        // Create MemPartition(stack_part) consuming InitialMemory output.
+        // Create MemPartition(Stack) consuming InitialMemory output.
         let part_node = fg.create_node_attributed(
-            NodeKind::MemPartition { partition: stack_part },
+            NodeKind::MemPartition { class: AliasClass::Stack },
             [im_out],
-            [NodeOutputKind::Memory(Some(stack_part))],
+            [NodeOutputKind::Memory(Some(AliasClass::Stack))],
             &[im_node],
         );
         let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
@@ -992,13 +989,13 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
         let ss_mem_input_id = fg.graph().node_input_id_at(first_store_node, 0).unwrap();
         fg.graph_mut().update_input(ss_mem_input_id, part_out);
 
-        // Retype all Store memory outputs to Memory(Some(stack_part))
+        // Retype all Store memory outputs to Memory(Some(AliasClass::Stack))
         // and walk to the last Store in the chain.
         let mut cur_node = first_store_node;
         loop {
             let ss_mem_out = fg.graph().memory_output_of(cur_node).unwrap();
             fg.graph_mut()
-                .set_memory_partition(ss_mem_out, Some(stack_part))
+                .set_memory_partition(ss_mem_out, Some(AliasClass::Stack))
                 .unwrap();
 
             // Find the next Store in the chain (consumes this node's

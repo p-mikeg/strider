@@ -345,7 +345,7 @@ fn try_from_u32_size_to_node_output_type() {
 /// `is_cacheable` and `asm_fingerprint_exempt` catch new variants at compile
 /// time, but a forgotten append here would silently shrink runtime coverage.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
-    use crate::mem_partition::{AliasClass, PartitionTable};
+    use crate::mem_partition::AliasClass;
     use crate::ops::{
         BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
         IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -357,8 +357,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let mut pt = PartitionTable::default();
-    let partition = pt.create(AliasClass::Stack);
     vec![
         // initial state
         NodeKind::Entry,
@@ -379,7 +377,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Load(space),
         NodeKind::Store(space),
         // memory partition boundaries
-        NodeKind::MemPartition { partition },
+        NodeKind::MemPartition { class: AliasClass::Stack },
         NodeKind::MemUnion,
         // pure value: integer
         NodeKind::IntConst(0),
@@ -483,11 +481,9 @@ fn asm_fingerprint_exempt_matches_legacy() {
 
 #[test]
 fn mem_partition_is_not_cacheable_and_is_exempt() {
-    use crate::mem_partition::{AliasClass, PartitionTable};
+    use crate::mem_partition::AliasClass;
 
-    let mut pt = PartitionTable::default();
-    let p = pt.create(AliasClass::Stack);
-    let k = NodeKind::MemPartition { partition: p };
+    let k = NodeKind::MemPartition { class: AliasClass::Stack };
 
     assert!(!k.is_cacheable(), "MemPartition must NOT be cacheable");
     assert!(k.asm_fingerprint_exempt(), "MemPartition must be fingerprint-exempt");
@@ -502,12 +498,10 @@ fn mem_union_is_not_cacheable_and_is_exempt() {
 
 #[test]
 fn mem_partition_signature_has_single_memory_input_and_memory_output() {
-    use crate::mem_partition::{AliasClass, PartitionTable};
+    use crate::mem_partition::AliasClass;
     use crate::node_signature::{ExpectedOutputKind, expected_signature};
 
-    let mut pt = PartitionTable::default();
-    let p = pt.create(AliasClass::Stack);
-    let sig = expected_signature(&NodeKind::MemPartition { partition: p });
+    let sig = expected_signature(&NodeKind::MemPartition { class: AliasClass::Stack });
 
     // Fixed-arity: exactly one input, one output.
     assert!(!sig.inputs.is_variadic(), "MemPartition inputs should be fixed-arity");
@@ -542,11 +536,9 @@ fn mem_union_signature_has_variadic_memory_inputs_and_unified_output() {
 
 #[test]
 fn mem_partition_is_not_const() {
-    use crate::mem_partition::{AliasClass, PartitionTable};
+    use crate::mem_partition::AliasClass;
 
-    let mut pt = PartitionTable::default();
-    let p = pt.create(AliasClass::Heap);
-    let k = NodeKind::MemPartition { partition: p };
+    let k = NodeKind::MemPartition { class: AliasClass::Heap };
     assert!(!k.is_const(), "MemPartition must not be a constant");
 }
 

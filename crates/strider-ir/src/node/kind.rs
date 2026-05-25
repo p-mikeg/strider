@@ -89,18 +89,18 @@ pub enum NodeKind {
     Store(rsleigh::VnSpace),
 
     // ── Memory partition boundary nodes (inserted by AliasSplit) ─────────────
-    /// Memory partition split boundary.  Projects partition `partition`
+    /// Memory partition split boundary.  Projects the `class`-typed partition
     /// out of unified memory.  Inserted by the AliasSplit optimization
     /// at the entry to a subgraph whose memory ops can be proven to
     /// operate on a single alias class.
     ///
     /// Inputs: `[unified_memory]` — single `Memory(None)` data input.
-    /// Outputs: `[Memory(Some(partition))]`.
+    /// Outputs: `[Memory(Some(class))]`.
     ///
     /// NOT phi-shaped: no phi_token, no control input.  Position
     /// identity matters (deduping two split boundaries at different
     /// program points would conflate them).
-    MemPartition { partition: crate::mem_partition::MemPartitionId },
+    MemPartition { class: crate::mem_partition::AliasClass },
 
     /// Memory partition join boundary.  Bundles partition tokens back
     /// into unified memory.  Inserted by the AliasSplit optimization

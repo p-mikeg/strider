@@ -1094,14 +1094,11 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
 
         let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
 
-        // Create a Stack partition.
-        let stack_part = fg.partitions_mut().create(AliasClass::Stack);
-
-        // Create MemPartition(stack_part) consuming InitialMemory output.
+        // Create MemPartition(Stack) consuming InitialMemory output.
         let part_node = fg.create_node_attributed(
-            NodeKind::MemPartition { partition: stack_part },
+            NodeKind::MemPartition { class: AliasClass::Stack },
             [im_out],
-            [NodeOutputKind::Memory(Some(stack_part))],
+            [NodeOutputKind::Memory(Some(AliasClass::Stack))],
             &[im_node],
         );
         let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();

@@ -517,8 +517,7 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     );
 }
 
-/// `MemPartition` nodes must render with the alias-class name in the label
-/// (not the raw `MemPartitionId(N)` debug representation).
+/// `MemPartition` nodes must render with the alias-class name in the label.
 #[test]
 fn mempartition_label_uses_alias_class_name() {
     use crate::mem_partition::AliasClass;
@@ -528,14 +527,13 @@ fn mempartition_label_uses_alias_class_name() {
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    // Create a Stack partition and a MemPartition node that references it.
-    let partition = f.partitions_mut().create(AliasClass::Stack);
+    // Create a MemPartition node with AliasClass::Stack stored directly.
     let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
     let mp = f.create_node(
-        NodeKind::MemPartition { partition },
+        NodeKind::MemPartition { class: AliasClass::Stack },
         [mem_out],
-        [NodeOutputKind::Memory(Some(partition))],
+        [NodeOutputKind::Memory(Some(AliasClass::Stack))],
     );
     let [mp_out] = f.node_outputs_exact::<1>(mp).unwrap();
     f.create_node(NodeKind::Return, [entry_ctrl, mp_out], []);

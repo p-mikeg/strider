@@ -140,8 +140,8 @@ fn collect_stack_args_in_chain_order(
                     }
                 }
             }
-            // `MemPartition { partition }` — boundary inserted by AliasSplit
-            // that tags a unified memory edge with a single partition.
+            // `MemPartition { class }` — boundary inserted by AliasSplit
+            // that tags a unified memory edge with a single alias class.
             // The walker passes straight through to the single predecessor
             // (input 0, the unified-memory side).
             NodeKind::MemPartition { .. } => {

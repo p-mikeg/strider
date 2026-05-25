@@ -280,20 +280,14 @@ fn process_segment(
         });
     }
 
-    // Create the Stack partition (lazy; one per spliced segment is
-    // fine — partitions never get unified across segments in v1).
-    let stack_partition = function.partitions_mut().create(AliasClass::Stack);
-
     // 1. Insert MemPartition right after `segment_in`.  Wire every
     //    existing consumer of `segment_in` to consume from the new
     //    MemPartition's output instead.  (The MemPartition itself
     //    consumes from `segment_in`.)
     let part_node = function.create_node_attributed(
-        NodeKind::MemPartition {
-            partition: stack_partition,
-        },
+        NodeKind::MemPartition { class: AliasClass::Stack },
         [segment_in],
-        [NodeOutputKind::Memory(Some(stack_partition))],
+        [NodeOutputKind::Memory(Some(AliasClass::Stack))],
         &[producer_node],
     );
     let [part_out] = function.node_outputs_exact::<1>(part_node)?;
@@ -304,7 +298,7 @@ fn process_segment(
         let mem_out = function.memory_output_of(producer)?;
         function
             .graph_mut()
-            .set_memory_partition(mem_out, Some(stack_partition))?;
+            .set_memory_partition(mem_out, Some(AliasClass::Stack))?;
     }
 
     // 3. For every MemPhi we promoted, retype its output too.
@@ -312,7 +306,7 @@ fn process_segment(
         let mem_out = function.memory_output_of(phi)?;
         function
             .graph_mut()
-            .set_memory_partition(mem_out, Some(stack_partition))?;
+            .set_memory_partition(mem_out, Some(AliasClass::Stack))?;
     }
 
     // 4. For every barrier-input edge we collected, insert a MemUnion

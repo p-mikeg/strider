@@ -102,10 +102,12 @@ fn stack_only_chain_inserts_mempartition_and_memunion() {
     assert_eq!(n_part, 1, "exactly one MemPartition expected");
     assert_eq!(n_union, 1, "exactly one MemUnion expected (before Return)");
 
-    // The partition table now has exactly one Stack partition.
-    let parts: Vec<_> = f.partitions().iter().collect();
-    assert_eq!(parts.len(), 1, "exactly one partition created");
-    assert_eq!(parts[0].1.alias_class, AliasClass::Stack);
+    // Exactly one MemPartition node with AliasClass::Stack was inserted.
+    assert_eq!(
+        count_reachable(&f, |k| matches!(k, NodeKind::MemPartition { class: AliasClass::Stack })),
+        1,
+        "one Stack MemPartition created"
+    );
 
     // Validate IR after rewrite.
     let entry = f.entry().unwrap();
@@ -155,13 +157,12 @@ fn call_in_middle_gets_memunion_before_and_mempartition_after() {
     assert_eq!(n_part, 2, "MemPartition before each Stack segment");
     assert_eq!(n_union, 2, "MemUnion before Call and before Return");
 
-    // Two Stack partitions created (one per segment in v1; reusing
-    // the same partition across segments is a follow-up).
-    let parts: Vec<_> = f.partitions().iter().collect();
-    assert_eq!(parts.len(), 2, "two Stack partitions");
-    for (_, info) in parts {
-        assert_eq!(info.alias_class, AliasClass::Stack);
-    }
+    // Two Stack MemPartition nodes created (one per segment in v1).
+    assert_eq!(
+        count_reachable(&f, |k| matches!(k, NodeKind::MemPartition { class: AliasClass::Stack })),
+        2,
+        "two Stack MemPartition nodes"
+    );
 
     let entry = f.entry().unwrap();
     strider_ir::validate::validate(&f, entry).expect("post-Call segment IR must validate");
