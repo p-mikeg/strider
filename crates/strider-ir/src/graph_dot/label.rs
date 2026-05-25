@@ -254,6 +254,12 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 self.out_type_str(node),
             ),
 
+            // ── memory partition boundaries ───────────────────────────────────
+            NodeKind::MemPartition { partition } => {
+                format!("MemPartition[{partition:?}]")
+            }
+            NodeKind::MemUnion => "MemUnion".to_string(),
+
             // ── user-defined / opaque opcodes ────────────────────────────────
             NodeKind::CallOther { user_op_id } => {
                 // Show the resolved Sleigh user-op name when the analyzer

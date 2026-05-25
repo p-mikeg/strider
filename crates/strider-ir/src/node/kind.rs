@@ -109,6 +109,35 @@ pub enum NodeKind {
     /// than inline so that `NodeKind` remains `Copy`.
     StackStorePhi { space: rsleigh::VnSpace },
 
+    // ── Memory partition boundary nodes (inserted by AliasSplit) ─────────────
+    /// Memory partition split boundary.  Projects partition `partition`
+    /// out of unified memory.  Inserted by the AliasSplit optimization
+    /// at the entry to a subgraph whose memory ops can be proven to
+    /// operate on a single alias class.
+    ///
+    /// Inputs: `[unified_memory]` — single `Memory(None)` data input.
+    /// Outputs: `[Memory(Some(partition))]`.
+    ///
+    /// NOT phi-shaped: no phi_token, no control input.  Position
+    /// identity matters (deduping two split boundaries at different
+    /// program points would conflate them).
+    MemPartition { partition: crate::mem_partition::MemPartitionId },
+
+    /// Memory partition join boundary.  Bundles partition tokens back
+    /// into unified memory.  Inserted by the AliasSplit optimization
+    /// before any op that needs all-of-memory (Call to unknown
+    /// function, Return, unknown-address Store, IndirectBranch,
+    /// CallOther with memory_edge).
+    ///
+    /// Inputs: `[mem_partition_0, mem_partition_1, ...]` — variadic
+    /// data inputs in canonical partition-id order, each
+    /// `Memory(Some(_))`.
+    /// Outputs: `[Memory(None)]`.
+    ///
+    /// NOT phi-shaped: no phi_token, no control input.  Position
+    /// identity matters.
+    MemUnion,
+
     // ── Integer constants and operations ──────────────────────────────────────
     /// A compile-time integer constant of value `u128`.  Covers
     /// `Bool`/`U8`/`U16`/`U32`/`U64`/`U80`/`U128`.  Wider integer types
@@ -262,6 +291,8 @@ impl NodeKind {
             | Self::Store(..)
             | Self::StackStore { .. }
             | Self::StackStorePhi { .. }
+            | Self::MemPartition { .. }
+            | Self::MemUnion
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
             | Self::IntCmpOp(..)
@@ -351,7 +382,10 @@ impl NodeKind {
             | Self::CallOther { .. }
             // Sleigh user-ops with opaque per-occurrence identity.
             | Self::CPoolRef
-            | Self::New => false,
+            | Self::New
+            // Memory partition boundaries: positional identity matters.
+            | Self::MemPartition { .. }
+            | Self::MemUnion => false,
         }
     }
 
@@ -378,7 +412,12 @@ impl NodeKind {
             | Self::Region
             | Self::Phi
             | Self::MemPhi
-            | Self::StackStorePhi { .. } => true,
+            | Self::StackStorePhi { .. }
+            // Memory partition boundaries: synthetic boundary nodes whose
+            // fingerprints are inherited from contributing writes via the
+            // superset-only contract.
+            | Self::MemPartition { .. }
+            | Self::MemUnion => true,
 
             // Non-exempt: everything else requires fingerprints.
             Self::If
@@ -416,6 +455,7 @@ impl NodeKind {
             | Self::CallOther { .. }
             | Self::CPoolRef
             | Self::New => false,
+
         }
     }
 
@@ -531,6 +571,8 @@ impl NodeKind {
             Self::SegmentOp { .. } => "SegmentOp",
             Self::CPoolRef => "CPoolRef",
             Self::New => "New",
+            Self::MemPartition { .. } => "MemPartition",
+            Self::MemUnion => "MemUnion",
         }
     }
 

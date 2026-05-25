@@ -337,6 +337,17 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // program point.
         NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
 
+        // ── Memory partition boundary nodes ─────────────────────────────────
+        // MemPartition: [unified_memory] → [Memory(Some(partition))].
+        // The output kind carries the specific partition id at runtime;
+        // the signature declares the slot kind as Memory (any partition)
+        // — the validator's kind_matches treats Memory(_) as matching
+        // ExpectedOutputKind::Memory regardless of the Option payload.
+        NodeKind::MemPartition { .. } => sig!(inputs: [MEM], outputs: [MEM]),
+        // MemUnion: [...partition_memories] → [Memory(None)].
+        // Variadic partition-typed inputs; unified output.
+        NodeKind::MemUnion => sig!(inputs: []; in_tail: MEM, outputs: [MEM]),
+
         // ── Memory operations ───────────────────────────────────────────────
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
         NodeKind::Store(_) => sig!(inputs: [MEM, ADDR, DATA], outputs: [MEM]),
@@ -670,12 +681,15 @@ mod tests {
     /// time, but a forgotten append here would silently shrink coverage.
     #[test]
     fn expected_signature_covers_every_node_kind() {
+        use crate::mem_partition::{AliasClass, PartitionTable};
         use crate::ops::{
             BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
             IntBinaryOp, IntCmpOp, IntUnaryOp,
         };
         let space = rsleigh::VnSpace::RAM;
         let vn = smoke_vn();
+        let mut pt = PartitionTable::default();
+        let partition = pt.create(AliasClass::Stack);
         let kinds: Vec<NodeKind> = vec![
             NodeKind::Entry,
             NodeKind::InitialMemory,
@@ -691,6 +705,8 @@ mod tests {
             NodeKind::Store(space),
             NodeKind::StackStore { space, offset: 0 },
             NodeKind::StackStorePhi { space },
+            NodeKind::MemPartition { partition },
+            NodeKind::MemUnion,
             NodeKind::IntConst(0),
             NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
@@ -755,6 +771,7 @@ mod tests {
             (NodeKind::Return, K::AnyValue),
             (NodeKind::CPoolRef, K::AnyInt),
             (NodeKind::New, K::AnyValue),
+            (NodeKind::MemUnion, K::Memory),
         ];
         for (k, expected) in cases {
             let sig = expected_signature(k);

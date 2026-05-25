@@ -90,7 +90,9 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::FloatToFloat
         | NodeKind::SegmentOp { .. }
         | NodeKind::CPoolRef
-        | NodeKind::New => CastMask::empty(),
+        | NodeKind::New
+        | NodeKind::MemPartition { .. }
+        | NodeKind::MemUnion => CastMask::empty(),
     }
 }
 

@@ -29,6 +29,8 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         | NodeKind::StackStore { .. }
         | NodeKind::StackStorePhi { .. } => "box3d",
 
+        NodeKind::MemPartition { .. } | NodeKind::MemUnion => "trapezium",
+
         NodeKind::Call => "rarrow",
         NodeKind::CallOther { .. } => "doubleoctagon",
         NodeKind::SegmentOp { .. } => "parallelogram",
@@ -59,6 +61,8 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
         NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
 
         NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. } => "\"#20182a\"", // stack-slot purple
+
+        NodeKind::MemPartition { .. } | NodeKind::MemUnion => "\"#3a1a4a\"", // deep purple — alias-split boundary
 
         NodeKind::Call => "\"#3a1010\"",
         NodeKind::CallOther { .. } => "\"#3a2810\"", // amber — opaque intrinsic

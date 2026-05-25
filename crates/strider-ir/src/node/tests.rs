@@ -355,6 +355,7 @@ fn try_from_u32_size_to_node_output_type() {
 /// `is_cacheable` and `asm_fingerprint_exempt` catch new variants at compile
 /// time, but a forgotten append here would silently shrink runtime coverage.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
+    use crate::mem_partition::{AliasClass, PartitionTable};
     use crate::ops::{
         BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
         IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -366,6 +367,8 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
+    let mut pt = PartitionTable::default();
+    let partition = pt.create(AliasClass::Stack);
     vec![
         // initial state
         NodeKind::Entry,
@@ -383,10 +386,13 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Return,
         NodeKind::IndirectBranch,
         NodeKind::CallOther { user_op_id: 0 },
-        // pure value: memory
+        // memory operations
         NodeKind::Load(space),
         NodeKind::Store(space),
         NodeKind::StackStore { space, offset: 0 },
+        // memory partition boundaries
+        NodeKind::MemPartition { partition },
+        NodeKind::MemUnion,
         // pure value: integer
         NodeKind::IntConst(0),
         NodeKind::IntConstWide(crate::wide_const::WideConstId::new(0)),
@@ -443,6 +449,8 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
             | NodeKind::CPoolRef
             | NodeKind::New
             | NodeKind::StackStorePhi { .. }
+            | NodeKind::MemPartition { .. }
+            | NodeKind::MemUnion
     )
 }
 
@@ -457,6 +465,8 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
             | NodeKind::MemPhi
             | NodeKind::Phi
             | NodeKind::StackStorePhi { .. }
+            | NodeKind::MemPartition { .. }
+            | NodeKind::MemUnion
     )
 }
 
@@ -484,4 +494,80 @@ fn asm_fingerprint_exempt_matches_legacy() {
             "asm_fingerprint_exempt disagrees with legacy for {k:?}"
         );
     }
+}
+
+// ── MemPartition / MemUnion ───────────────────────────────────────────────
+
+#[test]
+fn mem_partition_is_not_cacheable_and_is_exempt() {
+    use crate::mem_partition::{AliasClass, PartitionTable};
+
+    let mut pt = PartitionTable::default();
+    let p = pt.create(AliasClass::Stack);
+    let k = NodeKind::MemPartition { partition: p };
+
+    assert!(!k.is_cacheable(), "MemPartition must NOT be cacheable");
+    assert!(k.asm_fingerprint_exempt(), "MemPartition must be fingerprint-exempt");
+}
+
+#[test]
+fn mem_union_is_not_cacheable_and_is_exempt() {
+    let k = NodeKind::MemUnion;
+    assert!(!k.is_cacheable(), "MemUnion must NOT be cacheable");
+    assert!(k.asm_fingerprint_exempt(), "MemUnion must be fingerprint-exempt");
+}
+
+#[test]
+fn mem_partition_signature_has_single_memory_input_and_memory_output() {
+    use crate::mem_partition::{AliasClass, PartitionTable};
+    use crate::node_signature::{ExpectedOutputKind, expected_signature};
+
+    let mut pt = PartitionTable::default();
+    let p = pt.create(AliasClass::Stack);
+    let sig = expected_signature(&NodeKind::MemPartition { partition: p });
+
+    // Fixed-arity: exactly one input, one output.
+    assert!(!sig.inputs.is_variadic(), "MemPartition inputs should be fixed-arity");
+    assert_eq!(sig.inputs.head_len(), 1, "MemPartition takes exactly one memory input");
+    assert_eq!(sig.inputs.at(0).unwrap().kind, ExpectedOutputKind::Memory);
+
+    assert!(!sig.outputs.is_variadic(), "MemPartition outputs should be fixed-arity");
+    assert_eq!(sig.outputs.head_len(), 1, "MemPartition has exactly one memory output");
+    assert_eq!(sig.outputs.at(0).unwrap().kind, ExpectedOutputKind::Memory);
+}
+
+#[test]
+fn mem_union_signature_has_variadic_memory_inputs_and_unified_output() {
+    use crate::node_signature::{ExpectedOutputKind, expected_signature};
+
+    let sig = expected_signature(&NodeKind::MemUnion);
+
+    // Variadic memory inputs (zero fixed-head, memory tail).
+    assert!(sig.inputs.is_variadic(), "MemUnion inputs should be variadic");
+    assert_eq!(sig.inputs.head_len(), 0, "MemUnion has no fixed-head inputs");
+    assert_eq!(
+        sig.inputs.tail.unwrap().kind,
+        ExpectedOutputKind::Memory,
+        "MemUnion variadic tail must be Memory"
+    );
+
+    // Fixed single Memory(None) output.
+    assert!(!sig.outputs.is_variadic(), "MemUnion outputs should be fixed-arity");
+    assert_eq!(sig.outputs.head_len(), 1, "MemUnion has exactly one output");
+    assert_eq!(sig.outputs.at(0).unwrap().kind, ExpectedOutputKind::Memory);
+}
+
+#[test]
+fn mem_partition_is_not_const() {
+    use crate::mem_partition::{AliasClass, PartitionTable};
+
+    let mut pt = PartitionTable::default();
+    let p = pt.create(AliasClass::Heap);
+    let k = NodeKind::MemPartition { partition: p };
+    assert!(!k.is_const(), "MemPartition must not be a constant");
+}
+
+#[test]
+fn mem_union_is_not_const() {
+    assert!(!NodeKind::MemUnion.is_const(), "MemUnion must not be a constant");
 }
