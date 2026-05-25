@@ -1182,3 +1182,111 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     );
     Ok(())
 }
+
+// ── Side-table source-of-truth pin ─────────────────────────────────────────
+
+/// Pins that `CallStackArgCollect` reads the store's offset from
+/// `Function::stack_offsets` when a side-table entry is present, rather than
+/// re-deriving it via `decompose_sp`.
+///
+/// After normalisation the arg0 store's address is replaced with an opaque
+/// `IntConst(0xDEAD_BEEF)` node so `decompose_sp` would return `None` for it
+/// (non-SP-rooted → pass-through in the old path, skipped entirely).  Then
+/// `Function::stack_offsets` is populated manually with offset 4 for that
+/// store (mimicking what `AliasSplit` would record).
+///
+/// With the side-table as the source of truth the arg is collected.  Without
+/// it, `decompose_sp` would pass through the store (non-SP-rooted → `None`)
+/// and no arg would be appended.
+#[test]
+fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result<()> {
+    #![allow(clippy::unwrap_used)]
+
+    let sp = sp_vn();
+    // Build a minimal function: store arg0=77 at sp+4, anchor at sp+0, call.
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
+        // arg0 = 77 at sp + 4.
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let sp_plus_4 = b.build_int_binary_operation(
+            sp_v0,
+            four,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )?;
+        let arg0 = b.build_int_const(77u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
+
+        // Anchor store at sp+0 (ret-addr-push role).
+        let anchor = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x2000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    // Canonicalize so `decompose_sp` would work if called.
+    {
+        let mut prep = OptimizerPipeline::new();
+        prep.add(ConstantFold);
+        prep.add(RedundantPhis);
+        let entry = fg.entry().unwrap();
+        prep.run(&mut fg, entry)?;
+    }
+
+    // Find the arg0 store: the Store whose data input is IntConst(77).
+    let entry = fg.entry().unwrap();
+    let arg0_store = fg
+        .walk_from(entry)
+        .find(|&n| {
+            if !matches!(fg.node_kind(n), NodeKind::Store(_)) {
+                return false;
+            }
+            let inputs = fg.node_inputs(n);
+            inputs.len() == 3
+                && matches!(fg.node_kind(fg.get_node_from_output(inputs[2])), NodeKind::IntConst(77))
+        })
+        .expect("arg0 Store(IntConst(77)) must exist");
+
+    // Replace the arg0 store's address (input slot 1) with an opaque constant
+    // so decompose_sp returns None for it.  Without the side-table, the walker
+    // would pass through this store (non-SP-rooted) and arg0 would not be
+    // collected.
+    let opaque_addr = fg
+        .graph_mut()
+        .make_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)
+        .unwrap();
+    let addr_input_id = fg.graph().node_input_id_at(arg0_store, 1).unwrap();
+    fg.graph_mut().update_input(addr_input_id, opaque_addr);
+
+    // Stamp the opaque node with the sentinel fingerprint so IR validation
+    // doesn't reject the manually-wired graph.
+    fg.set_asm_fingerprint(
+        fg.get_node_from_output(opaque_addr),
+        vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR],
+    );
+
+    // Populate the side-table: offset 4 for arg0_store (what AliasSplit would
+    // have recorded from the original sp+4 address before we clobbered it).
+    fg.set_stack_offset(arg0_store, 4);
+
+    // Run CallStackArgCollect with slot table [4, 8] (offset 0 = anchor).
+    let pass = CallStackArgCollect::new(vec![4, 8], sp);
+    pass.optimize(&mut fg, entry)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + arg0 = 4 inputs.
+    assert_eq!(
+        inputs.len(),
+        4,
+        "side-table offset must be used to collect arg0 even with opaque address; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(77)),
+        "arg0 should be IntConst(77), got {arg0_kind:?}"
+    );
+    Ok(())
+}

@@ -103,6 +103,10 @@ fn collect_stack_args_in_chain_order(
         return Vec::new();
     }
     let mut cur = mem;
+    // `anchor_base` tracks the SP root node used by decompose_sp-path stores.
+    // All SP-relative stores in a function trace to the same SP root by
+    // construction (InitialVar(sp) or the post-alignment And node), so when
+    // the side-table path is used no per-store base check is needed.
     let mut anchor_base: Option<NodeOutputId> = None;
     let mut anchor_space: Option<rsleigh::VnSpace> = None;
     let mut chain_anchor_offset: Option<i64> = None;
@@ -111,10 +115,17 @@ fn collect_stack_args_in_chain_order(
     let mut prefix_top: i32 = -1;
     loop {
         let node = ctx.get_node_from_output(cur);
-        let (offset, space, base, data, prev_mem) = match *ctx.node_kind(node) {
-            // Raw `Store` — decompose the address to determine if it's
-            // SP-relative.  If it is, treat it as a stack-arg store and
-            // collect it; if not, pass through (non-aliasing).
+        let (offset, space, data, prev_mem) = match *ctx.node_kind(node) {
+            // Raw `Store` — determine whether it is SP-relative.
+            //
+            // Fast path: consult `Function::stack_offsets`, populated by
+            // `AliasSplit` for every Store whose address decomposes to a
+            // single concrete `sp + K`.  O(1) side-table read, no
+            // `decompose_sp` call.
+            //
+            // Slow path (side-table miss): call `decompose_sp` directly —
+            // covers functions where `AliasSplit` has not run yet, and
+            // stores with Phi-SP or non-SP addresses.
             NodeKind::Store(space) => {
                 let inputs = ctx.node_inputs(node);
                 // Store inputs: [memory, addr, data].  Skip if shape is
@@ -124,19 +135,35 @@ fn collect_stack_args_in_chain_order(
                 }
                 let addr = inputs[1];
                 let prev = inputs[0];
-                match decompose_sp(ctx.function_ref(), addr, stack_ptr_vn, sp_memo) {
-                    None => {
-                        // Non-aliasing — pass through.
-                        cur = prev;
-                        continue;
-                    }
-                    Some(crate::opt::sp_expr::SpExpr::Terminal { base, offset }) => {
-                        // SP-relative Store — treat like a stack-arg store.
-                        (offset, space, base, inputs[2], prev)
-                    }
-                    Some(crate::opt::sp_expr::SpExpr::Phi { .. }) => {
-                        // SP-rooted Phi address: conservatively terminate.
-                        return dense_prefix(slots);
+                if let Some(offset) = ctx.function_ref().stack_offset(node) {
+                    // Fast path: side-table hit.  All side-table stores in a
+                    // function share the same SP root (by AliasSplit's
+                    // construction), so no per-store anchor_base check is
+                    // needed.
+                    (offset, space, inputs[2], prev)
+                } else {
+                    // Slow path: no side-table entry.
+                    match decompose_sp(ctx.function_ref(), addr, stack_ptr_vn, sp_memo) {
+                        None => {
+                            // Non-aliasing — pass through.
+                            cur = prev;
+                            continue;
+                        }
+                        Some(crate::opt::sp_expr::SpExpr::Terminal { base, offset }) => {
+                            // SP-relative Store — treat like a stack-arg store.
+                            match anchor_base {
+                                None => anchor_base = Some(base),
+                                Some(b) if b == base => {}
+                                // Base changed mid-chain: stop rather than merge
+                                // offsets relative to different SP versions.
+                                _ => return dense_prefix(slots),
+                            }
+                            (offset, space, inputs[2], prev)
+                        }
+                        Some(crate::opt::sp_expr::SpExpr::Phi { .. }) => {
+                            // SP-rooted Phi address: conservatively terminate.
+                            return dense_prefix(slots);
+                        }
                     }
                 }
             }
@@ -175,13 +202,6 @@ fn collect_stack_args_in_chain_order(
             // `PostCallMemState`, …) terminates the chain.
             _ => return dense_prefix(slots),
         };
-        match anchor_base {
-            None => anchor_base = Some(base),
-            Some(b) if b == base => {}
-            // Base changed mid-chain: stop rather than merge offsets
-            // relative to different SP versions.
-            _ => return dense_prefix(slots),
-        }
         match anchor_space {
             None => anchor_space = Some(space),
             Some(s) if s == space => {}
@@ -299,9 +319,12 @@ fn try_collect_stack_args(
 ///
 /// The walker tolerates non-stack-aliasing `Store` nodes interleaved on the
 /// chain (e.g. compiler-emitted volatile global writes that gcc/clang at
-/// `-O2` are free to schedule between stack-arg pushes).  Such stores are
-/// detected via `crate::opt::sp_expr::decompose_sp` returning `None` for their
-/// address; SP-rooted stores remain chain-terminating.
+/// `-O2` are free to schedule between stack-arg pushes).  When
+/// `Function::stack_offsets` is populated by `AliasSplit`, SP-relative
+/// stores are identified via an O(1) side-table read; without it the walker
+/// falls back to `crate::opt::sp_expr::decompose_sp`.  Non-SP-rooted stores
+/// (side-table miss + decompose returns `None`) are passed through; SP-rooted
+/// stores remain chain-terminating.
 #[derive(Clone)]
 pub struct CallStackArgCollect {
     /// Calling convention this pass was built from.  See the comment
@@ -355,9 +378,11 @@ impl Optimizer for CallStackArgCollect {
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
             .collect();
         // Share the SP-decomposition memo across all Call sites in the
-        // function — many stack pushes near each other share the same
-        // intermediate `sp - K` outputs, and decompose_sp is the hot path
-        // when the function has many calls or many stack args.
+        // function.  When `AliasSplit` has populated `Function::stack_offsets`,
+        // the walker uses the side-table (O(1)) and the memo is only consulted
+        // for stores not in the side-table.  Without `AliasSplit`, many stack
+        // pushes near each other share intermediate `sp − K` outputs that hit
+        // the memo on the second access.
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         let default_offsets = self.layout.stack_arg_offsets();
