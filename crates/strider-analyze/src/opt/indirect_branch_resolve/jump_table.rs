@@ -288,7 +288,7 @@ fn match_jump_table_shape(
 /// every classified anchor so we don't re-run the worklist analysis per
 /// anchor.
 #[must_use]
-pub fn bound_via_known_bits(
+pub(super) fn bound_via_known_bits(
     ctx: crate::pattern::RewriteCtxView<'_>,
     idx_output: NodeOutputId,
     known: &crate::opt::KnownBitsMap,
@@ -345,7 +345,7 @@ pub fn bound_via_known_bits(
 /// `IntCmp(idx, N)` evaluating true under {Less, LessEqual, Sless,
 /// SlessEqual} bounds `idx` above by `N` or `N+1`.
 #[must_use]
-pub fn bound_via_predecessor_if(
+pub(super) fn bound_via_predecessor_if(
     ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     idx_output: NodeOutputId,

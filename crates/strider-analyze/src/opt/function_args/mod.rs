@@ -90,11 +90,6 @@ impl FunctionArgDetect {
         }
     }
 
-    /// Convention this pass was built with.
-    #[must_use]
-    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
-        &self.cc
-    }
 }
 
 impl Optimizer for FunctionArgDetect {

@@ -66,17 +66,6 @@ impl StackLoadForward {
         }
     }
 
-    /// Convention this pass was built with.
-    #[must_use]
-    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
-        &self.cc
-    }
-
-    /// Target endianness this pass was built with.
-    #[must_use]
-    pub fn endianness(&self) -> Endianness {
-        self.endianness
-    }
 }
 
 impl Optimizer for StackLoadForward {
