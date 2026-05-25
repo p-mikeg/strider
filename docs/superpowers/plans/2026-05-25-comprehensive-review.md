@@ -1482,93 +1482,86 @@ Skipped:
 
 ---
 
-## Task 11: Top-10 crap-score function simplifications
+## Task 11: Simplify the 17 REAL-PROBLEM crap-score functions
 
 **Step:** 10 (cargo crap)
 
-**Files:**
-- Modify: `crates/strider-lift/src/pcode_lift/value/mod.rs` (lift dispatch)
-- Modify: `crates/strider-analyze/src/opt/known_bits/mod.rs` (node_known_bits)
-- Modify: `crates/strider-analyze/src/opt/alias_split/mod.rs` (build_forked_chains)
-- Modify: `crates/strider-analyze/src/opt/constant_fold/eval_int.rs` (eval_int_binary)
-- Modify: `crates/strider-analyze/src/opt/call_stack_args/mod.rs` (collect_stack_args_in_chain_order)
-
 ### Verified findings being addressed
 
-Audit 5 Section D lists 235 functions above CRAP 30.  The user's constraint: pick the top 10–15 by score AND impact — ones whose simplification meaningfully lowers future risk.  Picked (5 highest-value, NOT 15 — rest is documented technical debt):
+A follow-up classifier audit (`/tmp/crap-classified.md`) inspected all 235 functions above the CRAP threshold and split them:
 
-| Function | CRAP | Why simplify? |
-|---|---|---|
-| `lift` (`value/mod.rs:108`) | 4970 | Central opcode dispatch; future arch additions multiply complexity if not split |
-| `node_known_bits` (`known_bits/mod.rs:122`) | 1260 | Per-op-group split aligns with existing IR taxonomy; mechanical |
-| `build_forked_chains` (`alias_split/mod.rs:533`) | 1482 | Per-MemPhi back-edge helper extraction; aligns with the audit-6 cycle fix |
-| `eval_int_binary` (`constant_fold/eval_int.rs:19`) | 1056 | Identity-rule extraction; opens room for future symbolic identities |
-| `collect_stack_args_in_chain_order` (`call_stack_args/mod.rs:248`) | 992 | MemProject/MemUnion walk arm naturally extracts |
+- **163 SHAPE-ONLY**: flat dispatches (opcode lift, `expected_signature`, `eval_int_binary`, `node_known_bits`, `node_fillcolor`, etc.) — high CRAP comes from arm count, not tangling.  **Leave alone.**
+- **17 REAL PROBLEM**: deep nesting, mixed concerns, or copy-paste duplication.  **Fix list below.**
+- **13 BORDERLINE**: long but algorithmically coherent — no clear simplification.  **Documented; no work.**
+- **42 SKIP**: tests, examples, excluded crates.
 
-Skipped (documented technical debt):
-- `node_kind_name` (test helper — low impact)
-- `GraphDotDumper::pretty_label` (rendering; tests exist, complexity is inherent to NodeKind variants)
-- `expected_signature` (dispatch table; inherent)
-- `register` (pattern dispatch; codegen-flavoured; less risky to leave)
-- All others below CRAP 700.
+User direction: "do everything that is really a problem and not just a large match in the most readable / simplified way possible."  Each fix below is a mechanical extraction with no behaviour change.  Estimated total: −458 function-body lines (≈−250 net workspace LOC after helpers added).
 
-### Steps
+### The 17 fixes (each is one sub-task)
 
-- [ ] **Step 11.1: Extract `lift` opcode-group handlers.** Open `crates/strider-lift/src/pcode_lift/value/mod.rs:108`.  Identify the giant `match insn.opcode { Opcode::IntAdd => …, … }`.  Split into per-group handlers in new sub-modules:
-  - `crates/strider-lift/src/pcode_lift/value/int_dispatch.rs` — `IntAdd`, `IntSub`, `IntMul`, `IntDiv*`, `IntRem*`, `IntAnd/Or/Xor`, shifts, comparisons.
-  - `crates/strider-lift/src/pcode_lift/value/float_dispatch.rs` — `FloatAdd/Sub/Mul/Div`, unary, comparisons.
-  - `crates/strider-lift/src/pcode_lift/value/cast_dispatch.rs` — extends, truncates, casts.
-  - `crates/strider-lift/src/pcode_lift/value/memory_dispatch.rs` — `Load`, `Store`.
-  - Keep `lift` itself as a small top-level dispatcher (`match group_of(opcode) { IntOp => int_dispatch(insn), ... }`).
+Order is by CRAP score desc.  Each sub-task can be its own commit if useful, OR batched per cluster (clusters: alias_split + call_stack_args; cast handlers; mem-chain probes).
 
-  Run `cargo test -p strider-lift` and the cross-arch tests — no test should change.
+- [ ] **Step 11.1: `build_forked_chains` (alias_split/mod.rs:533, CRAP=1482).**  Extract `wire_consumer_to_partition_head(function, consumer, p, producer_value, &outgoing_heads, entry_heads) -> Result<NodeOutputId>` for the lookup+replace block shared by the Store and Load arms.  Then extract `splice_all_mem_phi_joins(...)` for the MemPhi pass.  Goal: outer loop body becomes ≤5 lines per arm.  Estimated −50 lines.
 
-- [ ] **Step 11.2: Split `node_known_bits` per op family.**  Open `crates/strider-analyze/src/opt/known_bits/mod.rs:122`.  Extract:
-  - `eval_int_known_bits(node_kind, inputs) -> KnownBits`
-  - `eval_bool_known_bits(...)`
-  - `eval_float_known_bits(...)` (likely trivial — float bits are usually `KnownBits::unknown`)
-  - `eval_phi_known_bits(...)`
+- [ ] **Step 11.2: `collect_stack_args_in_chain_order` (call_stack_args/mod.rs:248, CRAP=992).**  Extract `advance_through_transparent_node(ctx, node, cur, slots) -> Option<MemWalkStep>` for MemProject / MemUnion / InitialMemory / MemPhi-bail arms.  Extract `classify_store_for_stack_arg_walk(ctx, node, ...) -> StoreStepResult` returning an enum `{StackSlot{offset,data,prev}, PassThrough{prev}, Bail}`.  Outer loop drops to ~40 lines.  Estimated −70 lines.
 
-  Top-level `node_known_bits` becomes a small dispatcher.  Run `cargo test -p strider-analyze opt::known_bits`.
+- [ ] **Step 11.3: `collect_stack_args_partitioned` (call_stack_args/mod.rs:46, CRAP=756).**  Extract `update_prefix_top(slots: &[Option<_>], slot: usize, prefix_top: &mut i32) -> bool` (returns `true` when all slots filled).  Estimated −30 lines.
 
-- [ ] **Step 11.3: Extract per-MemPhi back-edge helper from `build_forked_chains`.**  Open `crates/strider-analyze/src/opt/alias_split/mod.rs:533`.  The "deferred-slot" path inside the loop over MemPhis is the heaviest sub-arm — extract it to:
+- [ ] **Step 11.4: `remove_phis` (redundant_phis/mod.rs:30, CRAP=650).**  Extract `single_element<T>(it: impl Iterator<Item=T>) -> Option<T>` for the iterator-singularity idiom (used twice).  Extract `try_remove_region_phi(...)` for the Region arm at the bottom of the function.  Estimated −35 lines.
 
-  ```rust
-  fn fill_memphi_back_edge_slots(
-      function: &mut Function,
-      mp_node: NodeId,
-      mp_entry: NodeId,
-      outgoing_heads: &OutgoingHeadsMap,
-      entry_heads: PartitionHeads,
-  ) -> Result<()> {
-      // Body lifted from build_forked_chains.
-  }
+- [ ] **Step 11.5: `topological_mem_order` (alias_split/mod.rs:814, CRAP=380).**  Merge the three independent FxHashMap construction loops (predecessors / successors / in_degree) into one pass over `classified.mem_chain_consumers`.  Estimated −25 lines.
+
+- [ ] **Step 11.6: `try_eliminate_dead_branch` (dead_branch/mod.rs:38, CRAP=380).**  Extract `dead_branch_work_is_done(live_uses_count, dead_uses, dead_subgraph_escapes, ctx) -> bool` for the idempotency check.  Extract `strip_dead_region_inputs(ctx, dead_uses) -> Result<()>` for the inner `for ... if matches!(Region) ...` block.  Top-level function drops to ~30 lines.  Estimated −30 lines.
+
+- [ ] **Step 11.7: `ValueLifter::write_reg_vn` (vn_io.rs:264, CRAP=380).**  Extract `build_masked_insert(builder, val, container_val, shift_bits, reg_mask, container_mask, ty) -> Result<Value>` covering steps 2+3 (positioned value + preserve mask + merge).  Estimated −30 lines.
+
+  Note: this is the same file Task 5 documents the AAPCS64 gap in.  Order Task 5 first so the SOUNDNESS NOTE lands on the un-refactored shape, then this extraction preserves it.
+
+- [ ] **Step 11.8: `classify_all` (alias_split/mod.rs:319, CRAP=342).**  Extract `callother_clobbers(function, node, preset) -> &'static [AliasClass]` for the CallOther arm.  Extract `classify_memory_access(function, node, sp_vn, memo) -> (AliasClass, Option<i64>)` for the Store/Load classification.  Estimated −25 lines.
+
+- [ ] **Step 11.9: `PerRegionDriver::handle_call_other_modeled` (strider/insn/mod.rs:133, CRAP=342).**  Split the 7-phase sequence: extract `resolve_abi_reg_values(...)` (phases 2+3) and `write_implicit_clobbers(...)` (phase 7).  The numbered "1–7" comments are the smell — once split, each helper documents itself.  Estimated −25 lines.
+
+- [ ] **Step 11.10: `ValueLifter::handle_extract` + `ValueLifter::handle_insert` (cast.rs:164, cast.rs:230, CRAP=342+600).**  Extract `extract_bit_pos_u8(vn: &rsleigh::Vn, opcode: Opcode, label: &'static str) -> Result<u8>` for the byte-identical `u8::try_from(...)` blocks (4 copies between the two functions).  Then extract `build_bit_field_insert(builder, dest, src, lsb, len, out_ty) -> Result<Value>` for `handle_insert`'s mask-and-position IR construction.  Estimated −51 lines combined.
+
+- [ ] **Step 11.11: `detect_register_args` (function_args/mod.rs:149, CRAP=306).**  Move the 30-line nested `fn largest_sub_in(...)` out to a module-private function.  The inner `fn` already takes its needed data as a parameter — pure mechanical de-indent.  Estimated −2 lines (function shrinks visually).
+
+- [ ] **Step 11.12: `walk_control_for_if_bound_iter` (jump_table.rs:421, CRAP=306).**  Extract `push_region_continuation(region_node, trail, work, graph, ...) -> Option<u64>` for the Region arm's multi-predecessor continuation logic.  The inner loop body drops from ~80 to ~30 lines.  Estimated −35 lines.
+
+- [ ] **Step 11.13: `decompose_sp_inner` (sp_expr/decompose.rs:151, CRAP=462).**  Extract `commit_spine_to_memo(spine, leaf_result, memo, visiting)` for the spine teardown loop.  Makes the postcondition verifiable in isolation.  Estimated −20 lines.
+
+- [ ] **Step 11.14: `field_kind_from_bag` (strider-pattern-macros/src/lib.rs:459, CRAP=552).**  Extract `check_field_attr_conflicts(attr, bag) -> syn::Result<()>` for the 5 mutual-exclusion guards.  Function drops from 80 to ~45 lines.  Estimated −20 lines.
+
+- [ ] **Step 11.15: `mem_chain_is_dirty` (function_args/mod.rs:550, CRAP=552).**  Move the inline `DirtyStep` struct + `MemChainStep` impl to module-level private structs.  Outer function becomes ~10 lines of setup + `walk_mem_chain(...)` call.  Estimated −5 lines.
+
+- [ ] **Step 11.16: `probe` (stack_load_forward/mod.rs:202, CRAP=506).**  Same as 11.15 for `ProbeStep`.  Move to module-level private struct; `probe` becomes a 10-line wrapper.  Estimated −5 lines.
+
+- [ ] **Step 11.17: Verify CRAP scores dropped.**
+
+  ```
+  cargo crap --workspace 2>&1 > /tmp/crap-after.txt
+  diff <(sort /tmp/crap-raw.txt) <(sort /tmp/crap-after.txt) | head -50
   ```
 
-  Then `build_forked_chains` calls it for each MemPhi.  Tests in `alias_split/tests.rs` should cover.
+  All 17 functions should show lower scores.  None should regress.
 
-- [ ] **Step 11.4: Extract identity-rule helpers from `eval_int_binary`.**  Open `crates/strider-analyze/src/opt/constant_fold/eval_int.rs:19`.  Group:
-  - `eval_shift_identities(op, lhs, rhs) -> Option<NodeOutputId>`
-  - `eval_mask_identities(op, lhs, rhs) -> Option<NodeOutputId>`
-  - `eval_arith_identities(op, lhs, rhs) -> Option<NodeOutputId>`
-  - The const-fold core (both args constants) stays in `eval_int_binary`.
+- [ ] **Step 11.18: Run all gates.**
 
-- [ ] **Step 11.5: Extract MemProject/MemUnion walk arm from `collect_stack_args_in_chain_order`.**  Open `crates/strider-analyze/src/opt/call_stack_args/mod.rs:248`.  Extract:
-  ```rust
-  fn walk_through_partition_boundary(...) -> Option<NodeOutputId> { ... }
   ```
-  to handle the MemProject/MemUnion skip logic.
-
-- [ ] **Step 11.6: Verify.**
-  ```
-  cargo test --workspace
+  cargo build --workspace
+  cargo test --workspace --exclude strider-py
   cargo clippy --workspace --all-targets -- -D warnings
-  cargo bench -p strider-analyze --no-run   # confirm benches still build
+  cargo doc --workspace --no-deps
   ```
 
-  Important: confirm `cargo crap` (if installed) shows lower scores for the five functions.  If unavailable, just confirm tests pass — the LOC reduction itself is the win.
+  All green.
 
-- [ ] **Step 11.7: Commit.** Title: `Comprehensive review: split top-5 crap-score functions into per-group helpers`.
+- [ ] **Step 11.19: Commit (single commit per cluster, OR one per sub-step if preferred).**  Commit titles describe the function simplified, not the plan step.  Example: `alias_split: extract wire_consumer_to_partition_head helper`.
+
+### Skipped (BORDERLINE, documented technical debt)
+
+13 functions that are long for legitimate reasons (single-algorithm coherence, dispatch tables with no nesting).  Listed in `/tmp/crap-classified.md` under the BORDERLINE table.  No work — the synthesis judged that extracting from them would FRAGMENT atomic logic without improving readability.
+
+Examples: `node_known_bits` (per-NodeKind algorithm table), `eval_int_binary` (per-op evaluation table), `find_stack_stored_value_at_offset` (single iterative walk).
 
 ---
 
