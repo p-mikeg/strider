@@ -1,6 +1,7 @@
 use super::*;
 use crate::opt::pipeline::Optimizer;
-use crate::opt::{ConstantFold, OptimizerPipeline};
+use crate::opt::OptimizerPipeline;
+use crate::opt::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::{sp_vn_x86 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
@@ -52,9 +53,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let pipeline = cf_rp_pipeline();
     pipeline.run_built(&mut fg)?;
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the

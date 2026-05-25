@@ -28,6 +28,23 @@ pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_va
 
 use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackLoadForward};
 
+/// Returns a fresh pipeline containing exactly `ConstantFold` +
+/// `RedundantPhis` — the most common two-pass pair used across the
+/// stack / memory / arg white-box test suites.  Callers that need
+/// additional passes (e.g. `add_post_pass(FunctionArgDetect)`) chain
+/// those calls on the returned pipeline.
+///
+/// Only replace the verbatim `new() → add(CF) → add(RP)` sequences
+/// with this helper — pipelines that include `AliasSplit`,
+/// `DeadBranchElimination`, or other passes must still build their
+/// own pipeline explicitly.
+pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
+    let mut p = OptimizerPipeline::new();
+    p.add(ConstantFold);
+    p.add(RedundantPhis);
+    p
+}
+
 /// Builds the canonical 3-pass optimizer pipeline used across the
 /// opt white-box tests: `ConstantFold` → `RedundantPhis` →
 /// `StackLoadForward(sp, endianness)`.

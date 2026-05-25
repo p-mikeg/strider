@@ -20,6 +20,8 @@ use rsleigh::mem_readers::BufMemReader;
 use strider_analyze::Strider;
 use strider_target::{CallingConvention, SleighArch};
 
+mod common;
+
 /// Lift the supplied bytes starting at `0x1000` and run the full
 /// strider optimiser pipeline (which now includes
 /// `FlagCmpCanonicalize`).  Returns the post-pipeline graph.
@@ -41,15 +43,6 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let entry = graph.entry().unwrap();
     p.run(&mut graph, entry).expect("optimizer pipeline");
     graph
-}
-
-fn find_unique_if(fg: &Function) -> NodeId {
-    let ifs: Vec<NodeId> = fg
-        .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .collect();
-    assert_eq!(ifs.len(), 1, "fixture must have exactly one reachable If; got {ifs:?}");
-    ifs[0]
 }
 
 /// Build the AArch64 byte sequence:
@@ -86,7 +79,7 @@ fn aarch64_b_eq_after_pipeline_has_direct_int_cmp_cond() {
         CallingConvention::aarch64_aapcs64().unwrap(),
         aarch64_cmp_eq_branch_bytes(),
     );
-    let if_node = find_unique_if(&graph);
+    let if_node = common::find_unique_if(&graph);
     assert_eq!(
         if_cond_kind(&graph, if_node),
         NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
@@ -113,7 +106,7 @@ fn x86_64_je_after_pipeline_has_direct_int_cmp_cond() {
         CallingConvention::x86_64_systemv().unwrap(),
         x86_64_cmp_je_branch_bytes(),
     );
-    let if_node = find_unique_if(&graph);
+    let if_node = common::find_unique_if(&graph);
     assert_eq!(
         if_cond_kind(&graph, if_node),
         NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
@@ -140,7 +133,7 @@ fn arm_thumb_beq_after_pipeline_has_direct_int_cmp_cond() {
         CallingConvention::arm_aapcs().unwrap(),
         thumb_cmp_beq_branch_bytes(),
     );
-    let if_node = find_unique_if(&graph);
+    let if_node = common::find_unique_if(&graph);
     assert_eq!(
         if_cond_kind(&graph, if_node),
         NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),

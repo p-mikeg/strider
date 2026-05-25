@@ -546,16 +546,8 @@ mod tests {
     use super::*;
     use strider_ir::node::NodeOutputType;
     use strider_ir::ExtendOp;
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::{sp_vn_aarch64 as sp64, RegisterSet};
     use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
-
-    fn sp64() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr_off: 0x40,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        }
-    }
 
     fn build_two_target_array(
         targets: [u64; 2],

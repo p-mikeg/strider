@@ -19,16 +19,12 @@ use strider_analyze::opt::{
 };
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{sp_vn_x86_64, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_target::Endianness;
 
 type Result<T> = strider_analyze::opt::Result<T>;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-fn sp_vn() -> rsleigh::Vn {
-    reg_vn(0x20, 8)
-}
 
 /// Count reachable nodes matching `pred`.
 fn count_reachable<F>(fg: &strider_ir::Function, pred: F) -> usize
@@ -138,7 +134,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> Result<()> {
 /// return value (the forwarded constant).
 #[test]
 fn stack_pipeline_full_cooperation() -> Result<()> {
-    let sp = sp_vn();
+    let sp = sp_vn_x86_64();
     let mut b = RegisterSet::new()
         .tracked(sp)
         .callee_saved(sp)

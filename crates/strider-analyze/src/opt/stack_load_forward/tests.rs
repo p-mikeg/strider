@@ -4,27 +4,9 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use strider_ir::{AliasClass};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{sp_vn_aarch64 as sp64_vn, sp_vn_x86 as sp32_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::IntBinaryOp;
 use strider_target::Endianness;
-
-/// Fake 4-byte SP varnode (x86-cdecl-like).
-fn sp32_vn() -> rsleigh::Vn {
-    rsleigh::Vn {
-        addr_off: 0x20,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    }
-}
-
-/// 8-byte SP for aarch64/x86-64-like scenarios.
-fn sp64_vn() -> rsleigh::Vn {
-    rsleigh::Vn {
-        addr_off: 0x40,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    }
-}
 
 /// Counts reachable anonymous (Vn-untagged) `Phi` nodes — the shape
 /// `StackLoadForward` synthesises when forwarding a load across a

@@ -18,7 +18,7 @@ use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{NodeOutputType, NodeOutputKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
-use strider_ir_test_utils::RegisterSet;
+use strider_ir_test_utils::{sp_vn_aarch64, RegisterSet};
 use strider_analyze::opt::{
     ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward,
 };
@@ -140,11 +140,7 @@ mod synthetic {
     /// arch — `StackLoadForward` only cares that it's the SP varnode
     /// passed into the pass constructor.
     pub fn sp_vn() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr_off: 0x40,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        }
+        sp_vn_aarch64()
     }
 
     /// Build a function with `n` SP-relative `Store`s at distinct

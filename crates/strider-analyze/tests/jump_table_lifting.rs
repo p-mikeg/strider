@@ -20,10 +20,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rustc_hash::FxHashMap;
-
-use strider_lift::cfg::{
-    Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets,
-};
+use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::NodeKind;
 use strider_ir::Function;
 use rsleigh::Sleigh;
@@ -31,61 +28,6 @@ use rsleigh::mem_readers::BufMemReader;
 use strider_target::SleighArch;
 
 mod common;
-
-/// Build a synthetic x86-64 binary whose entry is `jmp rax` (a
-/// BranchIndirect) followed by `n_targets` 1-byte `ret` regions
-/// laid out contiguously starting at `0x1002`.
-///
-/// Returns `(bytes, base, branch_indirect_addr, target_addrs)`.
-fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u64>) {
-    let base = 0x1000u64;
-    let mut bytes = vec![0xffu8, 0xe0]; // jmp rax — 2 bytes at 0x1000
-    let mut target_addrs = Vec::with_capacity(n_targets);
-    for i in 0..n_targets {
-        let target_addr = base + 2 + i as u64; // 0x1002, 0x1003, ...
-        target_addrs.push(target_addr);
-        bytes.push(0xc3); // ret
-    }
-    // Pad with int3 so any speculative look-ahead past the last
-    // ret doesn't fault the BufMemReader.  16 bytes is overkill
-    // for the tests but matches the fixture pattern in indirect_resolve_helpers.
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let branch_indirect_addr = base; // first pcode insn at the entry
-    (bytes, base, branch_indirect_addr, target_addrs)
-}
-
-/// Run `analyze_cfg` on a hand-assembled x86-64 byte sequence with
-/// `known_targets` pre-seeded for the BranchIndirect at
-/// `branch_indirect_addr`.  Returns the resulting graph.
-fn analyze_with_known_targets(
-    bytes: Vec<u8>,
-    base: u64,
-    branch_indirect_addr: u64,
-    targets: Vec<u64>,
-) -> Function {
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let sleigh =
-        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
-    // Seed `known_targets` so the cfg builder produces
-    // `RegionTerminator::Switch` (not `UnresolvedIndirectBranch`)
-    // for the BranchIndirect at `branch_indirect_addr`.
-    let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-    let key = PcodeInsnAddr { machine_addr: MachineInsnAddr::from(branch_indirect_addr), insn_index: 0 };
-    known_targets.insert(key, ResolvedTargets::Multiple(targets));
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
-        .with_known_targets(known_targets)
-        .build()
-        .expect("cfg build with Multiple known target");
-
-    let strider = common::strider_x86_64();
-    strider.analyze_cfg(&cfg).expect("analyze_cfg").graph
-}
-
-fn count_if_nodes(g: &Function) -> usize {
-    g.count_kind(|k| matches!(k, NodeKind::If))
-}
 
 fn count_eq_cmps(g: &Function) -> usize {
     g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
@@ -102,9 +44,9 @@ fn switch_terminator_lifts_to_if_ladder_for_one_target() {
     // for the dispatch value.  Pinning this shape ensures the
     // single-target case doesn't regress into a 1-arm If with a
     // dead default.
-    let (bytes, base, ba, targets) = synth_jmp_rax_with_targets(1);
-    let g = analyze_with_known_targets(bytes, base, ba, targets.clone());
-    assert_eq!(count_if_nodes(&g), 0, "no If for 1-target Switch");
+    let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(1);
+    let (g, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    assert_eq!(common::count_ifs(&g), 0, "no If for 1-target Switch");
     assert_eq!(count_eq_cmps(&g), 0, "no equality cmp for 1-target Switch");
     // Still no comparison-constant for K_0 — `build_switch_if_ladder` emits the const
     // ONLY when there's a cmp.
@@ -123,9 +65,9 @@ fn switch_terminator_lifts_to_if_ladder_for_three_targets() {
     // via the last If's false-branch.  Pinning the polarity here
     // catches any future regression that flips true/false sides
     // or that introduces a redundant final cmp.
-    let (bytes, base, ba, targets) = synth_jmp_rax_with_targets(3);
-    let g = analyze_with_known_targets(bytes, base, ba, targets.clone());
-    assert_eq!(count_if_nodes(&g), 2, "N-1=2 If nodes for 3-target Switch");
+    let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
+    let (g, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    assert_eq!(common::count_ifs(&g), 2, "N-1=2 If nodes for 3-target Switch");
     assert_eq!(
         count_eq_cmps(&g),
         2,
@@ -210,7 +152,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     // constant-index dispatch, all of them should be gone
     // (DeadBranchElimination removes If nodes whose conditions are
     // BoolConst).
-    let if_count_pre = count_if_nodes(&graph);
+    let if_count_pre = common::count_ifs(&graph);
     assert!(
         if_count_pre >= 2,
         "expected at least 2 If nodes pre-optimization, got {if_count_pre}",
@@ -222,7 +164,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         .run(&mut graph, entry)
         .expect("optimizer pipeline");
 
-    let if_count_post = count_if_nodes(&graph);
+    let if_count_post = common::count_ifs(&graph);
     assert_eq!(
         if_count_post, 0,
         "constant-index Switch must collapse to zero If nodes after \
@@ -241,10 +183,10 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // consumers (pattern queries, dot rendering) can pattern-match
     // against — closing the gap that pre-`build_switch_if_ladder` produced CFG edges
     // with no IR encoding for the dispatch.
-    let (bytes, base, ba, targets) = synth_jmp_rax_with_targets(2);
-    let g = analyze_with_known_targets(bytes, base, ba, targets.clone());
+    let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(2);
+    let (g, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     // 2-target Switch: exactly one If, one equality cmp.
-    assert_eq!(count_if_nodes(&g), 1, "2-target Switch produces one If");
+    assert_eq!(common::count_ifs(&g), 1, "2-target Switch produces one If");
     assert_eq!(count_eq_cmps(&g), 1, "2-target Switch produces one cmp");
     // K_0 is the comparison constant; K_1 is the false-branch's
     // final target (no constant emitted for it).

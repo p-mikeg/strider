@@ -25,68 +25,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use rustc_hash::FxHashMap;
-
-use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{Function, FunctionBuilder, IntBinaryOp};
 use strider_analyze::pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{GraphRewriter, Strider};
-use strider_target::SleighArch;
+use strider_analyze::GraphRewriter;
 
 mod common;
-
-// ── Common fixture builders (private to this test crate) ────────────────────
-
-/// Build a synthetic x86-64 binary: `jmp rax` followed by `n` `ret`
-/// targets.  Returns `(bytes, base, branch_indirect_addr, target_addrs)`.
-fn synth_jmp_rax_with_targets(n: usize) -> (Vec<u8>, u64, u64, Vec<u64>) {
-    let base = 0x1000u64;
-    let mut bytes = vec![0xffu8, 0xe0]; // jmp rax (2 bytes at 0x1000)
-    let mut targets = Vec::with_capacity(n);
-    for i in 0..n {
-        targets.push(base + 2 + i as u64); // 0x1002, 0x1003, ...
-        bytes.push(0xc3); // ret
-    }
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    (bytes, base, base, targets)
-}
-
-/// Lift `bytes` via `analyze_cfg` with `with_known_targets` seeding the
-/// BranchIndirect at `branch_indirect_addr` to `Multiple(targets)`.
-/// Returns `(graph, strider)` so callers can run the optimizer with
-/// the convention-aware pipeline.
-fn analyze_with_known_targets(
-    bytes: Vec<u8>,
-    base: u64,
-    branch_indirect_addr: u64,
-    targets: Vec<u64>,
-) -> (Function, Strider) {
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-        .expect("create x86_64 sleigh");
-    let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-    known_targets.insert(
-        PcodeInsnAddr { machine_addr: MachineInsnAddr::from(branch_indirect_addr), insn_index: 0 },
-        ResolvedTargets::Multiple(targets),
-    );
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
-        .with_known_targets(known_targets)
-        .build()
-        .expect("cfg build");
-
-    let strider = common::strider_x86_64();
-    let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").graph;
-    (graph, strider)
-}
-
-fn count_if_nodes(g: &Function) -> usize {
-    g.count_kind(|k| matches!(k, NodeKind::If))
-}
 
 fn count_eq_cmps(g: &Function) -> usize {
     g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
@@ -129,9 +73,9 @@ fn count_adds(g: &Function) -> usize {
 /// remaining ladder to nothing.  We pin the post-rewrite If count.
 #[test]
 fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Result<()> {
-    let (bytes, base, ba, targets) = synth_jmp_rax_with_targets(3);
-    let (mut g, strider) = analyze_with_known_targets(bytes, base, ba, targets.clone());
-    let if_count_pre = count_if_nodes(&g);
+    let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
+    let (mut g, strider) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let if_count_pre = common::count_ifs(&g);
     let cmp_count_pre = count_eq_cmps(&g);
     assert_eq!(if_count_pre, 2, "3-target Switch produces N-1=2 If nodes");
     assert_eq!(cmp_count_pre, 2, "3-target Switch produces N-1=2 equality cmps");
@@ -160,7 +104,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
     // first If, the second If's condition is reachable only via the
     // K_0-true path which the dead-branch eliminator pruned.  Final
     // If count must drop below the pre-rewrite count.
-    let if_count_post = count_if_nodes(&g);
+    let if_count_post = common::count_ifs(&g);
     assert!(
         if_count_post < if_count_pre,
         "post-rewrite If count must shrink: pre={if_count_pre}, post={if_count_post}",
@@ -176,9 +120,9 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
 /// branch (zero Ifs reachable post-fold).
 #[test]
 fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Result<()> {
-    let (bytes, base, ba, targets) = synth_jmp_rax_with_targets(3);
-    let (mut g, strider) = analyze_with_known_targets(bytes, base, ba, targets.clone());
-    assert_eq!(count_if_nodes(&g), 2, "3-target Switch lifts to 2 Ifs");
+    let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
+    let (mut g, strider) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    assert_eq!(common::count_ifs(&g), 2, "3-target Switch lifts to 2 Ifs");
     assert_eq!(count_eq_cmps(&g), 2, "3-target Switch lifts to 2 cmps");
     // Rewrite every Equal-cmp to `BoolConst(false)` *except* the K_1
     // arm (let it stay so DeadBranchElim collapses around it).  Pin
@@ -201,7 +145,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
     // After all conditions become BoolConst(false), every If's true
     // branch goes dead; DeadBranchElim collapses the ladder.
     assert_eq!(
-        count_if_nodes(&g),
+        common::count_ifs(&g),
         0,
         "post-rewrite ladder must contain zero If nodes after re_optimize",
     );

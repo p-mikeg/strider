@@ -2,7 +2,8 @@ use super::*;
 use anyhow::anyhow;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
-use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
+use crate::opt::AliasSplit;
+use crate::opt::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use strider_ir::{AliasClass, Graph, IntBinaryOp};
 use strider_ir_test_utils::{sp_vn_x86 as sp_vn};
@@ -78,9 +79,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, …
     pipeline.add_post_pass(CallStackArgCollect::new(
         vec![4, 8, 12, 16, 20, 24, 28, 32],
@@ -148,9 +147,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -200,9 +197,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -250,9 +245,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
 
     let before_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     // x86 cdecl-style: ret addr at offset 0 from anchor, args at +4 and +8.
     // Only slot 1 (rel=8) is filled; slot 0 (rel=4) is absent →
     // dense prefix is empty → no args appended.
@@ -281,9 +274,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
 
     let before_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -335,9 +326,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -407,9 +396,7 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     // cdecl-style offsets: ret-addr at 0, args at +4, +8, +12.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
@@ -475,9 +462,7 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     // 4 cdecl-like stack-arg offsets.  arg0 ends up at sp - 4 (anchor),
     // arg1 at sp - 8 (= anchor + 4), arg2 at sp - 12 (= anchor + 8),
     // arg3 at sp - 16 (= anchor + 12).  AArch64-style table starting at 0.
@@ -551,9 +536,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, …
     pipeline.add_post_pass(CallStackArgCollect::new(
         vec![4, 8, 12, 16, 20, 24, 28, 32],
@@ -624,9 +607,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
@@ -689,9 +670,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
@@ -763,9 +742,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     // 2-slot cdecl table: anchor at +0 (ret-addr), arg0 at +4, arg1 at +8.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run_built(&mut fg)?;
@@ -851,9 +828,7 @@ fn call_stack_args_collected_through_mempartition() -> Result<()> {
     // AliasSplit inserts MemProject(Stack) and MemUnion around the
     // stack stores; the backward walk must see through the partition
     // boundary.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     // x86-cdecl-style table: ret-addr at offset 0, arg0 at +4.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
@@ -930,9 +905,7 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
     // 2. normalize (ConstantFold + RedundantPhis) so SP arithmetic is
     // in canonical form for AliasSplit / decompose_sp.
     {
-        let mut prep = OptimizerPipeline::new();
-        prep.add(ConstantFold);
-        prep.add(RedundantPhis);
+        let prep = cf_rp_pipeline();
         let entry = fg.entry().unwrap();
         prep.run(&mut fg, entry)?;
     }
@@ -1102,9 +1075,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     })?;
 
     // No side-table entry for the Call — pass uses default offsets [4, 8].
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -1164,9 +1135,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
 
     // Run optimization with the default table [4, 8].  The pass must read
     // the per-call override [0, 4] and collect the arg at offset 0.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -1234,9 +1203,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
 
     // Canonicalize so `decompose_sp` would work if called.
     {
-        let mut prep = OptimizerPipeline::new();
-        prep.add(ConstantFold);
-        prep.add(RedundantPhis);
+        let prep = cf_rp_pipeline();
         let entry = fg.entry().unwrap();
         prep.run(&mut fg, entry)?;
     }
@@ -1336,9 +1303,7 @@ fn call_stack_arg_collect_fast_path_on_partitioned_function() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     // AliasSplit partitions the graph; fast path uses side-table offsets.
     pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
@@ -1407,9 +1372,7 @@ fn call_stack_arg_collect_fast_path_two_args_on_partitioned_function() -> Result
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;

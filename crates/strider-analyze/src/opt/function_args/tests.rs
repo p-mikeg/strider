@@ -1,8 +1,9 @@
 use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
+use crate::opt::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{reg_vn, sp_vn_aarch64, sp_vn_x86 as sp32_vn, sp_vn_x86_64 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 fn rdi_like_vn() -> rsleigh::Vn {
@@ -54,15 +55,6 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
         "InitialVar(rdi) must remain reachable after the pass"
     );
     Ok(())
-}
-
-/// Fake 4-byte SP for x86-cdecl-like scenarios.
-fn sp32_vn() -> rsleigh::Vn {
-    rsleigh::Vn {
-        addr_off: 0x20,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    }
 }
 
 /// x86 cdecl reads its first stack arg at `[sp + 4]`.  With no
@@ -166,7 +158,6 @@ fn stack_arg_gap_truncates() -> Result<()> {
 /// load reads the stored value, not the caller's arg.  No arg registered.
 #[test]
 fn prior_stackstore_shadows() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -181,9 +172,7 @@ fn prior_stackstore_shadows() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
@@ -201,7 +190,6 @@ fn prior_stackstore_shadows() -> Result<()> {
 /// `MemPhi` as a fork where **every** predecessor must be clean.
 #[test]
 fn memphi_shadow_disqualifies() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -252,9 +240,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
@@ -266,15 +252,6 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     Ok(())
 }
 
-/// 8-byte SP varnode for aarch64-like scenarios.
-fn sp64_vn() -> rsleigh::Vn {
-    rsleigh::Vn {
-        addr_off: 0x40,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    }
-}
-
 /// If the same stack-arg slot is read at multiple
 /// widths — e.g. aarch64 reading both `x0` (8 bytes) and `w0` (4 bytes)
 /// from `sp+0` — both `Load` nodes must be registered in the side-table
@@ -283,7 +260,7 @@ fn sp64_vn() -> rsleigh::Vn {
 fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
-    let sp = sp64_vn();
+    let sp = sp_vn_aarch64();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Read sp+0 as U32, then sp+0 as U64.  Combine so neither is dead.
         let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
@@ -442,9 +419,8 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 /// disqualified; with the old `k == offset` check it would be registered.
 #[test]
 fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
-    let sp = sp64_vn();
+    let sp = sp_vn_aarch64();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // *(sp+0) = U64(0xDEAD_BEEF_CAFE_BABE)
         let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::U64)?;
@@ -459,9 +435,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
@@ -481,7 +455,6 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 /// covers `[4,8)`.  No overlap ⇒ the sp+4 slot is still a valid arg 0.
 #[test]
 fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -498,9 +471,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
@@ -526,7 +497,6 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 /// merge: `return *(sp+4) as U32`.
 #[test]
 fn memphi_partial_overlap_shadows() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -571,9 +541,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
@@ -788,7 +756,6 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
 /// so the chain must be dirty.
 #[test]
 fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -838,9 +805,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
@@ -995,7 +960,7 @@ fn function_args_combine_phi_or_semantics_pinned() {
 /// MemProject / MemUnion insertion (single-op functions are skipped).
 #[test]
 fn function_arg_detect_walks_through_mempartition() -> Result<()> {
-    use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
+    use crate::opt::AliasSplit;
 
     let sp = sp32_vn();
 
@@ -1022,9 +987,7 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
     // After AliasSplit the Load's memory chain passes through a MemProject
     // node.  Without the fix, mem_chain_is_dirty treats MemProject as
     // unknown and returns dirty=true, suppressing arg registration.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
@@ -1100,11 +1063,7 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
 
     // 2. run ConstantFold + RedundantPhis so the graph is clean.
     {
-        use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
-        let mut prep = OptimizerPipeline::new();
-        prep.add(ConstantFold);
-        prep.add(RedundantPhis);
-        prep.run_built(&mut fg)?;
+        cf_rp_pipeline().run_built(&mut fg)?;
     }
 
     // 3. manually wire MemProject + MemUnion so the Load's memory
@@ -1194,7 +1153,7 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
 /// `function_arg_detect_walks_through_mempartition`.
 #[test]
 fn function_arg_detect_fast_path_on_partitioned_function() -> Result<()> {
-    use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
+    use crate::opt::AliasSplit;
 
     let sp = sp32_vn();
 
@@ -1218,9 +1177,7 @@ fn function_arg_detect_fast_path_on_partitioned_function() -> Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     // AliasSplit partitions the graph and populates Function::stack_offsets.
     pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
@@ -1251,7 +1208,7 @@ fn function_arg_detect_fast_path_on_partitioned_function() -> Result<()> {
 /// `prior_stackstore_shadows` scenario.
 #[test]
 fn function_arg_detect_fast_path_shadow_rejected_on_partitioned_function() -> Result<()> {
-    use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
+    use crate::opt::AliasSplit;
 
     let sp = sp32_vn();
 
@@ -1268,9 +1225,7 @@ fn function_arg_detect_fast_path_shadow_rejected_on_partitioned_function() -> Re
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    let mut pipeline = cf_rp_pipeline();
     pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;

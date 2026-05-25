@@ -435,6 +435,14 @@ pub fn sp_vn_x86_64() -> rsleigh::Vn {
     reg_vn(0x20, 8)
 }
 
+/// Stack-pointer varnode at REGISTER:0x40 with AArch64 / ARM64 SP width
+/// (8 bytes).  Same offset used by the AArch64 Sleigh spec and by the
+/// `sp64_vn` / `sp64` helpers that appear in several opt-pass test modules.
+#[must_use]
+pub fn sp_vn_aarch64() -> rsleigh::Vn {
+    reg_vn(0x40, 8)
+}
+
 /// Builds a single-region function with `sp_vn` tracked as a stack-pointer
 /// variable.  The closure receives the builder and the read-back SP value
 /// (`InitialVar(sp_vn)`) and is responsible for emitting the function body

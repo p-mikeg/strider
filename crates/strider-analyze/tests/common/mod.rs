@@ -182,6 +182,64 @@ pub fn strider_for(arch: Arch) -> strider_analyze::Strider {
     strider_analyze::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new")
 }
 
+// ── Synthetic x86-64 jump-table fixture builders ─────────────────────────────
+
+/// Build a synthetic x86-64 binary: `jmp rax` (2 bytes at `0x1000`)
+/// followed by `n_targets` × `ret` (0xc3), padded with 16 × `int3`
+/// (0xcc) so speculative look-ahead past the last `ret` doesn't fault
+/// the `BufMemReader`.
+///
+/// Returns `(bytes, base_addr, branch_indirect_addr, target_addrs)`.
+/// `branch_indirect_addr == base_addr == 0x1000`; targets are at
+/// `0x1002`, `0x1003`, … (each `ret` is 1 byte).
+pub fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u64>) {
+    let base = 0x1000u64;
+    let mut bytes = vec![0xffu8, 0xe0]; // jmp rax — 2 bytes at 0x1000
+    let mut target_addrs = Vec::with_capacity(n_targets);
+    for i in 0..n_targets {
+        let target_addr = base + 2 + i as u64; // 0x1002, 0x1003, ...
+        target_addrs.push(target_addr);
+        bytes.push(0xc3); // ret
+    }
+    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+    let branch_indirect_addr = base;
+    (bytes, base, branch_indirect_addr, target_addrs)
+}
+
+/// Lift `bytes` via `analyze_cfg` with `with_known_targets` seeding the
+/// `BranchIndirect` at `branch_indirect_addr` to `Multiple(targets)`.
+///
+/// Returns `(graph, strider)` so callers can drive the optimizer with
+/// the convention-aware pipeline.  Panics on any construction failure.
+pub fn analyze_with_known_targets(
+    bytes: &[u8],
+    base: u64,
+    branch_indirect_addr: u64,
+    targets: &[u64],
+) -> (strider_ir::Function, strider_analyze::Strider) {
+    use rustc_hash::FxHashMap;
+    use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+
+    let arch = strider_target::SleighArch::x86_64();
+    let reader = rsleigh::mem_readers::BufMemReader::new(bytes.to_vec(), base);
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+        .expect("create x86_64 sleigh");
+    let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+    known_targets.insert(
+        PcodeInsnAddr { machine_addr: MachineInsnAddr::from(branch_indirect_addr), insn_index: 0 },
+        ResolvedTargets::Multiple(targets.to_vec()),
+    );
+    let opts = OptionsBuilder::new().build();
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
+        .with_known_targets(known_targets)
+        .build()
+        .expect("cfg build with Multiple known targets");
+
+    let strider = strider_x86_64();
+    let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").graph;
+    (graph, strider)
+}
+
 // ── Binary path resolution ───────────────────────────────────────────────────
 
 pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
@@ -383,11 +441,11 @@ pub fn count_return_paths(g: &strider_ir::Function) -> usize {
 /// header but never modified by the body — `RedundantPhis`'s self-ref
 /// rule then collapses the phi to the entry value).
 pub fn count_loops(g: &strider_ir::Function) -> usize {
-    use std::collections::HashSet;
+    use entity_utils::DenseEntitySet;
     let mut count = 0;
-    let reachable: HashSet<_> = g.preorder().collect();
+    let reachable: DenseEntitySet<strider_ir::node::NodeId> = g.preorder().collect();
     for n in g.all_node_ids() {
-        if !reachable.contains(&n) {
+        if !reachable.contains(n) {
             continue;
         }
         if !matches!(g.node_kind(n), NodeKind::Region) {
@@ -399,7 +457,7 @@ pub fn count_loops(g: &strider_ir::Function) -> usize {
         let preds: Vec<_> = g.node_inputs(n).into_iter().collect();
         let has_back_edge = preds.iter().any(|&pred_out| {
             let pred = g.get_node_from_output(pred_out);
-            let mut seen: HashSet<_> = HashSet::new();
+            let mut seen: DenseEntitySet<strider_ir::node::NodeId> = DenseEntitySet::new();
             let mut stack = vec![pred];
             while let Some(cur) = stack.pop() {
                 if !seen.insert(cur) {
@@ -442,6 +500,22 @@ pub fn has_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::Function, pred: F) -> 
 pub fn has_constant(g: &strider_ir::Function, value: u64) -> bool {
     // IntConst stores u128; compare against the u64 value widened to u128.
     has_kind(g, |k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(value)))
+}
+
+/// Locates the unique `If` node in `g`.  Panics if zero or more than one
+/// is present — either case indicates a fixture-construction bug.  Use this
+/// helper when the test asserts on the condition of a known-unique `If` node
+/// rather than counting `If` nodes via [`count_ifs`].
+pub fn find_unique_if(g: &strider_ir::Function) -> strider_ir::node::NodeId {
+    let mut iter = g
+        .all_node_ids()
+        .filter(|&n| matches!(g.node_kind(n), NodeKind::If));
+    let first = iter.next().expect("fixture must contain exactly one If node");
+    assert!(
+        iter.next().is_none(),
+        "fixture has more than one If node",
+    );
+    first
 }
 
 // ── per_arch_test! macro ─────────────────────────────────────────────────────
