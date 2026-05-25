@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeOutputId};
 
 use crate::pattern::pat::Pat;
 
 mod function_arg_handle;
 
-pub use function_arg_handle::FunctionArgHandle;
+pub use function_arg_handle::{ArgSource, FunctionArgHandle};
 
 pub(crate) mod bindings;
 pub(crate) mod cast_mask;
@@ -19,14 +17,6 @@ pub use cast_mask::CastMask;
 pub use match_result::Match;
 
 // ── Matcher ───────────────────────────────────────────────────────────────────
-
-/// Lazy index used by the `FunctionArg` query API ([`Matcher::function_arg`],
-/// [`Matcher::function_args`], [`Matcher::function_arg_count`]).
-///
-/// Built on first access; [`Matcher::match_at`] and [`Matcher::find_all`]
-/// never need it.  The graph-invariants check of the IR validator enforces at most one
-/// `FunctionArg` per index, so at most one entry exists per key.
-struct FunctionArgIndex(HashMap<u32, NodeId>);
 
 /// Optional behaviors that change how the matcher walks through "transparent"
 /// producer / consumer nodes during input or control-chain matching.
@@ -61,18 +51,16 @@ pub(crate) struct MatcherOptions {
 /// Construction is O(1).  `find_all` / `match_at` do a single preorder
 /// walk of the graph each call and try the pattern against every
 /// candidate node (kind-prefiltered when the pattern's
-/// `KindSpec` is concrete).  These
-/// paths never touch the `FunctionArg` index.
+/// `KindSpec` is concrete).
 ///
 /// The `FunctionArg` query API (`function_arg`, `function_args`,
-/// `function_arg_count`, `function_arg_len`) builds an index lazily on
-/// first use via `OnceCell`: the first call pays a one-time preorder
-/// walk to populate `index → NodeId`; subsequent calls are O(1).
+/// `function_arg_count`, `function_arg_len`) reads the
+/// `Function::arg_index_to_nodes` side-table directly — O(1) per call,
+/// no scan.
 pub struct Matcher<'g> {
     pub(super) graph: &'g strider_ir::Function,
     pub(super) entry: NodeId,
     pub(crate) options: MatcherOptions,
-    function_arg_index: std::cell::OnceCell<FunctionArgIndex>,
     /// Lazily-cached preorder traversal of `graph`.  Built on
     /// first call to [`Self::preorder_cached`]; stays valid for the
     /// `Matcher`'s lifetime because the matcher holds an immutable
@@ -119,7 +107,6 @@ impl<'g> Matcher<'g> {
             graph,
             entry,
             options: MatcherOptions::default(),
-            function_arg_index: std::cell::OnceCell::new(),
             preorder: std::cell::OnceCell::new(),
             kind_index: std::cell::OnceCell::new(),
         }
@@ -179,21 +166,6 @@ impl<'g> Matcher<'g> {
     pub fn ignore_regions(mut self) -> Self {
         self.options.ignore_regions = true;
         self
-    }
-
-    /// Returns the lazily-built `FunctionArg` index.
-    fn function_arg_index(&self) -> &FunctionArgIndex {
-        self.function_arg_index.get_or_init(|| {
-            let mut map: HashMap<u32, NodeId> = HashMap::new();
-            for node in self.graph.walk_from(self.entry) {
-                if let NodeKind::FunctionArg { index, .. } =
-                    self.graph.node_kind(node)
-                {
-                    map.insert(*index, node);
-                }
-            }
-            FunctionArgIndex(map)
-        })
     }
 
     /// Finds all nodes in the graph where `pat` matches and returns a [`Match`]
@@ -479,68 +451,73 @@ impl<'g> Matcher<'g> {
     }
 
     // ── FunctionArg query API ─────────────────────────────────────────────────
+    //
+    // These methods read `Function::arg_index_to_nodes` directly; no lazy
+    // scan of the graph is needed.
 
-    /// Returns a `FunctionArgHandle` for the `FunctionArg` node at argument
-    /// position `index`, if the `FunctionArgDetect` pass emitted one.
+    /// Returns a [`FunctionArgHandle`] for the first carrier node registered
+    /// for argument `index`, or `None` if no carriers are registered.
+    ///
+    /// For register args there is always exactly one carrier (`InitialVar`).
+    /// For stack args there may be multiple carriers (different-width `Load`s
+    /// at the same SP-relative offset); this method returns the first.  Use
+    /// [`Self::function_args`] to iterate all carriers for an index.
     pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'g>> {
-        let node_id = *self.function_arg_index().0.get(&index)?;
-        self.make_function_arg_handle(node_id)
+        let node_id = *self.graph.arg_index_to_nodes(index).first()?;
+        Some(FunctionArgHandle {
+            node_id,
+            function: self.graph,
+            index,
+        })
+    }
+
+    /// Iterates over all carrier nodes for argument `index`, each wrapped in
+    /// a [`FunctionArgHandle`].
+    ///
+    /// The common case (register arg) yields exactly one handle.  The
+    /// stack-arg case may yield several (one per observed Load width at
+    /// the same SP-relative offset).
+    pub fn function_args_for(&self, index: u32) -> impl Iterator<Item = FunctionArgHandle<'g>> + '_ {
+        self.graph.arg_index_to_nodes(index).iter().map(move |&node_id| {
+            FunctionArgHandle {
+                node_id,
+                function: self.graph,
+                index,
+            }
+        })
+    }
+
+    /// Iterates over every registered argument index, yielding `(index,
+    /// handle)` pairs for the first carrier of each index, sorted ascending
+    /// by index.
+    pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'g>)> + '_ {
+        let mut indices: Vec<u32> = self.graph.arg_indices().collect();
+        indices.sort_unstable();
+        indices.into_iter().filter_map(move |idx| {
+            self.function_arg(idx).map(|h| (idx, h))
+        })
     }
 
     /// Returns the **highest observed** argument index plus one, or `0` if
-    /// the graph has no `FunctionArg` nodes.
+    /// no arguments are registered.
     ///
     /// `FunctionArgDetect` does not enforce contiguous indices — a function
-    /// that reads only `rdx` (the third x86_64 arg) will yield a
-    /// `FunctionArg { index: 2, .. }` with no entries at indices 0 or 1.
-    /// In that case this method returns `3` but `function_arg(0)` and
-    /// `function_arg(1)` both return `None`.  Use [`Self::function_arg_len`]
-    /// for the actual population count.
+    /// that reads only `rdx` (the third x86_64 arg) will have index `2`
+    /// registered with nothing at 0 or 1.  In that case this returns `3`
+    /// while `function_arg(0)` and `function_arg(1)` return `None`.  Use
+    /// [`Self::function_arg_len`] for the actual population count.
     pub fn function_arg_count(&self) -> usize {
-        self.function_arg_index()
-            .0
-            .keys()
+        self.graph
+            .arg_indices()
             .max()
-            .map_or(0, |&m| (m as usize) + 1)
+            .map_or(0, |m| (m as usize) + 1)
     }
 
-    /// Returns the number of distinct `FunctionArg` nodes in the graph.
-    /// Unlike [`Self::function_arg_count`] this is insensitive to gaps in
-    /// the index space.
+    /// Returns the number of distinct argument indices registered in the
+    /// side-table.  Unlike [`Self::function_arg_count`] this is insensitive
+    /// to gaps in the index space.
     pub fn function_arg_len(&self) -> usize {
-        self.function_arg_index().0.len()
-    }
-
-    /// Iterates over every `FunctionArg` node, yielding `(index, handle)`
-    /// pairs sorted ascending by index.
-    pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'g>)> + '_ {
-        let mut pairs: Vec<(u32, NodeId)> = self
-            .function_arg_index()
-            .0
-            .iter()
-            .map(|(&k, &v)| (k, v))
-            .collect();
-        pairs.sort_by_key(|(k, _)| *k);
-        pairs.into_iter().filter_map(move |(k, node_id)| {
-            self.make_function_arg_handle(node_id).map(|h| (k, h))
-        })
-    }
-
-    /// Builds a [`FunctionArgHandle`] from `node_id`, pulling `source` and
-    /// `index` out of the node's `NodeKind`.  Returns `None` if the node is
-    /// not actually a `FunctionArg` — the index-map only contains such nodes
-    /// by construction, so this never fires in practice, but preserves the
-    /// "no-panic" discipline.
-    fn make_function_arg_handle(&self, node_id: NodeId) -> Option<FunctionArgHandle<'g>> {
-        let NodeKind::FunctionArg { source, index } = *self.graph.node_kind(node_id)
-        else {
-            return None;
-        };
-        Some(FunctionArgHandle {
-            source,
-            index,
-            _graph: std::marker::PhantomData,
-        })
+        self.graph.arg_indices().count()
     }
 
     // ── Dispatch entry points ────────────────────────────────────────────────

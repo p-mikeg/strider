@@ -152,7 +152,7 @@ pub(crate) use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_
 
 // ── Core types & entry points ────────────────────────────────────────────────
 
-pub use matcher::{Bindings, CastMask, Match, Matcher};
+pub use matcher::{ArgSource, Bindings, CastMask, FunctionArgHandle, Match, Matcher};
 pub use pat::{IntoPat, Pat};
 
 // ── Capture variable ─────────────────────────────────────────────────────────

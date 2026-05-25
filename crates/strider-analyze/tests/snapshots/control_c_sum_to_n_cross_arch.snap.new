@@ -17,10 +17,9 @@ aarch64:
   kind_histogram:
     Entry: 1
     Extend(ZeroExtend): 2
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 1
     IntBinaryOp(ShiftRight): 1
@@ -44,10 +43,9 @@ aarch64be:
   kind_histogram:
     Entry: 1
     Extend(ZeroExtend): 1
-    FunctionArg: 2
     If: 1
     InitialMemory: 1
-    InitialVar: 3
+    InitialVar: 5
     IntBinaryOp(Add): 3
     IntCmpOp(Sless): 1
     IntConst: 3
@@ -72,10 +70,9 @@ arm:
   kind_histogram:
     CastToInt: 2
     Entry: 1
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 2
     IntCmpOp(Sborrow): 1
@@ -97,10 +94,9 @@ arm_be:
   stack_store_phis: 0
   kind_histogram:
     Entry: 1
-    FunctionArg: 1
     If: 1
     InitialMemory: 1
-    InitialVar: 3
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Sless): 1
     IntConst: 3
@@ -124,10 +120,9 @@ arm_thumb:
   kind_histogram:
     CastToInt: 2
     Entry: 1
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 2
     IntCmpOp(Sborrow): 1
@@ -149,10 +144,9 @@ mips32be:
   stack_store_phis: 0
   kind_histogram:
     Entry: 1
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 3
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
@@ -173,10 +167,9 @@ mips32le:
   stack_store_phis: 0
   kind_histogram:
     Entry: 1
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 3
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
@@ -198,10 +191,9 @@ mips64be:
   kind_histogram:
     Entry: 1
     Extend(SignExtend): 3
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 3
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
@@ -224,10 +216,9 @@ mips64le:
   kind_histogram:
     Entry: 1
     Extend(SignExtend): 3
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 3
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
@@ -251,10 +242,9 @@ ppc32be:
     CastToBool: 1
     CastToInt: 3
     Entry: 1
-    FunctionArg: 2
     If: 1
     InitialMemory: 1
-    InitialVar: 5
+    InitialVar: 7
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -284,10 +274,9 @@ ppc32le:
     CastToBool: 1
     CastToInt: 3
     Entry: 1
-    FunctionArg: 1
     If: 1
     InitialMemory: 1
-    InitialVar: 5
+    InitialVar: 6
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -319,10 +308,9 @@ ppc64be:
     Entry: 1
     Extend(SignExtend): 3
     Extend(ZeroExtend): 4
-    FunctionArg: 1
     If: 1
     InitialMemory: 1
-    InitialVar: 4
+    InitialVar: 5
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -355,10 +343,9 @@ ppc64le:
     Entry: 1
     Extend(SignExtend): 3
     Extend(ZeroExtend): 4
-    FunctionArg: 1
     If: 1
     InitialMemory: 1
-    InitialVar: 4
+    InitialVar: 5
     IntBinaryOp(Add): 3
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -388,10 +375,9 @@ x64:
   kind_histogram:
     Entry: 1
     Extend(ZeroExtend): 3
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
@@ -402,25 +388,25 @@ x64:
     VarPhi: 2
 x86:
   status: OK
-  reachable_nodes: 19
+  reachable_nodes: 22
   regions: 1
   edges_control: 6
-  edges_memory: 2
-  edges_value: 24
+  edges_memory: 3
+  edges_value: 27
   var_phis: 2
   mem_phis: 0
   value_phis: 0
   stack_store_phis: 0
   kind_histogram:
     Entry: 1
-    FunctionArg: 1
     If: 2
     InitialMemory: 1
-    InitialVar: 2
-    IntBinaryOp(Add): 3
+    InitialVar: 3
+    IntBinaryOp(Add): 4
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
-    IntConst: 2
+    IntConst: 3
+    Load: 1
     Region: 1
     Return: 2
     VarPhi: 2
@@ -437,10 +423,9 @@ x86_kernel:
   stack_store_phis: 0
   kind_histogram:
     Entry: 1
-    FunctionArg: 2
     If: 2
     InitialMemory: 1
-    InitialVar: 2
+    InitialVar: 4
     IntBinaryOp(Add): 3
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 1
