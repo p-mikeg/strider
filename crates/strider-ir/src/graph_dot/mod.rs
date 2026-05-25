@@ -95,8 +95,6 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 pub(super) fn mem_project_fillcolor(class: AliasClass) -> &'static str {
     match class {
         AliasClass::Stack => "\"#1a5c5c\"",   // dark cyan
-        AliasClass::Heap => "\"#5c3a1a\"",    // dark orange
-        AliasClass::Rom => "\"#1a5c2c\"",     // dark green
         AliasClass::Unknown => "\"#444444\"", // gray
     }
 }

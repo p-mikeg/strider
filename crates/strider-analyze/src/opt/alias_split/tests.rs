@@ -100,11 +100,11 @@ fn mem_project_classes(function: &Function) -> Vec<AliasClass> {
 // ─── Entry-partition shape ────────────────────────────────────────────────
 
 #[test]
-fn entry_projects_all_three_active_partitions() {
-    // Stack-only function: the pass should still project Stack, Heap,
-    // AND Unknown from InitialMemory at entry — over-projection is
-    // sound and lets a later pass add a non-stack consumer without
-    // re-running AliasSplit.
+fn entry_projects_both_active_partitions() {
+    // Stack-only function: the pass should still project Stack AND
+    // Unknown from InitialMemory at entry — over-projection is sound
+    // and lets a later pass add a non-stack consumer without re-running
+    // AliasSplit.
     let sp = sp_vn_x86();
     let mut f = stack_store_load_return(sp);
 
@@ -114,7 +114,6 @@ fn entry_projects_all_three_active_partitions() {
     use std::collections::HashSet;
     let classes: HashSet<AliasClass> = mem_project_classes(&f).into_iter().collect();
     assert!(classes.contains(&AliasClass::Stack), "Stack partition projected");
-    assert!(classes.contains(&AliasClass::Heap), "Heap partition projected");
     assert!(classes.contains(&AliasClass::Unknown), "Unknown partition projected");
 
     let entry = f.entry().unwrap();
@@ -131,10 +130,10 @@ fn empty_chain_with_return_partitions_for_terminator() {
     let r = run_split(&mut f, sp);
     assert_eq!(r, OptimizationResult::Changed);
 
-    // 3 entry MemProjects + 1 MemUnion at Return.
+    // 2 entry MemProjects + 1 MemUnion at Return.
     let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject { .. }));
     let n_union = count_reachable(&f, |k| matches!(k, NodeKind::MemUnion));
-    assert_eq!(n_part, 3, "3 entry MemProjects (Stack/Heap/Unknown)");
+    assert_eq!(n_part, 2, "2 entry MemProjects (Stack/Unknown)");
     assert_eq!(n_union, 1, "1 MemUnion at Return");
 
     let entry = f.entry().unwrap();
@@ -254,10 +253,10 @@ fn forked_chains_skip_other_partition() {
 
 #[test]
 fn call_clobbers_stack_chain() {
-    // store sp-4; call f; load sp-4 — Call clobbers [Stack, Heap,
-    // Unknown] by default (sound floor: callee may hold &local_var and
-    // mutate the caller's stack frame).  The Stack Load's mem-input must
-    // trace through a Call-emitted MemProject[Stack] re-projection,
+    // store sp-4; call f; load sp-4 — Call clobbers [Stack, Unknown]
+    // by default (sound floor: callee may hold &local_var and mutate
+    // the caller's stack frame).  The Stack Load's mem-input must trace
+    // through a Call-emitted MemProject[Stack] re-projection,
     // NOT directly back to the Store.
     let sp = sp_vn_x86();
     let mut f = stack_call_stack_return(sp);

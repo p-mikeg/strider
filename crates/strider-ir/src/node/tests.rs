@@ -540,7 +540,7 @@ fn mem_union_signature_has_variadic_memory_inputs_and_unified_output() {
 fn mem_project_is_not_const() {
     use crate::mem_project::AliasClass;
 
-    let k = NodeKind::MemProject { class: AliasClass::Heap };
+    let k = NodeKind::MemProject { class: AliasClass::Unknown };
     assert!(!k.is_const(), "MemProject must not be a constant");
 }
 

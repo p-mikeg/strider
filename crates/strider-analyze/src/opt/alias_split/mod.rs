@@ -1,22 +1,21 @@
 //! `AliasSplit` — converts the unified memory chain into a **forked
 //! per-partition** memory SSA.
 //!
-//! After this pass runs, each [`AliasClass`] partition (Stack / Heap /
-//! Unknown — Rom is read-only and has no chain) carries its own
-//! independent chain of `Memory(Some(P))` tokens.  Operations in
-//! partition `P` depend only on the previous op in `P`, so two stores
-//! at disjoint partitions appear as parallel branches of the SSA graph
-//! and the downstream stack-aware passes (`StackLoadForward`,
-//! `CallStackArgCollect`, `FunctionArgDetect`, `LoadReadOnly`) can walk
-//! exactly the partition they care about.
+//! After this pass runs, each [`AliasClass`] partition (Stack /
+//! Unknown) carries its own independent chain of `Memory(Some(P))`
+//! tokens.  Operations in partition `P` depend only on the previous op
+//! in `P`, so two stores at disjoint partitions appear as parallel
+//! branches of the SSA graph and the downstream stack-aware passes
+//! (`StackLoadForward`, `CallStackArgCollect`, `FunctionArgDetect`,
+//! `LoadReadOnly`) can walk exactly the partition they care about.
 //!
 //! # Forked vs linearised — the shape change
 //!
 //! ## Before AliasSplit
 //!
 //! ```text
-//! InitialMemory → MemPhi(entry) → St@sp+0 → St@heap → St@sp+4 → Return
-//!                                  (Stack)   (Heap)   (Stack)
+//! InitialMemory → MemPhi(entry) → St@sp+0 → St@unk → St@sp+4 → Return
+//!                                  (Stack)  (Unknown) (Stack)
 //! ```
 //!
 //! ## After AliasSplit (forked, the new design)
@@ -24,19 +23,18 @@
 //! ```text
 //!                ┌── MemPart[Stack]   → St@sp+0 → St@sp+4 ──┐
 //! InitialMemory ─┤                                          ├── MemUnion → Return
-//!                ├── MemPart[Heap]    → St@heap ────────────┤
-//!                └── MemPart[Unknown] (passes through) ─────┘
+//!                └── MemPart[Unknown] → St@unk ─────────────┘
 //! ```
 //!
 //! `St@sp+4`'s `mem_input` is `St@sp+0`'s mem-output directly —
-//! `St@heap` is bypassed because their partitions are disjoint.  The
+//! `St@unk` is bypassed because their partitions are disjoint.  The
 //! per-partition chains reconverge at `MemUnion` only when a unified-
 //! memory consumer (Return, full-clobber Call/CallOther,
 //! IndirectBranch) needs everything.
 //!
 //! ## Per-Call clobber semantics
 //!
-//! A bare `Call` clobbers `[Stack, Heap, Unknown]` by default — the
+//! A bare `Call` clobbers `[Stack, Unknown]` by default — the
 //! conservative sound floor until escape analysis proves that no
 //! SP-derived pointer escapes into the callee.  A callee that received
 //! `&local_var` can mutate the caller's stack frame, so the Stack chain
@@ -51,25 +49,23 @@
 //! [`strider_target::call_other_abi::CallOtherAbi::mem_clobbers`] —
 //! per-op data on the ABI table.  A CallOther with empty `mem_clobbers`
 //! (e.g. `cpuid`, `rdtsc`) doesn't touch the memory chain at all;
-//! `MEM_CLOBBER_HEAP_UNKNOWN` is the usual default for atomics /
-//! barriers / port-I/O; `MEM_CLOBBER_FULL` is reserved for kernel-entry
-//! paths (`syscall`, `swi`, `software_interrupt`) where the kernel can
-//! also mutate the user stack frame.
+//! `MEM_CLOBBER_HEAP_UNKNOWN` (`[Unknown]`) is the usual default for
+//! atomics / barriers / port-I/O; `MEM_CLOBBER_FULL` (`[Stack, Unknown]`)
+//! is reserved for kernel-entry paths (`syscall`, `swi`,
+//! `software_interrupt`) where the kernel can also mutate the user stack
+//! frame.
 //!
 //! # v1 scope and assumptions
 //!
 //! * Only `Stack` vs `Unknown` is *address-classifiable* by this pass
 //!   today — the `decompose_sp` test promotes SP-relative addresses to
-//!   `Stack` and everything else falls back to `Unknown`.  `Heap` and
-//!   `Rom` partition tags exist on the IR (and `Call` clobbers them
-//!   distinctly) but address-range-based Heap/Rom detection is not in
-//!   scope yet.
-//! * **All three partitions (`Stack` / `Heap` / `Unknown`) are projected
-//!   at function entry**, even if a particular function turns out not
-//!   to touch one of them.  Conservatively over-projecting (never
-//!   under-projecting) keeps the algorithm sound when a downstream pass
-//!   inserts a new partition consumer; idle partition heads cost one
-//!   `MemProject` node each and become dead unless wired up.
+//!   `Stack` and everything else falls back to `Unknown`.
+//! * **Both partitions (`Stack` / `Unknown`) are projected at function
+//!   entry**, even if a particular function turns out not to touch one
+//!   of them.  Conservatively over-projecting (never under-projecting)
+//!   keeps the algorithm sound when a downstream pass inserts a new
+//!   partition consumer; idle partition heads cost one `MemProject`
+//!   node each and become dead unless wired up.
 //! * `MemPhi` joins (the lifter's per-Region memory-φ) are partitioned
 //!   sibling-style: every non-entry `MemPhi` M with N CFG predecessors
 //!   gets N+1 per-partition mirror `MemPhi[P]` nodes (one per active
@@ -98,25 +94,24 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 
 /// Per-call default clobber set: a bare `Call` clobbers
-/// `[Stack, Heap, Unknown]` — the conservative sound floor until escape
+/// `[Stack, Unknown]` — the conservative sound floor until escape
 /// analysis can prove that no SP-derived pointer escapes into the callee.
 /// A callee that received `&local_var` can legitimately mutate the
 /// caller's stack frame, so preserving the Stack chain across every Call
 /// is unsound in the general case.  Per-call overrides remain available
 /// for known stack-preserving leaf calls or CC-tagged shapes.
 const CALL_DEFAULT_CLOBBERS: &[AliasClass] =
-    &[AliasClass::Stack, AliasClass::Heap, AliasClass::Unknown];
+    &[AliasClass::Stack, AliasClass::Unknown];
 
 /// Terminal-clobber set used at `Return` and `IndirectBranch` —
 /// everything is "consumed" so any pending stores in any partition
 /// must reach the terminator.
 const TERMINAL_CLOBBERS: &[AliasClass] =
-    &[AliasClass::Stack, AliasClass::Heap, AliasClass::Unknown];
+    &[AliasClass::Stack, AliasClass::Unknown];
 
-/// Active partitions tracked by this pass (in canonical order).  Rom
-/// is read-only and has no chain.
-const ACTIVE_PARTITIONS: [AliasClass; 3] =
-    [AliasClass::Stack, AliasClass::Heap, AliasClass::Unknown];
+/// Active partitions tracked by this pass (in canonical order).
+const ACTIVE_PARTITIONS: [AliasClass; 2] =
+    [AliasClass::Stack, AliasClass::Unknown];
 
 /// Splits the unified memory chain into one independent SSA chain per
 /// alias-class partition.  See the module-level documentation for the
@@ -384,8 +379,7 @@ fn classify_all(
 /// no offset (consumers that need per-branch offsets can call
 /// `decompose_sp` directly).
 ///
-/// Heap detection would require address-range analysis; that is out of
-/// scope for this pass, so everything non-SP-rooted falls back to Unknown.
+/// Everything non-SP-rooted falls back to Unknown.
 fn address_class_with_offset(
     function: &Function,
     addr: NodeOutputId,
@@ -404,7 +398,7 @@ fn address_class_with_offset(
 /// algorithm this is held per memory-output `NodeOutputId` in
 /// [`OutgoingHeadsMap`] — every chain node's mem-output is associated
 /// with the per-partition heads that downstream consumers should see.
-type PartitionHeads = [Option<NodeOutputId>; 3];
+type PartitionHeads = [Option<NodeOutputId>; 2];
 
 /// `outgoing_heads[output_id][P]` = the partition-P memory token that
 /// flows out of the node defining `output_id`.  Seeded at the chain
@@ -414,17 +408,11 @@ type PartitionHeads = [Option<NodeOutputId>; 3];
 type OutgoingHeadsMap = FxHashMap<NodeOutputId, PartitionHeads>;
 
 /// Maps an active partition to its index in [`PartitionHeads`].
-/// Returns an error when given `AliasClass::Rom` (read-only memory has
-/// no chain — callers should never request a Rom head).
 #[inline]
 fn partition_index(p: AliasClass) -> Result<usize> {
     match p {
         AliasClass::Stack => Ok(0),
-        AliasClass::Heap => Ok(1),
-        AliasClass::Unknown => Ok(2),
-        AliasClass::Rom => Err(anyhow::anyhow!(
-            "AliasSplit: Rom has no memory chain; partition_index called with Rom"
-        )),
+        AliasClass::Unknown => Ok(1),
     }
 }
 
@@ -514,7 +502,7 @@ fn build_forked_chains(
     // Insert one MemProject[P] per active partition projecting from
     // the chain root's memory output (typically the lifter's entry
     // MemPhi).
-    let mut entry_heads: PartitionHeads = [None; 3];
+    let mut entry_heads: PartitionHeads = [None; 2];
     for &p in &ACTIVE_PARTITIONS {
         let mp = function.create_node_attributed(
             NodeKind::MemProject { class: p },
@@ -705,7 +693,7 @@ fn splice_mem_phi_join(
     // `add_node_input` so we can defer back-edge slots without
     // leaving the node mid-rewrite with the wrong arity.
     let unified_mem_out = function.memory_output_of(mem_phi)?;
-    let mut new_heads: PartitionHeads = [None; 3];
+    let mut new_heads: PartitionHeads = [None; 2];
 
     for &p in &ACTIVE_PARTITIONS {
         let mirror = function.create_node_attributed(
