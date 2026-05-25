@@ -215,14 +215,14 @@ impl<'g> RewriteCtx<'g> {
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
     {
-        let g: &Graph = &**self.graph;
+        let g: &Graph = self.graph;
         self.preorder().filter(move |&n| pred(g.node_kind(n)))
     }
 
     /// Read-only access to the wrapped structural [`Graph`].
     #[must_use]
     pub fn graph_ref(&self) -> &Graph {
-        &**self.graph
+        self.graph
     }
 
     /// Read-only access to the wrapped [`Function`] (graph + overlay).
@@ -249,6 +249,7 @@ impl<'g> RewriteCtx<'g> {
 
     /// Mutable access to the wrapped structural [`Graph`].
     pub fn graph_mut(&mut self) -> &mut Graph {
+        #[allow(clippy::explicit_auto_deref)]
         &mut **self.graph
     }
 

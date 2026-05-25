@@ -29,8 +29,8 @@ use common::*;
 
 use strider_analyze::pattern::{
     CastMask, IntCmpOp, Matcher, Capture, Pat,
-    add, and, any, any_int_const, call, function_arg, if_node, int_cmp,
-    int_const, load, store, var, IntoPat,
+    add, and, any, any_int_const, call, if_node, int_cmp,
+    int_const, load, predicate, store, var, IntoPat,
 };
 
 use strider_ir::node::{NodeId, NodeKind};
@@ -100,6 +100,23 @@ fn field_store(addr_pat: impl Into<Pat>, data_pat: impl Into<Pat>) -> Pat {
 ///   load.addr( add(var(base), any_int_const(offset)) )
 fn field_load_at_offset(base: Capture, offset: Capture) -> Pat {
     field_load(add(var(base), any_int_const(offset)))
+}
+
+/// Builds a `Pat` that matches any carrier node registered for function arg
+/// `arg_index` in the `Function::arg_index_to_nodes` side-table.  The pattern
+/// checks that the matched node's primary output is one of the carriers'
+/// outputs, making it usable as a drop-in for the old `function_arg(N)`
+/// pattern in expressions like `call().arg(i, arg_carrier_pat(g, N))`.
+fn arg_carrier_pat(g: &strider_ir::Function, arg_index: u32) -> Pat {
+    use strider_ir::node::NodeOutputId;
+    // Collect the primary output of every registered carrier.
+    let carrier_outputs: std::sync::Arc<[NodeOutputId]> = g
+        .arg_index_to_nodes(arg_index)
+        .iter()
+        .filter_map(|&n| g.node_outputs(n).first().copied())
+        .collect::<Vec<_>>()
+        .into();
+    predicate(move |_, _, out| carrier_outputs.contains(&out))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -251,15 +268,18 @@ fn if_bit_clear_call_assertions(g: &strider_ir::Function) {
     let m = matcher(g);
     assert!(!m.find_all(&if_node().into()).is_empty(),
             "no If matched in if_bit_clear_call");
-    let pat: Pat = call().arg(0, function_arg(1)).into();
+    // Carrier for arg 1 (the `p` parameter).
+    assert!(!g.arg_index_to_nodes(1).is_empty(),
+            "arg 1 must be registered in the side-table");
+    let pat: Pat = call().arg(0, arg_carrier_pat(g, 1)).into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
-            "expected Call(arg(0) = function_arg(1)) in if_bit_clear_call \
+            "expected Call(arg(0) = carrier(arg 1)) in if_bit_clear_call \
              (proves StackLoadForward connects the spilled `p` parameter \
              through to the call site)");
 
     // STRICT composition: "If whose true branch is a Call(arg(0) =
-    // function_arg(1))".  The compiler may emit either
+    // carrier(arg 1))".  The compiler may emit either
     //   bne skip; call          (call on False side)
     // or
     //   je do_call; call        (call on True side)
@@ -268,16 +288,16 @@ fn if_bit_clear_call_assertions(g: &strider_ir::Function) {
     // every arch, including arm_thumb (proves the construction-time
     // NoOp classification of setISAMode keeps the walk unblocked).
     let true_pat: Pat = if_node()
-        .true_branch(call().arg(0, function_arg(1)))
+        .true_branch(call().arg(0, arg_carrier_pat(g, 1)))
         .into();
     let false_pat: Pat = if_node()
-        .false_branch(call().arg(0, function_arg(1)))
+        .false_branch(call().arg(0, arg_carrier_pat(g, 1)))
         .into();
     let true_hits = m.find_all(&true_pat);
     let false_hits = m.find_all(&false_pat);
     assert!(
         !true_hits.is_empty() || !false_hits.is_empty(),
-        "expected If(true_branch | false_branch = Call(arg(0)=function_arg(1))) \
+        "expected If(true_branch | false_branch = Call(arg(0)=carrier(arg 1))) \
          (proves construction-time NoOp classification of setISAMode \
          keeps If→Call walks unblocked on Thumb); got 0 matches on either branch",
     );
@@ -405,29 +425,29 @@ fn multi_arg_call_in_branch_assertions(g: &strider_ir::Function) {
     // orderings: `ext_three(a, b, c)` on the True branch and
     // `ext_three(c, b, a)` on the False.  Function param indices are
     // cond=0, a=1, b=2, c=3.  We match each ordering independently
-    // via strict `function_arg(N)` on every positional arg — a buggy
-    // optimizer that fails to connect Call.arg(N) back to FunctionArg(N)
+    // via strict carrier-pat on every positional arg — a buggy
+    // optimizer that fails to connect Call.arg(N) back to the carrier(N)
     // through the spill round-trip would lose one of the two matches.
     let m = matcher(g);
     let nv_abc = Capture::new();
     let pat_abc: Pat = call()
-        .arg(0, function_arg(1))   // a
-        .arg(1, function_arg(2))   // b
-        .arg(2, function_arg(3))   // c
+        .arg(0, arg_carrier_pat(g, 1))   // a
+        .arg(1, arg_carrier_pat(g, 2))   // b
+        .arg(2, arg_carrier_pat(g, 3))   // c
         .capture(nv_abc);
     let nv_cba = Capture::new();
     let pat_cba: Pat = call()
-        .arg(0, function_arg(3))   // c
-        .arg(1, function_arg(2))   // b
-        .arg(2, function_arg(1))   // a
+        .arg(0, arg_carrier_pat(g, 3))   // c
+        .arg(1, arg_carrier_pat(g, 2))   // b
+        .arg(2, arg_carrier_pat(g, 1))   // a
         .capture(nv_cba);
     let hits_abc = m.find_all(&pat_abc);
     let hits_cba = m.find_all(&pat_cba);
     assert!(!hits_abc.is_empty(),
-            "expected a Call with args (function_arg(1), function_arg(2), function_arg(3)) \
+            "expected a Call with args (carrier(1), carrier(2), carrier(3)) \
              — the True-branch ext_three(a,b,c)");
     assert!(!hits_cba.is_empty(),
-            "expected a Call with args (function_arg(3), function_arg(2), function_arg(1)) \
+            "expected a Call with args (carrier(3), carrier(2), carrier(1)) \
              — the False-branch ext_three(c,b,a)");
     // Distinct call sites — captured NodeIds must differ across the
     // two patterns (otherwise we matched the same call twice).

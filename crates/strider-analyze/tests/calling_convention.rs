@@ -40,10 +40,10 @@ mod common;
 use std::collections::HashSet;
 
 use strider_analyze::pattern::{
-    CastMask, Matcher, Pat, call, function_arg,
+    CastMask, Capture, IntoPat, Matcher, Pat, any, call, initial_var_for,
 };
 
-use strider_ir::node::{NodeKind, FunctionArgSource};
+use strider_ir::node::NodeKind;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -61,23 +61,19 @@ fn matcher(g: &strider_ir::Function) -> Matcher<'_> {
         .ignore_regions()
 }
 
-/// Returns the set of `index` values present on `FunctionArg` nodes in `g`.
+/// Returns the set of arg `index` values registered in
+/// `Function::arg_index_to_nodes` (the side-table populated by
+/// `FunctionArgDetect`).
 fn function_arg_indices(g: &strider_ir::Function) -> HashSet<u32> {
-    g.preorder()
-        .filter_map(|n| match g.node_kind(n) {
-            NodeKind::FunctionArg { index, .. } => Some(*index),
-            _ => None,
-        })
-        .collect()
+    g.arg_indices().collect()
 }
 
-/// Asserts at least `min` distinct `FunctionArg` indices in `0..n` are
-/// present in the IR, and that index 0 is among them.  This is the
+/// Asserts at least `min` distinct arg indices in `0..n` are registered
+/// in the side-table, and that index 0 is among them.  This is the
 /// regression guard for `detect_register_args`'s sub-register fallback:
 /// without it, a function whose first parameter is read at sub-register
-/// width (universal at -O2 on every arch we test) would have no
-/// `FunctionArg(0)` — and consequently no `FunctionArg` at all in the
-/// extreme case.
+/// width (universal at -O2 on every arch we test) would have no arg 0
+/// recorded — and consequently no args at all in the extreme case.
 fn assert_function_args_present(
     g: &strider_ir::Function,
     n: u32,
@@ -88,44 +84,100 @@ fn assert_function_args_present(
     let in_range: HashSet<u32> = got.iter().copied().filter(|&i| i < n).collect();
     assert!(
         in_range.len() >= (min as usize),
-        "{fn_label}: expected ≥{min} FunctionArg indices in 0..{n}; \
+        "{fn_label}: expected ≥{min} arg indices in 0..{n}; \
          got {} (all indices: {got:?})",
         in_range.len(),
     );
     assert!(
         in_range.contains(&0),
-        "{fn_label}: expected FunctionArg(0) to exist (the first \
+        "{fn_label}: expected arg 0 to be registered (the first \
          parameter); got indices {got:?}",
     );
 }
 
-/// Asserts that for at least one `i` in `0..n`, the pattern
-///   `call().arg(i, function_arg(i))`
-/// matches.  Pins the StackLoadForward + sub-register-fallback chain
-/// that connects Call.arg(i) ↔ FunctionArg(i) at the call site.
+/// Asserts that for at least one `i` in `0..n`, the side-table has a
+/// carrier node for arg `i` that appears as a value-input to at least one
+/// `Call` node (directly or via the cast-transparent pattern matcher).
 ///
 /// Requiring "at least one match" rather than "all 0..N must match"
-/// gives headroom for arch-specific lowerings where one or two arg
-/// slots route through a non-`StackStore` chain the walker can't
-/// follow; the universal cross-arch invariant the test enforces is
-/// "at least one slot threads through cleanly."
+/// gives headroom for arch-specific lowerings where one or two arg slots
+/// route through a non-`StackStore` chain the walker can't follow; the
+/// universal cross-arch invariant is "at least one slot threads through
+/// cleanly."
 fn assert_some_call_arg_threads_through(
     g: &strider_ir::Function,
     n: u32,
     fn_label: &str,
 ) {
     let m = matcher(g);
+    // Capture the call's arg i, then check if the captured value traces
+    // back to the carrier through cast-transparent walks.
     let mut matched_indices: Vec<u32> = Vec::new();
     for i in 0..n {
-        let pat: Pat = call().arg(i as usize, function_arg(i)).into();
-        if !m.find_all(&pat).is_empty() {
+        let carriers = g.arg_index_to_nodes(i);
+        if carriers.is_empty() {
+            continue;
+        }
+        // Use the cast-transparent pattern matcher:
+        // - For InitialVar carriers: match `call().arg(i, initial_var_for(vn))`.
+        // - For Load carriers: match `call().arg(i, initial_var_for(vn))` won't
+        //   work, so instead capture arg i and walk backward to find the carrier.
+        //
+        // Strategy: capture the i-th call arg and check if the captured node's
+        // source (after stripping casts) matches one of the carriers.
+        let arg_cap = Capture::new();
+        let pat: Pat = call().arg(i as usize, any().capture(arg_cap)).into();
+        let call_matches = m.find_all(&pat);
+        if call_matches.iter().any(|hit| {
+            let Some(arg_out) = hit.output(arg_cap) else { return false; };
+            // Walk backward through the cast chain from the captured call arg.
+            // If we reach a carrier, it threads through.
+            let mut cur = g.get_node_from_output(arg_out);
+            for _ in 0..8 {
+                if carriers.contains(&cur) {
+                    return true;
+                }
+                // Step through cast/extend/truncate nodes one level.
+                let kind = g.node_kind(cur);
+                if matches!(kind,
+                    NodeKind::Extend(_)
+                    | NodeKind::Truncate
+                    | NodeKind::CastToInt
+                    | NodeKind::CastToBool
+                    | NodeKind::CastToFloat
+                    | NodeKind::Phi
+                ) {
+                    let inputs = g.node_inputs(cur);
+                    if let Some(&first) = inputs.get(0) {
+                        cur = g.get_node_from_output(first);
+                        continue;
+                    }
+                }
+                break;
+            }
+            false
+        }) {
             matched_indices.push(i);
+        }
+
+        // Also try the cast-transparent matcher for InitialVar carriers.
+        if matched_indices.last() != Some(&i) {
+            for &carrier in carriers {
+                if let NodeKind::InitialVar(vn) = *g.node_kind(carrier) {
+                    let pat2: Pat = call().arg(i as usize, initial_var_for(vn)).into();
+                    if !m.find_all(&pat2).is_empty() {
+                        matched_indices.push(i);
+                        break;
+                    }
+                }
+            }
         }
     }
     assert!(
         !matched_indices.is_empty(),
-        "{fn_label}: expected ≥1 i in 0..{n} where Call(arg(i) = \
-         function_arg(i)) matches; FunctionArg indices present = {indices:?}",
+        "{fn_label}: expected ≥1 i in 0..{n} where a Call's arg i traces \
+         back to the registered carrier for arg i; \
+         registered arg indices = {indices:?}",
         indices = function_arg_indices(g),
     );
 }
@@ -235,45 +287,37 @@ per_arch_test!(
 );
 
 fn narrow_widths_assertions(g: &strider_ir::Function) {
-    // (a) at least 2 FunctionArgs exist in 0..4 (loose floor; the strict
-    //     0..4 form fails on big-endian / x86-cdecl arches).
-    // Strict: 4 narrow-width args (signed/unsigned char + short)
+    // (a) Strict: 4 narrow-width args (signed/unsigned char + short)
     // fully detected via the contained-in sub-register fallback in
     // upgrade_to_tracked_for + the detect_register_args fallback.
     assert_function_args_present(g, 4, 4, "narrow_widths");
-    // (b) at least one Call.arg(i) ↔ FunctionArg(i) link exists.
+    // (b) at least one Call.arg(i) ↔ carrier(i) link exists.
     assert_some_call_arg_threads_through(g, 4, "narrow_widths");
 
-    // (c) Source-shape check: every FunctionArg(0..4) that DOES exist
-    //     must surface as a valid Register(Vn) (with width ∈ {1, 2, 4, 8})
-    //     or Stack slot at a sane offset.  Validates that the
-    //     sub-register fallback emits the narrower-than-container Vn
+    // (c) Source-shape check: every registered carrier for indices 0..4
+    //     must be an `InitialVar(Vn)` with width ∈ {1, 2, 4, 8} (register
+    //     arg) or a `Load` node (stack arg).  Validates that the
+    //     sub-register fallback records the narrower-than-container Vn
     //     correctly when it does emit one.
-    let by_index: std::collections::HashMap<u32, FunctionArgSource> = g
-        .preorder()
-        .filter_map(|n| match g.node_kind(n) {
-            NodeKind::FunctionArg { index, source } => Some((*index, *source)),
-            _ => None,
-        })
-        .collect();
-    for (idx, src) in &by_index {
-        if *idx >= 4 {
-            continue;
-        }
-        match src {
-            FunctionArgSource::Register(vn) => {
-                assert!(
-                    matches!(vn.size, 1 | 2 | 4 | 8),
-                    "narrow_widths: FunctionArg({idx}) Register source has \
-                     unexpected width {} (Vn = {:?})", vn.size, vn,
-                );
-            }
-            FunctionArgSource::Stack { offset, .. } => {
-                assert!(
-                    *offset >= 0 && *offset < 256,
-                    "narrow_widths: FunctionArg({idx}) Stack offset {offset} \
-                     unreasonable",
-                );
+    for idx in 0..4u32 {
+        let carriers = g.arg_index_to_nodes(idx);
+        for &n in carriers {
+            match g.node_kind(n) {
+                NodeKind::InitialVar(vn) => {
+                    assert!(
+                        matches!(vn.size, 1 | 2 | 4 | 8),
+                        "narrow_widths: arg {idx} InitialVar carrier has \
+                         unexpected width {} (Vn = {:?})", vn.size, vn,
+                    );
+                }
+                NodeKind::Load(_) => {
+                    // Stack-arg carrier: no additional width check needed here.
+                }
+                other => {
+                    panic!(
+                        "narrow_widths: arg {idx} carrier is unexpected node kind {other:?}"
+                    );
+                }
             }
         }
     }

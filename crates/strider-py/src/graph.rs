@@ -328,7 +328,7 @@ impl PyGraph {
             ))
         })?;
         real_pipeline
-            .run(&mut *graph, entry)
+            .run(&mut graph, entry)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -349,7 +349,7 @@ impl PyGraph {
                 "Graph.reoptimize: graph has not been built (entry is None)"
             ))
         })?;
-        pipe.run(&mut *graph, entry).map_err(|e| {
+        pipe.run(&mut graph, entry).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }

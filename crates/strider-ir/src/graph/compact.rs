@@ -432,7 +432,7 @@ mod tests {
     #[test]
     fn node_id_remap_returns_none_for_dropped() {
         let mut graph = Graph::new();
-        let (entry, const_node, ret_node, mem_node) = build_anchor(&mut graph, 1);
+        let (entry, const_node, ret_node, _mem_node) = build_anchor(&mut graph, 1);
         let [const_old_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
         // Grab the pre-compaction NodeInputId slots on Return via crate-
         // private arena access — there's no public accessor for raw

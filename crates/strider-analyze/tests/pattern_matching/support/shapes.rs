@@ -196,8 +196,9 @@ pub fn single_initial_var() -> (Function, rsleigh::Vn) {
     (t.ret_val(v), reg)
 }
 
-/// Graph that, after `opt::FunctionArgDetect`, contains a single
-/// `FunctionArg { Register(reg), 0 }` node.
+/// Graph that, after `opt::FunctionArgDetect`, has `reg` registered as the
+/// carrier for arg 0 in `Function::arg_index_to_nodes`.  The underlying
+/// `InitialVar(reg)` node remains in place; no `FunctionArg` node is created.
 pub fn function_arg_reg() -> (Function, rsleigh::Vn) {
     use strider_analyze::opt::{FunctionArgDetect, Optimizer};
     let reg = reg_vn(0x38, 8);

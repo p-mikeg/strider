@@ -100,7 +100,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));
     let entry = graph.entry().unwrap();
-    p.run(graph.graph_mut(), entry).expect("optimizer pipeline");
+    p.run(&mut graph, entry).expect("optimizer pipeline");
     graph
 }
 
@@ -197,7 +197,7 @@ mod synthetic {
         p.add(ConstantFold);
         p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
-        p.run(fg.graph_mut(), entry).unwrap();
+        p.run(&mut fg, entry).unwrap();
         fg
     }
 
@@ -264,7 +264,7 @@ mod synthetic {
         p.add(ConstantFold);
         p.add(RedundantPhis);
         let entry = fg.entry().unwrap();
-        p.run(fg.graph_mut(), entry).unwrap();
+        p.run(&mut fg, entry).unwrap();
         fg
     }
 
@@ -340,7 +340,7 @@ mod synthetic {
         p.add(ConstantFold);
         p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
-        p.run(fg.graph_mut(), entry).unwrap();
+        p.run(&mut fg, entry).unwrap();
         fg
     }
 
@@ -377,7 +377,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 |mut fg| {
                     let pass = StackLoadForward::new(sp, strider_target::Endianness::Little);
                     let entry = fg.entry().unwrap();
-                    let _ = pass.optimize(fg.graph_mut(), entry);
+                    let _ = pass.optimize(&mut fg, entry);
                     black_box(fg);
                 },
                 BatchSize::LargeInput,

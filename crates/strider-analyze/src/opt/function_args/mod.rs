@@ -1,18 +1,19 @@
-//! Detects function arguments and replaces their reads with canonical
-//! [`NodeKind::FunctionArg`] nodes.
+//! Detects function arguments and records them in the
+//! [`strider_ir::Function::arg_index_to_nodes`] side-table.
 //!
-//! Runs as a post-pass after the main fixed-point loop converges.  Rewrites
+//! Runs as a post-pass after the main fixed-point loop converges.  Identifies
 //! register-passed arg reads (`InitialVar(arg_reg)`) and stack-passed arg
-//! reads (`Load[InitialVar(sp) + K]` unshadowed by any prior store) into a
-//! single canonical form keyed by the argument's index in the calling
-//! convention.
+//! reads (`Load[InitialVar(sp) + K]` unshadowed by any prior store) and
+//! records each underlying node in the side-table keyed by the argument's
+//! index in the calling convention.  The original `InitialVar` / `Load` nodes
+//! survive unchanged — no consumer rewiring, no new nodes.
 //!
 //! # Detection rules
 //!
 //! * **Register args** (no contiguity constraint).  For each register
 //!   `R = cc.arg_passing_regs[i]`, if `InitialVar(R)` has live uses in the
-//!   graph, emit one `FunctionArg { Register(R), i }` and rewire every use
-//!   of `InitialVar(R)`'s output to point at the new node.
+//!   graph, register it as the carrier for arg `i` via
+//!   `function.register_arg_node(i, initial_var_node)`.
 //!
 //! * **Stack args** (strict contiguity + no-shadow).  Collect all `Load`
 //!   nodes whose address decomposes (via [`sp_expr::decompose_sp`]) to
@@ -27,11 +28,11 @@
 //!   filtering, emit only those indices that form a gap-free prefix starting
 //!   at `first_stack_arg = arg_passing_regs.len()`; the first gap truncates.
 //!
-//! Each emitted `FunctionArg` has an output width equal to the widest load
-//! observed at that offset (register sources use the container register's
-//! natural width); narrower reads are rewired through `Truncate`.
+//! For the stack-arg multi-`Load` case, every `Load` at the same `sp+K`
+//! offset (potentially at different widths) is registered into the side-table
+//! for that arg index — the `Vec<NodeId>` per entry accommodates this.
 
-use strider_ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
 use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
@@ -42,9 +43,10 @@ use crate::opt::sp_expr::{
 };
 use crate::opt::worklist::seeded_kind;
 
-/// Replaces register-passed and stack-passed argument reads with canonical
-/// [`NodeKind::FunctionArg`][strider_ir::node::NodeKind::FunctionArg] nodes.  Intended
-/// to run once, as an
+/// Detects register-passed and stack-passed argument reads and records their
+/// underlying carrier nodes in
+/// [`strider_ir::Function::arg_index_to_nodes`] via
+/// [`strider_ir::Function::register_arg_node`].  Intended to run once, as an
 /// [`OptimizerPipeline::add_post_pass`][crate::opt::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
 #[derive(Clone)]
@@ -101,7 +103,6 @@ impl Optimizer for FunctionArgDetect {
         entry: NodeId,
     ) -> Result<OptimizationResult> {
         let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
-        let mut changed = OptimizationResult::NoChange;
         // `layout.register_args()` yields slots in ABI order, with
         // canonical positional indices stamped at layout-construction
         // time.  `layout.first_stack_index()` replaces the local
@@ -110,30 +111,24 @@ impl Optimizer for FunctionArgDetect {
             self.layout.register_args().map(|(_, vn)| vn).collect();
         let stack_arg_offsets: Vec<i64> =
             self.layout.stack_args().map(|(_, o)| o).collect();
-        changed |= detect_register_args(&mut ctx, &arg_passing_regs)?;
-        changed |= detect_stack_args(
+        detect_register_args(&mut ctx, &arg_passing_regs)?;
+        detect_stack_args(
             &mut ctx,
             self.cc.stack_ptr_vn,
             &stack_arg_offsets,
             self.layout.first_stack_index() as usize,
         )?;
-        // Replacing `Load[sp+K]` with `FunctionArg` orphans the address-
-        // computation chain (`Add(sp, K)` and friends).  Those nodes remain in
-        // the use-list of surviving producers like `InitialVar(sp)`, which
-        // confuses downstream consumers that walk use-lists — e.g. the dot
-        // renderer draws an edgeless `InitialVar(sp)` island.  Detach them.
-        // The detach result is hygiene-only (post-pass return values are
-        // ignored by the pipeline); don't escalate it into `Changed`.
-        let entry = ctx.entry();
-        let _ = crate::opt::worklist::detach_unreachable_nodes(ctx.graph_mut(), entry);
-        Ok(changed)
+        // The pass only populates the arg_index_to_nodes side-table — it
+        // does not rewrite the graph — so the optimizer's fixed-point loop
+        // does not need to re-run.
+        Ok(OptimizationResult::NoChange)
     }
 }
 
 /// Rule D: for every register in `arg_passing_regs` whose `InitialVar` node
-/// has live uses, emit one `FunctionArg { Register(reg), i }` and rewire all
-/// those uses to it.  No contiguity check — reading only arg 2 still labels it
-/// arg 2.
+/// has live uses, register that `InitialVar` as the carrier for arg `i` in
+/// `function.arg_index_to_nodes`.  No contiguity check — reading only arg 2
+/// still labels it arg 2.
 ///
 /// **Sub-register fallback.**  The IR builder doesn't always promote a
 /// register read at function entry to the full container register: a `char`
@@ -147,13 +142,13 @@ impl Optimizer for FunctionArgDetect {
 /// `Vn` lies fully within `reg`'s byte range
 /// `[reg.addr_off, reg.addr_off + reg.size)` in the same address space.
 /// If multiple candidates exist, pick the largest (the most specific
-/// reading of `reg`'s state).  The emitted `FunctionArg`'s `source`
-/// records the actual sub-register Vn, so downstream consumers see the
-/// width the function actually reads.
+/// reading of `reg`'s state).  The registered node carries the actual
+/// sub-register Vn, so downstream consumers see the width the function
+/// actually reads.
 fn detect_register_args(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     arg_passing_regs: &[rsleigh::Vn],
-) -> Result<OptimizationResult> {
+) -> Result<()> {
     // Single reachable-graph scan collects every InitialVar's Vn → NodeId.
     // `InitialVar` nodes are not hash-cached (see `NodeKind::is_cacheable`),
     // so we still rely on the builder's invariant of at most one InitialVar
@@ -219,14 +214,13 @@ fn detect_register_args(
         best
     }
 
-    let mut result = OptimizationResult::NoChange;
     for (i, reg) in arg_passing_regs.iter().enumerate() {
         // Exact match → use as-is.  Otherwise the largest sub-register
         // contained in `reg`'s byte range.
-        let (effective_vn, initial_var) = if let Some(&n) = initial_vars.get(reg) {
-            (*reg, n)
-        } else if let Some((sub_vn, sub_n)) = largest_sub_in(&initial_vars_by_space, *reg) {
-            (sub_vn, sub_n)
+        let initial_var = if let Some(&n) = initial_vars.get(reg) {
+            n
+        } else if let Some((_, sub_n)) = largest_sub_in(&initial_vars_by_space, *reg) {
+            sub_n
         } else {
             continue;
         };
@@ -237,47 +231,31 @@ fn detect_register_args(
             continue;
         }
 
-        let out_type = NodeOutputType::try_from(effective_vn.size)?;
-        // Inherit the InitialVar's asm-fingerprint so downstream pattern
-        // queries (`m.asm_fingerprint(c, &graph)` on a captured FunctionArg)
-        // can still trace back to the contributing machine instruction.
-        // FunctionArg is exempt from the validator's non-empty-fingerprint
-        // check, but the superset-only contract still says passes may grow
-        // fingerprints — never shrink them — when replacing a node's uses.
-        // The single-source register-args path (one InitialVar in, one
-        // FunctionArg out) carries no coupling concern; the stack-args path
-        // unifies multiple Loads and intentionally skips the absorption.
-        let new_node = ctx.create_node_attributed(
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Register(effective_vn),
-                index: i as u32,
-            },
-            [],
-            [NodeOutputKind::OutputType(out_type)],
-            &[initial_var],
-        );
-        let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
-        result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, new_out)?);
+        // Register the underlying InitialVar as the carrier for arg i.
+        // The node stays in place; consumers are not rewired.
+        ctx.function_mut().register_arg_node(i as u32, initial_var);
     }
-    Ok(result)
+    Ok(())
 }
 
 /// Rule (stack args): collect every `Load` node whose address decomposes to
 /// `InitialVar(sp) + K` where `K` is one of the convention's stack-arg
 /// offsets.  Group by `K`, then apply **strict contiguity** from position 0:
 /// the first gap in the offset-set truncates, so surviving indices are a
-/// gap-free prefix.  For each surviving `K`, emit one `FunctionArg` and rewire
-/// every qualifying load's uses to it.
+/// gap-free prefix.  For each surviving group of qualifying `Load`s, register
+/// every `Load` in the group into `function.arg_index_to_nodes` for that index.
 ///
-/// Memory-shadow disqualification and width merging extend this further.
+/// The original `Load` nodes survive unchanged — no consumer rewiring.
+/// Multiple `Load`s at the same `sp+K` offset (e.g. different widths) are all
+/// registered into the side-table for that index.
 fn detect_stack_args(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     sp_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
-) -> Result<OptimizationResult> {
+) -> Result<()> {
     if stack_arg_offsets.is_empty() {
-        return Ok(OptimizationResult::NoChange);
+        return Ok(());
     }
 
     // Group candidate loads by their position `j` in `stack_arg_offsets`.
@@ -334,82 +312,39 @@ fn detect_stack_args(
         max_j_plus_one += 1;
     }
     if max_j_plus_one == 0 {
-        return Ok(OptimizationResult::NoChange);
+        return Ok(());
     }
 
-    let mut result = OptimizationResult::NoChange;
-    for (j, &offset) in stack_arg_offsets.iter().enumerate().take(max_j_plus_one) {
+    for (j, _offset) in stack_arg_offsets.iter().enumerate().take(max_j_plus_one) {
         let index = (first_stack_arg + j) as u32;
         let Some(loads) = groups.remove(&j) else {
             continue;
         };
 
-        // Space from first load (all loads in a K-group share the same memory
-        // space).  Per-load output types may differ — pick the widest.
+        // Guard: every load in this K-group must share the same memory space.
+        // The grouping logic above keys only on `j` (the offset slot), not on
+        // space, so a multi-space lifter could in principle place two loads at
+        // the same offset in different spaces.  Skip the whole group on
+        // mismatch rather than silently merging.
         let first = loads[0];
         let NodeKind::Load(space) = *ctx.node_kind(first) else {
             continue;
         };
-        // Guard: every load in this K-group must share `space`. The grouping
-        // logic above keys only on `j` (the offset slot), not on space, so a
-        // multi-space lifter could in principle place two loads at the same
-        // offset in different spaces. Skip the whole group on mismatch rather
-        // than silently merging.
         if loads.iter().any(|&l| {
             !matches!(*ctx.node_kind(l), NodeKind::Load(s) if s == space)
         }) {
             continue;
         }
-        // Collect (load, out_type) pairs and find the max byte size.
-        let mut load_types: Vec<(NodeId, NodeOutputType)> = Vec::with_capacity(loads.len());
-        for load in &loads {
-            let [out] = ctx.node_outputs_exact::<1>(*load)?;
-            let Some(ty) = ctx.output_kind(out).as_value() else {
-                continue;
-            };
-            load_types.push((*load, ty));
-        }
-        let Some(max_type) = load_types.iter().map(|(_, t)| *t).max_by_key(|t| t.byte_size())
-        else {
-            continue;
-        };
 
-        let new_node = ctx.create_node(
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { space, offset },
-                index,
-            },
-            [],
-            [NodeOutputKind::OutputType(max_type)],
-        );
-        let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
-
-        for (load, load_ty) in load_types {
-            let [old_out] = ctx.node_outputs_exact::<1>(load)?;
-            if load_ty == max_type {
-                // FunctionArg is exempt from the fingerprint check; no need
-                // to absorb the load's fingerprint into it (and doing so
-                // would couple FunctionArg's identity to the loads it
-                // happens to subsume).
-                result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, new_out)?);
-            } else {
-                // Narrower read: insert a Truncate from the wider FunctionArg.
-                // The Truncate is non-exempt and freshly created; inherit
-                // the rewritten Load's fingerprint so the contributing
-                // machine instruction's address survives the rewrite.
-                let trunc = ctx.create_node_attributed(
-                    NodeKind::Truncate,
-                    [new_out],
-                    [NodeOutputKind::OutputType(load_ty)],
-                    &[load],
-                );
-                let [trunc_out] = ctx.node_outputs_exact::<1>(trunc)?;
-                result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, trunc_out)?);
-            }
-            ctx.detach_node_inputs(load);
+        // Register every qualifying Load as a carrier for arg `index`.
+        // Each Load stays in place; consumers are not rewired.
+        // Multiple Loads at the same offset (different widths) are all
+        // recorded — the Vec<NodeId> per index accommodates this.
+        for load in loads {
+            ctx.function_mut().register_arg_node(index, load);
         }
     }
-    Ok(result)
+    Ok(())
 }
 
 /// Per-pass-call memo for [`mem_chain_is_dirty`]. Keyed on `(memory_token,

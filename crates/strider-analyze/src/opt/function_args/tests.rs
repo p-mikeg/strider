@@ -1,8 +1,7 @@
 use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
-use crate::opt::test_support::count;
-use strider_ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::{reg_vn, sp_vn_x86_64 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
@@ -13,8 +12,8 @@ fn rdi_like_vn() -> rsleigh::Vn {
 
 /// x86_64-like convention passes arg 0 in a register.  A function
 /// that reads that register once should, after `FunctionArgDetect` runs,
-/// contain exactly one `FunctionArg { Register(rdi), 0 }` node, and the
-/// original `InitialVar(rdi)` use should have been rewired to it.
+/// have `arg_index_to_nodes(0)` containing the `InitialVar(rdi)` node.
+/// The original `InitialVar(rdi)` must still be reachable.
 #[test]
 fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let rdi = rdi_like_vn();
@@ -36,28 +35,23 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let entry = fg.entry().unwrap();
     pass.optimize(&mut fg, entry)?;
 
-    let n_fa = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Register(r),
-                index: 0,
-            } if *r == rdi
-        )
-    });
-    assert_eq!(
-        n_fa, 1,
-        "expected exactly one FunctionArg {{ Register(rdi), 0 }}"
+    // Side-table must have arg 0.
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(!arg0_nodes.is_empty(), "arg 0 should be registered in the side-table");
+    assert_eq!(arg0_nodes.len(), 1, "exactly one carrier for register arg 0");
+    let carrier = arg0_nodes[0];
+    assert!(
+        matches!(fg.node_kind(carrier), NodeKind::InitialVar(v) if *v == rdi),
+        "carrier for arg 0 must be InitialVar(rdi)"
     );
 
-    // The original InitialVar(rdi) should have no remaining live uses
-    // (the Return should now source from the FunctionArg output).
+    // The original InitialVar(rdi) must still be reachable — no consumer rewiring.
     let reachable_initial_rdi = fg.count_kind(|k| {
         matches!(k, NodeKind::InitialVar(v) if *v == rdi)
     });
     assert_eq!(
-        reachable_initial_rdi, 0,
-        "InitialVar(rdi) should be detached after rewiring"
+        reachable_initial_rdi, 1,
+        "InitialVar(rdi) must remain reachable after the pass"
     );
     Ok(())
 }
@@ -72,9 +66,8 @@ fn sp32_vn() -> rsleigh::Vn {
 }
 
 /// x86 cdecl reads its first stack arg at `[sp + 4]`.  With no
-/// register args in the convention, the `Load[sp+4]` should be rewritten
-/// to a single `FunctionArg { Stack{offset:4}, 0 }` node and all consumers
-/// of the load rewired to it.
+/// register args in the convention, `arg_index_to_nodes(0)` should contain
+/// the `Load[sp+4]` node.  The original Load must remain reachable.
 #[test]
 fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
@@ -96,28 +89,20 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let n_fa = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 4, .. },
-                index: 0,
-            }
-        )
-    });
-    assert_eq!(
-        n_fa, 1,
-        "expected exactly one FunctionArg {{ Stack{{+4}}, 0 }}"
+    // Side-table must have arg 0.
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(!arg0_nodes.is_empty(), "arg 0 should be registered (stack)");
+    assert_eq!(arg0_nodes.len(), 1, "one Load at sp+4, so one carrier");
+    assert!(
+        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        "carrier for stack arg 0 must be a Load node"
     );
 
-    // The original Load should no longer be reachable (its single consumer,
-    // the Return, now sources from the FunctionArg).
-    let reachable_loads = fg.count_kind(|k| {
-        matches!(k, NodeKind::Load(_))
-    });
+    // The original Load must still be reachable.
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
-        reachable_loads, 0,
-        "Load[sp+4] should be detached after rewiring"
+        reachable_loads, 1,
+        "Load[sp+4] must remain reachable after the pass"
     );
     Ok(())
 }
@@ -138,8 +123,7 @@ fn build_sp_load(
 
 /// Loads at sp+4 and sp+12, but **not** sp+8 — only the contiguous
 /// prefix (sp+4 → arg 0) is labelled.  The sp+12 load remains unchanged
-/// (i.e. it does **not** get FunctionArg index 2), and no gap-index node
-/// is emitted.
+/// and is NOT registered in the side-table (no gap-spanning).
 #[test]
 fn stack_arg_gap_truncates() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
@@ -159,51 +143,27 @@ fn stack_arg_gap_truncates() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
     pipeline.run_built(&mut fg)?;
 
-    // Only arg 0 emitted; arg 1 absent (gap) and arg 2 MUST NOT be emitted.
-    let arg0 = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 4, .. },
-                index: 0,
-            }
-        )
-    });
-    let arg1 = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 8, .. },
-                ..
-            }
-        )
-    });
-    let arg2 = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 12, .. },
-                ..
-            }
-        )
-    });
-    assert_eq!(arg0, 1, "arg 0 (sp+4) should be emitted");
-    assert_eq!(arg1, 0, "arg 1 (sp+8) is absent");
-    assert_eq!(arg2, 0, "arg 2 (sp+12) must be truncated by the gap");
+    // Only arg 0 registered; arg 1 absent (gap) so arg 2 MUST NOT be registered.
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(!arg0_nodes.is_empty(), "arg 0 (sp+4) should be registered");
 
-    // The sp+12 load must still exist and be reachable.
-    let reachable_loads = fg.count_kind(|k| {
-        matches!(k, NodeKind::Load(_))
-    });
+    let arg1_nodes = fg.arg_index_to_nodes(1);
+    assert!(arg1_nodes.is_empty(), "arg 1 (sp+8) is absent — nothing at that offset");
+
+    let arg2_nodes = fg.arg_index_to_nodes(2);
+    assert!(arg2_nodes.is_empty(), "arg 2 (sp+12) must be truncated by the gap");
+
+    // Both loads must still be reachable — the pass does not remove nodes.
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
-        reachable_loads, 1,
-        "sp+12 Load should remain (sp+4 Load replaced)"
+        reachable_loads, 2,
+        "both Load nodes (sp+4 and sp+12) must remain reachable"
     );
     Ok(())
 }
 
 /// A prior `StackStore{+4}` shadows the `Load[sp+4]` — the load
-/// reads the stored value, not the caller's arg.  No FunctionArg emitted.
+/// reads the stored value, not the caller's arg.  No arg registered.
 #[test]
 fn prior_stackstore_shadows() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
@@ -228,10 +188,10 @@ fn prior_stackstore_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
-    assert_eq!(
-        any_fa, 0,
-        "Load[sp+4] is shadowed by StackStore{{+4}}, not a function arg"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
+        "Load[sp+4] is shadowed by StackStore{{+4}}, must not be registered as arg"
     );
     Ok(())
 }
@@ -300,10 +260,10 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
-    assert_eq!(
-        any_fa, 0,
-        "Load[sp+4] reaches a MemPhi with a shadowing branch — disqualified"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
+        "Load[sp+4] reaches a MemPhi with a shadowing branch — must not be registered"
     );
     Ok(())
 }
@@ -319,8 +279,8 @@ fn sp64_vn() -> rsleigh::Vn {
 
 /// If the same stack-arg slot is read at multiple
 /// widths — e.g. aarch64 reading both `x0` (8 bytes) and `w0` (4 bytes)
-/// from `sp+0` — emit **one** `FunctionArg` at the widest observed width
-/// and route narrower reads through `Truncate(FunctionArg)`.
+/// from `sp+0` — both `Load` nodes must be registered in the side-table
+/// for index 0.
 #[test]
 fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
@@ -347,52 +307,27 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
     pipeline.run_built(&mut fg)?;
 
-    // Exactly one FunctionArg at offset 0.
-    let fa_count = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 0, .. },
-                index: 0,
-            }
-        )
-    });
-    assert_eq!(fa_count, 1, "exactly one FunctionArg at offset 0");
-
-    // That one FunctionArg must be at U64 (the widest observed load).
-    let fa_node = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::FunctionArg { .. }))
-        .expect("FunctionArg exists");
-    let [fa_out] = fg.node_outputs_exact::<1>(fa_node)?;
+    // Both Loads at offset 0 must be registered for arg 0.
+    let arg0_nodes = fg.arg_index_to_nodes(0);
     assert_eq!(
-        fg.output_kind(fa_out).as_value(),
-        Some(NodeOutputType::U64),
-        "FunctionArg output width should match widest load (U64)"
+        arg0_nodes.len(), 2,
+        "both Loads at sp+0 (U32 and U64) must be registered for arg 0"
+    );
+    assert!(
+        arg0_nodes.iter().all(|&n| matches!(fg.node_kind(n), NodeKind::Load(_))),
+        "all registered carriers for stack arg 0 must be Load nodes"
     );
 
-    // The narrow (U32) use must be re-routed through a `Truncate` node
-    // whose input is the FunctionArg's output.
-    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.preorder().collect();
-    let trunc_from_fa = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(*n))
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
-        .filter(|&n| {
-            let inputs = fg.node_inputs(n);
-            inputs.len() == 1 && inputs[0] == fa_out
-        })
-        .count();
+    // Both Loads must still be reachable — the pass does not remove them.
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
-        trunc_from_fa, 1,
-        "expected one Truncate consuming the FunctionArg output"
+        reachable_loads, 2,
+        "both Loads must remain reachable after the pass"
     );
     Ok(())
 }
 
-/// An `InitialVar(arg_reg)` with no live uses must not produce a
-/// `FunctionArg` node.  The pass is not pinning unreferenced registers.
+/// An `InitialVar(arg_reg)` with no live uses must not be registered.
 /// `FunctionArgDetect` runs after the fixed-point loop, so the setup here
 /// includes `RedundantPhis` to strip phantom phi consumers the builder
 /// creates during variable tracking.
@@ -420,17 +355,22 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi], sp, vec![]));
     pipeline.run_built(&mut fg)?;
 
-    let n_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
+        "unused InitialVar(rdi) must not be registered as arg"
+    );
+    // No indices at all.
     assert_eq!(
-        n_fa, 0,
-        "unused InitialVar(rdi) must not be labelled as FunctionArg"
+        fg.arg_indices().count(), 0,
+        "side-table must be empty when no arg reads are live"
     );
     Ok(())
 }
 
 /// x86_64-like: two register args (rdi, rsi) and a stack arg at `sp+8`
-/// (i.e. arg 6 in SysV; for this test arg 2).  All three should become
-/// `FunctionArg` nodes, indexed 0, 1, and 2 respectively.
+/// (i.e. arg 6 in SysV; for this test arg 2).  All three should be
+/// registered in the side-table at indices 0, 1, and 2 respectively.
 #[test]
 fn x86_64_mixed_reg_and_stack() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
@@ -469,36 +409,29 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi, rsi], sp, vec![8]));
     pipeline.run_built(&mut fg)?;
 
-    let fa_reg0 = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Register(r),
-                index: 0,
-            } if *r == rdi
-        )
-    });
-    let fa_reg1 = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Register(r),
-                index: 1,
-            } if *r == rsi
-        )
-    });
-    let fa_stack2 = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 8, .. },
-                index: 2,
-            }
-        )
-    });
-    assert_eq!(fa_reg0, 1, "rdi → FunctionArg index 0");
-    assert_eq!(fa_reg1, 1, "rsi → FunctionArg index 1");
-    assert_eq!(fa_stack2, 1, "sp+8 → FunctionArg index 2");
+    // Arg 0 = InitialVar(rdi).
+    let arg0 = fg.arg_index_to_nodes(0);
+    assert!(!arg0.is_empty(), "arg 0 (rdi) should be registered");
+    assert!(
+        matches!(fg.node_kind(arg0[0]), NodeKind::InitialVar(v) if *v == rdi),
+        "arg 0 carrier must be InitialVar(rdi)"
+    );
+
+    // Arg 1 = InitialVar(rsi).
+    let arg1 = fg.arg_index_to_nodes(1);
+    assert!(!arg1.is_empty(), "arg 1 (rsi) should be registered");
+    assert!(
+        matches!(fg.node_kind(arg1[0]), NodeKind::InitialVar(v) if *v == rsi),
+        "arg 1 carrier must be InitialVar(rsi)"
+    );
+
+    // Arg 2 = Load at sp+8.
+    let arg2 = fg.arg_index_to_nodes(2);
+    assert!(!arg2.is_empty(), "arg 2 (sp+8) should be registered");
+    assert!(
+        matches!(fg.node_kind(arg2[0]), NodeKind::Load(_)),
+        "arg 2 carrier must be a Load node"
+    );
     Ok(())
 }
 
@@ -508,8 +441,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 ///
 /// `*(sp+0) = U64(X); return *(sp+4) as U64` — store covers `[0,8)`, load
 /// covers `[4,12)`.  With the byte-range overlap check the load is
-/// disqualified; with the old `k == offset` check it is mis-labelled as a
-/// function arg.
+/// disqualified; with the old `k == offset` check it would be registered.
 #[test]
 fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
@@ -536,10 +468,10 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
-    assert_eq!(
-        any_fa, 0,
-        "Load[sp+4] overlaps with StackStore{{+0, size=8}} — must be shadowed"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
+        "Load[sp+4] overlaps with StackStore{{+0, size=8}} — must not be registered"
     );
     Ok(())
 }
@@ -576,18 +508,14 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let fa_at_4 = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 4, .. },
-                index: 0,
-            }
-        )
-    });
-    assert_eq!(
-        fa_at_4, 1,
-        "disjoint StackStore{{+0, size=4}} must not shadow Load[sp+4]"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        !arg0_nodes.is_empty(),
+        "disjoint StackStore{{+0, size=4}} must not shadow Load[sp+4] — arg 0 should be registered"
+    );
+    assert!(
+        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        "carrier for arg 0 must be a Load node"
     );
     Ok(())
 }
@@ -595,8 +523,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 /// Byte-range overlap through a `MemPhi`: one arm of the diamond stores
 /// at an offset whose range overlaps the load's; the other arm's store is
 /// disjoint.  Under `any()` semantics for MemPhi any overlapping predecessor
-/// is a shadow, so the load must be disqualified — but the old exact-offset
-/// check misses the overlap on the overlapping arm and mis-labels the load.
+/// is a shadow, so the load must be disqualified.
 ///
 /// then: `*(sp+2) = U32` covers `[2,6)` — overlaps load `[4,8)`.
 /// else: `*(sp+8) = U32` covers `[8,12)` — disjoint from load `[4,8)`.
@@ -655,16 +582,16 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
-    assert_eq!(
-        any_fa, 0,
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
         "MemPhi with an overlapping-range StackStore predecessor must disqualify Load[sp+4]"
     );
     Ok(())
 }
 
 /// An isolated high-offset load (sp+12) with no sp+4 or sp+8
-/// produces no FunctionArg at all — nothing starts the contiguous prefix.
+/// produces no registered args at all — nothing starts the contiguous prefix.
 #[test]
 fn isolated_high_offset_load_dropped() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
@@ -681,10 +608,9 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
     pipeline.run_built(&mut fg)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
-        any_fa, 0,
-        "isolated sp+12 load must not be labelled without arg 0/1"
+        fg.arg_indices().count(), 0,
+        "isolated sp+12 load must not be registered without arg 0/1"
     );
     Ok(())
 }
@@ -692,9 +618,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
 /// `sub rsp, 0xFFFFFFFFFFFFFFFC` is an alternate encoding of `add rsp, 4`:
 /// when the constant is sign-extended from its U64 bit width it becomes
 /// `-4`, and `Sub(sp, -4) = sp + 4`.  `FunctionArgDetect` must recognise
-/// the resulting `Load` as a candidate for stack-arg offset `+4` via
-/// `int_const_signed`'s sign extension — without `ConstantFold`
-/// rewriting the address into its canonical form first.
+/// the resulting `Load` as a candidate for stack-arg offset `+4`.
 #[test]
 fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     use crate::opt::{OptimizerPipeline, RedundantPhis};
@@ -717,18 +641,14 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let fa = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 4, .. },
-                index: 0,
-            }
-        )
-    });
-    assert_eq!(
-        fa, 1,
-        "Sub(sp, 0xFFFFFFFFFFFFFFFC_U64) must decompose to offset +4 and be recognised as stack arg 0",
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        !arg0_nodes.is_empty(),
+        "Sub(sp, 0xFFFFFFFFFFFFFFFC_U64) must decompose to offset +4 and be registered as arg 0",
+    );
+    assert!(
+        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        "carrier for arg 0 (stack-arg via negative sub) must be a Load node"
     );
     Ok(())
 }
@@ -779,10 +699,10 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
-    assert_eq!(
-        any_fa, 0,
-        "plain Store(sp+4, U32) overlaps Load[sp+4]: chain must be dirty"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
+        "plain Store(sp+4, U32) overlaps Load[sp+4]: chain must be dirty — no arg registered"
     );
     Ok(())
 }
@@ -791,21 +711,13 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
 /// function-entry memory and a `Load[sp+K]` candidate must NOT mark the
 /// chain dirty.  Such a Store is provably non-stack-aliasing (its address
 /// does not decompose to `sp + K`), so the walker should pass through it.
-///
-/// Models the cause #2 reproducer for `mem_chain_is_dirty`: gcc/clang
-/// at -O2 freely interleave volatile global writes (`volatile int g = …;`
-/// barriers) between the function-entry stack-arg loads and the call.
-/// Without the fix, the global Store hits the `_ => true` catch-all and the
-/// load is dropped from the FunctionArg group.
 #[test]
 fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // Volatile global write: store to fixed `.data` address.  decompose_sp
-        // returns None for an IntConst address — the new branch must continue
-        // past it.
+        // Volatile global write: store to fixed `.data` address.
         let global_addr = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
         let global_data = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
         b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
@@ -825,27 +737,16 @@ fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let fa = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 4, .. },
-                index: 0,
-            }
-        )
-    });
-    assert_eq!(
-        fa, 1,
-        "non-SP-rooted Store must not mark chain dirty: Load[sp+4] should still qualify as stack arg 0"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        !arg0_nodes.is_empty(),
+        "non-SP-rooted Store must not mark chain dirty: Load[sp+4] should be registered as arg 0"
     );
     Ok(())
 }
 
 /// NEW: an SP-rooted plain `Store(addr=sp+K2, U32)` whose byte range is
-/// disjoint from the load's must NOT mark the chain dirty.  After
-/// decomposing the Store address to `Terminal { offset: K2 }`, the
-/// `ranges_disjoint(K2, store_size, K, load_size)` check should let the
-/// walker recurse into the Store's MEM input.
+/// disjoint from the load's must NOT mark the chain dirty.
 ///
 /// `*(sp + 0) = U32(X)` covers `[0,4)`; `return *(sp + 4)` covers `[4,8)`
 /// — disjoint, so sp+4 still qualifies as arg 0.
@@ -873,27 +774,17 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let fa = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 4, .. },
-                index: 0,
-            }
-        )
-    });
-    assert_eq!(
-        fa, 1,
-        "disjoint SP-rooted Store(sp+0, U32) must not mark Load[sp+4] dirty: still arg 0"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        !arg0_nodes.is_empty(),
+        "disjoint SP-rooted Store(sp+0, U32) must not mark Load[sp+4] dirty: still registered as arg 0"
     );
     Ok(())
 }
 
 /// Pin: a plain `Store` whose address decomposes to `SpExpr::Phi { … }`
 /// (SP-rooted but flowing through a control-flow join with per-branch
-/// offsets) must conservatively mark the chain dirty — handling phi-of-SP
-/// would require per-pred range analysis.  Mirrors `stack_load_forward::probe`'s
-/// posture for the same SpExpr variant.
+/// offsets) must conservatively mark the chain dirty.
 ///
 /// Diamond: then-branch does `sp -= 4`, else-branch does `sp -= 8`.  At
 /// the join, `read_variable(&sp)` produces a phi over the two SP versions;
@@ -959,10 +850,10 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
-    assert_eq!(
-        any_fa, 0,
-        "Store with SpExpr::Phi address must conservatively mark chain dirty: no FunctionArg"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
+        "Store with SpExpr::Phi address must conservatively mark chain dirty: no arg registered"
     );
     Ok(())
 }
@@ -1003,33 +894,18 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    let fa = count(&fg, |k| {
-        matches!(
-            k,
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Stack { offset: 4, .. },
-                index: 0,
-            }
-        )
-    });
-    assert_eq!(
-        fa, 1,
-        "10k disjoint stores must not mark the chain dirty: load at sp+4 forwards to FunctionArg"
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        !arg0_nodes.is_empty(),
+        "10k disjoint stores must not mark the chain dirty: load at sp+4 should be registered as arg 0"
     );
     Ok(())
 }
 
 /// Escape-into-callee: the caller takes the address of its own incoming
 /// stack-arg slot and passes it as a value-arg to a `CallOther`.  After
-/// the call, a `Load` from that same slot must NOT be promoted to
-/// `FunctionArg`: the callee may have stored through the passed pointer,
-/// so the slot's post-call value is *not* the caller's incoming arg.
-///
-/// Setup: `CallOther` (with `memory_edge`) takes `sp_val` (i.e.
-/// `InitialVar(sp) + 0`) as its sole value-arg, then `Load[sp + 0]`
-/// reads from the post-call memory.  Convention has stack_arg_offsets =
-/// `[0]`, so without the escape check the Load would be classified
-/// against arg-slot 0 and rewritten to `FunctionArg(0)`.
+/// the call, a `Load` from that same slot must NOT be registered as arg:
+/// the callee may have stored through the passed pointer.
 #[test]
 fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
@@ -1043,10 +919,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     // Take the address of stack-arg slot 0 (i.e. sp + 0 = sp itself).
     let sp_val = b.read_variable(&sp)?;
 
-    // CallOther whose sole value-arg is &arg0 (= sp_val).  No
-    // implicit reads/writes; the modeled CallOther advances ctrl but
-    // not memory, so we must manually advance the memory edge to
-    // simulate a normal `Call`-like memory clobber.
+    // CallOther whose sole value-arg is &arg0 (= sp_val).
     let (call_node, _val, _clobs) = b.build_call_other_modeled(
         42,
         "escape_helper",
@@ -1059,12 +932,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     let call_mem_out = b.graph().memory_output_of(call_node)?;
     b.advance_cur_region_memory(call_mem_out)?;
 
-    // After the call, read *(sp + 0).  Its memory chain traces:
-    //   Load.mem  →  CallOther.mem_out  →  CallOther.mem_in (InitialMemory)
-    // The current `mem_chain_is_dirty` walks transparently through
-    // Call/CallOther on the assumption nested callees can't alias the
-    // caller's arg slots.  But the caller just handed the callee
-    // `&arg0`, so that assumption is wrong here.
+    // After the call, read *(sp + 0).
     let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
@@ -1076,14 +944,11 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
     pipeline.run_built(&mut fg)?;
 
-    let any_fa = count(
-        &fg,
-        |k| matches!(k, NodeKind::FunctionArg { .. }),
-    );
-    assert_eq!(
-        any_fa, 0,
+    let arg0_nodes = fg.arg_index_to_nodes(0);
+    assert!(
+        arg0_nodes.is_empty(),
         "Load[sp+0] after CallOther that received &arg0 as a value-arg \
-         must NOT be promoted: the callee may have stored through the pointer",
+         must NOT be registered: the callee may have stored through the pointer",
     );
     Ok(())
 }
@@ -1091,16 +956,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
 /// Pin the invariant that `combine_phi` OR-combines its
 /// predecessors.  This is the safety net that allows
 /// `DirtyStep::cycle_verdict` to return `false` ("clean for this
-/// edge") without compromising overall soundness: even when one
-/// branch of a phi reaches the cycle sentinel, any sibling branch
-/// that traced through an aliasing store still upgrades the phi's
-/// combined verdict to `true` (dirty).  Reversing combine_phi to
-/// `.all()` would silently break this guarantee.
-///
-/// The walker itself is private (`fn mem_chain_is_dirty`), so this
-/// test pins the contract on a value table that mirrors the OR
-/// semantics — a regression that flips it to `all` would fail here
-/// before the integration tests trip.
+/// edge") without compromising overall soundness.
 #[test]
 fn function_args_combine_phi_or_semantics_pinned() {
     // Mirror of `DirtyStep::combine_phi`: any dirty predecessor

@@ -108,12 +108,12 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         // `inline_initial_var` below).  Emitting the real node in
         // that case leaves it floating edgeless, so skip it.
         if matches!(kind, NodeKind::InitialVar(_))
-            && all_uses_go_through_inline(&*self.function,node)
+            && all_uses_go_through_inline(self.function,node)
         {
             return Ok(None);
         }
 
-        let cur_id = state.get_dot_id(&*self.function,node);
+        let cur_id = state.get_dot_id(self.function,node);
         let label = self.pretty_label(node)?;
         out.node(
             &cur_id,
@@ -237,7 +237,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                     let name = self.call_clobbered_name(parent_output)?;
                     let label = format!("Post Call\n{name}");
                     let virt_id = state.alloc_virtual_id();
-                    let call_dot_id = state.get_dot_id(&*self.function,parent_id);
+                    let call_dot_id = state.get_dot_id(self.function,parent_id);
                     out.node(
                         &virt_id,
                         &label,
@@ -252,7 +252,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                     state.virtual_nodes.insert(parent_output, virt_id.clone());
                     virt_id
                 } else {
-                    state.get_dot_id(&*self.function,parent_id)
+                    state.get_dot_id(self.function,parent_id)
                 }
             } else if *self.function.node_kind(parent_id) == NodeKind::If {
                 // The If node may not have been rendered yet.
@@ -268,7 +268,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 };
                 Self::get_or_create_if_branch_virtual(state, parent_output, blabel, out)
             } else {
-                state.get_dot_id(&*self.function,parent_id)
+                state.get_dot_id(self.function,parent_id)
             }
         };
 
