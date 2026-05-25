@@ -550,6 +550,146 @@ fn mempartition_label_uses_alias_class_name() {
     );
 }
 
+// ── stack_offsets addr-edge suppression ──────────────────────────────────
+
+/// A `Store` whose `stack_offsets` entry is populated must NOT have an edge
+/// from the addr-producer to the Store node in the rendered DOT output.
+/// A `Store` without a `stack_offsets` entry MUST have an addr edge.
+#[test]
+fn store_addr_edge_suppressed_when_stack_offset_present() {
+    // Build: Entry → Region → Store(ram) → Return, with an addr IntConst.
+    let mut f = Function::new();
+
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    f.set_entry(entry);
+    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let [mem0] = f.node_outputs_exact::<1>(init_mem).unwrap();
+
+    let region = f.create_node(
+        NodeKind::Region,
+        [entry_ctrl],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+    let [region_ctrl, _phi_tok] = f.node_outputs_exact::<2>(region).unwrap();
+
+    // addr is a constant (SP + 0x10 — represented as a raw IntConst here).
+    let addr = f.create_node(
+        NodeKind::IntConst(0x10),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [addr_out] = f.node_outputs_exact::<1>(addr).unwrap();
+
+    // data value to store.
+    let val = f.create_node(
+        NodeKind::IntConst(0xdeadbeef_u64 as u128),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let [val_out] = f.node_outputs_exact::<1>(val).unwrap();
+
+    // Store(ram): inputs = [mem, addr, data], output = [mem].
+    let store = f.create_node(
+        NodeKind::Store(rsleigh::VnSpace::RAM),
+        [mem0, addr_out, val_out],
+        [NodeOutputKind::Memory(None)],
+    );
+    let [store_mem] = f.node_outputs_exact::<1>(store).unwrap();
+
+    f.create_node(NodeKind::Return, [region_ctrl, store_mem], []);
+
+    // ── Case 1: no stack_offset entry — addr edge MUST be present ──────
+
+    let dot_no_offset = render(&f, entry);
+
+    // The addr const node ("const 0x10:u64") must appear.
+    assert!(
+        dot_no_offset.contains("0x10"),
+        "addr const must appear when no stack offset is set:\n{dot_no_offset}",
+    );
+
+    // Count total edges — baseline for the with-offset comparison.
+    let edge_count_no_offset = edge_lines(&dot_no_offset).len();
+
+    // ── Case 2: stack_offset present — addr edge must be suppressed ─────
+
+    f.set_stack_offset(store, 0x10_i64);
+
+    let dot_with_offset = render(&f, entry);
+
+    // The node label must contain the offset text.
+    assert!(
+        dot_with_offset.contains("[sp+16]"),
+        "Store label must show stack offset when stack_offset is set:\n{dot_with_offset}",
+    );
+
+    // The addr const's value must NOT appear as an edge endpoint
+    // referencing the Store — i.e. the dot output has one fewer edge
+    // than the no-offset case (the addr edge was dropped).
+    let edge_count_with_offset = edge_lines(&dot_with_offset).len();
+    assert!(
+        edge_count_with_offset < edge_count_no_offset,
+        "stack-offset Store must have fewer edges than non-stack Store \
+         (addr edge suppressed): {edge_count_with_offset} vs {edge_count_no_offset}:\n\
+         without offset:\n{dot_no_offset}\n\nwith offset:\n{dot_with_offset}",
+    );
+}
+
+/// A `Load` whose `stack_offsets` entry is populated must NOT have an edge
+/// from the addr-producer to the Load node in the rendered DOT output.
+#[test]
+fn load_addr_edge_suppressed_when_stack_offset_present() {
+    let mut f = Function::new();
+
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    f.set_entry(entry);
+    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let [mem0] = f.node_outputs_exact::<1>(init_mem).unwrap();
+
+    // addr.
+    let addr = f.create_node(
+        NodeKind::IntConst(0x8),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [addr_out] = f.node_outputs_exact::<1>(addr).unwrap();
+
+    // Load(ram): inputs = [mem, addr], output = [value].
+    let load = f.create_node(
+        NodeKind::Load(rsleigh::VnSpace::RAM),
+        [mem0, addr_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [load_out] = f.node_outputs_exact::<1>(load).unwrap();
+
+    f.create_node(NodeKind::Return, [entry_ctrl, load_out], []);
+
+    // Without stack offset: addr const appears.
+    let dot_no_offset = render(&f, entry);
+    let edges_no_offset = edge_lines(&dot_no_offset).len();
+
+    // With stack offset: addr edge is suppressed.
+    f.set_stack_offset(load, -8_i64);
+    let dot_with_offset = render(&f, entry);
+
+    assert!(
+        dot_with_offset.contains("[sp-8]"),
+        "Load label must show negative stack offset:\n{dot_with_offset}",
+    );
+
+    let edges_with_offset = edge_lines(&dot_with_offset).len();
+    assert!(
+        edges_with_offset < edges_no_offset,
+        "stack-offset Load must have fewer edges than non-stack Load \
+         (addr edge suppressed): {edges_with_offset} vs {edges_no_offset}:\n\
+         without offset:\n{dot_no_offset}\n\nwith offset:\n{dot_with_offset}",
+    );
+}
+
 /// Nodes registered as `FunctionArg` carriers must show `[arg N]` in their
 /// rendered label and a `peripheries=2` attribute for the double border.
 #[test]
