@@ -250,14 +250,15 @@ fn forked_chains_skip_other_partition() {
     strider_ir::validate::validate(&f, entry).expect("post-AliasSplit IR must validate");
 }
 
-// ─── Per-Call clobber: Stack flows through Call ──────────────────────────
+// ─── Per-Call clobber: Call breaks the Stack chain ───────────────────────
 
 #[test]
-fn call_does_not_clobber_stack_chain() {
-    // store sp-4; call f; load sp-4 — under the new design, Call
-    // clobbers [Heap, Unknown] by default; the Stack chain flows
-    // through.  The Load's mem-input should trace back to the Store
-    // directly.
+fn call_clobbers_stack_chain() {
+    // store sp-4; call f; load sp-4 — Call clobbers [Stack, Heap,
+    // Unknown] by default (sound floor: callee may hold &local_var and
+    // mutate the caller's stack frame).  The Stack Load's mem-input must
+    // trace through a Call-emitted MemPartition[Stack] re-projection,
+    // NOT directly back to the Store.
     let sp = sp_vn_x86();
     let mut f = stack_call_stack_return(sp);
     let r = run_split(&mut f, sp);
@@ -269,14 +270,12 @@ fn call_does_not_clobber_stack_chain() {
     let producer_kind = f.node_kind(producer);
 
     assert!(
-        matches!(producer_kind, NodeKind::Store(_)),
-        "Stack load's mem-input must be the Stack Store directly, not a Call-emitted \
-         boundary; got {producer_kind:?}",
-    );
-    let prod_out = f.memory_output_of(producer).unwrap();
-    assert_eq!(
-        f.output_kind(prod_out).memory_partition(),
-        Some(AliasClass::Stack),
+        matches!(
+            producer_kind,
+            NodeKind::MemPartition { class: AliasClass::Stack }
+        ),
+        "Stack load's mem-input must re-enter via a fresh MemPartition[Stack] \
+         after the Call (not a direct edge back to the Store); got {producer_kind:?}",
     );
 
     let entry = f.entry().unwrap();

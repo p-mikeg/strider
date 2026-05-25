@@ -36,13 +36,15 @@
 //!
 //! ## Per-Call clobber semantics
 //!
-//! A bare `Call` clobbers `[Heap, Unknown]` by default — the Stack
-//! chain flows through `Call` unchanged so a stack store before the
-//! call still feeds a stack load after the call directly:
+//! A bare `Call` clobbers `[Stack, Heap, Unknown]` by default — the
+//! conservative sound floor until escape analysis proves that no
+//! SP-derived pointer escapes into the callee.  A callee that received
+//! `&local_var` can mutate the caller's stack frame, so the Stack chain
+//! must be broken at every Call unless a per-call override marks it
+//! stack-preserving.
 //!
 //! ```text
-//! Stack:        St@sp+4 ──────────────────────────────→ Ld@sp+4
-//! Heap/Unknown: St@heap → MemUnion → Call → MemPart[Heap] → Ld@heap
+//! Stack: St@sp+4 → MemUnion → Call → MemPart[Stack] → Ld@sp+4
 //! ```
 //!
 //! `CallOther`'s clobber set comes from
@@ -95,11 +97,15 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 
-/// Per-call default clobber set: a bare `Call` clobbers `[Heap,
-/// Unknown]` so the Stack chain flows through it.  Future calling-
-/// convention metadata (`CcMetadata.no_memory_clobber`) could refine
-/// this on a per-callee basis; for now every `Call` uses this set.
-const CALL_DEFAULT_CLOBBERS: &[AliasClass] = &[AliasClass::Heap, AliasClass::Unknown];
+/// Per-call default clobber set: a bare `Call` clobbers
+/// `[Stack, Heap, Unknown]` — the conservative sound floor until escape
+/// analysis can prove that no SP-derived pointer escapes into the callee.
+/// A callee that received `&local_var` can legitimately mutate the
+/// caller's stack frame, so preserving the Stack chain across every Call
+/// is unsound in the general case.  Per-call overrides remain available
+/// for known stack-preserving leaf calls or CC-tagged shapes.
+const CALL_DEFAULT_CLOBBERS: &[AliasClass] =
+    &[AliasClass::Stack, AliasClass::Heap, AliasClass::Unknown];
 
 /// Terminal-clobber set used at `Return` and `IndirectBranch` —
 /// everything is "consumed" so any pending stores in any partition
