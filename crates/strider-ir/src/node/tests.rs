@@ -347,7 +347,6 @@ fn try_from_u32_size_to_node_output_type() {
 /// `is_cacheable` and `asm_fingerprint_exempt` catch new variants at compile
 /// time, but a forgotten append here would silently shrink runtime coverage.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
-    use crate::mem_project::AliasClass;
     use crate::ops::{
         BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
         IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -379,7 +378,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Load(space),
         NodeKind::Store(space),
         // memory partition boundaries
-        NodeKind::MemProject { class: AliasClass::Stack },
+        NodeKind::MemProject,
         NodeKind::MemUnion,
         // pure value: integer
         NodeKind::IntConst(0),
@@ -433,7 +432,7 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
             | NodeKind::CallOther { .. }
             | NodeKind::CPoolRef
             | NodeKind::New
-            | NodeKind::MemProject { .. }
+            | NodeKind::MemProject
             | NodeKind::MemUnion
     )
 }
@@ -448,7 +447,7 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
             | NodeKind::Region
             | NodeKind::MemPhi
             | NodeKind::Phi
-            | NodeKind::MemProject { .. }
+            | NodeKind::MemProject
             | NodeKind::MemUnion
     )
 }
@@ -483,9 +482,7 @@ fn asm_fingerprint_exempt_matches_legacy() {
 
 #[test]
 fn mem_project_is_not_cacheable_and_is_exempt() {
-    use crate::mem_project::AliasClass;
-
-    let k = NodeKind::MemProject { class: AliasClass::Stack };
+    let k = NodeKind::MemProject;
 
     assert!(!k.is_cacheable(), "MemProject must NOT be cacheable");
     assert!(k.asm_fingerprint_exempt(), "MemProject must be fingerprint-exempt");
@@ -499,20 +496,20 @@ fn mem_union_is_not_cacheable_and_is_exempt() {
 }
 
 #[test]
-fn mem_project_signature_has_single_memory_input_and_memory_output() {
-    use crate::mem_project::AliasClass;
+fn mem_project_signature_has_single_memory_input_and_two_memory_outputs() {
     use crate::node_signature::{ExpectedOutputKind, expected_signature};
 
-    let sig = expected_signature(&NodeKind::MemProject { class: AliasClass::Stack });
+    let sig = expected_signature(&NodeKind::MemProject);
 
-    // Fixed-arity: exactly one input, one output.
+    // Fixed-arity: exactly one input, two outputs (one per active partition).
     assert!(!sig.inputs.is_variadic(), "MemProject inputs should be fixed-arity");
     assert_eq!(sig.inputs.head_len(), 1, "MemProject takes exactly one memory input");
     assert_eq!(sig.inputs.at(0).unwrap().kind, ExpectedOutputKind::Memory);
 
     assert!(!sig.outputs.is_variadic(), "MemProject outputs should be fixed-arity");
-    assert_eq!(sig.outputs.head_len(), 1, "MemProject has exactly one memory output");
+    assert_eq!(sig.outputs.head_len(), 2, "MemProject has two memory outputs (one per partition)");
     assert_eq!(sig.outputs.at(0).unwrap().kind, ExpectedOutputKind::Memory);
+    assert_eq!(sig.outputs.at(1).unwrap().kind, ExpectedOutputKind::Memory);
 }
 
 #[test]
@@ -538,9 +535,7 @@ fn mem_union_signature_has_variadic_memory_inputs_and_unified_output() {
 
 #[test]
 fn mem_project_is_not_const() {
-    use crate::mem_project::AliasClass;
-
-    let k = NodeKind::MemProject { class: AliasClass::Unknown };
+    let k = NodeKind::MemProject;
     assert!(!k.is_const(), "MemProject must not be a constant");
 }
 

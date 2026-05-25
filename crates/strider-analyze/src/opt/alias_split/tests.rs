@@ -86,13 +86,21 @@ fn unique_node(
     first
 }
 
-/// Helper: collect the AliasClass of every reachable MemProject.
+/// Helper: collect the AliasClass of every output slot of every reachable
+/// MemProject node.
 fn mem_project_classes(function: &Function) -> Vec<AliasClass> {
+    use strider_ir::node::NodeOutputKind;
     function
-        .preorder_kind(|k| matches!(k, NodeKind::MemProject { .. }))
-        .map(|n| match function.node_kind(n) {
-            NodeKind::MemProject { class } => *class,
-            _ => unreachable!(),
+        .preorder_kind(|k| matches!(k, NodeKind::MemProject))
+        .flat_map(|n| {
+            function
+                .node_outputs(n)
+                .iter()
+                .filter_map(|&out| match function.output_kind(out) {
+                    NodeOutputKind::Memory(Some(class)) => Some(class),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -130,10 +138,10 @@ fn empty_chain_with_return_partitions_for_terminator() {
     let r = run_split(&mut f, sp);
     assert_eq!(r, OptimizationResult::Changed);
 
-    // 2 entry MemProjects + 1 MemUnion at Return.
-    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject { .. }));
+    // 1 MemProject node (2 outputs) + 1 MemUnion at Return.
+    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject));
     let n_union = count_reachable(&f, |k| matches!(k, NodeKind::MemUnion));
-    assert_eq!(n_part, 2, "2 entry MemProjects (Stack/Unknown)");
+    assert_eq!(n_part, 1, "1 MemProject node with 2 outputs (Stack/Unknown)");
     assert_eq!(n_union, 1, "1 MemUnion at Return");
 
     let entry = f.entry().unwrap();
@@ -263,18 +271,21 @@ fn call_clobbers_stack_chain() {
     let r = run_split(&mut f, sp);
     assert_eq!(r, OptimizationResult::Changed);
 
+    use strider_ir::node::NodeOutputKind;
     let load = unique_node(&f, |k| matches!(k, NodeKind::Load(_)));
     let mem_in = f.node_inputs(load).into_iter().next().unwrap();
     let producer = f.get_node_from_output(mem_in);
     let producer_kind = f.node_kind(producer);
 
     assert!(
-        matches!(
-            producer_kind,
-            NodeKind::MemProject { class: AliasClass::Stack }
-        ),
-        "Stack load's mem-input must re-enter via a fresh MemProject[Stack] \
+        matches!(producer_kind, NodeKind::MemProject),
+        "Stack load's mem-input must re-enter via a fresh MemProject \
          after the Call (not a direct edge back to the Store); got {producer_kind:?}",
+    );
+    assert!(
+        matches!(f.output_kind(mem_in), NodeOutputKind::Memory(Some(AliasClass::Stack))),
+        "the MemProject output feeding the Stack load must be Stack-tagged; \
+         got {:?}", f.output_kind(mem_in),
     );
 
     let entry = f.entry().unwrap();
@@ -319,17 +330,20 @@ fn callother_with_full_clobber_breaks_stack_chain() {
     let r = pass.optimize(&mut f, entry).expect("AliasSplit must not error");
     assert_eq!(r, OptimizationResult::Changed);
 
+    use strider_ir::node::NodeOutputKind;
     let load = unique_node(&f, |k| matches!(k, NodeKind::Load(_)));
     let mem_in = f.node_inputs(load).into_iter().next().unwrap();
     let producer = f.get_node_from_output(mem_in);
     let producer_kind = f.node_kind(producer);
     assert!(
-        matches!(
-            producer_kind,
-            NodeKind::MemProject { class: AliasClass::Stack }
-        ),
+        matches!(producer_kind, NodeKind::MemProject),
         "after a full-clobber CallOther, the Stack load must re-enter via a fresh \
-         MemProject[Stack]; got {producer_kind:?}",
+         MemProject; got {producer_kind:?}",
+    );
+    assert!(
+        matches!(f.output_kind(mem_in), NodeOutputKind::Memory(Some(AliasClass::Stack))),
+        "the MemProject output feeding the Stack load must be Stack-tagged; \
+         got {:?}", f.output_kind(mem_in),
     );
 
     strider_ir::validate::validate(&f, entry)
@@ -382,7 +396,7 @@ fn indirect_branch_function_is_left_unified_v1() {
         "AliasSplit must bail (NoChange) on functions with an IndirectBranch in v1",
     );
     assert_eq!(
-        count_reachable(&f, |k| matches!(k, NodeKind::MemProject { .. })),
+        count_reachable(&f, |k| matches!(k, NodeKind::MemProject)),
         0,
         "no MemProject nodes should be inserted when the pass bails",
     );
@@ -826,6 +840,6 @@ fn previously_bailed_functions_now_partition() {
         OptimizationResult::Changed,
         "AliasSplit must succeed on functions with a multi-pred MemPhi"
     );
-    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject { .. }));
+    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject));
     assert!(n_part >= 1, "≥1 MemProject node must be emitted");
 }

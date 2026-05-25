@@ -1212,15 +1212,21 @@ fn stack_load_forward_walks_through_mempartition() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(&mut fg, entry)?;
 
-    // AliasSplit must have inserted MemProject nodes (one per
-    // active partition; the Stack one is the load-bearing one for
-    // this test).
-    let stack_parts = fg.count_kind(
-        |k| matches!(k, NodeKind::MemProject { class: strider_ir::AliasClass::Stack }),
-    );
+    // AliasSplit must have inserted a MemProject node with a Stack output slot.
+    let has_stack_mp = fg.all_node_ids().any(|n| {
+        if !matches!(fg.node_kind(n), NodeKind::MemProject) {
+            return false;
+        }
+        fg.node_outputs(n).iter().any(|&out| {
+            matches!(
+                fg.output_kind(out),
+                strider_ir::node::NodeOutputKind::Memory(Some(strider_ir::AliasClass::Stack))
+            )
+        })
+    });
     assert!(
-        stack_parts >= 1,
-        "AliasSplit must insert at least one Stack MemProject; got {stack_parts}",
+        has_stack_mp,
+        "AliasSplit must insert a MemProject with a Stack output slot",
     );
 
     // The Load should be forwarded: no reachable Load nodes remain.
@@ -1310,15 +1316,19 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
 
         let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
 
-        // Create MemProject(Stack) consuming InitialMemory output.
-        // Output: Memory(Some(AliasClass::Stack)).
+        // Create MemProject consuming InitialMemory output.
+        // Output slot 0 = Stack, slot 1 = Unknown.
         let part_node = fg.create_node_attributed(
-            NodeKind::MemProject { class: AliasClass::Stack },
+            NodeKind::MemProject,
             [im_out],
-            [NodeOutputKind::Memory(Some(AliasClass::Stack))],
+            [
+                NodeOutputKind::Memory(Some(AliasClass::Stack)),
+                NodeOutputKind::Memory(Some(AliasClass::Unknown)),
+            ],
             &[im_node],
         );
-        let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
+        // Use the Stack output (slot 0).
+        let part_out = fg.node_outputs(part_node).to_vec()[0];
 
         // Rewire Store's memory input (slot 0) to consume MemProject
         // output instead of InitialMemory output.

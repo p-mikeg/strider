@@ -232,9 +232,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             ),
 
             // ── memory partition boundaries ───────────────────────────────────
-            NodeKind::MemProject { class } => {
-                format!("MemProject\n{}", class.as_str())
-            }
+            NodeKind::MemProject => "MemProject".to_string(),
             NodeKind::MemUnion => "MemUnion".to_string(),
 
             // ── user-defined / opaque opcodes ────────────────────────────────

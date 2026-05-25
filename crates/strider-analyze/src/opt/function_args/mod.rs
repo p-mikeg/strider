@@ -246,7 +246,7 @@ fn detect_register_args(
 /// [`detect_stack_args`] and the caller's partition-aware shadow check.
 #[inline]
 fn was_partitioned(function: &strider_ir::Function) -> bool {
-    function.has_kind(|k| matches!(k, NodeKind::MemProject { .. }))
+    function.has_kind(|k| matches!(k, NodeKind::MemProject))
 }
 
 /// Fast-path shadow check for functions partitioned by `AliasSplit`.
@@ -303,9 +303,17 @@ fn check_no_shadow_partitioned(
     loop {
         let node = ctx.function_ref().get_node_from_output(cur);
         match *ctx.function_ref().node_kind(node) {
-            NodeKind::MemProject { class: AliasClass::Stack } => {
-                // Reached the function-entry Stack boundary — no shadow found.
-                return Ok(false);
+            NodeKind::MemProject => {
+                // Partition split boundary.  Check the output slot we arrived on.
+                if matches!(
+                    ctx.function_ref().output_kind(cur),
+                    NodeOutputKind::Memory(Some(AliasClass::Stack))
+                ) {
+                    // Reached the function-entry Stack boundary — no shadow found.
+                    return Ok(false);
+                }
+                // Non-Stack partition — conservative.
+                return Ok(true);
             }
             NodeKind::Store(_) => {
                 // Use the side-table offset if available for an exact and
@@ -349,10 +357,6 @@ fn check_no_shadow_partitioned(
                         return Ok(true);
                     }
                 }
-            }
-            NodeKind::MemProject { .. } => {
-                // Wrong partition class on the chain (unexpected) — conservative.
-                return Ok(true);
             }
             // MemPhi (multi-predecessor join inside the Stack partition) and all
             // other unexpected nodes fall back to the unified-form DFS.
@@ -669,9 +673,8 @@ fn mem_chain_is_dirty(
                     }
                     Ok(StepResult::Continue(inputs[1]))
                 }
-                NodeKind::MemProject { .. } => {
-                    // MemProject: synthetic boundary tagging a unified
-                    // memory edge with a single partition.  Pass through to
+                NodeKind::MemProject => {
+                    // MemProject: partition boundary.  Pass through to
                     // the single unified-memory predecessor (input 0).
                     let inputs = graph.node_inputs(node);
                     if inputs.is_empty() {

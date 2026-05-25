@@ -138,7 +138,7 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
         NodeKind::SegmentOp { .. } => "SegmentOp",
         NodeKind::CPoolRef => "CPoolRef",
         NodeKind::New => "New",
-        NodeKind::MemProject { .. } => "MemProject",
+        NodeKind::MemProject => "MemProject",
         NodeKind::MemUnion => "MemUnion",
     }
 }

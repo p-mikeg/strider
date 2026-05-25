@@ -517,32 +517,41 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     );
 }
 
-/// `MemProject` nodes must render with the alias-class name in the label.
+/// `MemProject` nodes must render as "MemProject" in the label.
 #[test]
-fn mempartition_label_uses_alias_class_name() {
-    use crate::mem_project::AliasClass;
-
+fn mempartition_label_is_memproject() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    // Create a MemProject node with AliasClass::Stack stored directly.
+    // One MemProject node with two output slots (Stack=0, Unknown=1).
+    use crate::mem_project::AliasClass;
     let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
     let mp = f.create_node(
-        NodeKind::MemProject { class: AliasClass::Stack },
+        NodeKind::MemProject,
         [mem_out],
-        [NodeOutputKind::Memory(Some(AliasClass::Stack))],
+        [
+            NodeOutputKind::Memory(Some(AliasClass::Stack)),
+            NodeOutputKind::Memory(Some(AliasClass::Unknown)),
+        ],
     );
-    let [mp_out] = f.node_outputs_exact::<1>(mp).unwrap();
-    f.create_node(NodeKind::Return, [entry_ctrl, mp_out], []);
+    let mp_outs = f.node_outputs(mp).to_vec();
+    // Use the Stack output (slot 0) to feed Return.
+    let mu = f.create_node(
+        NodeKind::MemUnion,
+        [mp_outs[0], mp_outs[1]],
+        [NodeOutputKind::Memory(None)],
+    );
+    let [mu_out] = f.node_outputs_exact::<1>(mu).unwrap();
+    f.create_node(NodeKind::Return, [entry_ctrl, mu_out], []);
 
     let dot = render(&f, entry);
 
     assert!(
-        dot.contains("Stack"),
-        "MemProject label must contain the alias class 'Stack':\n{dot}",
+        dot.contains("MemProject"),
+        "MemProject label must contain 'MemProject':\n{dot}",
     );
     assert!(
         !dot.contains("MemProjectId("),
@@ -550,10 +559,10 @@ fn mempartition_label_uses_alias_class_name() {
     );
 }
 
-/// Edges from a `MemProject` output must carry an alias-class label
-/// (e.g. `"mem:Stack"` / `"mem:Unknown"`), making multi-partition graphs
-/// readable at a glance.  A `MemUnion` consuming per-class edges must also
-/// show the class labels on each incoming edge.
+/// Edges from a `MemProject` node's output slots must carry alias-class labels
+/// (e.g. `"mem:Stack"` / `"mem:Unknown"`) derived from the slot's
+/// `NodeOutputKind`.  A `MemUnion` consuming both outputs must also show the
+/// class labels on each incoming edge.
 #[test]
 fn mem_project_edges_carry_alias_class_label() {
     use crate::mem_project::AliasClass;
@@ -563,29 +572,24 @@ fn mem_project_edges_carry_alias_class_label() {
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    // InitialMemory → MemProject[Stack] → Return
-    //              └→ MemProject[Unknown] → MemUnion → Return
+    // InitialMemory → MemProject[Stack, Unknown] → MemUnion → Return
     let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
-    let mp_stack = f.create_node(
-        NodeKind::MemProject { class: AliasClass::Stack },
+    let mp = f.create_node(
+        NodeKind::MemProject,
         [mem_out],
-        [NodeOutputKind::Memory(Some(AliasClass::Stack))],
+        [
+            NodeOutputKind::Memory(Some(AliasClass::Stack)),
+            NodeOutputKind::Memory(Some(AliasClass::Unknown)),
+        ],
     );
-    let [mp_stack_out] = f.node_outputs_exact::<1>(mp_stack).unwrap();
-
-    let mp_unknown = f.create_node(
-        NodeKind::MemProject { class: AliasClass::Unknown },
-        [mem_out],
-        [NodeOutputKind::Memory(Some(AliasClass::Unknown))],
-    );
-    let [mp_unknown_out] = f.node_outputs_exact::<1>(mp_unknown).unwrap();
+    let mp_outs = f.node_outputs(mp).to_vec();
 
     // MemUnion joins both partitions back to a unified memory.
     let mu = f.create_node(
         NodeKind::MemUnion,
-        [mp_stack_out, mp_unknown_out],
+        [mp_outs[0], mp_outs[1]],
         [NodeOutputKind::Memory(None)],
     );
     let [mu_out] = f.node_outputs_exact::<1>(mu).unwrap();
@@ -597,11 +601,11 @@ fn mem_project_edges_carry_alias_class_label() {
     // Edge labels for MemProject outputs.
     assert!(
         dot.contains("mem:Stack"),
-        "partitioned memory edges from MemProject[Stack] must be labelled 'mem:Stack':\n{dot}",
+        "partitioned memory edges from MemProject slot 0 must be labelled 'mem:Stack':\n{dot}",
     );
     assert!(
         dot.contains("mem:Unknown"),
-        "partitioned memory edges from MemProject[Unknown] must be labelled 'mem:Unknown':\n{dot}",
+        "partitioned memory edges from MemProject slot 1 must be labelled 'mem:Unknown':\n{dot}",
     );
 
     // At least two edge lines must carry an alias-class label.

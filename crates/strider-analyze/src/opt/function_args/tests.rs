@@ -1017,19 +1017,27 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    // AliasSplit must have inserted MemProject nodes at function
-    // entry — one per active partition (Stack / Heap / Unknown).
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
+    // AliasSplit must have inserted a MemProject node at function entry.
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject));
     assert!(
         n_part >= 1,
         "AliasSplit must insert at least one MemProject; got {n_part}"
     );
-    let stack_parts = fg.count_kind(
-        |k| matches!(k, NodeKind::MemProject { class: strider_ir::AliasClass::Stack }),
-    );
+    // The MemProject node must have a Stack-tagged output slot.
+    let has_stack_output = fg.all_node_ids().any(|n| {
+        if !matches!(fg.node_kind(n), NodeKind::MemProject) {
+            return false;
+        }
+        fg.node_outputs(n).iter().any(|&out| {
+            matches!(
+                fg.output_kind(out),
+                strider_ir::node::NodeOutputKind::Memory(Some(strider_ir::AliasClass::Stack))
+            )
+        })
+    });
     assert!(
-        stack_parts >= 1,
-        "AliasSplit must insert at least one Stack MemProject; got {stack_parts}",
+        has_stack_output,
+        "AliasSplit must insert a MemProject with a Stack output slot",
     );
 
     // FunctionArgDetect must have registered the load as arg 0.
@@ -1105,14 +1113,19 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
 
         let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
 
-        // Create MemProject(Stack) consuming InitialMemory output.
+        // Create MemProject consuming InitialMemory output.
+        // Output slot 0 = Stack, slot 1 = Unknown.
         let part_node = fg.create_node_attributed(
-            NodeKind::MemProject { class: AliasClass::Stack },
+            NodeKind::MemProject,
             [im_out],
-            [NodeOutputKind::Memory(Some(AliasClass::Stack))],
+            [
+                NodeOutputKind::Memory(Some(AliasClass::Stack)),
+                NodeOutputKind::Memory(Some(AliasClass::Unknown)),
+            ],
             &[im_node],
         );
-        let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
+        // Use the Stack output (slot 0).
+        let part_out = fg.node_outputs(part_node).to_vec()[0];
 
         // Create MemUnion consuming the MemProject output.
         let union_node = fg.create_node_attributed(
@@ -1202,7 +1215,7 @@ fn function_arg_detect_fast_path_on_partitioned_function() -> Result<()> {
     pipeline.run_built(&mut fg)?;
 
     // Confirm the graph IS partitioned (fast path was eligible).
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject));
     assert!(n_part >= 1, "AliasSplit must have inserted MemProject nodes; got {n_part}");
 
     // Load[sp+4] is not shadowed by Store[sp+8] — must be registered as arg 0.
@@ -1251,7 +1264,7 @@ fn function_arg_detect_fast_path_shadow_rejected_on_partitioned_function() -> Re
     pipeline.run_built(&mut fg)?;
 
     // Confirm the graph IS partitioned.
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject));
     assert!(n_part >= 1, "AliasSplit must have inserted MemProject nodes; got {n_part}");
 
     // Store[sp+4] shadows Load[sp+4] — must NOT be registered as arg.

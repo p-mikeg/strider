@@ -5,8 +5,8 @@
 //! `strider-ir` callers (and downstream pattern code) can keep referring
 //! to `strider_ir::AliasClass`.
 //!
-//! `AliasClass` is stored directly on [`crate::node::NodeKind::MemProject`]
-//! and [`crate::node::NodeOutputKind::Memory`] so pass code can branch on the
-//! class without any table lookup.
+//! `AliasClass` is stored on [`crate::node::NodeOutputKind::Memory`] and on
+//! [`crate::node::NodeOutputKind::Memory`] so pass code can branch on the
+//! class by querying the output slot's [`crate::node::NodeOutputKind`].
 
 pub use strider_target::AliasClass;

@@ -860,7 +860,7 @@ fn call_stack_args_collected_through_mempartition() -> Result<()> {
     pipeline.run_built(&mut fg)?;
 
     // Confirm AliasSplit actually inserted a MemProject.
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject));
     assert!(
         n_part >= 1,
         "AliasSplit must insert at least one MemProject"
@@ -959,14 +959,20 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
 
         let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
 
-        // Create MemProject(Stack) consuming InitialMemory output.
+        // Create MemProject consuming InitialMemory output.
+        // Output slot 0 = Stack, slot 1 = Unknown (canonical partition order).
         let part_node = fg.create_node_attributed(
-            NodeKind::MemProject { class: AliasClass::Stack },
+            NodeKind::MemProject,
             [im_out],
-            [NodeOutputKind::Memory(Some(AliasClass::Stack))],
+            [
+                NodeOutputKind::Memory(Some(AliasClass::Stack)),
+                NodeOutputKind::Memory(Some(AliasClass::Unknown)),
+            ],
             &[im_node],
         );
-        let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
+        // Use the Stack output (slot 0).
+        let part_outs = fg.node_outputs(part_node).to_vec();
+        let part_out = part_outs[0];
 
         // Find the first Store in chain order: the Store whose memory
         // predecessor (slot 0) is InitialMemory.
@@ -1339,7 +1345,7 @@ fn call_stack_arg_collect_fast_path_on_partitioned_function() -> Result<()> {
     pipeline.run_built(&mut fg)?;
 
     // Confirm the graph IS partitioned (fast path was eligible).
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject));
     assert!(n_part >= 1, "AliasSplit must have inserted MemProject nodes; got {n_part}");
 
     let call_id = find_call(&fg)?;
@@ -1408,7 +1414,7 @@ fn call_stack_arg_collect_fast_path_two_args_on_partitioned_function() -> Result
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
 
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject));
     assert!(n_part >= 1, "AliasSplit must have inserted MemProject nodes; got {n_part}");
 
     let call_id = find_call(&fg)?;

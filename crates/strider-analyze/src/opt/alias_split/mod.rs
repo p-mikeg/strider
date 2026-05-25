@@ -159,7 +159,7 @@ impl Optimizer for AliasSplit {
     ) -> Result<OptimizationResult> {
         // Idempotency: any existing MemProject / MemUnion ⇒ NoChange.
         if function.has_kind(|k| {
-            matches!(k, NodeKind::MemProject { .. } | NodeKind::MemUnion)
+            matches!(k, NodeKind::MemProject | NodeKind::MemUnion)
         }) {
             return Ok(OptimizationResult::NoChange);
         }
@@ -499,18 +499,26 @@ fn build_forked_chains(
     // preorder so they're visited at least once.
     let chain_order = topological_mem_order(function, chain_root_out, classified)?;
 
-    // Insert one MemProject[P] per active partition projecting from
-    // the chain root's memory output (typically the lifter's entry
-    // MemPhi).
+    // Insert one MemProject node with one output slot per active
+    // partition, projecting from the chain root's memory output
+    // (typically the lifter's entry MemPhi).  Output slot indices
+    // match partition_index() — Stack=0, Unknown=1.
     let mut entry_heads: PartitionHeads = [None; 2];
+    let mp_entry = function.create_node_attributed(
+        NodeKind::MemProject,
+        [chain_root_out],
+        [
+            NodeOutputKind::Memory(Some(AliasClass::Stack)),
+            NodeOutputKind::Memory(Some(AliasClass::Unknown)),
+        ],
+        &[chain_root_node],
+    );
+    let mp_entry_outs = function.node_outputs(mp_entry).to_vec();
     for &p in &ACTIVE_PARTITIONS {
-        let mp = function.create_node_attributed(
-            NodeKind::MemProject { class: p },
-            [chain_root_out],
-            [NodeOutputKind::Memory(Some(p))],
-            &[chain_root_node],
-        );
-        let [mp_out] = function.node_outputs_exact::<1>(mp)?;
+        let idx = partition_index(p)?;
+        let mp_out = *mp_entry_outs
+            .get(idx)
+            .ok_or_else(|| anyhow::anyhow!("AliasSplit: MemProject output {idx} missing"))?;
         set_head(&mut entry_heads, p, mp_out)?;
     }
     let mut outgoing_heads: OutgoingHeadsMap = FxHashMap::default();
@@ -945,16 +953,28 @@ fn splice_barrier(
     // Re-project clobbered partitions from the barrier's mem-output
     // (if any).  Return / IndirectBranch don't produce a memory
     // output — terminate the chain there.
+    //
+    // One MemProject node produces outputs for all active partitions.
+    // Only the clobbered partition heads are advanced; non-clobbered
+    // heads continue to point to their pre-barrier values (the
+    // non-clobbered outputs of the MemProject are present but unused).
     let mem_out = function.memory_output_of(barrier).ok();
     if let Some(barrier_mem_out) = mem_out {
+        let mp = function.create_node_attributed(
+            NodeKind::MemProject,
+            [barrier_mem_out],
+            [
+                NodeOutputKind::Memory(Some(AliasClass::Stack)),
+                NodeOutputKind::Memory(Some(AliasClass::Unknown)),
+            ],
+            &[barrier],
+        );
+        let mp_outs = function.node_outputs(mp).to_vec();
         for &p in clobbers {
-            let mp = function.create_node_attributed(
-                NodeKind::MemProject { class: p },
-                [barrier_mem_out],
-                [NodeOutputKind::Memory(Some(p))],
-                &[barrier],
-            );
-            let [mp_out] = function.node_outputs_exact::<1>(mp)?;
+            let idx = partition_index(p)?;
+            let mp_out = *mp_outs
+                .get(idx)
+                .ok_or_else(|| anyhow::anyhow!("AliasSplit: MemProject output {idx} missing"))?;
             set_head(heads, p, mp_out)?;
         }
     }

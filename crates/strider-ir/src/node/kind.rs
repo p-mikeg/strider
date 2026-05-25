@@ -89,18 +89,20 @@ pub enum NodeKind {
     Store(rsleigh::VnSpace),
 
     // ── Memory partition boundary nodes (inserted by AliasSplit) ─────────────
-    /// Memory partition split boundary.  Projects the `class`-typed partition
-    /// out of unified memory.  Inserted by the AliasSplit optimization
-    /// at the entry to a subgraph whose memory ops can be proven to
-    /// operate on a single alias class.
+    /// Memory partition split boundary.  Projects ALL active partitions
+    /// out of unified memory in one node.  Inserted by the AliasSplit
+    /// optimization at the entry to a region where the memory chain
+    /// diverges into per-class lanes.
     ///
     /// Inputs: `[unified_memory]` — single `Memory(None)` data input.
-    /// Outputs: `[Memory(Some(class))]`.
+    /// Outputs: `[Memory(Some(Stack)), Memory(Some(Unknown))]` — one slot
+    /// per active partition, in canonical partition order.  The per-slot
+    /// class is recoverable from `node_outputs(node)[slot].kind`.
     ///
     /// NOT phi-shaped: no phi_token, no control input.  Position
     /// identity matters (deduping two split boundaries at different
     /// program points would conflate them).
-    MemProject { class: crate::mem_project::AliasClass },
+    MemProject,
 
     /// Memory partition join boundary.  Bundles partition tokens back
     /// into unified memory.  Inserted by the AliasSplit optimization
@@ -268,7 +270,7 @@ impl NodeKind {
             | Self::CallOther { .. }
             | Self::Load(..)
             | Self::Store(..)
-            | Self::MemProject { .. }
+            | Self::MemProject
             | Self::MemUnion
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
@@ -362,7 +364,7 @@ impl NodeKind {
             | Self::CPoolRef
             | Self::New
             // Memory partition boundaries: positional identity matters.
-            | Self::MemProject { .. }
+            | Self::MemProject
             | Self::MemUnion => false,
         }
     }
@@ -393,7 +395,7 @@ impl NodeKind {
             // Memory partition boundaries: synthetic boundary nodes whose
             // fingerprints are inherited from contributing writes via the
             // superset-only contract.
-            | Self::MemProject { .. }
+            | Self::MemProject
             | Self::MemUnion => true,
 
             // Non-exempt: everything else requires fingerprints.

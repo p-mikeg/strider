@@ -332,12 +332,14 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
 
         // ── Memory partition boundary nodes ─────────────────────────────────
-        // MemProject: [unified_memory] → [Memory(Some(partition))].
-        // The output kind carries the specific partition id at runtime;
-        // the signature declares the slot kind as Memory (any partition)
-        // — the validator's kind_matches treats Memory(_) as matching
-        // ExpectedOutputKind::Memory regardless of the Option payload.
-        NodeKind::MemProject { .. } => sig!(inputs: [MEM], outputs: [MEM]),
+        // MemProject: [unified_memory] → [Memory(Some(Stack)), Memory(Some(Unknown))].
+        // One output slot per active partition, in canonical partition order
+        // (Stack=0, Unknown=1).  The per-slot class is recoverable from the
+        // slot's NodeOutputKind.  The signature declares each output slot kind
+        // as Memory (any partition) — the validator's kind_matches treats
+        // Memory(_) as matching ExpectedOutputKind::Memory regardless of the
+        // Option payload.
+        NodeKind::MemProject => sig!(inputs: [MEM], outputs: [MEM, MEM]),
         // MemUnion: [...partition_memories] → [Memory(None)].
         // Variadic partition-typed inputs; unified output.
         NodeKind::MemUnion => sig!(inputs: []; in_tail: MEM, outputs: [MEM]),
@@ -641,7 +643,6 @@ mod tests {
     /// time, but a forgotten append here would silently shrink coverage.
     #[test]
     fn expected_signature_covers_every_node_kind() {
-        use crate::mem_project::AliasClass;
         use crate::ops::{
             BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
             IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -661,7 +662,7 @@ mod tests {
             NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
-            NodeKind::MemProject { class: AliasClass::Stack },
+            NodeKind::MemProject,
             NodeKind::MemUnion,
             NodeKind::IntConst(0),
             NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
