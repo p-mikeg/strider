@@ -99,15 +99,14 @@ pub trait Pattern: Send + Sync {
     }
 }
 
-/// Outcome of a [`Pattern::try_build`] call: either a freshly-created
-/// output, or a `Skip` signalling the rewrite doesn't apply after all.
+/// Outcome of a [`Pattern::try_build`] call: a freshly-created output.
+///
+/// (Earlier drafts carried a `Skip` variant for build-time opt-out;
+/// the rewrite-rule interpreter routes skips through the typed
+/// [`crate::pattern::error::RewriteSkip`] error sentinel instead, so
+/// no separate enum variant is needed.)
 pub enum BuildOutcome {
     Out(NodeOutputId),
-    /// Reserved for build-time opt-out; today the rewrite-rule
-    /// interpreter detects skips via the [`crate::pattern::error::RewriteSkip`]
-    /// error sentinel rather than this variant.
-    #[allow(dead_code)]
-    Skip,
 }
 
 /// Mutable context threaded through `Pattern::try_build`.  Carries the

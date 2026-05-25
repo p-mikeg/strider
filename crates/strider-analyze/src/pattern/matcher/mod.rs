@@ -490,22 +490,6 @@ impl<'g> Matcher<'g> {
         })
     }
 
-    /// Iterates over all carrier nodes for argument `index`, each wrapped in
-    /// a [`FunctionArgHandle`].
-    ///
-    /// The common case (register arg) yields exactly one handle.  The
-    /// stack-arg case may yield several (one per observed Load width at
-    /// the same SP-relative offset).
-    pub fn function_args_for(&self, index: u32) -> impl Iterator<Item = FunctionArgHandle<'g>> + '_ {
-        self.graph.arg_index_to_nodes(index).iter().map(move |&node_id| {
-            FunctionArgHandle {
-                node_id,
-                function: self.graph,
-                index,
-            }
-        })
-    }
-
     /// Iterates over every registered argument index, yielding `(index,
     /// handle)` pairs for the first carrier of each index, sorted ascending
     /// by index.

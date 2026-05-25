@@ -86,7 +86,6 @@ pub fn rewrite_rule(
         };
 
         match outcome {
-            BuildOutcome::Skip => Ok(false),
             BuildOutcome::Out(new_out) => {
                 // Absorb the rewritten root's asm-fingerprint into EVERY
                 // freshly-created interior node of the RHS subtree, not

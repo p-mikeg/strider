@@ -36,20 +36,6 @@ impl Graph {
         }
     }
 
-    /// Returns the raw bits of a float constant, or `None` if the output is
-    /// not a `FloatConst` node.
-    #[must_use]
-    pub fn float_const_val(&self, out: NodeOutputId) -> Option<u64> {
-        let ty = self.output_kind(out).as_value()?;
-        if !ty.is_float() {
-            return None;
-        }
-        match *self.kind_of_output(out) {
-            NodeKind::FloatConst(bits) => Some(bits),
-            _ => None,
-        }
-    }
-
     /// Creates (or retrieves from the dedup cache) an `IntConst(val)` node of
     /// type `ty` and returns its single output.
     ///
@@ -93,20 +79,6 @@ impl Graph {
         Ok(self.node_outputs_exact::<1>(node)?[0])
     }
 
-    /// Creates (or retrieves) a `BoolConst(val)` node.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the freshly-created node does not have exactly
-    /// one output.
-    pub fn make_bool_const(&mut self, val: bool) -> Result<NodeOutputId> {
-        let node = self.create_node(
-            NodeKind::BoolConst(val),
-            [],
-            [NodeOutputKind::OutputType(NodeOutputType::Bool)],
-        );
-        Ok(self.node_outputs_exact::<1>(node)?[0])
-    }
 
     /// Creates (or retrieves) a `FloatConst(bits)` node of float type `ty`.
     ///

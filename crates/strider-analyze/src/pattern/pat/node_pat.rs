@@ -312,10 +312,8 @@ impl Pattern for NodePat {
             InputsSpec::Fixed { pats, .. } => {
                 let mut out = Vec::with_capacity(pats.len());
                 for p in pats {
-                    match p.as_dyn().try_build(ctx)? {
-                        BuildOutcome::Out(o) => out.push(o),
-                        BuildOutcome::Skip => return Ok(BuildOutcome::Skip),
-                    }
+                    let BuildOutcome::Out(o) = p.as_dyn().try_build(ctx)?;
+                    out.push(o);
                 }
                 out
             }

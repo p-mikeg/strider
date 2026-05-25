@@ -25,8 +25,7 @@ use crate::node::NodeId;
 ///
 /// `FunctionBuilder::build` is the canonical constructor.  For synthetic /
 /// test graphs, use [`Function::new`] and populate via [`Function::graph_mut`]
-/// and [`Function::set_entry`].  For wrapping an already-built graph plus a
-/// known entry, use [`Function::from_built_graph`].
+/// and [`Function::set_entry`].
 ///
 /// `Function` derefs to `Graph`, so all [`Graph`] read accessors (e.g.
 /// `node_kind`, `walk_from`, `all_node_ids`) are available directly on a
@@ -103,27 +102,6 @@ impl Function {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Wraps an already-built `graph` and records `entry` as the entry node.
-    ///
-    /// Use this adapter when you have a `Graph` + a known entry `NodeId`
-    /// (e.g. returned from a lower-level builder path) and need to present
-    /// a `Function`.
-    #[must_use]
-    pub fn from_built_graph(graph: Graph, entry: NodeId) -> Self {
-        Self {
-            graph,
-            entry: Some(entry),
-            cc_metadata: None,
-            call_other_names: SecondaryMap::new(),
-            asm_fingerprints: SecondaryMap::new(),
-            call_clobbered_overrides: SecondaryMap::new(),
-            phi_var_tag: SecondaryMap::new(),
-            call_stack_arg_offsets_overrides: SecondaryMap::new(),
-            arg_index_to_nodes: FxHashMap::default(),
-            stack_offsets: SecondaryMap::new(),
-        }
     }
 
     /// Returns a shared reference to the underlying graph.
