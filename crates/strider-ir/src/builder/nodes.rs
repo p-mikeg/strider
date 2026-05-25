@@ -460,7 +460,7 @@ impl FunctionBuilder {
         self.entry_control = control;
 
         let memory_node =
-            self.create_node(NodeKind::InitialMemory, [], vec![NodeOutputKind::Memory]);
+            self.create_node(NodeKind::InitialMemory, [], vec![NodeOutputKind::Memory(None)]);
         let [memory] = self.graph().node_outputs_exact(memory_node)?;
         self.entry_memory = memory;
         Ok(())
@@ -670,7 +670,7 @@ impl FunctionBuilder {
         let node_id = self.create_node(
             NodeKind::Store(space),
             [memory, addr, data],
-            [NodeOutputKind::Memory],
+            [NodeOutputKind::Memory(None)],
         );
         let [new_mem] = self.graph().node_outputs_exact(node_id)?;
         self.advance_cur_region_memory(new_mem)

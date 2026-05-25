@@ -163,7 +163,7 @@ mod tests {
         let phi_node = fg.create_node(
             NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM },
             [phi_token, mem_out, data],
-            [NodeOutputKind::Memory],
+            [NodeOutputKind::Memory(None)],
         );
         // DELIBERATELY do NOT call set_stack_phi_offsets.
         let alias = step_through_stack_store_phi(&fg, phi_node, 0, 8);

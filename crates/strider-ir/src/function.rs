@@ -547,7 +547,7 @@ mod function_skeleton_tests {
             .create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let n2 = f
             .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+            .create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
 
         // Register two NodeIds for arg index 3 (the stack-args multi-Load case).
         f.register_arg_node(3, n1);

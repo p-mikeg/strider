@@ -191,7 +191,7 @@ fn non_cacheable_node_is_never_deduplicated() {
 fn adjacent_calls_with_same_args_are_distinct() {
     let mut graph = Function::new();
     let ctrl_a = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem_a = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mem_a = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let [ctrl_out] = graph.node_outputs_exact::<1>(ctrl_a).unwrap();
     let [mem_out] = graph.node_outputs_exact::<1>(mem_a).unwrap();
     let target = graph.create_node(
@@ -200,7 +200,7 @@ fn adjacent_calls_with_same_args_are_distinct() {
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
     let [target_out] = graph.node_outputs_exact::<1>(target).unwrap();
-    let outs = [NodeOutputKind::Control, NodeOutputKind::Memory];
+    let outs = [NodeOutputKind::Control, NodeOutputKind::Memory(None)];
     let call_a = graph.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
     let call_b = graph.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
     assert_ne!(
@@ -218,12 +218,12 @@ fn call_other_name_round_trip() {
     let mut graph = Function::new();
     // Two CallOther nodes with the same user_op_id.  CallOther is
     // non-cacheable (see `is_cacheable`), so they get distinct ids.
-    let outs = [NodeOutputKind::Control, NodeOutputKind::Memory];
+    let outs = [NodeOutputKind::Control, NodeOutputKind::Memory(None)];
     // We need a control + memory input to construct a CallOther; build a
     // throwaway Entry and InitialMemory.
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
-    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let [init_mem_out] = graph.node_outputs_exact::<1>(init_mem).unwrap();
     let id_a = graph.create_node(
         NodeKind::CallOther { user_op_id: 62 },
@@ -254,12 +254,12 @@ fn stack_store_phi_is_never_deduplicated() {
     let id_a = graph.create_node(
         NodeKind::StackStorePhi { space },
         [],
-        [NodeOutputKind::Memory],
+        [NodeOutputKind::Memory(None)],
     );
     let id_b = graph.create_node(
         NodeKind::StackStorePhi { space },
         [],
-        [NodeOutputKind::Memory],
+        [NodeOutputKind::Memory(None)],
     );
     assert_ne!(id_a, id_b);
     graph.set_stack_phi_offsets(id_a, vec![0, -4]);
@@ -1079,7 +1079,7 @@ fn asm_fingerprint_extend_sorts_and_dedupes() {
 fn asm_fingerprint_extend_from_unions_two_nodes() {
     let mut graph = Function::new();
     let a = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let b = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let b = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     graph.set_asm_fingerprint(a, vec![0x1000, 0x1004]);
     graph.set_asm_fingerprint(b, vec![0x1004, 0x100C]);
     graph.extend_asm_fingerprint_from(a, b);

@@ -247,7 +247,7 @@ fn mem_phi_label_is_phi_mem() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let mem_phi = f.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
+    let mem_phi = f.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory(None)]);
     // mem_phi is only reachable as a data input of Return (graph walk follows inputs)
     let [mp_out] = f.node_outputs_exact::<1>(mem_phi).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -396,7 +396,7 @@ fn cast_to_int_label_reflects_actual_input_type() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
 
@@ -427,7 +427,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let target = f.create_node(
@@ -442,7 +442,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         [entry_ctrl, mem, target_out],
         [
             NodeOutputKind::Control,
-            NodeOutputKind::Memory,
+            NodeOutputKind::Memory(None),
             NodeOutputKind::OutputType(NodeOutputType::Bool),
         ],
     );
@@ -463,13 +463,13 @@ fn call_other_label_includes_resolved_name() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let co = f.create_node(
         NodeKind::CallOther { user_op_id: 62 },
         [entry_ctrl, mem],
-        [NodeOutputKind::Control, NodeOutputKind::Memory],
+        [NodeOutputKind::Control, NodeOutputKind::Memory(None)],
     );
     f.set_call_other_name(co, "setISAMode".to_string());
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
@@ -491,13 +491,13 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let co = f.create_node(
         NodeKind::CallOther { user_op_id: 7 },
         [entry_ctrl, mem],
-        [NodeOutputKind::Control, NodeOutputKind::Memory],
+        [NodeOutputKind::Control, NodeOutputKind::Memory(None)],
     );
     // Intentionally do NOT call `set_call_other_name`.
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();

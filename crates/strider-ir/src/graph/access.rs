@@ -136,7 +136,7 @@ impl Graph {
     pub fn memory_output_of(&self, node_id: NodeId) -> crate::error::Result<NodeOutputId> {
         let mut found: Option<NodeOutputId> = None;
         for &out in self.node_outputs(node_id) {
-            if matches!(self.output_kind(out), NodeOutputKind::Memory) {
+            if matches!(self.output_kind(out), NodeOutputKind::Memory(_)) {
                 if found.is_some() {
                     return Err(anyhow!(
                         "node {node_id:?} has more than one Memory output"

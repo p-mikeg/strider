@@ -39,7 +39,7 @@ fn try_detect_stack_store(
             let new_node = ctx.create_node_attributed(
                 NodeKind::StackStore { space, offset },
                 [memory, base, data],
-                [NodeOutputKind::Memory],
+                [NodeOutputKind::Memory(None)],
                 &[node_id],
             );
             ctx.node_outputs_exact::<1>(new_node)?[0]
@@ -61,7 +61,7 @@ fn try_detect_stack_store(
             let new_node = ctx.create_node_attributed(
                 NodeKind::StackStorePhi { space },
                 [phi_token, memory, data],
-                [NodeOutputKind::Memory],
+                [NodeOutputKind::Memory(None)],
                 &[node_id],
             );
             ctx.set_stack_phi_offsets(new_node, offsets);

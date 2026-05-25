@@ -557,7 +557,7 @@ mod tests {
             [
                 NodeOutputKind::Control,
                 NodeOutputKind::OutputType(NodeOutputType::U64),
-                NodeOutputKind::Memory,
+                NodeOutputKind::Memory(None),
                 NodeOutputKind::Control,
             ],
         );

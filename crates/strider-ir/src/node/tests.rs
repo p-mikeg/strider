@@ -99,7 +99,7 @@ fn is_value_only_for_output_type() {
     assert!(NodeOutputKind::OutputType(NodeOutputType::U64).is_value());
     assert!(!NodeOutputKind::Control.is_value());
     assert!(!NodeOutputKind::PhiToken.is_value());
-    assert!(!NodeOutputKind::Memory.is_value());
+    assert!(!NodeOutputKind::Memory(None).is_value());
 }
 
 /// `is_bool` must be `true` only when the wrapped type is `Bool`.
@@ -140,7 +140,7 @@ fn is_integer_for_all_integer_output_types() {
         );
     }
     assert!(!NodeOutputKind::Control.is_integer());
-    assert!(!NodeOutputKind::Memory.is_integer());
+    assert!(!NodeOutputKind::Memory(None).is_integer());
 }
 
 // ── NodeKind ─────────────────────────────────────────────────────────────

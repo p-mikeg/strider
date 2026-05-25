@@ -557,7 +557,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
         &[],
     )?;
     let mem_out = b.graph().memory_output_of(node)?;
-    assert_eq!(b.graph().output_kind(mem_out), NodeOutputKind::Memory);
+    assert_eq!(b.graph().output_kind(mem_out), NodeOutputKind::Memory(None));
     Ok(())
 }
 

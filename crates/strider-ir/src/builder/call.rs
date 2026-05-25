@@ -237,7 +237,7 @@ impl FunctionBuilder {
         // memory chain is NOT advanced, so subsequent loads see the
         // pre-call memory edge.  LoadReadOnly / StackLoadForward can
         // therefore forward through the call.
-        let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
+        let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory(None)]
             .into_iter()
             .chain(clobbered_kinds);
         let call = self.create_node(NodeKind::Call, inputs, outputs);
@@ -318,7 +318,7 @@ impl FunctionBuilder {
         self.require_terminator_kinds(&res)?;
         let mut output_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
         output_kinds.push(NodeOutputKind::Control);
-        output_kinds.push(NodeOutputKind::Memory);
+        output_kinds.push(NodeOutputKind::Memory(None));
         let inputs = [res.control, res.memory];
         let node = self.create_node(
             NodeKind::CallOther { user_op_id },
@@ -422,7 +422,7 @@ impl FunctionBuilder {
 
         let mut output_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
         output_kinds.push(NodeOutputKind::Control);
-        output_kinds.push(NodeOutputKind::Memory);
+        output_kinds.push(NodeOutputKind::Memory(None));
         if let Some(ty) = output_ty {
             output_kinds.push(NodeOutputKind::OutputType(ty));
         }

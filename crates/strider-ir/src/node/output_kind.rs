@@ -17,7 +17,10 @@ pub enum NodeOutputKind {
     /// Carries no data — it says "fire your phi for this region."
     PhiToken,
     /// Memory token tracking the current state of memory through the graph.
-    Memory,
+    ///
+    /// `None` = unified memory (the default until `AliasSplit` promotes it to a
+    /// partition).  `Some(p)` = memory restricted to partition `p`.
+    Memory(Option<crate::mem_partition::MemPartitionId>),
 }
 
 impl NodeOutputKind {
@@ -44,7 +47,7 @@ impl NodeOutputKind {
     ///
     /// # Errors
     ///
-    /// Returns an error when `self` is `Control`, `Memory`, or `PhiToken`.
+    /// Returns an error when `self` is `Control`, `Memory(_)`, or `PhiToken`.
     pub fn as_value_or_err(self) -> crate::Result<NodeOutputType> {
         self.as_value()
             .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
@@ -83,7 +86,19 @@ impl NodeOutputKind {
     #[inline]
     #[must_use]
     pub fn is_memory(self) -> bool {
-        self == Self::Memory
+        matches!(self, Self::Memory(_))
+    }
+
+    /// Returns the partition id if this is a partition-typed memory output.
+    /// Returns `None` for unified `Memory` (or non-memory).
+    #[inline]
+    #[must_use]
+    pub fn memory_partition(self) -> Option<crate::mem_partition::MemPartitionId> {
+        if let NodeOutputKind::Memory(Some(p)) = self {
+            Some(p)
+        } else {
+            None
+        }
     }
 
     /// Returns `true` if this is a value output carrying a `Bool` type.
@@ -106,5 +121,30 @@ impl NodeOutputKind {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NodeOutputKind;
+    use crate::mem_partition::{AliasClass, PartitionTable};
+
+    #[test]
+    fn memory_variant_carries_optional_partition() {
+        // Unified memory (the default)
+        let m_unified = NodeOutputKind::Memory(None);
+        assert!(m_unified.is_memory());
+        assert_eq!(m_unified.memory_partition(), None);
+
+        // Partitioned memory
+        let mut pt = PartitionTable::default();
+        let p = pt.create(AliasClass::Stack);
+        let m_part = NodeOutputKind::Memory(Some(p));
+        assert!(m_part.is_memory());
+        assert_eq!(m_part.memory_partition(), Some(p));
+
+        // Non-memory variants
+        assert!(!NodeOutputKind::Control.is_memory());
+        assert_eq!(NodeOutputKind::Control.memory_partition(), None);
     }
 }

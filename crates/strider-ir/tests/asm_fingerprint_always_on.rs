@@ -19,7 +19,7 @@ fn default_validate_flags_missing_asm_fingerprint() {
     let mut g = Function::new();
     // Entry + InitialMemory are required by graph-invariants uniqueness checks.
     let entry = g.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = g.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mem = g.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let mem_out = g.node_outputs(mem).iter().copied().next().unwrap();
 
     // Two constants and an Add — these are NOT structural / exempt kinds,
