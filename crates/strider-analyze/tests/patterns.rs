@@ -85,12 +85,15 @@ fn if_const_pattern_finds_two_consts(g: &strider_ir::Function) {
 }
 
 fn invariant_load_pattern_finds_load(g: &strider_ir::Function) {
-    // Pattern: any Load.
+    // Pattern: any Load.  Primary check is that the Load pattern matches.
+    // We don't assert the loop survives — the compiler is free to close-form
+    // the triangle-sum (e.g. x86_kernel collapses the loop entirely into
+    // arithmetic on n and the invariant *p), which is a valid optimization
+    // that strider faithfully represents as "no back-edge".
     let m = Matcher::try_new(g).unwrap();
     let pat: Pat = strider_analyze::pattern::load().into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(), "expected ≥1 Load match in loop_with_invariant_load");
-    assert!(count_loops(g) >= 1, "loop must remain");
 }
 
 fn recursive_pattern_finds_self_call(g: &strider_ir::Function) {

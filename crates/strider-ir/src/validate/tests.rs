@@ -283,36 +283,32 @@ fn graph_invariants_missing_initial_memory() {
     );
 }
 
-#[test]
-fn graph_invariants_duplicate_entry() {
-    let mut graph = Function::new();
-    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _entry2 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+// `MultipleEntryNodes` / `MultipleInitialMemoryNodes` were verified via tests
+// that called `create_node` twice and expected the validator to flag the
+// duplicate.  Once Entry and InitialMemory became cacheable, dedup makes the
+// "duplicate" construction structurally impossible from any code path that
+// goes through `create_node`.  The validator checks themselves remain as
+// defence-in-depth against future graph-construction bugs (e.g. compact()
+// ordering issues that resurrect a stale node).
 
-    let errs = validate(&graph, entry).unwrap_err();
-    assert!(
-        errs.0
-            .iter()
-            .any(|e| matches!(e, ValidationError::MultipleEntryNodes { .. })),
-        "expected MultipleEntryNodes, got: {errs:?}"
-    );
+#[test]
+fn graph_invariants_entry_dedupes_on_repeated_create() {
+    let mut graph = Function::new();
+    let entry1 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry2 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    assert_eq!(entry1, entry2, "Entry must dedup");
+    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    validate(&graph, entry1).expect("graph with single deduped Entry must validate");
 }
 
 #[test]
-fn graph_invariants_duplicate_initial_memory() {
+fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
     let mut graph = Function::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem1 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
-    let _mem2 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
-
-    let errs = validate(&graph, entry).unwrap_err();
-    assert!(
-        errs.0
-            .iter()
-            .any(|e| matches!(e, ValidationError::MultipleInitialMemoryNodes { .. })),
-        "expected MultipleInitialMemoryNodes, got: {errs:?}"
-    );
+    let mem1 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let mem2 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    assert_eq!(mem1, mem2, "InitialMemory must dedup");
+    validate(&graph, entry).expect("graph with single deduped InitialMemory must validate");
 }
 
 #[test]

@@ -49,23 +49,36 @@ fn assert_smoke(arch: &str) {
     // ElfFileMemReader round-trip
     let r = ElfFileMemReader::from_path(&path).unwrap();
 
-    // Read 1 byte at the entry point. The entry is inside the executable
-    // segment so the read must succeed. We don't assert the byte value —
-    // it depends on the toolchain — only that the reader finds it.
-    let entry = obj.entry();
+    // Read 1 byte from a known-executable address.  We prefer `obj.entry()`
+    // when it's non-zero; some toolchains (x86 in this fixture set) emit
+    // ELFs with `e_entry == 0` because no entry symbol was passed to the
+    // linker.  Fall back to the first executable code section's address —
+    // ElfFileMemReader maps code + readonly-data sections, so picking a
+    // section ensures the address is in the reader's region table.
+    use object::{ObjectSection, SectionKind};
+    let exec_addr = if obj.entry() != 0 {
+        obj.entry()
+    } else {
+        obj.sections()
+            .find_map(|sec| {
+                let addr = sec.address();
+                (matches!(sec.kind(), SectionKind::Text) && addr != 0).then_some(addr)
+            })
+            .expect("real ELF has at least one .text section")
+    };
     let mut buf = [0u8; 1];
     let n = rsleigh::MemReader::read(
         &r,
-        rsleigh::VnAddr { off: entry, space: rsleigh::VnSpace::RAM },
+        rsleigh::VnAddr { off: exec_addr, space: rsleigh::VnSpace::RAM },
         &mut buf,
     )
     .unwrap();
-    assert_eq!(n, 1, "{arch}: could not read 1 byte at entry {entry:#x}");
+    assert_eq!(n, 1, "{arch}: could not read 1 byte at {exec_addr:#x}");
 
-    // ReadOnlyMemory read at entry returns *some* u8 value.
+    // ReadOnlyMemory read at the same address returns *some* u8 value.
     assert!(
-        ReadOnlyMemory::read(&r, entry, 1).is_some(),
-        "{arch}: ReadOnlyMemory failed at entry {entry:#x}",
+        ReadOnlyMemory::read(&r, exec_addr, 1).is_some(),
+        "{arch}: ReadOnlyMemory failed at {exec_addr:#x}",
     );
 
     // At least one section exists.

@@ -160,9 +160,11 @@ fn is_const_only_for_constant_kinds() {
 #[test]
 fn non_cacheable_kinds_are_not_cacheable() {
     let space = rsleigh::VnSpace::RAM;
+    // Entry / InitialMemory / InitialVar are cacheable (identity fully
+    // determined by NodeKind fields; dedup prevents accidental
+    // duplicates).  Region / MemPhi / Phi / Return / Call remain
+    // non-cacheable: their identity depends on construction context.
     let non_cacheable = [
-        NodeKind::Entry,
-        NodeKind::InitialMemory,
         NodeKind::Return,
         NodeKind::Region,
         NodeKind::MemPhi,

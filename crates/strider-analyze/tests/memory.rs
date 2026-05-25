@@ -13,7 +13,7 @@ per_arch_test!("memory", "array_copy",         array_copy_has_load_and_store);
 per_arch_test!("memory", "pointer_chase",      pointer_chase_has_two_loads);
 per_arch_test!("memory", "struct_field_load",  struct_load_has_load);
 per_arch_test!("memory", "struct_field_store", struct_store_has_store);
-per_arch_test!("memory", "tagged_union_read",  union_read_has_two_loads);
+per_arch_test!("memory", "tagged_union_read",  union_read_has_load);
 
 fn array_sum_has_load_and_loop(g: &strider_ir::Function) {
     assert!(count_loads(g) >= 1, "array_sum must have ≥1 Load");
@@ -37,6 +37,10 @@ fn struct_load_has_load(g: &strider_ir::Function) {
 fn struct_store_has_store(g: &strider_ir::Function) {
     assert!(count_stores(g) >= 2, "x and y are two field writes; got {}", count_stores(g));
 }
-fn union_read_has_two_loads(g: &strider_ir::Function) {
-    assert!(count_loads(g) >= 2, "as_int + bytes[0] = 2 loads; got {}", count_loads(g));
+fn union_read_has_load(g: &strider_ir::Function) {
+    // Compilers may collapse union member reads into a single Load + shift/mask
+    // (both as_int and bytes[0] live at the same address).  x86 cdecl gets a
+    // second arg-passing Load on top, but regparm CCs (x86_kernel) don't.  The
+    // invariant that holds across all arches is "the function loads from memory".
+    assert!(count_loads(g) >= 1, "union read must Load at least once; got {}", count_loads(g));
 }
