@@ -152,20 +152,31 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         }),
     },
     // x86 INT instruction also lifts to "swi" in some Sleigh contexts.
-    // Empty register ABI + full-clobber mem set as a sound stub until a
-    // future spec models per-(arch, INT-vector, OS) syscall conventions.
-    // Without this entry, any x86 lift containing an INT instruction
-    // would error with UnknownCallOtherError (e.g. INT3 padding bytes).
+    // Sleigh's `swi` pcode-op covers *every* INT instruction on x86
+    // regardless of the vector immediate (INT 0x80 = Linux syscall,
+    // INT3 = debugger trap / padding byte, INT 0xN for legacy DOS
+    // services, page-fault triggers, etc.).  The op carries no per-call
+    // operand information at the CallOther layer, so this single row
+    // must accept all of them.  Implications:
+    //   * INT 0x80 (Linux x86 syscall) really does read
+    //     EAX/EBX/ECX/EDX/ESI/EDI/EBP and write EAX — but modelling
+    //     those reads/writes here would be WRONG for INT3 padding /
+    //     other vectors, which touch none of those regs at the user-
+    //     visible level.
+    //   * x86_64 has a separate `syscall` opcode whose ABI we *can*
+    //     model precisely (see next row) — that's where the real
+    //     coverage lives for 64-bit binaries.
+    // The empty register ABI + full-clobber mem is therefore the safest
+    // we can do here.  Producing precise INT-0x80 patterns on x86
+    // requires a future per-immediate-operand dispatch mechanism (not
+    // landed).  Without this row, any x86 lift containing an INT
+    // instruction would error with UnknownCallOtherError.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["swi"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
-            // Conservatively full-clobber: INT 0x80 (Linux x86 syscall)
-            // is a kernel entry that can mutate user stack memory.  Other
-            // INT vectors (debugger, page-fault) won't usually but we
-            // prefer the sound stub.
             mem_clobbers: MEM_CLOBBER_FULL,
         }),
     },
