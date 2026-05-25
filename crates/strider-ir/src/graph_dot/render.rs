@@ -306,7 +306,14 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             // generic "ret" label otherwise.
             self.return_ret_name(idx)?
         } else {
-            None
+            // Partitioned memory edge: label with the alias class so the
+            // reader can tell Stack from Unknown chains at a glance.
+            // Applies to MemProject outputs and all downstream consumers
+            // (MemUnion inputs, Load/Store mem slots, etc.).
+            self.function
+                .output_kind(parent_output)
+                .memory_partition()
+                .map(|class| format!("mem:{}", class.as_str()))
         };
         let label_str: &str = owned_label.as_deref().unwrap_or(label);
 

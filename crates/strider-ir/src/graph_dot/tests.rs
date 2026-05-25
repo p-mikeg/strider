@@ -550,6 +550,71 @@ fn mempartition_label_uses_alias_class_name() {
     );
 }
 
+/// Edges from a `MemProject` output must carry an alias-class label
+/// (e.g. `"mem:Stack"` / `"mem:Unknown"`), making multi-partition graphs
+/// readable at a glance.  A `MemUnion` consuming per-class edges must also
+/// show the class labels on each incoming edge.
+#[test]
+fn mem_project_edges_carry_alias_class_label() {
+    use crate::mem_project::AliasClass;
+
+    let mut f = Function::new();
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    f.set_entry(entry);
+    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+
+    // InitialMemory → MemProject[Stack] → Return
+    //              └→ MemProject[Unknown] → MemUnion → Return
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
+
+    let mp_stack = f.create_node(
+        NodeKind::MemProject { class: AliasClass::Stack },
+        [mem_out],
+        [NodeOutputKind::Memory(Some(AliasClass::Stack))],
+    );
+    let [mp_stack_out] = f.node_outputs_exact::<1>(mp_stack).unwrap();
+
+    let mp_unknown = f.create_node(
+        NodeKind::MemProject { class: AliasClass::Unknown },
+        [mem_out],
+        [NodeOutputKind::Memory(Some(AliasClass::Unknown))],
+    );
+    let [mp_unknown_out] = f.node_outputs_exact::<1>(mp_unknown).unwrap();
+
+    // MemUnion joins both partitions back to a unified memory.
+    let mu = f.create_node(
+        NodeKind::MemUnion,
+        [mp_stack_out, mp_unknown_out],
+        [NodeOutputKind::Memory(None)],
+    );
+    let [mu_out] = f.node_outputs_exact::<1>(mu).unwrap();
+
+    f.create_node(NodeKind::Return, [entry_ctrl, mu_out], []);
+
+    let dot = render(&f, entry);
+
+    // Edge labels for MemProject outputs.
+    assert!(
+        dot.contains("mem:Stack"),
+        "partitioned memory edges from MemProject[Stack] must be labelled 'mem:Stack':\n{dot}",
+    );
+    assert!(
+        dot.contains("mem:Unknown"),
+        "partitioned memory edges from MemProject[Unknown] must be labelled 'mem:Unknown':\n{dot}",
+    );
+
+    // At least two edge lines must carry an alias-class label.
+    let labelled_edges = edge_lines(&dot)
+        .into_iter()
+        .filter(|l| l.contains("mem:Stack") || l.contains("mem:Unknown"))
+        .count();
+    assert!(
+        labelled_edges >= 2,
+        "expected ≥2 alias-class-labelled edges (one per partition), got {labelled_edges}:\n{dot}",
+    );
+}
+
 // ── stack_offsets addr-edge suppression ──────────────────────────────────
 
 /// A `Store` whose `stack_offsets` entry is populated must NOT have an edge
