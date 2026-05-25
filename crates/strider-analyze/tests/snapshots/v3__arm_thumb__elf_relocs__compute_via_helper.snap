@@ -1,5 +1,0 @@
----
-source: crates/strider/tests/v2_baseline.rs
-expression: snapshot_body
----
-LIFT_FAILED:Cfg build for compute_via_helper: generic sleigh error Base(PartiallyInitializedInsn)
