@@ -32,7 +32,7 @@ use pyo3::types::{PyString, PyTuple};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use strider_pattern_macros::strider_pattern;
 
-use crate::errors::into_pattern_err;
+use crate::errors::into_strider_err;
 
 // ── Capture ──────────────────────────────────────────────────────────────
 
@@ -92,13 +92,13 @@ fn intern_table() -> &'static Mutex<HashMap<String, strider_analyze::pattern::Ca
 
 pub(crate) fn intern_str(name: &str) -> PyResult<strider_analyze::pattern::Capture> {
     if name == "_" || name == "any_" {
-        return Err(into_pattern_err(anyhow::anyhow!(
+        return Err(into_strider_err(anyhow::anyhow!(
             "{name:?} is reserved (use any_() / var() / _ explicitly)"
         )));
     }
     let mut table = intern_table()
         .lock()
-        .map_err(|_| into_pattern_err(anyhow::anyhow!("intern table lock poisoned")))?;
+        .map_err(|_| into_strider_err(anyhow::anyhow!("intern table lock poisoned")))?;
     Ok(*table
         .entry(name.to_string())
         .or_insert_with(strider_analyze::pattern::Capture::new))
@@ -558,9 +558,9 @@ impl PyPat {
     /// therefore commutativity) is baked in.  Calling `.ordered()` on a
     /// finalized `Pat` previously silently returned `self` — a trap that
     /// fooled users into thinking they had disabled commutativity.  This
-    /// method now raises [`PatternError`] so the misuse is visible.
+    /// method now raises [`StriderError`] so the misuse is visible.
     fn ordered(&self) -> PyResult<PyPat> {
-        Err(into_pattern_err(anyhow::anyhow!(
+        Err(into_strider_err(anyhow::anyhow!(
             "Pat.ordered() has no effect on a finalized Pat — \
              use int_binary(op, l, r).ordered() / bool_binary(op, l, r).ordered() / \
              float_binary(op, l, r).ordered() to force left-to-right matching"
@@ -974,7 +974,7 @@ fn lookup_op<Op: Copy>(
     if let Some(&(_, op)) = table.iter().find(|(n, _)| n.eq_ignore_ascii_case(&lowered)) {
         return Ok(op);
     }
-    Err(into_pattern_err(anyhow::anyhow!(
+    Err(into_strider_err(anyhow::anyhow!(
         "unknown {op_kind} variant {name:?}"
     )))
 }
@@ -1089,7 +1089,7 @@ pub fn extend(op: &str, operand: PatLike<'_>) -> PyResult<PyPat> {
         "zero" | "zero_extend" | "ZeroExtend" => strider_ir::ExtendOp::ZeroExtend,
         "sign" | "sign_extend" | "SignExtend" => strider_ir::ExtendOp::SignExtend,
         other => {
-            return Err(into_pattern_err(anyhow::anyhow!(
+            return Err(into_strider_err(anyhow::anyhow!(
                 "unknown extend op {other:?} (expected 'zero' or 'sign')"
             )))
         }

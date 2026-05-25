@@ -57,14 +57,11 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
 }
 
 #[test]
-fn outer_loop_unresolved_at_fixed_point_returns_typed_error() {
+fn outer_loop_unresolved_at_fixed_point_returns_error() {
     // `jmp rax` on x86_64: rax is a function-entry value (no constant
     // write), and x86_64 has no link register, so IR-level indirect-branch resolver cannot
     // classify.  The orchestrator must reach a fixed point and return
-    // a `UnresolvedIndirectBranch`-typed error — never panic, never
-    // loop forever.  The typed error lets callers (e.g. strider-py's
-    // `UnresolvedIndirectBranchError`) catch this case selectively
-    // rather than treating every fixed-point failure as opaque.
+    // an informative error — never panic, never loop forever.
     let strider = common::strider_x86_64();
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
@@ -76,10 +73,6 @@ fn outer_loop_unresolved_at_fixed_point_returns_typed_error() {
             assert!(
                 msg.contains("could not be resolved at fixed point"),
                 "expected unresolved-at-fixed-point message, got: {msg}"
-            );
-            assert!(
-                e.downcast_ref::<strider_analyze::UnresolvedIndirectBranch>().is_some(),
-                "expected `UnresolvedIndirectBranch` typed error in the anyhow chain, got: {e:?}"
             );
         }
         Ok(_) => panic!("expected error, got Ok"),

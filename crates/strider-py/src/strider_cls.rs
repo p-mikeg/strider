@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
-use crate::errors::into_lift_err;
+use crate::errors::into_strider_err;
 use crate::graph::PyGraph;
 use crate::sleigh::PySleigh;
 
@@ -49,7 +49,7 @@ impl PyStrider {
         let sleigh_borrow = sleigh.borrow(py);
         let regs = sleigh_borrow.regs.clone();
         drop(sleigh_borrow);
-        let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
+        let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_strider_err)?;
         Ok(Self { inner })
     }
 
@@ -58,7 +58,7 @@ impl PyStrider {
         let outcome = self
             .inner
             .analyze_cfg(&cfg_borrow.inner)
-            .map_err(into_lift_err)?;
+            .map_err(into_strider_err)?;
         let unresolved_branch_count = outcome.unresolved_branches.len();
         let region_count = outcome.region_count();
         let graph = outcome.graph;
@@ -101,7 +101,7 @@ impl PyStrider {
         let sleigh_borrow = sleigh.borrow(py);
         let regs = sleigh_borrow.regs.clone();
         drop(sleigh_borrow);
-        let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
+        let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_strider_err)?;
         Ok(Self { inner })
     }
 }

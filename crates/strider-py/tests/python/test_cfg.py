@@ -62,5 +62,5 @@ def test_build_cfg_consumes_sleigh(x86_memory_elf):
     mem.add_region_from_elf(str(x86_memory_elf))
     sleigh = strider.Sleigh(arch, mem)
     _ = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
-    with _pytest.raises(strider.errors.LiftError):
+    with _pytest.raises(strider.errors.StriderError):
         strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)

@@ -1,12 +1,12 @@
 """Regression: a Python `ReadOnlyMemory.read` that raises
 `KeyboardInterrupt` or `SystemExit` propagates out of the Rust
 adapter rather than being swallowed and surfaced as a generic
-`ReaderError`.
+`StriderError`.
 
-Pre-fix: the adapter caught any `PyErr` and converted it to
-`ReaderError`, which would mask Ctrl-C during a long pattern walk.
+Pre-fix: the adapter caught any `PyErr` and converted it to a
+`StriderError`, which would mask Ctrl-C during a long pattern walk.
 Post-fix: the adapter explicitly re-raises both exit-style
-exceptions before falling back to the typed conversion.
+exceptions before falling back to the error conversion.
 
 The exercise path: `strider.run(rom=...)` wires the Python ROM into
 the optimizer's `LoadReadOnly` pass.  Bytes encoding a load from a

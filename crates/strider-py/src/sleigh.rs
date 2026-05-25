@@ -8,7 +8,7 @@
 use pyo3::prelude::*;
 
 use crate::arch::PySleighArch;
-use crate::errors::into_lift_err;
+use crate::errors::into_strider_err;
 use crate::reader::{AnyMemReader, MemInput};
 
 /// A constructed Sleigh keyed off a (SleighArch, reader) pair.
@@ -16,7 +16,7 @@ use crate::reader::{AnyMemReader, MemInput};
 /// The inner `Sleigh<AnyMemReader>` is held in an `Option` so it can
 /// be moved out (into a `strider_lift::cfg::Builder`, for example).
 /// While the inner is `None` the wrapper is "in use" by some
-/// downstream consumer; further moves fail with `LiftError`.
+/// downstream consumer; further moves raise `StriderError`.
 #[pyclass(name = "Sleigh", module = "strider")]
 pub struct PySleigh {
     pub(crate) inner: Option<rsleigh::Sleigh<AnyMemReader>>,
@@ -45,10 +45,10 @@ impl PySleigh {
     /// PyO3's argument-conversion path.
     pub(crate) fn new_internal(arch: PySleighArch, reader: AnyMemReader) -> PyResult<Self> {
         let inner = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
-            .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+            .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
         let regs = inner
             .regs()
-            .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
+            .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
         Ok(Self {
             inner: Some(inner),
             arch_name: arch.preset_name,

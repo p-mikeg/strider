@@ -3,8 +3,8 @@
 //! `build_cfg` consumes the inner `Sleigh` of its `PySleigh` argument
 //! (the Sleigh moves into `strider_lift::cfg::Builder`, then into the resulting
 //! `Cfg`).  The PySleigh wrapper is left "empty" — `inner = None` —
-//! after a successful build.  Subsequent uses of the same PySleigh as
-//! a Sleigh raise `LiftError("Sleigh already in use")`.  `Sleigh.regs`
+//! after a successful build.  Subsequent uses of the same PySleigh after
+//! `build_cfg` will raise `StriderError("Sleigh already in use")`.  `Sleigh.regs`
 //! was eagerly cached at construction time so callers can still build
 //! a `Strider` from the same PySleigh after `build_cfg`.
 
@@ -13,7 +13,7 @@ use std::path::Path;
 use pyo3::prelude::*;
 
 use crate::dot::dot_style_for;
-use crate::errors::{into_lift_err, into_strider_err};
+use crate::errors::into_strider_err;
 use crate::reader::AnyMemReader;
 use crate::sleigh::PySleigh;
 
@@ -34,7 +34,7 @@ pub fn build_cfg(
     let arch = sleigh_borrow.arch;
     let inner_sleigh = sleigh_borrow
         .take_inner()
-        .ok_or_else(|| into_lift_err(anyhow::anyhow!("Sleigh already in use")))?;
+        .ok_or_else(|| into_strider_err(anyhow::anyhow!("Sleigh already in use")))?;
     drop(sleigh_borrow);
 
     let mut opts_builder = strider_lift::cfg::OptionsBuilder::new();
@@ -63,7 +63,7 @@ pub fn build_cfg(
     let built = strider_lift::cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .with_indirect_resolver(resolver)
         .build()
-        .map_err(into_lift_err)?;
+        .map_err(into_strider_err)?;
 
     Ok(PyCfg { inner: built })
 }

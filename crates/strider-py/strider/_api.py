@@ -231,7 +231,7 @@ class Strider:
 
     def symbol(self, name: str) -> int:
         """Resolve a symbol name to its address.  Thin pass-through
-        to `MemoryMap.symbol(name)` — raises `ReaderError` when
+        to `MemoryMap.symbol(name)` — raises `StriderError` when
         the name isn't defined in any loaded ELF."""
         return self._mem.symbol(name)
 

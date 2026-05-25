@@ -50,7 +50,6 @@ use strider_lift::cfg::{Builder, Cfg, DecodeCache, OptionsBuilder, PcodeInsnAddr
 use strider_ir::node::{NodeId, NodeOutputId};
 use crate::opt::ReadOnlyMemory;
 
-use crate::errors::UnresolvedIndirectBranch;
 use crate::opt::indirect_branch_resolve::{
     apply_link_register, apply_tail_call, classify_anchor,
 };
@@ -436,31 +435,13 @@ where
 
         let all_vns = scan_new_vns(&cfg, &mut self.vn_cache, &mut self.vn_cache_region_count);
 
-        // Wrap the IR lift step as `LiftError`.  `analyze_cfg_with`
-        // surfaces sleigh decode failures, pcode-lift type errors,
-        // unsupported register-aliasing widths, etc. — everything the
-        // Python boundary should report as `LiftError` rather than the
-        // catch-all `StriderError`.  The typed `UnknownCallOtherError`
-        // still flows through unchanged: it's an `anyhow::Error` whose
-        // typed root takes precedence over the `LiftError` wrapper at the
-        // strider-py boundary (the downcast for `UnknownCallOtherError`
-        // runs before the `LiftError` arm).
         let outcome = self.strider.analyze_cfg_with(
             &cfg,
             crate::AnalyzeOptions {
                 all_vns: Some(all_vns),
                 per_address_ccs: Some(&self.per_address_built_ccs),
             },
-        ).map_err(|e| {
-            // Preserve the typed `UnknownCallOtherError` root if the lift
-            // produced one — wrapping it in `LiftError` would hide the
-            // typed downcast at the strider-py boundary.
-            if e.downcast_ref::<crate::UnknownCallOtherError>().is_some() {
-                e
-            } else {
-                strider_lift::LiftError::wrap(e)
-            }
-        })?;
+        )?;
         let region_index = RegionIndex::from_handles(outcome.region_handles);
         let mut graph = outcome.graph;
         let unresolved = outcome.unresolved_branches;
@@ -513,7 +494,7 @@ where
                     Some(*addr)
                 }
             }) {
-                return Err(UnresolvedIndirectBranch { addr }.into());
+                return Err(anyhow!("indirect branch at {addr:?} could not be resolved at fixed point"));
             }
             return Ok(Decision::FixedPoint);
         }
@@ -990,9 +971,7 @@ fn read_or_init_var(
 /// Constructs the `OptionsBuilder` from `rom` / link-register /
 /// `fn_max_size` / `allow_code_before_start_addr`, installs the
 /// strider-analyze mini-IR indirect-branch resolver, and threads the
-/// shared decode cache.  Failures wrap as [`strider_lift::LiftError`]
-/// so the strider-py boundary can classify them via typed downcast
-/// rather than substring-matching the formatted error chain.
+/// shared decode cache.
 #[allow(clippy::too_many_arguments)]
 fn build_cfg<R>(
     sleigh: rsleigh::Sleigh<R>,
@@ -1040,19 +1019,11 @@ where
             )
         },
     );
-    // Wrap the cfg build failure as `LiftError` so the strider-py
-    // boundary can classify it via a typed downcast instead of a
-    // substring scan over the formatted error chain.  Skipping the
-    // bare `?` here would let a `Builder::build()` failure (sleigh
-    // decode, region overlap, unresolved indirect branch on the
-    // strict path, etc.) propagate as a plain `anyhow::Error` and
-    // get bucketed under the generic `StriderError` at the boundary.
     Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())
         .with_indirect_resolver(resolver)
         .build()
-        .map_err(strider_lift::LiftError::wrap)
 }
 
 /// Union the varnodes from any regions added since the last

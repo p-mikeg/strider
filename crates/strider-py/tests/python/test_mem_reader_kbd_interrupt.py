@@ -1,13 +1,12 @@
 """Regression: a Python `MemReader.read` that raises
 `KeyboardInterrupt` or `SystemExit` must propagate out of the Rust
 adapter rather than being swallowed and surfaced as a generic
-`ReaderError`.
+`StriderError`.
 
 Pre-fix: `PyMemReaderAdapter::read` caught any `PyErr` and converted
 it to `MemReadError`, masking Ctrl-C during long lifts.
 Post-fix: the adapter explicitly re-raises both exit-style exceptions
-before falling back to the typed conversion (mirrors the existing
-`PyReadOnlyMemoryAdapter::read` guard).
+before falling back to the error conversion.
 """
 
 import pytest

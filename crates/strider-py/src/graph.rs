@@ -381,7 +381,7 @@ impl PyGraph {
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
         if ignore_casts && ignore_casts_mask.is_some() {
-            return Err(crate::errors::into_pattern_err(anyhow::anyhow!(
+            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
                 "find_all: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
@@ -455,7 +455,7 @@ impl PyGraph {
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<Vec<crate::matcher::PyMatch>>> {
         if ignore_casts && ignore_casts_mask.is_some() {
-            return Err(crate::errors::into_pattern_err(anyhow::anyhow!(
+            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
                 "find_all_requirements: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
@@ -517,7 +517,7 @@ impl PyGraph {
         let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut graph)
             .map_err(crate::errors::into_strider_err)?;
         rewriter.apply_rule(rule).map_err(|e| {
-            crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite failed: {e:?}"))
+            crate::errors::into_strider_err(anyhow::anyhow!("rewrite failed: {e:?}"))
         })
     }
 
@@ -540,7 +540,7 @@ impl PyGraph {
         let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut graph)
             .map_err(crate::errors::into_strider_err)?;
         rewriter.apply_rules(&rules).map_err(|e| {
-            crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))
+            crate::errors::into_strider_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))
         })
     }
 }

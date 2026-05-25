@@ -24,7 +24,7 @@ def test_symbol_returns_address(x86_memory_elf):
 def test_symbol_unknown_raises_reader_error(x86_memory_elf):
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(x86_memory_elf))
-    with pytest.raises(strider.errors.ReaderError) as excinfo:
+    with pytest.raises(strider.errors.StriderError) as excinfo:
         mem.symbol("definitely_not_a_real_symbol_xyz")
     assert "not found" in str(excinfo.value).lower()
 
@@ -32,7 +32,7 @@ def test_symbol_unknown_raises_reader_error(x86_memory_elf):
 def test_symbol_without_elf_raises(x86_memory_elf):
     mem = strider.MemoryMap()
     # No ELF loaded; symbol lookup should fail cleanly.
-    with pytest.raises(strider.errors.ReaderError):
+    with pytest.raises(strider.errors.StriderError):
         mem.symbol("array_sum")
 
 
@@ -57,7 +57,7 @@ def test_entry_point(x86_memory_elf):
 
 def test_entry_point_without_elf_raises():
     mem = strider.MemoryMap()
-    with pytest.raises(strider.errors.ReaderError):
+    with pytest.raises(strider.errors.StriderError):
         mem.entry_point()
 
 

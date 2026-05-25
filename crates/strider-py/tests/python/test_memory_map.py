@@ -32,5 +32,5 @@ def test_overlapping_address_overwrites():
 
 def test_overflow_rejected():
     m = strider.MemoryMap()
-    with pytest.raises(strider.errors.ReaderError):
+    with pytest.raises(strider.errors.StriderError):
         m.add_region(0xFFFFFFFFFFFFFFFE, b"\x00\x00\x00\x00")

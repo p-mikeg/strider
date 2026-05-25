@@ -17,7 +17,7 @@ use pyo3::prelude::*;
 use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
-use crate::errors::{into_lift_err, into_strider_err};
+use crate::errors::into_strider_err;
 use crate::graph::PyGraph;
 use crate::reader::{AnyMemReader, MemInput};
 use crate::sleigh::PySleigh;
@@ -154,7 +154,7 @@ fn run_via_orchestrator(
     // Build the second Sleigh handle (orchestrator-owned, fresh
     // reader).  This is consumed by Config.
     let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
-        .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+        .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
     let rom_arc = rom.map(|r| r.into_arc());
 
@@ -258,7 +258,7 @@ fn run_with_custom_pipeline(
                         .build(&regs)
                         .map(|built| (addr, built))
                         .map_err(|e| {
-                            into_lift_err(anyhow::anyhow!(
+                            into_strider_err(anyhow::anyhow!(
                                 "per-address CC at {addr:#x} unresolved: {e:?}"
                             ))
                         })
@@ -276,7 +276,7 @@ fn run_with_custom_pipeline(
                 ..strider_analyze::AnalyzeOptions::default()
             },
         )
-        .map_err(into_lift_err)?;
+        .map_err(into_strider_err)?;
     let graph = outcome.graph;
     drop(strider_borrow);
     let py_graph = Py::new(py, PyGraph::new(graph, cfg_obj.clone_ref(py)))?;

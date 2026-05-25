@@ -59,7 +59,7 @@ impl PyCallingConvention {
     #[classmethod]
     fn x86_64_all_preserving(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
         let inner = strider_target::CallingConvention::x86_64_all_preserving()
-            .map_err(|e| crate::errors::into_lift_err(e.into()))?;
+            .map_err(|e| crate::errors::into_strider_err(e.into()))?;
         Ok(Self {
             inner,
             preset_name: "x86_64_all_preserving",
@@ -86,7 +86,7 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// at every constructor that needs a built CC (StackLoadForward,
 /// FunctionArgDetect, CallStackArgCollect, Strider).
 /// The pattern was: borrow Sleigh, clone regs, drop borrow, call
-/// `cc.inner.build(&regs)`, map LiftError.
+/// `cc.inner.build(&regs)`, map StriderError.
 pub(crate) fn build_cc_for_sleigh(
     py: Python<'_>,
     sleigh: &Py<crate::sleigh::PySleigh>,
@@ -95,5 +95,5 @@ pub(crate) fn build_cc_for_sleigh(
     let sleigh_borrow = sleigh.borrow(py);
     let regs = sleigh_borrow.regs.clone();
     drop(sleigh_borrow);
-    cc.inner.build(&regs).map_err(crate::errors::into_lift_err)
+    cc.inner.build(&regs).map_err(crate::errors::into_strider_err)
 }

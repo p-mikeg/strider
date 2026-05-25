@@ -94,7 +94,7 @@ def test_analyze_unknown_symbol_raises():
     """An undefined symbol surfaces as ReaderError."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load(str(elf))
-    with pytest.raises(strider.errors.ReaderError):
+    with pytest.raises(strider.errors.StriderError):
         s.analyze("definitely_not_a_real_function_xyz")
 
 

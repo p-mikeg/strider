@@ -28,8 +28,7 @@ missing.
    unresolvable indirect branch.  Once the cfg builder was taught
    that ``function_max_size`` defines the function's exact extent
    regardless of the legacy reach-back flag, the lift completes
-   cleanly.  The typed ``UnresolvedIndirectBranchError`` machinery
-   is still pinned here as a static type-hierarchy check.
+   cleanly.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ import pathlib
 import pytest
 
 import strider
-from strider.errors import StriderError, UnresolvedIndirectBranchError  # noqa: F401 — re-exported for typed catches
+from strider.errors import StriderError
 
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
@@ -109,8 +108,3 @@ def test_vmspace_exit_bounded_lift_does_not_walk_into_neighbour(version: str):
     kernel = _kernel_path(version)
     result = _bounded_lift(kernel, "vmspace_exit")
     assert result.graph.node_count() > 0
-
-
-def test_unresolved_indirect_branch_error_is_strider_error_subclass():
-    """Static check independent of any binary fixture."""
-    assert issubclass(UnresolvedIndirectBranchError, StriderError)

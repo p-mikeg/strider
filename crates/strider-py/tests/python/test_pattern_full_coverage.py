@@ -119,7 +119,7 @@ def test_extend_with_op_string():
 
 
 def test_extend_with_invalid_op_raises():
-    with pytest.raises(strider.errors.PatternError):
+    with pytest.raises(strider.errors.StriderError):
         extend("nope", var(Capture()))
 
 
@@ -259,7 +259,7 @@ def test_int_binary_when_chains_to_pat():
 
 def test_int_binary_invalid_op_raises():
     from strider.pattern import int_binary
-    with pytest.raises(strider.errors.PatternError):
+    with pytest.raises(strider.errors.StriderError):
         int_binary("NopeOp", "x", "y")
 
 

@@ -21,7 +21,7 @@ use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use crate::errors::into_reader_err;
+use crate::errors::into_strider_err;
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 
 // ── PyRelocationStats — return type for apply_elf_relocations ────────────
@@ -160,7 +160,7 @@ impl PyMemoryMap {
 
     /// Walk the loaded ELFs in insertion order and run `f` on the first
     /// symbol whose name matches `name`, returning its result.  Raises
-    /// `ReaderError` when no loaded ELF defines the name.  Centralises
+    /// `StriderError` when no loaded ELF defines the name.  Centralises
     /// the iterate-and-match loop plus the not-found error string
     /// shared by `symbol`, `symbol_size`, and `function_max_size`.
     fn find_symbol<R>(
@@ -174,7 +174,7 @@ impl PyMemoryMap {
                 return Ok(f(&sym));
             }
         }
-        Err(into_reader_err(anyhow::anyhow!(
+        Err(into_strider_err(anyhow::anyhow!(
             "symbol {name:?} not found in any ELF loaded into this MemoryMap \
              ({} loaded)",
             inner.elfs.len()
@@ -206,13 +206,13 @@ impl PyMemoryMap {
     /// bytes for a big-endian target.
     ///
     /// # Errors
-    /// Raises `ReaderError` for unrecognised endianness strings.
+    /// Raises `StriderError` for unrecognised endianness strings.
     fn set_endianness(&self, endianness: &str) -> PyResult<()> {
         let parsed = match endianness.to_ascii_lowercase().as_str() {
             "little" | "le" => strider_target::Endianness::Little,
             "big" | "be" => strider_target::Endianness::Big,
             other => {
-                return Err(into_reader_err(anyhow::anyhow!(
+                return Err(into_strider_err(anyhow::anyhow!(
                     "unknown endianness {other:?}; use \"little\" or \"big\""
                 )));
             }
@@ -222,7 +222,7 @@ impl PyMemoryMap {
     }
 
     fn add_region(&self, start_addr: u64, data: Vec<u8>) -> PyResult<()> {
-        let region = MemRegion::new(start_addr, data).map_err(into_reader_err)?;
+        let region = MemRegion::new(start_addr, data).map_err(into_strider_err)?;
         let mut inner = self.inner.borrow_mut();
         inner.regions.push(region);
         inner.table = None;
@@ -265,7 +265,7 @@ impl PyMemoryMap {
     /// for the supported kinds.
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_region_from_elf(&self, path: &str, apply_relocations: bool) -> PyResult<()> {
-        let obj = strider_reader::load_elf(path).map_err(into_reader_err)?;
+        let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         // Auto-set the byte order from the ELF header so subsequent
         // ReadOnlyMemory::read calls assemble multi-byte words in the
         // right order (big-endian targets like MIPS-BE / PowerPC-BE
@@ -282,11 +282,11 @@ impl PyMemoryMap {
         // function pointers should be.
         let regions = if apply_relocations {
             let (regions, _stats) =
-                strider_reader::elf::elf_load_with_relocations(&obj).map_err(into_reader_err)?;
+                strider_reader::elf::elf_load_with_relocations(&obj).map_err(into_strider_err)?;
             regions
         } else {
             strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
-                .map_err(into_reader_err)?
+                .map_err(into_strider_err)?
         };
         let mut inner = self.inner.borrow_mut();
         inner.endianness = elf_endian;
@@ -322,10 +322,10 @@ impl PyMemoryMap {
     /// sections only — `SHT_NOBITS` like `.bss` is never
     /// autoloaded).
     fn apply_elf_relocations(&self, path: &str) -> PyResult<PyRelocationStats> {
-        let obj = strider_reader::load_elf(path).map_err(into_reader_err)?;
+        let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         let mut inner = self.inner.borrow_mut();
         let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut inner.regions, &obj)
-            .map_err(into_reader_err)?;
+            .map_err(into_strider_err)?;
         // Invalidate the lookup table — both the autoload step
         // (which appends new regions) and the in-place patches
         // require a rebuild before the next read.
@@ -335,7 +335,7 @@ impl PyMemoryMap {
 
     /// Look up the address of a function/data symbol across every ELF
     /// loaded into this MemoryMap via `add_region_from_elf`.  Returns
-    /// the first match in load order; raises `ReaderError` when no
+    /// the first match in load order; raises `StriderError` when no
     /// loaded ELF defines the name.
     fn symbol(&self, name: &str) -> PyResult<u64> {
         self.find_symbol(name, |sym| sym.address())
@@ -345,7 +345,7 @@ impl PyMemoryMap {
     /// `name` (`st_size` for an ELF symbol).  Returns `None` when
     /// the symbol exists but its size is recorded as 0 (typical for
     /// data symbols in stripped binaries, or for stub functions).
-    /// Raises `ReaderError` when the symbol isn't defined in any
+    /// Raises `StriderError` when the symbol isn't defined in any
     /// loaded ELF.
     ///
     /// Pair with `symbol(name)` to derive a `function_max_size`
@@ -367,7 +367,7 @@ impl PyMemoryMap {
     /// `(symbol(name), symbol_size(name))` pair — returns
     /// `(addr, size)` so callers don't need two lookups.  `size` is
     /// `None` when the ELF doesn't record one (zero `st_size`).
-    /// Raises `ReaderError` when the symbol is undefined.
+    /// Raises `StriderError` when the symbol is undefined.
     fn function_max_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
         self.find_symbol(name, |sym| {
             let size = sym.size();
@@ -395,11 +395,11 @@ impl PyMemoryMap {
     }
 
     /// ELF entry-point address from the first loaded ELF.  Raises
-    /// `ReaderError` when no ELF has been loaded yet.
+    /// `StriderError` when no ELF has been loaded yet.
     fn entry_point(&self) -> PyResult<u64> {
         let inner = self.inner.borrow();
         let first = inner.elfs.first().ok_or_else(|| {
-            into_reader_err(anyhow::anyhow!(
+            into_strider_err(anyhow::anyhow!(
                 "no ELF loaded into this MemoryMap; call add_region_from_elf first"
             ))
         })?;
@@ -456,7 +456,7 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
             // Re-raise control-flow exceptions (`KeyboardInterrupt`,
             // `SystemExit`) so Ctrl-C / sys.exit during a long lift
             // can interrupt rather than being silently absorbed into
-            // a `ReaderError`.  Mirrors the same guard in
+            // a `StriderError`.  Mirrors the same guard in
             // `PyReadOnlyMemoryAdapter::read`.
             let result = match self
                 .py_obj

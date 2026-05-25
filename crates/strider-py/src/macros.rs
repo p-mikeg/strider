@@ -14,7 +14,7 @@
 //!
 //! - default arm — inner ctor returns `Self` (used by `SleighArch`).
 //! - `try` arm — inner ctor returns `Result<_, _>`; the wrapper lifts
-//!   the error through `errors::into_lift_err` (used by
+//!   the error through `errors::into_strider_err` (used by
 //!   `CallingConvention`).
 
 macro_rules! forall_preset {
@@ -26,7 +26,7 @@ macro_rules! forall_preset {
                 #[classmethod]
                 fn $name(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
                     let inner = <$inner_ty>::$name()
-                        .map_err(|e| crate::errors::into_lift_err(e.into()))?;
+                        .map_err(|e| crate::errors::into_strider_err(e.into()))?;
                     Ok(Self {
                         inner,
                         preset_name: stringify!($name),
