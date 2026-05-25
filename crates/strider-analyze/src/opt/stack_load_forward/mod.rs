@@ -176,6 +176,158 @@ enum ResolveShape {
     },
 }
 
+/// [`MemChainStep`] implementation for [`probe`].
+struct ProbeStep<'a> {
+    offset: i64,
+    load_size: i64,
+    load_ty: strider_ir::node::NodeOutputType,
+    sp_vn: rsleigh::Vn,
+    memo: &'a mut SpExprMemo,
+}
+
+impl<'a> MemChainStep for ProbeStep<'a> {
+    type Verdict = Option<ResolveShape>;
+
+    fn classify(
+        &mut self,
+        graph: &strider_ir::Function,
+        _mem: NodeOutputId,
+        node: NodeId,
+    ) -> Result<StepResult<Option<ResolveShape>>> {
+        match *graph.node_kind(node) {
+            NodeKind::Store(_) => {
+                // Store inputs: [memory, addr, data].
+                let inputs = graph.node_inputs(node);
+                if inputs.len() < 3 {
+                    return Ok(StepResult::Verdict(None));
+                }
+                let addr = inputs[1];
+                let data = inputs[2];
+                match decompose_sp(graph, addr, self.sp_vn, self.memo) {
+                    Some(SpExpr::Terminal { base: _, offset: k }) => {
+                        let Some(data_ty) = graph.output_kind(data).as_value() else {
+                            return Ok(StepResult::Verdict(None));
+                        };
+                        let store_size = data_ty.byte_size() as i64;
+                        if k == self.offset {
+                            // Exact-offset match: forward the stored value.
+                            if data_ty == self.load_ty {
+                                Ok(StepResult::Verdict(Some(ResolveShape::Existing(data))))
+                            } else if data_ty.is_integer()
+                                && self.load_ty.is_integer()
+                                && self.load_ty.byte_size() < data_ty.byte_size()
+                            {
+                                Ok(StepResult::Verdict(Some(ResolveShape::Narrow {
+                                    data,
+                                    data_ty,
+                                })))
+                            } else {
+                                Ok(StepResult::Verdict(None))
+                            }
+                        } else if ranges_disjoint(k, store_size, self.offset, self.load_size) {
+                            // Disjoint SP-relative offset: pass through.
+                            Ok(StepResult::Continue(inputs[0]))
+                        } else {
+                            // Overlapping SP-relative store: may alias.
+                            Ok(StepResult::Verdict(None))
+                        }
+                    }
+                    Some(SpExpr::Phi { .. }) => {
+                        // SP-rooted Phi address: conservatively may alias.
+                        Ok(StepResult::Verdict(None))
+                    }
+                    None => {
+                        // Non-SP-rooted address: classified as Unknown,
+                        // passed through without breaking the Stack chain.
+                        //
+                        // SOUNDNESS NOTE: this is sound only when no
+                        // SP-derived pointer has escaped into user code
+                        // in a way that could make a non-SP-rooted Store
+                        // alias a Stack-class slot.  Concretely:
+                        //   p = *(sp+8);   // p is Unknown-class
+                        //   *p = v;        // Store with Unknown addr
+                        //   // if p == &local (a stack slot), StackLoadForward
+                        //   // will forward from the BEFORE-store value — WRONG.
+                        //
+                        // The default `CALL_DEFAULT_CLOBBERS = [Stack, Unknown]`
+                        // mitigates the most common form of this (a callee that
+                        // holds a pointer to a local variable will clobber the
+                        // Stack chain at the Call barrier), but in-function
+                        // pointer manipulation that doesn't cross a Call is not
+                        // covered.  Closing this gap requires escape analysis
+                        // (tracking whether any non-SP-rooted value was derived
+                        // from an SP-rooted source) — not yet implemented.
+                        Ok(StepResult::Continue(inputs[0]))
+                    }
+                }
+            }
+            NodeKind::MemPhi => {
+                // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
+                let inputs = graph.node_inputs(node);
+                if inputs.len() < 2 {
+                    return Ok(StepResult::Verdict(None));
+                }
+                let phi_token = inputs[0];
+                let preds = inputs.iter().skip(1).collect();
+                Ok(StepResult::JoinPhi {
+                    phi_node: node,
+                    phi_token,
+                    preds,
+                })
+            }
+            NodeKind::MemProject => {
+                // MemProject: partition boundary.
+                // Pass through to the single unified-memory predecessor.
+                let inputs = graph.node_inputs(node);
+                if inputs.is_empty() {
+                    return Ok(StepResult::Verdict(None));
+                }
+                Ok(StepResult::Continue(inputs[0]))
+            }
+            NodeKind::MemUnion => {
+                // MemUnion: [...partition_memories] → [Memory(None)].
+                // Walk through the Stack-partition input — the only one
+                // StackLoadForward cares about.  Identify it by looking
+                // for an input whose NodeOutputKind is Memory(Some(Stack)).
+                let inputs = graph.node_inputs(node);
+                let stack_input = inputs
+                    .iter()
+                    .find(|&inp| is_stack_partition_input(graph, inp));
+                match stack_input {
+                    Some(inp) => Ok(StepResult::Continue(inp)),
+                    // No Stack-partition input in this MemUnion (all
+                    // inputs are Unknown / Heap / etc.) — bail.
+                    None => Ok(StepResult::Verdict(None)),
+                }
+            }
+            _ => Ok(StepResult::Verdict(None)),
+        }
+    }
+
+    fn cycle_verdict(&mut self) -> Option<ResolveShape> {
+        // Cycle guard: loop-header MemPhis feed their own region
+        // indirectly.  Fail closed.
+        None
+    }
+
+    fn combine_phi(
+        &mut self,
+        _phi_node: NodeId,
+        phi_token: NodeOutputId,
+        preds: Vec<Option<ResolveShape>>,
+    ) -> Option<ResolveShape> {
+        // If any predecessor failed, the whole MemPhi fails closed.
+        let mut collected: Vec<ResolveShape> = Vec::with_capacity(preds.len());
+        for p in preds {
+            collected.push(p?);
+        }
+        Some(ResolveShape::Phi {
+            phi_token,
+            preds: collected,
+        })
+    }
+}
+
 /// Iterative read-only walk of the memory chain backward from `mem`
 /// looking for a provable source of the bytes
 /// `[offset, offset + load_size)` at type `load_ty`.  Stack-safe at any
@@ -198,156 +350,6 @@ fn probe(
     memo: &mut SpExprMemo,
     visited: &mut entity_utils::DenseEntitySet<NodeOutputId>,
 ) -> Result<Option<ResolveShape>> {
-    struct ProbeStep<'a> {
-        offset: i64,
-        load_size: i64,
-        load_ty: strider_ir::node::NodeOutputType,
-        sp_vn: rsleigh::Vn,
-        memo: &'a mut SpExprMemo,
-    }
-    impl<'a> MemChainStep for ProbeStep<'a> {
-        type Verdict = Option<ResolveShape>;
-
-        fn classify(
-            &mut self,
-            graph: &strider_ir::Function,
-            _mem: NodeOutputId,
-            node: NodeId,
-        ) -> Result<StepResult<Option<ResolveShape>>> {
-            match *graph.node_kind(node) {
-                NodeKind::Store(_) => {
-                    // Store inputs: [memory, addr, data].
-                    let inputs = graph.node_inputs(node);
-                    if inputs.len() < 3 {
-                        return Ok(StepResult::Verdict(None));
-                    }
-                    let addr = inputs[1];
-                    let data = inputs[2];
-                    match decompose_sp(graph, addr, self.sp_vn, self.memo) {
-                        Some(SpExpr::Terminal { base: _, offset: k }) => {
-                            let Some(data_ty) = graph.output_kind(data).as_value() else {
-                                return Ok(StepResult::Verdict(None));
-                            };
-                            let store_size = data_ty.byte_size() as i64;
-                            if k == self.offset {
-                                // Exact-offset match: forward the stored value.
-                                if data_ty == self.load_ty {
-                                    Ok(StepResult::Verdict(Some(ResolveShape::Existing(data))))
-                                } else if data_ty.is_integer()
-                                    && self.load_ty.is_integer()
-                                    && self.load_ty.byte_size() < data_ty.byte_size()
-                                {
-                                    Ok(StepResult::Verdict(Some(ResolveShape::Narrow {
-                                        data,
-                                        data_ty,
-                                    })))
-                                } else {
-                                    Ok(StepResult::Verdict(None))
-                                }
-                            } else if ranges_disjoint(k, store_size, self.offset, self.load_size) {
-                                // Disjoint SP-relative offset: pass through.
-                                Ok(StepResult::Continue(inputs[0]))
-                            } else {
-                                // Overlapping SP-relative store: may alias.
-                                Ok(StepResult::Verdict(None))
-                            }
-                        }
-                        Some(SpExpr::Phi { .. }) => {
-                            // SP-rooted Phi address: conservatively may alias.
-                            Ok(StepResult::Verdict(None))
-                        }
-                        None => {
-                            // Non-SP-rooted address: classified as Unknown,
-                            // passed through without breaking the Stack chain.
-                            //
-                            // SOUNDNESS NOTE: this is sound only when no
-                            // SP-derived pointer has escaped into user code
-                            // in a way that could make a non-SP-rooted Store
-                            // alias a Stack-class slot.  Concretely:
-                            //   p = *(sp+8);   // p is Unknown-class
-                            //   *p = v;        // Store with Unknown addr
-                            //   // if p == &local (a stack slot), StackLoadForward
-                            //   // will forward from the BEFORE-store value — WRONG.
-                            //
-                            // The default `CALL_DEFAULT_CLOBBERS = [Stack, Unknown]`
-                            // mitigates the most common form of this (a callee that
-                            // holds a pointer to a local variable will clobber the
-                            // Stack chain at the Call barrier), but in-function
-                            // pointer manipulation that doesn't cross a Call is not
-                            // covered.  Closing this gap requires escape analysis
-                            // (tracking whether any non-SP-rooted value was derived
-                            // from an SP-rooted source) — not yet implemented.
-                            Ok(StepResult::Continue(inputs[0]))
-                        }
-                    }
-                }
-                NodeKind::MemPhi => {
-                    // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                    let inputs = graph.node_inputs(node);
-                    if inputs.len() < 2 {
-                        return Ok(StepResult::Verdict(None));
-                    }
-                    let phi_token = inputs[0];
-                    let preds = inputs.iter().skip(1).collect();
-                    Ok(StepResult::JoinPhi {
-                        phi_node: node,
-                        phi_token,
-                        preds,
-                    })
-                }
-                NodeKind::MemProject => {
-                    // MemProject: partition boundary.
-                    // Pass through to the single unified-memory predecessor.
-                    let inputs = graph.node_inputs(node);
-                    if inputs.is_empty() {
-                        return Ok(StepResult::Verdict(None));
-                    }
-                    Ok(StepResult::Continue(inputs[0]))
-                }
-                NodeKind::MemUnion => {
-                    // MemUnion: [...partition_memories] → [Memory(None)].
-                    // Walk through the Stack-partition input — the only one
-                    // StackLoadForward cares about.  Identify it by looking
-                    // for an input whose NodeOutputKind is Memory(Some(Stack)).
-                    let inputs = graph.node_inputs(node);
-                    let stack_input = inputs
-                        .iter()
-                        .find(|&inp| is_stack_partition_input(graph, inp));
-                    match stack_input {
-                        Some(inp) => Ok(StepResult::Continue(inp)),
-                        // No Stack-partition input in this MemUnion (all
-                        // inputs are Unknown / Heap / etc.) — bail.
-                        None => Ok(StepResult::Verdict(None)),
-                    }
-                }
-                _ => Ok(StepResult::Verdict(None)),
-            }
-        }
-
-        fn cycle_verdict(&mut self) -> Option<ResolveShape> {
-            // Cycle guard: loop-header MemPhis feed their own region
-            // indirectly.  Fail closed.
-            None
-        }
-
-        fn combine_phi(
-            &mut self,
-            _phi_node: NodeId,
-            phi_token: NodeOutputId,
-            preds: Vec<Option<ResolveShape>>,
-        ) -> Option<ResolveShape> {
-            // If any predecessor failed, the whole MemPhi fails closed.
-            let mut collected: Vec<ResolveShape> = Vec::with_capacity(preds.len());
-            for p in preds {
-                collected.push(p?);
-            }
-            Some(ResolveShape::Phi {
-                phi_token,
-                preds: collected,
-            })
-        }
-    }
-
     let mut step = ProbeStep {
         offset,
         load_size,

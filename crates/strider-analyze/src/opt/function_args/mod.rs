@@ -141,6 +141,38 @@ impl Optimizer for FunctionArgDetect {
 /// reading of `reg`'s state).  The registered node carries the actual
 /// sub-register Vn, so downstream consumers see the width the function
 /// actually reads.
+/// Find the largest `(Vn, NodeId)` whose Vn is fully contained
+/// in `reg`'s byte range.  Returns `None` if nothing's contained.
+///
+/// Binary-searches the pre-sorted per-space bucket to the first
+/// candidate at `addr_off >= reg.addr_off`, then scans forward
+/// while the candidate's `addr_off` stays below `reg`'s end.
+fn largest_sub_in(
+    initial_vars_by_space: &rustc_hash::FxHashMap<rsleigh::VnSpace, Vec<(rsleigh::Vn, NodeId)>>,
+    reg: rsleigh::Vn,
+) -> Option<(rsleigh::Vn, NodeId)> {
+    let bucket = initial_vars_by_space.get(&reg.addr_space)?;
+    let lo = reg.addr_off;
+    let hi = reg.addr_off.checked_add(u64::from(reg.size))?;
+    // First index whose `addr_off >= lo`.
+    let start_idx = bucket.partition_point(|(vn, _)| vn.addr_off < lo);
+    let mut best: Option<(rsleigh::Vn, NodeId)> = None;
+    for (vn, n) in &bucket[start_idx..] {
+        if vn.addr_off >= hi {
+            break;
+        }
+        // Containment: `vn.addr_off >= lo` (guaranteed by start_idx)
+        // and `vn.addr_off + vn.size <= hi`.
+        if vn.addr_off.checked_add(u64::from(vn.size)).is_some_and(|e| e <= hi) {
+            match best {
+                Some((b, _)) if b.size >= vn.size => {}
+                _ => best = Some((*vn, *n)),
+            }
+        }
+    }
+    best
+}
+
 fn detect_register_args(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     arg_passing_regs: &[rsleigh::Vn],
@@ -177,38 +209,6 @@ fn detect_register_args(
         }
         by_space
     };
-
-    /// Find the largest `(Vn, NodeId)` whose Vn is fully contained
-    /// in `reg`'s byte range.  Returns `None` if nothing's contained.
-    ///
-    /// Binary-searches the pre-sorted per-space bucket to the first
-    /// candidate at `addr_off >= reg.addr_off`, then scans forward
-    /// while the candidate's `addr_off` stays below `reg`'s end.
-    fn largest_sub_in(
-        initial_vars_by_space: &rustc_hash::FxHashMap<rsleigh::VnSpace, Vec<(rsleigh::Vn, NodeId)>>,
-        reg: rsleigh::Vn,
-    ) -> Option<(rsleigh::Vn, NodeId)> {
-        let bucket = initial_vars_by_space.get(&reg.addr_space)?;
-        let lo = reg.addr_off;
-        let hi = reg.addr_off.checked_add(u64::from(reg.size))?;
-        // First index whose `addr_off >= lo`.
-        let start_idx = bucket.partition_point(|(vn, _)| vn.addr_off < lo);
-        let mut best: Option<(rsleigh::Vn, NodeId)> = None;
-        for (vn, n) in &bucket[start_idx..] {
-            if vn.addr_off >= hi {
-                break;
-            }
-            // Containment: `vn.addr_off >= lo` (guaranteed by start_idx)
-            // and `vn.addr_off + vn.size <= hi`.
-            if vn.addr_off.checked_add(u64::from(vn.size)).is_some_and(|e| e <= hi) {
-                match best {
-                    Some((b, _)) if b.size >= vn.size => {}
-                    _ => best = Some((*vn, *n)),
-                }
-            }
-        }
-        best
-    }
 
     for (i, reg) in arg_passing_regs.iter().enumerate() {
         // Exact match → use as-is.  Otherwise the largest sub-register
@@ -537,6 +537,119 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 /// Sub-frame results aren't cached because their cleanliness depends
 /// on the cycle set populated above them, not just on `(mem, offset,
 /// load_size)`.
+
+/// [`MemChainStep`] implementation for [`mem_chain_is_dirty`].
+struct DirtyStep<'a> {
+    offset: i64,
+    load_size: i64,
+    sp_vn: rsleigh::Vn,
+    sp_memo: &'a mut SpExprMemo,
+}
+
+impl<'a> MemChainStep for DirtyStep<'a> {
+    type Verdict = bool;
+
+    fn classify(
+        &mut self,
+        graph: &strider_ir::Function,
+        _mem: NodeOutputId,
+        node: NodeId,
+    ) -> Result<StepResult<bool>> {
+        match *graph.node_kind(node) {
+            NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
+            NodeKind::Store(_) => Ok(match step_through_store(
+                graph,
+                node,
+                self.sp_vn,
+                self.sp_memo,
+                self.offset,
+                self.load_size,
+            ) {
+                AliasStep::MayAlias => StepResult::Verdict(true),
+                AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
+            }),
+            NodeKind::MemPhi => {
+                // Inputs: [PHI, MEM, MEM, ...].
+                let inputs = graph.node_inputs(node);
+                if inputs.len() < 2 {
+                    return Err(anyhow::anyhow!(
+                        "mem_chain_is_dirty: malformed MemPhi with zero predecessor inputs",
+                    ));
+                }
+                let phi_token = inputs[0];
+                let preds = inputs.iter().skip(1).collect();
+                Ok(StepResult::JoinPhi {
+                    phi_node: node,
+                    phi_token,
+                    preds,
+                })
+            }
+            NodeKind::Call | NodeKind::CallOther { .. } => {
+                let inputs = graph.node_inputs(node);
+                if inputs.len() < 2 {
+                    return Err(anyhow::anyhow!(
+                        "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
+                        graph.node_kind(node),
+                    ));
+                }
+                let args_start = if matches!(graph.node_kind(node), NodeKind::Call) {
+                    3
+                } else {
+                    2
+                };
+                let load_offset = self.offset;
+                let load_size = self.load_size;
+                for arg in inputs.iter().skip(args_start) {
+                    let Some(expr) = decompose_sp(graph, arg, self.sp_vn, self.sp_memo) else {
+                        continue;
+                    };
+                    let offsets: &[i64] = match &expr {
+                        SpExpr::Terminal { offset, .. } => std::slice::from_ref(offset),
+                        SpExpr::Phi { offsets, .. } => offsets.as_slice(),
+                    };
+                    for &k in offsets {
+                        if !ranges_disjoint(k, i64::MAX, load_offset, load_size) {
+                            return Ok(StepResult::Verdict(true));
+                        }
+                    }
+                }
+                Ok(StepResult::Continue(inputs[1]))
+            }
+            NodeKind::MemProject => {
+                let inputs = graph.node_inputs(node);
+                if inputs.is_empty() {
+                    return Ok(StepResult::Verdict(true));
+                }
+                Ok(StepResult::Continue(inputs[0]))
+            }
+            NodeKind::MemUnion => {
+                let inputs = graph.node_inputs(node);
+                match inputs
+                    .iter()
+                    .find(|&inp| is_stack_partition_input(graph, inp))
+                {
+                    Some(stack_input) => Ok(StepResult::Continue(stack_input)),
+                    None => Ok(StepResult::Verdict(true)),
+                }
+            }
+            _ => Ok(StepResult::Verdict(true)),
+        }
+    }
+
+    fn cycle_verdict(&mut self) -> bool {
+        false
+    }
+
+    fn combine_phi(
+        &mut self,
+        _phi_node: NodeId,
+        _phi_token: NodeOutputId,
+        preds: Vec<bool>,
+    ) -> bool {
+        preds.into_iter().any(|d| d)
+    }
+}
+
 // Eight arguments are the minimum needed to thread cycle-guards, the
 // SP-decomposition memo and the shadow-walk memo through the
 // memory-chain DFS; bundling them into a context struct would just
@@ -557,170 +670,7 @@ fn mem_chain_is_dirty(
         return Ok(cached);
     }
 
-    struct DirtyStep<'a> {
-        offset: i64,
-        load_size: i64,
-        sp_vn: rsleigh::Vn,
-        sp_memo: &'a mut SpExprMemo,
-    }
-    impl<'a> MemChainStep for DirtyStep<'a> {
-        type Verdict = bool;
-
-        fn classify(
-            &mut self,
-            graph: &strider_ir::Function,
-            _mem: NodeOutputId,
-            node: NodeId,
-        ) -> Result<StepResult<bool>> {
-            match *graph.node_kind(node) {
-                NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
-                NodeKind::Store(_) => Ok(match step_through_store(
-                    graph,
-                    node,
-                    self.sp_vn,
-                    self.sp_memo,
-                    self.offset,
-                    self.load_size,
-                ) {
-                    AliasStep::MayAlias => StepResult::Verdict(true),
-                    AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
-                }),
-                NodeKind::MemPhi => {
-                    // Inputs: [PHI, MEM, MEM, ...].
-                    let inputs = graph.node_inputs(node);
-                    if inputs.len() < 2 {
-                        return Err(anyhow::anyhow!(
-                            "mem_chain_is_dirty: malformed MemPhi with zero predecessor inputs",
-                        ));
-                    }
-                    let phi_token = inputs[0];
-                    let preds = inputs.iter().skip(1).collect();
-                    Ok(StepResult::JoinPhi {
-                        phi_node: node,
-                        phi_token,
-                        preds,
-                    })
-                }
-                NodeKind::Call | NodeKind::CallOther { .. } => {
-                    let inputs = graph.node_inputs(node);
-                    if inputs.len() < 2 {
-                        // A `Call` / `CallOther` with fewer than 2
-                        // inputs (control + memory) violates the
-                        // signature contract.  Surface as Err
-                        // rather than returning the unsafe "clean"
-                        // direction (which would silently forward
-                        // a stale value across the malformed call).
-                        return Err(anyhow::anyhow!(
-                            "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
-                            graph.node_kind(node),
-                        ));
-                    }
-                    // Scan the call's value-args for SP-rooted pointers
-                    // (`Add(InitialVar(sp), Const(K))` / equivalents).
-                    // If any value-arg decomposes to a Terminal sp-rooted
-                    // address, the caller has handed the callee a
-                    // pointer into its own stack frame — the callee may
-                    // store through it, so any subsequent load of any
-                    // stack slot reachable from that pointer is a
-                    // potential shadow.
-                    //
-                    // We don't know the callee's effective store extent,
-                    // so model the escape as a write of `i64::MAX` bytes
-                    // starting at the escaped offset.  `ranges_disjoint`
-                    // saturates and reports "not disjoint" in that case,
-                    // which collapses to: any sp-rooted escape pins the
-                    // chain as dirty for any subsequent stack-arg load.
-                    //
-                    // `SpExpr::Phi` predecessors are checked one-by-one;
-                    // any predecessor offset that is not provably
-                    // disjoint pins the chain.
-                    //
-                    // `Call` inputs are `[CTRL, MEM, TARGET, ...args]`
-                    // (value-args start at index 3); `CallOther` skips
-                    // the explicit target since the user-op identity is
-                    // encoded in the kind (value-args start at index 2).
-                    // The outer match arm gates this branch to those two
-                    // kinds.
-                    let args_start = if matches!(graph.node_kind(node), NodeKind::Call) {
-                        3
-                    } else {
-                        2
-                    };
-                    let load_offset = self.offset;
-                    let load_size = self.load_size;
-                    for arg in inputs.iter().skip(args_start) {
-                        // `decompose_sp` returns `None` for any non-SP-rooted
-                        // value (constants, register-derived integers,
-                        // function-args, etc.).  Those args don't alias the
-                        // caller's stack-arg slots, so we skip past them.
-                        let Some(expr) = decompose_sp(graph, arg, self.sp_vn, self.sp_memo) else {
-                            continue;
-                        };
-                        let offsets: &[i64] = match &expr {
-                            SpExpr::Terminal { offset, .. } => std::slice::from_ref(offset),
-                            SpExpr::Phi { offsets, .. } => offsets.as_slice(),
-                        };
-                        for &k in offsets {
-                            if !ranges_disjoint(k, i64::MAX, load_offset, load_size) {
-                                return Ok(StepResult::Verdict(true));
-                            }
-                        }
-                    }
-                    Ok(StepResult::Continue(inputs[1]))
-                }
-                NodeKind::MemProject => {
-                    // MemProject: partition boundary.  Pass through to
-                    // the single unified-memory predecessor (input 0).
-                    let inputs = graph.node_inputs(node);
-                    if inputs.is_empty() {
-                        // Malformed node — conservatively dirty.
-                        return Ok(StepResult::Verdict(true));
-                    }
-                    Ok(StepResult::Continue(inputs[0]))
-                }
-                NodeKind::MemUnion => {
-                    // MemUnion merges N partition-typed edges back into a
-                    // single unified memory edge.  Only the Stack-partition
-                    // input is relevant for the shadow walk; follow it and
-                    // ignore the rest.  If no Stack-partition input exists
-                    // the chain is opaque — conservatively dirty.
-                    let inputs = graph.node_inputs(node);
-                    match inputs
-                        .iter()
-                        .find(|&inp| is_stack_partition_input(graph, inp))
-                    {
-                        Some(stack_input) => Ok(StepResult::Continue(stack_input)),
-                        None => Ok(StepResult::Verdict(true)),
-                    }
-                }
-                _ => {
-                    // Unknown memory-producing node: be conservative.
-                    Ok(StepResult::Verdict(true))
-                }
-            }
-        }
-
-        fn cycle_verdict(&mut self) -> bool {
-            // Cycle / re-visit: treat as clean for this edge.
-            false
-        }
-
-        fn combine_phi(
-            &mut self,
-            _phi_node: NodeId,
-            _phi_token: NodeOutputId,
-            preds: Vec<bool>,
-        ) -> bool {
-            preds.into_iter().any(|d| d)
-        }
-    }
-
-    let mut step = DirtyStep {
-        offset,
-        load_size,
-        sp_vn,
-        sp_memo,
-    };
+    let mut step = DirtyStep { offset, load_size, sp_vn, sp_memo };
     let result = walk_mem_chain(
         ctx.function_ref(),
         mem,

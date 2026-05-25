@@ -142,6 +142,41 @@ pub fn decompose_sp(
 }
 
 /// Inner form of [`decompose_sp`] that threads a shared `visiting` set
+/// Rolls back `visiting` and memoizes each spine level after the leaf result
+/// is known.
+///
+/// `leaf_result` is the `SpExpr` at the **top** of `spine` (i.e. at the
+/// original `out`).  Each intermediate level `X` shares the same base but
+/// has its offset reduced by the accumulation that happened BELOW `X`.
+/// `None` results are deliberately not memoized (see the long comment in the
+/// caller for the cycle-safety rationale).
+fn commit_spine_to_memo(
+    spine: &[(NodeOutputId, NodeId, i64)],
+    leaf_result: &Option<SpExpr>,
+    memo: &mut SpExprMemo,
+    visiting: &mut entity_utils::DenseEntitySet<NodeId>,
+) {
+    for (level_out, level_node, accum_at_level) in spine.iter().rev() {
+        visiting.remove(*level_node);
+        if let Some(top) = leaf_result {
+            let level_expr = match top {
+                SpExpr::Terminal { base, offset } => SpExpr::Terminal {
+                    base: *base,
+                    offset: offset.wrapping_sub(*accum_at_level),
+                },
+                SpExpr::Phi { phi_node, offsets } => SpExpr::Phi {
+                    phi_node: *phi_node,
+                    offsets: offsets
+                        .iter()
+                        .map(|o| o.wrapping_sub(*accum_at_level))
+                        .collect(),
+                },
+            };
+            memo.insert(*level_out, Some(level_expr));
+        }
+    }
+}
+
 /// across recursive descent into `VarPhi` predecessors.  The `visiting`
 /// set is recursion-internal scratch state: cycle detection requires it
 /// to remain shared across [`decompose_sp_phi`]'s sibling recursions
@@ -260,42 +295,7 @@ fn decompose_sp_inner(
         }
     };
 
-    // Roll back `visiting` and memoize each spine level.  `leaf_result`
-    // already represents the SpExpr at the *original* `out` (the top of
-    // the spine) — the leaf branches all returned a value with its
-    // offset shifted by `accumulated`, which is the total constant
-    // absorbed during descent from `out` to the leaf.  For an
-    // intermediate spine level `X` (whose entry-time accumulation is
-    // `accum_at_X`), the SpExpr at `X` shares the same `base`/`phi_node`
-    // but its offset is reduced by `accum_at_X` (we want only the
-    // offsets absorbed BELOW `X`, i.e. `total_acc - accum_at_X`, and
-    // `total_acc == leaf_result.offset`).
-    for (level_out, level_node, accum_at_level) in spine.iter().rev() {
-        visiting.remove(*level_node);
-        if let Some(ref top) = leaf_result {
-            let level_expr = match top {
-                SpExpr::Terminal { base, offset } => SpExpr::Terminal {
-                    base: *base,
-                    offset: offset.wrapping_sub(*accum_at_level),
-                },
-                SpExpr::Phi { phi_node, offsets } => SpExpr::Phi {
-                    phi_node: *phi_node,
-                    offsets: offsets
-                        .iter()
-                        .map(|o| o.wrapping_sub(*accum_at_level))
-                        .collect(),
-                },
-            };
-            memo.insert(*level_out, Some(level_expr));
-        }
-        // Note: `None` results are deliberately NOT memoized.  When a
-        // spine descent hits a cycle (mutually-recursive phis), it
-        // returns `None` for the sake of the *current* call path —
-        // but a different entry-point may legitimately resolve the
-        // same node.  Memoizing `None` would poison those entries.
-        // See `decompose_sp_does_not_cache_none_results`.
-    }
-
+    commit_spine_to_memo(&spine, &leaf_result, memo, visiting);
     leaf_result
 }
 

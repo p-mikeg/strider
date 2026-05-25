@@ -456,12 +456,12 @@ fn parse_field_inner_attrs(attr: &syn::Attribute) -> syn::Result<FieldAttrBag> {
 /// generated PyO3 setter dispatches on.  Reports mutually-exclusive
 /// flag combinations + unknown `accepts` values as typed
 /// `syn::Error`s.
-fn field_kind_from_bag(
-    attr: &syn::Attribute,
-    bag: &FieldAttrBag,
-    inner_ty: &Type,
-    field_ty: &Type,
-) -> syn::Result<FieldKind> {
+/// Checks that no mutually-exclusive flag combinations are present in `bag`.
+///
+/// Returns `Ok(())` when all combinations are valid, or a `syn::Error` on
+/// the first conflict found.  Extracted from [`field_kind_from_bag`] to keep
+/// the dispatch logic uncluttered.
+fn check_field_attr_conflicts(attr: &syn::Attribute, bag: &FieldAttrBag) -> syn::Result<()> {
     if bag.terminal && bag.multi {
         return Err(syn::Error::new_spanned(
             attr,
@@ -492,6 +492,16 @@ fn field_kind_from_bag(
             "`#[field(terminal)]` and `#[field(no_arg_toggle)]` are mutually exclusive",
         ));
     }
+    Ok(())
+}
+
+fn field_kind_from_bag(
+    attr: &syn::Attribute,
+    bag: &FieldAttrBag,
+    inner_ty: &Type,
+    field_ty: &Type,
+) -> syn::Result<FieldKind> {
+    check_field_attr_conflicts(attr, bag)?;
     if bag.terminal {
         // The inner type must be `bool` so the toggle is well-typed.
         // (The macro doesn't strictly enforce this — anything that

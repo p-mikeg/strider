@@ -418,6 +418,40 @@ fn find_anchor_consumer_placeholder(
 /// abstraction for the pure-DAG / no-trail-rollback case; this walker
 /// is the trail-rollback case and stays here until a second consumer
 /// demonstrates the rollback policy can be parameterised cleanly.
+/// JoinNext frame: the multi-predecessor `Region` is the only
+/// case that needs a continuation.  Linear chains (If's transparent
+/// walk, generic transparent walk, single-pred `Region`) are
+/// handled by re-entering the inner loop with an updated
+/// `control_out`, so they cost zero heap allocation.
+struct JoinNext {
+    region_node: NodeId,
+    next_idx: u32,
+    pre_pred_trail_len: u32,
+    combined: u64,
+}
+
+/// Pushes a `JoinNext` continuation for a multi-predecessor `Region` and
+/// returns the first predecessor to walk, or `None` if no inputs are found.
+///
+/// Extracted from [`walk_control_for_if_bound_iter`]'s Region arm to keep
+/// the inner match arms at a uniform depth.
+fn push_region_continuation(
+    graph: &strider_ir::Graph,
+    region_node: NodeId,
+    trail: &[NodeId],
+    work: &mut Vec<JoinNext>,
+) -> Option<NodeOutputId> {
+    let pre_pred_trail_len = trail.len() as u32;
+    let first_pred = graph.node_inputs(region_node).into_iter().next()?;
+    work.push(JoinNext {
+        region_node,
+        next_idx: 1,
+        pre_pred_trail_len,
+        combined: 0,
+    });
+    Some(first_pred)
+}
+
 fn walk_control_for_if_bound_iter(
     ctx: crate::pattern::RewriteCtxView<'_>,
     initial_control_out: NodeOutputId,
@@ -425,18 +459,6 @@ fn walk_control_for_if_bound_iter(
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     use strider_ir::walk::NodeIdSet;
-
-    /// JoinNext frame: the multi-predecessor `Region` is the only
-    /// case that needs a continuation.  Linear chains (If's transparent
-    /// walk, generic transparent walk, single-pred `Region`) are
-    /// handled by re-entering the inner loop with an updated
-    /// `control_out`, so they cost zero heap allocation.
-    struct JoinNext {
-        region_node: NodeId,
-        next_idx: u32,
-        pre_pred_trail_len: u32,
-        combined: u64,
-    }
 
     let graph = ctx.graph_ref();
     let mut visited: NodeIdSet = NodeIdSet::new();
@@ -483,18 +505,14 @@ fn walk_control_for_if_bound_iter(
                     continue;
                 }
                 NodeKind::Region => {
-                    let preds_iter = graph.node_inputs(producer);
-                    let pred_count = preds_iter.len();
+                    let pred_count = graph.node_inputs(producer).len();
                     if pred_count == 0 {
                         last_result = None;
                         break;
                     }
                     if pred_count == 1 {
                         // Single-pred join is just a transparent walk;
-                        // no rollback needed.  `pred_count == 1`
-                        // guarantees the iterator has a first element,
-                        // but we re-check rather than `unwrap` to keep
-                        // the no-panic discipline.
+                        // no rollback needed.
                         let Some(only) = graph.node_inputs(producer).into_iter().next() else {
                             last_result = None;
                             break;
@@ -502,20 +520,13 @@ fn walk_control_for_if_bound_iter(
                         control_out = only;
                         continue;
                     }
-                    // Multi-pred: push a continuation for the second
-                    // and later preds.  The first pred is processed
-                    // by re-entering the inner loop directly.
-                    let pre_pred_trail_len = trail.len() as u32;
-                    let Some(first_pred) = graph.node_inputs(producer).into_iter().next() else {
+                    // Multi-pred: push a continuation and walk first pred.
+                    let Some(first_pred) = push_region_continuation(
+                        graph, producer, &trail, &mut work,
+                    ) else {
                         last_result = None;
                         break;
                     };
-                    work.push(JoinNext {
-                        region_node: producer,
-                        next_idx: 1,
-                        pre_pred_trail_len,
-                        combined: 0,
-                    });
                     control_out = first_pred;
                     continue;
                 }
