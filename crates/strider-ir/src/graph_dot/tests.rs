@@ -31,6 +31,7 @@ fn render(function: &Function, entry: NodeId) -> String {
         call_clobbered: &[],
         ret_val_regs: &[],
         node_filter: None,
+        node_to_arg_indices: build_arg_reverse_map(function),
     };
     use ::dot::GraphDot;
     GraphDot::new(dumper, ::dot::DotStyle::empty())
@@ -342,6 +343,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         call_clobbered: &[],
         ret_val_regs: &[],
         node_filter: None,
+        node_to_arg_indices: build_arg_reverse_map(&f),
     };
 
     let style = ::dot::DotStyle::empty();
@@ -512,5 +514,78 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     assert!(
         !dot.contains("CallOther  #7"),
         "no double-space (placeholder for the missing name) should leak:\n{dot}",
+    );
+}
+
+/// `MemPartition` nodes must render with the alias-class name in the label
+/// (not the raw `MemPartitionId(N)` debug representation).
+#[test]
+fn mempartition_label_uses_alias_class_name() {
+    use crate::mem_partition::AliasClass;
+
+    let mut f = Function::new();
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    f.set_entry(entry);
+    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+
+    // Create a Stack partition and a MemPartition node that references it.
+    let partition = f.partitions_mut().create(AliasClass::Stack);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
+    let mp = f.create_node(
+        NodeKind::MemPartition { partition },
+        [mem_out],
+        [NodeOutputKind::Memory(Some(partition))],
+    );
+    let [mp_out] = f.node_outputs_exact::<1>(mp).unwrap();
+    f.create_node(NodeKind::Return, [entry_ctrl, mp_out], []);
+
+    let dot = render(&f, entry);
+
+    assert!(
+        dot.contains("Stack"),
+        "MemPartition label must contain the alias class 'Stack':\n{dot}",
+    );
+    assert!(
+        !dot.contains("MemPartitionId("),
+        "raw MemPartitionId debug repr must not appear in label:\n{dot}",
+    );
+}
+
+/// Nodes registered as `FunctionArg` carriers must show `[arg N]` in their
+/// rendered label and a `peripheries=2` attribute for the double border.
+#[test]
+fn function_arg_node_label_includes_arg_index() {
+    let mut f = Function::new();
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    f.set_entry(entry);
+    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+
+    // Create an InitialVar (stand-in for a register arg carrier) and register
+    // it as argument index 0.
+    let init_var = f.create_node(
+        NodeKind::InitialVar(rsleigh::Vn {
+            addr_off: 0,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        }),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [iv_out] = f.node_outputs_exact::<1>(init_var).unwrap();
+    f.register_arg_node(0, init_var);
+
+    // Wire it into a Return so it's reachable.
+    f.create_node(NodeKind::Return, [entry_ctrl, iv_out], []);
+
+    let dot = render(&f, entry);
+
+    assert!(
+        dot.contains("[arg 0]"),
+        "arg carrier node label must contain '[arg 0]':\n{dot}",
+    );
+    assert!(
+        dot.contains("peripheries"),
+        "arg carrier node must have peripheries attribute (double border):\n{dot}",
     );
 }

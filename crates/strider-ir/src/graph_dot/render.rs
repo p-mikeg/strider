@@ -1,7 +1,10 @@
 use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
-use super::{GraphDotDumper, GraphDotDumperState, edge_style, node_fillcolor, node_shape};
+use super::{
+    GraphDotDumper, GraphDotDumperState, edge_style, mem_partition_fillcolor, node_fillcolor,
+    node_shape,
+};
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
 
@@ -101,14 +104,38 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             return Ok(None);
         }
 
-        let cur_id = state.get_dot_id(self.function,node);
-        let label = self.pretty_label(node)?;
-        out.node(
-            &cur_id,
-            &label,
-            node_shape(&kind),
-            &[("fillcolor", node_fillcolor(&kind))],
-        );
+        let cur_id = state.get_dot_id(self.function, node);
+
+        // Build label: prepend "[arg N]" marker for FunctionArg carrier nodes.
+        let base_label = self.pretty_label(node)?;
+        let label = if let Some(indices) = self.node_to_arg_indices.get(&node) {
+            let tag: String = indices
+                .iter()
+                .map(|i| format!("[arg {i}]"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{tag}\n{base_label}")
+        } else {
+            base_label
+        };
+
+        // Per-class fillcolor override for MemPartition nodes.
+        let fillcolor = if let NodeKind::MemPartition { partition } = kind {
+            mem_partition_fillcolor(
+                self.function.partitions().info(partition).alias_class,
+            )
+        } else {
+            node_fillcolor(&kind)
+        };
+
+        // Double border for FunctionArg carrier nodes.
+        let is_arg_node = self.node_to_arg_indices.contains_key(&node);
+        let mut extra: Vec<(&str, &str)> = vec![("fillcolor", fillcolor)];
+        if is_arg_node {
+            extra.push(("peripheries", "2"));
+        }
+
+        out.node(&cur_id, &label, node_shape(&kind), &extra);
         Ok(Some(cur_id))
     }
 

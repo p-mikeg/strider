@@ -3,6 +3,7 @@ use rustc_hash::FxHashMap;
 
 use crate::function::Function;
 use crate::graph::Graph;
+use crate::mem_partition::AliasClass;
 use crate::node::{NodeId, NodeKind, NodeOutputId};
 use crate::node_signature::{SlotRole, expected_signature};
 
@@ -27,7 +28,8 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::Load(_)
         | NodeKind::Store(_) => "box3d",
 
-        NodeKind::MemPartition { .. } | NodeKind::MemUnion => "trapezium",
+        NodeKind::MemPartition { .. } => "note",
+        NodeKind::MemUnion => "cds",
 
         NodeKind::Call => "rarrow",
         NodeKind::CallOther { .. } => "doubleoctagon",
@@ -58,7 +60,12 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
 
-        NodeKind::MemPartition { .. } | NodeKind::MemUnion => "\"#3a1a4a\"", // deep purple — alias-split boundary
+        // MemPartition fillcolor is class-specific; see `mem_partition_fillcolor`.
+        // This fallback is only reached when the render path bypasses the
+        // per-class override (e.g. in tests that emit nodes via node_fillcolor
+        // directly without going through try_declare_node).
+        NodeKind::MemPartition { .. } => "\"#444444\"", // gray fallback
+        NodeKind::MemUnion => "\"#3a1a4a\"", // deep purple — alias-split boundary
 
         NodeKind::Call => "\"#3a1010\"",
         NodeKind::CallOther { .. } => "\"#3a2810\"", // amber — opaque intrinsic
@@ -81,6 +88,16 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
         | NodeKind::CastToFloat => "\"#302018\"", // dark amber
 
         _ => "\"#2d2d2d\"",
+    }
+}
+
+/// Per-class fill color for `MemPartition` nodes on the dark theme.
+pub(super) fn mem_partition_fillcolor(class: AliasClass) -> &'static str {
+    match class {
+        AliasClass::Stack => "\"#1a5c5c\"",   // dark cyan
+        AliasClass::Heap => "\"#5c3a1a\"",    // dark orange
+        AliasClass::Rom => "\"#1a5c2c\"",     // dark green
+        AliasClass::Unknown => "\"#444444\"", // gray
     }
 }
 
@@ -140,6 +157,29 @@ pub struct GraphDotDumper<'a, R: MemReader> {
     /// neighborhood dumps that want to render a subgraph rather than
     /// the whole reachable graph.
     pub(crate) node_filter: Option<crate::walk::NodeIdSet>,
+    /// Reverse map from a carrier `NodeId` to every argument index that
+    /// `Function::arg_index_to_nodes` maps to it.  Built once at render
+    /// time from `function.arg_indices()` so per-node label / visual
+    /// rendering is O(1).  Empty when `FunctionArgDetect` has not yet run
+    /// (the underlying `Function::arg_index_to_nodes` table is empty).
+    pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<u32>>,
+}
+
+/// Build the `node_to_arg_indices` reverse map from `function.arg_indices()`.
+/// Called once at construction time inside [`Function::dot_dumper`] and in
+/// test helpers that construct a [`GraphDotDumper`] directly.
+pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>> {
+    let mut map: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
+    for idx in function.arg_indices() {
+        for &node in function.arg_index_to_nodes(idx) {
+            map.entry(node).or_default().push(idx);
+        }
+    }
+    // Sort each Vec so label output is deterministic.
+    for v in map.values_mut() {
+        v.sort_unstable();
+    }
+    map
 }
 
 impl<'a, R: MemReader> GraphDotDumper<'a, R> {

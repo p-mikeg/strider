@@ -32,6 +32,19 @@ pub enum AliasClass {
     Unknown,
 }
 
+impl AliasClass {
+    /// Short human-readable name for rendering (e.g. in dot labels).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AliasClass::Stack => "Stack",
+            AliasClass::Heap => "Heap",
+            AliasClass::Rom => "Rom",
+            AliasClass::Unknown => "Unknown",
+        }
+    }
+}
+
 /// Per-partition metadata stored in a [`PartitionTable`].
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PartitionInfo {

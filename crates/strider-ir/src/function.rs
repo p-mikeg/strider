@@ -459,6 +459,7 @@ impl Function {
         let cc = self.cc_metadata().ok_or_else(|| {
             anyhow::anyhow!("Function::dot_dumper: cc_metadata is not set")
         })?;
+        let node_to_arg_indices = crate::graph_dot::build_arg_reverse_map(self);
         Ok(crate::graph_dot::GraphDotDumper {
             entry,
             function: self,
@@ -466,6 +467,7 @@ impl Function {
             call_clobbered: &cc.call_clobbered,
             ret_val_regs: &cc.ret_val_regs,
             node_filter: None,
+            node_to_arg_indices,
         })
     }
 }

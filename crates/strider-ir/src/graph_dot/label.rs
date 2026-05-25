@@ -223,7 +223,13 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 
             // ── memory partition boundaries ───────────────────────────────────
             NodeKind::MemPartition { partition } => {
-                format!("MemPartition[{partition:?}]")
+                let class_name = self
+                    .function
+                    .partitions()
+                    .info(*partition)
+                    .alias_class
+                    .as_str();
+                format!("MemPartition\n{class_name}")
             }
             NodeKind::MemUnion => "MemUnion".to_string(),
 
