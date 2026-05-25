@@ -305,10 +305,15 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             // reader can tell Stack from Unknown chains at a glance.
             // Applies to MemProject outputs and all downstream consumers
             // (MemUnion inputs, Load/Store mem slots, etc.).
+            // Quote the label: it contains a colon, which is reserved
+            // in unquoted dot identifiers (would be parsed as a port
+            // specifier).  Other bare labels in this code path (ctrl,
+            // arg0, mem) are valid unquoted identifiers so they don't
+            // need quoting.
             self.function
                 .output_kind(parent_output)
                 .memory_partition()
-                .map(|class| format!("mem:{}", class.as_str()))
+                .map(|class| format!("\"mem:{}\"", class.as_str()))
         };
         let label_str: &str = owned_label.as_deref().unwrap_or(label);
 

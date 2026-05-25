@@ -617,6 +617,20 @@ fn mem_project_edges_carry_alias_class_label() {
         labelled_edges >= 2,
         "expected ≥2 alias-class-labelled edges (one per partition), got {labelled_edges}:\n{dot}",
     );
+
+    // The colon in the label is reserved in unquoted dot identifiers
+    // (used for `node:port` references), so the partition labels must
+    // appear quoted in the emitted dot.  Unquoted `label=mem:Stack`
+    // would be a parse error in any strict dot consumer (viz.js,
+    // graphviz).
+    assert!(
+        dot.contains("label=\"mem:Stack\"") && dot.contains("label=\"mem:Unknown\""),
+        "partition-class labels must be quoted in the emitted dot (colon is reserved in unquoted IDs):\n{dot}",
+    );
+    assert!(
+        !dot.contains("label=mem:Stack") && !dot.contains("label=mem:Unknown"),
+        "partition-class labels must NEVER appear unquoted in the emitted dot:\n{dot}",
+    );
 }
 
 // ── stack_offsets addr-edge suppression ──────────────────────────────────
