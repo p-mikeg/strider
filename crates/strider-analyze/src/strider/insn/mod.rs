@@ -127,9 +127,11 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     }
 
     /// Handle the `CallOtherClass::Call(abi)` arm of
-    /// [`Self::handle_call_other`] — the only modeled form, comprising
-    /// the seven numbered phases below.  Extracted to keep the parent
-    /// dispatch terse.
+    /// [`Self::handle_call_other`] — the only modeled form.  The body
+    /// is structured as seven small helpers below (read implicit-reads,
+    /// resolve per-instruction clobber set, advance current region's
+    /// control/memory, emit the CallOther node, write back implicit-
+    /// writes, etc.).  Extracted to keep the parent dispatch terse.
     fn handle_call_other_modeled(
         &mut self,
         insn: &rsleigh::Insn,
@@ -188,10 +190,10 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         Ok(())
     }
 
-    /// Phase-1 helper for [`Self::handle_call_other_modeled`]: read
-    /// every p-code-explicit input past slot 0 (the user-op id) as a
-    /// value via the aliasing-aware value lifter.  Slot 0 is excluded
-    /// because it carries the user-op id, not a real argument.
+    /// Read every p-code-explicit input past slot 0 (the user-op id)
+    /// as a value via the aliasing-aware value lifter.  Slot 0 is
+    /// excluded because it carries the user-op id, not a real argument.
+    /// Called by [`Self::handle_call_other_modeled`].
     fn read_call_other_args(&mut self, insn: &rsleigh::Insn) -> Result<Vec<strider_ir::Value>> {
         if insn.inputs.len() > 1 {
             insn.inputs[1..]
@@ -203,9 +205,11 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         }
     }
 
-    /// Phases 2+3 for [`Self::handle_call_other_modeled`]: resolve ABI
-    /// register names to Vns, then read their current values via the
-    /// aliasing-aware value lifter (so EAX reads the low 4 bytes of RAX).
+    /// Resolve ABI register names to Vns, then read their current
+    /// values via the aliasing-aware value lifter (so EAX reads the
+    /// low 4 bytes of RAX).  Called by
+    /// [`Self::handle_call_other_modeled`] for both implicit-reads and
+    /// implicit-writes resolution.
     fn resolve_abi_reg_values(
         &mut self,
         op_name: &str,
@@ -215,11 +219,11 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         vns.iter().map(|vn| self.read_vn(vn)).collect()
     }
 
-    /// Phase-7 helper for [`Self::handle_call_other_modeled`]: rebind
-    /// tracked variables for the pcode-explicit output and each implicit-write
-    /// clobber slot.  The pcode-explicit output is written first; any
-    /// implicit-writes entry that matches `out_vn` is skipped so the
-    /// clobber-slot doesn't overwrite the modeled value.
+    /// Rebind tracked variables for the pcode-explicit output and each
+    /// implicit-write clobber slot.  The pcode-explicit output is
+    /// written first; any implicit-writes entry that matches `out_vn`
+    /// is skipped so the clobber-slot doesn't overwrite the modeled
+    /// value.  Called by [`Self::handle_call_other_modeled`].
     ///
     /// Concrete case: `rdpkru` emits `EAX = rdpkru_u32()` in pcode while
     /// the ABI table also lists `EAX` as an implicit-write — without this
@@ -243,10 +247,10 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         Ok(())
     }
 
-    /// Phase-2 helper for [`Self::handle_call_other_modeled`]: resolve
-    /// an ABI-table register-name list against the cached Sleigh
-    /// register table.  Surface an unknown name as a typed error
-    /// referencing the user-op for traceability.
+    /// Resolve an ABI-table register-name list against the cached
+    /// Sleigh register table.  Surface an unknown name as a typed
+    /// error referencing the user-op for traceability.  Used by
+    /// [`Self::resolve_abi_reg_values`].
     fn resolve_abi_regs(&self, op_name: &str, reg_names: &[&str]) -> Result<Vec<rsleigh::Vn>> {
         let regs = &self.strider.sleigh_regs;
         reg_names

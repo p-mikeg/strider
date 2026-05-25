@@ -49,18 +49,18 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
         out: &mut ::dot::DotEmitter,
         state: &mut Self::State,
     ) -> core::result::Result<(), Self::Error> {
-        // Phase A: skip-checks + declare this node.
+        // Declare-this-node: skip-checks + node declaration.
         let Some(cur_id) = self.try_declare_node(node, out, state)? else {
             return Ok(());
         };
         let kind = *self.function.node_kind(node);
 
-        // Phase B: virtual If branch outputs.
+        // Emit per-output virtual nodes for If's true/false branches.
         if matches!(kind, NodeKind::If) {
             self.emit_if_branch_virtuals(node, &cur_id, out, state);
         }
 
-        // Phase C: draw an edge from each input's producer (with any
+        // Draw an edge from each input's producer (with any
         // virtual / inlined consumer-side helpers it needs).
         for (idx, parent_output) in self.function.node_inputs(node).into_iter().enumerate() {
             self.emit_input_edge(node, &cur_id, kind, idx, parent_output, out, state)?;
@@ -71,15 +71,15 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
 }
 
 impl<'a, R: MemReader> GraphDotDumper<'a, R> {
-    /// Phase A of [`dump_as_dot`]: apply the skip-checks and emit the
-    /// dot node declaration when the node passes.  Returns
+    /// First step of [`dump_as_dot`]: apply the skip-checks and emit
+    /// the dot node declaration when the node passes.  Returns
     /// `Ok(Some(id))` (the dot id) when the node was declared,
     /// `Ok(None)` when it was filtered out or is a const (rendered
     /// inline beside its consumers) or an inlined-`InitialVar`.  An
     /// `Err` propagates a `pretty_label` IO failure to the caller
     /// (e.g. a Sleigh `vn_to_name` lookup that surfaces as
-    /// `io::Error`).  Callers proceed to phases B/C only on
-    /// `Ok(Some(_))`.
+    /// `io::Error`).  Callers proceed to virtual-branch / edge-draw
+    /// steps only on `Ok(Some(_))`.
     fn try_declare_node(
         &self,
         node: NodeId,
@@ -132,10 +132,11 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         Ok(Some(cur_id))
     }
 
-    /// Phase B of [`dump_as_dot`]: emit "if.true" / "if.false" virtual
-    /// trapezium nodes for the two control outputs of an If node so
-    /// each branch is clearly labelled.  Reuses any virtual nodes a
-    /// previously-rendered consumer already created eagerly.
+    /// Emit "if.true" / "if.false" virtual trapezium nodes for the two
+    /// control outputs of an If node so each branch is clearly
+    /// labelled.  Reuses any virtual nodes a previously-rendered
+    /// consumer already created eagerly.  Called by [`dump_as_dot`]
+    /// after the If node itself is declared.
     fn emit_if_branch_virtuals(
         &self,
         node: NodeId,
@@ -189,11 +190,11 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         }
     }
 
-    /// Phase C of [`dump_as_dot`]: emit one edge from a single input's
-    /// producer to `node`, plus any virtual / inlined producer-side
-    /// helpers (inline `InitialVar` for SP slots, post-Call clobber
-    /// virtuals, eager If branch virtuals when a consumer renders
-    /// before its If producer) and inline const labels.
+    /// Emit one edge from a single input's producer to `node`, plus
+    /// any virtual / inlined producer-side helpers (inline `InitialVar`
+    /// for SP slots, post-Call clobber virtuals, eager If branch
+    /// virtuals when a consumer renders before its If producer) and
+    /// inline const labels.  Called per input by [`dump_as_dot`].
     #[allow(clippy::too_many_arguments)]
     fn emit_input_edge(
         &self,
