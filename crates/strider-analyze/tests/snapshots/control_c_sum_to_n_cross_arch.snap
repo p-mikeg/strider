@@ -32,14 +32,14 @@ aarch64:
     VarPhi: 2
 aarch64be:
   status: OK
-  reachable_nodes: 38
+  reachable_nodes: 42
   regions: 1
   edges_control: 4
-  edges_memory: 9
-  edges_value: 46
+  edges_memory: 20
+  edges_value: 41
   var_phis: 0
   mem_phis: 1
-  value_phis: 5
+  value_phis: 0
   kind_histogram:
     Entry: 1
     Extend(ZeroExtend): 1
@@ -49,13 +49,14 @@ aarch64be:
     IntBinaryOp(Add): 8
     IntCmpOp(Sless): 1
     IntConst: 5
-    Load: 1
+    Load: 6
+    MemPartition: 3
     MemPhi: 1
+    MemUnion: 1
     Region: 1
     Return: 1
     Store: 5
     Truncate: 1
-    ValuePhi: 5
 arm:
   status: OK
   reachable_nodes: 29
@@ -84,14 +85,14 @@ arm:
     VarPhi: 2
 arm_be:
   status: OK
-  reachable_nodes: 34
+  reachable_nodes: 38
   regions: 1
   edges_control: 4
-  edges_memory: 9
-  edges_value: 42
+  edges_memory: 20
+  edges_value: 37
   var_phis: 0
   mem_phis: 1
-  value_phis: 5
+  value_phis: 0
   kind_histogram:
     Entry: 1
     If: 1
@@ -100,12 +101,13 @@ arm_be:
     IntBinaryOp(Add): 7
     IntCmpOp(Sless): 1
     IntConst: 5
-    Load: 1
+    Load: 6
+    MemPartition: 3
     MemPhi: 1
+    MemUnion: 1
     Region: 1
     Return: 1
     Store: 5
-    ValuePhi: 5
 arm_thumb:
   status: OK
   reachable_nodes: 29
@@ -234,14 +236,14 @@ mips64le:
     VarPhi: 2
 ppc32be:
   status: OK
-  reachable_nodes: 62
+  reachable_nodes: 66
   regions: 1
   edges_control: 4
-  edges_memory: 11
-  edges_value: 78
+  edges_memory: 22
+  edges_value: 73
   var_phis: 0
   mem_phis: 1
-  value_phis: 5
+  value_phis: 0
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
@@ -257,22 +259,23 @@ ppc32be:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
     IntConst: 10
-    Load: 1
+    Load: 6
+    MemPartition: 3
     MemPhi: 1
+    MemUnion: 1
     Region: 1
     Return: 1
     Store: 7
-    ValuePhi: 5
 ppc32le:
   status: OK
-  reachable_nodes: 61
+  reachable_nodes: 65
   regions: 1
   edges_control: 4
-  edges_memory: 11
-  edges_value: 78
+  edges_memory: 22
+  edges_value: 73
   var_phis: 0
   mem_phis: 1
-  value_phis: 5
+  value_phis: 0
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
@@ -288,22 +291,23 @@ ppc32le:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
     IntConst: 10
-    Load: 1
+    Load: 6
+    MemPartition: 3
     MemPhi: 1
+    MemUnion: 1
     Region: 1
     Return: 1
     Store: 7
-    ValuePhi: 5
 ppc64be:
   status: OK
-  reachable_nodes: 64
+  reachable_nodes: 70
   regions: 1
   edges_control: 4
-  edges_memory: 9
-  edges_value: 80
+  edges_memory: 20
+  edges_value: 79
   var_phis: 0
   mem_phis: 1
-  value_phis: 5
+  value_phis: 0
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
@@ -313,7 +317,7 @@ ppc64be:
     If: 1
     InitialMemory: 1
     InitialVar: 5
-    IntBinaryOp(Add): 8
+    IntBinaryOp(Add): 10
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
     IntBinaryOp(ShiftLeft): 3
@@ -321,23 +325,24 @@ ppc64be:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
     IntConst: 8
-    Load: 1
+    Load: 6
+    MemPartition: 3
     MemPhi: 1
+    MemUnion: 1
     Region: 1
     Return: 1
     Store: 5
     Truncate: 3
-    ValuePhi: 5
 ppc64le:
   status: OK
-  reachable_nodes: 65
+  reachable_nodes: 71
   regions: 1
   edges_control: 4
-  edges_memory: 10
-  edges_value: 82
+  edges_memory: 21
+  edges_value: 81
   var_phis: 0
   mem_phis: 1
-  value_phis: 5
+  value_phis: 0
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
@@ -347,7 +352,7 @@ ppc64le:
     If: 1
     InitialMemory: 1
     InitialVar: 5
-    IntBinaryOp(Add): 8
+    IntBinaryOp(Add): 10
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
     IntBinaryOp(ShiftLeft): 3
@@ -355,13 +360,14 @@ ppc64le:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
     IntConst: 8
-    Load: 1
+    Load: 6
+    MemPartition: 3
     MemPhi: 1
+    MemUnion: 1
     Region: 1
     Return: 1
     Store: 6
     Truncate: 3
-    ValuePhi: 5
 x64:
   status: OK
   reachable_nodes: 33

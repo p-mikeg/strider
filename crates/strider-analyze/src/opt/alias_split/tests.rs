@@ -299,7 +299,17 @@ fn callother_with_full_clobber_breaks_stack_chain() {
         let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        b.build_call_other_modeled(0xCAFE, "software_interrupt", &[], None, &[], &[], &[])?;
+        let (call_other, _v, _w) = b.build_call_other_modeled(
+            0xCAFE, "software_interrupt", &[], None, &[], &[], &[],
+        )?;
+        // Model the strider lifter's post-CallOther step: advance the
+        // region's memory token to the CallOther's mem-output so the
+        // subsequent Load reads through the clobber.  The lifter does
+        // this automatically when the user-op's `mem_clobbers` is
+        // non-empty; this fixture skips the strider layer and so
+        // must do it manually.
+        let co_mem_out = b.graph().memory_output_of(call_other)?;
+        b.advance_cur_region_memory(co_mem_out)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
@@ -483,4 +493,341 @@ fn pipeline_with_alias_split_validates() {
     p.add(ConstantFold);
     p.add(AliasSplit::new(sp, ArchPreset::X86));
     p.run(&mut f, entry).expect("pipeline must converge & validate");
+}
+
+// ─── Multi-pred MemPhi (true CFG memory joins) ──────────────────────────────
+
+/// Diamond CFG with disjoint stack writes on each branch — the
+/// canonical multi-pred MemPhi shape.  After `AliasSplit` runs, the
+/// join MemPhi MUST get a per-partition mirror for the Stack class
+/// whose two pred inputs are the Stack-chain heads from each branch.
+#[test]
+fn diamond_cfg_per_partition_memphi() {
+    use strider_ir::IntBinaryOp;
+    use strider_ir_test_utils::RegisterSet;
+
+    let sp = sp_vn_x86();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .build_fn()
+        .expect("builder");
+    let entry = b.create_region().unwrap();
+    let true_br = b.create_region().unwrap();
+    let false_br = b.create_region().unwrap();
+    let join = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+
+    // entry: if (true) goto true_br else false_br
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, true_br, false_br).unwrap();
+
+    // true_br: *(sp+0) = 0x11; goto join
+    b.set_region(true_br);
+    let sp_t = b.read_variable(&sp).unwrap();
+    let d0 = b.build_int_const(0x11u64, NodeOutputType::U32).unwrap();
+    b.build_store(sp_t, d0, rsleigh::VnSpace::RAM).unwrap();
+    b.build_branch(join).unwrap();
+
+    // false_br: *(sp+8) = 0x22; goto join
+    b.set_region(false_br);
+    let sp_f = b.read_variable(&sp).unwrap();
+    let eight = b.build_int_const(8u64, NodeOutputType::U32).unwrap();
+    let addr_f = b
+        .build_int_binary_operation(sp_f, eight, IntBinaryOp::Add, NodeOutputType::U32)
+        .unwrap();
+    let d1 = b.build_int_const(0x22u64, NodeOutputType::U32).unwrap();
+    b.build_store(addr_f, d1, rsleigh::VnSpace::RAM).unwrap();
+    b.build_branch(join).unwrap();
+
+    // join: return *(sp+0)
+    b.set_region(join);
+    let sp_j = b.read_variable(&sp).unwrap();
+    let loaded = b
+        .build_load(sp_j, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.build_return(Some(loaded), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    let _ = &mut f; // silence
+
+    let r = run_split(&mut f, sp);
+    assert_eq!(r, OptimizationResult::Changed);
+
+    let entry_id = f.entry().unwrap();
+    strider_ir::validate::validate(&f, entry_id).expect("post-AliasSplit IR must validate");
+
+    // The Load's mem-input MUST trace to a Stack-partition-typed
+    // value.  Specifically: the per-partition Stack mirror MemPhi at
+    // the join region.
+    let load = unique_node(&f, |k| matches!(k, NodeKind::Load(_)));
+    let mem_in = f.node_inputs(load).into_iter().next().unwrap();
+    assert_eq!(
+        f.output_kind(mem_in).memory_partition(),
+        Some(AliasClass::Stack),
+        "Load's mem-input must be Stack-partition-typed at the join"
+    );
+    let producer = f.get_node_from_output(mem_in);
+    assert!(
+        matches!(f.node_kind(producer), NodeKind::MemPhi),
+        "Load's mem-input must come from a per-partition Stack MemPhi at the join, got {:?}",
+        f.node_kind(producer)
+    );
+
+    // Both Stores must be Stack-partition-typed.
+    let stores: Vec<_> = f
+        .all_node_ids()
+        .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
+        .collect();
+    assert_eq!(stores.len(), 2, "two Stores in fixture");
+    for &s in &stores {
+        let out = f.memory_output_of(s).unwrap();
+        assert_eq!(
+            f.output_kind(out).memory_partition(),
+            Some(AliasClass::Stack),
+            "Store at sp+K must be partition-typed Stack",
+        );
+    }
+}
+
+/// Loop-header MemPhi with a real back-edge from the body.  The
+/// per-partition mirror MemPhi at the loop header MUST have its
+/// back-edge input wired by pass-2 deferred sweep — both arms
+/// (outer entry's chain, loop-body's chain) must be present.
+#[test]
+fn loop_back_edge_partition_memphi_closes_correctly() {
+    use strider_ir_test_utils::RegisterSet;
+
+    let sp = sp_vn_x86();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .build_fn()
+        .unwrap();
+    let entry = b.create_region().unwrap();
+    let header = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+
+    // entry: goto header
+    b.set_region(entry);
+    b.build_branch(header).unwrap();
+
+    // header: store *sp = 0x11; if (true) goto header else goto exit
+    // (synthetic back-edge from header to itself: writes to sp+0 from
+    // both the outer path and the back-edge path.)
+    b.set_region(header);
+    let sp_h = b.read_variable(&sp).unwrap();
+    let v = b.build_int_const(0x11u64, NodeOutputType::U32).unwrap();
+    b.build_store(sp_h, v, rsleigh::VnSpace::RAM).unwrap();
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, header, exit).unwrap();
+
+    // exit: return *sp
+    b.set_region(exit);
+    let sp_e = b.read_variable(&sp).unwrap();
+    let loaded = b
+        .build_load(sp_e, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.build_return(Some(loaded), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+
+    let r = run_split(&mut f, sp);
+    assert_eq!(r, OptimizationResult::Changed);
+
+    let entry_id = f.entry().unwrap();
+    strider_ir::validate::validate(&f, entry_id).expect("post-AliasSplit IR must validate");
+
+    // The loop-header MemPhi has 2 mem preds (outer entry + back-edge).
+    // After AliasSplit, the per-partition Stack mirror MemPhi at the
+    // header must also have 2 mem preds — and both must be
+    // Memory(Some(Stack)).
+    let mem_phis: Vec<_> = f
+        .all_node_ids()
+        .filter(|&n| matches!(f.node_kind(n), NodeKind::MemPhi))
+        .collect();
+    let stack_mirrors: Vec<_> = mem_phis
+        .iter()
+        .copied()
+        .filter(|&n| {
+            let out = f.memory_output_of(n).ok();
+            out.is_some_and(|o| f.output_kind(o).memory_partition() == Some(AliasClass::Stack))
+        })
+        .collect();
+    assert!(!stack_mirrors.is_empty(), "must have ≥1 Stack-partition MemPhi mirror");
+    // The loop-header Stack mirror has 2 mem preds (i.e. 1 + 2 = 3 inputs).
+    let has_multi_pred_stack_mirror = stack_mirrors.iter().any(|&n| {
+        let inputs: Vec<_> = f.node_inputs(n).into_iter().collect();
+        inputs.len() >= 3 // phi_token + ≥2 mem preds
+    });
+    assert!(
+        has_multi_pred_stack_mirror,
+        "loop-header Stack mirror MemPhi must have ≥2 mem preds (the back-edge was closed)"
+    );
+
+    // Every input of every Stack mirror must be Memory(Some(Stack)) or PhiToken.
+    for &n in &stack_mirrors {
+        let inputs: Vec<_> = f.node_inputs(n).into_iter().collect();
+        for (i, &v) in inputs.iter().enumerate() {
+            let kind = f.output_kind(v);
+            if i == 0 {
+                assert!(matches!(kind, NodeOutputKind::PhiToken),
+                        "MemPhi mirror input[0] must be PhiToken, got {kind:?}");
+            } else {
+                assert_eq!(
+                    kind.memory_partition(),
+                    Some(AliasClass::Stack),
+                    "Stack mirror MemPhi input[{i}] must be Memory(Some(Stack)), got {kind:?}",
+                );
+            }
+        }
+    }
+}
+
+/// Diamond CFG where only ONE branch writes to Stack; the other branch
+/// has no Stack writes.  The Stack mirror MemPhi at the join must
+/// still have a valid Memory(Some(Stack)) input for the inactive
+/// branch — sourced from the function-entry MemPartition[Stack] as
+/// the canonical default.
+#[test]
+fn partition_inactive_on_branch_uses_entry_default() {
+    use strider_ir_test_utils::RegisterSet;
+
+    let sp = sp_vn_x86();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .build_fn()
+        .unwrap();
+    let entry = b.create_region().unwrap();
+    let true_br = b.create_region().unwrap();
+    let false_br = b.create_region().unwrap();
+    let join = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+
+    // entry: if (true) goto true_br else false_br
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, true_br, false_br).unwrap();
+
+    // true_br: *sp = 0x11; goto join   (writes Stack)
+    b.set_region(true_br);
+    let sp_t = b.read_variable(&sp).unwrap();
+    let d = b.build_int_const(0x11u64, NodeOutputType::U32).unwrap();
+    b.build_store(sp_t, d, rsleigh::VnSpace::RAM).unwrap();
+    b.build_branch(join).unwrap();
+
+    // false_br: empty branch — no Stack writes.
+    b.set_region(false_br);
+    b.build_branch(join).unwrap();
+
+    // join: return *sp
+    b.set_region(join);
+    let sp_j = b.read_variable(&sp).unwrap();
+    let loaded = b
+        .build_load(sp_j, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.build_return(Some(loaded), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+
+    let r = run_split(&mut f, sp);
+    assert_eq!(r, OptimizationResult::Changed);
+
+    let entry_id = f.entry().unwrap();
+    strider_ir::validate::validate(&f, entry_id).expect("post-AliasSplit IR must validate");
+
+    // The Stack mirror MemPhi at the join must have:
+    //   inputs[0] = PhiToken
+    //   inputs[1] = the Store's mem-output (true-branch's Stack tail)
+    //   inputs[2] = MemPartition[Stack] from entry  (false-branch's
+    //               Stack head is the unmodified entry projection)
+    // Both value inputs MUST be Memory(Some(Stack)) — the entry
+    // MemPartition[Stack] is the canonical default.
+    let mem_phis: Vec<_> = f
+        .all_node_ids()
+        .filter(|&n| matches!(f.node_kind(n), NodeKind::MemPhi))
+        .collect();
+    let stack_mirrors: Vec<_> = mem_phis
+        .iter()
+        .copied()
+        .filter(|&n| {
+            let out = f.memory_output_of(n).ok();
+            out.is_some_and(|o| f.output_kind(o).memory_partition() == Some(AliasClass::Stack))
+        })
+        .collect();
+    // The join's Stack mirror has 1 + 2 = 3 inputs.
+    let join_stack_mirror = stack_mirrors
+        .iter()
+        .copied()
+        .find(|&n| f.node_inputs(n).into_iter().count() == 3)
+        .expect("join Stack mirror MemPhi");
+    // Every pred slot must be Memory(Some(Stack)).
+    for (i, v) in f.node_inputs(join_stack_mirror).into_iter().enumerate() {
+        let kind = f.output_kind(v);
+        if i == 0 {
+            assert!(matches!(kind, NodeOutputKind::PhiToken));
+        } else {
+            assert_eq!(
+                kind.memory_partition(),
+                Some(AliasClass::Stack),
+                "join Stack mirror pred[{i}] must be Memory(Some(Stack)) (entry default for \
+                 inactive branch), got {kind:?}",
+            );
+        }
+    }
+}
+
+/// Sanity: a function with a multi-pred MemPhi that previously
+/// triggered the `has_multi_pred_mem_phi` bail now partitions
+/// successfully — `OptimizationResult::Changed` and at least one
+/// `MemPartition[Stack]` node appears.
+#[test]
+fn previously_bailed_functions_now_partition() {
+    use strider_ir_test_utils::RegisterSet;
+
+    let sp = sp_vn_x86();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .build_fn()
+        .unwrap();
+    let entry = b.create_region().unwrap();
+    let true_br = b.create_region().unwrap();
+    let false_br = b.create_region().unwrap();
+    let join = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, true_br, false_br).unwrap();
+    b.set_region(true_br);
+    let sp_t = b.read_variable(&sp).unwrap();
+    let d = b.build_int_const(1u64, NodeOutputType::U32).unwrap();
+    b.build_store(sp_t, d, rsleigh::VnSpace::RAM).unwrap();
+    b.build_branch(join).unwrap();
+    b.set_region(false_br);
+    b.build_branch(join).unwrap();
+    b.set_region(join);
+    let sp_j = b.read_variable(&sp).unwrap();
+    let _ = b
+        .build_load(sp_j, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+
+    let r = run_split(&mut f, sp);
+    assert_eq!(
+        r,
+        OptimizationResult::Changed,
+        "AliasSplit must succeed on functions with a multi-pred MemPhi"
+    );
+    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemPartition { .. }));
+    assert!(n_part >= 1, "≥1 MemPartition node must be emitted");
 }
