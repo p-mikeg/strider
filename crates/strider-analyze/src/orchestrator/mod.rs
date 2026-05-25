@@ -719,9 +719,10 @@ fn apply_in_place_edit(
             // default when no override is in play) suppress the spliced
             // Call's memory clobber so LoadReadOnly / StackLoadForward
             // chains stay intact across the tail call.
-            let no_memory_clobber = override_cc
-                .map(|cc| cc.no_memory_clobber)
-                .unwrap_or_else(|| strider.calling_convention().no_memory_clobber);
+            let no_memory_clobber = override_cc.map_or_else(
+                || strider.calling_convention().no_memory_clobber,
+                |cc| cc.no_memory_clobber,
+            );
             let new_return = graph.with_rewrite_ctx(|rctx| {
                 apply_tail_call(
                     rctx,

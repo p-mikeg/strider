@@ -344,7 +344,7 @@ mod tests {
     fn apply_tail_call_emits_call_then_return() {
         let (mut ctx, placeholder) = build_placeholder_graph();
         let _new_return = ctx
-            .with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de_u64, &[], &[], &[]))
+            .with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de_u64, &[], &[], &[], false))
             .expect("apply");
         // The new Return must be reachable from entry; the placeholder
         // is detached.  Walk all node ids to confirm a Call materialised.
@@ -377,7 +377,7 @@ mod tests {
             .find(|&nid| matches!(ctx.node_kind(nid), NodeKind::Return))
             .expect("Return");
         let result =
-            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, ret_id, 0xc0de, &[], &[], &[]));
+            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, ret_id, 0xc0de, &[], &[], &[], false));
         assert!(result.is_err(), "must reject Return: {result:?}");
     }
 
@@ -447,7 +447,7 @@ mod tests {
         let a2 = synth_value_output(&mut ctx, 0x03, NodeOutputType::U64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xc0de, &[a0, a1, a2], &[], &[])
+                apply_tail_call(rctx, placeholder, 0xc0de, &[a0, a1, a2], &[], &[], false)
             })
             .expect("apply");
         // The new Return's input #0 is the Call's ctrl output.  Walk
@@ -476,7 +476,7 @@ mod tests {
         ];
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xbeef, &[], &clob_kinds, &[])
+                apply_tail_call(rctx, placeholder, 0xbeef, &[], &clob_kinds, &[], false)
             })
             .expect("apply");
         // Walk to the Call.
@@ -501,7 +501,7 @@ mod tests {
         let r1 = synth_value_output(&mut ctx, 0x11, NodeOutputType::U64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xface, &[], &[], &[r0, r1])
+                apply_tail_call(rctx, placeholder, 0xface, &[], &[], &[r0, r1], false)
             })
             .expect("apply");
         assert_eq!(ctx.node_inputs(new_return).len(), 4, "[call_ctrl, call_mem, r0, r1]");
@@ -541,7 +541,7 @@ mod tests {
         );
 
         let result =
-            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de, &[], &[], &[]));
+            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de, &[], &[], &[], false));
         let err = result.expect_err("non-integer target_value must propagate as Err");
         let msg = format!("{err:?}");
         assert!(
