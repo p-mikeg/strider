@@ -358,7 +358,7 @@ impl HtmlEngineChoice {
 /// drives the initial engine selection, so a small over-count is
 /// harmless and an under-count just keeps the default `dot`.
 #[must_use]
-pub fn dot_node_count(dot: &str) -> usize {
+pub(crate) fn dot_node_count(dot: &str) -> usize {
     dot.matches("[label=").count()
 }
 

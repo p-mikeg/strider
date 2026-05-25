@@ -66,7 +66,7 @@ pub mod read_only_memory;
 pub use read_only_memory::ReadOnlyMemory;
 pub mod validate;
 pub mod walk;
-pub mod wide_const;
+pub(crate) mod wide_const;
 
 pub use crate::error::Result;
 pub use builder::FunctionBuilder;

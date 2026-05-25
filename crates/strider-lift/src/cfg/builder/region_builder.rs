@@ -45,8 +45,10 @@ fn next_pcode_addr(
 
 /// Outcome of processing a single pcode instruction inside the region
 /// builder.
+///
+/// Created internally by `Builder::explore`; not part of the public API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProcessInsnRes {
+pub(crate) enum ProcessInsnRes {
     /// The instruction terminated the current region (branch, return, or
     /// fall-through into an already-existing region).
     FinishedProcessing,

@@ -55,7 +55,7 @@ impl WideConstStorage {
     /// `U512`.  Projection over the variant difference so width-agnostic
     /// callers (`byte_size`, `to_le_bytes`) don't have to match.
     #[must_use]
-    pub fn limbs(&self) -> &[u64] {
+    pub(crate) fn limbs(&self) -> &[u64] {
         match self {
             Self::U256(limbs) => limbs,
             Self::U512(limbs) => limbs,

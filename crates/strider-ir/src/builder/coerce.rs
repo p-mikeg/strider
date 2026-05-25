@@ -65,7 +65,7 @@ impl FunctionBuilder {
     ///
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
-    pub fn get_as_bool(&self, output_id: NodeOutputId) -> Result<Option<bool>> {
+    pub(crate) fn get_as_bool(&self, output_id: NodeOutputId) -> Result<Option<bool>> {
         Ok(self.const_value(output_id)?.and_then(|c| match c {
             ConstValue::Bool(b) => Some(b),
             ConstValue::Int { val, .. } => Some(val != 0),

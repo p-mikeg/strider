@@ -19,7 +19,7 @@ use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 /// shortcut-character fallback, so the previous `InvalidRegVn` and
 /// `UnsupportedVnSpaceDisplay` error paths no longer fire — those inputs
 /// now produce a best-effort fallback string.
-pub fn vn_to_display_name<R: MemReader>(
+pub(crate) fn vn_to_display_name<R: MemReader>(
     sleigh: &rsleigh::Sleigh<R>,
     vn: &rsleigh::Vn,
 ) -> anyhow::Result<String> {

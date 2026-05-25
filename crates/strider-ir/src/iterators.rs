@@ -97,7 +97,7 @@ impl InputCursor<'_> {
         Some((current.node_id, current.input_index))
     }
 
-    pub fn move_next(&mut self) {
+    fn move_next(&mut self) {
         let Some(current) = self.current else {
             return;
         };

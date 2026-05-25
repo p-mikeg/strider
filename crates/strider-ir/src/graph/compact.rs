@@ -67,18 +67,23 @@ impl NodeIdRemap {
     }
 
     /// Returns the post-compaction `NodeOutputId` for `old`, or
-    /// `None` if `old`'s producing node was dropped.
+    /// `None` if `old`'s producing node was dropped.  Test-only:
+    /// production code uses `Function::remap_side_table_*` instead of
+    /// poking the remap directly.
+    #[cfg(test)]
     #[inline]
     #[must_use]
-    pub fn output_old_to_new(&self, old: NodeOutputId) -> Option<NodeOutputId> {
+    pub(crate) fn output_old_to_new(&self, old: NodeOutputId) -> Option<NodeOutputId> {
         self.outputs[old]
     }
 
     /// Returns the post-compaction `NodeInputId` for `old`, or `None`
-    /// if `old`'s consuming node was dropped.
+    /// if `old`'s consuming node was dropped.  Test-only (same
+    /// rationale as [`Self::output_old_to_new`]).
+    #[cfg(test)]
     #[inline]
     #[must_use]
-    pub fn input_old_to_new(&self, old: NodeInputId) -> Option<NodeInputId> {
+    pub(crate) fn input_old_to_new(&self, old: NodeInputId) -> Option<NodeInputId> {
         self.inputs[old]
     }
 }

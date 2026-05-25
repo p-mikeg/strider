@@ -26,7 +26,7 @@ fn never_match() -> NodeKindCheck {
 
 /// Type alias for the closure stored by `int_const_with_fn` /
 /// `bool_const_with_fn` / `float_const_with_fn`.
-pub type BuildValueFn<T> = Arc<dyn Fn(&BuildCtx<'_>) -> Result<T> + Send + Sync>;
+pub(crate) type BuildValueFn<T> = Arc<dyn Fn(&BuildCtx<'_>) -> Result<T> + Send + Sync>;
 
 /// Returns the [`NodeOutputType`] of the matched root's first value input,
 /// or `None` if the root has no inputs or its first input isn't a value
