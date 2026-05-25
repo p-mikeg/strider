@@ -1,5 +1,5 @@
 //! Stack-pointer expression decomposition shared by every SP-aware pass
-//! (`stack_store::detect`, `stack_load_forward`, `function_args::stack_args`).
+//! (`call_stack_args`, `stack_load_forward`, `function_args::stack_args`).
 //!
 //! The implementation is split across focused submodules:
 //!

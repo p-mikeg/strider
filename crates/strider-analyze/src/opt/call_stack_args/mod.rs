@@ -1,3 +1,6 @@
+//! Stack-argument collection post-pass. The shared SP-decomposition
+//! machinery lives in [`crate::opt::sp_expr`].
+//!
 //! `CallStackArgCollect` — post-pass that walks the memory chain leading
 //! into each `Call` node, collects positional `StackStore` data outputs, and
 //! appends them as additional Call inputs.
@@ -8,6 +11,9 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{SpExprMemo, decompose_sp};
 use crate::opt::stack_load_forward::is_stack_partition_input;
+
+#[cfg(test)]
+mod tests;
 
 /// Walks memory backward from `mem`, collecting `StackStore` data outputs as
 /// positional call arguments by matching each store's offset against the

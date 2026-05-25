@@ -54,7 +54,7 @@ mod known_bits;
 mod load_readonly;
 mod redundant_phis;
 pub(crate) mod stack_load_forward;
-mod stack_store;
+mod call_stack_args;
 #[cfg(test)]
 mod test_support;
 
@@ -79,7 +79,7 @@ pub use strider_ir::ReadOnlyMemory;
 pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
-pub use stack_store::CallStackArgCollect;
+pub use call_stack_args::CallStackArgCollect;
 /// Stable subset of the default pipeline — passes whose rewrites survive
 /// the addition of new phi inputs in a later strider fixed-point
 /// iteration.  Used while the IR `Graph` is still growing under the

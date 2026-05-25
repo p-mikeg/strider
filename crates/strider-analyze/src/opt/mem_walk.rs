@@ -29,7 +29,7 @@
 //! Two other backward memory-chain walks live elsewhere in this crate
 //! and deliberately do NOT use this primitive:
 //!
-//! * [`crate::opt::stack_store::call_args`]'s
+//! * [`crate::opt::call_stack_args`]'s
 //!   `collect_stack_args_in_chain_order` walks the chain leading into a
 //!   `Call`, accumulating positional `StackStore` data outputs into a
 //!   dense-prefix slot table.  It treats `MemPhi` as a chain-terminator
