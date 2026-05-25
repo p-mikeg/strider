@@ -129,14 +129,7 @@ fn collect_stack_args_partitioned(
                         if prefix_top >= 0 && slot_i32 > prefix_top + 1 {
                             return Some(dense_prefix(slots));
                         }
-                        slots[slot] = Some(data);
-                        let mut k = usize::try_from(prefix_top + 1).unwrap_or(0);
-                        while k < slots.len() && slots[k].is_some() {
-                            k += 1;
-                        }
-                        prefix_top =
-                            i32::try_from(k).unwrap_or(i32::MAX).saturating_sub(1);
-                        if usize::try_from(prefix_top + 1).unwrap_or(0) == slots.len() {
+                        if fill_slot_and_advance(&mut slots, slot, data, &mut prefix_top) {
                             return Some(dense_prefix(slots));
                         }
                     }
@@ -330,39 +323,16 @@ fn collect_stack_args_in_chain_order(
                     }
                 }
             }
-            // `MemProject` — partition boundary inserted by AliasSplit.
-            // The walker passes straight through to the single predecessor
-            // (input 0, the unified-memory side).
-            NodeKind::MemProject => {
-                let inputs = ctx.node_inputs(node);
-                if inputs.is_empty() {
-                    return dense_prefix(slots);
+            // `MemProject` / `MemUnion` — partition boundaries; pass through
+            // to the relevant predecessor.  `StackStorePhi`, `MemPhi`, and
+            // anything else terminates the chain.
+            _ => match step_through_transparent(ctx, node) {
+                Some(next) => {
+                    cur = next;
+                    continue;
                 }
-                cur = inputs[0];
-                continue;
-            }
-            // `MemUnion` — merges N partition-typed edges back into a
-            // single unified memory edge.  Only the Stack-partition input
-            // is relevant for stack-arg collection; follow it and ignore
-            // the rest.  If no Stack-partition input exists the chain is
-            // opaque and we terminate.
-            NodeKind::MemUnion => {
-                let inputs = ctx.node_inputs(node);
-                let stack_input = inputs
-                    .iter()
-                    .find(|&inp| is_stack_partition_input(ctx.function_ref(), inp));
-                match stack_input {
-                    Some(inp) => {
-                        cur = inp;
-                        continue;
-                    }
-                    None => return dense_prefix(slots),
-                }
-            }
-            // `StackStorePhi` (ambiguous offsets), `MemPhi` (control-flow
-            // join), or anything else (entry memory, an earlier `Call`,
-            // `PostCallMemState`, …) terminates the chain.
-            _ => return dense_prefix(slots),
+                None => return dense_prefix(slots),
+            },
         };
         match anchor_space {
             None => anchor_space = Some(space),
@@ -389,20 +359,11 @@ fn collect_stack_args_in_chain_order(
                 // counts at a few dozen in practice, so this never
                 // fires; `as i32` would silently wrap on a
                 // future >2^31-slot table).
-                let slot_i32 = i32::try_from(slot)
-                    .unwrap_or(i32::MAX);
+                let slot_i32 = i32::try_from(slot).unwrap_or(i32::MAX);
                 if prefix_top >= 0 && slot_i32 > prefix_top + 1 {
                     return dense_prefix(slots);
                 }
-                slots[slot] = Some(data);
-                // Extend `prefix_top` as far as the contiguous prefix
-                // now reaches.
-                let mut k = usize::try_from(prefix_top + 1).unwrap_or(0);
-                while k < slots.len() && slots[k].is_some() {
-                    k += 1;
-                }
-                prefix_top = i32::try_from(k).unwrap_or(i32::MAX).saturating_sub(1);
-                if usize::try_from(prefix_top + 1).unwrap_or(0) == slots.len() {
+                if fill_slot_and_advance(&mut slots, slot, data, &mut prefix_top) {
                     return dense_prefix(slots);
                 }
             }
@@ -422,6 +383,56 @@ fn collect_stack_args_in_chain_order(
         }
         cur = prev_mem;
     }
+}
+
+/// Attempts to pass through a transparent memory node (`MemProject` or
+/// `MemUnion`) and return the next `cur` value to walk.  Returns `Some(next)`
+/// when the node is transparent and walking should continue from `next`, or
+/// `None` when the node is not transparent (caller handles it as a non-Store).
+///
+/// `MemProject`: pass through to input 0 (the unified-memory side).
+/// `MemUnion`: follow the Stack-partition input; `None` if none found.
+fn step_through_transparent(
+    ctx: crate::pattern::RewriteCtxView<'_>,
+    node: NodeId,
+) -> Option<NodeOutputId> {
+    match *ctx.node_kind(node) {
+        NodeKind::MemProject => {
+            let inputs = ctx.node_inputs(node);
+            inputs.iter().next()
+        }
+        NodeKind::MemUnion => {
+            let inputs = ctx.node_inputs(node);
+            inputs
+                .iter()
+                .find(|&inp| is_stack_partition_input(ctx.function_ref(), inp))
+        }
+        _ => None,
+    }
+}
+
+/// Fills `slots[slot]` with `data`, advances `prefix_top` to cover the new
+/// contiguous prefix, and returns whether the prefix is now complete.
+///
+/// Returns `true` when `prefix_top + 1 == slots.len()` (caller should return
+/// the dense prefix immediately).  Returns `false` when the slot was filled but
+/// more slots remain.
+///
+/// **Precondition:** `slots[slot]` is `None` and the monotonicity guard has
+/// already been checked by the caller.
+fn fill_slot_and_advance(
+    slots: &mut [Option<NodeOutputId>],
+    slot: usize,
+    data: NodeOutputId,
+    prefix_top: &mut i32,
+) -> bool {
+    slots[slot] = Some(data);
+    let mut k = usize::try_from(*prefix_top + 1).unwrap_or(0);
+    while k < slots.len() && slots[k].is_some() {
+        k += 1;
+    }
+    *prefix_top = i32::try_from(k).unwrap_or(i32::MAX).saturating_sub(1);
+    usize::try_from(*prefix_top + 1).unwrap_or(0) == slots.len()
 }
 
 /// Returns the longest dense prefix of `slots` (indices `0..k` where

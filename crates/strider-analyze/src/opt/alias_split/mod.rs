@@ -312,6 +312,48 @@ struct Classified {
 /// Walk the function once and classify every memory-touching node.
 ///
 /// `entry_mem_phi`, if `Some`, names the chain root — that MemPhi is
+/// Classifies `addr` for `node` (a `Store` or `Load`) and records the result
+/// in `addr_class` and `concrete_stack_offsets`.  Shared by both arms of
+/// [`classify_all`] to avoid code duplication.
+fn classify_memory_access(
+    function: &Function,
+    node: NodeId,
+    addr: NodeOutputId,
+    sp_vn: rsleigh::Vn,
+    memo: &mut SpExprMemo,
+    addr_class: &mut rustc_hash::FxHashMap<NodeId, AliasClass>,
+    concrete_stack_offsets: &mut Vec<(NodeId, i64)>,
+) {
+    let (cls, offset) = address_class_with_offset(function, addr, sp_vn, memo);
+    addr_class.insert(node, cls);
+    if let Some(off) = offset {
+        concrete_stack_offsets.push((node, off));
+    }
+}
+
+/// Returns the memory-clobber slice for a `CallOther` node.
+///
+/// Looks up the op name from the side-table; if found, dispatches through
+/// the ABI classification table.  Missing name → conservative full-clobber.
+/// `NoOp` / `NoReturn` → empty (no chain advance needed).
+fn callother_clobbers(
+    function: &Function,
+    node: NodeId,
+    preset: strider_target::ArchPreset,
+) -> &'static [AliasClass] {
+    if let Some(name) = function.call_other_name(node) {
+        match classify(preset, name) {
+            Some(CallOtherClass::Call(abi)) => abi.mem_clobbers,
+            // NoOp / NoReturn / unknown name — leave the memory edge alone.
+            _ => &[],
+        }
+    } else {
+        // No name on the side-table: conservative default — treat as
+        // full-clobber so we don't forward across an unmodeled op.
+        TERMINAL_CLOBBERS
+    }
+}
+
 /// EXCLUDED from `mem_chain_consumers` because the chain projects from
 /// its output rather than passing through it.  Non-entry MemPhis ARE
 /// enqueued: [`build_forked_chains`] processes each of them as a join
@@ -333,20 +375,12 @@ fn classify_all(
         match kind {
             NodeKind::Store(_) => {
                 let [_, addr, _] = function.node_inputs_exact::<3>(node)?;
-                let (cls, offset) = address_class_with_offset(function, addr, sp_vn, memo);
-                addr_class.insert(node, cls);
-                if let Some(off) = offset {
-                    concrete_stack_offsets.push((node, off));
-                }
+                classify_memory_access(function, node, addr, sp_vn, memo, &mut addr_class, &mut concrete_stack_offsets);
                 mem_chain_consumers.push(node);
             }
             NodeKind::Load(_) => {
                 let [_, addr] = function.node_inputs_exact::<2>(node)?;
-                let (cls, offset) = address_class_with_offset(function, addr, sp_vn, memo);
-                addr_class.insert(node, cls);
-                if let Some(off) = offset {
-                    concrete_stack_offsets.push((node, off));
-                }
+                classify_memory_access(function, node, addr, sp_vn, memo, &mut addr_class, &mut concrete_stack_offsets);
                 mem_chain_consumers.push(node);
             }
             NodeKind::Call => {
@@ -354,21 +388,7 @@ fn classify_all(
                 mem_chain_consumers.push(node);
             }
             NodeKind::CallOther { .. } => {
-                let clobbers: &'static [AliasClass] =
-                    if let Some(name) = function.call_other_name(node) {
-                        match classify(preset, name) {
-                            Some(CallOtherClass::Call(abi)) => abi.mem_clobbers,
-                            // NoOp / NoReturn / unknown name — leave
-                            // the memory edge alone.  Unknown CallOther
-                            // would have been rejected at lift time.
-                            _ => &[],
-                        }
-                    } else {
-                        // No name on the side-table: conservative
-                        // default — treat as full-clobber so we don't
-                        // forward across an unmodeled op.
-                        TERMINAL_CLOBBERS
-                    };
+                let clobbers = callother_clobbers(function, node, preset);
                 if !clobbers.is_empty() {
                     barriers.insert(node, clobbers);
                     mem_chain_consumers.push(node);
@@ -497,6 +517,36 @@ struct DeferredBackEdge {
     pred_value: NodeOutputId,
 }
 
+/// Shared lookup+replace block for `Store` and `Load` arms in
+/// [`build_forked_chains`] Pass 1.
+///
+/// Resolves the partition class from `classified.addr_class`, finds the
+/// current head for that partition from `outgoing_heads` (falling back to
+/// `entry_heads`), rewires `consumer`'s mem-input (slot 0) to that head,
+/// and returns `(partition, producer_heads)` so the caller can record the
+/// Store's updated outgoing heads.
+fn wire_consumer_to_partition_head(
+    function: &mut Function,
+    consumer: NodeId,
+    classified: &Classified,
+    outgoing_heads: &OutgoingHeadsMap,
+    entry_heads: PartitionHeads,
+    kind_label: &'static str,
+) -> Result<(AliasClass, PartitionHeads)> {
+    let p = classified
+        .addr_class
+        .get(&consumer)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!(
+            "AliasSplit: {kind_label} {consumer:?} missing from addr_class table"
+        ))?;
+    let producer_value = mem_input_value(function, consumer)?;
+    let producer_heads = lookup_outgoing_or_seed(outgoing_heads, producer_value, entry_heads);
+    let cur_head = head_for(&producer_heads, p)?;
+    replace_specific_input(function, consumer, 0, cur_head)?;
+    Ok((p, producer_heads))
+}
+
 /// Build the forked chains.  Returns `Changed` iff at least one
 /// boundary (`MemProject` / `MemUnion`) was inserted.
 ///
@@ -585,21 +635,14 @@ fn build_forked_chains(
         let kind = *function.node_kind(consumer);
         match kind {
             NodeKind::Store(_) => {
-                let p = classified
-                    .addr_class
-                    .get(&consumer)
-                    .copied()
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "AliasSplit: Store {consumer:?} missing from addr_class table"
-                    ))?;
-                let producer_value = mem_input_value(function, consumer)?;
-                let producer_heads = lookup_outgoing_or_seed(
+                let (p, producer_heads) = wire_consumer_to_partition_head(
+                    function,
+                    consumer,
+                    classified,
                     &outgoing_heads,
-                    producer_value,
                     entry_heads,
-                );
-                let cur_head = head_for(&producer_heads, p)?;
-                replace_specific_input(function, consumer, 0, cur_head)?;
+                    "Store",
+                )?;
                 let mem_out = function.memory_output_of(consumer)?;
                 function
                     .graph_mut()
@@ -609,21 +652,14 @@ fn build_forked_chains(
                 outgoing_heads.insert(mem_out, store_heads);
             }
             NodeKind::Load(_) => {
-                let p = classified
-                    .addr_class
-                    .get(&consumer)
-                    .copied()
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "AliasSplit: Load {consumer:?} missing from addr_class table"
-                    ))?;
-                let producer_value = mem_input_value(function, consumer)?;
-                let producer_heads = lookup_outgoing_or_seed(
+                wire_consumer_to_partition_head(
+                    function,
+                    consumer,
+                    classified,
                     &outgoing_heads,
-                    producer_value,
                     entry_heads,
-                );
-                let cur_head = head_for(&producer_heads, p)?;
-                replace_specific_input(function, consumer, 0, cur_head)?;
+                    "Load",
+                )?;
                 // Load produces no mem-output; no entry to record.
             }
             NodeKind::Call
@@ -840,7 +876,11 @@ fn topological_mem_order(
         }
     }
 
+    // Single pass over mem_chain_consumers builds predecessors, successors,
+    // and in_degree simultaneously — avoids two extra scans of the consumer list.
     let mut predecessors: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
+    let mut successors: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
+    let mut in_degree: FxHashMap<NodeId, usize> = FxHashMap::default();
     for &n in &classified.mem_chain_consumers {
         if matches!(function.node_kind(n), NodeKind::MemPhi) {
             continue;
@@ -854,23 +894,13 @@ fn topological_mem_order(
             let producer = function.get_node_from_output(mem_in_value);
             if in_chain.contains(producer) {
                 preds.push(producer);
+                successors.entry(producer).or_default().push(n);
             }
             // MemPhi producers and out-of-chain producers contribute
             // no in-degree (resolved via `outgoing_heads` lookup).
         }
-        predecessors.insert(n, preds);
-    }
-
-    let mut successors: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
-    for (&n, preds) in &predecessors {
-        for &p in preds {
-            successors.entry(p).or_default().push(n);
-        }
-    }
-
-    let mut in_degree: FxHashMap<NodeId, usize> = FxHashMap::default();
-    for (&n, preds) in &predecessors {
         in_degree.insert(n, preds.len());
+        predecessors.insert(n, preds);
     }
 
     use cranelift_entity::EntityRef;
