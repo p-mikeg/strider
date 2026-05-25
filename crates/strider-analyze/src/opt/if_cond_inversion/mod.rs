@@ -69,7 +69,7 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
         if !is_inverted_cond(ctx.graph_ref(), root) {
             return Ok(OptimizationResult::NoChange);
         }
-        invert(ctx.graph_mut(), root)?;
+        invert(ctx.function_mut(), root)?;
         Ok(OptimizationResult::Changed)
     }
 
@@ -99,7 +99,7 @@ fn is_inverted_cond(graph: &strider_ir::Graph, if_node: NodeId) -> bool {
 /// Performs the inversion in place:
 ///   1. Re-points the `If`'s cond input from `BoolNeg(X)` to `X`.
 ///   2. Swaps the consumers of the two control outputs.
-fn invert(graph: &mut strider_ir::Graph, if_node: NodeId) -> Result<()> {
+fn invert(graph: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     // Redirect cond input.
     //
     // Read the BoolNeg node's input first, then call `update_input` on the

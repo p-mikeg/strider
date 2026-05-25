@@ -78,14 +78,14 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// A single IR optimization pass.
 ///
 /// Implement this trait to add a new pass.  The pass receives the
-/// function `graph` and its `entry` [`strider_ir::node::NodeId`],
+/// function and its `entry` [`strider_ir::node::NodeId`],
 /// applies whatever transformations it can in one sweep, and returns
 /// [`OptimizationResult::Changed`] if anything was modified (causing
 /// the pipeline to run another iteration) or
 /// [`OptimizationResult::NoChange`] if the graph is already in normal
 /// form for this pass.
 ///
-/// # Why `(&mut Graph, NodeId)` and not `&mut crate::pattern::RewriteCtx<'_>`
+/// # Why `(&mut Function, NodeId)` and not `&mut crate::pattern::RewriteCtx<'_>`
 ///
 /// `RewriteCtx<'_>` carries a lifetime parameter, which prevents it
 /// appearing as the receiver type of a trait object
@@ -95,25 +95,18 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// internally at the top of `optimize`:
 ///
 /// ```ignore
-/// fn optimize(&self, graph: &mut Graph, entry: NodeId) -> Result<OptimizationResult> {
-///     let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+/// fn optimize(&self, function: &mut Function, entry: NodeId) -> Result<OptimizationResult> {
+///     let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
 ///     // ... pass body operating on `ctx` ...
 /// }
 /// ```
 ///
-/// Callers can run optimizer passes on a graph that has not yet been
-/// packaged into a final [`strider_ir::Graph`] (e.g. on a
-/// live [`strider_ir::FunctionBuilder`] via
-/// [`strider_ir::FunctionBuilder::graph_mut`] +
-/// [`strider_ir::FunctionBuilder::entry`]).  `Graph` is a
-/// final-output convenience type, not a precondition for analysis.
-///
 /// `entry` is the function's entry [`strider_ir::node::NodeId`] —
 /// needed because several passes walk the reachable-node set
-/// (`graph.preorder(entry)`) or use it directly
-/// (`strider_ir::walk::cfg_reachable(graph, entry)`).
+/// (`function.preorder(entry)`) or use it directly
+/// (`strider_ir::walk::cfg_reachable(function, entry)`).
 pub trait Optimizer: OptimizerClone + Send + Sync {
-    /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
+    /// Run one sweep of this pass over the IR `function`, anchored at `entry`.
     ///
     /// # Errors
     ///
@@ -122,7 +115,7 @@ pub trait Optimizer: OptimizerClone + Send + Sync {
     /// `anyhow::Error`.
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: strider_ir::node::NodeId,
     ) -> crate::opt::Result<OptimizationResult>;
 }
@@ -158,7 +151,7 @@ impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
 /// register passes and [`OptimizerPipeline::run`] to execute them.
 ///
 /// Internally the pipeline stores passes as `Box<dyn Optimizer>` so it
-/// can dispatch on `(&mut Graph, NodeId)` directly.
+/// can dispatch on `(&mut Function, NodeId)` directly.
 pub struct OptimizerPipeline {
     optimizers: Vec<Box<dyn Optimizer>>,
     post_passes: Vec<Box<dyn Optimizer>>,
@@ -225,7 +218,7 @@ impl OptimizerPipeline {
     /// final validation step is skipped — the pass error wins.
     pub fn run(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: strider_ir::node::NodeId,
     ) -> crate::opt::Result<()> {
         const MAX_ITERS: u32 = 1024;
@@ -233,7 +226,7 @@ impl OptimizerPipeline {
         loop {
             let mut changed = false;
             for opt in &self.optimizers {
-                if opt.optimize(graph, entry)?.changed() {
+                if opt.optimize(function, entry)?.changed() {
                     changed = true;
                 }
             }
@@ -246,9 +239,9 @@ impl OptimizerPipeline {
             }
         }
         for opt in &self.post_passes {
-            opt.optimize(graph, entry)?;
+            opt.optimize(function, entry)?;
         }
-        strider_ir::validate::validate(graph, entry)?;
+        strider_ir::validate::validate(function, entry)?;
         Ok(())
     }
 
@@ -262,13 +255,13 @@ impl OptimizerPipeline {
     ///
     /// Returns an error if `graph.entry()` is `None` (the graph has
     /// not been built), or any error [`Self::run`] would propagate.
-    pub fn run_built(&self, graph: &mut strider_ir::Function) -> crate::opt::Result<()> {
-        let entry = graph.entry().ok_or_else(|| {
+    pub fn run_built(&self, function: &mut strider_ir::Function) -> crate::opt::Result<()> {
+        let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!(
                 "OptimizerPipeline::run_built: entry node is not set"
             )
         })?;
-        self.run(graph.graph_mut(), entry)
+        self.run(function, entry)
     }
 }
 
@@ -307,7 +300,7 @@ mod tests {
         let pipeline = crate::opt::default_pipeline();
         let entry = g.entry().unwrap();
         let before = g.preorder().count();
-        pipeline.run(g.graph_mut(), entry)?;
+        pipeline.run(&mut g, entry)?;
         let after = g.preorder().count();
         // The default pipeline on an already-folded constant cannot fold
         // further; the reachable-count is stable.  This pins that
@@ -329,7 +322,7 @@ mod tests {
         impl Optimizer for AlwaysChanged {
             fn optimize(
                 &self,
-                _graph: &mut strider_ir::Graph,
+                _function: &mut strider_ir::Function,
                 _entry: strider_ir::node::NodeId,
             ) -> crate::opt::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)
@@ -341,7 +334,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(g.graph_mut(), entry)
+            .run(&mut g, entry)
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -356,7 +349,7 @@ mod tests {
     fn run_validates_after_default_pipeline() -> crate::opt::Result<()> {
         let mut g = one_const_fn(0);
         let entry = g.entry().unwrap();
-        crate::opt::default_pipeline().run(g.graph_mut(), entry)?;
+        crate::opt::default_pipeline().run(&mut g, entry)?;
         Ok(())
     }
 
@@ -388,7 +381,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(StackStoreDetect::new(sp));
         p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
-        p.run(g.graph_mut(), entry)?;
+        p.run(&mut g, entry)?;
         Ok(())
     }
 
@@ -434,7 +427,7 @@ mod tests {
         p.add(DeadBranchElimination);
         p.add(StackStoreDetect::new(sp));
         p.add(StackLoadForward::new(sp, Endianness::Little));
-        p.run(g.graph_mut(), entry)?;
+        p.run(&mut g, entry)?;
 
         let ret = g
             .all_node_ids()
@@ -497,7 +490,7 @@ mod tests {
         p.add(StackStoreDetect::new(sp));
         p.add(StackLoadForward::new(sp, Endianness::Little));
         p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
-        p.run(g.graph_mut(), entry)?;
+        p.run(&mut g, entry)?;
 
         let call = g
             .all_node_ids()
@@ -532,7 +525,7 @@ mod tests {
             Ok(acc)
         })?;
         let entry = g.entry().unwrap();
-        crate::opt::default_pipeline().run(g.graph_mut(), entry)?;
+        crate::opt::default_pipeline().run(&mut g, entry)?;
         // After fixed point, the 50-deep chain has folded to a single
         // `IntConst(50)`; the reachable set is small.
         assert!(

@@ -798,7 +798,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     prep.add(RedundantPhis);
     prep.add(StackStoreDetect::new(sp));
     let entry = fg.entry().unwrap();
-    prep.run(fg.graph_mut(), entry)?;
+    prep.run(&mut fg, entry)?;
 
     let total_truncate_before = fg
         .all_node_ids()
@@ -814,7 +814,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
     let entry = fg.entry().unwrap();
-    StackLoadForward::new(sp, Endianness::Little).optimize(fg.graph_mut(), entry)?;
+    StackLoadForward::new(sp, Endianness::Little).optimize(&mut fg, entry)?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
@@ -890,7 +890,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
     let result = find_stack_stored_value_at_offset(
-        fg.graph(),
+        &fg,
         mem,
         -24,
         NodeOutputType::U64,
@@ -945,7 +945,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     // Look up offset -16: the chain has the latest store at -16 and an
     // earlier store at -24 (non-aliasing).  Helper must find -16's value.
     let v16 = find_stack_stored_value_at_offset(
-        fg.graph(),
+        &fg,
         mem,
         -16,
         NodeOutputType::U64,
@@ -958,7 +958,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     // Look up offset -24: must walk through the -16 store (non-aliasing) and
     // find -24's value.
     let v24 = find_stack_stored_value_at_offset(
-        fg.graph(),
+        &fg,
         mem,
         -24,
         NodeOutputType::U64,
@@ -1002,7 +1002,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
     let result = find_stack_stored_value_at_offset(
-        fg.graph(),
+        &fg,
         mem,
         -8,  // No store at -8.
         NodeOutputType::U64,
@@ -1050,7 +1050,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
     let result = find_stack_stored_value_at_offset(
-        fg.graph(),
+        &fg,
         mem,
         -24,
         NodeOutputType::U64,
@@ -1098,7 +1098,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
     let result = find_stack_stored_value_at_offset(
-        fg.graph(),
+        &fg,
         mem,
         -24,
         NodeOutputType::U64, // request U64 from a U32 store
@@ -1161,7 +1161,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     for i in 0..2 {
         let off = base + i * stride;
         let v = find_stack_stored_value_at_offset(
-            fg.graph(),
+            &fg,
             mem,
             off,
             NodeOutputType::U64,

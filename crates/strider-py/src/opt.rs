@@ -40,7 +40,7 @@ impl Clone for ForwardPass {
 impl strider_analyze::opt::Optimizer for ForwardPass {
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        graph: &mut strider_ir::Function,
         entry: strider_ir::node::NodeId,
     ) -> strider_analyze::opt::Result<strider_analyze::opt::OptimizationResult> {
         self.0.optimize(graph, entry)

@@ -267,6 +267,6 @@ fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
     rewriter.apply_rule(rule)?;
     // Run validate directly (local typing + use-list + graph invariants).
     // If any check fails we surface the bundle as a strider error.
-    strider_ir::validate::validate(built.graph(), built.entry().unwrap())
+    strider_ir::validate::validate(&built, built.entry().unwrap())
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed: {e}"))
 }

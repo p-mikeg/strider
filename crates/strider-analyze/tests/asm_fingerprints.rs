@@ -19,7 +19,7 @@ fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
     // Same invariant as above, but driven through the IR validator's opt-in
     // hook so we exercise the public surface end-to-end.
     let g = analyze(Arch::X86, "arithmetic", "add");
-    validate(g.graph(), g.entry().unwrap())
+    validate(&g, g.entry().unwrap())
         .expect("every reachable non-exempt node must have a fingerprint");
 }
 
@@ -27,7 +27,7 @@ fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
 fn arithmetic_x86_default_validate_remains_unchanged() {
     // Sanity: the default `validate` call still works post-pipeline.
     let g = analyze(Arch::X86, "arithmetic", "add");
-    validate(g.graph(), g.entry().unwrap()).expect("default validate still passes");
+    validate(&g, g.entry().unwrap()).expect("default validate still passes");
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn control_x86_clamp_validate_with_asm_fingerprint_check() {
     // Control flow with two If branches; exercises constant-fold,
     // dead-branch, redundant-phi propagation alongside lift-time.
     let g = analyze(Arch::X86, "control", "clamp");
-    validate(g.graph(), g.entry().unwrap())
+    validate(&g, g.entry().unwrap())
         .expect("clamp pipeline preserves the fingerprint invariant");
 }
 
@@ -43,7 +43,7 @@ fn control_x86_clamp_validate_with_asm_fingerprint_check() {
 fn control_x86_count_bits_validate_with_asm_fingerprint_check() {
     // Loop body — exercises mem-phi / var-phi at the join points.
     let g = analyze(Arch::X86, "control", "count_bits");
-    validate(g.graph(), g.entry().unwrap())
+    validate(&g, g.entry().unwrap())
         .expect("count_bits pipeline preserves the fingerprint invariant");
 }
 
@@ -53,7 +53,7 @@ fn arithmetic_x86_complex_validate_with_asm_fingerprint_check() {
     // KnownBits and the AND-mask merge.
     for fn_name in ["bit_and", "bit_or", "shl", "lshr", "bit_xor"] {
         let g = analyze(Arch::X86, "arithmetic", fn_name);
-        validate(g.graph(), g.entry().unwrap())
+        validate(&g, g.entry().unwrap())
             .unwrap_or_else(|e| panic!("{fn_name}: {e}"));
     }
 }

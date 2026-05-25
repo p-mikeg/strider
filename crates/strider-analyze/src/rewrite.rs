@@ -50,7 +50,6 @@
 
 use anyhow::Result;
 use strider_ir::node::NodeId;
-use strider_ir::Graph;
 
 /// Thin façade over [`crate::pattern::rewrite_rule`] / `crate::pattern::apply_rules_in_order`
 /// that lets users replace any node's input with a constant (or any other
@@ -58,13 +57,11 @@ use strider_ir::Graph;
 ///
 /// See module-level docs for the architecture and intended use case.
 pub struct GraphRewriter<'a> {
-    /// The graph to rewrite.  Held as `&mut Graph` rather than
-    /// `&mut Graph` to align with the optimizer pass
-    /// contract `(&mut Graph, NodeId)`.  `crate::pattern::rewrite_rule`'s
+    /// The function to rewrite.  `crate::pattern::rewrite_rule`'s
     /// closure expects `&mut RewriteCtx<'_>`, so [`Self::apply_rule`]
     /// builds a fresh `RewriteCtx::new(&mut *self.graph, self.entry)`
     /// per call — same shape as `crate::opt::with_rewrite_ctx`.
-    graph: &'a mut Graph,
+    graph: &'a mut strider_ir::Function,
     /// The function's entry [`NodeId`] — needed by the validator's
     /// reachable-set walk and by [`crate::opt::OptimizerPipeline::run`].
     entry: NodeId,
@@ -82,7 +79,7 @@ impl<'a> GraphRewriter<'a> {
             anyhow::anyhow!("GraphRewriter::try_wrap_built: entry node is not set")
         })?;
         Ok(Self {
-            graph: built.graph_mut(),
+            graph: built,
             entry,
         })
     }
@@ -181,8 +178,8 @@ impl<'a> GraphRewriter<'a> {
     /// branches it enabled) settle".  `pipeline.run` itself runs to a
     /// fixed point internally, so re-running it on an unchanged graph
     /// is a no-op.
-    pub fn graph_mut(&mut self) -> &mut Graph {
-        &mut *self.graph
+    pub fn graph_mut(&mut self) -> &mut strider_ir::Function {
+        self.graph
     }
 
     /// The function's entry [`NodeId`].  Stable for the lifetime of

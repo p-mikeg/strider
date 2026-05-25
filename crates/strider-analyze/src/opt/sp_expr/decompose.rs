@@ -17,7 +17,7 @@
 use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
-use strider_ir::{Graph, IntBinaryOp};
+use strider_ir::{Function, Graph, IntBinaryOp};
 
 /// Decomposed stack-pointer expression.
 ///
@@ -132,7 +132,7 @@ pub(crate) const MAX_DECOMPOSE_DEPTH: u32 = 512;
 /// `And(sp_root, mask)`) dispatch to handlers that recurse only when
 /// graph topology actually requires (phi predecessors).
 pub fn decompose_sp(
-    g: &Graph,
+    g: &Function,
     out: NodeOutputId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
@@ -149,7 +149,7 @@ pub fn decompose_sp(
 /// iterative spine of a single call).  Callers outside this module use
 /// the 4-arg [`decompose_sp`] wrapper.
 fn decompose_sp_inner(
-    g: &Graph,
+    g: &Function,
     out: NodeOutputId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
@@ -300,7 +300,7 @@ fn decompose_sp_inner(
 }
 
 fn decompose_sp_phi(
-    g: &Graph,
+    g: &Function,
     node: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
@@ -426,7 +426,7 @@ mod tests {
         // sp_val is a VarPhi-of-InitialVar; the phi has 1 predecessor →
         // collapses to Terminal{base: InitialVar(sp), offset: 0}.
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(fg.graph(), sp_val, sp, &mut memo);
+        let r = decompose_sp(&fg, sp_val, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
         Ok(())
     }
@@ -442,7 +442,7 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(fg.graph(), addr, sp, &mut memo);
+        let r = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
     }
@@ -459,7 +459,7 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(fg.graph(), addr, sp, &mut memo);
+        let r = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
     }
@@ -477,10 +477,10 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let r1 = decompose_sp(fg.graph(), addr, sp, &mut memo);
+        let r1 = decompose_sp(&fg, addr, sp, &mut memo);
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
-        let r2 = decompose_sp(fg.graph(), addr, sp, &mut memo);
+        let r2 = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!((&r1, &r2),
             (Some(SpExpr::Terminal { offset: -4, .. }),
              Some(SpExpr::Terminal { offset: -4, .. }))));
@@ -501,7 +501,7 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        assert!(decompose_sp(fg.graph(), c, sp, &mut memo).is_none());
+        assert!(decompose_sp(&fg, c, sp, &mut memo).is_none());
         Ok(())
     }
 
@@ -528,7 +528,7 @@ mod tests {
         let fg = b.build()?;
 
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(fg.graph(), s3, sp, &mut memo);
+        let r = decompose_sp(&fg, s3, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
@@ -558,7 +558,7 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(fg.graph(), c, sp, &mut memo);
+        let r = decompose_sp(&fg, c, sp, &mut memo);
         assert!(r.is_none());
         assert!(
             !memo.contains_key(&c),
@@ -615,7 +615,7 @@ mod tests {
         let fg = b.build()?;
 
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(fg.graph(), sp_at_c, sp, &mut memo);
+        let r = decompose_sp(&fg, sp_at_c, sp, &mut memo);
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -644,7 +644,7 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(fg.graph(), aligned, sp, &mut memo);
+        let r = decompose_sp(&fg, aligned, sp, &mut memo);
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
@@ -684,9 +684,9 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let aligned_dec = decompose_sp(fg.graph(), aligned, sp, &mut memo)
+        let aligned_dec = decompose_sp(&fg, aligned, sp, &mut memo)
             .expect("aligned must decompose");
-        let post_sub_dec = decompose_sp(fg.graph(), post_sub, sp, &mut memo)
+        let post_sub_dec = decompose_sp(&fg, post_sub, sp, &mut memo)
             .expect("post_sub must decompose");
         let SpExpr::Terminal { base: aligned_base, offset: aligned_off } = aligned_dec else {
             panic!("aligned must be Terminal");
@@ -731,7 +731,7 @@ mod tests {
         // Budget exhaustion must surface as None — not a stack overflow,
         // not a fabricated Terminal.  This call would have overflowed
         // pre-budget; post-budget it returns None cleanly.
-        let r = decompose_sp(fg.graph(), current, sp, &mut memo);
+        let r = decompose_sp(&fg, current, sp, &mut memo);
         assert!(
             r.is_none(),
             "deep nested-And chain ({} levels > MAX_DECOMPOSE_DEPTH={}) must \
@@ -761,7 +761,7 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(fg.graph(), current, sp, &mut memo)
+        let r = decompose_sp(&fg, current, sp, &mut memo)
             .expect("5000-node chain must decompose without stack-overflowing");
         let SpExpr::Terminal { offset, .. } = r else {
             panic!("expected Terminal, got {r:?}");

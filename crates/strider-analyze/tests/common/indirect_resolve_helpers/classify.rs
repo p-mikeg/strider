@@ -219,7 +219,7 @@ pub fn build_value_phi_target_scenario(
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry).expect("opt pipeline");
+    pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("no IndirectBranch placeholder");
     (fg, anchor)
@@ -310,7 +310,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     // the loaded InitialVar(lr) in a phi at the merge region).
     pipeline.add(strider_analyze::opt::RedundantPhis);
     let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry).expect("opt pipeline");
+    pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
     for nid in fg.preorder() {
@@ -393,7 +393,7 @@ pub fn build_push_target_pop_pc_scenario(
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry).expect("opt pipeline");
+    pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
     for nid in fg.preorder() {
@@ -489,7 +489,7 @@ pub fn build_jump_table_known_bits_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry).expect("opt pipeline");
+    pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
     (fg, anchor)
@@ -568,7 +568,7 @@ pub fn build_jump_table_predecessor_if_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry).expect("opt pipeline");
+    pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
     (fg, anchor)
@@ -616,7 +616,7 @@ pub fn build_jump_table_unbounded_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry).expect("opt pipeline");
+    pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
     (fg, anchor)
@@ -649,7 +649,7 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     let entry = fg.entry().unwrap();
-    pipeline.run(fg.graph_mut(), entry).expect("opt pipeline");
+    pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
     (fg, anchor)
@@ -797,7 +797,7 @@ pub fn build_stack_array_dispatch_scenario(
     // NOTE: StackLoadForward is intentionally NOT in this pipeline;
     // see the doc-comment above.
     let entry = fg.entry().unwrap();
-    p.run(fg.graph_mut(), entry).expect("opt pipeline");
+    p.run(&mut fg, entry).expect("opt pipeline");
 
     // Locate the surviving Load from the IndirectBranch's value-input.
     // After the partial pipeline, the placeholder's anchor IS the Load
@@ -864,7 +864,7 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     let mut graph = outcome.graph;
     let p = strider.build_optimizer_pipeline();
     let entry = graph.entry().unwrap();
-    p.run(graph.graph_mut(), entry).expect("optimizer pipeline");
+    p.run(&mut graph, entry).expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),

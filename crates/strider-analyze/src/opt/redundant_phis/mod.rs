@@ -194,10 +194,10 @@ pub struct RedundantPhis;
 impl Optimizer for RedundantPhis {
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: NodeId,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         let reachable = strider_ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `remove_phis`, so don't

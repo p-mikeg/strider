@@ -97,10 +97,10 @@ impl FunctionArgDetect {
 impl Optimizer for FunctionArgDetect {
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: NodeId,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         let mut changed = OptimizationResult::NoChange;
         // `layout.register_args()` yields slots in ABI order, with
         // canonical positional indices stamped at layout-construction
@@ -299,7 +299,7 @@ fn detect_stack_args(
         };
         let load_size = load_ty.byte_size() as i64;
         let Some(SpExpr::Terminal { base: _, offset }) =
-            decompose_sp(ctx.graph_ref(), addr, sp_vn, &mut memo)
+            decompose_sp(ctx.function_ref(), addr, sp_vn, &mut memo)
         else {
             continue;
         };
@@ -492,7 +492,7 @@ fn mem_chain_is_dirty(
 
         fn classify(
             &mut self,
-            graph: &strider_ir::Graph,
+            graph: &strider_ir::Function,
             _mem: NodeOutputId,
             node: NodeId,
         ) -> Result<StepResult<bool>> {
@@ -633,7 +633,7 @@ fn mem_chain_is_dirty(
         sp_memo,
     };
     let result = walk_mem_chain(
-        ctx.graph_ref(),
+        ctx.function_ref(),
         mem,
         CyclePolicy::GuardEveryNode,
         seen,

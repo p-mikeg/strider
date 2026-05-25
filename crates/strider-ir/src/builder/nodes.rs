@@ -3,7 +3,6 @@ use smallvec::SmallVec;
 
 use super::FunctionBuilder;
 use crate::error::Result;
-use crate::graph::Graph;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::ops::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
@@ -450,12 +449,13 @@ impl FunctionBuilder {
     /// or `InitialMemory` nodes do not have their expected single output
     /// (this would indicate a graph-construction bug, not user error).
     pub fn build_entry(&mut self) -> Result<()> {
-        // Reset the graph to a fresh empty state.  Synthetic test builders
+        // Reset the function to a fresh empty state.  Synthetic test builders
         // call `build_entry` via `new_raw`; resetting in-place keeps the
         // entry/InitialMemory pair as nodes 0/1.
-        self.graph = Graph::new();
+        self.graph = crate::function::Function::new();
 
         self.entry = self.create_node(NodeKind::Entry, [], vec![NodeOutputKind::Control]);
+        self.graph.set_entry(self.entry);
         let [control] = self.graph().node_outputs_exact(self.entry)?;
         self.entry_control = control;
 

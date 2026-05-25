@@ -1,3 +1,4 @@
+use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 use crate::walk::NodeIdSet;
@@ -167,17 +168,18 @@ pub(super) fn check_graph_invariants_phis(
 
 /// Graph invariant: every reachable, non-exempt node must carry at
 /// least one asm-fingerprint contributor.  See
-/// [`crate::graph::Graph::asm_fingerprint`] for the full contract.
+/// [`crate::function::Function::asm_fingerprint`] for the full contract.
 pub(super) fn check_graph_invariants_asm_fingerprints(
-    graph: &Graph,
+    function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
+    let graph: &Graph = function;
     for (node, kind) in graph.reachable_kind_iter(reachable) {
         if kind.asm_fingerprint_exempt() {
             continue;
         }
-        if graph.asm_fingerprint(node).is_empty() {
+        if function.asm_fingerprint(node).is_empty() {
             errs.push(ValidationError::MissingAsmFingerprint {
                 node,
                 kind: *kind,

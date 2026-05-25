@@ -12,11 +12,11 @@
 //! would otherwise produce silently invalid output.
 
 use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-use strider_ir::{Graph, IntBinaryOp};
+use strider_ir::{Function, IntBinaryOp};
 
 #[test]
 fn default_validate_flags_missing_asm_fingerprint() {
-    let mut g = Graph::new();
+    let mut g = Function::new();
     // Entry + InitialMemory are required by graph-invariants uniqueness checks.
     let entry = g.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let mem = g.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);

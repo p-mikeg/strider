@@ -133,7 +133,7 @@ fn collect_stack_args_in_chain_order(
                 }
                 let addr = inputs[1];
                 let prev = inputs[0];
-                match decompose_sp(ctx.graph_ref(), addr, stack_ptr_vn, sp_memo) {
+                match decompose_sp(ctx.function_ref(), addr, stack_ptr_vn, sp_memo) {
                     None => {
                         // Non-aliasing — pass through.
                         cur = prev;
@@ -318,10 +318,10 @@ impl CallStackArgCollect {
 impl Optimizer for CallStackArgCollect {
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: NodeId,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         let calls: Vec<NodeId> = ctx
             .preorder()
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))

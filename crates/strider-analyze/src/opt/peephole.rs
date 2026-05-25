@@ -114,10 +114,10 @@ macro_rules! impl_optimizer_from_peephole {
         impl $crate::opt::pipeline::Optimizer for $t {
             fn optimize(
                 &self,
-                graph: &mut strider_ir::Graph,
+                function: &mut strider_ir::Function,
                 entry: strider_ir::node::NodeId,
             ) -> $crate::opt::error::Result<$crate::opt::pipeline::OptimizationResult> {
-                let mut ctx = $crate::pattern::RewriteCtx::new(graph, entry);
+                let mut ctx = $crate::pattern::RewriteCtx::new(function, entry);
                 $crate::opt::peephole::run_peephole(self, &mut ctx)
             }
         }

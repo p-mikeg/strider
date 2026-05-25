@@ -34,7 +34,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
 
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
     let entry = fg.entry().unwrap();
-    pass.optimize(fg.graph_mut(), entry)?;
+    pass.optimize(&mut fg, entry)?;
 
     let n_fa = count(&fg, |k| {
         matches!(

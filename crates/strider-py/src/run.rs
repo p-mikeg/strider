@@ -291,7 +291,7 @@ fn run_with_custom_pipeline(
             ))
         })?;
         actual_pipeline
-            .run(graph.graph_mut(), entry)
+            .run(&mut *graph, entry)
             .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
         if compact {
             graph.compact().map_err(into_strider_err)?;

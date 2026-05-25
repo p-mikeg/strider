@@ -42,7 +42,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
         // Walk from `entry`, then drop any node not in the active filter.
         // When no filter is set, every reachable node passes through.
         let walk: Vec<_> = self
-            .graph
+            .function
             .walk_from(self.entry)
             .filter(|n| self.is_visible(*n))
             .collect();
@@ -59,7 +59,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
         let Some(cur_id) = self.try_declare_node(node, out, state)? else {
             return Ok(());
         };
-        let kind = *self.graph.node_kind(node);
+        let kind = *self.function.node_kind(node);
 
         // Phase B: virtual If branch outputs.
         if matches!(kind, NodeKind::If) {
@@ -68,7 +68,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
 
         // Phase C: draw an edge from each input's producer (with any
         // virtual / inlined consumer-side helpers it needs).
-        for (idx, parent_output) in self.graph.node_inputs(node).into_iter().enumerate() {
+        for (idx, parent_output) in self.function.node_inputs(node).into_iter().enumerate() {
             self.emit_input_edge(node, &cur_id, kind, idx, parent_output, out, state)?;
         }
 
@@ -98,7 +98,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         if !self.is_visible(node) {
             return Ok(None);
         }
-        let kind = *self.graph.node_kind(node);
+        let kind = *self.function.node_kind(node);
         if kind.is_const() {
             return Ok(None);
         }
@@ -108,12 +108,12 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         // `inline_initial_var` below).  Emitting the real node in
         // that case leaves it floating edgeless, so skip it.
         if matches!(kind, NodeKind::InitialVar(_))
-            && all_uses_go_through_inline(self.graph, node)
+            && all_uses_go_through_inline(&*self.function,node)
         {
             return Ok(None);
         }
 
-        let cur_id = state.get_dot_id(self.graph, node);
+        let cur_id = state.get_dot_id(&*self.function,node);
         let label = self.pretty_label(node)?;
         out.node(
             &cur_id,
@@ -135,7 +135,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         out: &mut ::dot::DotEmitter,
         state: &mut GraphDotDumperState,
     ) {
-        let outputs = self.graph.node_outputs(node);
+        let outputs = self.function.node_outputs(node);
         let branch_labels = ["if.true", "if.false"];
         let edge_labels = ["true", "false"];
         for ((out_id, blabel), elabel) in outputs
@@ -197,16 +197,16 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         out: &mut ::dot::DotEmitter,
         state: &mut GraphDotDumperState,
     ) -> core::result::Result<(), std::io::Error> {
-        let parent_id = self.graph.get_node_from_output(parent_output);
+        let parent_id = self.function.get_node_from_output(parent_output);
         // Skip edges whose producer was filtered out by the active
         // node filter.  Constants are always re-emitted alongside
         // their consumers (the `is_const` branch below), so they
         // bypass the filter check — the filter is for "real" graph
         // nodes, not inlined per-consumer constants.
-        if !self.graph.node_kind(parent_id).is_const() && !self.is_visible(parent_id) {
+        if !self.function.node_kind(parent_id).is_const() && !self.is_visible(parent_id) {
             return Ok(());
         }
-        let parent_kind = *self.graph.node_kind(parent_id);
+        let parent_kind = *self.function.node_kind(parent_id);
 
         // Inline the SP `InitialVar` into each
         // StackStore/StackStorePhi consumer: otherwise every stack
@@ -232,12 +232,12 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             if let Some(virt_id) = maybe_virt {
                 virt_id
             } else if parent_kind == NodeKind::Call {
-                let (_, output_index) = self.graph.output_definition(parent_output);
+                let (_, output_index) = self.function.output_definition(parent_output);
                 if output_index >= 2 {
                     let name = self.call_clobbered_name(parent_output)?;
                     let label = format!("Post Call\n{name}");
                     let virt_id = state.alloc_virtual_id();
-                    let call_dot_id = state.get_dot_id(self.graph, parent_id);
+                    let call_dot_id = state.get_dot_id(&*self.function,parent_id);
                     out.node(
                         &virt_id,
                         &label,
@@ -252,15 +252,15 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                     state.virtual_nodes.insert(parent_output, virt_id.clone());
                     virt_id
                 } else {
-                    state.get_dot_id(self.graph, parent_id)
+                    state.get_dot_id(&*self.function,parent_id)
                 }
-            } else if *self.graph.node_kind(parent_id) == NodeKind::If {
+            } else if *self.function.node_kind(parent_id) == NodeKind::If {
                 // The If node may not have been rendered yet.
                 // Create the virtual branch node eagerly so this
                 // consumer's edge lands on "if.true"/"if.false"
                 // rather than directly on the If diamond, which
                 // would leave the virtual node dangling.
-                let (_, output_index) = self.graph.output_definition(parent_output);
+                let (_, output_index) = self.function.output_definition(parent_output);
                 let blabel = if output_index == 0 {
                     "if.true"
                 } else {
@@ -268,7 +268,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 };
                 Self::get_or_create_if_branch_virtual(state, parent_output, blabel, out)
             } else {
-                state.get_dot_id(self.graph, parent_id)
+                state.get_dot_id(&*self.function,parent_id)
             }
         };
 
@@ -304,7 +304,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 
         out.edge(&parent_dot_id, cur_id, &extra);
 
-        if self.graph.node_kind(parent_id).is_const() {
+        if self.function.node_kind(parent_id).is_const() {
             self.emit_const_node(parent_id, &parent_dot_id, out);
         }
         Ok(())

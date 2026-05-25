@@ -74,6 +74,7 @@ pub fn classify_anchor(
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
     let graph = ctx.graph_ref();
+    let function = ctx.function_ref();
     let producer_id = graph.get_node_from_output(anchor_output);
     let kind = *graph.node_kind(producer_id);
     match kind {
@@ -105,7 +106,7 @@ pub fn classify_anchor(
         //
         // Vn-tagged phis are excluded: their register-identity
         // semantics must not be folded into a target-set computation.
-        NodeKind::Phi if graph.phi_var_tag(producer_id).is_none() => {
+        NodeKind::Phi if function.phi_var_tag(producer_id).is_none() => {
             let inputs = graph.node_inputs(producer_id);
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
             for val in inputs.into_iter().skip(1) {

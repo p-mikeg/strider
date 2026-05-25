@@ -269,7 +269,7 @@ impl Match {
     pub fn stack_phi_offsets<'g>(
         &self,
         c: Capture,
-        graph: &'g strider_ir::Graph,
+        graph: &'g strider_ir::Function,
     ) -> Option<&'g [i64]> {
         let node = self.bindings.get_node(c)?;
         match graph.node_kind(node) {
@@ -298,7 +298,7 @@ impl Match {
     pub fn asm_fingerprint<'g>(
         &self,
         c: Capture,
-        graph: &'g strider_ir::Graph,
+        graph: &'g strider_ir::Function,
     ) -> &'g [u64] {
         match self.bindings.get_node(c) {
             Some(node) => graph.asm_fingerprint(node),

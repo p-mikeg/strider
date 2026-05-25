@@ -4,8 +4,8 @@
 //! [`Graph`] holds structural state (nodes/edges/wide_const interning, dedup
 //! cache).  [`Function`] holds the overlay that gives those nodes their
 //! function-level meaning: which node is the entry, the calling convention
-//! metadata, asm fingerprint attribution, and other `NodeId`-keyed side
-//! tables.
+//! metadata, asm fingerprint attribution, and the other four `NodeId`-keyed
+//! side tables.
 //!
 //! Passes that only need structure take `&Graph`; passes that need the overlay
 //! (most opt passes, the validator, dot rendering) take `&Function` or
@@ -15,7 +15,9 @@
 //! [`Graph`] methods are available on a `&Function` / `&mut Function`
 //! without going through the explicit `.graph()` accessor.
 
-use crate::graph::{CcMetadata, Graph, NodeIdRemap};
+use cranelift_entity::SecondaryMap;
+
+use crate::graph::{CcMetadata, Graph, NodeIdRemap, SideTableRemap};
 use crate::node::NodeId;
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
@@ -30,11 +32,34 @@ use crate::node::NodeId;
 /// `&Function`.
 #[derive(Default)]
 pub struct Function {
-    graph: Graph,
+    pub(crate) graph: Graph,
     entry: Option<NodeId>,
     /// Calling-convention metadata.  `None` before `FunctionBuilder::build`
     /// completes; `Some(_)` on every fully-built function returned to callers.
     cc_metadata: Option<CcMetadata>,
+
+    // ── NodeId-keyed overlay tables ────────────────────────────────────────
+    //
+    // These five side tables hold per-function data that is keyed by NodeId
+    // but is not part of the structural graph identity.  They are remapped
+    // through [`NodeIdRemap`] by [`Self::compact`] whenever the arena is
+    // compacted.
+
+    /// Per-predecessor SP-relative offsets for [`crate::node::NodeKind::StackStorePhi`]
+    /// nodes.
+    pub(crate) stack_phi_offsets: SecondaryMap<NodeId, Vec<i64>>,
+    /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
+    /// nodes.
+    pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
+    /// Per-node sorted-deduplicated list of machine-instruction addresses
+    /// whose lifting or rewrite contributed to the node's value.
+    pub(crate) asm_fingerprints: SecondaryMap<NodeId, Vec<u64>>,
+    /// Per-Call clobber-list override (shadows `CcMetadata::call_clobbered`
+    /// for a specific call site).
+    pub(crate) call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>,
+    /// Source-level varnode tag for lift-time [`crate::node::NodeKind::Phi`]
+    /// nodes.  `Some(vn)` = register-identity phi; `None` = anonymous phi.
+    pub(crate) phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>,
 }
 
 impl std::ops::Deref for Function {
@@ -71,6 +96,11 @@ impl Function {
             graph,
             entry: Some(entry),
             cc_metadata: None,
+            stack_phi_offsets: SecondaryMap::new(),
+            call_other_names: SecondaryMap::new(),
+            asm_fingerprints: SecondaryMap::new(),
+            call_clobbered_overrides: SecondaryMap::new(),
+            phi_var_tag: SecondaryMap::new(),
         }
     }
 
@@ -157,21 +187,148 @@ impl Function {
         self.cc_metadata.as_ref().map(|cc| &cc.variables)
     }
 
-    /// Returns the asm-fingerprint addresses attributed to `id`.
-    ///
-    /// Delegates to [`Graph`] storage.
+    // ── NodeId-keyed overlay accessors ────────────────────────────────────
+
+    /// Returns the per-predecessor SP-relative offsets associated with a
+    /// [`crate::node::NodeKind::StackStorePhi`] node, or an empty slice if
+    /// none are set.
+    #[inline]
+    #[must_use]
+    pub fn stack_phi_offsets(&self, node_id: NodeId) -> &[i64] {
+        self.stack_phi_offsets[node_id].as_slice()
+    }
+
+    /// Associates a list of per-predecessor SP-relative offsets with a
+    /// [`crate::node::NodeKind::StackStorePhi`] node.  Replaces any prior
+    /// value.
+    #[inline]
+    pub fn set_stack_phi_offsets(&mut self, node_id: NodeId, offsets: Vec<i64>) {
+        self.stack_phi_offsets[node_id] = offsets;
+    }
+
+    /// Returns the user-op name associated with a
+    /// [`crate::node::NodeKind::CallOther`] node, or `None` if no name has
+    /// been recorded for that node.
+    #[inline]
+    #[must_use]
+    pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
+        self.call_other_names[node_id].as_deref()
+    }
+
+    /// Associates a user-op name with a [`crate::node::NodeKind::CallOther`]
+    /// node.  Replaces any prior value.
+    #[inline]
+    pub fn set_call_other_name(&mut self, node_id: NodeId, name: String) {
+        self.call_other_names[node_id] = Some(name);
+    }
+
+    /// Returns the source-level varnode tag for `node_id` if it is a
+    /// [`crate::node::NodeKind::Phi`] created at lift time tracking a specific
+    /// varnode, or `None` for anonymous phis (synthesised by opt passes) or
+    /// non-phi nodes.
+    #[inline]
+    #[must_use]
+    pub fn phi_var_tag(&self, node_id: NodeId) -> Option<rsleigh::Vn> {
+        self.phi_var_tag[node_id]
+    }
+
+    /// Sets the source-level varnode tag for `node_id`.  Callers must
+    /// guarantee that `node_id`'s kind is [`crate::node::NodeKind::Phi`].
+    #[inline]
+    pub fn set_phi_var_tag(&mut self, node_id: NodeId, vn: rsleigh::Vn) {
+        self.phi_var_tag[node_id] = Some(vn);
+    }
+
+    /// Returns the per-Call clobber-list override for `node_id`, or `None`
+    /// if the Call uses the function-default
+    /// [`CcMetadata::call_clobbered`].
+    #[inline]
+    #[must_use]
+    pub fn call_clobbered_override(&self, node_id: NodeId) -> Option<&[rsleigh::Vn]> {
+        self.call_clobbered_overrides[node_id].as_deref()
+    }
+
+    /// Records `clobbered` as the per-Call clobber-list override for
+    /// `node_id`.  Replaces any prior value.
+    #[inline]
+    pub fn set_call_clobbered_override(&mut self, node_id: NodeId, clobbered: Vec<rsleigh::Vn>) {
+        self.call_clobbered_overrides[node_id] = Some(clobbered);
+    }
+
+    /// Returns the asm-instruction-address fingerprint of `node_id` as a
+    /// sorted-deduplicated slice.  Returns an empty slice when no
+    /// contributors have been recorded.
     #[inline]
     #[must_use]
     pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
-        self.graph.asm_fingerprint(id)
+        self.asm_fingerprints[id].as_slice()
     }
 
-    /// Sets the asm-fingerprint for `id` to `fp` (sorted, deduplicated).
+    /// Replaces `node_id`'s fingerprint with `addrs`.
     ///
-    /// Delegates to [`Graph`] storage.
+    /// Sorts and deduplicates `addrs` first so callers cannot accidentally
+    /// install an unsorted entry.  This is the test-only / synthetic-graph
+    /// entry point: production passes use
+    /// [`Self::extend_asm_fingerprint`] / [`Self::extend_asm_fingerprint_from`]
+    /// to preserve the superset-only invariant.
     #[inline]
-    pub fn set_asm_fingerprint(&mut self, id: NodeId, fp: Vec<u64>) {
-        self.graph.set_asm_fingerprint(id, fp);
+    pub fn set_asm_fingerprint(&mut self, id: NodeId, mut addrs: Vec<u64>) {
+        addrs.sort_unstable();
+        addrs.dedup();
+        self.asm_fingerprints[id] = addrs;
+    }
+
+    /// Unions `contributors` into `node_id`'s fingerprint.  Result is kept
+    /// sorted and deduplicated.  Existing entries are never removed: this
+    /// satisfies the no-shrink contract.  Empty `contributors` is a no-op.
+    pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
+        if contributors.is_empty() {
+            return;
+        }
+        let existing = &mut self.asm_fingerprints[node_id];
+        let mut needs_resort = false;
+        for &addr in contributors {
+            match existing.last() {
+                None => existing.push(addr),
+                Some(&last) if addr > last => existing.push(addr),
+                Some(&last) if addr == last => { /* already present */ }
+                Some(_) => {
+                    existing.push(addr);
+                    needs_resort = true;
+                }
+            }
+        }
+        if needs_resort {
+            existing.sort_unstable();
+            existing.dedup();
+        }
+    }
+
+    /// Unions the fingerprint of `src` into `dst`.  Self-extension
+    /// (`src == dst`) is a no-op.
+    pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
+        if dst == src {
+            return;
+        }
+        let src_slice: smallvec::SmallVec<[u64; 4]> =
+            self.asm_fingerprints[src].iter().copied().collect();
+        self.extend_asm_fingerprint(dst, &src_slice);
+    }
+
+    /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
+    /// every node in `contributors` into the resulting node.
+    pub fn create_node_attributed(
+        &mut self,
+        kind: crate::node::NodeKind,
+        inputs: impl IntoIterator<Item = crate::node::NodeOutputId>,
+        output_kinds: impl IntoIterator<Item = crate::node::NodeOutputKind>,
+        contributors: &[NodeId],
+    ) -> NodeId {
+        let node_id = self.graph.create_node(kind, inputs, output_kinds);
+        for &src in contributors {
+            self.extend_asm_fingerprint_from(node_id, src);
+        }
+        node_id
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
@@ -210,7 +367,8 @@ impl Function {
 
     /// Rebuilds the function's graph to retain only nodes reachable from
     /// [`Self::entry`].  The entry node id is remapped; the stored entry
-    /// is updated to the new id.
+    /// is updated to the new id.  All five `NodeId`-keyed overlay tables are
+    /// remapped through the same translation.
     ///
     /// # Errors
     ///
@@ -228,6 +386,13 @@ impl Function {
             )
         })?;
         self.entry = Some(new_entry);
+        // Remap the five NodeId-keyed overlay tables through the
+        // old→new translation table produced by `retain_reachable`.
+        self.stack_phi_offsets.remap_node_keyed(&remap);
+        self.call_other_names.remap_node_keyed(&remap);
+        self.asm_fingerprints.remap_node_keyed(&remap);
+        self.call_clobbered_overrides.remap_node_keyed(&remap);
+        self.phi_var_tag.remap_node_keyed(&remap);
         Ok(remap)
     }
 
@@ -249,7 +414,7 @@ impl Function {
         })?;
         Ok(crate::graph_dot::GraphDotDumper {
             entry,
-            graph: &self.graph,
+            function: self,
             sleigh,
             call_clobbered: &cc.call_clobbered,
             ret_val_regs: &cc.ret_val_regs,

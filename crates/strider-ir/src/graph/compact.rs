@@ -2,6 +2,13 @@
 //! reachable from `entry` via [`Graph::walk_from`] (control-out +
 //! data-in), returning the old→new id translation table so external
 //! callers can fix up any ids they hold.
+//!
+//! The five `NodeId`-keyed side tables (`stack_phi_offsets`,
+//! `call_other_names`, `asm_fingerprints`, `call_clobbered_overrides`,
+//! `phi_var_tag`) live on [`crate::Function`], not on `Graph`.
+//! `Graph::retain_reachable` only compacts the structural arena;
+//! [`crate::Function::compact`] applies the returned [`NodeIdRemap`] to
+//! all five overlay tables via [`SideTableRemap::remap_node_keyed`].
 
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
 
@@ -16,15 +23,13 @@ use super::Graph;
 /// Implementors expose a single method that rebuilds the table under the
 /// old→new translation, draining the source via `std::mem::take` so the
 /// post-remap source is left at `Default::default()` for every slot.
-/// Used by [`Graph::retain_reachable`] to fold every `NodeId`-keyed
-/// side-table through one iteration site — adding a new side-table now
-/// means adding one entry to [`Graph::node_keyed_side_tables_mut`] and
-/// no new logic.
+/// Used by [`crate::Function::compact`] to fold every `NodeId`-keyed
+/// overlay table through one iteration site.
 ///
 /// The Vn-keyed `initial_var_index` does **not** fit this shape (its
-/// key is `rsleigh::Vn`, not `NodeId`) and stays inline in
-/// `retain_reachable`.
-trait SideTableRemap {
+/// key is `rsleigh::Vn`, not `NodeId`) and is remapped inline in
+/// `Graph::retain_reachable`.
+pub(crate) trait SideTableRemap {
     fn remap_node_keyed(&mut self, remap: &NodeIdRemap);
 }
 
@@ -79,25 +84,6 @@ impl NodeIdRemap {
 }
 
 impl Graph {
-    /// Returns the set of `SecondaryMap<NodeId, _>`-shaped side-tables
-    /// that participate in [`Self::retain_reachable`]'s id remap.
-    ///
-    /// Adding a new `NodeId`-keyed side-table means: declare the field
-    /// on `Graph`, then append `&mut self.new_field` to this iterator.
-    /// `retain_reachable` picks it up automatically — no fixed array
-    /// size to update.
-    fn node_keyed_side_tables_mut(
-        &mut self,
-    ) -> impl IntoIterator<Item = &mut dyn SideTableRemap> {
-        [
-            &mut self.stack_phi_offsets as &mut dyn SideTableRemap,
-            &mut self.call_other_names,
-            &mut self.asm_fingerprints,
-            &mut self.call_clobbered_overrides,
-            &mut self.phi_var_tag,
-        ]
-    }
-
     /// Rebuilds the arena to retain only nodes reachable from `entry`
     /// via [`Graph::walk_from`] (control-out forward + data-in
     /// backward).  Returns the old→new id translation table.
@@ -107,10 +93,12 @@ impl Graph {
     /// MUST rewrite them through the returned [`NodeIdRemap`] (or
     /// drop them).
     ///
-    /// The dedup cache is rebuilt from scratch.  All side-tables
-    /// (`stack_phi_offsets`, `call_other_names`, `asm_fingerprints`,
-    /// `call_clobbered_overrides`, `phi_var_tag`) are remapped through
-    /// the translation table; entries for dropped nodes are dropped.
+    /// The dedup cache is rebuilt from scratch.  The five `NodeId`-keyed
+    /// overlay tables (`stack_phi_offsets`, `call_other_names`,
+    /// `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`)
+    /// live on [`crate::Function`], not on `Graph`.  The caller
+    /// ([`crate::Function::compact`]) applies the returned [`NodeIdRemap`]
+    /// to those tables after this method returns.
     ///
     /// # Errors
     ///
@@ -259,25 +247,10 @@ impl Graph {
             self.node_to_id.insert(key, new_node_id);
         }
 
-        // 8. Remap every `SecondaryMap<NodeId, _>`-shaped side-table
-        // through `node_keyed_side_tables_mut`.  Each table's
-        // `remap_node_keyed` iterates the surviving (old → new) pairs
-        // straight off `remap.nodes` and writes the old entry into the
-        // fresh table at the new id via `std::mem::take`; the post-
-        // remap source is left at `Default::default()` for every slot.
-        // SecondaryMap stores `Default` cheaply (no allocation for
-        // `Vec`/`Option`), so the prior `if !is_empty() { ... }` micro-
-        // optimization isn't worth the complexity here.
-        //
-        // Implementation note: we used to materialise an intermediate
-        // `HashMap<NodeId, NodeId>` of surviving pairs and pass that to
-        // each side-table; that was a lossy copy of `remap.nodes` (which
-        // is itself a `SecondaryMap<NodeId, Option<NodeId>>`).  Iterating
-        // `remap.nodes` directly drops one hash-insert per surviving
-        // node per compaction.
-        for tbl in self.node_keyed_side_tables_mut() {
-            tbl.remap_node_keyed(&remap);
-        }
+        // 8. The five NodeId-keyed overlay tables (stack_phi_offsets,
+        // call_other_names, asm_fingerprints, call_clobbered_overrides,
+        // phi_var_tag) live on Function, not on Graph.  Function::compact
+        // applies the returned remap to those tables after this call.
 
         // Remap the InitialVar Vn→NodeId index.  Entries whose NodeId
         // didn't survive compaction (i.e. the InitialVar became
@@ -397,278 +370,11 @@ mod tests {
         (entry, const_node, ret_node, mem)
     }
 
-    /// `asm_fingerprints` is the project's proof-of-correctness side-table.
-    /// After `retain_reachable`, surviving nodes must keep their exact
-    /// fingerprints; entries previously installed for zombie nodes must be
-    /// dropped (i.e. the new id's `asm_fingerprint` must not surface stale
-    /// addresses from a now-dropped predecessor).
-    #[test]
-    fn asm_fingerprints_remap_through_retain() {
-        let mut graph = Graph::new();
-        let (entry, const_node, ret_node, mem_node) = build_anchor(&mut graph, 0xAB);
-        // Zombie value with its own fingerprint — must be dropped.
-        let zombie = graph.create_node(
-            NodeKind::IntConst(0xDEAD),
-            [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
-        );
+    // NOTE: Tests for the five NodeId-keyed overlay tables
+    // (asm_fingerprints, stack_phi_offsets, call_other_names,
+    // call_clobbered_overrides, phi_var_tag) remap through
+    // Function::compact — see the compact_tests module in function.rs.
 
-        graph.set_asm_fingerprint(entry, vec![0x1000]);
-        graph.set_asm_fingerprint(const_node, vec![0x2000, 0x2004]);
-        graph.set_asm_fingerprint(ret_node, vec![0x3000]);
-        graph.set_asm_fingerprint(mem_node, vec![0x4000]);
-        // Stale fingerprint on a zombie — must not survive.
-        graph.set_asm_fingerprint(zombie, vec![0xBADBAD]);
-
-        let remap = graph.retain_reachable(entry).unwrap();
-
-        let new_entry = remap.node_old_to_new(entry).unwrap();
-        let new_const = remap.node_old_to_new(const_node).unwrap();
-        let new_ret = remap.node_old_to_new(ret_node).unwrap();
-        let new_mem = remap.node_old_to_new(mem_node).unwrap();
-
-        assert_eq!(graph.asm_fingerprint(new_entry), &[0x1000]);
-        assert_eq!(graph.asm_fingerprint(new_const), &[0x2000, 0x2004]);
-        assert_eq!(graph.asm_fingerprint(new_ret), &[0x3000]);
-        assert_eq!(graph.asm_fingerprint(new_mem), &[0x4000]);
-
-        // The zombie's fingerprint must not have leaked onto any
-        // surviving node.  Scan every surviving id.
-        for id in graph.all_node_ids() {
-            assert!(
-                !graph.asm_fingerprint(id).contains(&0xBADBAD),
-                "zombie fingerprint 0xBADBAD leaked onto surviving id {id:?}",
-            );
-        }
-    }
-
-    /// `stack_phi_offsets` is keyed by `StackStorePhi` node id.  Verify
-    /// the side-table is remapped to the new id and that zombie entries
-    /// are dropped.
-    #[test]
-    fn stack_phi_offsets_remap_through_retain() {
-        let mut graph = Graph::new();
-        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-        let const_node = graph.create_node(
-            NodeKind::IntConst(0),
-            [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
-        );
-        // Reachable StackStorePhi wired into Return's data inputs (so it
-        // shows up in walk_from(entry) via data-in).
-        let space = rsleigh::VnSpace::RAM;
-        let live_ssp = graph.create_node(
-            NodeKind::StackStorePhi { space },
-            [],
-            [NodeOutputKind::Memory],
-        );
-        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
-        let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
-        let [live_ssp_out] = graph.node_outputs_exact::<1>(live_ssp).unwrap();
-        let _ret = graph.create_node(
-            NodeKind::Return,
-            [entry_ctrl, mem_out, const_out, live_ssp_out],
-            [],
-        );
-        // Zombie StackStorePhi — never used by anything reachable.
-        let zombie_ssp = graph.create_node(
-            NodeKind::StackStorePhi { space },
-            [],
-            [NodeOutputKind::Memory],
-        );
-
-        graph.set_stack_phi_offsets(live_ssp, vec![0, -4, -8]);
-        graph.set_stack_phi_offsets(zombie_ssp, vec![999, 1000]);
-
-        graph.set_asm_fingerprint(entry, vec![0x1000]);
-        graph.set_asm_fingerprint(mem, vec![0x1004]);
-        graph.set_asm_fingerprint(const_node, vec![0x1008]);
-        graph.set_asm_fingerprint(live_ssp, vec![0x100c]);
-
-        let remap = graph.retain_reachable(entry).unwrap();
-        let new_live = remap.node_old_to_new(live_ssp).unwrap();
-        assert_eq!(graph.stack_phi_offsets(new_live), &[0, -4, -8]);
-        // Zombie must be dropped and its offsets must not surface on
-        // any surviving id.
-        assert!(remap.node_old_to_new(zombie_ssp).is_none());
-        for id in graph.all_node_ids() {
-            assert_ne!(
-                graph.stack_phi_offsets(id),
-                &[999, 1000],
-                "zombie offsets leaked onto surviving id {id:?}",
-            );
-        }
-    }
-
-    /// `call_other_names` is keyed by `CallOther` node id.  Verify remap
-    /// and zombie drop.
-    #[test]
-    fn call_other_names_remap_through_retain() {
-        let mut graph = Graph::new();
-        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
-        // Reachable CallOther — chained on control so walk_from picks it up.
-        let live_co = graph.create_node(
-            NodeKind::CallOther { user_op_id: 1 },
-            [entry_ctrl, mem_out],
-            [NodeOutputKind::Control, NodeOutputKind::Memory],
-        );
-        let [co_ctrl, co_mem] = graph.node_outputs_exact::<2>(live_co).unwrap();
-        let _ret = graph.create_node(NodeKind::Return, [co_ctrl, co_mem], []);
-        // Zombie CallOther — isolated, never used.
-        let zombie_co = graph.create_node(
-            NodeKind::CallOther { user_op_id: 99 },
-            [],
-            [NodeOutputKind::Control, NodeOutputKind::Memory],
-        );
-
-        graph.set_call_other_name(live_co, "live_op".to_string());
-        graph.set_call_other_name(zombie_co, "zombie_op".to_string());
-
-        graph.set_asm_fingerprint(entry, vec![0x1000]);
-        graph.set_asm_fingerprint(mem, vec![0x1004]);
-        graph.set_asm_fingerprint(live_co, vec![0x1008]);
-
-        let remap = graph.retain_reachable(entry).unwrap();
-        let new_co = remap.node_old_to_new(live_co).unwrap();
-        assert_eq!(graph.call_other_name(new_co), Some("live_op"));
-        assert!(remap.node_old_to_new(zombie_co).is_none());
-        for id in graph.all_node_ids() {
-            assert_ne!(
-                graph.call_other_name(id),
-                Some("zombie_op"),
-                "zombie call_other_name leaked onto surviving id {id:?}",
-            );
-        }
-    }
-
-    /// `call_clobbered_overrides` is keyed by `Call` node id.  Verify
-    /// remap and zombie drop.
-    #[test]
-    fn call_clobbered_overrides_remap_through_retain() {
-        let mut graph = Graph::new();
-        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
-        // Reachable Call wired into the control / memory chain.
-        let live_call = graph.create_node(
-            NodeKind::Call,
-            [entry_ctrl, mem_out],
-            [NodeOutputKind::Control, NodeOutputKind::Memory],
-        );
-        let [call_ctrl, call_mem] = graph.node_outputs_exact::<2>(live_call).unwrap();
-        let _ret = graph.create_node(NodeKind::Return, [call_ctrl, call_mem], []);
-        // Zombie Call — never consumed.
-        let zombie_call = graph.create_node(
-            NodeKind::Call,
-            [],
-            [NodeOutputKind::Control, NodeOutputKind::Memory],
-        );
-
-        let live_clobs = vec![rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        }];
-        let zombie_clobs = vec![rsleigh::Vn {
-            size: 8,
-            addr_off: 0xDEAD,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        }];
-        graph.set_call_clobbered_override(live_call, live_clobs.clone());
-        graph.set_call_clobbered_override(zombie_call, zombie_clobs.clone());
-
-        graph.set_asm_fingerprint(entry, vec![0x1000]);
-        graph.set_asm_fingerprint(mem, vec![0x1004]);
-        graph.set_asm_fingerprint(live_call, vec![0x1008]);
-
-        let remap = graph.retain_reachable(entry).unwrap();
-        let new_call = remap.node_old_to_new(live_call).unwrap();
-        assert_eq!(
-            graph.call_clobbered_override(new_call),
-            Some(live_clobs.as_slice()),
-        );
-        assert!(remap.node_old_to_new(zombie_call).is_none());
-        for id in graph.all_node_ids() {
-            assert_ne!(
-                graph.call_clobbered_override(id),
-                Some(zombie_clobs.as_slice()),
-                "zombie call_clobbered_override leaked onto surviving id {id:?}",
-            );
-        }
-    }
-
-    /// `phi_var_tag` is keyed by `Phi` node id (and is the Vn-tag
-    /// side-table the indirect-branch classifier consults).  Verify
-    /// remap and zombie drop.
-    #[test]
-    fn phi_var_tag_remap_through_retain() {
-        let mut graph = Graph::new();
-        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-        let [entry_ctrl_for_cs] = graph.node_outputs_exact::<1>(entry).unwrap();
-        let cs = graph.create_node(
-            NodeKind::Region,
-            [entry_ctrl_for_cs],
-            [NodeOutputKind::Control, NodeOutputKind::PhiToken],
-        );
-        let [cs_ctrl, cs_token] = graph.node_outputs_exact::<2>(cs).unwrap();
-        let const_node = graph.create_node(
-            NodeKind::IntConst(7),
-            [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
-        );
-        let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
-        // Reachable Phi — consumed by Return.
-        let live_phi = graph.create_node(
-            NodeKind::Phi,
-            [cs_token, const_out],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
-        );
-        let [phi_out] = graph.node_outputs_exact::<1>(live_phi).unwrap();
-        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
-        let _ret = graph.create_node(NodeKind::Return, [cs_ctrl, mem_out, phi_out], []);
-        // Zombie Phi — never consumed.
-        let zombie_phi = graph.create_node(
-            NodeKind::Phi,
-            [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
-        );
-
-        let live_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x20,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        let zombie_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0xBEEF,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        graph.set_phi_var_tag(live_phi, live_vn);
-        graph.set_phi_var_tag(zombie_phi, zombie_vn);
-
-        graph.set_asm_fingerprint(entry, vec![0x1000]);
-        graph.set_asm_fingerprint(mem, vec![0x1004]);
-        graph.set_asm_fingerprint(const_node, vec![0x1008]);
-
-        let remap = graph.retain_reachable(entry).unwrap();
-        let new_phi = remap.node_old_to_new(live_phi).unwrap();
-        assert_eq!(graph.phi_var_tag(new_phi), Some(live_vn));
-        assert!(remap.node_old_to_new(zombie_phi).is_none());
-        for id in graph.all_node_ids() {
-            assert_ne!(
-                graph.phi_var_tag(id),
-                Some(zombie_vn),
-                "zombie phi_var_tag leaked onto surviving id {id:?}",
-            );
-        }
-    }
 
     /// `initial_var_index` is Vn-keyed (`FxHashMap<Vn, NodeId>`) and
     /// inline-remapped by `retain_reachable` — NOT part of the
@@ -710,10 +416,6 @@ mod tests {
         // Only live_iv is wired into Return.
         let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, live_iv_out], []);
 
-        graph.set_asm_fingerprint(entry, vec![0x1000]);
-        graph.set_asm_fingerprint(mem, vec![0x1004]);
-        graph.set_asm_fingerprint(live_iv, vec![0x1008]);
-
         let remap = graph.retain_reachable(entry).unwrap();
         let new_live_iv = remap.node_old_to_new(live_iv).unwrap();
         assert_eq!(graph.initial_var_for(live_vn), Some(new_live_iv));
@@ -750,14 +452,6 @@ mod tests {
         );
         let [zombie_out] = graph.node_outputs_exact::<1>(zombie).unwrap();
 
-        // Stamp fingerprints so the validator's superset-only check
-        // doesn't fire on surviving nodes (we don't run validate here,
-        // but keep the test honest).
-        graph.set_asm_fingerprint(entry, vec![0x1000]);
-        graph.set_asm_fingerprint(const_node, vec![0x1004]);
-        graph.set_asm_fingerprint(ret_node, vec![0x1008]);
-        graph.set_asm_fingerprint(mem_node, vec![0x100c]);
-
         let remap = graph.retain_reachable(entry).unwrap();
 
         // Surviving ids resolve to Some(_).
@@ -780,21 +474,15 @@ mod tests {
     /// Calling `retain_reachable` a second time on an already-compacted
     /// graph leaves node count unchanged and produces a remap whose
     /// every entry is `Some(_)` (no further drops possible).
-    /// Side-tables previously remapped survive the second call intact.
     #[test]
     fn retain_reachable_is_idempotent() {
         let mut graph = Graph::new();
-        let (entry, const_node, ret_node, mem_node) = build_anchor(&mut graph, 0x42);
+        let (entry, _const_node, _ret_node, _mem_node) = build_anchor(&mut graph, 0x42);
         let _zombie = graph.create_node(
             NodeKind::IntConst(0xDEAD),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-
-        graph.set_asm_fingerprint(entry, vec![0x1000]);
-        graph.set_asm_fingerprint(const_node, vec![0x2000]);
-        graph.set_asm_fingerprint(ret_node, vec![0x3000]);
-        graph.set_asm_fingerprint(mem_node, vec![0x4000]);
 
         let _ = graph.retain_reachable(entry).unwrap();
         let post_first_count = graph.all_node_ids().count();
@@ -804,11 +492,6 @@ mod tests {
             .all_node_ids()
             .find(|&id| matches!(graph.node_kind(id), NodeKind::Entry))
             .unwrap();
-        // Snapshot every surviving fingerprint pre-second-call.
-        let pre_fps: Vec<(NodeId, Vec<u64>)> = graph
-            .all_node_ids()
-            .map(|id| (id, graph.asm_fingerprint(id).to_vec()))
-            .collect();
 
         let remap2 = graph.retain_reachable(new_entry).unwrap();
         let post_second_count = graph.all_node_ids().count();
@@ -817,14 +500,10 @@ mod tests {
             "second retain_reachable must not drop further nodes",
         );
         // Every pre-second id remaps to Some(_).
-        for (old_id, expected_fp) in &pre_fps {
-            let new_id = remap2.node_old_to_new(*old_id).unwrap_or_else(|| {
-                panic!("second retain_reachable dropped already-compact id {old_id:?}")
-            });
-            assert_eq!(
-                graph.asm_fingerprint(new_id),
-                expected_fp.as_slice(),
-                "fingerprint changed across idempotent retain_reachable on id {old_id:?}",
+        for old_id in graph.all_node_ids().collect::<Vec<_>>() {
+            assert!(
+                remap2.node_old_to_new(old_id).is_some(),
+                "second retain_reachable dropped already-compact id {old_id:?}",
             );
         }
     }
@@ -857,9 +536,9 @@ mod tests {
         assert_eq!(one_a, one_b, "dedup cache must be rebuilt by retain_reachable");
     }
 
-    /// A graph with no entries in any of the `NodeId`-keyed side-tables
-    /// must compact cleanly — no panic, no garbage entries, surviving
-    /// nodes' accessors return defaults.
+    /// A graph with no side-table entries must compact cleanly — no panic,
+    /// no garbage entries.  The `initial_var_index` (Vn-keyed; Graph-owned)
+    /// starts empty and stays empty.
     #[test]
     fn empty_side_table_compacts_cleanly() {
         let mut graph = Graph::new();
@@ -869,19 +548,11 @@ mod tests {
         let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
         let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
 
-        // Deliberately set NOTHING on any side-table.  Compact must
-        // tolerate empty SecondaryMaps and an empty initial_var_index.
+        // Compact must tolerate an empty initial_var_index.
         let remap = graph.retain_reachable(entry).unwrap();
 
-        let new_entry = remap.node_old_to_new(entry).unwrap();
-        let new_mem = remap.node_old_to_new(mem).unwrap();
-        // Default accessors over surviving ids return empty / None.
-        assert_eq!(graph.asm_fingerprint(new_entry), &[] as &[u64]);
-        assert_eq!(graph.stack_phi_offsets(new_entry), &[] as &[i64]);
-        assert_eq!(graph.call_other_name(new_entry), None);
-        assert_eq!(graph.call_clobbered_override(new_entry), None);
-        assert_eq!(graph.phi_var_tag(new_entry), None);
-        assert_eq!(graph.asm_fingerprint(new_mem), &[] as &[u64]);
+        assert!(remap.node_old_to_new(entry).is_some());
+        assert!(remap.node_old_to_new(mem).is_some());
         // The Vn-keyed index started empty and stays empty.
         assert_eq!(graph.initial_var_index.len(), 0);
     }

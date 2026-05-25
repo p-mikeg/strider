@@ -469,7 +469,7 @@ where
         let entry = graph.entry().ok_or_else(|| {
             anyhow::anyhow!("seat: entry node is not set")
         })?;
-        pipeline.run(graph.graph_mut(), entry)?;
+        pipeline.run(&mut graph, entry)?;
 
         // Harvest the Sleigh handle out of the consumed Cfg so the next
         // iteration can re-use it without re-loading the SLA spec.
@@ -541,7 +541,7 @@ where
         let entry = self.graph.entry().ok_or_else(|| {
             anyhow::anyhow!("run_stable_only: entry node is not set")
         })?;
-        pipeline.run(self.graph.graph_mut(), entry)?;
+        pipeline.run(&mut self.graph, entry)?;
         Ok(())
     }
 
@@ -571,7 +571,7 @@ where
         let entry = self.graph.entry().ok_or_else(|| {
             anyhow::anyhow!("finalize: graph has not been built (entry is None)")
         })?;
-        pipeline.run(self.graph.graph_mut(), entry)?;
+        pipeline.run(&mut self.graph, entry)?;
         if compact {
             self.graph.compact()?;
         }
@@ -757,7 +757,7 @@ fn apply_in_place_edit(
             {
                 let clobber_vars: Vec<rsleigh::Vn> =
                     override_clobber_vars(graph, cc, strider).collect();
-                graph.graph_mut().set_call_clobbered_override(call_id, clobber_vars);
+                graph.set_call_clobbered_override(call_id, clobber_vars);
             }
             Ok(())
         }

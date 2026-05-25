@@ -275,10 +275,10 @@ pub struct DeadBranchElimination;
 impl Optimizer for DeadBranchElimination {
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: NodeId,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         // DBE only fires on `If` nodes whose outputs are control edges. We
         // drain the seeded preorder once: chained constant-branch patterns
         // (where one elimination exposes another) are caught by the outer

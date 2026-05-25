@@ -11,7 +11,7 @@
 //! `ir::graph::Graph`, `ir::graph::Graph::create_node`, etc., regardless of
 //! which submodule's `impl Graph { ... }` block defines each method.
 
-use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
+use cranelift_entity::{ListPool, PrimaryMap};
 use hashbrown::HashMap;
 
 use crate::node::{
@@ -24,6 +24,7 @@ mod store;
 mod uses;
 
 pub use compact::NodeIdRemap;
+pub(crate) use compact::SideTableRemap;
 
 #[cfg(test)]
 mod tests;
@@ -69,6 +70,11 @@ pub struct CcMetadata {
 /// cacheable node kinds.  All ids (node, output, input) are small integers
 /// allocated from dense entity maps, so they can be used as cheap, copyable
 /// handles.
+///
+/// `Graph` is the pure structural arena: nodes, edges, wide-const interning,
+/// the dedup cache, and the generation counter.  Per-function overlay state
+/// (asm fingerprints, phi var tags, stack-phi offsets, call-other names, and
+/// call-clobbered overrides) lives on [`crate::Function`].
 #[derive(Clone)]
 pub struct Graph {
     /// Dense map from [`NodeId`] to [`Node`] metadata.
@@ -84,86 +90,6 @@ pub struct Graph {
     /// Deduplication cache: maps `(Node, inputs, output_kinds)` → `NodeId`
     /// for cacheable node kinds.
     pub(crate) node_to_id: HashMap<(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>), NodeId>,
-    /// Side-map from [`crate::node::NodeKind::StackStorePhi`] nodes to their
-    /// per-predecessor SP-relative offsets.  Kept external so that
-    /// `NodeKind` stays `Copy`.
-    ///
-    /// Stored as a `SecondaryMap<NodeId, Vec<i64>>` (dense entity-indexed
-    /// array) instead of a `HashMap` for O(1) cache-local lookup with no
-    /// hashing.  The default value is an empty `Vec`, which is the same
-    /// "no entry" sentinel the previous `HashMap`-keyed accessor returned.
-    pub(crate) stack_phi_offsets: SecondaryMap<NodeId, Vec<i64>>,
-    /// Side-map from [`crate::node::NodeKind::CallOther`] nodes to the user-op
-    /// name resolved from Sleigh.  Kept external so that `NodeKind::CallOther`
-    /// keeps its single-`u64` payload (and stays `Copy`).  `CallOther` is
-    /// non-cacheable, so the dedup-cache concern that motivates the side-map
-    /// shape for cacheable kinds doesn't apply here — the choice is purely to
-    /// keep the kind enum small and `Copy`.
-    ///
-    /// Populated at IR construction time by the strider lifter.  Not all `CallOther`
-    /// nodes are guaranteed to have an entry — e.g. nodes synthesised by tests
-    /// that don't go through the strider lifter.  Use [`Graph::call_other_name`].
-    ///
-    /// Stored as a `SecondaryMap<NodeId, Option<String>>`: O(1) array index
-    /// without hashing.  The `Option` distinguishes "name not set" from
-    /// "name set to empty string"; the previous `HashMap` accessor returned
-    /// `None` for the former and `Some("")` for the latter.
-    pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
-    /// Side-map from every [`NodeId`] to a sorted-deduped list of the
-    /// machine-instruction addresses ("asm addresses") whose lifting or
-    /// subsequent rewrite contributed to the node's value — its
-    /// **fingerprint**.
-    ///
-    /// The contract is **superset-only**:
-    /// - The fingerprint may overstate (extra ancestors are tolerated).
-    /// - It must never *omit* a contributing address — every optimisation
-    ///   pass that folds `old → new` must absorb `old`'s fingerprint into
-    ///   `new` via [`Graph::extend_asm_fingerprint_from`].
-    /// - Two structurally identical nodes share one entry on the
-    ///   side-table; [`Graph::create_node`]'s callers union additional
-    ///   contributors via the same `extend_*` helper.
-    ///
-    /// Stored as `SecondaryMap<NodeId, Vec<u64>>` for O(1) array indexing
-    /// and small-set merge — the typical fingerprint is 1–4 entries.
-    /// The default value is the empty `Vec`, which represents "no
-    /// contributors recorded".  Structural nodes — those whose
-    /// [`NodeKind::category`] is `Region`, `InitialState`, or `Phi` —
-    /// legitimately stay empty; the validator's fingerprint check
-    /// (`asm_fingerprint_exempt` in `validate/graph_invariants.rs`)
-    /// derives its exempt set from the same category predicate and
-    /// flags any other reachable empty entry.
-    pub(crate) asm_fingerprints: SecondaryMap<NodeId, Vec<u64>>,
-    /// Per-Call clobber-list override.
-    ///
-    /// `None` (the default) means the Call uses the function-default
-    /// clobber list at [`CcMetadata::call_clobbered`];
-    /// `Some(list)` shadows the function-default for this one Call —
-    /// the i-th value-typed output (slot `i + 2`) corresponds to
-    /// `list[i]` instead of the function-default.  Populated by
-    /// [`crate::FunctionBuilder::build_call_with_cc`] when the call
-    /// site uses a per-address calling-convention override (e.g.
-    /// Linux-kernel `__fentry__` / `mcount` callbacks that preserve
-    /// every register).
-    ///
-    /// Stored as `SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>` so
-    /// the default `None` is the "no override" sentinel; the previous
-    /// `HashMap`-keyed shape isn't used because the override is
-    /// per-NodeId and benefits from the `SecondaryMap`'s O(1) array
-    /// lookup with no hashing.
-    pub(crate) call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>,
-    /// Source-level varnode tag for [`crate::node::NodeKind::Phi`] nodes
-    /// created at lift time.  `Some(vn)` marks the phi as the SSA φ for
-    /// varnode `vn` (carries register-identity semantics — the
-    /// indirect-branch classifier's soundness gate refuses to walk
-    /// through such phis because doing so would erase that identity).
-    /// `None` (the default) marks an anonymous value phi — synthesised
-    /// by opt passes like `StackLoadForward` when forwarding a load
-    /// across a `MemPhi`.  Non-`Phi` kinds always store `None`; readers
-    /// must always pair the tag query with a `NodeKind::Phi` match.
-    ///
-    /// Stored as `SecondaryMap<NodeId, Option<rsleigh::Vn>>` for O(1)
-    /// array indexing without hashing.
-    pub(crate) phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>,
     /// Wide-integer constant values (U256, U512) referenced by
     /// [`crate::node::NodeKind::IntConstWide`].
     ///
@@ -216,11 +142,6 @@ impl Graph {
             output_pool: ListPool::new(),
             input_pool: ListPool::new(),
             node_to_id: HashMap::new(),
-            stack_phi_offsets: SecondaryMap::new(),
-            call_other_names: SecondaryMap::new(),
-            asm_fingerprints: SecondaryMap::new(),
-            call_clobbered_overrides: SecondaryMap::new(),
-            phi_var_tag: SecondaryMap::new(),
             wide_consts: PrimaryMap::new(),
             wide_const_dedup: rustc_hash::FxHashMap::default(),
             initial_var_index: rustc_hash::FxHashMap::default(),

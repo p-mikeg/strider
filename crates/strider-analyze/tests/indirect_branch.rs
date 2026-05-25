@@ -62,7 +62,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         let mut p = ana.build_optimizer_pipeline();
         p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
         let entry = graph.entry().unwrap();
-        p.run(graph.graph_mut(), entry)
+        p.run(&mut graph, entry)
             .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
         return;
     }
@@ -73,7 +73,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt.clone()));
     let entry = graph.entry().unwrap();
-    p.run(graph.graph_mut(), entry)
+    p.run(&mut graph, entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn;

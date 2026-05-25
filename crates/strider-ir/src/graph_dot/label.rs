@@ -63,20 +63,20 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     /// Returns the [`NodeOutputType`] of the first value output of `node`,
     /// or `None` if it has no value output.
     fn out_type(&self, node: NodeId) -> Option<NodeOutputType> {
-        self.graph
+        self.function
             .node_outputs(node)
             .iter()
-            .find_map(|&o| self.graph.output_kind(o).as_value())
+            .find_map(|&o| self.function.output_kind(o).as_value())
     }
 
     /// Returns the [`NodeOutputType`] of the `NodeOutputId` at input index
     /// `idx` of `node`, or `None` if it is not a value output.
     fn input_type(&self, node: NodeId, idx: usize) -> Option<NodeOutputType> {
-        self.graph
+        self.function
             .node_inputs(node)
             .into_iter()
             .nth(idx)
-            .and_then(|o| self.graph.output_kind(o).as_value())
+            .and_then(|o| self.function.output_kind(o).as_value())
     }
 
     /// Type name of the first value output of `node`, or `"?"` if absent.
@@ -105,7 +105,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     }
 
     pub(super) fn pretty_label(&self, node: NodeId) -> io::Result<String> {
-        let kind = self.graph.node_kind(node);
+        let kind = self.function.node_kind(node);
 
         let label = match kind {
             // ── entry / structural ────────────────────────────────────────────
@@ -125,7 +125,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 }
             },
             NodeKind::MemPhi => "φ Mem".to_string(),
-            NodeKind::Phi => match self.graph.phi_var_tag(node) {
+            NodeKind::Phi => match self.function.phi_var_tag(node) {
                 None => "φ Val".to_string(),
                 Some(var) => format!("φ {}", self.vn_to_name(&var)?),
             },
@@ -177,7 +177,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::StackStorePhi { space } => {
                 let space = self.pretty_vnspace(*space);
                 let ty = self.input_type_suffix(node, 2, " ");
-                let offsets = self.graph.stack_phi_offsets(node);
+                let offsets = self.function.stack_phi_offsets(node);
                 let offsets_str = if offsets.is_empty() {
                     "?".to_string()
                 } else {
@@ -275,7 +275,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 // id for synthetic nodes (tests, third-party graph builders)
                 // that bypass the name side-table.
                 let name_prefix = self
-                    .graph
+                    .function
                     .call_other_name(node)
                     .map(|n| format!("{n} "))
                     .unwrap_or_default();
@@ -298,7 +298,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     }
 
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
-        let kind = self.graph.node_kind(node);
+        let kind = self.function.node_kind(node);
         let fc = node_fillcolor(kind);
         // Use pretty_label so const nodes get their type annotation too.
         let label = self
@@ -316,7 +316,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         dot_id: &str,
         out: &mut ::dot::DotEmitter,
     ) {
-        let kind = self.graph.node_kind(node);
+        let kind = self.function.node_kind(node);
         let shape = node_shape(kind);
         let fc = node_fillcolor(kind);
         let label = self
@@ -336,7 +336,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     /// of synthetic test graphs (which often pass `call_clobbered: &[]`)
     /// does not panic.
     pub(super) fn call_clobbered_name(&self, output_id: NodeOutputId) -> io::Result<String> {
-        let (_call_id, output_index) = self.graph.output_definition(output_id);
+        let (_call_id, output_index) = self.function.output_definition(output_id);
         let Some(i) = output_index.checked_sub(2).map(|i| i as usize) else {
             return Ok(format!("out{output_index}"));
         };

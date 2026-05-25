@@ -22,7 +22,7 @@ use strider_ir_test_utils::RegisterSet;
 /// which sits between the matcher's input descent and the InitialVar.
 fn collapse_phis(g: &mut Function) {
     let entry = g.entry().expect("entry");
-    RedundantPhis.optimize(g.graph_mut(), entry).expect("RedundantPhis");
+    RedundantPhis.optimize(g, entry).expect("RedundantPhis");
 }
 
 // ── Fixture builder ─────────────────────────────────────────────────────────

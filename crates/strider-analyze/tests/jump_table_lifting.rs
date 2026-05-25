@@ -219,7 +219,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     let pipeline = strider.build_optimizer_pipeline();
     let entry = graph.entry().unwrap();
     pipeline
-        .run(graph.graph_mut(), entry)
+        .run(&mut graph, entry)
         .expect("optimizer pipeline");
 
     let if_count_post = count_if_nodes(&graph);

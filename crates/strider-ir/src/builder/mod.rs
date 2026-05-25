@@ -4,7 +4,7 @@ use cranelift_entity::{PrimaryMap, entity_impl};
 use rustc_hash::FxHashMap;
 
 use crate::error::Result;
-use crate::graph::Graph;
+use crate::function::Function;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::region::Region;
 
@@ -156,8 +156,8 @@ fn build_call_clobbered_list(
 /// writes go through this mapping so that the graph is always in a consistent
 /// state.
 pub struct FunctionBuilder {
-    /// The sea-of-nodes graph being built.
-    pub(crate) graph: Graph,
+    /// The function being built (structural graph + overlay side tables).
+    pub(crate) graph: Function,
     /// The `Entry` node that serves as the root of the function.
     /// Set to a reserved sentinel before [`Self::build_entry`] runs;
     /// `build()` will refuse to finalise if it remains reserved.
@@ -268,23 +268,22 @@ macro_rules! require_kind {
 }
 
 impl FunctionBuilder {
-    /// Returns a reference to the underlying [`Graph`] without consuming
-    /// the builder.  Pairs with [`Self::graph_mut`] and [`Self::entry`].
+    /// Returns a reference to the underlying [`Function`] (graph + overlay).
+    /// Pairs with [`Self::graph_mut`] and [`Self::entry`].
     #[must_use]
-    pub fn graph(&self) -> &Graph {
+    pub fn graph(&self) -> &Function {
         &self.graph
     }
 
-    /// Returns a mutable reference to the underlying [`Graph`] without
-    /// consuming the builder.
+    /// Returns a mutable reference to the underlying [`Function`] (graph + overlay).
     ///
     /// This is the primary entry point for in-place graph mutation (e.g.
     /// running an `opt::Optimizer` pass on a builder that we still want to
     /// use afterwards). Pairs with [`Self::entry`]: opt passes need
-    /// `(graph, entry)` together because `entry` anchors the
+    /// `(function, entry)` together because `entry` anchors the
     /// reachable-node walk the validator's local-typing check is scoped
     /// to.
-    pub fn graph_mut(&mut self) -> &mut Graph {
+    pub fn graph_mut(&mut self) -> &mut Function {
         &mut self.graph
     }
 
@@ -446,7 +445,7 @@ impl FunctionBuilder {
             .collect();
 
         let mut fb = FunctionBuilder {
-            graph: Graph::new(),
+            graph: Function::new(),
             entry: NodeId::reserved_value(),
             entry_control: NodeOutputId::reserved_value(),
             entry_memory: NodeOutputId::reserved_value(),
@@ -674,10 +673,9 @@ impl FunctionBuilder {
             call_other_clobbered,
             no_memory_clobber: self.no_memory_clobber,
         };
-        let graph = self.graph;
-        crate::validate::validate(&graph, entry)?;
-        let mut function = crate::Function::from_built_graph(graph, entry);
+        let mut function = self.graph;
         function.set_cc_metadata(cc_metadata);
+        crate::validate::validate(&function, entry)?;
         Ok(function)
     }
 }

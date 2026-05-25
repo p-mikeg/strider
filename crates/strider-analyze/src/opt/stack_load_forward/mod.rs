@@ -84,10 +84,10 @@ impl StackLoadForward {
 impl Optimizer for StackLoadForward {
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: strider_ir::node::NodeId,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
@@ -117,7 +117,7 @@ fn try_forward_load(
     };
 
     let Some(SpExpr::Terminal { base: _, offset }) =
-        decompose_sp(ctx.graph_ref(), addr, sp_vn, memo)
+        decompose_sp(ctx.function_ref(), addr, sp_vn, memo)
     else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -223,7 +223,7 @@ fn probe(
 
         fn classify(
             &mut self,
-            graph: &strider_ir::Graph,
+            graph: &strider_ir::Function,
             _mem: NodeOutputId,
             node: NodeId,
         ) -> Result<StepResult<Option<ResolveShape>>> {
@@ -339,7 +339,7 @@ fn probe(
         memo,
     };
     walk_mem_chain(
-        ctx.graph_ref(),
+        ctx.function_ref(),
         initial_mem,
         CyclePolicy::GuardPhiOnly,
         visited,
@@ -560,7 +560,7 @@ pub type StackStoredValueMemo =
 ///   indirect-branch classifier so shared chain prefixes pay O(1) per node.
 #[must_use]
 pub(crate) fn find_stack_stored_value_at_offset(
-    graph: &strider_ir::Graph,
+    graph: &strider_ir::Function,
     mem: NodeOutputId,
     offset: i64,
     value_type: NodeOutputType,

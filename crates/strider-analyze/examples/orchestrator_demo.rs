@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let entry = function
         .entry()
         .ok_or("orchestrator_demo: built function missing entry")?;
-    pipeline.run(function.graph_mut(), entry)?;
+    pipeline.run(&mut function, entry)?;
     println!("dumping opt IR graph...");
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh)?, dot::DotStyle::dark());

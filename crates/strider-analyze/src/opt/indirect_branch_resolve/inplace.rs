@@ -49,7 +49,7 @@ fn detach_placeholder(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     placeholder: NodeId,
 ) -> Result<PlaceholderEdit> {
-    let graph = ctx.graph_mut();
+    let graph = ctx.function_mut();
     let kind = *graph.node_kind(placeholder);
     if !matches!(kind, NodeKind::IndirectBranch) {
         return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
@@ -115,7 +115,7 @@ pub fn apply_link_register(
     );
     let PlaceholderEdit { control_in, memory_in, target_value: _, fingerprint } =
         detach_placeholder(ctx, placeholder)?;
-    let graph = ctx.graph_mut();
+    let graph = ctx.function_mut();
 
     let mut return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
     return_inputs.push(control_in);
@@ -189,7 +189,7 @@ pub fn apply_tail_call(
     );
     let PlaceholderEdit { control_in, memory_in, target_value, fingerprint } =
         detach_placeholder(ctx, placeholder)?;
-    let graph = ctx.graph_mut();
+    let graph = ctx.function_mut();
 
     // Surface a non-integer target type as a typed error — silently
     // defaulting to U64 would mask an upstream invariant break (every
@@ -364,7 +364,7 @@ mod tests {
     /// placeholder site" in unit tests that don't care which register
     /// it came from.
     fn synth_value_output(
-        graph: &mut strider_ir::Graph,
+        graph: &mut strider_ir::Function,
         value: u128,
         ty: NodeOutputType,
     ) -> NodeOutputId {
@@ -400,8 +400,8 @@ mod tests {
         // 0-indexed over the real return values).
         let (mut ctx, placeholder) = build_placeholder_graph();
         assert_eq!(ctx.node_inputs(placeholder).len(), 3);
-        let r0 = synth_value_output(ctx.graph_mut(), 0x42, NodeOutputType::U64);
-        let r1 = synth_value_output(ctx.graph_mut(), 0x43, NodeOutputType::U64);
+        let r0 = synth_value_output(&mut ctx, 0x42, NodeOutputType::U64);
+        let r1 = synth_value_output(&mut ctx, 0x43, NodeOutputType::U64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[r0, r1]))
             .expect("apply");
@@ -420,9 +420,9 @@ mod tests {
         // Three arg-passing outputs → Call's inputs are
         // `[ctrl, mem, IntConst(target), arg_0, arg_1, arg_2]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let a0 = synth_value_output(ctx.graph_mut(), 0x01, NodeOutputType::U64);
-        let a1 = synth_value_output(ctx.graph_mut(), 0x02, NodeOutputType::U64);
-        let a2 = synth_value_output(ctx.graph_mut(), 0x03, NodeOutputType::U64);
+        let a0 = synth_value_output(&mut ctx, 0x01, NodeOutputType::U64);
+        let a1 = synth_value_output(&mut ctx, 0x02, NodeOutputType::U64);
+        let a2 = synth_value_output(&mut ctx, 0x03, NodeOutputType::U64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
                 apply_tail_call(rctx, placeholder, 0xc0de, &[a0, a1, a2], &[], &[])
@@ -475,8 +475,8 @@ mod tests {
         // Two ret-val outputs → new Return's inputs are
         // `[call_ctrl, call_mem, ret_val_0, ret_val_1]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let r0 = synth_value_output(ctx.graph_mut(), 0x10, NodeOutputType::U64);
-        let r1 = synth_value_output(ctx.graph_mut(), 0x11, NodeOutputType::U64);
+        let r0 = synth_value_output(&mut ctx, 0x10, NodeOutputType::U64);
+        let r1 = synth_value_output(&mut ctx, 0x11, NodeOutputType::U64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
                 apply_tail_call(rctx, placeholder, 0xface, &[], &[], &[r0, r1])

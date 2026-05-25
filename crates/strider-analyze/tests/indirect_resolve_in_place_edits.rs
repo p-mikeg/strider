@@ -71,7 +71,7 @@ fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
     assert_eq!(inputs_after[0], inputs_before[0], "ctrl preserved");
     assert_eq!(inputs_after[1], inputs_before[1], "mem preserved");
     // strider_ir::validate::validate must still pass on the mutated graph.
-    strider_ir::validate::validate(graph.graph(), graph.entry().unwrap()).expect("validate after edit");
+    strider_ir::validate::validate(&graph, graph.entry().unwrap()).expect("validate after edit");
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
     let inputs_after: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     assert_eq!(inputs_after.len(), inputs_before.len(), "[ctrl, mem, ret_val_0]");
     assert_eq!(*inputs_after.last().expect("non-empty"), anchor);
-    strider_ir::validate::validate(graph.graph(), graph.entry().unwrap()).expect("validate after edit");
+    strider_ir::validate::validate(&graph, graph.entry().unwrap()).expect("validate after edit");
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     assert!(new_seen, "new Return must be reachable from entry");
     assert!(!old_seen, "old placeholder must be detached / unreachable");
     // strider_ir::validate must still pass.
-    strider_ir::validate::validate(graph.graph(), graph.entry().unwrap()).expect("validate after edit");
+    strider_ir::validate::validate(&graph, graph.entry().unwrap()).expect("validate after edit");
 }
 
 // ── G1-COMPLETE: cache-exit-handle / NodeId-stability tests ────────────────
@@ -282,7 +282,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // an existing `InitialVar(rdi)`, but for this unit-level
     // integration test the IR identity of the value doesn't matter —
     // only that the in-place edit threads it through unchanged.
-    let mk_const = |g: &mut strider_ir::Graph, v: u128| {
+    let mk_const = |g: &mut strider_ir::Function, v: u128| {
         let nid = g.create_node(
             NodeKind::IntConst(v),
             [],
@@ -321,7 +321,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
 
     // Validate the post-edit graph.  `validate` is the contract the
     // optimiser's pipeline relies on between iterations.
-    strider_ir::validate::validate(graph.graph(), graph.entry().unwrap()).expect("validate");
+    strider_ir::validate::validate(&graph, graph.entry().unwrap()).expect("validate");
 
     // The headline assertion: a `strider_analyze::pattern::call().arg(0, …)` query
     // matches at least once.  Before the ABI-threading fix this would

@@ -27,7 +27,7 @@ fn try_detect_stack_store(
     let [memory, addr, data] = ctx.node_inputs_exact::<3>(node_id)?;
     let [old_mem_out] = ctx.node_outputs_exact::<1>(node_id)?;
 
-    let Some(expr) = decompose_sp(ctx.graph_ref(), addr, sp_vn, memo) else {
+    let Some(expr) = decompose_sp(ctx.function_ref(), addr, sp_vn, memo) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -130,10 +130,10 @@ impl StackStoreDetect {
 impl Optimizer for StackStoreDetect {
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: strider_ir::node::NodeId,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         // Only Store nodes can be promoted to StackStore — kind-filter at
         // the iterator level so we don't allocate a Vec sized to all
         // reachable nodes.  Mirrors the established pattern in

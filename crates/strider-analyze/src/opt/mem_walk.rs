@@ -63,7 +63,7 @@
 //! disjoint enough that one trait cannot serve both shapes cleanly.
 
 use smallvec::SmallVec;
-use strider_ir::Graph;
+use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeOutputId};
 
 use crate::opt::error::Result;
@@ -98,7 +98,7 @@ pub(crate) trait MemChainStep {
     /// specific output port carrying the token).
     fn classify(
         &mut self,
-        graph: &Graph,
+        graph: &Function,
         mem: NodeOutputId,
         node: NodeId,
     ) -> Result<StepResult<Self::Verdict>>;
@@ -164,7 +164,7 @@ pub(crate) enum CyclePolicy {
 /// full `strider_ir::node::NodeKind` dependency into a "what kind is
 /// this?" branch that only the existing passes really need.
 pub(crate) fn walk_mem_chain<S: MemChainStep>(
-    graph: &Graph,
+    graph: &Function,
     initial_mem: NodeOutputId,
     cycle_policy: CyclePolicy,
     seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
@@ -287,7 +287,7 @@ mod tests {
         type Verdict = bool;
         fn classify(
             &mut self,
-            _g: &Graph,
+            _g: &Function,
             _mem: NodeOutputId,
             _node: NodeId,
         ) -> crate::opt::error::Result<StepResult<bool>> {
@@ -316,7 +316,7 @@ mod tests {
         type Verdict = u64;
         fn classify(
             &mut self,
-            _g: &Graph,
+            _g: &Function,
             _mem: NodeOutputId,
             _node: NodeId,
         ) -> crate::opt::error::Result<StepResult<u64>> {
@@ -347,7 +347,7 @@ mod tests {
         type Verdict = bool;
         fn classify(
             &mut self,
-            g: &Graph,
+            g: &Function,
             _mem: NodeOutputId,
             node: NodeId,
         ) -> crate::opt::error::Result<StepResult<bool>> {
@@ -393,7 +393,7 @@ mod tests {
         type Verdict = bool;
         fn classify(
             &mut self,
-            g: &Graph,
+            g: &Function,
             _mem: NodeOutputId,
             node: NodeId,
         ) -> crate::opt::error::Result<StepResult<bool>> {
@@ -465,7 +465,7 @@ mod tests {
         let mut step = AlwaysClean { visit_count: 0 };
         let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
         let r = walk_mem_chain(
-            fg.graph(),
+            &fg,
             im_out,
             CyclePolicy::GuardEveryNode,
             &mut seen,
@@ -485,7 +485,7 @@ mod tests {
         let mut step = EarlyStopWithValue { target_value: 0xDEADBEEF };
         let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
         let r = walk_mem_chain(
-            fg.graph(),
+            &fg,
             im_out,
             CyclePolicy::GuardEveryNode,
             &mut seen,
@@ -505,7 +505,7 @@ mod tests {
         let mut step = LinearTraceStep { visited: Default::default() };
         let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
         let r = walk_mem_chain(
-            fg.graph(),
+            &fg,
             head,
             CyclePolicy::GuardEveryNode,
             &mut seen,
@@ -555,12 +555,12 @@ mod tests {
         for _ in 0..n_arms {
             inputs.push(im_out);
         }
-        let phi = fg.graph_mut().create_node(
+        let phi = fg.create_node(
             NodeKind::MemPhi,
             inputs.iter().copied(),
             [strider_ir::node::NodeOutputKind::Memory],
         );
-        fg.graph_mut().set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
+        fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
         fg.node_outputs_exact::<1>(phi).unwrap()[0]
     }
 
@@ -583,7 +583,7 @@ mod tests {
         let mut step = LinearTraceStep { visited: Default::default() };
         let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
         let r = walk_mem_chain(
-            fg.graph(),
+            &fg,
             phi_out,
             CyclePolicy::GuardPhiOnly,
             &mut seen,
@@ -622,18 +622,18 @@ mod tests {
         let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
         let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
         let phi_token = fg.node_outputs(region_node)[1];
-        let phi = fg.graph_mut().create_node(
+        let phi = fg.create_node(
             NodeKind::MemPhi,
             [phi_token, store_mem, im_out],
             [strider_ir::node::NodeOutputKind::Memory],
         );
-        fg.graph_mut().set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
+        fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
         let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
         let mut step = PhiDisagreeStep;
         let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
         let r = walk_mem_chain(
-            fg.graph(),
+            &fg,
             phi_out,
             CyclePolicy::GuardPhiOnly,
             &mut seen,
@@ -666,7 +666,7 @@ mod tests {
             type Verdict = bool;
             fn classify(
                 &mut self,
-                g: &Graph,
+                g: &Function,
                 _mem: NodeOutputId,
                 node: NodeId,
             ) -> crate::opt::error::Result<StepResult<bool>> {
@@ -697,7 +697,7 @@ mod tests {
         let mut step1 = CountIM { im_visits: 0 };
         let mut seen1: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
         let _ = walk_mem_chain(
-            fg.graph(),
+            &fg,
             phi_out,
             CyclePolicy::GuardEveryNode,
             &mut seen1,
@@ -714,7 +714,7 @@ mod tests {
         let mut step2 = CountIM { im_visits: 0 };
         let mut seen2: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
         let _ = walk_mem_chain(
-            fg.graph(),
+            &fg,
             phi_out,
             CyclePolicy::GuardPhiOnly,
             &mut seen2,

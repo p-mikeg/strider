@@ -376,7 +376,7 @@ fn non_stack_store_is_untouched() -> Result<()> {
     })?;
 
     let entry = fg.entry().unwrap();
-    StackStoreDetect::new(sp).optimize(fg.graph_mut(), entry)?;
+    StackStoreDetect::new(sp).optimize(&mut fg, entry)?;
 
     assert_eq!(
         count(&fg, |k| matches!(k, NodeKind::StackStore { .. })),
@@ -647,7 +647,7 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     let mut fg = b.build()?;
 
     let entry = fg.entry().unwrap();
-    StackStoreDetect::new(sp).optimize(fg.graph_mut(), entry)?;
+    StackStoreDetect::new(sp).optimize(&mut fg, entry)?;
 
     assert_eq!(
         count(&fg, |k| matches!(k, NodeKind::StackStore { .. })),

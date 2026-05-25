@@ -98,7 +98,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     let entry = fg.entry().ok_or_else(|| {
         anyhow::anyhow!("resolver mini-graph has not been built (entry is None)")
     })?;
-    make_resolver_pipeline().run(fg.graph_mut(), entry)?;
+    make_resolver_pipeline().run(&mut fg, entry)?;
 
     // If the caller supplied a ReadOnlyMemory, resolve constant-address
     // loads against it and re-run the core fold pipeline so the loaded
@@ -110,7 +110,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // shapes resolve in subsequent sweeps.
     if let Some(rom) = rom {
         while resolve_const_loads(&mut fg, rom)? {
-            make_resolver_pipeline().run(fg.graph_mut(), entry)?;
+            make_resolver_pipeline().run(&mut fg, entry)?;
         }
     }
 

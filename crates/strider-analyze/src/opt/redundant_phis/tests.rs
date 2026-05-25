@@ -98,7 +98,7 @@ fn mem_phi_single_pred_eliminated() -> crate::opt::Result<()> {
 
     let mut fg = b.build()?;
     let entry = fg.entry().unwrap();
-    RedundantPhis.optimize(fg.graph_mut(), entry)?;
+    RedundantPhis.optimize(&mut fg, entry)?;
 
     // Surviving (reachable) MemPhis with at most 1+1 inputs (token + 1 value)
     // must be 0.  `count_reachable` only filters by `NodeKind`, so the
@@ -132,7 +132,7 @@ fn region_single_pred_collapses() -> crate::opt::Result<()> {
     let mut fg = b.build()?;
     let entry = fg.entry().unwrap();
     assert!(
-        RedundantPhis.optimize(fg.graph_mut(), entry)?.changed(),
+        RedundantPhis.optimize(&mut fg, entry)?.changed(),
         "single-pred Region must be simplified"
     );
     Ok(())
@@ -201,9 +201,9 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
     // this, any further RedundantPhis invocation on the unmodified graph
     // returns NoChange; that's our baseline.
     let entry = fg.entry().unwrap();
-    while RedundantPhis.optimize(fg.graph_mut(), entry)?.changed() {}
+    while RedundantPhis.optimize(&mut fg, entry)?.changed() {}
     let entry = fg.entry().unwrap();
-    let baseline = RedundantPhis.optimize(fg.graph_mut(), entry)?;
+    let baseline = RedundantPhis.optimize(&mut fg, entry)?;
     assert_eq!(
         baseline,
         OptimizationResult::NoChange,
@@ -223,7 +223,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
     );
 
     let entry = fg.entry().unwrap();
-    let res = RedundantPhis.optimize(fg.graph_mut(), entry)?;
+    let res = RedundantPhis.optimize(&mut fg, entry)?;
     assert_eq!(
         res,
         OptimizationResult::NoChange,
@@ -287,7 +287,7 @@ fn transient_arity_mismatch_surfaces_as_error_not_panic() -> crate::opt::Result<
     );
 
     let entry = fg.entry().unwrap();
-    let result = RedundantPhis.optimize(fg.graph_mut(), entry);
+    let result = RedundantPhis.optimize(&mut fg, entry);
     let err = result.expect_err(
         "RedundantPhis must surface transient phi-arity violation as a typed Err, not panic"
     );
@@ -374,7 +374,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
 
     // Run the pass under test.
     let entry = fg.entry().unwrap();
-    RedundantPhis.optimize(fg.graph_mut(), entry)?;
+    RedundantPhis.optimize(&mut fg, entry)?;
 
     // After collapse, the Return's value input must reference the
     // initial entry value, *not* the phi's output.  `replace_all_uses`

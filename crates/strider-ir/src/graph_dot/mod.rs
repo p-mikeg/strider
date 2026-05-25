@@ -1,6 +1,7 @@
 use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
+use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId};
 use crate::node_signature::{SlotRole, expected_signature};
@@ -113,7 +114,7 @@ pub(super) fn edge_style<R: MemReader>(
     input_idx: usize,
     _output: NodeOutputId,
 ) -> (&'static str, &'static str) {
-    let kind = dumper.graph.node_kind(consumer);
+    let kind = dumper.function.node_kind(consumer);
     let sig = expected_signature(kind);
     match sig.inputs.at(input_idx) {
         Some(slot) => (slot.name, role_color(slot.role)),
@@ -125,7 +126,10 @@ pub(super) fn edge_style<R: MemReader>(
 
 pub struct GraphDotDumper<'a, R: MemReader> {
     pub(crate) entry: NodeId,
-    pub(crate) graph: &'a Graph,
+    /// Function overlay (including structural graph via `Deref`).
+    /// Provides access to both structural graph data and overlay tables
+    /// (asm fingerprints, call-other names, stack-phi offsets, phi var tags).
+    pub(crate) function: &'a Function,
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
     pub(crate) call_clobbered: &'a [rsleigh::Vn],
     /// Calling convention's return-value registers in ABI order.  Used to
@@ -183,6 +187,8 @@ impl GraphDotDumperState {
 
     pub(super) fn get_dot_id(&mut self, graph: &Graph, node_id: NodeId) -> String {
         // Constants are always given a fresh id so they render as separate nodes.
+        // Note: `graph` here is used for structural node-kind lookup only;
+        // callers pass `dumper.function.graph()` or a deref of the function.
         if graph.node_kind(node_id).is_const() {
             return self.alloc_id(node_id);
         }

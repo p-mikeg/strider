@@ -299,7 +299,7 @@ impl PyGraph {
                     "Graph.validate: graph has not been built (entry is None)"
                 ))
             })?;
-            match strider_ir::validate::validate(graph.graph(), entry) {
+            match strider_ir::validate::validate(graph, entry) {
                 Ok(()) => Ok(None),
                 Err(e) => Ok(Some(format!("{e}"))),
             }
@@ -328,7 +328,7 @@ impl PyGraph {
             ))
         })?;
         real_pipeline
-            .run(graph.graph_mut(), entry)
+            .run(&mut *graph, entry)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -349,7 +349,7 @@ impl PyGraph {
                 "Graph.reoptimize: graph has not been built (entry is None)"
             ))
         })?;
-        pipe.run(graph.graph_mut(), entry).map_err(|e| {
+        pipe.run(&mut *graph, entry).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }

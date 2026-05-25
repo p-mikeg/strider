@@ -431,10 +431,10 @@ pub struct KnownBits;
 impl Optimizer for KnownBits {
     fn optimize(
         &self,
-        graph: &mut strider_ir::Graph,
+        function: &mut strider_ir::Function,
         entry: NodeId,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(graph, entry);
+        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).

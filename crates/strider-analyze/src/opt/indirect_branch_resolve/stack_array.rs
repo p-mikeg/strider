@@ -81,7 +81,7 @@ pub fn classify_stack_array(
     stack_ptr_vn: rsleigh::Vn,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = ctx.graph_ref();
+    let graph = ctx.function_ref();
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM, `& 0xFFFFFFFFFFFFFFFE` for 64-bit
@@ -330,7 +330,7 @@ fn match_stack_array_shape(
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
-    let graph = ctx.graph_ref();
+    let graph = ctx.function_ref();
     let load_node = graph.get_node_from_output(anchor_output);
     let NodeKind::Load(_) = *graph.node_kind(load_node) else {
         return None;
@@ -626,7 +626,7 @@ mod tests {
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
-        p.run(fg.graph_mut(), entry).unwrap();
+        p.run(&mut fg, entry).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -671,7 +671,7 @@ mod tests {
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
-        p.run(fg.graph_mut(), entry).unwrap();
+        p.run(&mut fg, entry).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -726,7 +726,7 @@ mod tests {
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
-        p.run(fg.graph_mut(), entry).unwrap();
+        p.run(&mut fg, entry).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -783,7 +783,7 @@ mod tests {
     /// `swap=true` produces `op(IntConst(c), inner)`.  `ty` is the output
     /// type of both operands and the result.
     fn build_binop_wrapped(
-        graph: &mut strider_ir::Graph,
+        graph: &mut strider_ir::Function,
         inner: NodeOutputId,
         op: IntBinaryOp,
         c: u64,
@@ -819,7 +819,7 @@ mod tests {
     fn strip_target_mask_and_with_const_rhs_strips_one_layer() {
         let (mut fg, inner) = build_load_anchor();
         let wrapped = build_binop_wrapped(
-            fg.graph_mut(), inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
@@ -830,7 +830,7 @@ mod tests {
     fn strip_target_mask_and_with_const_lhs_strips_one_layer() {
         let (mut fg, inner) = build_load_anchor();
         let wrapped = build_binop_wrapped(
-            fg.graph_mut(), inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
@@ -845,10 +845,10 @@ mod tests {
         // is fully cleared by the surviving mask `0xFFFE`).
         let (mut fg, inner) = build_load_anchor();
         let or_layer = build_binop_wrapped(
-            fg.graph_mut(), inner, IntBinaryOp::Or, 1, NodeOutputType::U64, false,
+            &mut fg, inner, IntBinaryOp::Or, 1, NodeOutputType::U64, false,
         );
         let and_layer = build_binop_wrapped(
-            fg.graph_mut(), or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
@@ -862,10 +862,10 @@ mod tests {
         // the surrounding And contributes its mask.
         let (mut fg, inner) = build_load_anchor();
         let or_layer = build_binop_wrapped(
-            fg.graph_mut(), inner, IntBinaryOp::Or, 0xFF, NodeOutputType::U64, false,
+            &mut fg, inner, IntBinaryOp::Or, 0xFF, NodeOutputType::U64, false,
         );
         let and_layer = build_binop_wrapped(
-            fg.graph_mut(), or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
@@ -878,10 +878,10 @@ mod tests {
         // Both layers strip; surviving mask is the intersection.
         let (mut fg, inner) = build_load_anchor();
         let inner_and = build_binop_wrapped(
-            fg.graph_mut(), inner, IntBinaryOp::And, 0xFFFF, NodeOutputType::U64, false,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFF, NodeOutputType::U64, false,
         );
         let outer_and = build_binop_wrapped(
-            fg.graph_mut(), inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
+            &mut fg, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");
@@ -898,7 +898,7 @@ mod tests {
     /// Build a right-spine Add tree of the given depth over fresh
     /// IntConst(i) leaves.  Returns the root NodeOutputId.
     fn build_right_spine_add_tree(
-        graph: &mut strider_ir::Graph,
+        graph: &mut strider_ir::Function,
         depth: usize,
     ) -> NodeOutputId {
         assert!(depth >= 1, "need at least one node");
@@ -938,7 +938,7 @@ mod tests {
     fn flatten_add_tree_within_budget_collects_all_leaves() {
         // 8-deep Add tree → 8 leaves should all flatten out.
         let (mut fg, _anchor) = build_load_anchor();
-        let root = build_right_spine_add_tree(fg.graph_mut(), 8);
+        let root = build_right_spine_add_tree(&mut fg, 8);
         let mut acc: Vec<NodeOutputId> = Vec::new();
         let mut budget = 0usize;
         flatten_add_tree(fg.graph(), root, &mut acc, &mut budget);
@@ -954,7 +954,7 @@ mod tests {
         // not panic; it pushes the over-budget node verbatim (which
         // downstream per-term decompose rejects as non-const non-Mul).
         let (mut fg, _anchor) = build_load_anchor();
-        let root = build_right_spine_add_tree(fg.graph_mut(), 64);
+        let root = build_right_spine_add_tree(&mut fg, 64);
         let mut acc: Vec<NodeOutputId> = Vec::new();
         let mut budget = 0usize;
         // Smoke test: must not panic at any tree depth.
@@ -973,16 +973,16 @@ mod tests {
         // Non-Add root → push the root verbatim; budget should be 1
         // (one entry to the walk).
         let (mut fg, _anchor) = build_load_anchor();
-        let n = fg.graph_mut().create_node(
+        let n = fg.create_node(
             NodeKind::IntConst(0xABCDu128),
             [],
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        fg.graph_mut().set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let out = fg.graph().node_outputs_exact::<1>(n).unwrap()[0];
+        fg.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let out = fg.node_outputs_exact::<1>(n).unwrap()[0];
         let mut acc: Vec<NodeOutputId> = Vec::new();
         let mut budget = 0usize;
-        flatten_add_tree(fg.graph(), out, &mut acc, &mut budget);
+        flatten_add_tree(&fg, out, &mut acc, &mut budget);
         assert_eq!(acc.len(), 1, "non-Add root → single entry");
         assert_eq!(acc[0], out, "entry is the root itself");
     }
@@ -1089,7 +1089,7 @@ mod tests {
         p.add(RedundantPhis);
         p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
-        p.run(fg.graph_mut(), entry).unwrap();
+        p.run(&mut fg, entry).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))

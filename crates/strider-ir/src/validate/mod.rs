@@ -17,6 +17,7 @@
 //! aggregates every [`ValidationError`] it found during a single pass, so
 //! callers can see all problems at once rather than only the first.
 
+use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::node_signature::ExpectedOutputKind;
@@ -36,7 +37,7 @@ use graph_invariants::{
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
 
-/// Validates the structural invariants of `graph` starting from `entry`.
+/// Validates the structural invariants of `function` starting from `entry`.
 ///
 /// Returns `Ok(())` if every checked invariant holds, or a
 /// [`ValidationErrors`] bundle describing every violation otherwise.
@@ -53,13 +54,14 @@ use use_list_consistency::check_use_list_consistency;
 /// # Errors
 ///
 /// Returns a [`ValidationErrors`] bundle aggregating every local-typing,
-/// use-list, and graph-invariants violation found in `graph`. Validation
+/// use-list, and graph-invariants violation found in `function`. Validation
 /// does not fail fast — every check runs to completion so the caller sees
 /// the full set of problems at once.
-pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
+pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErrors> {
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.
+    let graph: &Graph = function;
     let mut walk = graph.walk_from(entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();
@@ -76,7 +78,7 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     check_graph_invariants_phis(graph, &reachable, &mut errs);
     check_graph_invariants_function_arg_uniqueness(graph, &reachable, &mut errs);
     check_graph_invariants_wide_consts(graph, &reachable, &mut errs);
-    check_graph_invariants_asm_fingerprints(graph, &reachable, &mut errs);
+    check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
 
     if errs.is_empty() {
         Ok(())

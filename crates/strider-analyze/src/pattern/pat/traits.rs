@@ -28,7 +28,7 @@ use crate::pattern::matcher::{Bindings, Matcher};
 /// [`Matcher::match_output`](crate::pattern::matcher::Matcher::match_output).
 #[derive(Clone, Copy)]
 pub struct MatchCtx<'g, 'm> {
-    pub graph: &'g strider_ir::Graph,
+    pub graph: &'g strider_ir::Function,
     pub(crate) matcher: &'m Matcher<'g>,
 }
 
@@ -116,7 +116,7 @@ pub enum BuildOutcome {
 /// macros to expose `ty` — the root output type — and `in_ty` — the
 /// root's first value input type).
 pub(crate) struct BuildCtx<'a> {
-    pub graph: &'a mut strider_ir::Graph,
+    pub graph: &'a mut strider_ir::Function,
     pub bindings: &'a Bindings,
     pub root: NodeId,
     pub root_ty: NodeOutputType,

@@ -3,7 +3,7 @@
 //! byte range.
 
 use strider_ir::node::{NodeId, NodeOutputId};
-use strider_ir::Graph;
+use strider_ir::{Function, Graph};
 
 use super::decompose::{decompose_sp, SpExpr, SpExprMemo};
 use super::ranges::{ranges_disjoint, store_value_byte_size};
@@ -47,7 +47,7 @@ pub(crate) fn step_through_stack_store(
 /// safe.  The phi disqualifies if any per-predecessor offset (stored in
 /// `Graph::stack_phi_offsets`) overlaps the query range.
 pub(crate) fn step_through_stack_store_phi(
-    graph: &Graph,
+    graph: &Function,
     node: NodeId,
     query_off: i64,
     query_size: i64,
@@ -84,7 +84,7 @@ pub(crate) fn step_through_stack_store_phi(
 /// address uses the same disjointness check; an SP-rooted Phi address
 /// conservatively terminates.
 pub(crate) fn step_through_store(
-    graph: &Graph,
+    graph: &Function,
     node: NodeId,
     sp_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
@@ -166,7 +166,7 @@ mod tests {
             [NodeOutputKind::Memory],
         );
         // DELIBERATELY do NOT call set_stack_phi_offsets.
-        let alias = step_through_stack_store_phi(fg.graph(), phi_node, 0, 8);
+        let alias = step_through_stack_store_phi(&fg, phi_node, 0, 8);
         assert!(
             matches!(alias, AliasStep::MayAlias),
             "empty stack_phi_offsets must yield MayAlias (sound default)"

@@ -94,7 +94,7 @@ fn resolver_mini_ir_passes_graph_invariants_asm_fingerprint_check() {
     // The graph-invariants asm-fingerprint check is unconditional in
     // `validate`.  Every node born from a real pcode insn must carry a
     // non-empty contributor list naming the parent machine instruction.
-    let result = strider_ir::validate::validate(fg.graph(), fg.entry().unwrap());
+    let result = strider_ir::validate::validate(&fg, fg.entry().unwrap());
     assert!(
         result.is_ok(),
         "mini-IR violates Layer-C asm-fingerprint invariant: {:?}",

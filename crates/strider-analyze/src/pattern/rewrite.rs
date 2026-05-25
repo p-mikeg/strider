@@ -4,6 +4,7 @@
 use cranelift_entity::EntityRef;
 use entity_utils::DenseEntitySet;
 use strider_ir::Graph;
+use strider_ir::Function;
 use strider_ir::node::NodeId;
 
 use crate::pattern::error::Result;
@@ -157,47 +158,46 @@ pub fn rewrite_rule(
 /// (targeting `Graph`) for method calls, and uses [`Self::graph_ref`]
 /// / [`Self::graph_mut`] when an explicit `&Graph` / `&mut Graph` is
 /// needed for a free function or trait method.  This prevents
-/// struct-literal rebinding (`ctx.graph = &mut other`) at distance —
-/// the field could previously be aimed at a different graph than
-/// `entry` belongs to, silently corrupting subsequent walks.
+/// struct-literal rebinding at distance — the field could previously be
+/// aimed at a different function than `entry` belongs to, silently
+/// corrupting subsequent walks.
 pub struct RewriteCtx<'g> {
-    pub(crate) graph: &'g mut Graph,
+    pub(crate) graph: &'g mut Function,
     pub(crate) entry: NodeId,
 }
 
-/// Read-only `(&Graph, NodeId)` view used by opt's read-only public
+/// Read-only `(&Function, NodeId)` view used by opt's read-only public
 /// API.  `Copy` and cheap to pass.  Constructible from `&RewriteCtx`
-/// (via `as_view`) or `&Graph` (via
-/// `From<&Graph>`).
+/// (via `as_view`) or `&Function` (via `from_built`).
 #[derive(Clone, Copy)]
 pub struct RewriteCtxView<'g> {
-    pub(crate) graph: &'g Graph,
+    pub(crate) graph: &'g Function,
     pub(crate) entry: NodeId,
 }
 
 impl<'g> RewriteCtx<'g> {
-    /// Constructs a `RewriteCtx` from a raw `(graph, entry)` pair —
+    /// Constructs a `RewriteCtx` from a `(function, entry)` pair —
     /// the rewrite-only path used by `opt::with_rewrite_ctx`,
     /// `strider::rewrite::GraphRewriter::apply_rule`, and similar.
-    pub fn new(graph: &'g mut Graph, entry: NodeId) -> Self {
-        Self { graph, entry }
+    pub fn new(function: &'g mut Function, entry: NodeId) -> Self {
+        Self { graph: function, entry }
     }
 
-    /// Constructs a `RewriteCtx` borrowing from a [`Graph`]'s built
+    /// Constructs a `RewriteCtx` borrowing from a [`Function`]'s built
     /// form (i.e. `entry` is populated).
     ///
     /// # Errors
     ///
-    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// Returns an error if the function has not been built (i.e. `entry`
     /// is `None`).  Use [`Self::new`] when you already have an explicit
-    /// `(graph, entry)` pair.
+    /// `(function, entry)` pair.
     pub fn try_for_built(fn_graph: &'g mut strider_ir::Function) -> anyhow::Result<Self> {
         let entry = fn_graph.entry().ok_or_else(|| {
             anyhow::anyhow!(
                 "RewriteCtx::try_for_built: entry node is not set"
             )
         })?;
-        Ok(Self { graph: fn_graph.graph_mut(), entry })
+        Ok(Self { graph: fn_graph, entry })
     }
 
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
@@ -215,13 +215,19 @@ impl<'g> RewriteCtx<'g> {
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
     {
-        let g: &Graph = self.graph;
+        let g: &Graph = &**self.graph;
         self.preorder().filter(move |&n| pred(g.node_kind(n)))
     }
 
-    /// Read-only access to the wrapped `Graph`.
+    /// Read-only access to the wrapped structural [`Graph`].
     #[must_use]
     pub fn graph_ref(&self) -> &Graph {
+        &**self.graph
+    }
+
+    /// Read-only access to the wrapped [`Function`] (graph + overlay).
+    #[must_use]
+    pub fn function_ref(&self) -> &Function {
         self.graph
     }
 
@@ -241,8 +247,13 @@ impl<'g> RewriteCtx<'g> {
         RewriteCtxView { graph: self.graph, entry: self.entry }
     }
 
-    /// Mutable access to the wrapped `Graph`.
+    /// Mutable access to the wrapped structural [`Graph`].
     pub fn graph_mut(&mut self) -> &mut Graph {
+        &mut **self.graph
+    }
+
+    /// Mutable access to the wrapped [`Function`] (graph + overlay).
+    pub fn function_mut(&mut self) -> &mut Function {
         self.graph
     }
 
@@ -281,6 +292,12 @@ impl<'g> RewriteCtxView<'g> {
         self.graph
     }
 
+    /// Read-only access to the wrapped [`Function`] (graph + overlay).
+    #[must_use]
+    pub fn function_ref(&self) -> &Function {
+        self.graph
+    }
+
     /// Function-entry `NodeId` anchor.
     #[must_use]
     pub fn entry(&self) -> NodeId {
@@ -306,7 +323,7 @@ impl<'g> RewriteCtxView<'g> {
         let entry = fn_graph.entry().ok_or_else(|| {
             anyhow::anyhow!("RewriteCtxView::from_built: entry node is not set")
         })?;
-        Ok(Self { graph: fn_graph.graph(), entry })
+        Ok(Self { graph: fn_graph, entry })
     }
 }
 
@@ -360,20 +377,20 @@ impl<'g> std::ops::Deref for RewriteCtxView<'g> {
     }
 }
 
-// allow Graph methods to be
-// called on `RewriteCtx` directly via Deref.  Mirrors
-// `Graph::Deref<Target=Graph>` so optimizer pass bodies
-// using `ctx.node_kind(_)` / `ctx.create_node(_)` look the same as
-// if they held a `Graph` directly.
+// Allow `Function` overlay methods (asm fingerprints, phi var tags, etc.)
+// to be called on `RewriteCtx` directly via Deref.  `Function` itself
+// derefs to `Graph`, so structural graph methods like `node_kind` /
+// `create_node` are also reachable through the two-step deref chain:
+// `RewriteCtx → Function → Graph`.
 impl<'g> std::ops::Deref for RewriteCtx<'g> {
-    type Target = Graph;
-    fn deref(&self) -> &Graph {
+    type Target = Function;
+    fn deref(&self) -> &Function {
         self.graph
     }
 }
 
 impl<'g> std::ops::DerefMut for RewriteCtx<'g> {
-    fn deref_mut(&mut self) -> &mut Graph {
+    fn deref_mut(&mut self) -> &mut Function {
         self.graph
     }
 }

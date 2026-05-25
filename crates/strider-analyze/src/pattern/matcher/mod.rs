@@ -69,7 +69,7 @@ pub(crate) struct MatcherOptions {
 /// first use via `OnceCell`: the first call pays a one-time preorder
 /// walk to populate `index → NodeId`; subsequent calls are O(1).
 pub struct Matcher<'g> {
-    pub(super) graph: &'g strider_ir::Graph,
+    pub(super) graph: &'g strider_ir::Function,
     pub(super) entry: NodeId,
     pub(crate) options: MatcherOptions,
     function_arg_index: std::cell::OnceCell<FunctionArgIndex>,
@@ -109,14 +109,12 @@ impl<'g> Matcher<'g> {
         let entry = fn_graph.entry().ok_or_else(|| {
             anyhow::anyhow!("Matcher::try_new: entry node is not set")
         })?;
-        Ok(Self::for_graph(fn_graph.graph(), entry))
+        Ok(Self::for_graph(fn_graph, entry))
     }
 
-    /// Creates a new `Matcher` over a raw `(graph, entry)` pair —
-    /// the rewrite-only path.  No `Graph` wrapper required;
-    /// the matcher only ever consults graph + entry.
+    /// Creates a new `Matcher` over a `(function, entry)` pair.
     #[must_use]
-    pub fn for_graph(graph: &'g strider_ir::Graph, entry: NodeId) -> Self {
+    pub fn for_graph(graph: &'g strider_ir::Function, entry: NodeId) -> Self {
         Self {
             graph,
             entry,

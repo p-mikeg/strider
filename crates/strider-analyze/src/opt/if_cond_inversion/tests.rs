@@ -44,7 +44,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     ));
 
     let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(fg.graph_mut(), entry)?;
+    let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed());
 
     // After: cond is the inner CastToBool (the BoolNeg's input was the
@@ -61,10 +61,10 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
 fn idempotent_after_one_application() -> Result<()> {
     let (mut fg, _if_node) = build_if_with_neg_cond()?;
     let entry = fg.entry().unwrap();
-    let first = IfCondInversion.optimize(fg.graph_mut(), entry)?;
+    let first = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(first.changed());
     let entry = fg.entry().unwrap();
-    let second = IfCondInversion.optimize(fg.graph_mut(), entry)?;
+    let second = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(!second.changed(), "second pass must be a no-op");
     Ok(())
 }
@@ -91,12 +91,12 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     let mut changed = true;
     while changed {
         let entry = fg.entry().unwrap();
-        changed = ConstantFold.optimize(fg.graph_mut(), entry)?.changed();
+        changed = ConstantFold.optimize(&mut fg, entry)?.changed();
     }
     // After ConstantFold the cond is no longer `BoolNeg`, so
     // IfCondInversion must NOT fire.  Even-parity → no branch swap.
     let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(fg.graph_mut(), entry)?;
+    let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(
         !r.changed(),
         "IfCondInversion must be a no-op after !!x simplification — even parity preserves direct layout"
@@ -127,7 +127,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     );
 
     let entry = fg.entry().unwrap();
-    IfCondInversion.optimize(fg.graph_mut(), entry)?;
+    IfCondInversion.optimize(&mut fg, entry)?;
 
     let [out0_post, out1_post] = fg.node_outputs_exact::<2>(if_node)?;
     let post_true_consumer = consumer_of(&fg, out0_post);
@@ -178,7 +178,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
         .expect("BoolUnaryOp::Neg present pre-pass");
 
     let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(fg.graph_mut(), entry)?;
+    let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed());
 
     // The BoolNeg's fingerprint MUST have been absorbed into the
@@ -243,7 +243,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     assert!(!fg.asm_fingerprint(if_node_pre).contains(&0x804));
 
     let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(fg.graph_mut(), entry)?;
+    let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed());
 
     // After the pass, BoolNeg's address (0x804) must land on exactly the
