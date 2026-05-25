@@ -110,15 +110,22 @@ fn invert(graph: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     let cond_out = graph.input_output_id(cond_input_id);
     let bool_neg_node = graph.get_node_from_output(cond_out);
     let [inner] = graph.node_inputs_exact::<1>(bool_neg_node)?;
-    // Absorb the BoolNeg's asm-fingerprint into the surviving inner-cond
-    // node BEFORE redirecting the input, so the contributing-asm history
-    // survives even when the BoolNeg becomes dead (no other consumers).
-    // This upholds the asm-fingerprint superset contract: a rewrite that
-    // makes a node dead must transfer its fingerprint to whatever node
-    // takes over its semantic role.
-    let inner_node = graph.get_node_from_output(inner);
-    graph.extend_asm_fingerprint_from(inner_node, bool_neg_node);
+    // Count BoolNeg's consumers BEFORE redirecting: if we are the only
+    // user, BoolNeg becomes dead after the redirect and its
+    // contributing-asm history needs to be absorbed by the inner-cond
+    // node (the new If consumer).  When BoolNeg has other live uses,
+    // those uses still produce the value via BoolNeg's own
+    // fingerprint, so transferring would CONTAMINATE inner_node's
+    // fingerprint with addresses that don't contribute to its value
+    // (false positives violate the contract that a fingerprint names
+    // the asm insns whose lifting or rewrite contributed to that
+    // node's value).
+    let bool_neg_uses_before = graph.output_uses(cond_out).count();
     graph.update_input(cond_input_id, inner);
+    if bool_neg_uses_before == 1 {
+        let inner_node = graph.get_node_from_output(inner);
+        graph.extend_asm_fingerprint_from(inner_node, bool_neg_node);
+    }
 
     // Swap consumers between output[0] (true) and output[1] (false).
     //

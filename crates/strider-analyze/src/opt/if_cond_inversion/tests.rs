@@ -267,3 +267,79 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     );
     Ok(())
 }
+
+/// Regression: when the `BoolNeg(cond)` feeding the `If` has OTHER live
+/// consumers, the inversion MUST NOT absorb the BoolNeg's fingerprint
+/// into the inner-cond producer.  The BoolNeg still produces a live
+/// value for its remaining consumers (their fingerprints attribute via
+/// the BoolNeg as before), so adding BoolNeg's addresses to the inner
+/// cond would create FALSE-POSITIVE attribution — the inner cond does
+/// NOT compute the BoolNeg's value, the BoolNeg does.
+#[test]
+fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Result<()> {
+    let cond_vn = strider_ir_test_utils::reg_vn(0x4000, 1);
+    // Build `if (!cond) { … }` AND a second consumer of the same
+    // `!cond` value (a chained `BoolNeg(BoolNeg(cond))` left
+    // unreachable but still referencing the first BoolNeg's output
+    // — its use-list counts).
+    let (mut fg, _if_node, second_neg_node) = RegisterSet::new()
+        .tracked(cond_vn)
+        .build_if_then_else_returns(|b| {
+            b.set_lift_addr(Some(0x900));
+            let raw = b.read_variable(&cond_vn)?;
+            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            b.set_lift_addr(Some(0x904));
+            let neg_cond =
+                b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+            // Second consumer of the SAME `neg_cond` output.
+            b.set_lift_addr(Some(0x908));
+            let second_neg = b
+                .build_boolean_unary_operation(neg_cond, strider_ir::BoolUnaryOp::Neg)?;
+            let second_neg_node = b.graph().get_node_from_output(second_neg);
+            b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+            Ok((neg_cond, second_neg_node))
+        })?;
+
+    // Locate the first BoolNeg (the one IfCondInversion will redirect
+    // around) and its inner cond producer pre-pass.
+    let bool_neg_node = fg
+        .all_node_ids()
+        .find(|&n| {
+            n != second_neg_node
+                && matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg))
+        })
+        .expect("first BoolNeg present pre-pass");
+    let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
+    let inner_producer_pre = fg.get_node_from_output(bool_neg_input);
+
+    // Sanity-check the fixture: BoolNeg has 2 uses (the If and the
+    // chained second BoolNeg), and inner_producer_pre does NOT carry
+    // 0x904 yet.
+    let bool_neg_outs = fg.node_outputs(bool_neg_node).to_vec();
+    assert_eq!(
+        fg.output_uses(bool_neg_outs[0]).count(),
+        2,
+        "fixture must have the first BoolNeg with 2 consumers (If + second BoolNeg)"
+    );
+    assert!(!fg.asm_fingerprint(inner_producer_pre).contains(&0x904));
+
+    let entry = fg.entry().unwrap();
+    let r = IfCondInversion.optimize(&mut fg, entry)?;
+    assert!(r.changed(), "pass must still fire — the If's cond is BoolNeg(…)");
+
+    // The headline assertion: the first BoolNeg's address (0x904) must
+    // NOT have been absorbed into the inner cond producer.  The
+    // BoolNeg is still live (consumed by second_neg_node), so the
+    // attribution must stay on the BoolNeg itself.
+    assert!(
+        !fg.asm_fingerprint(inner_producer_pre).contains(&0x904),
+        "BoolNeg's address 0x904 must NOT leak into inner_producer when BoolNeg has \
+         remaining consumers (BoolNeg is still live; would be false-positive attribution)"
+    );
+    // Inversely: the BoolNeg's own fingerprint must still carry 0x904.
+    assert!(
+        fg.asm_fingerprint(bool_neg_node).contains(&0x904),
+        "BoolNeg's own fingerprint must still carry its address"
+    );
+    Ok(())
+}
