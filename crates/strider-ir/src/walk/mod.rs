@@ -199,7 +199,7 @@ pub fn region_membership_from_exit(
     use crate::node::NodeKind;
     let seed = graph.get_node_from_output(exit_control);
 
-    // Step 1+2: collect the region's control spine via a backward
+    // (1) collect the region's control spine via a backward
     // control walk, with `Region` as a barrier (include it, don't
     // recurse through its control inputs).
     let mut spine: DenseEntitySet<NodeId> = DenseEntitySet::new();
@@ -222,9 +222,9 @@ pub fn region_membership_from_exit(
         }
     }
 
-    // Step 3: union in all data ancestors of every spine node.  Walk
+    // (2) union in all data ancestors of every spine node.  Walk
     // ONLY non-control inputs — control inputs are the spine's edges
-    // (already handled in step 2 with the Region barrier), and
+    // (already handled in pass 1 with the Region barrier), and
     // following them here would re-cross the barrier from the other
     // side (a `Region` that fed our seed has its control inputs
     // listed alongside its phi inputs).

@@ -898,7 +898,7 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
 
     let sp = sp_vn();
 
-    // Step 1: build a simple function with stack stores before a call.
+    // 1. build a simple function with stack stores before a call.
     // Store order: arg0 first (farther from Call), then anchor (closer to
     // Call), so the backward walk sees: anchor → arg0 → InitialMemory.
     // The anchor at rel=0 triggers is_first_store; then arg0 at rel=4 fills
@@ -927,7 +927,7 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
         Ok(())
     })?;
 
-    // Step 2: normalize (ConstantFold + RedundantPhis) so SP arithmetic is
+    // 2. normalize (ConstantFold + RedundantPhis) so SP arithmetic is
     // in canonical form for AliasSplit / decompose_sp.
     {
         let mut prep = OptimizerPipeline::new();
@@ -937,7 +937,7 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
         prep.run(&mut fg, entry)?;
     }
 
-    // Step 3: manually wire MemProject + MemUnion so the Call's memory
+    // 3. manually wire MemProject + MemUnion so the Call's memory
     //         input arrives through a MemUnion.
     //
     //         Before: InitialMemory → Store(sp+4) → Store(sp+0) → Call[mem]
@@ -1040,12 +1040,12 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
         fg.graph_mut().update_input(call_mem_input_id, union_out);
     }
 
-    // Step 4: validate the manually-wired graph.
+    // 4. validate the manually-wired graph.
     let entry = fg.entry().unwrap();
     strider_ir::validate::validate(&fg, entry)
         .expect("manually-wired graph must pass IR validation");
 
-    // Step 5: run CallStackArgCollect.  Without the MemUnion arm the
+    // 5. run CallStackArgCollect.  Without the MemUnion arm the
     //         walk bails immediately and collects nothing.  With it the
     //         walk routes through MemUnion → Store chain and appends
     //         IntConst(99) as arg 0.

@@ -22,7 +22,7 @@ if hasattr(_ext, "pattern"):
 # __version__ comes from the cdylib.
 __version__ = _ext.__version__
 
-# High-level Python facade (Phase 5 Task 5.2).  Adds:
+# High-level Python facade.  Adds:
 #   * `strider.load(path)` → high-level handle
 #   * `strider.Analysis` — wrapper around a RunResult
 #

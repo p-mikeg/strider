@@ -818,7 +818,7 @@ fn topological_mem_order(
 ) -> Result<Vec<NodeId>> {
     let mut order: Vec<NodeId> = Vec::with_capacity(classified.mem_chain_consumers.len());
 
-    // Phase 1: all MemPhis first, in classifier preorder.  Each
+    // Pass 1 of 2: all MemPhis first, in classifier preorder.  Each
     // MemPhi's value inputs may include back-edges; pass 1 wires the
     // forward edges (resolvable now) and defers back-edge slots.
     for &n in &classified.mem_chain_consumers {
@@ -827,7 +827,7 @@ fn topological_mem_order(
         }
     }
 
-    // Phase 2: non-MemPhi consumers in Kahn topo order over mem-
+    // Pass 2 of 2: non-MemPhi consumers in Kahn topo order over mem-
     // input edges, restricted to non-MemPhi producers (MemPhis are
     // already in `order` and their mem-output's outgoing-heads
     // entries are populated by pass 1's MemPhi handler before any
@@ -901,7 +901,7 @@ fn topological_mem_order(
     // entry-heads when a pred-value isn't in `outgoing_heads` yet,
     // which is sound for the loop-body-into-loop-header back-edge
     // shape — `outgoing_heads[loop_header_MemPhi.out]` was populated
-    // in Phase 1.
+    // in pass 1.
     for &n in &classified.mem_chain_consumers {
         if !order.contains(&n) {
             order.push(n);

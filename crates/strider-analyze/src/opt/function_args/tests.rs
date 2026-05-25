@@ -1088,7 +1088,7 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
 
     let sp = sp32_vn();
 
-    // Step 1: build a simple function with only a Load — no stores.
+    // 1. build a simple function with only a Load — no stores.
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
@@ -1098,7 +1098,7 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
         Ok(())
     })?;
 
-    // Step 2: run ConstantFold + RedundantPhis so the graph is clean.
+    // 2. run ConstantFold + RedundantPhis so the graph is clean.
     {
         use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
         let mut prep = OptimizerPipeline::new();
@@ -1107,7 +1107,7 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
         prep.run_built(&mut fg)?;
     }
 
-    // Step 3: manually wire MemProject + MemUnion so the Load's memory
+    // 3. manually wire MemProject + MemUnion so the Load's memory
     //         input passes through MemUnion rather than going directly to
     //         InitialMemory.
     //
@@ -1153,12 +1153,12 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
         fg.graph_mut().update_input(load_mem_input_id, union_out);
     }
 
-    // Step 4: confirm the graph validates before running the pass.
+    // 4. confirm the graph validates before running the pass.
     let entry = fg.entry().unwrap();
     strider_ir::validate::validate(&fg, entry)
         .expect("manually-wired graph must pass IR validation before FunctionArgDetect");
 
-    // Step 5: run FunctionArgDetect.  Without the MemUnion arm the walk
+    // 5. run FunctionArgDetect.  Without the MemUnion arm the walk
     //         hits MemUnion's _ arm and returns dirty=true, suppressing
     //         arg registration.  With the fix the walk routes through
     //         MemUnion to MemProject to InitialMemory, returning dirty=false.

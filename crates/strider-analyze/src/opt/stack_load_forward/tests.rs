@@ -1270,7 +1270,7 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
 
     let sp = sp32_vn();
 
-    // Step 1: build a simple function with store + load.
+    // 1. build a simple function with store + load.
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
@@ -1282,7 +1282,7 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
         Ok(())
     })?;
 
-    // Step 2: run ConstantFold + RedundantPhis to normalize the graph.
+    // 2. run ConstantFold + RedundantPhis to normalize the graph.
     {
         let mut prep = OptimizerPipeline::new();
         prep.add(ConstantFold);
@@ -1291,7 +1291,7 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
         prep.run(&mut fg, entry)?;
     }
 
-    // Step 3: manually wire MemProject + MemUnion around the Store
+    // 3. manually wire MemProject + MemUnion around the Store
     //         so the Load's memory input goes through MemUnion rather than
     //         directly to Store.
     //
@@ -1356,12 +1356,12 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
         fg.graph_mut().update_input(load_mem_input_id, union_out);
     }
 
-    // Step 4: confirm the graph validates before we forward.
+    // 4. confirm the graph validates before we forward.
     let entry = fg.entry().unwrap();
     strider_ir::validate::validate(&fg, entry)
         .expect("manually-wired graph must pass IR validation before forward pass");
 
-    // Step 5: run StackLoadForward.  Without the MemUnion arm the load
+    // 5. run StackLoadForward.  Without the MemUnion arm the load
     //         would stay; with it the backward walk routes through the
     //         MemUnion to Store(sp+4) and forwards 0xBEEF.
     let fwd = StackLoadForward::new(sp, Endianness::Little);
