@@ -16,6 +16,7 @@
 //! without going through the explicit `.graph()` accessor.
 
 use cranelift_entity::SecondaryMap;
+use rustc_hash::FxHashMap;
 
 use crate::graph::{CcMetadata, Graph, NodeIdRemap, SideTableRemap};
 use crate::node::NodeId;
@@ -60,6 +61,17 @@ pub struct Function {
     /// Source-level varnode tag for lift-time [`crate::node::NodeKind::Phi`]
     /// nodes.  `Some(vn)` = register-identity phi; `None` = anonymous phi.
     pub(crate) phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>,
+
+    /// Maps each calling-convention argument index to the [`NodeId`](s) of the
+    /// underlying carrier nodes: [`crate::node::NodeKind::InitialVar`] for
+    /// register args, [`crate::node::NodeKind::Load`] for stack args.
+    ///
+    /// `Vec<NodeId>` per index because a stack slot may have multiple `Load`
+    /// nodes at the same `sp+K` offset but different widths.  Register args
+    /// have a `Vec` of size 1.
+    ///
+    /// Populated by `FunctionArgDetect`; empty until that pass runs.
+    arg_index_to_nodes: FxHashMap<u32, Vec<NodeId>>,
 }
 
 impl std::ops::Deref for Function {
@@ -101,6 +113,7 @@ impl Function {
             asm_fingerprints: SecondaryMap::new(),
             call_clobbered_overrides: SecondaryMap::new(),
             phi_var_tag: SecondaryMap::new(),
+            arg_index_to_nodes: FxHashMap::default(),
         }
     }
 
@@ -253,6 +266,41 @@ impl Function {
     #[inline]
     pub fn set_call_clobbered_override(&mut self, node_id: NodeId, clobbered: Vec<rsleigh::Vn>) {
         self.call_clobbered_overrides[node_id] = Some(clobbered);
+    }
+
+    // ── arg_index_to_nodes accessors ─────────────────────────────────────
+
+    /// All [`NodeId`]s registered as carriers for argument `index`.
+    ///
+    /// Returns `&[]` if no nodes have been registered for that index.
+    /// Register args have a slice of length 1; stack args may have multiple
+    /// entries (different-width [`crate::node::NodeKind::Load`]s at the same
+    /// `sp+K` offset).
+    #[inline]
+    #[must_use]
+    pub fn arg_index_to_nodes(&self, index: u32) -> &[NodeId] {
+        self.arg_index_to_nodes
+            .get(&index)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Register `node` as the underlying carrier for argument `index`.
+    ///
+    /// Appends to the per-index `Vec`; multiple nodes per index are allowed
+    /// (the stack-args case may register multiple `Load`s at different widths
+    /// for the same offset).
+    #[inline]
+    pub fn register_arg_node(&mut self, index: u32, node: NodeId) {
+        self.arg_index_to_nodes
+            .entry(index)
+            .or_default()
+            .push(node);
+    }
+
+    /// Iterate over all registered argument indices (unordered).
+    #[inline]
+    pub fn arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
+        self.arg_index_to_nodes.keys().copied()
     }
 
     /// Returns the asm-instruction-address fingerprint of `node_id` as a
@@ -453,6 +501,36 @@ mod function_skeleton_tests {
             .create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         f.set_asm_fingerprint(n, vec![0xDEAD_BEEF]);
         assert_eq!(f.asm_fingerprint(n), &[0xDEAD_BEEF]);
+    }
+
+    #[test]
+    fn arg_index_to_nodes_returns_empty_for_unregistered() {
+        let f = Function::new();
+        assert!(f.arg_index_to_nodes(0).is_empty());
+        assert!(f.arg_index_to_nodes(99).is_empty());
+    }
+
+    #[test]
+    fn register_arg_node_supports_multiple_nodes_per_index() {
+        let mut f = Function::new();
+        let n1 = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let n2 = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+
+        // Register two NodeIds for arg index 3 (the stack-args multi-Load case).
+        f.register_arg_node(3, n1);
+        f.register_arg_node(3, n2);
+
+        let nodes = f.arg_index_to_nodes(3);
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes.contains(&n1));
+        assert!(nodes.contains(&n2));
+
+        // arg_indices contains the registered index.
+        assert!(f.arg_indices().any(|i| i == 3));
     }
 }
 
