@@ -308,10 +308,13 @@ so the resolver-bearing dependency stays one-way.
       forked SSA (`Stack` / `Unknown`) via `MemProject` / `MemUnion`
       boundary nodes; also annotates SP-relative `Store` offsets in
       `Function::stack_offsets`.
-    - `StackLoadForward` — forwards values from `StackStore` to
-      subsequent same-offset `Load`.
+    - `StackLoadForward` — forwards values from stack-tagged `Store`
+      (via `Function::stack_offsets`) to subsequent same-offset `Load`.
     - `FunctionArgDetect` (post-pass) — canonicalises register / stack
-      arg reads into `FunctionArg` nodes.
+      arg reads by populating the `Function::arg_index_to_nodes`
+      side-table (carrier `NodeId` is `InitialVar` for register args,
+      `Load` for stack args).  There is no `FunctionArg` `NodeKind`
+      variant.
     - `CallStackArgCollect` (post-pass) — wires positional stack args
       into `Call` nodes.
     - Imperative peephole passes use `pattern::Matcher::find_all`
@@ -326,7 +329,7 @@ so the resolver-bearing dependency stays one-way.
     `build_stable_optimizer_pipeline`,
     `build_destructive_optimizer_pipeline` produce the three pre-canned
     pipelines.
-  - `orchestrator::run(config) -> Result<Graph>` — the
+  - `orchestrator::run(config) -> Result<Function>` — the
     canonical top-level entry, re-exported as
     `strider_analyze::run`.  Build the CFG, lift to IR, run the stable
     optimiser subset, drive the indirect-branch fixed-point loop

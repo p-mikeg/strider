@@ -27,8 +27,10 @@
 //! builder tracks SSA-like variable state per basic block and inserts
 //! [`node::NodeKind::Phi`] nodes automatically at join points.
 //!
-//! The high-level entry point is the `strider-analyze` crate, which
-//! drives [`FunctionBuilder`] from a p-code CFG produced by `rsleigh`.
+//! The high-level entry point is the `strider-analyze` crate's
+//! `orchestrator::run`, which feeds a per-region driver that in turn
+//! drives [`FunctionBuilder`] from the p-code CFG built by `strider-lift`
+//! against `rsleigh`.
 //!
 //! # Key types
 //!

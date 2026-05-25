@@ -159,7 +159,7 @@ for hit in g.find_all(call().capture(c)):
           + ", ".join(f"{a:#x}" for a in addrs))
 ```
 
-`Match.asm_fingerprint` returns `[]` for "structural" node kinds (Entry, InitialMemory, phis, ControlState, FunctionArg) whose existence is synthesised by the IR builder rather than tied to a specific asm instruction.
+`Match.asm_fingerprint` returns `[]` for "structural" node kinds (Entry, InitialMemory, Region, MemPhi, Phi, MemProject, MemUnion, InitialVar) whose existence is synthesised by the IR builder rather than tied to a specific asm instruction.
 
 ### Predicate guards
 
@@ -211,13 +211,13 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 | `KnownBits` | Bit-level zero/one propagation. Folds outputs whose every bit is determined to a constant. |
 | `FlagCmpCanonicalize` | Recognises CPU-flag-tree comparisons (AArch64 NZCV / x86 EFLAGS / Thumb) and rewrites them to high-level `IntCmpOp`. |
 | `IfCondInversion` | Canonicalises `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` so every `If` has a non-`BoolNeg` cond. |
-| `RedundantPhis` | Eliminates `Phi`/`MemPhi`/`ControlState` with a single reachable predecessor.  (The phi's optional source-varnode tag lives in `Graph::phi_var_tag`.) |
+| `RedundantPhis` | Eliminates `Phi`/`MemPhi`/`Region` with a single reachable predecessor.  (The phi's optional source-varnode tag lives in `Graph::phi_var_tag`.) |
 | `DeadBranchElimination` | Removes `If` whose condition is constant; strips dead control edges. |
 | `LoadReadOnly` | Folds `Load`s of constant addresses against a caller-supplied ROM. |
-| `StackStoreDetect` | Converts `Store(InitialVar(SP) + K, …)` into `StackStore { offset: K }`. |
-| `StackLoadForward` | Forwards `StackStore` values to subsequent same-offset `Load`s. |
+| `AliasSplit` | Partitions the unified memory chain into per-alias-class (`Stack` / `Unknown`) forked SSA via `MemProject`/`MemUnion` boundary nodes; populates `Function::stack_offsets` with the SP-relative offset of every stack-tagged `Store`. |
+| `StackLoadForward` | Forwards stack-tagged `Store` values to subsequent same-offset `Load`s. |
 | `CallStackArgCollect` (post-pass) | Collects positional stack args at `Call` sites. |
-| `FunctionArgDetect` (post-pass) | Canonicalises register- and stack-passed arg reads at the function boundary into `FunctionArg`. |
+| `FunctionArgDetect` (post-pass) | Canonicalises register- and stack-passed arg reads at the function boundary by populating `Function::arg_index_to_nodes` (carrier `NodeId` is `InitialVar` for register args, `Load` for stack args).  There is no `FunctionArg` `NodeKind` variant. |
 
 `opt::indirect_branch_resolve` is a module of free-function classifiers (link-register-return, tail call, jump table, stack-array dispatch, plus the `Truncate(IntConst)` / `Extend(IntConst)` arms) and in-place IR editors (`apply_link_register`, `apply_tail_call`).  There is no `Optimizer`-implementing struct — the strider orchestrator calls them directly, outside any pipeline.
 
@@ -235,7 +235,7 @@ A few common surprises when a pattern that "should obviously match" returns no h
 
 4. **`phi()` matches a tagged `Phi` only** (one whose `Graph::phi_var_tag` entry is `Some`, i.e. the lifter-emitted SSA φ for a register-aliased read).  Use `mem_phi()` for the memory-token phi at join points; `value_phi()` for the anonymous value phi `StackLoadForward` synthesises (its `phi_var_tag` is `None`).
 
-5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `ControlState`, `Or(BoolConst(false), x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
+5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `Region`, `Or(BoolConst(false), x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
 
 6. **Width mismatch.**  `int_const(42)` defaults to a "any-width" constant; on a 32-bit comparison your `42` may be lifted as `IntConst(42 : U32)` while your pattern expects `IntConst(42 : U64)`.  Use `int_const(42).with_type(NodeOutputType::U32)` or `signed_int_const(42)` for the typed variant.
 
@@ -265,7 +265,10 @@ let strider = Strider::new(
     CallingConvention::x86_64_systemv()?,
 )?;
 
-let graph = run(Config {
+// `run` returns the fully-optimised `strider_ir::Function`.  Use
+// `function.entry()` for the IR graph entry, `function.to_html(...)` for
+// debug rendering, etc.
+let function = run(Config {
     strider: &strider,
     start_addr: 0x1000_u64.into(),  // MachineInsnAddr
     sleigh,

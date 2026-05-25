@@ -55,7 +55,7 @@
 //! `software_interrupt`) where the kernel can also mutate the user stack
 //! frame.
 //!
-//! # v1 scope and assumptions
+//! # Current scope and assumptions
 //!
 //! * Only `Stack` vs `Unknown` is *address-classifiable* by this pass
 //!   today — the `decompose_sp` test promotes SP-relative addresses to

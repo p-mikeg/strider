@@ -42,17 +42,15 @@ names the same types.
   — resolves register names to `rsleigh::Vn` varnodes.
 - `BuiltCallingConvention` — the resolved version.  Same fields as
   `CallingConvention` but with `Vn`s in place of static strings.
-  Method `positional_arg_layout() -> PositionalArgLayout` produces the
-  DTO below.
 - `PositionalArgLayout` / `PositionalArg` — canonical positional-arg
-  enumeration DTO consumed by `FunctionArgDetect`,
-  `CallStackArgCollect`, and `StackLoadForward`.
+  enumeration DTO consumed by `FunctionArgDetect` and
+  `CallStackArgCollect` (`AliasSplit` and `StackLoadForward` only need
+  `sp_vn`, not the layout).
   Indices `0..arg_passing_regs.len()` are register slots; indices
   `arg_passing_regs.len()..` are stack slots at the convention's
   `stack_arg_offsets`.  Construct via
-  `PositionalArgLayout::from_convention(&cc)` or
-  `BuiltCallingConvention::positional_arg_layout()`.  Single source of
-  truth so every pass sees the same slot order.
+  `PositionalArgLayout::from_convention(&cc)`.  Single source of truth
+  so every pass sees the same slot order.
 - `MissingPresetError` — error returned when a `CallingConvention`
   preset constructor fails to look up its static register names.
 - `call_other_abi::CallOtherAbi` — describes the *implicit* (ISA-fixed,

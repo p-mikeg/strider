@@ -2,17 +2,18 @@
 //!
 //! Both `stack_load_forward::probe` and `function_args::mem_chain_is_dirty`
 //! traverse the memory chain backward from a `mem: NodeOutputId`, treat
-//! `StackStore` / `StackStorePhi` / `Store` as pass-through-or-terminate
-//! steps (delegated to [`crate::opt::sp_expr::step_through_*`]), and treat
-//! `MemPhi` as a fork where every predecessor must be walked and the
-//! per-predecessor verdicts combined.  This module pulls the work-stack
-//! plumbing, the cycle guard, and the MemPhi-fold continuation frame into
-//! one place so the two passes only contribute their per-step classifier
-//! and their verdict-combination policy.
+//! `Store(VnSpace)` (whose stack-relative offset metadata lives in
+//! `Function::stack_offsets` when applicable) as pass-through-or-
+//! terminate steps (delegated to [`crate::opt::sp_expr::step_through_store`]),
+//! and treat `MemPhi` as a fork where every predecessor must be walked
+//! and the per-predecessor verdicts combined.  This module pulls the
+//! work-stack plumbing, the cycle guard, and the MemPhi-fold
+//! continuation frame into one place so the two passes only contribute
+//! their per-step classifier and their verdict-combination policy.
 //!
 //! The walk is stack-safe at any chain depth (no recursion); a long
-//! sequence of disjoint StackStores or non-aliasing Stores costs O(1)
-//! heap per node.
+//! sequence of disjoint stack `Store`s or non-aliasing `Store`s costs
+//! O(1) heap per node.
 //!
 //! See [`MemChainStep`] for the classifier-trait shape and
 //! [`walk_mem_chain`] for the driver entry point.
@@ -31,7 +32,7 @@
 //!
 //! * [`crate::opt::call_stack_args`]'s
 //!   `collect_stack_args_in_chain_order` walks the chain leading into a
-//!   `Call`, accumulating positional `StackStore` data outputs into a
+//!   `Call`, accumulating positional stack-`Store` data outputs into a
 //!   dense-prefix slot table.  It treats `MemPhi` as a chain-terminator
 //!   (never branches), and its per-step decision depends on cross-step
 //!   accumulated state (`prefix_top`, `anchor_base`, `anchor_space`,
@@ -40,7 +41,7 @@
 //!   call site and a `combine_phi` impl that is never invoked.
 //!
 //! * [`crate::opt::stack_load_forward::find_stack_stored_value_at_offset`]
-//!   walks the chain looking for one `StackStore` at a specific
+//!   walks the chain looking for one stack-`Store` at a specific
 //!   SP-relative offset.  It bails on `MemPhi` rather than branching,
 //!   and it memoises EVERY prefix on the way back into a caller-
 //!   supplied `StackStoredValueMemo` — the walker would have to expose
