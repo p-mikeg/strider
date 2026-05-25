@@ -213,15 +213,17 @@ fn match_jump_table_shape(
         mul(var(idx_var), any_int_const(stride_var)),
     ));
     if let Some(m) = ctx.matcher().match_at(load_node, &mul_pat.into()) {
-        // CORRECTNESS — `get_uint` returns `Option<u128>`; the prior
-        // code returned `u64` for both `base` and `stride` via
-        // `int_const_val`, which itself truncates to `u64`.  We mirror
-        // the truncation here.  Real jump-table bases / strides fit in
-        // `u64` on every supported arch.
-        #[allow(clippy::cast_possible_truncation)]
-        let base = m.get_uint(base_var, ctx.graph_ref())? as u64;
-        #[allow(clippy::cast_possible_truncation)]
-        let stride = m.get_uint(stride_var, ctx.graph_ref())? as u64;
+        // `get_uint` returns `Option<u128>`; jump-table bases / strides
+        // are addresses + element widths and must fit in u64 on every
+        // supported arch.  A wide value here is a malformed match —
+        // defer rather than silently routing through a truncated wrong
+        // address.
+        let base = crate::opt::indirect_branch_resolve::u128_to_branch_target(
+            m.get_uint(base_var, ctx.graph_ref())?,
+        )?;
+        let stride = crate::opt::indirect_branch_resolve::u128_to_branch_target(
+            m.get_uint(stride_var, ctx.graph_ref())?,
+        )?;
         let idx_output = m.output(idx_var)?;
         return Some(JumpTableShape {
             base,
@@ -242,8 +244,9 @@ fn match_jump_table_shape(
         shl(var(idx_var), any_int_const(stride_var)),
     ));
     let m = ctx.matcher().match_at(load_node, &shl_pat.into())?;
-    #[allow(clippy::cast_possible_truncation)]
-    let base = m.get_uint(base_var, ctx.graph_ref())? as u64;
+    let base = crate::opt::indirect_branch_resolve::u128_to_branch_target(
+        m.get_uint(base_var, ctx.graph_ref())?,
+    )?;
     let shift = m.get_uint(stride_var, ctx.graph_ref())?;
     // Reject shift amounts >= 64 — the implied stride `1u64 << shift`
     // would overflow / be UB in Rust.  Real jump-table entries are at

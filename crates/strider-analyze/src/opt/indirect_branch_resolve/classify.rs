@@ -86,9 +86,10 @@ pub fn classify_anchor(
         // pcode, so the same address is the only possible runtime
         // target of this BranchIndirect.
         NodeKind::IntConst(k) => {
-            #[allow(clippy::cast_possible_truncation)]
-            let truncated = k as u64;
-            Some(ResolvedTargets::Single(truncated))
+            // Wide constants (high 64 bits set) are never valid branch
+            // targets on any 64-bit ISA — defer to UnresolvedIndirectBranch
+            // rather than silently routing to a truncated wrong address.
+            Some(ResolvedTargets::Single(crate::opt::indirect_branch_resolve::u128_to_branch_target(k)?))
         }
         // SOUND: `InitialVar(vn)` is the function-entry value of
         // varnode `vn`.  When `vn == lr_vn`, the indirect branch
@@ -112,8 +113,10 @@ pub fn classify_anchor(
             for val in inputs.into_iter().skip(1) {
                 match graph.kind_of_output(val) {
                     NodeKind::IntConst(k) => {
-                        #[allow(clippy::cast_possible_truncation)]
-                        targets.push(*k as u64);
+                        // Same wide-const guard as the IntConst arm
+                        // above: defer the whole Phi if any value input
+                        // doesn't fit u64.
+                        targets.push(crate::opt::indirect_branch_resolve::u128_to_branch_target(*k)?);
                     }
                     _ => return None,
                 }

@@ -46,6 +46,18 @@ pub mod stack_array;
 /// `UnresolvedIndirectBranch`) over the pathological enumeration cost.
 pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
+/// Cast a u128 IR constant to a 64-bit **branch target**.  Returns
+/// `None` when the high 64 bits are non-zero — those constants are
+/// never valid jump targets on any 64-bit ISA, and silently truncating
+/// would produce a wrong CFG edge.  Use this anywhere an `IntConst(u128)`
+/// flows directly into a CFG target slot (`ResolvedTargets::Single`,
+/// `Multiple`, jump-table base addresses).
+#[inline]
+#[must_use]
+pub(crate) fn u128_to_branch_target(k: u128) -> Option<u64> {
+    u64::try_from(k).ok()
+}
+
 pub use classify::classify_anchor;
 pub use inplace::{apply_link_register, apply_tail_call};
 pub use jump_table::classify_jump_table;
@@ -105,4 +117,28 @@ pub fn find_placeholder_return_for_anchor(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::u128_to_branch_target;
+
+    #[test]
+    fn u128_to_branch_target_passes_through_u64_range_values() {
+        assert_eq!(u128_to_branch_target(0), Some(0));
+        assert_eq!(u128_to_branch_target(0x1234_5678), Some(0x1234_5678));
+        assert_eq!(u128_to_branch_target(u128::from(u64::MAX)), Some(u64::MAX));
+    }
+
+    #[test]
+    fn u128_to_branch_target_rejects_high_bits_set() {
+        // First u128 value above u64::MAX.
+        assert_eq!(u128_to_branch_target(u128::from(u64::MAX) + 1), None);
+        // Both high bits set.
+        assert_eq!(u128_to_branch_target(u128::MAX), None);
+        // High 64 bits set, low 64 bits zero — common wide-const shape.
+        assert_eq!(u128_to_branch_target(1u128 << 64), None);
+    }
 }
