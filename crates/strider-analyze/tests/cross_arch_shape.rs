@@ -39,6 +39,110 @@ use std::collections::BTreeMap;
 const FN_NAME: &str = "sum_to_n";
 const CASE: &str = "control";
 
+/// Returns a stable, human-readable name for a node kind variant.
+///
+/// The name elides scalar payload that's irrelevant to structural
+/// shape (e.g. the numeric value of an [`NodeKind::IntConst`], or the
+/// varnode of an [`NodeKind::InitialVar`]) but keeps inner operator
+/// payload that *is* a structural property of the source program
+/// (e.g. `IntBinaryOp(Add)` → `"IntBinaryOp(Add)"`).
+fn node_kind_name(k: &NodeKind) -> &'static str {
+    use strider_ir::{
+        BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+        IntBinaryOp, IntCmpOp, IntUnaryOp,
+    };
+    match k {
+        NodeKind::Entry => "Entry",
+        NodeKind::InitialMemory => "InitialMemory",
+        NodeKind::InitialVar(_) => "InitialVar",
+        NodeKind::Region => "Region",
+        NodeKind::MemPhi => "MemPhi",
+        NodeKind::Phi => "Phi",
+        NodeKind::If => "If",
+        NodeKind::Call => "Call",
+        NodeKind::Return => "Return",
+        NodeKind::IndirectBranch => "IndirectBranch",
+        NodeKind::Load(_) => "Load",
+        NodeKind::Store(_) => "Store",
+        NodeKind::IntConst(_) => "IntConst",
+        NodeKind::IntConstWide(_) => "IntConstWide",
+        NodeKind::IntUnaryOp(op) => match op {
+            IntUnaryOp::BitNot => "IntUnaryOp(BitNot)",
+            IntUnaryOp::Neg => "IntUnaryOp(Neg)",
+        },
+        NodeKind::IntBinaryOp(op) => match op {
+            IntBinaryOp::Add => "IntBinaryOp(Add)",
+            IntBinaryOp::Mul => "IntBinaryOp(Mul)",
+            IntBinaryOp::Div => "IntBinaryOp(Div)",
+            IntBinaryOp::Sdiv => "IntBinaryOp(Sdiv)",
+            IntBinaryOp::Rem => "IntBinaryOp(Rem)",
+            IntBinaryOp::Srem => "IntBinaryOp(Srem)",
+            IntBinaryOp::And => "IntBinaryOp(And)",
+            IntBinaryOp::Or => "IntBinaryOp(Or)",
+            IntBinaryOp::Xor => "IntBinaryOp(Xor)",
+            IntBinaryOp::ShiftLeft => "IntBinaryOp(ShiftLeft)",
+            IntBinaryOp::ShiftRight => "IntBinaryOp(ShiftRight)",
+            IntBinaryOp::SShiftRight => "IntBinaryOp(SShiftRight)",
+        },
+        NodeKind::IntCmpOp(op) => match op {
+            IntCmpOp::Equal => "IntCmpOp(Equal)",
+            IntCmpOp::Less => "IntCmpOp(Less)",
+            IntCmpOp::Sless => "IntCmpOp(Sless)",
+            IntCmpOp::Carry => "IntCmpOp(Carry)",
+            IntCmpOp::Scarry => "IntCmpOp(Scarry)",
+            IntCmpOp::Sborrow => "IntCmpOp(Sborrow)",
+        },
+        NodeKind::CastToInt => "CastToInt",
+        NodeKind::Truncate => "Truncate",
+        NodeKind::Popcount => "Popcount",
+        NodeKind::Lzcount => "Lzcount",
+        NodeKind::Extend(op) => match op {
+            ExtendOp::ZeroExtend => "Extend(ZeroExtend)",
+            ExtendOp::SignExtend => "Extend(SignExtend)",
+        },
+        NodeKind::BoolConst(_) => "BoolConst",
+        NodeKind::BoolUnaryOp(op) => match op {
+            BoolUnaryOp::Neg => "BoolUnaryOp(Neg)",
+        },
+        NodeKind::BoolBinaryOp(op) => match op {
+            BoolBinaryOp::And => "BoolBinaryOp(And)",
+            BoolBinaryOp::Or => "BoolBinaryOp(Or)",
+            BoolBinaryOp::Xor => "BoolBinaryOp(Xor)",
+        },
+        NodeKind::CastToBool => "CastToBool",
+        NodeKind::FloatConst(_) => "FloatConst",
+        NodeKind::FloatBinaryOp(op) => match op {
+            FloatBinaryOp::Add => "FloatBinaryOp(Add)",
+            FloatBinaryOp::Mul => "FloatBinaryOp(Mul)",
+            FloatBinaryOp::Div => "FloatBinaryOp(Div)",
+        },
+        NodeKind::FloatUnaryOp(op) => match op {
+            FloatUnaryOp::Neg => "FloatUnaryOp(Neg)",
+            FloatUnaryOp::Abs => "FloatUnaryOp(Abs)",
+            FloatUnaryOp::Sqrt => "FloatUnaryOp(Sqrt)",
+            FloatUnaryOp::Ceil => "FloatUnaryOp(Ceil)",
+            FloatUnaryOp::Floor => "FloatUnaryOp(Floor)",
+            FloatUnaryOp::Round => "FloatUnaryOp(Round)",
+        },
+        NodeKind::FloatCmpOp(op) => match op {
+            FloatCmpOp::Equal => "FloatCmpOp(Equal)",
+            FloatCmpOp::Less => "FloatCmpOp(Less)",
+        },
+        NodeKind::IntToFloat => "IntToFloat",
+        NodeKind::FloatToInt => "FloatToInt",
+        NodeKind::FloatToFloat => "FloatToFloat",
+        NodeKind::IntBitsToFloat => "IntBitsToFloat",
+        NodeKind::FloatBitsToInt => "FloatBitsToInt",
+        NodeKind::CastToFloat => "CastToFloat",
+        NodeKind::CallOther { .. } => "CallOther",
+        NodeKind::SegmentOp { .. } => "SegmentOp",
+        NodeKind::CPoolRef => "CPoolRef",
+        NodeKind::New => "New",
+        NodeKind::MemPartition { .. } => "MemPartition",
+        NodeKind::MemUnion => "MemUnion",
+    }
+}
+
 /// Structural shape of one lifted IR graph, register-/address-/value-
 /// agnostic.  See module doc for what is and isn't captured.
 #[derive(Debug, serde::Serialize)]
@@ -85,16 +189,16 @@ impl Fingerprint {
 /// (e.g. `IntBinaryOp(Add)`) since that's a *structural* property of the
 /// source program, not a register-renaming artefact.
 ///
-/// Delegates to [`NodeKind::as_static_str`] for the common case;
+/// Uses [`node_kind_name`] for the common case;
 /// overrides only for `Phi`, which splits into `VarPhi` / `ValuePhi`
-/// based on the per-node side-table `Graph::phi_var_tag` (the
-/// `as_static_str` method has no graph context).
+/// based on the per-node side-table `Graph::phi_var_tag` (which
+/// `node_kind_name` cannot access without graph context).
 fn kind_bucket(g: &strider_ir::Function, nid: strider_ir::node::NodeId) -> String {
     let k = g.node_kind(nid);
     match k {
         NodeKind::Phi if g.phi_var_tag(nid).is_some() => "VarPhi".to_string(),
         NodeKind::Phi => "ValuePhi".to_string(),
-        _ => k.as_static_str().to_string(),
+        _ => node_kind_name(k).to_string(),
     }
 }
 
