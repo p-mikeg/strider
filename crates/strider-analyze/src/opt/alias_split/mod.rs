@@ -113,6 +113,18 @@ const TERMINAL_CLOBBERS: &[AliasClass] =
 const ACTIVE_PARTITIONS: [AliasClass; 2] =
     [AliasClass::Stack, AliasClass::Unknown];
 
+/// Single source of truth for "has [`AliasSplit`] already run on this
+/// function?".  Downstream passes ([`crate::opt::call_stack_args`],
+/// [`crate::opt::function_args`]) gate their partition-aware fast paths
+/// on this and fall back to the unified-memory path when it returns
+/// `false`.  Looks for any `MemProject` boundary node — the marker
+/// `AliasSplit` deposits at every memory-projection point.
+#[inline]
+#[must_use]
+pub(crate) fn was_partitioned(function: &strider_ir::Function) -> bool {
+    function.has_kind(|k| matches!(k, NodeKind::MemProject))
+}
+
 /// Splits the unified memory chain into one independent SSA chain per
 /// alias-class partition.  See the module-level documentation for the
 /// algorithm and IR shape.

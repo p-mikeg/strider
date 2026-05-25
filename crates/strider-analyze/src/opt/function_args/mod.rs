@@ -35,6 +35,7 @@
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 use strider_ir::AliasClass;
 
+use crate::opt::alias_split::was_partitioned;
 use crate::opt::error::Result;
 use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -232,16 +233,6 @@ fn detect_register_args(
         ctx.function_mut().register_arg_node(i as u32, initial_var);
     }
     Ok(())
-}
-
-/// Returns `true` when the function's graph contains at least one
-/// `MemProject` node — the sign that `AliasSplit` successfully
-/// partitioned this function into per-alias-class chains.  Pre-computed
-/// once per pass invocation to gate the fast paths in
-/// [`detect_stack_args`] and the caller's partition-aware shadow check.
-#[inline]
-fn was_partitioned(function: &strider_ir::Function) -> bool {
-    function.has_kind(|k| matches!(k, NodeKind::MemProject))
 }
 
 /// Fast-path shadow check for functions partitioned by `AliasSplit`.

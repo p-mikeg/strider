@@ -11,19 +11,11 @@ use strider_ir::AliasClass;
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{SpExprMemo, decompose_sp};
+use crate::opt::alias_split::was_partitioned;
 use crate::opt::stack_load_forward::is_stack_partition_input;
 
 #[cfg(test)]
 mod tests;
-
-/// Returns `true` when the function contains at least one `MemProject`
-/// node — the sign that `AliasSplit` successfully partitioned this function.
-/// Pre-computed once per pass invocation to gate the fast path in
-/// [`collect_stack_args_in_chain_order`].
-#[inline]
-fn was_partitioned(function: &strider_ir::Function) -> bool {
-    function.has_kind(|k| matches!(k, NodeKind::MemProject))
-}
 
 /// Fast-path stack-arg collection for functions partitioned by `AliasSplit`.
 ///
