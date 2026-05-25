@@ -149,6 +149,14 @@ pub fn apply_link_register(
 /// well-typed); a real ABI-aware caller passes the placeholder's
 /// pre-edit ABI register values.
 ///
+/// `no_memory_clobber = true` suppresses the Call's memory output so
+/// the new Return wires the *pre-Call* memory edge directly — required
+/// for `__fentry__`-style tracing pre-ambles and any other ABI that
+/// guarantees no memory side-effects through the call (e.g. the
+/// `x86_64_all_preserving` preset).  Mirrors the semantics of
+/// `FunctionBuilder::build_call_with_cc` when its CC carries
+/// `no_memory_clobber`.
+///
 /// # Errors
 ///
 /// Returns an error when `placeholder` is not a
@@ -162,6 +170,7 @@ pub fn apply_tail_call(
     arg_passing_outputs: &[NodeOutputId],
     clobbered_kinds: &[NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
+    no_memory_clobber: bool,
 ) -> Result<NodeId> {
     // Defensive: arg-passing and ret-val outputs must reference ABI
     // register values produced upstream of the placeholder, never the
@@ -232,13 +241,26 @@ pub fn apply_tail_call(
     // Slot 0 = Control, slot 1 = Memory.  The clobbered slots beyond
     // those are produced for downstream consumers (typically empty
     // here because the only consumer is the freshly-spliced Return).
+    //
+    // Memory-preserving CCs (e.g. `x86_64_all_preserving`,
+    // `__fentry__`-style tracing pre-ambles) leave the Call's Memory
+    // output dangling and wire the pre-Call memory edge into the new
+    // Return directly, so LoadReadOnly / StackLoadForward chains stay
+    // intact across the spliced tail call.  Mirrors
+    // `FunctionBuilder::build_call_with_cc`'s `no_memory_clobber` branch
+    // (`builder/call.rs` — same Call output shape; only the
+    // region-memory advance differs).
     let call_outs: Vec<_> = graph.node_outputs(call).to_vec();
     let call_ctrl_out = call_outs[0];
-    let call_mem_out = call_outs[1];
+    let mem_for_return = if no_memory_clobber {
+        memory_in
+    } else {
+        call_outs[1]
+    };
 
     let mut new_return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
     new_return_inputs.push(call_ctrl_out);
-    new_return_inputs.push(call_mem_out);
+    new_return_inputs.push(mem_for_return);
     new_return_inputs.extend_from_slice(ret_val_outputs);
     let new_return = graph.create_node(NodeKind::Return, new_return_inputs, []);
     graph.extend_asm_fingerprint(new_return, &fingerprint);

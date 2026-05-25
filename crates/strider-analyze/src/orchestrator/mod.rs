@@ -715,6 +715,13 @@ fn apply_in_place_edit(
                 region_index,
                 override_cc,
             )?;
+            // Memory-preserving CCs (the override's flag, or the function
+            // default when no override is in play) suppress the spliced
+            // Call's memory clobber so LoadReadOnly / StackLoadForward
+            // chains stay intact across the tail call.
+            let no_memory_clobber = override_cc
+                .map(|cc| cc.no_memory_clobber)
+                .unwrap_or_else(|| strider.calling_convention().no_memory_clobber);
             let new_return = graph.with_rewrite_ctx(|rctx| {
                 apply_tail_call(
                     rctx,
@@ -723,6 +730,7 @@ fn apply_in_place_edit(
                     &ctx.arg_passing_outputs,
                     &ctx.clobbered_kinds,
                     &ctx.ret_val_outputs,
+                    no_memory_clobber,
                 )
             })?;
             // When an override was used, record the per-Call clobber
@@ -855,7 +863,13 @@ impl crate::opt::AnchorCallingContext {
             ctx.clobbered_kinds
                 .push(strider_ir::node::NodeOutputKind::OutputType(ty));
         }
-        for vn in &cc.ret_val_regs {
+        // Include BOTH integer and float return-value regs.  The
+        // naturally-lifted Return (via `FunctionBuilder`) uses
+        // `ret_val_vars()` which combines both, so the synthesised
+        // Return must match that arity — otherwise AArch64 q0/q1,
+        // x86_64 XMM0/XMM1, MIPS f0/f2, PPC f1/f2, ARM d0/d1 slots
+        // silently vanish for indirect-branch-resolved Returns.
+        for vn in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
             let out = read_or_init_var(graph, region, *vn)?;
             ctx.ret_val_outputs.push(out);
         }

@@ -102,7 +102,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0x1234_5678_u64;
-    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[])).expect("apply_tail_call");
+    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
     assert_ne!(
         new_return, return_id,
         "tail-call edit must produce a fresh Return id",
@@ -135,7 +135,7 @@ fn apply_tail_call_returns_node_id_of_new_return() {
     // `exit_control` after the in-place edit.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, &[], &[], &[])).expect("apply_tail_call");
+    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, &[], &[], &[], false)).expect("apply_tail_call");
     assert_ne!(new_return, return_id);
     assert!(matches!(graph.node_kind(new_return), NodeKind::Return));
 }
@@ -148,7 +148,7 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     // `exit_control`, so test it directly.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, &[], &[], &[])).expect("apply_tail_call");
+    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, &[], &[], &[], false)).expect("apply_tail_call");
     let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     let new_ctrl_in = inputs[0];
     let (producer, _idx) = graph.output_definition(new_ctrl_in);
@@ -234,7 +234,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0xdead_beef_u64;
-    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[])).expect("apply_tail_call");
+    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
     let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
     let (call_node, _idx) = graph.output_definition(call_ctrl);
@@ -315,6 +315,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
                 &[arg0, arg1, arg2],
                 &clob_kinds,
                 &[ret_val],
+                false,
             )
         })
         .expect("apply_tail_call");
@@ -367,4 +368,80 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         ret_inputs[2], ret_val,
         "Return's ret-val slot 0 (input #2) must be the threaded ret_val",
     );
+}
+
+#[test]
+fn apply_tail_call_with_no_memory_clobber_wires_pre_call_memory_into_return() {
+    // Pin the `no_memory_clobber = true` shape: mirrors the natural
+    // lifter (`FunctionBuilder::build_call_with_cc`'s `no_memory_clobber`
+    // branch).  The Call still emits `[Control, Memory(None), ...]`
+    // (Call's `expected_signature` requires Memory), but the Memory
+    // output is left dangling and the new Return wires the *pre-Call*
+    // memory edge so LoadReadOnly / StackLoadForward chains stay
+    // intact across the spliced tail call.  Required for
+    // `x86_64_all_preserving`-style tracing pre-ambles where the tail
+    // call provably doesn't touch memory.
+    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&graph);
+    // Record the placeholder's mem input BEFORE the edit — that's the
+    // pre-Call mem edge the new Return should consume.
+    let placeholder_mem_in = graph.nth_input(return_id, 1)
+        .expect("placeholder must have a memory input");
+    let new_return = graph
+        .with_rewrite_ctx(|ctx| {
+            apply_tail_call(
+                ctx,
+                return_id,
+                0xfeed,
+                /* arg_passing_outputs */ &[],
+                /* clobbered_kinds     */ &[],
+                /* ret_val_outputs     */ &[],
+                /* no_memory_clobber   */ true,
+            )
+        })
+        .expect("apply_tail_call(no_memory_clobber=true)");
+    // The Return's memory input must be the pre-Call memory edge, NOT
+    // the Call's Memory output.  This is the load-bearing behavior.
+    let new_mem_in = graph.nth_input(new_return, 1).expect("Return mem input");
+    assert_eq!(
+        new_mem_in, placeholder_mem_in,
+        "Return must wire pre-Call mem directly (skipping the Call's Memory output)"
+    );
+    // The Call's Memory output should have zero uses (dangling — that's
+    // what makes the chain preserved).
+    let ret_ctrl_in = graph.nth_input(new_return, 0).expect("Return ctrl input");
+    let (call_node, _) = graph.output_definition(ret_ctrl_in);
+    let call_outputs: Vec<_> = graph.node_outputs(call_node).to_vec();
+    assert_eq!(call_outputs.len(), 2, "Call has [Control, Memory(None)]");
+    let mem_use_count = graph.output_uses(call_outputs[1]).count();
+    assert_eq!(
+        mem_use_count, 0,
+        "no_memory_clobber: Call's Memory output must be dangling (0 uses)"
+    );
+    strider_ir::validate::validate(&graph, graph.entry().unwrap()).expect("validate after edit");
+}
+
+#[test]
+fn apply_tail_call_without_no_memory_clobber_threads_call_memory_into_return() {
+    // Inverse pin: when no_memory_clobber=false, the Return must wire
+    // the *Call's* Memory output (not the pre-Call mem), so downstream
+    // memory dependencies see the Call as a memory barrier.
+    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&graph);
+    let placeholder_mem_in = graph.nth_input(return_id, 1).expect("mem in");
+    let new_return = graph
+        .with_rewrite_ctx(|ctx| {
+            apply_tail_call(ctx, return_id, 0xbabe, &[], &[], &[], false)
+        })
+        .expect("apply_tail_call(no_memory_clobber=false)");
+    let new_mem_in = graph.nth_input(new_return, 1).expect("ret mem");
+    assert_ne!(
+        new_mem_in, placeholder_mem_in,
+        "default mode: Return mem must come from the Call, not the pre-Call edge"
+    );
+    let ret_ctrl_in = graph.nth_input(new_return, 0).expect("ret ctrl");
+    let (call_node, _) = graph.output_definition(ret_ctrl_in);
+    let call_outs: Vec<_> = graph.node_outputs(call_node).to_vec();
+    assert_eq!(new_mem_in, call_outs[1], "Return mem must equal Call's Memory output");
+    strider_ir::validate::validate(&graph, graph.entry().unwrap()).expect("validate");
 }
