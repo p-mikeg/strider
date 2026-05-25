@@ -165,7 +165,7 @@ impl Graph {
     /// output is not a `Memory(_)` slot.
     ///
     /// Used by the `AliasSplit` optimization to retype the memory
-    /// outputs of `Store` / `StackStore` / `StackStorePhi` / `MemPhi`
+    /// outputs of `Store` / `MemPhi`
     /// nodes that fall inside a single-alias-class subgraph.  The
     /// cacheable owner's stale dedup-cache entry is evicted *before*
     /// the mutation (same discipline as [`Graph::update_input`]) so a

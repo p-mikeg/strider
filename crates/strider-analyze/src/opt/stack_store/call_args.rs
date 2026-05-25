@@ -112,20 +112,10 @@ fn collect_stack_args_in_chain_order(
     loop {
         let node = ctx.get_node_from_output(cur);
         let (offset, space, base, data, prev_mem) = match *ctx.node_kind(node) {
-            NodeKind::StackStore { offset, space } => {
-                let inputs = ctx.node_inputs(node);
-                (offset, space, inputs[1], inputs[2], inputs[0])
-            }
-            // A plain `Store` survived `StackStoreDetect` either because
-            // its address didn't decompose to `sp + K` (so it doesn't
-            // alias the stack-arg space) or because it has a different
-            // SP base.  Decompose to decide:
-            //   * `None`: provably non-aliasing — walk through the
-            //     Store's memory predecessor and keep collecting.
-            //   * `Some(_)`: SP-rooted but somehow still a `Store` (rare;
-            //     would mean a different SP version or a non-canonical
-            //     form) — terminate conservatively.
-            NodeKind::Store(_) => {
+            // Raw `Store` — decompose the address to determine if it's
+            // SP-relative.  If it is, treat it as a stack-arg store and
+            // collect it; if not, pass through (non-aliasing).
+            NodeKind::Store(space) => {
                 let inputs = ctx.node_inputs(node);
                 // Store inputs: [memory, addr, data].  Skip if shape is
                 // unexpected (defensive).
@@ -140,7 +130,14 @@ fn collect_stack_args_in_chain_order(
                         cur = prev;
                         continue;
                     }
-                    Some(_) => return dense_prefix(slots),
+                    Some(crate::opt::sp_expr::SpExpr::Terminal { base, offset }) => {
+                        // SP-relative Store — treat like a stack-arg store.
+                        (offset, space, base, inputs[2], prev)
+                    }
+                    Some(crate::opt::sp_expr::SpExpr::Phi { .. }) => {
+                        // SP-rooted Phi address: conservatively terminate.
+                        return dense_prefix(slots);
+                    }
                 }
             }
             // `MemPartition { partition }` — boundary inserted by AliasSplit

@@ -88,27 +88,6 @@ pub enum NodeKind {
     /// Store to the given address space.
     Store(rsleigh::VnSpace),
 
-    // ── Stack-slot stores (produced by StackStoreDetect) ──────────────────────
-    /// Store whose address has been resolved to `base + offset`, where `base`
-    /// is an SP-rooted node (either `InitialVar(stack_ptr)` or a
-    /// `VarPhi(stack_ptr)` that could not be further reduced — typically
-    /// a loop-header SP phi with a back-edge to itself).
-    ///
-    /// Inputs: `[memory, base, data]`.  Outputs: `[Memory]`.
-    ///
-    /// The base is tracked explicitly so that stores with identical offsets
-    /// taken from different SP versions are not conflated.
-    StackStore {
-        space: rsleigh::VnSpace,
-        offset: i64,
-    },
-    /// Store whose address is an SP-phi of known per-branch offsets.
-    /// Inputs: `[phi_token, memory, data]`.  Outputs: `[Memory]`.
-    /// The per-branch offsets are stored in
-    /// [`Graph::stack_phi_offsets`](crate::Graph::stack_phi_offsets) rather
-    /// than inline so that `NodeKind` remains `Copy`.
-    StackStorePhi { space: rsleigh::VnSpace },
-
     // ── Memory partition boundary nodes (inserted by AliasSplit) ─────────────
     /// Memory partition split boundary.  Projects partition `partition`
     /// out of unified memory.  Inserted by the AliasSplit optimization
@@ -289,8 +268,6 @@ impl NodeKind {
             | Self::CallOther { .. }
             | Self::Load(..)
             | Self::Store(..)
-            | Self::StackStore { .. }
-            | Self::StackStorePhi { .. }
             | Self::MemPartition { .. }
             | Self::MemUnion
             | Self::IntUnaryOp(..)
@@ -337,7 +314,6 @@ impl NodeKind {
             Self::If
             | Self::Load(..)
             | Self::Store(..)
-            | Self::StackStore { .. }
             | Self::IntConst(..)
             | Self::IntConstWide(..)
             | Self::IntUnaryOp(..)
@@ -373,7 +349,6 @@ impl NodeKind {
             // Phis (per-region identity matters; inputs added incrementally).
             | Self::Phi
             | Self::MemPhi
-            | Self::StackStorePhi { .. }
             // Control-flow terminators / call-shaped (each occurrence is
             // a distinct event).
             | Self::Return
@@ -412,7 +387,6 @@ impl NodeKind {
             | Self::Region
             | Self::Phi
             | Self::MemPhi
-            | Self::StackStorePhi { .. }
             // Memory partition boundaries: synthetic boundary nodes whose
             // fingerprints are inherited from contributing writes via the
             // superset-only contract.
@@ -423,7 +397,6 @@ impl NodeKind {
             Self::If
             | Self::Load(..)
             | Self::Store(..)
-            | Self::StackStore { .. }
             | Self::IntConst(..)
             | Self::IntConstWide(..)
             | Self::IntUnaryOp(..)
@@ -455,7 +428,6 @@ impl NodeKind {
             | Self::CallOther { .. }
             | Self::CPoolRef
             | Self::New => false,
-
         }
     }
 
@@ -495,8 +467,6 @@ impl NodeKind {
             Self::IndirectBranch => "IndirectBranch",
             Self::Load(_) => "Load",
             Self::Store(_) => "Store",
-            Self::StackStore { .. } => "StackStore",
-            Self::StackStorePhi { .. } => "StackStorePhi",
             Self::IntConst(_) => "IntConst",
             Self::IntConstWide(_) => "IntConstWide",
             Self::IntUnaryOp(op) => match op {

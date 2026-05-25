@@ -27,17 +27,6 @@ pub fn vn_to_display_name<R: MemReader>(
     Ok(vn.ctx_fmt(sleigh, &regs).to_string())
 }
 
-/// Formats a signed SP-relative offset so that the sign is always shown
-/// (e.g. `0` → ` + 0`, `-4` → ` - 4`, `8` → ` + 8`).  Used by the StackStore
-/// / StackStorePhi labels.
-fn signed_offset(o: i64) -> String {
-    if o < 0 {
-        format!(" - {}", -(o as i128))
-    } else {
-        format!(" + {o}")
-    }
-}
-
 impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     fn vn_to_name(&self, vn: &rsleigh::Vn) -> io::Result<String> {
         vn_to_display_name(self.sleigh, vn).map_err(|e| io::Error::other(e.to_string()))
@@ -154,28 +143,6 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 let ty = self.input_type_suffix(node, 2, " ");
                 format!("Store{ty}\n→ {space}")
             }
-            NodeKind::StackStore { space, offset } => {
-                let space = self.pretty_vnspace(*space);
-                // data is input 2; memory and base are 0 and 1
-                let ty = self.input_type_suffix(node, 2, " ");
-                format!("StackStore{ty}\n→ {space}[sp{}]", signed_offset(*offset))
-            }
-            NodeKind::StackStorePhi { space } => {
-                let space = self.pretty_vnspace(*space);
-                let ty = self.input_type_suffix(node, 2, " ");
-                let offsets = self.function.stack_phi_offsets(node);
-                let offsets_str = if offsets.is_empty() {
-                    "?".to_string()
-                } else {
-                    offsets
-                        .iter()
-                        .map(|o| format!("sp{}", signed_offset(*o)))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                format!("φ StackStore{ty}\n→ {space}[{offsets_str}]")
-            }
-
             // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => {
                 let from = self.input_type_str(node, 0);
@@ -299,9 +266,8 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
 
-    /// Emits an `InitialVar` node at the given dot id, for inline duplication
-    /// as the SP-base of `StackStore` consumers.  Keeps the visual style
-    /// identical to the shared `InitialVar` rendering.
+    /// Emits an `InitialVar` node at the given dot id.  Keeps the visual
+    /// style identical to the shared `InitialVar` rendering.
     pub(super) fn emit_initial_var_node(
         &self,
         node: NodeId,

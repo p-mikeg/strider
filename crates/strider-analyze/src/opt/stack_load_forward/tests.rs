@@ -1,7 +1,7 @@
 use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
-use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use strider_ir::{AliasClass};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
@@ -54,9 +54,9 @@ fn find_reachable_anonymous_phi(
 /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes
 /// and the return sources from the stored constant.
 /// Stress test for the iterative `probe`: a long chain of disjoint
-/// StackStores between an early store and a load that targets it.
+/// SP-relative stores between an early store and a load that targets it.
 /// The recursive version this replaces would burn one stack frame
-/// per StackStore in the chain — pathological input would
+/// per store in the chain — pathological input would
 /// stack-overflow.  The iterative worklist must complete on any
 /// chain depth.
 #[test]
@@ -80,7 +80,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
         b.build_store(target_addr, target_val, rsleigh::VnSpace::RAM)?;
 
         // CHAIN_LEN disjoint stores at increasing offsets.  Each is
-        // a fresh StackStore in the memory chain that the probe must
+        // a fresh SP-relative store in the memory chain that the probe must
         // walk past to reach the target store.
         for i in 1..=CHAIN_LEN {
             let off = b.build_int_const(((i * 4) as u64) + 8, NodeOutputType::U32)?;
@@ -137,7 +137,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
 
 /// A non-aliasing store at a different offset sits between the target
 /// store and the load.  The walker must step past it and still forward
-/// the earlier `StackStore{+4}`'s value to the load.
+/// the `Store(sp+4)` value to the load.
 #[test]
 fn forward_skips_non_aliasing_store() -> Result<()> {
 
@@ -166,7 +166,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
-        "Load[sp+4] should forward past the non-aliasing StackStore{{+12}}"
+        "Load[sp+4] should forward past the non-aliasing Store(sp+12)"
     );
     Ok(())
 }
@@ -459,7 +459,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
 /// offsets but share an earlier store at `sp+4` in the entry block.
 /// This forces the MemPhi at the merge to have distinct per-predecessor
 /// memory inputs (so it can't collapse into a single value) while both
-/// resolver walks still bottom out on the same `StackStore{+4}`'s data.
+/// resolver walks still bottom out on the same `Store(sp+4)`'s data.
 /// The dedup path in `resolve()` must then skip the ValuePhi synthesis
 /// and return the shared data output directly.
 #[test]
@@ -535,8 +535,6 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
 /// running to canonicalise the encodings first.
 #[test]
 fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
-    use crate::opt::{OptimizerPipeline, RedundantPhis, StackStoreDetect};
-
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
@@ -554,10 +552,10 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     })?;
 
     // Intentionally omit `ConstantFold` so both encodings reach
-    // `decompose_sp` as-lifted.
+    // `decompose_sp` as-lifted.  StackLoadForward's `Store` arm
+    // decomposes addresses directly.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run_built(&mut fg)?;
 
@@ -582,8 +580,8 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
 
 /// Real-world pattern from `fixtures/test.c::struct_test` at `-O0 -m32`:
 /// the prologue spills a callee-saved register / arg to a 4-byte stack slot
-/// via `StackStore u32`, then the body reads a single byte of that slot via
-/// `Load u8` at the same SP offset.  The load is narrower than the store,
+/// via `Store u32` at sp-relative offset, then the body reads a single byte
+/// via `Load u8` at the same SP offset.  The load is narrower than the store,
 /// but its bytes are fully contained in the stored value — forwarding must
 /// emit a `Truncate(stored_u32, u8)` (which `ConstantFold` then folds to a
 /// byte constant when the stored value is itself a constant).
@@ -630,7 +628,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
 }
 
 /// As above but the load takes two bytes: `Load u16` at the matching
-/// offset of a `StackStore u32`.  Folds to the low 16 bits of the stored
+/// offset of a `Store u32`.  Folds to the low 16 bits of the stored
 /// constant — `0xBEEF` for `0xDEADBEEF`.  Guards the u16 case independently
 /// because the analyzer emits both for `struct_test`'s short/char reads.
 #[test]
@@ -681,8 +679,6 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
 /// structural assertion.
 #[test]
 fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
-    use crate::opt::{OptimizerPipeline, RedundantPhis, StackStoreDetect};
-
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
@@ -698,7 +694,6 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Big));
     pipeline.run_built(&mut fg)?;
 
@@ -791,13 +786,12 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    // Normalize the graph (Store → StackStore, single-pred phi collapse)
-    // BEFORE measuring the leak baseline, so that the SSD-introduced node
-    // changes don't show up as a "leak" attributable to SLF.
+    // Normalize the graph (single-pred phi collapse) BEFORE measuring the
+    // leak baseline so that prep-introduced node changes don't show up as
+    // a "leak" attributable to SLF.
     let mut prep = OptimizerPipeline::new();
     prep.add(ConstantFold);
     prep.add(RedundantPhis);
-    prep.add(StackStoreDetect::new(sp));
     let entry = fg.entry().unwrap();
     prep.run(&mut fg, entry)?;
 
@@ -845,8 +839,8 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
 // ── public helper for the indirect-branch classifier ─────────────
 //
 // `find_stack_stored_value_at_offset` walks the memory chain backward from
-// a given `mem` looking for a `StackStore { offset == requested }` whose
-// value type matches the caller's expectation.  Used by the
+// a given `mem` looking for a `Store(sp+offset)` whose value type matches
+// the caller's expectation.  Used by the
 // indirect-branch classifier to look up entries of a stack-array of label
 // addresses one offset at a time (computed-goto via local stack
 // array).  These tests pin the helper's contract in isolation, before the
@@ -871,14 +865,11 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
         Ok(())
     })?;
 
-    // Run StackStoreDetect so the raw Store becomes a StackStore (the helper
-    // matches StackStore, not raw Store, mirroring probe's primary arm).
-    // Run only StackStoreDetect (not StackLoadForward) so the load + its
-    // memory input survive for inspection.
+    // Run only ConstantFold + RedundantPhis (not StackLoadForward) so the
+    // load + its memory input survive for inspection.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.run_built(&mut fg)?;
 
     // Reach the surviving Load and use its memory-input as the chain root.
@@ -899,13 +890,13 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    let value = result.expect("helper should find StackStore at offset -24");
+    let value = result.expect("helper should find Store at offset -24");
     // The found value must be the stored constant 0xCAFE.
     assert_eq!(fg.int_const_val(value), Some(0xCAFE));
     Ok(())
 }
 
-/// Walks past a non-aliasing intermediate StackStore (different offset)
+/// Walks past a non-aliasing intermediate SP-relative store (different offset)
 /// and finds the requested-offset store.
 #[test]
 fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
@@ -932,7 +923,6 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.run_built(&mut fg)?;
 
     let load = fg
@@ -991,7 +981,6 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.run_built(&mut fg)?;
 
     let load = fg
@@ -1015,8 +1004,8 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     Ok(())
 }
 
-/// Aliasing intermediate StackStore (overlaps the requested offset) is the
-/// LIVE value at that slot — the helper returns the live store's value, not
+/// Aliasing intermediate SP-relative store (overlaps the requested offset) is
+/// the LIVE value at that slot — the helper returns the live store's value, not
 /// the older one.
 #[test]
 fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Result<()> {
@@ -1039,7 +1028,6 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.run_built(&mut fg)?;
 
     let load = fg
@@ -1087,7 +1075,6 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.run_built(&mut fg)?;
 
     let load = fg
@@ -1144,7 +1131,6 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.run_built(&mut fg)?;
 
     let load = fg
@@ -1185,17 +1171,17 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
 /// After `AliasSplit` runs, the memory chain from the `Load`'s
 /// perspective is:
 ///
-///   `Load[sp+4]` ← `StackStore{+4}` ← `MemPartition(Stack)` ← `InitialMemory`
+///   `Load[sp+4]` ← `Store(sp+4)` ← `MemPartition(Stack)` ← `InitialMemory`
 ///
-/// With a disjoint `StackStore{+8}` after `MemPartition`, the backward
-/// walk passes through `StackStore{+8}` (disjoint, skip), then hits
+/// With a disjoint `Store(sp+8)` after `MemPartition`, the backward
+/// walk passes through `Store(sp+8)` (disjoint, skip), then hits
 /// `MemPartition` — previously the `_` arm returned `Verdict(None)`,
 /// causing the load to stay.  Now the walk passes through `MemPartition`
 /// to `InitialMemory` without finding a matching store, confirming the
 /// boundary is traversed rather than treated as an opaque barrier.
 ///
 /// We also confirm the simple case — load at the same offset as the
-/// store — where the walk matches `StackStore{+4}` immediately (before
+/// store — where the walk matches `Store(sp+4)` immediately (before
 /// even reaching `MemPartition`), giving full forwarding.
 #[test]
 fn stack_load_forward_walks_through_mempartition() -> Result<()> {
@@ -1213,15 +1199,13 @@ fn stack_load_forward_walks_through_mempartition() -> Result<()> {
         Ok(())
     })?;
 
-    // Pipeline: ConstantFold → RedundantPhis → StackStoreDetect →
-    //           AliasSplit → StackLoadForward.
+    // Pipeline: ConstantFold → RedundantPhis → AliasSplit → StackLoadForward.
     // AliasSplit inserts `MemPartition(Stack)` right after InitialMemory
     // and `MemUnion` before the Return.  After this, the Load's backward
-    // chain passes through a StackStore{+4} then a MemPartition node.
+    // chain passes through a Store(sp+4) then a MemPartition node.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(AliasSplit::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
 
@@ -1260,21 +1244,20 @@ fn stack_load_forward_walks_through_mempartition() -> Result<()> {
 ///
 /// Graph constructed manually to exercise the `MemUnion` arm directly:
 ///
-///   `InitialMemory → MemPartition(Stack) → StackStore{+4} → MemUnion → Load{+4}`
+///   `InitialMemory → MemPartition(Stack) → Store(sp+4) → MemUnion → Load{sp+4}`
 ///
-/// The `MemUnion` has a single Stack-partition input (from `StackStore`).
+/// The `MemUnion` has a single Stack-partition input (from `Store`).
 /// The `Load`'s memory input is the `MemUnion` output (`Memory(None)`).
 /// Without the new arm, the walk bails on `MemUnion` and the load stays.
 /// With the fix, the walk routes through the Stack-partition input to
-/// `StackStore{+4}`, finds the matching store, and forwards the value.
+/// `Store(sp+4)`, finds the matching store, and forwards the value.
 #[test]
 fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     let sp = sp32_vn();
 
-    // Step 1: build a simple function with store + load so we have a
-    //         StackStore in the graph after StackStoreDetect.
+    // Step 1: build a simple function with store + load.
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
@@ -1286,25 +1269,23 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
         Ok(())
     })?;
 
-    // Step 2: run ConstantFold + RedundantPhis + StackStoreDetect so
-    //         the Store is promoted to StackStore.
+    // Step 2: run ConstantFold + RedundantPhis to normalize the graph.
     {
         let mut prep = OptimizerPipeline::new();
         prep.add(ConstantFold);
         prep.add(RedundantPhis);
-        prep.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
         prep.run(&mut fg, entry)?;
     }
 
-    // Step 3: manually wire MemPartition + MemUnion around the StackStore
+    // Step 3: manually wire MemPartition + MemUnion around the Store
     //         so the Load's memory input goes through MemUnion rather than
-    //         directly to StackStore.
+    //         directly to Store.
     //
-    //         Before manual wiring (after StackStoreDetect):
-    //           InitialMemory → StackStore{+4} → Load[mem]
+    //         Before manual wiring (after ConstantFold + RedundantPhis):
+    //           InitialMemory → Store(sp+4) → Load[mem]
     //         After manual wiring:
-    //           InitialMemory → MemPartition(Stack) → StackStore{+4} → MemUnion → Load[mem]
+    //           InitialMemory → MemPartition(Stack) → Store(sp+4) → MemUnion → Load[mem]
     {
         // Locate nodes before any mutation.
         let im_node = fg
@@ -1313,8 +1294,8 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
             .expect("InitialMemory must exist");
         let ss_node = fg
             .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::StackStore { .. }))
-            .expect("StackStore must exist after StackStoreDetect");
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+            .expect("Store must exist");
         let load_node = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -1335,18 +1316,18 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
         );
         let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
 
-        // Rewire StackStore's memory input (slot 0) to consume MemPartition
+        // Rewire Store's memory input (slot 0) to consume MemPartition
         // output instead of InitialMemory output.
         let ss_mem_input_id = fg.graph().node_input_id_at(ss_node, 0).unwrap();
         fg.graph_mut().update_input(ss_mem_input_id, part_out);
 
-        // Retype StackStore's memory output to Memory(Some(stack_part)).
+        // Retype Store's memory output to Memory(Some(stack_part)).
         let ss_mem_out: NodeOutputId = fg.graph().memory_output_of(ss_node).unwrap();
         fg.graph_mut()
             .set_memory_partition(ss_mem_out, Some(stack_part))
             .unwrap();
 
-        // Create MemUnion consuming the StackStore's partition-typed output.
+        // Create MemUnion consuming the Store's partition-typed output.
         // Output: Memory(None) (unified).
         let union_node = fg.create_node_attributed(
             NodeKind::MemUnion,
@@ -1368,7 +1349,7 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
 
     // Step 5: run StackLoadForward.  Without the MemUnion arm the load
     //         would stay; with it the backward walk routes through the
-    //         MemUnion to StackStore{+4} and forwards 0xBEEF.
+    //         MemUnion to Store(sp+4) and forwards 0xBEEF.
     let fwd = StackLoadForward::new(sp, Endianness::Little);
     fwd.optimize(&mut fg, entry)?;
 

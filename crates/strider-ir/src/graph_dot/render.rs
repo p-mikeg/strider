@@ -5,24 +5,15 @@ use super::{GraphDotDumper, GraphDotDumperState, edge_style, node_fillcolor, nod
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
 
-/// Returns `true` when every use of `node`'s single output is the SP input of
-/// a `StackStore`/`StackStorePhi`, which the renderer inlines as a per-consumer
-/// virtual node.  Also `true` when the output has no uses at all — either
-/// way, drawing the standalone node leaves an edgeless island beside the
-/// graph.
+/// Returns `true` when the node's single output has no uses.  In that case,
+/// drawing the standalone node leaves an edgeless island beside the graph.
 fn all_uses_go_through_inline(graph: &Graph, node: NodeId) -> bool {
     let outputs = graph.node_outputs(node);
     if outputs.len() != 1 {
         return false;
     }
     let out = outputs[0];
-    graph.output_uses(out).all(|(consumer, idx)| {
-        idx == 1
-            && matches!(
-                graph.node_kind(consumer),
-                NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. }
-            )
-    })
+    graph.output_uses(out).count() == 0
 }
 
 impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
@@ -102,13 +93,10 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         if kind.is_const() {
             return Ok(None);
         }
-        // An `InitialVar` whose sole consumer is a
-        // `StackStore`/`StackStorePhi` SP input is rendered inline as
-        // a virtual copy beside each consumer (see
-        // `inline_initial_var` below).  Emitting the real node in
-        // that case leaves it floating edgeless, so skip it.
+        // An `InitialVar` with no uses is rendered as floating edgeless,
+        // so skip it.
         if matches!(kind, NodeKind::InitialVar(_))
-            && all_uses_go_through_inline(self.function,node)
+            && all_uses_go_through_inline(self.function, node)
         {
             return Ok(None);
         }
@@ -208,16 +196,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         }
         let parent_kind = *self.function.node_kind(parent_id);
 
-        // Inline the SP `InitialVar` into each
-        // StackStore/StackStorePhi consumer: otherwise every stack
-        // store edges back to a single shared node, which turns the
-        // graph into a visual hub.
-        let inline_initial_var = matches!(parent_kind, NodeKind::InitialVar(_))
-            && matches!(
-                kind,
-                NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. }
-            )
-            && idx == 1;
+        let inline_initial_var = false;
 
         // If the producing output has a virtual node, connect from
         // it.  For clobbered Call outputs (index >= 2), create the

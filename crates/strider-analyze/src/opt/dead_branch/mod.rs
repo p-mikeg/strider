@@ -157,28 +157,8 @@ fn try_eliminate_dead_branch(
             // `phi_input_idx < phi_len` / `dead_idx < region_len` guards catch
             // per-consumer indices already shifted by an earlier removal.
             //
-            // Skip `StackStorePhi` consumers — they have fixed arity 3
-            // `[ctrl, mem, data]` (not per-predecessor) and their
-            // per-predecessor stack offsets live in
-            // `Graph::stack_phi_offsets` keyed by phi position.  Removing
-            // input `dead_idx+1` here would violate the fixed-arity
-            // invariant; the corresponding offset is patched separately.
-            // Triggers only in the SP-divergent-branches case — typical
-            // ABI-compliant functions don't synthesise a `VarPhi(sp)` at
-            // the join (the InitialVar(sp) flows through unchanged) so a
-            // `StackStorePhi` never appears on a phi-token derived from
-            // a const-If's dead branch.  Guarded for defense-in-depth
-            //.
             let phi_input_idx = dead_idx + 1;
             for phi_node in phi_nodes {
-                if matches!(*ctx.node_kind(phi_node), NodeKind::StackStorePhi { .. }) {
-                    let mut offsets = ctx.stack_phi_offsets(phi_node).to_vec();
-                    if (dead_idx as usize) < offsets.len() {
-                        offsets.remove(dead_idx as usize);
-                        ctx.set_stack_phi_offsets(phi_node, offsets);
-                    }
-                    continue;
-                }
                 let phi_len = ctx.node_inputs(phi_node).len() as u32;
                 if phi_input_idx < phi_len {
                     ctx.remove_node_input(phi_node, phi_input_idx)?;

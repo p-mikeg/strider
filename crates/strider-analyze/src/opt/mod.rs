@@ -27,8 +27,7 @@
 //! | Pass | What it does |
 //! |------|-------------|
 //! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
-//! | [`StackStoreDetect`] | Promotes SP-relative `Store` to `StackStore { offset }` |
-//! | [`StackLoadForward`] | Forwards values from `StackStore` to subsequent same-offset `Load` |
+//! | [`StackLoadForward`] | Forwards values from SP-relative `Store` to subsequent same-offset `Load` |
 //! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_nodes` side-table |
 //! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
 //!
@@ -80,7 +79,7 @@ pub use strider_ir::ReadOnlyMemory;
 pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
-pub use stack_store::{CallStackArgCollect, StackStoreDetect};
+pub use stack_store::CallStackArgCollect;
 /// Stable subset of the default pipeline — passes whose rewrites survive
 /// the addition of new phi inputs in a later strider fixed-point
 /// iteration.  Used while the IR `Graph` is still growing under the

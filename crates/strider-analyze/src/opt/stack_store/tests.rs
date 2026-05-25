@@ -2,262 +2,10 @@ use super::*;
 use anyhow::anyhow;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
-use crate::opt::test_support::count;
 use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use strider_ir::{AliasClass, Graph, IntBinaryOp};
-use strider_ir_test_utils::{sp_vn_x86 as sp_vn, RegisterSet};
-
-/// Simple straight-line program: `*(sp - 4) = 0x11; return *(sp - 4)`.  After
-/// `ConstantFold` reassociates the address to `sp + 0xFFFFFFFC`, the
-/// pass should replace the `Store` with a `StackStore { offset: -4 }`.
-/// The trailing `Load` keeps the memory chain alive so `RedundantPhis`
-/// doesn't detach the store as dead.
-#[test]
-fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
-    let sp = sp_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr =
-            b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(&mut fg)?;
-
-    let stack_stores = count(&fg, |k| {
-        matches!(k, NodeKind::StackStore { offset: -4, .. })
-    });
-    assert_eq!(stack_stores, 1, "expected one StackStore at offset -4");
-    // Every reachable Store must have been rewritten.
-    let reachable_stores =
-        fg.count_kind(|k| matches!(k, NodeKind::Store(_)));
-    assert_eq!(reachable_stores, 0, "no reachable Store must remain");
-    Ok(())
-}
-
-/// `add esp, 0xFFFFFFFC` and `sub esp, 4` are two encodings of the same
-/// SP adjustment.  `decompose_sp` must recognise `Add(sp, 0xFFFFFFFC_U32)`
-/// as `sp + (-4)` via `int_const_signed`'s bit-width-aware sign extension,
-/// producing a `StackStore { offset: -4 }` directly — without relying on
-/// `ConstantFold` to reassociate the address first.
-#[test]
-fn add_sp_with_negative_unsigned_constant_becomes_stack_store() -> Result<()> {
-    let sp = sp_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // 0xFFFFFFFC_U32 == -4 when sign-extended.
-        let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
-        let addr = b.build_int_binary_operation(
-            sp_val,
-            neg_four,
-            IntBinaryOp::Add,
-            NodeOutputType::U32,
-        )?;
-        let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    // Intentionally omit `ConstantFold` so the test exercises
-    // `decompose_sp`'s handling of the alternate encoding in isolation.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(&mut fg)?;
-
-    let stack_stores = count(&fg, |k| {
-        matches!(k, NodeKind::StackStore { offset: -4, .. })
-    });
-    assert_eq!(
-        stack_stores, 1,
-        "Add(sp, 0xFFFFFFFC_U32) must decompose to offset -4 without ConstantFold",
-    );
-    Ok(())
-}
-
-/// `*sp = X` where `sp` is an entry-only phi (single reachable predecessor):
-/// `RedundantPhis` collapses the phi inside the fixed-point loop, then
-/// `StackStoreDetect` picks up a straight InitialVar(sp) + 0.
-#[test]
-fn phi_sp_collapses_to_stack_store() -> Result<()> {
-    let sp = sp_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
-    // Two regions: entry → body.  Body reads sp (which is a phi of the
-    // single entry predecessor) and stores at sp + 0.
-    let entry = b.create_region()?;
-    let body = b.create_region()?;
-    b.set_entry_region(entry)?;
-    b.set_region(entry);
-    b.build_branch(body)?;
-    b.set_region(body);
-    let sp_val = b.read_variable(&sp)?;
-    let data = b.build_int_const(0xABu64, NodeOutputType::U32)?;
-    b.build_store(sp_val, data, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(&mut fg)?;
-
-    let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: 0, .. }));
-    assert_eq!(
-        stack_stores, 1,
-        "phi-of-single-predecessor-sp must collapse then yield StackStore at 0"
-    );
-    Ok(())
-}
-
-/// Two reachable predecessors adjust SP by different amounts and merge
-/// at a block that stores through the SP-phi.  The address cannot be
-/// reduced to a single constant, so the rewrite produces
-/// `StackStorePhi { offsets: [-4, -8] }`.
-#[test]
-fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
-    let sp = sp_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
-    let entry = b.create_region()?;
-    let a = b.create_region()?;
-    let bb = b.create_region()?;
-    let c = b.create_region()?;
-    b.set_entry_region(entry)?;
-
-    // entry: if (true) goto a else goto b
-    b.set_region(entry);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, a, bb)?;
-
-    // a: sp = sp - 4; goto c
-    b.set_region(a);
-    let sp_a = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let sp_a2 =
-        b.build_int_sub(sp_a, four, NodeOutputType::U32)?;
-    b.write_variable(&sp, sp_a2)?;
-    b.build_branch(c)?;
-
-    // b: sp = sp - 8; goto c
-    b.set_region(bb);
-    let sp_b = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
-    let sp_b2 =
-        b.build_int_sub(sp_b, eight, NodeOutputType::U32)?;
-    b.write_variable(&sp, sp_b2)?;
-    b.build_branch(c)?;
-
-    // c: *(sp) = 0xCC; load(sp); return loaded
-    b.set_region(c);
-    let sp_c = b.read_variable(&sp)?;
-    let data = b.build_int_const(0xCCu64, NodeOutputType::U32)?;
-    b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(&mut fg)?;
-
-    let phis: Vec<NodeId> = fg
-        .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::StackStorePhi { .. }))
-        .collect();
-    assert_eq!(phis.len(), 1, "expected one StackStorePhi");
-    let offsets = fg.stack_phi_offsets(phis[0]);
-    let mut sorted: Vec<i64> = offsets.to_vec();
-    sorted.sort();
-    assert_eq!(
-        sorted,
-        vec![-8, -4],
-        "expected per-branch offsets -4 and -8"
-    );
-    Ok(())
-}
-
-/// Two reachable predecessors both adjust SP by the same amount and merge
-/// at a block that stores through the SP-phi.  Because every predecessor
-/// resolves to the same `(base, offset)`, the phi is structurally
-/// redundant — the rewrite must produce a plain `StackStore`, not a
-/// degenerate `StackStorePhi { offsets: [-4, -4] }`.
-#[test]
-fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
-    let sp = sp_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
-    let entry = b.create_region()?;
-    let a = b.create_region()?;
-    let bb = b.create_region()?;
-    let c = b.create_region()?;
-    b.set_entry_region(entry)?;
-
-    b.set_region(entry);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, a, bb)?;
-
-    // a: sp = sp - 4; goto c
-    b.set_region(a);
-    let sp_a = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let sp_a2 =
-        b.build_int_sub(sp_a, four, NodeOutputType::U32)?;
-    b.write_variable(&sp, sp_a2)?;
-    b.build_branch(c)?;
-
-    // b: sp = sp - 4; goto c  (same offset as a)
-    b.set_region(bb);
-    let sp_b = b.read_variable(&sp)?;
-    let four2 = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let sp_b2 =
-        b.build_int_sub(sp_b, four2, NodeOutputType::U32)?;
-    b.write_variable(&sp, sp_b2)?;
-    b.build_branch(c)?;
-
-    // c: *(sp) = 0xCC; load(sp); return loaded
-    b.set_region(c);
-    let sp_c = b.read_variable(&sp)?;
-    let data = b.build_int_const(0xCCu64, NodeOutputType::U32)?;
-    b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(&mut fg)?;
-
-    let stack_store_phis = count(&fg, |k| matches!(k, NodeKind::StackStorePhi { .. }));
-    assert_eq!(
-        stack_store_phis, 0,
-        "phi with all-equal offsets must not produce a StackStorePhi"
-    );
-    let stack_stores = count(&fg, |k| {
-        matches!(k, NodeKind::StackStore { offset: -4, .. })
-    });
-    assert_eq!(
-        stack_stores, 1,
-        "phi with all-equal offsets must collapse to a plain StackStore"
-    );
-    Ok(())
-}
+use strider_ir_test_utils::{sp_vn_x86 as sp_vn};
 
 /// A prologue local-variable zero-init writes to offsets that happen to
 /// land in the arg-slot range for a later call, but *chronologically*
@@ -333,7 +81,6 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, …
     pipeline.add_post_pass(CallStackArgCollect::new(
         vec![4, 8, 12, 16, 20, 24, 28, 32],
@@ -358,35 +105,6 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     assert!(
         matches!(arg1_kind, NodeKind::IntConst(1)),
         "arg1 should be 1, got {arg1_kind:?}"
-    );
-    Ok(())
-}
-
-/// A non-stack store (address is an arbitrary integer constant) must be
-/// left completely untouched.
-#[test]
-fn non_stack_store_is_untouched() -> Result<()> {
-    let sp = sp_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        b.build_return(None, &[])?;
-        Ok(())
-    })?;
-
-    let entry = fg.entry().unwrap();
-    StackStoreDetect::new(sp).optimize(&mut fg, entry)?;
-
-    assert_eq!(
-        count(&fg, |k| matches!(k, NodeKind::StackStore { .. })),
-        0,
-        "non-stack store must not become a StackStore"
-    );
-    assert_eq!(
-        count(&fg, |k| matches!(k, NodeKind::Store(_))),
-        1,
-        "the original Store must remain"
     );
     Ok(())
 }
@@ -433,7 +151,6 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -486,7 +203,6 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -497,32 +213,31 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     Ok(())
 }
 
-/// Slot 1 is filled but slot 0 is empty — `dense_prefix` truncates at
-/// the first `None`, so zero args are appended.  Pattern queries doing
-/// `arg(0)` would otherwise mis-bind to a hole; the truncation makes
-/// the missing slot visible as "no args" rather than "args starting at
-/// slot 1."
+/// When slot 0 is never filled the collection must remain empty.
 ///
-/// To produce a chain where slot 0 is missing, use a cdecl-style table
-/// `[4, 8]` and a chain where the anchor (rel=0, OOW, `is_first_store`
-/// exception) is followed by a single store at rel=8 (slot 1) and no
-/// store at rel=4 (slot 0).
+/// Uses a ret-addr-push pattern: the chain anchor is a store at
+/// sp-4 (the implicit ret-addr push), which is NOT in the slot table
+/// `[4, 8]` (cdecl-style: args at sp+0 and sp+4 relative to the
+/// pre-call SP, i.e. at rel=+4 and rel=+8 from the post-push anchor).
+/// Only slot 1 (rel=8, arg1 at sp+4) is filled; slot 0 (rel=4) has
+/// no store — dense prefix is empty → no args appended.
 #[test]
 fn missing_slot_zero_skips_collection() -> Result<()> {
     let sp = sp_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
 
-        // arg1 at sp + 4 (rel = +4 from sp_v0; will be rel = 8 from
-        // anchor at sp - 4 below).
+        // Store arg1 at sp+4 (rel = 4+4=8 from anchor at sp-4 below).
+        // This fills slot 1 of the [4, 8] table (value 8, index 1).
         let sp_plus_4 =
             b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::U32)?;
         let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
         b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
-        // Implicit `call` ret-addr push at sp - 4 — chain anchor.
-        let sp_minus_4 =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+        // Implicit `call` ret-addr push at sp-4 — chain anchor.
+        // rel = 0 is NOT in the slot table [4, 8], so the
+        // `is_first_store` exception lets the walk continue.
+        let sp_minus_4 = b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_minus_4)?;
         let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
         b.build_store(sp_minus_4, retaddr, rsleigh::VnSpace::RAM)?;
@@ -533,28 +248,27 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
         Ok(())
     })?;
 
+    let before_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
+
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    // x86 cdecl-style: ret addr at offset 0, args at +4 and +8.
+    // x86 cdecl-style: ret addr at offset 0 from anchor, args at +4 and +8.
+    // Only slot 1 (rel=8) is filled; slot 0 (rel=4) is absent →
+    // dense prefix is empty → no args appended.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run_built(&mut fg)?;
 
-    let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + memory + target only — slot 1 was filled but slot 0's hole
-    // truncates the dense prefix to empty, so no args appended.
+    let after_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
     assert_eq!(
-        inputs.len(),
-        3,
-        "missing slot 0 must drop the slot-1 fill from the appended args; got {inputs:?}"
+        before_inputs, after_inputs,
+        "no args should have been collected when slot 0 is missing"
     );
     Ok(())
 }
 
-/// A call with no stack stores before it must not have any inputs
-/// added.
+/// A call with no stack stores at all — the walker should not add any
+/// extra inputs.
 #[test]
 fn call_with_no_stack_stores_unchanged() -> Result<()> {
     let sp = sp_vn();
@@ -570,7 +284,6 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -578,86 +291,6 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     assert_eq!(
         before_inputs, after_inputs,
         "no args should have been collected"
-    );
-    Ok(())
-}
-
-// ── Comprehensive tests ──────────────────────────────────────────────────────
-
-/// SP arithmetic mixing Add and Sub of constants in both directions:
-/// `((sp + 16) - 4) - 4 = sp + 8`. Must reduce via decompose_sp's recursive
-/// shifted handling.
-#[test]
-fn detect_mixed_add_sub_reduces() -> Result<()> {
-    let sp = sp_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v| {
-        let s16 = b.build_int_const(16u64, NodeOutputType::U32)?;
-        let s4 = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let plus16 =
-            b.build_int_binary_operation(sp_v, s16, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let minus4a =
-            b.build_int_sub(plus16, s4, NodeOutputType::U32)?;
-        let minus4b =
-            b.build_int_sub(minus4a, s4, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
-        b.build_store(minus4b, data, rsleigh::VnSpace::RAM)?;
-        b.build_return(None, &[])?;
-        Ok(())
-    })?;
-
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
-    pipeline.run_built(&mut fg)?;
-
-    let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: 8, .. }));
-    assert_eq!(
-        stack_stores, 1,
-        "((sp+16)-4)-4 must reduce to a single StackStore at offset 8"
-    );
-    Ok(())
-}
-
-/// A non-SP base (an `Add` of a non-SP register and a constant) must NOT be
-/// rewritten — `decompose_sp` returns `None` and the original Store stays.
-#[test]
-fn detect_non_sp_base_skipped() -> Result<()> {
-    let sp = sp_vn();
-    // A second register at a different offset that's not SP.
-    let other = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .tracked(other)
-        .arg(other)
-        .callee_saved(sp)
-        .build_fn_single_region()?;
-    let other_v = b.read_variable(&other)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let addr =
-        b.build_int_binary_operation(other_v, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
-    b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let entry = fg.entry().unwrap();
-    StackStoreDetect::new(sp).optimize(&mut fg, entry)?;
-
-    assert_eq!(
-        count(&fg, |k| matches!(k, NodeKind::StackStore { .. })),
-        0,
-        "non-SP base must not become a StackStore"
-    );
-    assert_eq!(
-        count(&fg, |k| matches!(k, NodeKind::Store(_))),
-        1,
-        "the original Store must remain"
     );
     Ok(())
 }
@@ -705,7 +338,6 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
 
@@ -778,7 +410,6 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     // cdecl-style offsets: ret-addr at 0, args at +4, +8, +12.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
@@ -847,7 +478,6 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     // 4 cdecl-like stack-arg offsets.  arg0 ends up at sp - 4 (anchor),
     // arg1 at sp - 8 (= anchor + 4), arg2 at sp - 12 (= anchor + 8),
     // arg3 at sp - 16 (= anchor + 12).  AArch64-style table starting at 0.
@@ -878,7 +508,7 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
 // On i386 cdecl, gcc/clang -O2 routinely emits stack-arg pushes in source
 // order (arg0 first, arg1 second, …), but the IR memory chain reflects
 // program order — the *last* arg stored shows up as the most-recent
-// `StackStore` on the chain.  The original walker required successive
+// store on the chain.  The original walker required successive
 // stores to land at `anchor + stack_arg_offsets[args.len()]`, which only
 // ever matches when the compiler happens to push args in slot-descending
 // order.  These tests pin the corrected behaviour: collection succeeds
@@ -924,7 +554,6 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, …
     pipeline.add_post_pass(CallStackArgCollect::new(
         vec![4, 8, 12, 16, 20, 24, 28, 32],
@@ -998,7 +627,6 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
@@ -1064,7 +692,6 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(CallStackArgCollect::new(
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
@@ -1086,7 +713,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     Ok(())
 }
 
-/// A `StackStore` whose offset is *outside* the convention's stack-arg
+/// A store whose offset is *outside* the convention's stack-arg
 /// window must terminate the walk — exactly the safety property the
 /// original in-order rule provided, now expressed as set-membership.
 ///
@@ -1139,7 +766,6 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     // 2-slot cdecl table: anchor at +0 (ret-addr), arg0 at +4, arg1 at +8.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run_built(&mut fg)?;
@@ -1190,7 +816,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
 /// boundary.  The backward walk must traverse it transparently rather
 /// than treating it as an opaque barrier.
 ///
-/// Chain (backwards from Call): `Call ← StackStore{+4} ← MemPartition(Stack) ← InitialMemory`
+/// Chain (backwards from Call): `Call ← Store(sp+4) ← MemPartition(Stack) ← InitialMemory`
 ///
 /// The single arg at offset +4 must be collected even with the
 /// `MemPartition` boundary in place.
@@ -1221,15 +847,13 @@ fn call_stack_args_collected_through_mempartition() -> Result<()> {
         Ok(())
     })?;
 
-    // Pipeline: ConstantFold → RedundantPhis → StackStoreDetect →
-    //           AliasSplit → CallStackArgCollect (post-pass).
+    // Pipeline: ConstantFold → RedundantPhis → AliasSplit → CallStackArgCollect (post-pass).
     // AliasSplit inserts MemPartition(Stack) and MemUnion around the
     // stack stores; the backward walk must see through the partition
     // boundary.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(AliasSplit::new(sp));
     // x86-cdecl-style table: ret-addr at offset 0, arg0 at +4.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
@@ -1263,7 +887,7 @@ fn call_stack_args_collected_through_mempartition() -> Result<()> {
 ///
 /// Graph manually wired so the Call's memory input is a `MemUnion`:
 ///
-///   `InitialMemory → MemPartition(Stack) → StackStore{+0} → StackStore{+4} → MemUnion → Call[mem]`
+///   `InitialMemory → MemPartition(Stack) → Store(sp+0) → Store(sp+4) → MemUnion → Call[mem]`
 ///
 /// Without the new `MemUnion` arm the walk bails and collects nothing.
 /// With it the walk routes through the Stack-partition input and appends
@@ -1303,12 +927,12 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
         Ok(())
     })?;
 
-    // Step 2: promote Stores to StackStores.
+    // Step 2: normalize (ConstantFold + RedundantPhis) so SP arithmetic is
+    // in canonical form for AliasSplit / decompose_sp.
     {
         let mut prep = OptimizerPipeline::new();
         prep.add(ConstantFold);
         prep.add(RedundantPhis);
-        prep.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
         prep.run(&mut fg, entry)?;
     }
@@ -1316,13 +940,13 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
     // Step 3: manually wire MemPartition + MemUnion so the Call's memory
     //         input arrives through a MemUnion.
     //
-    //         Before: InitialMemory → StackStore{+4} → StackStore{0} → Call[mem]
-    //         After:  InitialMemory → MemPartition(Stack) → StackStore{+4}
-    //                               → StackStore{0} → MemUnion → Call[mem]
+    //         Before: InitialMemory → Store(sp+4) → Store(sp+0) → Call[mem]
+    //         After:  InitialMemory → MemPartition(Stack) → Store(sp+4)
+    //                               → Store(sp+0) → MemUnion → Call[mem]
     //
     //         Walking backward from the Call through MemUnion:
-    //           MemUnion → StackStore{0}(anchor, is_first_store) →
-    //           StackStore{+4}(arg0, fills slot 0) → MemPartition → InitialMemory
+    //           MemUnion → Store(sp+0)(anchor, is_first_store) →
+    //           Store(sp+4)(arg0, fills slot 0) → MemPartition → InitialMemory
     {
         let im_node = fg
             .all_node_ids()
@@ -1347,12 +971,12 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
         );
         let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
 
-        // Find the first StackStore in chain order: the one whose memory
+        // Find the first Store in chain order: the Store whose memory
         // predecessor (slot 0) is InitialMemory.
-        let first_ss_node = fg
+        let first_store_node = fg
             .all_node_ids()
             .find(|&n| {
-                if !matches!(fg.node_kind(n), NodeKind::StackStore { .. }) {
+                if !matches!(fg.node_kind(n), NodeKind::Store(_)) {
                     return false;
                 }
                 let inputs = fg.node_inputs(n);
@@ -1362,26 +986,26 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
                         NodeKind::InitialMemory
                     )
             })
-            .expect("first StackStore (consuming InitialMemory) must exist");
+            .expect("first Store (consuming InitialMemory) must exist");
 
-        // Rewire first StackStore's memory input to MemPartition output.
-        let ss_mem_input_id = fg.graph().node_input_id_at(first_ss_node, 0).unwrap();
+        // Rewire first Store's memory input to MemPartition output.
+        let ss_mem_input_id = fg.graph().node_input_id_at(first_store_node, 0).unwrap();
         fg.graph_mut().update_input(ss_mem_input_id, part_out);
 
-        // Retype all StackStore memory outputs to Memory(Some(stack_part))
-        // and walk to the last StackStore in the chain.
-        let mut cur_node = first_ss_node;
+        // Retype all Store memory outputs to Memory(Some(stack_part))
+        // and walk to the last Store in the chain.
+        let mut cur_node = first_store_node;
         loop {
             let ss_mem_out = fg.graph().memory_output_of(cur_node).unwrap();
             fg.graph_mut()
                 .set_memory_partition(ss_mem_out, Some(stack_part))
                 .unwrap();
 
-            // Find the next StackStore in the chain (consumes this node's
+            // Find the next Store in the chain (consumes this node's
             // memory output at its memory-input slot 0).
             let uses: Vec<(NodeId, u32)> = fg.graph().output_uses(ss_mem_out).collect();
-            let next_ss = uses.iter().find_map(|&(user_node, slot)| {
-                if matches!(fg.node_kind(user_node), NodeKind::StackStore { .. })
+            let next_store = uses.iter().find_map(|&(user_node, slot)| {
+                if matches!(fg.node_kind(user_node), NodeKind::Store(_))
                     && slot == 0
                 {
                     Some(user_node)
@@ -1389,20 +1013,20 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
                     None
                 }
             });
-            match next_ss {
+            match next_store {
                 Some(next) => cur_node = next,
                 None => break,
             }
         }
 
-        // cur_node is now the last StackStore; its memory output currently
+        // cur_node is now the last Store; its memory output currently
         // feeds the Call's memory input.
-        let last_ss_mem_out = fg.graph().memory_output_of(cur_node).unwrap();
+        let last_store_mem_out = fg.graph().memory_output_of(cur_node).unwrap();
 
-        // Create MemUnion consuming the last StackStore's partition-typed output.
+        // Create MemUnion consuming the last Store's partition-typed output.
         let union_node = fg.create_node_attributed(
             NodeKind::MemUnion,
-            [last_ss_mem_out],
+            [last_store_mem_out],
             [NodeOutputKind::Memory(None)],
             &[cur_node],
         );
@@ -1420,7 +1044,7 @@ fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
 
     // Step 5: run CallStackArgCollect.  Without the MemUnion arm the
     //         walk bails immediately and collects nothing.  With it the
-    //         walk routes through MemUnion → StackStore chain and appends
+    //         walk routes through MemUnion → Store chain and appends
     //         IntConst(99) as arg 0.
     let pass = CallStackArgCollect::new(vec![4, 8], sp);
     pass.optimize(&mut fg, entry)?;

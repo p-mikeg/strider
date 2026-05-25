@@ -170,8 +170,8 @@ pub use var::Capture;
 #[allow(unused_imports)]
 pub(crate) use pat::{
     BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat,
-    IfPat, IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StackStorePat,
-    StackStorePhiPat, StorePat, ValuePhiPat,
+    IfPat, IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StorePat,
+    ValuePhiPat,
 };
 
 // ── Wildcards, captures, predicates ──────────────────────────────────────────
@@ -229,7 +229,7 @@ pub use pat::{
 #[rustfmt::skip]
 pub use pat::{
     function_arg, function_arg_any, function_arg_reg, function_arg_stack,
-    load, mem_phi, phi, phi_for, stack_store, stack_store_phi, store, value_phi,
+    load, mem_phi, phi, phi_for, store, value_phi,
 };
 
 // ── Control flow & entry values ──────────────────────────────────────────────

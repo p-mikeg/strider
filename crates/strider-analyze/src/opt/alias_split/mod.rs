@@ -187,11 +187,6 @@ impl ChainClassifier {
                     };
                     self.classes.insert(node, cls);
                 }
-                NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. } => {
-                    // StackStore / StackStorePhi are by construction
-                    // stack-class.
-                    self.classes.insert(node, NodeAliasClass::Stack);
-                }
                 NodeKind::Call
                 | NodeKind::Return
                 | NodeKind::IndirectBranch
@@ -393,7 +388,7 @@ impl SegmentWalk {
             for (consumer, input_idx) in consumers {
                 let consumer_kind = *function.node_kind(consumer);
                 match consumer_kind {
-                    NodeKind::Store(_) | NodeKind::StackStore { .. } => {
+                    NodeKind::Store(_) => {
                         let cls = classifier
                             .classes
                             .get(&consumer)
@@ -407,13 +402,6 @@ impl SegmentWalk {
                             }
                         } else {
                             self.bailed = true;
-                        }
-                    }
-                    NodeKind::StackStorePhi { .. } => {
-                        self.stack_producers.push(consumer);
-                        let out = function.memory_output_of(consumer)?;
-                        if seen.insert(out) {
-                            stack.push(out);
                         }
                     }
                     NodeKind::Load(_) => {

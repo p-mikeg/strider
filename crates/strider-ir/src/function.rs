@@ -41,14 +41,11 @@ pub struct Function {
 
     // ── NodeId-keyed overlay tables ────────────────────────────────────────
     //
-    // These five side tables hold per-function data that is keyed by NodeId
+    // These four side tables hold per-function data that is keyed by NodeId
     // but is not part of the structural graph identity.  They are remapped
     // through [`NodeIdRemap`] by [`Self::compact`] whenever the arena is
     // compacted.
 
-    /// Per-predecessor SP-relative offsets for [`crate::node::NodeKind::StackStorePhi`]
-    /// nodes.
-    pub(crate) stack_phi_offsets: SecondaryMap<NodeId, Vec<i64>>,
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.
     pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
@@ -112,7 +109,6 @@ impl Function {
             graph,
             entry: Some(entry),
             cc_metadata: None,
-            stack_phi_offsets: SecondaryMap::new(),
             call_other_names: SecondaryMap::new(),
             asm_fingerprints: SecondaryMap::new(),
             call_clobbered_overrides: SecondaryMap::new(),
@@ -206,23 +202,6 @@ impl Function {
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
-
-    /// Returns the per-predecessor SP-relative offsets associated with a
-    /// [`crate::node::NodeKind::StackStorePhi`] node, or an empty slice if
-    /// none are set.
-    #[inline]
-    #[must_use]
-    pub fn stack_phi_offsets(&self, node_id: NodeId) -> &[i64] {
-        self.stack_phi_offsets[node_id].as_slice()
-    }
-
-    /// Associates a list of per-predecessor SP-relative offsets with a
-    /// [`crate::node::NodeKind::StackStorePhi`] node.  Replaces any prior
-    /// value.
-    #[inline]
-    pub fn set_stack_phi_offsets(&mut self, node_id: NodeId, offsets: Vec<i64>) {
-        self.stack_phi_offsets[node_id] = offsets;
-    }
 
     /// Returns the user-op name associated with a
     /// [`crate::node::NodeKind::CallOther`] node, or `None` if no name has
@@ -455,9 +434,8 @@ impl Function {
             )
         })?;
         self.entry = Some(new_entry);
-        // Remap the five NodeId-keyed overlay tables through the
+        // Remap the four NodeId-keyed overlay tables through the
         // old→new translation table produced by `retain_reachable`.
-        self.stack_phi_offsets.remap_node_keyed(&remap);
         self.call_other_names.remap_node_keyed(&remap);
         self.asm_fingerprints.remap_node_keyed(&remap);
         self.call_clobbered_overrides.remap_node_keyed(&remap);

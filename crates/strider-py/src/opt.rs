@@ -306,11 +306,6 @@ macro_rules! cc_aware_pass_class {
     };
 }
 
-cc_aware_pass_class!(
-    "StackStoreDetect" => PyStackStoreDetect,
-    strider_analyze::opt::StackStoreDetect
-);
-
 /// `StackLoadForward(sleigh, cc, arch)`
 #[pyclass(name = "StackLoadForward", module = "strider.opt")]
 pub struct PyStackLoadForward {
@@ -377,7 +372,6 @@ pub enum PyOptPass<'py> {
     DeadBranchElim(PyDeadBranchElim),
     FlagCmpCanonicalize(PyFlagCmpCanonicalize),
     IfCondInversion(PyIfCondInversion),
-    StackStoreDetect(Bound<'py, PyStackStoreDetect>),
     StackLoadForward(Bound<'py, PyStackLoadForward>),
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
     CallStackArgCollect(Bound<'py, PyCallStackArgCollect>),
@@ -393,7 +387,6 @@ impl PyOptPass<'_> {
             PyOptPass::DeadBranchElim(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
             PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize),
             PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion),
-            PyOptPass::StackStoreDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::StackLoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
@@ -413,7 +406,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDeadBranchElim>()?;
     m.add_class::<PyFlagCmpCanonicalize>()?;
     m.add_class::<PyIfCondInversion>()?;
-    m.add_class::<PyStackStoreDetect>()?;
     m.add_class::<PyStackLoadForward>()?;
     m.add_class::<PyFunctionArgDetect>()?;
     m.add_class::<PyCallStackArgCollect>()?;

@@ -427,11 +427,7 @@ pub fn count_loops(g: &strider_ir::Function) -> usize {
 }
 pub fn count_loads (g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::Load(_))) }
 pub fn count_stores(g: &strider_ir::Function) -> usize {
-    // Both raw Store and StackStore count as "writes to memory" from the user's POV.
-    count_kind(g, |k| matches!(k, NodeKind::Store(_) | NodeKind::StackStore { .. }))
-}
-pub fn count_stack_stores(g: &strider_ir::Function) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::StackStore { .. }))
+    count_kind(g, |k| matches!(k, NodeKind::Store(_)))
 }
 pub fn count_popcount(g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::Popcount)) }
 pub fn count_lzcount (g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::Lzcount)) }

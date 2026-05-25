@@ -487,11 +487,9 @@ fn complex_dispatch_assertions(g: &strider_ir::Function) {
     assert!(count_calls(g) >= 4,
             "complex_dispatch must have ≥4 Calls; got {}", count_calls(g));
     // Stack-allocated `big`, `local_outer`, `locals[8]` produce many
-    // StackStores at distinct offsets.
-    assert!(count_stores(g) + count_kind(g, |k| matches!(k, NodeKind::StackStore { .. })) >= 5,
-            "complex_dispatch must have ≥5 (stack)-stores; got {} regular + {} stack",
-            count_stores(g),
-            count_kind(g, |k| matches!(k, NodeKind::StackStore { .. })));
+    // stores at distinct stack offsets.
+    assert!(count_stores(g) >= 5,
+            "complex_dispatch must have ≥5 stores; got {}", count_stores(g));
 
     // Multiple struct field accesses => at least one Load at base+const.
     let m = matcher(g);
@@ -520,7 +518,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
     // return value of the inner Call.  IR shape (-O0):
     //   call_inner = Call(produce, x)
     //   ret = Call_inner output (possibly via spill round-trip)
-    //   spill chain = Store/StackStore → Load/StackLoad (optional)
+    //   spill chain = Store → Load (optional, collapsed by StackLoadForward)
     //   call_outer = Call(consume, …chain to ret…)
     //
     // Whether the spill round-trip is collapsed by StackLoadForward,
@@ -534,7 +532,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
             "call_uses_call_return must have ≥2 Calls; got {}", count_calls(g));
 
     // For each Call, walk every input slot back through any chain of
-    // {Store, StackStore, Load, StackLoad, Region, ValuePhi}.
+    // {Store, Load, Region, ValuePhi}.
     // If we hit another Call, the test passes — that's proof of
     // Call→Call dataflow.
     let calls: Vec<NodeId> = g.preorder()
@@ -552,10 +550,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
                     // Walk through plumbing that doesn't change the
                     // value identity.  For each kind, follow the
                     // node's first input — every kind here produces
-                    // its data from input slot 0 or 2 (StackStore
-                    // input is [mem, sp, data] — slot 2 is the data;
-                    // for our purposes we pick the most-likely value
-                    // input).
+                    // its data from the most-likely value input slot.
                     NodeKind::Load(_) => {
                         // Load inputs: [memory, addr]; following the
                         // memory edge surfaces the producing store /
@@ -565,9 +560,8 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
                         let Some(&first) = inps.first() else { break; };
                         producer = g.get_node_from_output(first);
                     }
-                    NodeKind::Store(_) | NodeKind::StackStore { .. } => {
-                        // Store inputs: [mem, addr, data] (Store) or
-                        // [mem, sp, data] (StackStore) — `data` is
+                    NodeKind::Store(_) => {
+                        // Store inputs: [mem, addr, data] — `data` is
                         // the value being persisted.
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();

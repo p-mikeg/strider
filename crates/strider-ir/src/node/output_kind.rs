@@ -13,7 +13,7 @@ pub enum NodeOutputKind {
     /// predecessor and every branch node produces one per successor.
     Control,
     /// Synchronisation edge produced by `Region` and consumed by
-    /// every `VarPhi`/`MemPhi`/`StackStorePhi` in the same join.
+    /// every `VarPhi`/`MemPhi` in the same join.
     /// Carries no data — it says "fire your phi for this region."
     PhiToken,
     /// Memory token tracking the current state of memory through the graph.

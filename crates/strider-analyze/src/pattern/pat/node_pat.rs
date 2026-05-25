@@ -10,7 +10,7 @@
 //!   zero-input patterns (constants, `InitialVar`, `FunctionArg`); `Fixed`
 //!   covers unary / binary / cmp ops with optional commutative retry;
 //!   `Indexed` covers sparse positional matching for memory ops (`Load` /
-//!   `Store` / `StackStore` / `StackStorePhi`), `Phi`, and the control
+//!   `Store`), `Phi`, and the control
 //!   patterns (`Call`, `CallOther`, `Return`, `If`).
 //! * [`OutputsSpec`] — sub-pattern constraints on specific output slots
 //!   (used by `Call` for return-value captures).
@@ -19,7 +19,7 @@
 //!   forward walk).
 //! * [`NodePat::post_match`] — the one place bindings can be installed
 //!   during the match pipeline (op-variant captures, typed-const captures,
-//!   side-table lookups such as `stack_phi_offsets`).
+//!   side-table lookups).
 //! * [`BuildSpec`] (optional) — build-side spec for use as a rewrite-rule
 //!   RHS.  `None` means "match-only".
 
@@ -52,9 +52,8 @@ pub(crate) type NodeKindCheck =
 ///   Used by [`NodePat::try_match_common`] to gate the whole match.
 ///
 /// The `VariantWith` closure is payload-only (`&NodeKind -> bool`) — it
-/// cannot read graph side tables.  The rare pattern that needs side-table
-/// access (`StackStorePhi` offsets) uses a [`NodePat::post_match`] hook on
-/// top of a `VariantWith` kind spec.
+/// cannot read graph side tables.  Patterns that need side-table access
+/// use a [`NodePat::post_match`] hook on top of a `VariantWith` kind spec.
 #[derive(Clone)]
 pub(crate) enum KindSpec {
     /// Accepts any `NodeKind`.  Used by wildcards and by the match-only-false

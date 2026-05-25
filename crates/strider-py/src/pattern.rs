@@ -227,8 +227,6 @@ pub enum PatLike<'py> {
     IfPat(Bound<'py, PyIfPat>),
     LoadPat(Bound<'py, PyLoadPat>),
     StorePat(Bound<'py, PyStorePat>),
-    StackStorePat(Bound<'py, PyStackStorePat>),
-    StackStorePhiPat(Bound<'py, PyStackStorePhiPat>),
     PhiPat(Bound<'py, PyPhiPat>),
     MemPhiPat(Bound<'py, PyMemPhiPat>),
     ValuePhiPat(Bound<'py, PyValuePhiPat>),
@@ -280,8 +278,6 @@ impl PatLike<'_> {
             PatLike::IfPat(b) => Ok(b.borrow().finalise()),
             PatLike::LoadPat(b) => Ok(b.borrow().finalise()),
             PatLike::StorePat(b) => Ok(b.borrow().finalise()),
-            PatLike::StackStorePat(b) => Ok(b.borrow().finalise()),
-            PatLike::StackStorePhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::PhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::MemPhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::ValuePhiPat(b) => Ok(b.borrow().finalise()),
@@ -1196,86 +1192,6 @@ pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<P
     Ok(b)
 }
 
-/// Typed builder for `StackStore` node patterns.  Chain
-/// `.offset(o)`, `.offset_any([…])`, `.data(p)`, `.space(s)`.
-#[strider_pattern(
-    rust_name = "PyStackStorePat",
-    py_name = "StackStorePat",
-    py_module = "strider.pattern",
-    base_builder = "stack_store",
-    node_phrase = "stack-store node",
-)]
-pub struct StackStorePatDef {
-    /// Match only stack-stores whose SP-relative offset equals `o`.
-    #[field(arg = "o")]
-    offset: Option<i64>,
-
-    /// Match only stack-stores whose offset is in `offsets`.  Empty
-    /// list vacuously fails (matches nothing) — mirrors the contract
-    /// of `int_const_any_of`.  Accepts a Python list (or any iterable);
-    /// the underlying builder dedupes internally so duplicates in the
-    /// list are harmless.
-    #[field(arg = "offsets")]
-    offset_any: Option<Vec<i64>>,
-
-    /// Constrain the stored-value operand.
-    #[field(accepts = "Pat", arg = "p")]
-    data: Option<strider_analyze::pattern::Pat>,
-
-    /// Match only stack-stores in the given address space.
-    #[field(accepts = "VnSpace", arg = "s")]
-    space: Option<rsleigh::VnSpace>,
-}
-
-#[pyfunction]
-#[pyo3(signature = (offset=None, data=None))]
-pub fn stack_store(offset: Option<i64>, data: Option<PatLike<'_>>) -> PyResult<PyStackStorePat> {
-    let b = PyStackStorePat::new();
-    let data_pat = data.map(|v| v.into_pat()).transpose()?;
-    b.with_inner(|inner| {
-        inner.offset = offset;
-        inner.data = data_pat;
-    });
-    Ok(b)
-}
-
-/// Typed builder for `StackStorePhi` node patterns.  Chain
-/// `.data(p)`, `.space(s)`, `.offsets(list)` (per-predecessor stack
-/// offsets).
-#[strider_pattern(
-    rust_name = "PyStackStorePhiPat",
-    py_name = "StackStorePhiPat",
-    py_module = "strider.pattern",
-    base_builder = "stack_store_phi",
-    node_phrase = "stack-store-phi node",
-)]
-pub struct StackStorePhiPatDef {
-    /// Constrain the per-predecessor stored value.
-    #[field(accepts = "Pat", arg = "p")]
-    data: Option<strider_analyze::pattern::Pat>,
-
-    /// Match only in the given address space.
-    #[field(accepts = "VnSpace", arg = "s")]
-    space: Option<rsleigh::VnSpace>,
-
-    /// Per-predecessor stack offsets, in CFG-predecessor order.  Must
-    /// match the node's `Graph::stack_phi_offsets` entry exactly
-    /// (length and values).
-    #[field(arg = "os")]
-    offsets: Option<Vec<i64>>,
-}
-
-#[pyfunction]
-#[pyo3(signature = (data=None))]
-pub fn stack_store_phi(data: Option<PatLike<'_>>) -> PyResult<PyStackStorePhiPat> {
-    let b = PyStackStorePhiPat::new();
-    if let Some(v) = data {
-        let pat = v.into_pat()?;
-        b.with_inner(|inner| inner.data = Some(pat));
-    }
-    Ok(b)
-}
-
 // ── Calls ────────────────────────────────────────────────────────────────
 
 /// Typed builder for `Call` node patterns.  Wraps `strider_analyze::pattern::CallPat`
@@ -1777,8 +1693,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyIfPat>()?;
     m.add_class::<PyLoadPat>()?;
     m.add_class::<PyStorePat>()?;
-    m.add_class::<PyStackStorePat>()?;
-    m.add_class::<PyStackStorePhiPat>()?;
     m.add_class::<PyPhiPat>()?;
     m.add_class::<PyMemPhiPat>()?;
     m.add_class::<PyValuePhiPat>()?;
@@ -1878,8 +1792,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // memory / control
     add_fn!(load);
     add_fn!(store);
-    add_fn!(stack_store);
-    add_fn!(stack_store_phi);
     add_fn!(call);
     add_fn!(call_other);
     add_fn!(ret);

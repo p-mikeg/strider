@@ -55,7 +55,6 @@ struct Fingerprint {
     var_phis: usize,
     mem_phis: usize,
     value_phis: usize,
-    stack_store_phis: usize,
     /// `NodeKind` variant name → count.  Variant payload is elided (no
     /// register names, no constants, no user-op ids) so the bucket is
     /// arch-independent.
@@ -74,7 +73,6 @@ impl Fingerprint {
             var_phis: 0,
             mem_phis: 0,
             value_phis: 0,
-            stack_store_phis: 0,
             kind_histogram: BTreeMap::new(),
         }
     }
@@ -118,7 +116,6 @@ fn structural_fingerprint(g: &strider_ir::Function) -> Fingerprint {
     let mut var_phis = 0usize;
     let mut mem_phis = 0usize;
     let mut value_phis = 0usize;
-    let mut stack_store_phis = 0usize;
     let mut edges_control = 0usize;
     let mut edges_memory = 0usize;
     let mut edges_value = 0usize;
@@ -132,7 +129,6 @@ fn structural_fingerprint(g: &strider_ir::Function) -> Fingerprint {
             NodeKind::Phi if g.phi_var_tag(nid).is_some() => var_phis += 1,
             NodeKind::Phi => value_phis += 1,
             NodeKind::MemPhi => mem_phis += 1,
-            NodeKind::StackStorePhi { .. } => stack_store_phis += 1,
             _ => {}
         }
         // Count incoming edges by producer-output kind.
@@ -159,7 +155,6 @@ fn structural_fingerprint(g: &strider_ir::Function) -> Fingerprint {
         var_phis,
         mem_phis,
         value_phis,
-        stack_store_phis,
         kind_histogram,
     }
 }

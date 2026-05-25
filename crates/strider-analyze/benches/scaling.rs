@@ -20,7 +20,7 @@ use strider_ir::node::{NodeOutputType, NodeOutputKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
 use strider_analyze::opt::{
-    ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
+    ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward,
 };
 
 #[derive(Clone, Copy)]
@@ -137,8 +137,8 @@ mod synthetic {
 
     /// Synthetic 8-byte stack-pointer VN.  Same shape used in the
     /// existing `stack_array.rs` tests.  Doesn't have to match a real
-    /// arch — `StackStoreDetect` / `StackLoadForward` only care that
-    /// it's the SP varnode passed into the pass constructors.
+    /// arch — `StackLoadForward` only cares that it's the SP varnode
+    /// passed into the pass constructor.
     pub fn sp_vn() -> rsleigh::Vn {
         rsleigh::Vn {
             addr_off: 0x40,
@@ -150,10 +150,9 @@ mod synthetic {
     /// Build a function with `n` SP-relative `Store`s at distinct
     /// offsets (`-8 * (i+1)`), each storing a fresh `IntConst(i)`,
     /// followed by `n` `Load`s at the matching offsets that feed a
-    /// chain of `Add`s producing the function's return value.  After
-    /// `StackStoreDetect`, every store becomes a `StackStore`; the
-    /// returned graph is ready to feed into `StackLoadForward` for
-    /// the bench.  Pre-pass: `StackStoreDetect` is run inside the
+    /// chain of `Add`s producing the function's return value.
+    /// The returned graph is ready to feed into `StackLoadForward`
+    /// for the bench.  Pre-pass: `ConstantFold` is run inside the
     /// helper so the bench measures `StackLoadForward` in isolation.
     pub fn build_stack_store_chain(n: usize) -> strider_ir::Function {
         let sp = sp_vn();
@@ -189,13 +188,11 @@ mod synthetic {
         }
         b.build_return(Some(acc), &[]).unwrap();
         let mut fg = b.build().unwrap();
-        // Pre-pass: StackStoreDetect so the graph the bench measures
-        // already has StackStore nodes (StackLoadForward only forwards
-        // through StackStore, not raw Store).  This isolates the
-        // forward-pass cost from the detect-pass cost.
+        // Pre-pass: ConstantFold so the graph the bench measures
+        // is ready for StackLoadForward.  This isolates the
+        // forward-pass cost from the fold-pass cost.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
-        p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
         p.run(&mut fg, entry).unwrap();
         fg
@@ -338,7 +335,6 @@ mod synthetic {
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
-        p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
         p.run(&mut fg, entry).unwrap();
         fg

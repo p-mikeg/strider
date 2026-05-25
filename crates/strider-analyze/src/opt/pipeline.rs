@@ -355,12 +355,11 @@ mod tests {
 
     /// `run` calls `validate` after every post-pass too — pin that a
     /// pipeline carrying a post-pass produces a graph that still
-    /// validates.  Uses ConstantFold + StackStoreDetect (stable) +
-    /// CallStackArgCollect (post-pass) — the same plumbing the
-    /// orchestrator relies on.
+    /// validates.  Uses ConstantFold + CallStackArgCollect (post-pass)
+    /// — the same plumbing the orchestrator relies on.
     #[test]
     fn run_with_post_passes_validates() -> crate::opt::Result<()> {
-        use crate::opt::{CallStackArgCollect, ConstantFold, OptimizerPipeline, StackStoreDetect};
+        use crate::opt::{CallStackArgCollect, ConstantFold, OptimizerPipeline};
         // Use a synthetic SP varnode in REGISTER space.
         let sp = rsleigh::Vn {
             addr_off: 0x20,
@@ -379,14 +378,13 @@ mod tests {
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
-        p.add(StackStoreDetect::new(sp));
         p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
         p.run(&mut g, entry)?;
         Ok(())
     }
 
-    /// 2-pass cooperation contract: `StackStoreDetect` must run
-    /// before `StackLoadForward` for forward-through-store to fire.
+    /// `StackLoadForward` must forward a SP-relative store to the subsequent
+    /// load at the same offset.
     /// Build `store sp-4 = 0x42; load sp-4` and assert the load is
     /// forwarded to `IntConst(0x42)`.  Pins the in-pipeline ordering
     /// the orchestrator depends on.
@@ -394,7 +392,7 @@ mod tests {
     fn store_then_load_at_same_offset_forwarded() -> crate::opt::Result<()> {
         use crate::opt::{
             ConstantFold, DeadBranchElimination, KnownBits, OptimizerPipeline, RedundantPhis,
-            StackLoadForward, StackStoreDetect,
+            StackLoadForward,
         };
         use strider_ir::node::NodeKind;
         use strider_target::Endianness;
@@ -425,7 +423,6 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(DeadBranchElimination);
-        p.add(StackStoreDetect::new(sp));
         p.add(StackLoadForward::new(sp, Endianness::Little));
         p.run(&mut g, entry)?;
 
@@ -442,15 +439,14 @@ mod tests {
         Ok(())
     }
 
-    /// 3-pass cooperation contract: stack-store passes + the
-    /// `CallStackArgCollect` post-pass must collaborate to extend a
-    /// Call's input list with positional stack arg values pushed
-    /// before it.  Pins the orchestrator's full SP-aware pipeline.
+    /// `CallStackArgCollect` post-pass must extend a Call's input list
+    /// with positional stack arg values pushed before it.
+    /// Pins the orchestrator's full SP-aware pipeline.
     #[test]
     fn full_call_pipeline_collects_args() -> crate::opt::Result<()> {
         use crate::opt::{
             CallStackArgCollect, ConstantFold, DeadBranchElimination, KnownBits,
-            OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
+            OptimizerPipeline, RedundantPhis, StackLoadForward,
         };
         use strider_ir::node::NodeKind;
         use strider_target::Endianness;
@@ -487,7 +483,6 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(DeadBranchElimination);
-        p.add(StackStoreDetect::new(sp));
         p.add(StackLoadForward::new(sp, Endianness::Little));
         p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
         p.run(&mut g, entry)?;

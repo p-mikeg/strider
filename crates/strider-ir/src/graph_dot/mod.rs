@@ -25,9 +25,7 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::If => "diamond",
 
         NodeKind::Load(_)
-        | NodeKind::Store(_)
-        | NodeKind::StackStore { .. }
-        | NodeKind::StackStorePhi { .. } => "box3d",
+        | NodeKind::Store(_) => "box3d",
 
         NodeKind::MemPartition { .. } | NodeKind::MemUnion => "trapezium",
 
@@ -59,8 +57,6 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
         NodeKind::If => "\"#3a2a10\"",
 
         NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
-
-        NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. } => "\"#20182a\"", // stack-slot purple
 
         NodeKind::MemPartition { .. } | NodeKind::MemUnion => "\"#3a1a4a\"", // deep purple — alias-split boundary
 
@@ -99,7 +95,7 @@ fn role_color(role: SlotRole) -> &'static str {
         SlotRole::Lhs => "\"#4488ff\"",     // blue
         SlotRole::Rhs => "\"#ff4444\"",     // red
         SlotRole::Val | SlotRole::Ret => "\"#88cc88\"", // green
-        SlotRole::Addr | SlotRole::Sp | SlotRole::Off => "\"#cc88ff\"", // purple
+        SlotRole::Addr | SlotRole::Off => "\"#cc88ff\"", // purple
         SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "\"#ff8800\"", // orange
         SlotRole::Target | SlotRole::Seg => "\"#ffdd44\"", // yellow
         SlotRole::Cond => "\"#ff44ff\"",    // magenta

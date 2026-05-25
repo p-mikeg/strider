@@ -162,11 +162,11 @@ fn stack_arg_gap_truncates() -> Result<()> {
     Ok(())
 }
 
-/// A prior `StackStore{+4}` shadows the `Load[sp+4]` — the load
-/// reads the stored value, not the caller's arg.  No arg registered.
+/// A prior SP-relative store at `+4` shadows the `Load[sp+4]` — the
+/// load reads the stored value, not the caller's arg.  No arg registered.
 #[test]
 fn prior_stackstore_shadows() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -184,25 +184,24 @@ fn prior_stackstore_shadows() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
         arg0_nodes.is_empty(),
-        "Load[sp+4] is shadowed by StackStore{{+4}}, must not be registered as arg"
+        "Load[sp+4] is shadowed by Store(sp+4), must not be registered as arg"
     );
     Ok(())
 }
 
-/// If-branch where the true side does
-/// `StackStore{+4}`, false side does nothing — their join is a `MemPhi`,
-/// and a later `Load[sp+4]` from the phi must be disqualified.  The DFS
-/// treats `MemPhi` as a fork where **every** predecessor must be clean.
+/// If-branch where the true side does a SP-relative store at `+4`,
+/// false side does nothing — their join is a `MemPhi`, and a later
+/// `Load[sp+4]` from the phi must be disqualified.  The DFS treats
+/// `MemPhi` as a fork where **every** predecessor must be clean.
 #[test]
 fn memphi_shadow_disqualifies() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -256,7 +255,6 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
@@ -444,7 +442,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 /// disqualified; with the old `k == offset` check it would be registered.
 #[test]
 fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -464,27 +462,26 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
         arg0_nodes.is_empty(),
-        "Load[sp+4] overlaps with StackStore{{+0, size=8}} — must not be registered"
+        "Load[sp+4] overlaps with Store(sp+0, size=8) — must not be registered"
     );
     Ok(())
 }
 
 /// Regression guard for the dual of
 /// `overlapping_stackstore_at_different_offset_shadows`: a nearby
-/// `StackStore` whose range is *disjoint* from the load's must NOT shadow.
+/// SP-relative store whose range is *disjoint* from the load's must NOT shadow.
 ///
 /// `*(sp+0) = U32(X); return *(sp+4) as U32` — store covers `[0,4)`, load
 /// covers `[4,8)`.  No overlap ⇒ the sp+4 slot is still a valid arg 0.
 #[test]
 fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -504,14 +501,13 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
         !arg0_nodes.is_empty(),
-        "disjoint StackStore{{+0, size=4}} must not shadow Load[sp+4] — arg 0 should be registered"
+        "disjoint Store(sp+0, size=4) must not shadow Load[sp+4] — arg 0 should be registered"
     );
     assert!(
         matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
@@ -530,7 +526,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 /// merge: `return *(sp+4) as U32`.
 #[test]
 fn memphi_partial_overlap_shadows() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -578,14 +574,13 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
         arg0_nodes.is_empty(),
-        "MemPhi with an overlapping-range StackStore predecessor must disqualify Load[sp+4]"
+        "MemPhi with an overlapping-range Store predecessor must disqualify Load[sp+4]"
     );
     Ok(())
 }
@@ -672,16 +667,15 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
 /// Pin: a plain `Store(addr=sp+K, U32)` whose K overlaps the load's range
 /// must mark the chain dirty (this was the pre-fix behaviour for ALL plain
 /// Stores; here we keep it for SP-rooted overlapping Stores).  Pipeline
-/// omits `StackStoreDetect` so the Store stays a plain `Store` on the
-/// memory chain when `mem_chain_is_dirty` walks it.
+/// A plain `Store(addr=sp+4, U32)` whose range matches the load's range
+/// must mark the chain dirty.
 #[test]
 fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // *(sp + 4) = U32(0x11)  — covers [4,8); a plain Store (no
-        // StackStoreDetect in the pipeline).
+        // *(sp + 4) = U32(0x11)  — covers [4,8).
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
@@ -756,7 +750,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // *(sp + 0) = U32(0x11) — covers [0,4); plain Store (no StackStoreDetect).
+        // *(sp + 0) = U32(0x11) — covers [0,4).
         let zero_data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
         b.build_store(sp_val, zero_data, rsleigh::VnSpace::RAM)?;
 
@@ -997,7 +991,7 @@ fn function_args_combine_phi_or_semantics_pinned() {
 /// correctly returns `dirty=false`.
 #[test]
 fn function_arg_detect_walks_through_mempartition() -> Result<()> {
-    use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
 
     let sp = sp32_vn();
 
@@ -1011,7 +1005,7 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
         Ok(())
     })?;
 
-    // Pipeline: ConstantFold → RedundantPhis → StackStoreDetect → AliasSplit
+    // Pipeline: ConstantFold → RedundantPhis → AliasSplit
     //           (inserts MemPartition + MemUnion) → FunctionArgDetect.
     // After AliasSplit the Load's memory chain passes through a MemPartition
     // node.  Without the fix, mem_chain_is_dirty treats MemPartition as
@@ -1019,7 +1013,6 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(AliasSplit::new(sp));
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
@@ -1047,7 +1040,7 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
 /// backward walk must identify the Stack-partition input (via
 /// `is_stack_partition_input`) and follow it, ignoring the other partitions.
 ///
-/// Graph structure (manually wired after StackStoreDetect):
+/// Graph structure (manually wired):
 ///
 ///   `InitialMemory → MemPartition(Stack) → MemUnion → Load[sp+4]`
 ///

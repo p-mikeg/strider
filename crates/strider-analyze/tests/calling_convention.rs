@@ -101,7 +101,7 @@ fn assert_function_args_present(
 ///
 /// Requiring "at least one match" rather than "all 0..N must match"
 /// gives headroom for arch-specific lowerings where one or two arg slots
-/// route through a non-`StackStore` chain the walker can't follow; the
+/// route through a non-`Store` chain the walker can't follow; the
 /// universal cross-arch invariant is "at least one slot threads through
 /// cleanly."
 fn assert_some_call_arg_threads_through(
@@ -360,7 +360,7 @@ fn uses_return_assertions(g: &strider_ir::Function) {
             "uses_return must have ≥1 Call; got {}", calls.len());
 
     // For each Call, walk every input slot back through any chain of
-    // {Store, StackStore, Load, Region, ValuePhi}.
+    // {Store, Load, Region, ValuePhi}.
     // If we hit another Call, the test passes.
     let chained = calls.iter().any(|&outer| {
         let outer_inputs: Vec<_> = g.node_inputs(outer).into_iter().collect();
@@ -387,7 +387,7 @@ fn uses_return_assertions(g: &strider_ir::Function) {
                         let Some(&first) = inps.first() else { break; };
                         producer = g.get_node_from_output(first);
                     }
-                    NodeKind::Store(_) | NodeKind::StackStore { .. } => {
+                    NodeKind::Store(_) => {
                         // Store[memory, addr, data] — walk the data input.
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();

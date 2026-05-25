@@ -446,54 +446,6 @@ fn graph_invariants_phi_value_arity_mismatch() {
 }
 
 #[test]
-fn graph_invariants_stack_store_phi_does_not_fire_arity_mismatch() {
-    // StackStorePhi has fixed arity [token, memory, data] regardless of
-    // how many predecessors the owning Region has.  The
-    // per-predecessor arity rule that applies to Phi/MemPhi must
-    // not fire on it.  Here the owning Region has 1 predecessor;
-    // before the fix this produced a spurious
-    // PhiValueArityMismatch { expected_predecessors: 1, actual_values: 2 }.
-    let mut graph = Function::new();
-    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
-    let entry_out = graph.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = graph.node_outputs(mem).iter().copied().next().unwrap();
-
-    let cs = graph.create_node(
-        NodeKind::Region,
-        [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
-    );
-    let cs_phi_out = graph.node_outputs(cs).iter().copied().nth(1).unwrap();
-
-    let data = graph.create_node(
-        NodeKind::IntConst(0),
-        [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
-    );
-    let data_out = graph.node_outputs(data).iter().copied().next().unwrap();
-
-    let _ssp = graph.create_node(
-        NodeKind::StackStorePhi {
-            space: rsleigh::VnSpace::RAM,
-        },
-        [cs_phi_out, mem_out, data_out],
-        [NodeOutputKind::Memory(None)],
-    );
-
-    let res = validate(&graph, entry);
-    if let Err(errs) = &res {
-        assert!(
-            !errs
-                .0
-                .iter()
-                .any(|e| matches!(e, ValidationError::PhiValueArityMismatch { .. })),
-            "StackStorePhi must not trigger PhiValueArityMismatch; got: {errs:?}"
-        );
-    }
-}
-
-#[test]
 fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     // V-2 regression: opt passes (RedundantPhis, DeadBranchElimination)
     // detach phi inputs and leave the zero-input zombie node in the

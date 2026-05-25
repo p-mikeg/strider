@@ -210,9 +210,7 @@ fn adjacent_calls_with_same_args_are_distinct() {
 }
 
 /// `Graph::call_other_name` round-trip: setting and reading back a name
-/// works, and unset nodes return `None`.  This is the side-table parallel
-/// to `stack_phi_offsets` for `CallOther` nodes — kept external so the
-/// node payload (`user_op_id: u64`) stays `Copy`.
+/// works, and unset nodes return `None`.
 #[test]
 fn call_other_name_round_trip() {
     let mut graph = Function::new();
@@ -243,28 +241,6 @@ fn call_other_name_round_trip() {
     // Replacement
     graph.set_call_other_name(id_a, "OtherName".to_string());
     assert_eq!(graph.call_other_name(id_a), Some("OtherName"));
-}
-
-/// `StackStorePhi` is non-cacheable; its offsets live in a side-map and
-/// two distinct phis with the same space and inputs must remain distinct.
-#[test]
-fn stack_store_phi_is_never_deduplicated() {
-    let mut graph = Function::new();
-    let space = rsleigh::VnSpace::RAM;
-    let id_a = graph.create_node(
-        NodeKind::StackStorePhi { space },
-        [],
-        [NodeOutputKind::Memory(None)],
-    );
-    let id_b = graph.create_node(
-        NodeKind::StackStorePhi { space },
-        [],
-        [NodeOutputKind::Memory(None)],
-    );
-    assert_ne!(id_a, id_b);
-    graph.set_stack_phi_offsets(id_a, vec![0, -4]);
-    assert_eq!(graph.stack_phi_offsets(id_a), &[0, -4]);
-    assert_eq!(graph.stack_phi_offsets(id_b), &[] as &[i64]);
 }
 
 /// After adding an input to a non-cacheable node the output's use-list

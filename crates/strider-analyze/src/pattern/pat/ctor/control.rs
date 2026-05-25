@@ -11,7 +11,7 @@ use strider_ir::node::{FunctionArgSource, NodeKind};
 use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat, exemplar_vn};
 use crate::pattern::pat::{
     CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, MemPhiPat, Pat, PhiPat, RetPat,
-    StackStorePat, StackStorePhiPat, StorePat, ValuePhiPat,
+    StorePat, ValuePhiPat,
 };
 
 // ── Memory ops ────────────────────────────────────────────────────────────────
@@ -24,16 +24,6 @@ pub fn load() -> LoadPat { LoadPat::new() }
 /// to add constraints.
 #[must_use]
 pub fn store() -> StorePat { StorePat::new() }
-/// Starts building a `StackStore` pattern.  Chain `.offset()` / `.data()` /
-/// `.space()` to add constraints.
-#[must_use]
-pub fn stack_store() -> StackStorePat { StackStorePat::new() }
-/// Starts building a `StackStorePhi` pattern.  Chain `.offsets(…)` /
-/// `.data()` / `.space()` to add constraints.
-#[must_use]
-pub fn stack_store_phi() -> StackStorePhiPat { StackStorePhiPat::new() }
-
-
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
 /// Starts building a tagged-`Phi` pattern.  Matches `Phi` nodes whose

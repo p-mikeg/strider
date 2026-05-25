@@ -213,14 +213,3 @@ pub fn function_arg_reg() -> (Function, rsleigh::Vn) {
     (g, reg)
 }
 
-/// Runs the minimal opt pipeline needed before `StackStoreDetect` can see a
-/// `Store(sp ± K)` — `ConstantFold` normalises the address, `RedundantPhis`
-/// removes dead joins, and `StackStoreDetect` lowers the store.
-pub fn run_stack_store_pipeline(g: &mut Function, sp: rsleigh::Vn) {
-    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold);
-    p.add(RedundantPhis);
-    p.add(StackStoreDetect::new(sp));
-    p.run_built(g).expect("opt pipeline");
-}

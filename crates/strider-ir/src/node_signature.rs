@@ -57,7 +57,6 @@ pub(crate) enum SlotRole {
     Val,
     Addr,
     Data,
-    Sp,
     Target,
     Arg,
     Cond,
@@ -209,11 +208,6 @@ const DATA: Slot = Slot {
     name: "data",
     role: R::Data,
 };
-const SP: Slot = Slot {
-    kind: AnyInt,
-    name: "sp",
-    role: R::Sp,
-};
 const TARGET: Slot = Slot {
     kind: AnyInt,
     name: "target",
@@ -351,10 +345,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // ── Memory operations ───────────────────────────────────────────────
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
         NodeKind::Store(_) => sig!(inputs: [MEM, ADDR, DATA], outputs: [MEM]),
-        // StackStore: [memory, base, data].
-        NodeKind::StackStore { .. } => sig!(inputs: [MEM, SP, DATA], outputs: [MEM]),
-        // StackStorePhi: [phi_token, memory, data].
-        NodeKind::StackStorePhi { .. } => sig!(inputs: [PHI, MEM, DATA], outputs: [MEM]),
 
         // ── Integer constants and operations ────────────────────────────────
         // (`IntConst` / `IntConstWide` shape is folded into the Initial-state
@@ -479,36 +469,6 @@ mod tests {
             vec![
                 ExpectedOutputKind::Memory,
                 ExpectedOutputKind::AnyInt,
-                ExpectedOutputKind::AnyInt,
-            ]
-        );
-        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
-    }
-
-    #[test]
-    fn expected_signature_stack_store() {
-        let space = rsleigh::VnSpace::RAM;
-        let (inputs, outputs) = kinds(&NodeKind::StackStore { space, offset: -4 });
-        assert_eq!(
-            inputs,
-            vec![
-                ExpectedOutputKind::Memory,
-                ExpectedOutputKind::AnyInt,
-                ExpectedOutputKind::AnyInt,
-            ]
-        );
-        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
-    }
-
-    #[test]
-    fn expected_signature_stack_store_phi() {
-        let space = rsleigh::VnSpace::RAM;
-        let (inputs, outputs) = kinds(&NodeKind::StackStorePhi { space });
-        assert_eq!(
-            inputs,
-            vec![
-                ExpectedOutputKind::PhiToken,
-                ExpectedOutputKind::Memory,
                 ExpectedOutputKind::AnyInt,
             ]
         );
@@ -703,8 +663,6 @@ mod tests {
             NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
-            NodeKind::StackStore { space, offset: 0 },
-            NodeKind::StackStorePhi { space },
             NodeKind::MemPartition { partition },
             NodeKind::MemUnion,
             NodeKind::IntConst(0),

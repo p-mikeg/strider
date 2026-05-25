@@ -392,9 +392,8 @@ impl<'g> Matcher<'g> {
     ///
     /// If the load on the same stack slot was earlier rewritten by
     /// `StackLoadForward`, the field read is folded away and this
-    /// query returns nothing.  Add a `stack_store(...)` arm to the
-    /// pattern set when the field is being *written* rather than
-    /// *read*.
+    /// query returns nothing.  Add a `store(...)` arm to the pattern
+    /// set when the field is being *written* rather than *read*.
     pub fn find_all_requirements(&self, pats: &[&Pat]) -> Vec<Vec<Match>> {
         if pats.is_empty() {
             return Vec::new();

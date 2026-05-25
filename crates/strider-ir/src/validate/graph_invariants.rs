@@ -90,16 +90,11 @@ pub(super) fn check_graph_invariants_region(
     }
 }
 
-/// Graph invariant: every phi node (`Phi`, `MemPhi`, `StackStorePhi`)
-/// must take its dispatch token (input[0]) from a `Region`'s
-/// `PhiToken` output.
+/// Graph invariant: every phi node (`Phi`, `MemPhi`) must take its
+/// dispatch token (input[0]) from a `Region`'s `PhiToken` output.
 ///
 /// For `Phi` and `MemPhi` (variadic phis), the number of value inputs
-/// must match the owning `Region`'s predecessor count.  `StackStorePhi`
-/// has fixed arity `[token, memory, data]` (local-typing enforces this) — its
-/// per-predecessor information lives in the side-table
-/// `Graph::stack_phi_offsets`, not in its inputs, so the per-predecessor
-/// arity rule does not apply to it.
+/// must match the owning `Region`'s predecessor count.
 pub(super) fn check_graph_invariants_phis(
     graph: &Graph,
     reachable: &NodeIdSet,
@@ -110,10 +105,7 @@ pub(super) fn check_graph_invariants_phis(
     // zombies in the arena; reaching one here would falsely trip
     // `PhiTokenNotFromRegion` (input[0] is gone).
     for (node, kind) in graph.reachable_kind_iter(reachable) {
-        let is_phi = matches!(
-            kind,
-            NodeKind::Phi | NodeKind::MemPhi | NodeKind::StackStorePhi { .. }
-        );
+        let is_phi = matches!(kind, NodeKind::Phi | NodeKind::MemPhi);
         if !is_phi {
             continue;
         }
@@ -144,12 +136,6 @@ pub(super) fn check_graph_invariants_phis(
                 producer: owner,
                 producer_kind: token_kind,
             });
-            continue;
-        }
-
-        // StackStorePhi has fixed arity 3 regardless of predecessor count;
-        // skip the per-predecessor arity check for it.
-        if matches!(kind, NodeKind::StackStorePhi { .. }) {
             continue;
         }
 

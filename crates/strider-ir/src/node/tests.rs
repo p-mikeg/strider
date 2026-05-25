@@ -168,8 +168,8 @@ fn non_cacheable_kinds_are_not_cacheable() {
         NodeKind::MemPhi,
         NodeKind::Phi,
         NodeKind::Call,
-        NodeKind::StackStorePhi { space },
     ];
+    let _ = space; // silence unused variable warning
     for kind in non_cacheable {
         assert!(!kind.is_cacheable(), "{kind:?} should not be cacheable");
     }
@@ -184,16 +184,6 @@ fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add).is_cacheable());
     assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::BitNot).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
-}
-
-/// `StackStore` is a normal cacheable memory operation (its identity is
-/// fully determined by space+offset+inputs), while `StackStorePhi` must
-/// stay non-cacheable because its offsets live in a side-map.
-#[test]
-fn stack_store_cacheability() {
-    let space = rsleigh::VnSpace::RAM;
-    assert!(NodeKind::StackStore { space, offset: 0 }.is_cacheable());
-    assert!(!NodeKind::StackStorePhi { space }.is_cacheable());
 }
 
 // ── Float NodeOutputType ─────────────────────────────────────────────────
@@ -379,7 +369,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         // phis
         NodeKind::MemPhi,
         NodeKind::Phi,
-        NodeKind::StackStorePhi { space },
         // terminator
         NodeKind::If,
         NodeKind::Call,
@@ -389,7 +378,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         // memory operations
         NodeKind::Load(space),
         NodeKind::Store(space),
-        NodeKind::StackStore { space, offset: 0 },
         // memory partition boundaries
         NodeKind::MemPartition { partition },
         NodeKind::MemUnion,
@@ -448,7 +436,6 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
             | NodeKind::CallOther { .. }
             | NodeKind::CPoolRef
             | NodeKind::New
-            | NodeKind::StackStorePhi { .. }
             | NodeKind::MemPartition { .. }
             | NodeKind::MemUnion
     )
@@ -464,7 +451,6 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
             | NodeKind::Region
             | NodeKind::MemPhi
             | NodeKind::Phi
-            | NodeKind::StackStorePhi { .. }
             | NodeKind::MemPartition { .. }
             | NodeKind::MemUnion
     )

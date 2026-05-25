@@ -3,12 +3,12 @@
 //! data-in), returning the old→new id translation table so external
 //! callers can fix up any ids they hold.
 //!
-//! The five `NodeId`-keyed side tables (`stack_phi_offsets`,
-//! `call_other_names`, `asm_fingerprints`, `call_clobbered_overrides`,
-//! `phi_var_tag`) live on [`crate::Function`], not on `Graph`.
+//! The four `NodeId`-keyed side tables (`call_other_names`,
+//! `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`) live
+//! on [`crate::Function`], not on `Graph`.
 //! `Graph::retain_reachable` only compacts the structural arena;
 //! [`crate::Function::compact`] applies the returned [`NodeIdRemap`] to
-//! all five overlay tables via [`SideTableRemap::remap_node_keyed`].
+//! all four overlay tables via [`SideTableRemap::remap_node_keyed`].
 
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
 
@@ -93,10 +93,10 @@ impl Graph {
     /// MUST rewrite them through the returned [`NodeIdRemap`] (or
     /// drop them).
     ///
-    /// The dedup cache is rebuilt from scratch.  The five `NodeId`-keyed
-    /// overlay tables (`stack_phi_offsets`, `call_other_names`,
-    /// `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`)
-    /// live on [`crate::Function`], not on `Graph`.  The caller
+    /// The dedup cache is rebuilt from scratch.  The four `NodeId`-keyed
+    /// overlay tables (`call_other_names`, `asm_fingerprints`,
+    /// `call_clobbered_overrides`, `phi_var_tag`) live on
+    /// [`crate::Function`], not on `Graph`.  The caller
     /// ([`crate::Function::compact`]) applies the returned [`NodeIdRemap`]
     /// to those tables after this method returns.
     ///
@@ -247,10 +247,10 @@ impl Graph {
             self.node_to_id.insert(key, new_node_id);
         }
 
-        // 8. The five NodeId-keyed overlay tables (stack_phi_offsets,
-        // call_other_names, asm_fingerprints, call_clobbered_overrides,
-        // phi_var_tag) live on Function, not on Graph.  Function::compact
-        // applies the returned remap to those tables after this call.
+        // 8. The four NodeId-keyed overlay tables (call_other_names,
+        // asm_fingerprints, call_clobbered_overrides, phi_var_tag) live on
+        // Function, not on Graph.  Function::compact applies the returned
+        // remap to those tables after this call.
 
         // Remap the InitialVar Vn→NodeId index.  Entries whose NodeId
         // didn't survive compaction (i.e. the InitialVar became
@@ -370,10 +370,10 @@ mod tests {
         (entry, const_node, ret_node, mem)
     }
 
-    // NOTE: Tests for the five NodeId-keyed overlay tables
-    // (asm_fingerprints, stack_phi_offsets, call_other_names,
-    // call_clobbered_overrides, phi_var_tag) remap through
-    // Function::compact — see the compact_tests module in function.rs.
+    // NOTE: Tests for the four NodeId-keyed overlay tables
+    // (asm_fingerprints, call_other_names, call_clobbered_overrides,
+    // phi_var_tag) remap through Function::compact — see the
+    // compact_tests module in function.rs.
 
 
     /// `initial_var_index` is Vn-keyed (`FxHashMap<Vn, NodeId>`) and

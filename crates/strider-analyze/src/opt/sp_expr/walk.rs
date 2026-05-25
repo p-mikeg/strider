@@ -3,7 +3,7 @@
 //! byte range.
 
 use strider_ir::node::{NodeId, NodeOutputId};
-use strider_ir::{Function, Graph};
+use strider_ir::Function;
 
 use super::decompose::{decompose_sp, SpExpr, SpExprMemo};
 use super::ranges::{ranges_disjoint, store_value_byte_size};
@@ -19,63 +19,6 @@ pub(crate) enum AliasStep {
     /// The node may alias the query range (overlapping byte ranges, an
     /// SP-rooted Phi address, or malformed inputs).  Caller must terminate.
     MayAlias,
-}
-
-/// Decides whether walking past `node` (a `NodeKind::StackStore`) is safe
-/// for a search over `[query_off, query_off + query_size)`.
-pub(crate) fn step_through_stack_store(
-    graph: &Graph,
-    node: NodeId,
-    store_offset: i64,
-    query_off: i64,
-    query_size: i64,
-) -> AliasStep {
-    // StackStore inputs: [MEM, SP, DATA].
-    let inputs = graph.node_inputs(node);
-    if inputs.len() < 3 {
-        return AliasStep::MayAlias;
-    }
-    let store_size = store_value_byte_size(graph, inputs[2]);
-    if ranges_disjoint(store_offset, store_size, query_off, query_size) {
-        AliasStep::PassThrough { prev_mem: inputs[0] }
-    } else {
-        AliasStep::MayAlias
-    }
-}
-
-/// Decides whether walking past `node` (a `NodeKind::StackStorePhi`) is
-/// safe.  The phi disqualifies if any per-predecessor offset (stored in
-/// `Graph::stack_phi_offsets`) overlaps the query range.
-pub(crate) fn step_through_stack_store_phi(
-    graph: &Function,
-    node: NodeId,
-    query_off: i64,
-    query_size: i64,
-) -> AliasStep {
-    // StackStorePhi inputs: [PHI, MEM, DATA].
-    let inputs = graph.node_inputs(node);
-    if inputs.len() < 3 {
-        return AliasStep::MayAlias;
-    }
-    let store_size = store_value_byte_size(graph, inputs[2]);
-    let offsets = graph.stack_phi_offsets(node);
-    if offsets.is_empty() {
-        // No per-predecessor offsets recorded — the StackStorePhi could
-        // alias any stack address.  Conservative answer is MayAlias.
-        // `StackStoreDetect` always populates `stack_phi_offsets` for
-        // every StackStorePhi it creates, so this branch only fires for
-        // graphs where another builder produced the node without
-        // populating the side-table.
-        return AliasStep::MayAlias;
-    }
-    let any_overlap = offsets
-        .iter()
-        .any(|&k| !ranges_disjoint(k, store_size, query_off, query_size));
-    if any_overlap {
-        AliasStep::MayAlias
-    } else {
-        AliasStep::PassThrough { prev_mem: inputs[1] }
-    }
 }
 
 /// Decides whether walking past `node` (a raw `NodeKind::Store`) is safe.
@@ -114,63 +57,3 @@ pub(crate) fn step_through_store(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use strider_ir::FunctionBuilder;
-    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
-
-    /// Regression: a `StackStorePhi`
-    /// node with empty `stack_phi_offsets` MUST yield `MayAlias` from
-    /// `step_through_stack_store_phi` — the conservative answer for
-    /// "offsets unknown".  Previously it returned `PassThrough`, which
-    /// would silently let `StackLoadForward` forward across a phi that
-    /// could alias.
-    #[test]
-    fn step_through_stack_store_phi_empty_offsets_returns_may_alias() -> crate::opt::Result<()> {
-        // Build a graph with a StackStorePhi but DO NOT populate
-        // `stack_phi_offsets`.  We need a valid 3-input shape (PHI,
-        // MEM, DATA) so the function reaches the offsets check.
-        let mut b = FunctionBuilder::empty()?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        // We'll synthesise a StackStorePhi node directly in the graph
-        // by making three placeholder inputs.  Use the builder's region
-        // Region's PhiToken slot, the builder's InitialMemory,
-        // and a fresh IntConst as DATA.
-        let data = b.build_int_const(0xCAFE_u64, NodeOutputType::U64)?;
-        b.build_return(None, &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        // Locate the Region (it owns the PhiToken).
-        let cs = fg
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
-            .expect("Region present");
-        let cs_outs = fg.node_outputs(cs).to_vec();
-        let phi_token = *cs_outs
-            .iter()
-            .find(|&&o| matches!(fg.output_kind(o), NodeOutputKind::PhiToken))
-            .expect("PhiToken slot");
-        let init_mem = fg
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
-            .expect("InitialMemory present");
-        let mem_out = fg.node_outputs(init_mem).iter().copied().next().unwrap();
-        let phi_node = fg.create_node(
-            NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM },
-            [phi_token, mem_out, data],
-            [NodeOutputKind::Memory(None)],
-        );
-        // DELIBERATELY do NOT call set_stack_phi_offsets.
-        let alias = step_through_stack_store_phi(&fg, phi_node, 0, 8);
-        assert!(
-            matches!(alias, AliasStep::MayAlias),
-            "empty stack_phi_offsets must yield MayAlias (sound default)"
-        );
-        Ok(())
-    }
-}

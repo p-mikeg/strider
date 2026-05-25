@@ -1,16 +1,15 @@
-//! Helpers shared by the four SP-aware opt passes
-//! ([`StackStoreDetect`][crate::opt::StackStoreDetect],
-//! [`StackLoadForward`][crate::opt::StackLoadForward],
+//! Helpers shared by the SP-aware opt passes
+//! ([`StackLoadForward`][crate::opt::StackLoadForward],
 //! [`CallStackArgCollect`][crate::opt::CallStackArgCollect],
 //! [`FunctionArgDetect`][crate::opt::FunctionArgDetect]) when they
 //! synthesise a minimal calling convention from raw constructor
 //! arguments.
 //!
-//! Tests in this crate frequently construct one of the four passes
-//! with just a stack-pointer varnode (and sometimes a stack-arg offset
-//! list / register-arg list).  Those convenience `::new(...)`
-//! constructors funnel through here so the four passes share a single
-//! synthetic-CC construction site and a single drift surface.
+//! Tests in this crate frequently construct one of the passes with just
+//! a stack-pointer varnode (and sometimes a stack-arg offset list /
+//! register-arg list).  Those convenience `::new(...)` constructors
+//! funnel through here so the passes share a single synthetic-CC
+//! construction site and a single drift surface.
 
 use strider_target::BuiltCallingConvention;
 
@@ -34,7 +33,7 @@ pub(crate) fn minimal_cc_for_sp(stack_ptr_vn: rsleigh::Vn) -> BuiltCallingConven
 /// empty / `None` / `0`.
 ///
 /// Bypasses [`BuiltCallingConvention::try_new`] because this helper
-/// has only ever called from the four passes' `::new(...)`
+/// has only ever called from the SP-aware passes' `::new(...)`
 /// test-shorthand constructors, which must stay infallible.
 /// Validation of CC-table presets happens upstream in
 /// `CallingConvention::build`; callers here are not building presets.

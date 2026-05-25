@@ -38,8 +38,7 @@ use crate::opt::error::Result;
 use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{
-    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_stack_store,
-    step_through_stack_store_phi, step_through_store,
+    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_store,
 };
 use crate::opt::stack_load_forward::is_stack_partition_input;
 use crate::opt::worklist::seeded_kind;
@@ -362,24 +361,17 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 /// callee may store through the pointer, so the chain is marked dirty.
 ///
 /// Returns `true` if any path through the chain *may* overwrite bytes in the
-/// load's range.  A `StackStore` or `StackStorePhi` whose byte range overlaps
-/// the load's is treated as a shadow; one whose range is strictly disjoint is
-/// walked past.
+/// load's range.  A `Store` whose byte range overlaps the load's is treated as
+/// a shadow; one whose range is strictly disjoint is walked past.
 ///
-/// Plain `Store` nodes (those `StackStoreDetect` did not rewrite to
-/// `StackStore` because their address didn't decompose to `sp + K`) are
-/// alias-discriminated via [`crate::opt::sp_expr::decompose_sp`]: a non-SP-rooted
-/// address is provably non-aliasing with the stack-arg space and the walker
-/// passes through; an SP-rooted `Terminal` address uses the same byte-range
-/// disjointness check as `StackStore`; an SP-rooted `Phi` address conservatively
-/// terminates (matches `stack_load_forward::probe`'s posture).  This is the
-/// `mem_chain_is_dirty` arm of cause #2 — gcc/clang at -O2 routinely
-/// interleave volatile global writes between function-entry stack-arg loads
-/// and the first uses, and without this branch they would all hit `_ => true`.
-///
-/// `StackStorePhi` offsets are per-predecessor and stored in
-/// `Graph::stack_phi_offsets`.  They are relative to `InitialVar(sp)` by
-/// construction (the only place that populates them is `StackStoreDetect`).
+/// `Store` nodes are alias-discriminated via
+/// [`crate::opt::sp_expr::decompose_sp`]: a non-SP-rooted address is provably
+/// non-aliasing with the stack-arg space and the walker passes through; an
+/// SP-rooted `Terminal` address uses byte-range disjointness; an SP-rooted
+/// `Phi` address conservatively terminates.  This is the `mem_chain_is_dirty`
+/// arm of cause #2 — gcc/clang at -O2 routinely interleave volatile global
+/// writes between function-entry stack-arg loads and the first uses, and
+/// without this branch they would all hit `_ => true`.
 //
 /// Iterative form of `mem_chain_is_dirty` — the prior recursive form
 /// stack-overflowed on pathological deep prologues.
@@ -434,18 +426,6 @@ fn mem_chain_is_dirty(
         ) -> Result<StepResult<bool>> {
             match *graph.node_kind(node) {
                 NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
-                NodeKind::StackStore { offset: k, .. } => Ok(
-                    match step_through_stack_store(graph, node, k, self.offset, self.load_size) {
-                        AliasStep::MayAlias => StepResult::Verdict(true),
-                        AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
-                    },
-                ),
-                NodeKind::StackStorePhi { .. } => Ok(
-                    match step_through_stack_store_phi(graph, node, self.offset, self.load_size) {
-                        AliasStep::MayAlias => StepResult::Verdict(true),
-                        AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
-                    },
-                ),
                 NodeKind::Store(_) => Ok(match step_through_store(
                     graph,
                     node,

@@ -547,7 +547,7 @@ mod tests {
     use strider_ir::node::NodeOutputType;
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::RegisterSet;
-    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
 
     fn sp64() -> rsleigh::Vn {
         rsleigh::Vn {
@@ -624,7 +624,6 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
         p.run(&mut fg, entry).unwrap();
         let load = fg
@@ -669,7 +668,6 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
         p.run(&mut fg, entry).unwrap();
         let load = fg
@@ -724,7 +722,6 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
         p.run(&mut fg, entry).unwrap();
         let load = fg
@@ -1020,7 +1017,7 @@ mod tests {
     use strider_ir::node::NodeOutputType;
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::RegisterSet;
-    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
 
         let sp = rsleigh::Vn {
             addr_off: 0x40,
@@ -1087,7 +1084,6 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        p.add(StackStoreDetect::new(sp));
         let entry = fg.entry().unwrap();
         p.run(&mut fg, entry).unwrap();
         let load = fg

@@ -26,24 +26,21 @@ use strider_target::Endianness;
 
 pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
-use crate::opt::{
-    ConstantFold, OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
-};
+use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackLoadForward};
 
-/// Builds the canonical 4-pass optimizer pipeline used across the
+/// Builds the canonical 3-pass optimizer pipeline used across the
 /// opt white-box tests: `ConstantFold` → `RedundantPhis` →
-/// `StackStoreDetect(sp)` → `StackLoadForward(sp, endianness)`.
+/// `StackLoadForward(sp, endianness)`.
 ///
 /// `sp` is the stack-pointer varnode for the fixture's target;
 /// `endianness` matches the fixture's IR.  Tests that need a
 /// different subset of passes still build their own pipeline directly
 /// — this helper exists to retire the 14× verbatim copy of the
-/// 4-pass sequence.
+/// sequence.
 pub(crate) fn standard_test(sp: rsleigh::Vn, endianness: Endianness) -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, endianness));
     pipeline
 }

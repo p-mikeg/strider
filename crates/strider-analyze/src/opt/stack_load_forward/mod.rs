@@ -1,9 +1,9 @@
-//! Forwards the value of a `StackStore{offset: K}` to a subsequent
-//! `Load[sp + K]` when the load's memory input traces back to that store with
-//! no aliasing writes in between.  When a `MemPhi` sits between store and
-//! load and every predecessor resolves to a store at the same offset, the
-//! load is replaced with a synthesized anonymous `NodeKind::Phi` sharing the
-//! `MemPhi`'s phi-token.
+//! Forwards the value of a `Store(addr=sp+K)` to a subsequent `Load[sp + K]`
+//! when the load's memory input traces back to that store with no aliasing
+//! writes in between.  When a `MemPhi` sits between store and load and every
+//! predecessor resolves to a store at the same offset, the load is replaced
+//! with a synthesized anonymous `NodeKind::Phi` sharing the `MemPhi`'s
+//! phi-token.
 //!
 //! Must be wired into the pipeline with the calling convention's stack-pointer
 //! varnode and the target's endianness (see [`StackLoadForward::new`]).
@@ -15,10 +15,7 @@ use strider_target::Endianness;
 use crate::opt::error::Result;
 use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use crate::opt::sp_expr::{
-    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_stack_store_phi,
-    step_through_store,
-};
+use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 use crate::opt::worklist::seeded_kind;
 
 /// Store-to-load forwarding for SP-relative stack slots.
@@ -229,66 +226,53 @@ fn probe(
             node: NodeId,
         ) -> Result<StepResult<Option<ResolveShape>>> {
             match *graph.node_kind(node) {
-                NodeKind::StackStore { offset: k, space: _ } => {
+                NodeKind::Store(_) => {
+                    // Store inputs: [memory, addr, data].
                     let inputs = graph.node_inputs(node);
                     if inputs.len() < 3 {
                         return Ok(StepResult::Verdict(None));
                     }
+                    let addr = inputs[1];
                     let data = inputs[2];
-                    let Some(data_ty) = graph.output_kind(data).as_value() else {
-                        return Ok(StepResult::Verdict(None));
-                    };
-                    let store_size = data_ty.byte_size() as i64;
-                    if k == self.offset {
-                        if data_ty == self.load_ty {
-                            Ok(StepResult::Verdict(Some(ResolveShape::Existing(data))))
-                        } else if data_ty.is_integer()
-                            && self.load_ty.is_integer()
-                            && self.load_ty.byte_size() < data_ty.byte_size()
-                        {
-                            Ok(StepResult::Verdict(Some(ResolveShape::Narrow {
-                                data,
-                                data_ty,
-                            })))
-                        } else {
+                    match decompose_sp(graph, addr, self.sp_vn, self.memo) {
+                        Some(SpExpr::Terminal { base: _, offset: k }) => {
+                            let Some(data_ty) = graph.output_kind(data).as_value() else {
+                                return Ok(StepResult::Verdict(None));
+                            };
+                            let store_size = data_ty.byte_size() as i64;
+                            if k == self.offset {
+                                // Exact-offset match: forward the stored value.
+                                if data_ty == self.load_ty {
+                                    Ok(StepResult::Verdict(Some(ResolveShape::Existing(data))))
+                                } else if data_ty.is_integer()
+                                    && self.load_ty.is_integer()
+                                    && self.load_ty.byte_size() < data_ty.byte_size()
+                                {
+                                    Ok(StepResult::Verdict(Some(ResolveShape::Narrow {
+                                        data,
+                                        data_ty,
+                                    })))
+                                } else {
+                                    Ok(StepResult::Verdict(None))
+                                }
+                            } else if ranges_disjoint(k, store_size, self.offset, self.load_size) {
+                                // Disjoint SP-relative offset: pass through.
+                                Ok(StepResult::Continue(inputs[0]))
+                            } else {
+                                // Overlapping SP-relative store: may alias.
+                                Ok(StepResult::Verdict(None))
+                            }
+                        }
+                        Some(SpExpr::Phi { .. }) => {
+                            // SP-rooted Phi address: conservatively may alias.
                             Ok(StepResult::Verdict(None))
                         }
-                    } else if ranges_disjoint(k, store_size, self.offset, self.load_size) {
-                        Ok(StepResult::Continue(inputs[0]))
-                    } else {
-                        Ok(StepResult::Verdict(None))
+                        None => {
+                            // Non-SP-rooted address: provably non-aliasing with
+                            // the SP-relative query range — pass through.
+                            Ok(StepResult::Continue(inputs[0]))
+                        }
                     }
-                }
-                NodeKind::Store(_) => Ok(match step_through_store(
-                    graph,
-                    node,
-                    self.sp_vn,
-                    self.memo,
-                    self.offset,
-                    self.load_size,
-                ) {
-                    AliasStep::MayAlias => StepResult::Verdict(None),
-                    AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
-                }),
-                NodeKind::StackStorePhi { .. } => {
-                    // A `StackStorePhi` records every per-predecessor stack
-                    // offset on `Graph::stack_phi_offsets`; if every offset
-                    // is provably disjoint from `(offset, load_size)`, the
-                    // phi is a transparent step.  Mirrors the equivalent
-                    // arm in `function_args::mem_chain_is_dirty`.  Without
-                    // this, `Load[sp+K]` whose memory chain passes through
-                    // a stack-store phi could never be forwarded.
-                    Ok(
-                        match step_through_stack_store_phi(
-                            graph,
-                            node,
-                            self.offset,
-                            self.load_size,
-                        ) {
-                            AliasStep::MayAlias => StepResult::Verdict(None),
-                            AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
-                        },
-                    )
                 }
                 NodeKind::MemPhi => {
                     // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
@@ -574,9 +558,9 @@ pub type StackStoredValueMemo =
     rustc_hash::FxHashMap<(NodeOutputId, i64, NodeOutputType), Option<NodeOutputId>>;
 
 /// Walks the memory chain backward from `mem` looking for a
-/// [`NodeKind::StackStore`] at SP-relative offset `offset` whose stored
-/// value has type `value_type`.  Returns the stored value's output id
-/// on success, or `None` when no matching store dominates the chain.
+/// `Store(addr=sp+offset)` whose stored value has type `value_type`.
+/// Returns the stored value's output id on success, or `None` when no
+/// matching store dominates the chain.
 ///
 /// See the module-level "Public helper for the indirect-branch
 /// classifier" notes for the soundness rules.
@@ -627,36 +611,37 @@ pub(crate) fn find_stack_stored_value_at_offset(
         visited.push(key);
         let node = graph.get_node_from_output(cur_mem);
         match *graph.node_kind(node) {
-            NodeKind::StackStore { offset: k, space: _ } => {
+            NodeKind::Store(_) => {
                 let inputs = graph.node_inputs(node);
                 if inputs.len() < 3 {
                     break None;
                 }
+                let addr = inputs[1];
                 let data = inputs[2];
-                let data_ty = graph.output_kind(data).as_value();
-                match data_ty {
-                    None => break None,
-                    Some(data_ty) if k == offset => {
-                        if data_ty == value_type {
-                            break Some(data);
+                match decompose_sp(graph, addr, sp_vn, sp_memo) {
+                    Some(SpExpr::Terminal { base: _, offset: k }) => {
+                        let data_ty = graph.output_kind(data).as_value();
+                        match data_ty {
+                            None => break None,
+                            Some(data_ty) if k == offset => {
+                                if data_ty == value_type {
+                                    break Some(data);
+                                }
+                                break None;
+                            }
+                            Some(data_ty) => {
+                                let store_size = data_ty.byte_size() as i64;
+                                if ranges_disjoint(k, store_size, offset, load_size) {
+                                    cur_mem = inputs[0];
+                                    continue;
+                                }
+                                break None;
+                            }
                         }
-                        break None;
                     }
-                    Some(data_ty) => {
-                        let store_size = data_ty.byte_size() as i64;
-                        if ranges_disjoint(k, store_size, offset, load_size) {
-                            cur_mem = inputs[0];
-                            continue;
-                        }
-                        break None;
-                    }
-                }
-            }
-            NodeKind::Store(_) => {
-                match step_through_store(graph, node, sp_vn, sp_memo, offset, load_size) {
-                    AliasStep::MayAlias => break None,
-                    AliasStep::PassThrough { prev_mem } => {
-                        cur_mem = prev_mem;
+                    Some(SpExpr::Phi { .. }) => break None,
+                    None => {
+                        cur_mem = inputs[0];
                         continue;
                     }
                 }

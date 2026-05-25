@@ -184,18 +184,16 @@ impl Strider {
     /// 1. All passes from [`crate::opt::default_pipeline`] (constant folding,
     ///    known-bits, flag-cmp canonicalisation, if-cond inversion,
     ///    redundant-phi, dead-branch).
-    /// 2. [`crate::opt::StackStoreDetect`] inside the fixed-point loop, using the
-    ///    convention's stack-pointer varnode.
-    /// 3. [`crate::opt::CallStackArgCollect`] as a post-pass (runs once after
+    /// 2. [`crate::opt::AliasSplit`] to partition memory edges by alias class.
+    /// 3. [`crate::opt::StackLoadForward`] inside the fixed-point loop, using
+    ///    the convention's stack-pointer varnode.
+    /// 4. [`crate::opt::CallStackArgCollect`] as a post-pass (runs once after
     ///    convergence), using the convention's positional stack-arg offsets.
-    /// 4. [`crate::opt::FunctionArgDetect`] as a post-pass, registering
+    /// 5. [`crate::opt::FunctionArgDetect`] as a post-pass, registering
     ///    register- and stack-passed argument carriers in the side-table.
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::default_pipeline();
-        p.add(crate::opt::StackStoreDetect::from_convention(
-            &self.calling_convention,
-        ));
         p.add(crate::opt::AliasSplit::from_convention(
             &self.calling_convention,
         ));
@@ -218,7 +216,7 @@ impl Strider {
     /// Composed of passes whose rewrites survive a later iteration that
     /// adds new phi inputs.  Inherits `ConstantFold`, `KnownBits`,
     /// `FlagCmpCanonicalize`, and `IfCondInversion` from
-    /// `crate::opt::stable_default_pipeline()`, then adds `StackStoreDetect`,
+    /// `crate::opt::stable_default_pipeline()`, then adds `AliasSplit`,
     /// `StackLoadForward`, and the `FunctionArgDetect` post-pass.  The
     /// destructive passes (`RedundantPhis` / `DeadBranchElimination`)
     /// are deferred to the final iteration because they remove nodes
@@ -226,9 +224,6 @@ impl Strider {
     #[must_use]
     pub fn build_stable_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::stable_default_pipeline();
-        p.add(crate::opt::StackStoreDetect::from_convention(
-            &self.calling_convention,
-        ));
         p.add(crate::opt::AliasSplit::from_convention(
             &self.calling_convention,
         ));
