@@ -1331,7 +1331,7 @@ pub struct CallOtherPatDef {
 
     /// Match against the unique consumer of the CallOther's memory
     /// output (outputs[1]).  No match if zero or multiple consumers,
-    /// or when the ABI's `memory_edge` is `false`.
+    /// or when the ABI's `mem_clobbers` set is empty.
     #[field(accepts = "Pat", arg = "p")]
     next_mem: Option<strider_analyze::pattern::Pat>,
 }
@@ -1380,7 +1380,7 @@ impl PyCallOtherPat {
         Ok(slf)
     }
     /// Convenience: match `outputs[1]` (memory output; dangles when
-    /// the ABI's `memory_edge` is `false`).
+    /// the ABI's `mem_clobbers` set is empty).
     fn mem_out<'py>(
         slf: PyRef<'py, Self>,
         p: PatLike<'py>,

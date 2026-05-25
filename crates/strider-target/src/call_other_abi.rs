@@ -3,6 +3,10 @@
 //! (and the predecessor spec `2026-05-05-callother-classification-design.md`
 //! for the original cfg/ir consumer split).
 
+use crate::alias_class::{
+    AliasClass, MEM_CLOBBER_FULL, MEM_CLOBBER_HEAP_UNKNOWN, MEM_CLOBBER_NONE,
+};
+
 /// Per-user-op ABI describing register and memory effects beyond
 /// what Sleigh's pcode insn already encodes.  Sleigh emits
 /// `CALLOTHER(user_op_id, args…)` with a possible `output` field;
@@ -22,11 +26,32 @@ pub struct CallOtherAbi {
     /// rebinds the matching tracked variable to that slot.
     pub implicit_writes: &'static [&'static str],
 
-    /// Whether this op advances the IR's memory edge (token).  True
-    /// for ops whose effect on memory is observable to subsequent
-    /// loads / stores (syscall, port I/O, cache writeback).  False
-    /// for pure register-level computation (cpuid, rdtsc, NEON math).
-    pub memory_edge: bool,
+    /// Set of memory partitions whose memory token this op clobbers.
+    /// Replaces the old coarse `memory_edge: bool` — `[]` means "no
+    /// memory effect" (pure compute, identical to `memory_edge: false`)
+    /// and any non-empty set advances the IR's memory edge and tells
+    /// `AliasSplit` which per-partition chains to break across this
+    /// op.
+    ///
+    /// Common choices:
+    /// * `MEM_CLOBBER_NONE` (`&[]`) — pure compute (cpuid, rdtsc).
+    /// * `MEM_CLOBBER_HEAP_UNKNOWN` — atomic / barrier / port-I/O
+    ///   ops that disturb heap and unmapped memory but provably leave
+    ///   the user-mode stack frame intact.
+    /// * `MEM_CLOBBER_FULL` — SYSCALL and any kernel-entry path that
+    ///   may also mutate the user-mode stack frame.
+    pub mem_clobbers: &'static [AliasClass],
+}
+
+impl CallOtherAbi {
+    /// Convenience: does this op advance the IR's memory edge at all?
+    /// Equivalent to the old `memory_edge: bool` accessor — true when
+    /// at least one partition is clobbered.
+    #[must_use]
+    #[inline]
+    pub fn has_memory_edge(&self) -> bool {
+        !self.mem_clobbers.is_empty()
+    }
 }
 
 /// What `strider::handle_call_other` does for a given user-op name.
@@ -120,19 +145,28 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
             implicit_writes: &["r0"],
-            memory_edge:     true,
+            // Linux SVC/SWI is a kernel entry: the kernel can read/write
+            // any user-mode memory including the user stack.  Use the
+            // full-clobber set so AliasSplit breaks the Stack chain too.
+            mem_clobbers:    MEM_CLOBBER_FULL,
         }),
     },
     // x86 INT instruction also lifts to "swi" in some Sleigh contexts.
-    // Empty ABI + memory_edge for now: sound stub until a future spec
-    // models per-(arch, INT-vector, OS) syscall conventions.  Without
-    // this entry, any x86 lift containing an INT instruction would
-    // error with UnknownCallOtherError (e.g. INT3 padding bytes).
+    // Empty register ABI + full-clobber mem set as a sound stub until a
+    // future spec models per-(arch, INT-vector, OS) syscall conventions.
+    // Without this entry, any x86 lift containing an INT instruction
+    // would error with UnknownCallOtherError (e.g. INT3 padding bytes).
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["swi"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[], implicit_writes: &[], memory_edge: true,
+            implicit_reads: &[],
+            implicit_writes: &[],
+            // Conservatively full-clobber: INT 0x80 (Linux x86 syscall)
+            // is a kernel entry that can mutate user stack memory.  Other
+            // INT vectors (debugger, page-fault) won't usually but we
+            // prefer the sound stub.
+            mem_clobbers: MEM_CLOBBER_FULL,
         }),
     },
 
@@ -147,7 +181,9 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
             implicit_writes: &["RAX", "RCX", "R11"],
-            memory_edge:     true,
+            // Kernel entry: can read/write the user stack frame in
+            // addition to heap / unknown memory.  Full clobber.
+            mem_clobbers:    MEM_CLOBBER_FULL,
         }),
     },
 
@@ -161,7 +197,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             implicit_writes: &["x0", "x1", "x2", "x3"],
-            memory_edge:     true,
+            // Hypervisor / Secure Monitor calls operate via the SMCCC
+            // register-passing channel; the SMCCC spec does not permit
+            // them to mutate the caller's stack frame.  Heap+Unknown is
+            // the right clobber set.
+            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
         }),
     },
 
@@ -174,7 +214,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["ECX"],
             implicit_writes: &["EAX", "EDX"],
-            memory_edge:     false,
+            mem_clobbers:    MEM_CLOBBER_NONE,
         }),
     },
 
@@ -183,87 +223,89 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // so the EDX/EAX writes are explicit pcode ops downstream of the
     // CALLOTHER and don't need to be re-declared as implicit clobbers
     // here (double-declaring would over-clobber the call site).  No
-    // memory edge: TSC reads don't observe RAM.
+    // memory clobber: TSC reads don't observe RAM.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["rdtsc"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            memory_edge:     false,
+            mem_clobbers:    MEM_CLOBBER_NONE,
         }),
     },
 
     // x86 RDTSCP: like RDTSC but ALSO writes ECX (= IA32_TSC_AUX MSR's
     // low 32 bits).  Without the ECX clobber, a pattern reading
     // post-RDTSCP ECX would incorrectly see the pre-call value.  No
-    // memory edge: TSC reads don't observe RAM.
+    // memory clobber: TSC reads don't observe RAM.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["rdtscp"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &["EAX", "EDX", "ECX"],
-            memory_edge:     false,
+            mem_clobbers:    MEM_CLOBBER_NONE,
         }),
     },
 
     // x86 RDMSR — read model-specific register.  Sleigh emits
     //   `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`
     // so ECX is an explicit pcode arg and the EDX/EAX writes are
-    // separate downstream pcode ops.  Nothing implicit; no memory edge
-    // (an MSR read doesn't observe RAM).
+    // separate downstream pcode ops.  Nothing implicit; no memory
+    // clobber (an MSR read doesn't observe RAM).
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["rdmsr"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            memory_edge:     false,
+            mem_clobbers:    MEM_CLOBBER_NONE,
         }),
     },
 
     // x86 WRMSR — write model-specific register.  Sleigh emits
     //   `tmp:8 = (zext(EDX)<<32)|zext(EAX); wrmsr(ECX, tmp);`
     // so ECX/tmp (and transitively EDX/EAX) are all explicit pcode
-    // operands of upstream ops feeding this CALLOTHER.  Memory edge:
-    // a WRMSR can change TSC, FSBASE, etc., so subsequent loads must
-    // observe the write.
+    // operands of upstream ops feeding this CALLOTHER.  Heap+Unknown
+    // clobber: a WRMSR can change TSC, FSBASE, etc., so subsequent
+    // heap-resident loads must observe the write; the user-mode stack
+    // frame is unaffected.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["wrmsr"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            memory_edge:     true,
+            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
         }),
     },
 
     // x86_64 RDFSBASE / RDGSBASE — read FS/GS segment base into a GPR.
     // Sleigh emits `r32 = readfsbase()` / `r64 = readfsbase()`
     // (destination is the explicit pcode output, no inputs).  Nothing
-    // implicit; no memory edge.
+    // implicit; no memory clobber.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["readfsbase", "readgsbase"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            memory_edge:     false,
+            mem_clobbers:    MEM_CLOBBER_NONE,
         }),
     },
 
     // WRFSBASE / WRGSBASE — write FS/GS base from a GPR.  Sleigh emits
     // `writefsbase(r64)` (or `zext(r32)`) with the source register as
-    // the explicit pcode arg.  Memory edge: subsequent FS:/GS:-based
-    // loads depend on the new base.
+    // the explicit pcode arg.  Heap+Unknown clobber: subsequent
+    // FS:/GS:-based heap loads depend on the new base; the stack
+    // frame is SP-relative and unaffected.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["writefsbase", "writegsbase"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            memory_edge:     true,
+            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
         }),
     },
 
@@ -272,16 +314,17 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // register reads are not surfaced as pcode args, so they belong in
     // `implicit_reads`.  Per Intel SDM Vol. 2B §4-39: RAX = linear
     // address to monitor, ECX = extensions (must be 0), EDX = hints
-    // (must be 0).  Memory edge: the operation interacts with the
-    // cache subsystem and pairs with a subsequent MWAIT.  AMD MONITORX
-    // (0F 01 FA) shares the same ABI per AMD64 Vol. 3.
+    // (must be 0).  Heap+Unknown clobber: the operation interacts
+    // with the cache subsystem and pairs with a subsequent MWAIT; it
+    // does not mutate stack-frame contents.  AMD MONITORX (0F 01 FA)
+    // shares the same ABI per AMD64 Vol. 3.
     CallOtherRow {
         preset_arches: &[crate::ArchPreset::X86_64],
         op_names: &["monitor", "monitorx"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX", "ECX", "EDX"],
             implicit_writes: &[],
-            memory_edge:     true,
+            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
         }),
     },
     // x86 32-bit MONITOR / MONITORX — EAX-relative address.
@@ -291,22 +334,23 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX", "EDX"],
             implicit_writes: &[],
-            memory_edge:     true,
+            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
         }),
     },
 
     // x86 MWAIT (0F 01 C9) / MWAITX (0F 01 FB) — enter a low-power
     // state until the armed cache line is written.  Per Intel SDM
     // Vol. 2B §4-44: EAX = hints, ECX = extensions (must be 0).  No
-    // GPR writes.  Memory edge: serialises with the prior MONITOR's
-    // cache-line arming and acts as a memory-order point.
+    // GPR writes.  Heap+Unknown clobber: serialises with the prior
+    // MONITOR's cache-line arming and acts as a memory-order point
+    // for heap-resident memory; stack frames are unaffected.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["mwait", "mwaitx"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX"],
             implicit_writes: &[],
-            memory_edge:     true,
+            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
         }),
     },
 
@@ -327,18 +371,20 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
     // IA32_KERNEL_GS_BASE.  No GPR or RAM write on its own, but the
     // MSR swap silently changes the virtual base used by every
-    // subsequent `%gs:`-relative load/store.  Without memory_edge =
-    // true, StackLoadForward / LoadReadOnly would forward
-    // `%gs:`-loads across the swap.  Analogous to wr{fs,gs}base
-    // above.  Arch-specific so it cannot misclassify a non-x86
-    // user-op coincidentally named `swapgs`.
+    // subsequent `%gs:`-relative load/store.  Without a non-empty
+    // mem_clobbers, StackLoadForward / LoadReadOnly would forward
+    // `%gs:`-loads across the swap.  Analogous to wr{fs,gs}base above —
+    // %gs accesses are heap-resident; the stack pointer is not
+    // GS-relative, so MEM_CLOBBER_HEAP_UNKNOWN is sufficient.  Arch-
+    // specific so it cannot misclassify a non-x86 user-op
+    // coincidentally named `swapgs`.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["swapgs"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            memory_edge:     true,
+            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
         }),
     },
 
@@ -384,11 +430,13 @@ const AARCH64_BOTH: &[crate::ArchPreset] =
 /// map's setup cost isn't justified.
 #[must_use]
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
-    use TableClass::{NoOp, NoReturn, Pure, PureMem};
-    /// Per-table marker for one of the four pre-canned classifications
+    use TableClass::{FullClobber, NoOp, NoReturn, Pure, PureMem};
+    /// Per-table marker for one of the five pre-canned classifications
     /// — `NoOp` (decoder-context only), `NoReturn` (trap), `Pure`
-    /// (visible marker / pure compute, no memory edge), `PureMem`
-    /// (memory-chain marker / external-state effect).  Resolved to a
+    /// (visible marker / pure compute, no memory clobber), `PureMem`
+    /// (memory-chain marker / external-state effect, clobbers
+    /// Heap+Unknown), `FullClobber` (kernel-entry-style ops that can
+    /// also mutate the user stack frame).  Resolved to a
     /// `CallOtherClass` by `TableClass::resolve`.
     #[derive(Clone, Copy)]
     enum TableClass {
@@ -396,6 +444,7 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         NoReturn,
         Pure,
         PureMem,
+        FullClobber,
     }
     impl TableClass {
         fn resolve(self) -> CallOtherClass {
@@ -405,12 +454,26 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
                 Self::Pure => CallOtherClass::Call(CallOtherAbi {
                     implicit_reads: &[],
                     implicit_writes: &[],
-                    memory_edge: false,
+                    mem_clobbers: MEM_CLOBBER_NONE,
                 }),
                 Self::PureMem => CallOtherClass::Call(CallOtherAbi {
                     implicit_reads: &[],
                     implicit_writes: &[],
-                    memory_edge: true,
+                    // Default "memory-edge" classification: barriers,
+                    // LOCK/UNLOCK, port I/O, etc. all clobber heap and
+                    // unknown memory but leave the SP-relative stack
+                    // frame intact.  Ops whose semantics also disturb
+                    // the user stack (SYSCALL / SWI) get FullClobber.
+                    mem_clobbers: MEM_CLOBBER_HEAP_UNKNOWN,
+                }),
+                Self::FullClobber => CallOtherClass::Call(CallOtherAbi {
+                    implicit_reads: &[],
+                    implicit_writes: &[],
+                    // Kernel-entry path: kernel can mutate any user
+                    // memory including the stack frame.  Used for the
+                    // generic `software_interrupt` user-op that ARM's
+                    // SVC family lifts to.
+                    mem_clobbers: MEM_CLOBBER_FULL,
                 }),
             }
         }
@@ -519,8 +582,9 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("out", PureMem),
 
         // ARM SVC / SWI raised by an immediate — possible syscall
-        // path, kernel can do anything to memory.
-        ("software_interrupt", PureMem),
+        // path, kernel can do anything to memory including the user
+        // stack frame.  Use the full-clobber marker.
+        ("software_interrupt", FullClobber),
     ];
     TABLE
         .iter()
@@ -536,7 +600,7 @@ mod tests {
         CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
-            memory_edge: false,
+            mem_clobbers: MEM_CLOBBER_NONE,
         }
     }
 
@@ -569,7 +633,7 @@ mod tests {
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
-            assert!(abi.memory_edge, "{n}: must advance mem edge for chain visibility");
+            assert!(abi.has_memory_edge(), "{n}: must advance mem edge for chain visibility");
         }
     }
 
@@ -588,7 +652,7 @@ mod tests {
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
-            assert!(!abi.memory_edge, "{n}: must NOT advance mem edge (opt passes need to forward)");
+            assert!(!abi.has_memory_edge(), "{n}: must NOT advance mem edge (opt passes need to forward)");
         }
     }
 
@@ -638,7 +702,7 @@ mod tests {
         };
         assert_eq!(abi.implicit_reads, &["RAX", "ECX", "EDX"]);
         assert!(abi.implicit_writes.is_empty());
-        assert!(abi.memory_edge);
+        assert!(abi.has_memory_edge());
 
         let m32 = classify(crate::ArchPreset::X86, "monitor").expect("monitor x86");
         let CallOtherClass::Call(abi) = m32 else { panic!() };
@@ -648,7 +712,7 @@ mod tests {
         let CallOtherClass::Call(abi) = mwait else { panic!() };
         assert_eq!(abi.implicit_reads, &["EAX", "ECX"]);
         assert!(abi.implicit_writes.is_empty());
-        assert!(abi.memory_edge);
+        assert!(abi.has_memory_edge());
 
         // AMD variants share the same shape.
         assert!(matches!(
@@ -679,7 +743,7 @@ mod tests {
         let CallOtherClass::Call(abi) = cls else { panic!("expected Call(abi)") };
         assert!(abi.implicit_reads.is_empty());
         assert!(abi.implicit_writes.is_empty());
-        assert!(abi.memory_edge, "swapgs must advance memory edge (kernel GS base swap)");
+        assert!(abi.has_memory_edge(), "swapgs must advance memory edge (kernel GS base swap)");
     }
 
     #[test]
@@ -706,7 +770,7 @@ mod tests {
             &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"]
         );
         assert_eq!(abi.implicit_writes, &["RAX", "RCX", "R11"]);
-        assert!(abi.memory_edge);
+        assert!(abi.has_memory_edge());
     }
 
     #[test]
@@ -742,7 +806,7 @@ mod tests {
             };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
-            assert!(!abi.memory_edge, "{n}: cpuid doesn't touch RAM");
+            assert!(!abi.has_memory_edge(), "{n}: cpuid doesn't touch RAM");
         }
     }
 
@@ -758,7 +822,7 @@ mod tests {
         };
         assert_eq!(abi.implicit_reads, &[] as &[&str]);
         assert_eq!(abi.implicit_writes, &[] as &[&str]);
-        assert!(!abi.memory_edge);
+        assert!(!abi.has_memory_edge());
     }
 
     #[test]
@@ -772,7 +836,7 @@ mod tests {
         };
         assert_eq!(abi.implicit_reads, &[] as &[&str]);
         assert_eq!(abi.implicit_writes, &["EAX", "EDX", "ECX"]);
-        assert!(!abi.memory_edge);
+        assert!(!abi.has_memory_edge());
     }
 
     #[test]
@@ -813,7 +877,7 @@ mod tests {
                     "{preset:?}/{n}",
                 );
                 assert_eq!(abi.implicit_writes, &["x0", "x1", "x2", "x3"], "{preset:?}/{n}");
-                assert!(abi.memory_edge, "{preset:?}/{n}");
+                assert!(abi.has_memory_edge(), "{preset:?}/{n}");
             }
             // Non-aarch64 presets must NOT resolve these names.
             assert_eq!(classify(crate::ArchPreset::X86_64, "CallHyperVisor"), None);
@@ -830,7 +894,7 @@ mod tests {
             let CallOtherClass::Call(abi) = class else { panic!("expected Call") };
             assert_eq!(abi.implicit_reads, &["ECX"]);
             assert_eq!(abi.implicit_writes, &["EAX", "EDX"]);
-            assert!(!abi.memory_edge);
+            assert!(!abi.has_memory_edge());
         }
         // Non-x86 presets must NOT resolve.
         assert_eq!(classify(crate::ArchPreset::Aarch64, "rdpkru_u32"), None);
@@ -854,7 +918,7 @@ mod tests {
                     panic!("{preset:?}/{n}: expected Call")
                 };
                 assert_eq!(abi, empty_abi(), "{preset:?}/{n}");
-                assert!(!abi.memory_edge, "{preset:?}/{n}");
+                assert!(!abi.has_memory_edge(), "{preset:?}/{n}");
             }
             for n in edge_ops {
                 let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
@@ -863,7 +927,7 @@ mod tests {
                 };
                 assert_eq!(abi.implicit_reads, &[] as &[&str], "{preset:?}/{n}");
                 assert_eq!(abi.implicit_writes, &[] as &[&str], "{preset:?}/{n}");
-                assert!(abi.memory_edge, "{preset:?}/{n}");
+                assert!(abi.has_memory_edge(), "{preset:?}/{n}");
             }
         }
         // Non-x86 presets must NOT resolve these names — the encoded
@@ -960,7 +1024,7 @@ mod tests {
             };
             assert_eq!(abi.implicit_reads, &[] as &[&str], "{n}");
             assert_eq!(abi.implicit_writes, &[] as &[&str], "{n}");
-            assert!(abi.memory_edge, "{n}");
+            assert!(abi.has_memory_edge(), "{n}");
         }
     }
 
@@ -987,19 +1051,24 @@ mod tests {
                 "{preset:?}",
             );
             assert_eq!(abi.implicit_writes, &["r0"], "{preset:?}");
-            assert!(abi.memory_edge, "{preset:?}");
+            assert!(abi.has_memory_edge(), "{preset:?}");
         }
     }
 
     #[test]
     fn swi_on_x86_returns_empty_call_stub() {
-        // (X86, "swi") and (X86_64, "swi") use an empty-ABI Call as a
-        // sound stub until per-INT-vector / per-OS modelling lands.
-        let empty = CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[], implicit_writes: &[], memory_edge: true,
+        // (X86, "swi") and (X86_64, "swi") use a register-empty Call
+        // with a full-clobber memory set as a sound stub until
+        // per-INT-vector / per-OS modelling lands — INT 0x80 (Linux
+        // x86 syscall) is a kernel entry that can mutate the user
+        // stack, so the conservative mem-clobber default is FULL.
+        let stub = CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            mem_clobbers: MEM_CLOBBER_FULL,
         });
-        assert_eq!(classify(crate::ArchPreset::X86, "swi"), Some(empty));
-        assert_eq!(classify(crate::ArchPreset::X86_64, "swi"), Some(empty));
+        assert_eq!(classify(crate::ArchPreset::X86, "swi"), Some(stub));
+        assert_eq!(classify(crate::ArchPreset::X86_64, "swi"), Some(stub));
     }
 
     #[test]
@@ -1023,7 +1092,7 @@ mod tests {
             let CallOtherClass::Call(abi) = dmb else {
                 panic!("arch={arch:?}: DMB expected Call, got {dmb:?}")
             };
-            assert!(abi.memory_edge, "arch={arch:?}: DMB must advance mem edge");
+            assert!(abi.has_memory_edge(), "arch={arch:?}: DMB must advance mem edge");
             // Trap is NoReturn on every arch.
             assert_eq!(
                 classify(arch, "invalidInstructionException"),
@@ -1091,7 +1160,7 @@ mod tests {
                     "({preset:?}, {name}) must have empty implicit_writes"
                 );
                 assert!(
-                    abi.memory_edge,
+                    abi.has_memory_edge(),
                     "({preset:?}, {name}) must advance memory edge — fences are ordering primitives"
                 );
             }

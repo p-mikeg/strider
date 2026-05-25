@@ -106,7 +106,7 @@ impl From<CallPat> for Pat {
 /// **Outputs** — addressed by [`Self::ret`] using the raw `outputs[i]`
 /// index:
 ///   * `ret(0, p)` → control output
-///   * `ret(1, p)` → memory output (dangles when `abi.memory_edge=false`)
+///   * `ret(1, p)` → memory output (dangles when `abi.mem_clobbers` is empty)
 ///   * `ret(2, p)` → pcode-explicit value output (when present)
 ///   * `ret(2 + has_value + k, p)` → clobber output `k`
 ///     (matches `abi.implicit_writes[k]`)
@@ -184,7 +184,7 @@ impl CallOtherPat {
     }
 
     /// Convenience: match the memory output (``outputs[1]``).  Dangles
-    /// (no consumers) when the ABI's `memory_edge` is `false`.
+    /// (no consumers) when the ABI's `mem_clobbers` set is empty.
     pub fn mem_out(self, p: impl Into<Pat>) -> Self {
         self.ret(1, p)
     }
@@ -201,7 +201,7 @@ impl CallOtherPat {
     /// Match `p` against the unique consumer of the CallOther's memory
     /// output (`outputs[1]`).  Returns no match if the output has zero or
     /// multiple consumers.  Dangles (and so always fails to match) when
-    /// the matched op's ABI has `memory_edge: false`.
+    /// the matched op's ABI has an empty `mem_clobbers` set.
     pub fn next_mem(mut self, p: impl Into<Pat>) -> Self {
         self.next_mem = Some(p.into());
         self

@@ -58,7 +58,12 @@ names the same types.
 - `call_other_abi::CallOtherAbi` — describes the *implicit* (ISA-fixed,
   not pcode-explicit) channel of a CallOther beyond Sleigh's pcode
   operands.  Fields: `implicit_reads: &'static [&'static str]`,
-  `implicit_writes: &'static [&'static str]`, `memory_edge: bool`.
+  `implicit_writes: &'static [&'static str]`,
+  `mem_clobbers: &'static [AliasClass]` (per-partition memory clobber
+  set — replaces the old coarse `memory_edge: bool`; `MEM_CLOBBER_NONE`
+  for pure compute, `MEM_CLOBBER_HEAP_UNKNOWN` for barriers / atomics
+  / port-I/O, `MEM_CLOBBER_FULL` for kernel-entry paths that can also
+  mutate the user stack frame).
 - `call_other_abi::CallOtherClass` — `NoOp` | `NoReturn` |
   `Call(CallOtherAbi)`.  The classifier's verdict for a given user-op
   name.

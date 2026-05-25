@@ -106,7 +106,7 @@ pub enum NodeKind {
     /// into unified memory.  Inserted by the AliasSplit optimization
     /// before any op that needs all-of-memory (Call to unknown
     /// function, Return, unknown-address Store, IndirectBranch,
-    /// CallOther with memory_edge).
+    /// CallOther with a non-empty `mem_clobbers` set).
     ///
     /// Inputs: `[mem_partition_0, mem_partition_1, ...]` — variadic
     /// data inputs in canonical partition-id order, each

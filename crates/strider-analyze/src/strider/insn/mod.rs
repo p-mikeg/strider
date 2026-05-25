@@ -179,8 +179,13 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             &implicit_write_kinds,
         )?;
 
-        // 6. Memory edge: strider decides whether to advance.
-        if abi.memory_edge {
+        // 6. Memory edge: strider decides whether to advance.  Any
+        //    non-empty mem-clobber set advances the unified memory
+        //    token so subsequent loads/stores observe the call.
+        //    AliasSplit (the post-pass) reads `abi.mem_clobbers` to
+        //    decide which per-partition chains to break across this
+        //    CallOther.
+        if abi.has_memory_edge() {
             let mem_out = self.builder.graph().memory_output_of(node)?;
             self.builder.advance_cur_region_memory(mem_out)?;
         }

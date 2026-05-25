@@ -356,7 +356,7 @@ impl FunctionBuilder {
     /// `ctrl_out` but **does not** advance the memory token — the
     /// strider layer is responsible for calling
     /// `advance_cur_region_memory(mem_out)` IFF the ABI's
-    /// `memory_edge` is true.  Similarly the strider layer is
+    /// `mem_clobbers` set is non-empty.  Similarly the strider layer is
     /// responsible for rebinding each implicit-write Vn to its
     /// corresponding clobber slot via the aliasing-aware
     /// `strider_lift::pcode_lift::ValueLifter::write_vn`.
