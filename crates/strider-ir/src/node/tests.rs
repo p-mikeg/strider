@@ -355,7 +355,6 @@ fn try_from_u32_size_to_node_output_type() {
 /// `is_cacheable` and `asm_fingerprint_exempt` catch new variants at compile
 /// time, but a forgotten append here would silently shrink runtime coverage.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
-    use crate::node::FunctionArgSource;
     use crate::ops::{
         BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
         IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -372,10 +371,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Entry,
         NodeKind::InitialMemory,
         NodeKind::InitialVar(vn),
-        NodeKind::FunctionArg {
-            source: FunctionArgSource::Register(vn),
-            index: 0,
-        },
         // region
         NodeKind::Region,
         // phis
@@ -438,7 +433,6 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
         NodeKind::Entry
             | NodeKind::InitialMemory
             | NodeKind::InitialVar(..)
-            | NodeKind::FunctionArg { .. }
             | NodeKind::Return
             | NodeKind::IndirectBranch
             | NodeKind::Region
@@ -459,7 +453,6 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
         NodeKind::Entry
             | NodeKind::InitialMemory
             | NodeKind::InitialVar(_)
-            | NodeKind::FunctionArg { .. }
             | NodeKind::Region
             | NodeKind::MemPhi
             | NodeKind::Phi

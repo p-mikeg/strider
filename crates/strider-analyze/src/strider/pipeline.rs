@@ -188,8 +188,8 @@ impl Strider {
     ///    convention's stack-pointer varnode.
     /// 3. [`crate::opt::CallStackArgCollect`] as a post-pass (runs once after
     ///    convergence), using the convention's positional stack-arg offsets.
-    /// 4. [`crate::opt::FunctionArgDetect`] as a post-pass, canonicalising
-    ///    register- and stack-passed argument reads into `FunctionArg` nodes.
+    /// 4. [`crate::opt::FunctionArgDetect`] as a post-pass, registering
+    ///    register- and stack-passed argument carriers in the side-table.
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::default_pipeline();

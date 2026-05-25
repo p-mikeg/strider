@@ -188,41 +188,6 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     }
 }
 
-/// Graph invariant: at most one [`NodeKind::FunctionArg`] per `index`.
-/// The [`opt::FunctionArgDetect`] pass emits one canonical node per
-/// argument index; having two would mean patterns keyed by
-/// `matcher.function_arg(i)` become ambiguous.
-///
-/// Reachability-scoped — every other per-node graph-invariants check
-/// is reachability-gated, and `RedundantPhis` may leave a stale
-/// `FunctionArg` zombie in the arena while a new canonical one is live.
-/// Without scoping, the validator would flag a structurally valid graph
-/// with `DuplicateFunctionArg`.
-pub(super) fn check_graph_invariants_function_arg_uniqueness(
-    graph: &Graph,
-    reachable: &NodeIdSet,
-    errs: &mut Vec<ValidationError>,
-) {
-    use std::collections::HashMap;
-
-    let mut by_index: HashMap<u32, NodeId> = HashMap::new();
-    for (node, kind) in graph.reachable_kind_iter(reachable) {
-        let index = match *kind {
-            NodeKind::FunctionArg { index, .. } => index,
-            _ => continue,
-        };
-        if let Some(&first) = by_index.get(&index) {
-            errs.push(ValidationError::DuplicateFunctionArg {
-                index,
-                first,
-                second: node,
-            });
-        } else {
-            by_index.insert(index, node);
-        }
-    }
-}
-
 /// Returns the `(expected_byte_size, output_type)` pair that the
 /// declared `NodeOutputType` of a wide-const node prescribes, or
 /// `None` when the node lacks a value-typed output (skip — let

@@ -17,8 +17,7 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::Entry
         | NodeKind::InitialMemory
-        | NodeKind::InitialVar(_)
-        | NodeKind::FunctionArg { .. } => "Mdiamond",
+        | NodeKind::InitialVar(_) => "Mdiamond",
 
         NodeKind::Region => "invhouse",
         NodeKind::Phi | NodeKind::MemPhi => "house",
@@ -49,8 +48,7 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::Entry
         | NodeKind::InitialMemory
-        | NodeKind::InitialVar(_)
-        | NodeKind::FunctionArg { .. } => "\"#1a3a5c\"",
+        | NodeKind::InitialVar(_) => "\"#1a3a5c\"",
 
         NodeKind::Region => "\"#2a1a4a\"",
 

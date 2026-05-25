@@ -956,12 +956,10 @@ fn read_or_init_var(
         return Ok(out);
     }
     // Consult the graph's maintained `InitialVar` index.  Skip detached
-    // zombies (e.g. `InitialVar(rdi)` left behind by a prior
-    // `FunctionArgDetect` after it rewired the original consumer to a
-    // `FunctionArg`) by validating that the registered node's single
-    // output still has live uses — a zero-use entry indicates the
-    // index points at a detached node, so we fall through and mint a
-    // fresh `InitialVar` instead of resurrecting the zombie.
+    // zombies by validating that the registered node's single output
+    // still has live uses — a zero-use entry indicates the index points
+    // at a detached node, so we fall through and mint a fresh
+    // `InitialVar` instead of resurrecting the zombie.
     if let Some(nid) = graph.graph().initial_var_for(vn) {
         let [out] = graph.node_outputs_exact::<1>(nid).map_err(|e| {
             anyhow!(

@@ -299,7 +299,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
         NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
         NodeKind::InitialVar(_)
-        | NodeKind::FunctionArg { .. }
         | NodeKind::IntConst(_)
         | NodeKind::IntConstWide(_) => sig!(inputs: [], outputs: [INT_VAL]),
 
@@ -671,7 +670,6 @@ mod tests {
     /// time, but a forgotten append here would silently shrink coverage.
     #[test]
     fn expected_signature_covers_every_node_kind() {
-        use crate::node::FunctionArgSource;
         use crate::ops::{
             BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
             IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -682,10 +680,6 @@ mod tests {
             NodeKind::Entry,
             NodeKind::InitialMemory,
             NodeKind::InitialVar(vn),
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Register(vn),
-                index: 0,
-            },
             NodeKind::Region,
             NodeKind::MemPhi,
             NodeKind::Phi,

@@ -9,8 +9,8 @@
 //!     (reachability-scoped on the source side).
 //!   - **Graph invariants** (`graph_invariants`): whole-graph rules —
 //!     Entry/InitialMemory uniqueness, Region predecessor kinds,
-//!     phi-token ownership, phi per-predecessor arity, FunctionArg
-//!     uniqueness, wide-const consistency, and non-empty asm-fingerprints
+//!     phi-token ownership, phi per-predecessor arity,
+//!     wide-const consistency, and non-empty asm-fingerprints
 //!     on every reachable non-exempt node.
 //!
 //! On failure the validator returns a [`ValidationErrors`] bundle that
@@ -31,7 +31,7 @@ mod tests;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_region,
-    check_graph_invariants_function_arg_uniqueness, check_graph_invariants_phis,
+    check_graph_invariants_phis,
     check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
 };
 use local_typing::check_local_typing;
@@ -76,7 +76,6 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
     check_graph_invariants_uniqueness(graph, &mut errs);
     check_graph_invariants_region(graph, &reachable, &mut errs);
     check_graph_invariants_phis(graph, &reachable, &mut errs);
-    check_graph_invariants_function_arg_uniqueness(graph, &reachable, &mut errs);
     check_graph_invariants_wide_consts(graph, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
 
@@ -213,13 +212,6 @@ pub enum ValidationError {
         owner_region: NodeId,
         expected_predecessors: usize,
         actual_values: usize,
-    },
-
-    #[error("duplicate FunctionArg at index {index}: {first:?} and {second:?}")]
-    DuplicateFunctionArg {
-        index: u32,
-        first: NodeId,
-        second: NodeId,
     },
 
     #[error(

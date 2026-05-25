@@ -1,17 +1,16 @@
-//! `NodeKind` — the closed enum of every operation/role a node can take —
-//! and `FunctionArgSource`, the calling-convention source for a `FunctionArg`
-//! node.
+//! `NodeKind` — the closed enum of every operation/role a node can take.
 
 /// Where a function argument originates in the calling convention.
 ///
-/// Used inside [`NodeKind::FunctionArg`] to capture whether the argument was
-/// passed in a register (e.g. RDI on x86_64 System V) or on the stack at a
-/// positional offset from the entry stack pointer.
+/// Used by the pattern builder [`strider_analyze::pattern::FunctionArgPat`] to
+/// filter matches by ABI source — register-passed (`Register`) or
+/// stack-passed (`Stack`).  No longer embedded in a `NodeKind` variant; arg
+/// tracking lives in the `Function::arg_index_to_nodes` side-table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FunctionArgSource {
     /// The argument was passed in the given register varnode.  This is always
     /// the full-width container register (e.g. `RDI`, not `EDI`) so that
-    /// sub-register reads can be expressed as `Truncate(FunctionArg)`.
+    /// sub-register reads can be expressed as `Truncate(InitialVar(rdi))`.
     Register(rsleigh::Vn),
     /// The argument was passed on the stack at byte offset `offset` from the
     /// entry-time stack pointer (`InitialVar(sp)`).  `space` is the address
@@ -33,24 +32,6 @@ pub enum NodeKind {
     /// Initial value of varnode `Vn` at the function entry.  Produces a
     /// value output of the appropriate integer type.
     InitialVar(rsleigh::Vn),
-    /// Canonical marker for a function argument at position `index` in the
-    /// calling convention.  Introduced by
-    /// [`opt::FunctionArgDetect`](../../../opt/src/function_args/mod.rs) which
-    /// replaces register-passed arg reads (`InitialVar(arg_reg)`) and
-    /// stack-passed arg reads (`Load[InitialVar(sp) + K]`) with this node.
-    ///
-    /// The per-graph invariant is that at most one `FunctionArg` node exists
-    /// per `index` (enforced by `validate::graph_invariants`).  Source nodes
-    /// may become unreferenced after rewiring; `FunctionArg` itself is not
-    /// cacheable, since identity matters for the uniqueness invariant.
-    ///
-    /// Inputs: `[]`.  Outputs: `[value]` of a width determined by `source`
-    /// (register width for `Register`; the widest observed load width for
-    /// `Stack`).
-    FunctionArg {
-        source: FunctionArgSource,
-        index: u32,
-    },
 
     // ── Region / join nodes ────────────────────────────────────────────────────
     /// Region header.  Consumes incoming control edges (one per predecessor)
@@ -269,7 +250,6 @@ impl NodeKind {
             Self::Entry
             | Self::InitialMemory
             | Self::InitialVar(..)
-            | Self::FunctionArg { .. }
             | Self::Region
             | Self::MemPhi
             | Self::Phi
@@ -355,12 +335,10 @@ impl NodeKind {
 
             // Region header (inputs grow dynamically post-construction).
             Self::Region
-            // Initial state (function-entry singletons; per-index
-            // uniqueness invariant on FunctionArg).
+            // Initial state (function-entry singletons).
             | Self::Entry
             | Self::InitialMemory
             | Self::InitialVar(..)
-            | Self::FunctionArg { .. }
             // Phis (per-region identity matters; inputs added incrementally).
             | Self::Phi
             | Self::MemPhi
@@ -397,7 +375,6 @@ impl NodeKind {
             Self::Entry
             | Self::InitialMemory
             | Self::InitialVar(..)
-            | Self::FunctionArg { .. }
             | Self::Region
             | Self::Phi
             | Self::MemPhi
@@ -469,7 +446,6 @@ impl NodeKind {
             Self::Entry => "Entry",
             Self::InitialMemory => "InitialMemory",
             Self::InitialVar(_) => "InitialVar",
-            Self::FunctionArg { .. } => "FunctionArg",
             Self::Region => "Region",
             Self::MemPhi => "MemPhi",
             Self::Phi => "Phi",

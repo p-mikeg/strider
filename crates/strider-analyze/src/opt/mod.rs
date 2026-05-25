@@ -29,7 +29,7 @@
 //! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
 //! | [`StackStoreDetect`] | Promotes SP-relative `Store` to `StackStore { offset }` |
 //! | [`StackLoadForward`] | Forwards values from `StackStore` to subsequent same-offset `Load` |
-//! | [`FunctionArgDetect`] (post-pass) | Canonicalises register/stack arg reads to `FunctionArg` |
+//! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_nodes` side-table |
 //! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
 //!
 //! Indirect-branch resolution is driven separately by the orchestrator

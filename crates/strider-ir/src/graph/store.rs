@@ -51,10 +51,9 @@ impl Graph {
     /// for `vn`, or `None` if none has been registered on this graph.
     ///
     /// O(1) hash lookup.  Callers that want to skip detached zombie
-    /// `InitialVar` nodes (e.g. ones left behind by `FunctionArgDetect`
-    /// after it rewires the original consumer to a `FunctionArg`) must
-    /// validate the returned id themselves — typically by checking the
-    /// node's single output's use-list via [`Self::output_uses`].
+    /// `InitialVar` nodes must validate the returned id themselves —
+    /// typically by checking the node's single output's use-list via
+    /// [`Self::output_uses`].
     ///
     /// Maintained at every canonical `InitialVar` creation site (the
     /// lift-time `FunctionBuilder::set_entry_region` path and the
