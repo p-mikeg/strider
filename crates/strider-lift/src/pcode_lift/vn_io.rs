@@ -282,38 +282,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         };
         let container_ty = ctx.container_ty;
         let container_reg_val = self.builder.read_variable(&ctx.container_reg)?;
-
-        // Extend `val` to container width first, then shift it into position.
-        // Shifting at container width is the only way the mask AND afterwards
-        // can preserve the bits we just placed: shifting at reg's narrower
-        // width followed by an implicit extend would overflow at non-zero
-        // shift counts.
-        let val_extended =
-            self.builder
-                .extend_if_needed(val, container_ty, ExtendOp::ZeroExtend)?;
-        let shifted_value = if ctx.shift_bits == 0 {
-            val_extended
-        } else {
-            let shift_const = self.builder.build_int_const(ctx.shift_bits, container_ty)?;
-            self.builder.build_int_binary_operation(
-                val_extended,
-                shift_const,
-                IntBinaryOp::ShiftLeft,
-                container_ty,
-            )?
-        };
-
-        // Build the *positioned* reg mask: vn_mask(reg) is in low-bits domain,
-        // so shifting it by the same `shift_bits` lands it at reg's actual
-        // bit slot inside the container.
         let reg_mask = vn_mask(reg)? << ctx.shift_bits;
-        let reg_mask_val = self.builder.build_int_const(reg_mask, container_ty)?;
-        let reg_val = self.builder.build_int_binary_operation(
-            reg_mask_val,
-            shifted_value,
-            IntBinaryOp::And,
-            container_ty,
-        )?;
+        let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
 
         // SOUNDNESS NOTE: on AArch64, writing a scalar FP/SIMD sub-register
         // (s0/d0/h0/b0) is ISA-mandated to ZERO the upper bits of the
@@ -326,24 +296,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // zero-extending containers on AArch64; xmm0/xmm1/... are NOT on
         // x86 SSE).  See the ignored regression test
         // `aarch64_scalar_fp_write_zeroes_upper_bits_of_simd_container`.
-
-        // The "preserve" mask is the bits of the container that don't belong
-        // to reg — i.e. the container's full mask minus the positioned reg
-        // mask.
-        let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
-        let container_mask_val = self.builder.build_int_const(container_mask, container_ty)?;
-        let container_val = self.builder.build_int_binary_operation(
-            container_mask_val,
+        let final_container_value = build_masked_insert(
+            self.builder,
+            val,
             container_reg_val,
-            IntBinaryOp::And,
-            container_ty,
-        )?;
-
-        // Merge.
-        let final_container_value = self.builder.build_int_binary_operation(
-            container_val,
-            reg_val,
-            IntBinaryOp::Or,
+            ctx.shift_bits,
+            reg_mask,
+            container_mask,
             container_ty,
         )?;
         self.write_reg_vn(&ctx.container_reg, final_container_value)?;
@@ -429,6 +388,59 @@ struct SubRegContext {
     container_reg: rsleigh::Vn,
     container_ty: strider_ir::ValueType,
     shift_bits: u64,
+}
+
+/// Positions `val` into `container_val` at the given bit slot, merges
+/// with the preserved container bits, and returns the combined value.
+///
+/// Steps:
+///  1. Zero-extend `val` to `ty`, then shift left by `shift_bits` to place
+///     it at the correct bit position inside the container.
+///  2. AND the positioned value with `reg_mask` to isolate its bits.
+///  3. AND `container_val` with `container_mask` to clear the slot.
+///  4. OR the two halves together.
+///
+/// Extracted from [`ValueLifter::write_reg_vn`] to reduce nesting.
+fn build_masked_insert(
+    builder: &mut strider_ir::FunctionBuilder,
+    val: strider_ir::Value,
+    container_val: strider_ir::Value,
+    shift_bits: u64,
+    reg_mask: u128,
+    container_mask: u128,
+    ty: strider_ir::ValueType,
+) -> crate::pcode_lift::Result<strider_ir::Value> {
+    // Extend `val` to container width, then shift into position.
+    let val_extended = builder.extend_if_needed(val, ty, ExtendOp::ZeroExtend)?;
+    let shifted_value = if shift_bits == 0 {
+        val_extended
+    } else {
+        let shift_const = builder.build_int_const(shift_bits, ty)?;
+        builder.build_int_binary_operation(
+            val_extended,
+            shift_const,
+            IntBinaryOp::ShiftLeft,
+            ty,
+        )?
+    };
+
+    let reg_mask_val = builder.build_int_const(reg_mask, ty)?;
+    let reg_val = builder.build_int_binary_operation(
+        reg_mask_val,
+        shifted_value,
+        IntBinaryOp::And,
+        ty,
+    )?;
+
+    let container_mask_val = builder.build_int_const(container_mask, ty)?;
+    let preserved = builder.build_int_binary_operation(
+        container_mask_val,
+        container_val,
+        IntBinaryOp::And,
+        ty,
+    )?;
+
+    builder.build_int_binary_operation(preserved, reg_val, IntBinaryOp::Or, ty)
 }
 
 // ── Self-contained unit tests for the bit-shift formulas ──────────────────────

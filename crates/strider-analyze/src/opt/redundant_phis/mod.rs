@@ -25,6 +25,44 @@ fn try_detach_dead_inputs(
     }
 }
 
+/// Handles the `NodeKind::Region` arm of [`remove_phis`]: collapses a
+/// single-predecessor `Region` by replacing its control output with the lone
+/// live input and absorbing its asm-fingerprint into that predecessor's node.
+///
+/// Separated from `remove_phis` to keep the outer match readable.
+fn try_remove_region_phi(
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    node_id: NodeId,
+    reachable: &strider_ir::walk::NodeIdSet,
+) -> crate::opt::Result<OptimizationResult> {
+    let node_inputs = ctx.node_inputs(node_id);
+    let reachable_inputs: DenseEntitySet<NodeOutputId> = node_inputs
+        .into_iter()
+        .filter(|inp| reachable.contains(ctx.output_definition(*inp).0))
+        .collect();
+
+    let mut iter = reachable_inputs.iter();
+    let simplified = match (iter.next(), iter.next()) {
+        (Some(input), None) => {
+            let [output, _phi_token] = ctx.node_outputs_exact::<2>(node_id)?;
+            // Region is exempt-empty by default; absorb its fingerprint into
+            // the surviving control producer (same rationale as phi-collapse).
+            let input_node = ctx.get_node_from_output(input);
+            ctx.extend_asm_fingerprint_from(input_node, node_id);
+            ctx.replace_all_uses(output, input)?
+        }
+        _ => false,
+    };
+
+    // For Region we can only detach when BOTH outputs are unused.
+    // try_detach_dead_inputs handles this check.
+    if simplified {
+        Ok(try_detach_dead_inputs(ctx, node_id) | OptimizationResult::Changed)
+    } else {
+        Ok(try_detach_dead_inputs(ctx, node_id))
+    }
+}
+
 /// Attempts to simplify the phi-like node `node_id` given the set of
 /// CFG-reachable nodes.  Returns `Changed` if any transformation was applied.
 fn remove_phis(
@@ -148,36 +186,7 @@ fn remove_phis(
                 Ok(try_detach_dead_inputs(ctx, node_id))
             }
         }
-        NodeKind::Region => {
-            let node_inputs = ctx.node_inputs(node_id);
-            let reachable_inputs: DenseEntitySet<NodeOutputId> = node_inputs
-                .into_iter()
-                .filter(|inp| reachable.contains(ctx.output_definition(*inp).0))
-                .collect();
-
-            let mut iter = reachable_inputs.iter();
-            let simplified = match (iter.next(), iter.next()) {
-                (Some(input), None) => {
-                    let [output, _phi_token] =
-                        ctx.node_outputs_exact::<2>(node_id)?;
-                    // Region is exempt-empty by default; absorb its
-                    // fingerprint into the surviving control producer for
-                    // the same reason as the phi-collapse path above.
-                    let input_node = ctx.get_node_from_output(input);
-                    ctx.extend_asm_fingerprint_from(input_node, node_id);
-                    ctx.replace_all_uses(output, input)?
-                }
-                _ => false,
-            };
-
-            // For Region we can only detach when BOTH outputs are unused.
-            // try_detach_dead_inputs handles this check.
-            if simplified {
-                Ok(try_detach_dead_inputs(ctx, node_id) | OptimizationResult::Changed)
-            } else {
-                Ok(try_detach_dead_inputs(ctx, node_id))
-            }
-        }
+        NodeKind::Region => try_remove_region_phi(ctx, node_id, reachable),
         _ => Ok(OptimizationResult::NoChange),
     }
 }

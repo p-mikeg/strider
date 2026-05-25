@@ -10,6 +10,63 @@ mod tests;
 
 // ── Dead-branch elimination ───────────────────────────────────────────────────
 
+/// Strips dead Region predecessor slots and detaches the If node.
+///
+/// For each `(region_node, dead_idx)` pair in `dead_uses` that refers to a
+/// `Region`: removes the dead predecessor's value slots from all VarPhis, then
+/// removes the dead input from the Region itself.  Finally detaches the If's
+/// inputs so the outer pipeline stops re-visiting it.
+fn strip_dead_region_inputs(
+    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    dead_uses: &[(NodeId, u32)],
+    if_node_id: NodeId,
+) -> Result<()> {
+    for (region_node, dead_idx) in dead_uses {
+        let region_node = *region_node;
+        let dead_idx = *dead_idx;
+        if !matches!(*ctx.node_kind(region_node), NodeKind::Region) {
+            continue;
+        }
+
+        // Region outputs: [ctrl_out, phi_out].
+        let region_outputs = ctx.node_outputs(region_node);
+        if region_outputs.len() < 2 {
+            continue;
+        }
+        let region_phi_out = region_outputs[1];
+
+        // Collect VarPhi nodes that consume the phi token before we mutate.
+        let phi_nodes: Vec<NodeId> = ctx
+            .output_uses(region_phi_out)
+            .map(|(phi, _)| phi)
+            .collect();
+
+        // Remove the dead variable-value input from each VarPhi.
+        // VarPhi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
+        // So the variable value for predecessor at Region index
+        // `dead_idx` lives at VarPhi index `dead_idx + 1`.  Removals at
+        // different consumers don't interact (each `remove_node_input`
+        // only shifts its own later indices), and the
+        // `phi_input_idx < phi_len` / `dead_idx < region_len` guards catch
+        // per-consumer indices already shifted by an earlier removal.
+        let phi_input_idx = dead_idx + 1;
+        for phi_node in phi_nodes {
+            let phi_len = ctx.node_inputs(phi_node).len() as u32;
+            if phi_input_idx < phi_len {
+                ctx.remove_node_input(phi_node, phi_input_idx)?;
+            }
+        }
+
+        let region_len = ctx.node_inputs(region_node).len() as u32;
+        if dead_idx < region_len {
+            ctx.remove_node_input(region_node, dead_idx)?;
+        }
+    }
+
+    ctx.detach_node_inputs(if_node_id);
+    Ok(())
+}
+
 /// Eliminates `If` nodes whose condition is a `BoolConst`.
 ///
 /// For `If(ctrl_in, BoolConst(b))` with outputs `[ctrl_true, ctrl_false]`:
@@ -128,50 +185,7 @@ fn try_eliminate_dead_branch(
     // tears the live ↔ dead data edges apart; once they're gone a future
     // DBE iteration sees a non-escaping subgraph and finishes the job.
     if !dead_subgraph_escapes {
-        for (region_node, dead_idx) in &dead_uses {
-            let region_node = *region_node;
-            let dead_idx = *dead_idx;
-            if !matches!(*ctx.node_kind(region_node), NodeKind::Region) {
-                continue;
-            }
-
-            // Region outputs: [ctrl_out, phi_out].
-            let region_outputs = ctx.node_outputs(region_node);
-            if region_outputs.len() < 2 {
-                continue;
-            }
-            let region_phi_out = region_outputs[1];
-
-            // Collect VarPhi nodes that consume the phi token before we mutate.
-            let phi_nodes: Vec<NodeId> = ctx
-                .output_uses(region_phi_out)
-                .map(|(phi, _)| phi)
-                .collect();
-
-            // Remove the dead variable-value input from each VarPhi.
-            // VarPhi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
-            // So the variable value for predecessor at Region index
-            // `dead_idx` lives at VarPhi index `dead_idx + 1`.  Removals at
-            // different consumers don't interact (each `remove_node_input`
-            // only shifts its own later indices), and the
-            // `phi_input_idx < phi_len` / `dead_idx < region_len` guards catch
-            // per-consumer indices already shifted by an earlier removal.
-            //
-            let phi_input_idx = dead_idx + 1;
-            for phi_node in phi_nodes {
-                let phi_len = ctx.node_inputs(phi_node).len() as u32;
-                if phi_input_idx < phi_len {
-                    ctx.remove_node_input(phi_node, phi_input_idx)?;
-                }
-            }
-
-            let region_len = ctx.node_inputs(region_node).len() as u32;
-            if dead_idx < region_len {
-                ctx.remove_node_input(region_node, dead_idx)?;
-            }
-        }
-
-        ctx.detach_node_inputs(node_id);
+        strip_dead_region_inputs(ctx, &dead_uses, node_id)?;
     }
 
     Ok(OptimizationResult::Changed)
