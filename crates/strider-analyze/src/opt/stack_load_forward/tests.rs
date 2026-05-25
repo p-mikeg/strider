@@ -1164,25 +1164,25 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     Ok(())
 }
 
-// ── MemPartition / MemUnion boundary traversal ─────────────────────────────
+// ── MemProject / MemUnion boundary traversal ─────────────────────────────
 
-/// StackLoadForward walks through a `MemPartition` boundary node.
+/// StackLoadForward walks through a `MemProject` boundary node.
 ///
 /// After `AliasSplit` runs, the memory chain from the `Load`'s
 /// perspective is:
 ///
-///   `Load[sp+4]` ← `Store(sp+4)` ← `MemPartition(Stack)` ← `InitialMemory`
+///   `Load[sp+4]` ← `Store(sp+4)` ← `MemProject(Stack)` ← `InitialMemory`
 ///
-/// With a disjoint `Store(sp+8)` after `MemPartition`, the backward
+/// With a disjoint `Store(sp+8)` after `MemProject`, the backward
 /// walk passes through `Store(sp+8)` (disjoint, skip), then hits
-/// `MemPartition` — previously the `_` arm returned `Verdict(None)`,
-/// causing the load to stay.  Now the walk passes through `MemPartition`
+/// `MemProject` — previously the `_` arm returned `Verdict(None)`,
+/// causing the load to stay.  Now the walk passes through `MemProject`
 /// to `InitialMemory` without finding a matching store, confirming the
 /// boundary is traversed rather than treated as an opaque barrier.
 ///
 /// We also confirm the simple case — load at the same offset as the
 /// store — where the walk matches `Store(sp+4)` immediately (before
-/// even reaching `MemPartition`), giving full forwarding.
+/// even reaching `MemProject`), giving full forwarding.
 #[test]
 fn stack_load_forward_walks_through_mempartition() -> Result<()> {
     let sp = sp32_vn();
@@ -1200,9 +1200,9 @@ fn stack_load_forward_walks_through_mempartition() -> Result<()> {
     })?;
 
     // Pipeline: ConstantFold → RedundantPhis → AliasSplit → StackLoadForward.
-    // AliasSplit inserts `MemPartition(Stack)` right after InitialMemory
+    // AliasSplit inserts `MemProject(Stack)` right after InitialMemory
     // and `MemUnion` before the Return.  After this, the Load's backward
-    // chain passes through a Store(sp+4) then a MemPartition node.
+    // chain passes through a Store(sp+4) then a MemProject node.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
@@ -1212,22 +1212,22 @@ fn stack_load_forward_walks_through_mempartition() -> Result<()> {
     let entry = fg.entry().unwrap();
     pipeline.run(&mut fg, entry)?;
 
-    // AliasSplit must have inserted MemPartition nodes (one per
+    // AliasSplit must have inserted MemProject nodes (one per
     // active partition; the Stack one is the load-bearing one for
     // this test).
     let stack_parts = fg.count_kind(
-        |k| matches!(k, NodeKind::MemPartition { class: strider_ir::AliasClass::Stack }),
+        |k| matches!(k, NodeKind::MemProject { class: strider_ir::AliasClass::Stack }),
     );
     assert!(
         stack_parts >= 1,
-        "AliasSplit must insert at least one Stack MemPartition; got {stack_parts}",
+        "AliasSplit must insert at least one Stack MemProject; got {stack_parts}",
     );
 
     // The Load should be forwarded: no reachable Load nodes remain.
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
-        "Load[sp+4] must be forwarded through the MemPartition boundary"
+        "Load[sp+4] must be forwarded through the MemProject boundary"
     );
 
     // The return value must be IntConst(0x42) — the stored value.
@@ -1251,7 +1251,7 @@ fn stack_load_forward_walks_through_mempartition() -> Result<()> {
 ///
 /// Graph constructed manually to exercise the `MemUnion` arm directly:
 ///
-///   `InitialMemory → MemPartition(Stack) → Store(sp+4) → MemUnion → Load{sp+4}`
+///   `InitialMemory → MemProject(Stack) → Store(sp+4) → MemUnion → Load{sp+4}`
 ///
 /// The `MemUnion` has a single Stack-partition input (from `Store`).
 /// The `Load`'s memory input is the `MemUnion` output (`Memory(None)`).
@@ -1285,14 +1285,14 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
         prep.run(&mut fg, entry)?;
     }
 
-    // Step 3: manually wire MemPartition + MemUnion around the Store
+    // Step 3: manually wire MemProject + MemUnion around the Store
     //         so the Load's memory input goes through MemUnion rather than
     //         directly to Store.
     //
     //         Before manual wiring (after ConstantFold + RedundantPhis):
     //           InitialMemory → Store(sp+4) → Load[mem]
     //         After manual wiring:
-    //           InitialMemory → MemPartition(Stack) → Store(sp+4) → MemUnion → Load[mem]
+    //           InitialMemory → MemProject(Stack) → Store(sp+4) → MemUnion → Load[mem]
     {
         // Locate nodes before any mutation.
         let im_node = fg
@@ -1310,17 +1310,17 @@ fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
 
         let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
 
-        // Create MemPartition(Stack) consuming InitialMemory output.
+        // Create MemProject(Stack) consuming InitialMemory output.
         // Output: Memory(Some(AliasClass::Stack)).
         let part_node = fg.create_node_attributed(
-            NodeKind::MemPartition { class: AliasClass::Stack },
+            NodeKind::MemProject { class: AliasClass::Stack },
             [im_out],
             [NodeOutputKind::Memory(Some(AliasClass::Stack))],
             &[im_node],
         );
         let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
 
-        // Rewire Store's memory input (slot 0) to consume MemPartition
+        // Rewire Store's memory input (slot 0) to consume MemProject
         // output instead of InitialMemory output.
         let ss_mem_input_id = fg.graph().node_input_id_at(ss_node, 0).unwrap();
         fg.graph_mut().update_input(ss_mem_input_id, part_out);

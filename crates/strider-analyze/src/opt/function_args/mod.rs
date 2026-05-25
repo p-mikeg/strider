@@ -240,13 +240,13 @@ fn detect_register_args(
 }
 
 /// Returns `true` when the function's graph contains at least one
-/// `MemPartition` node — the sign that `AliasSplit` successfully
+/// `MemProject` node — the sign that `AliasSplit` successfully
 /// partitioned this function into per-alias-class chains.  Pre-computed
 /// once per pass invocation to gate the fast paths in
 /// [`detect_stack_args`] and the caller's partition-aware shadow check.
 #[inline]
 fn was_partitioned(function: &strider_ir::Function) -> bool {
-    function.has_kind(|k| matches!(k, NodeKind::MemPartition { .. }))
+    function.has_kind(|k| matches!(k, NodeKind::MemProject { .. }))
 }
 
 /// Fast-path shadow check for functions partitioned by `AliasSplit`.
@@ -254,7 +254,7 @@ fn was_partitioned(function: &strider_ir::Function) -> bool {
 /// Walks backward along the `Memory(Some(Stack))` chain starting from
 /// `mem` (the memory input of a candidate `Load[sp+K]`).  At each node:
 ///
-/// * `MemPartition { class: Stack }` — reached the function-entry
+/// * `MemProject { class: Stack }` — reached the function-entry
 ///   boundary without finding a shadow: the load IS an incoming arg.
 ///   Returns `Ok(false)` (chain is NOT dirty).
 /// * `Store` — consults `Function::stack_offset`.  If `Some(K)` with
@@ -303,7 +303,7 @@ fn check_no_shadow_partitioned(
     loop {
         let node = ctx.function_ref().get_node_from_output(cur);
         match *ctx.function_ref().node_kind(node) {
-            NodeKind::MemPartition { class: AliasClass::Stack } => {
+            NodeKind::MemProject { class: AliasClass::Stack } => {
                 // Reached the function-entry Stack boundary — no shadow found.
                 return Ok(false);
             }
@@ -350,7 +350,7 @@ fn check_no_shadow_partitioned(
                     }
                 }
             }
-            NodeKind::MemPartition { .. } => {
+            NodeKind::MemProject { .. } => {
                 // Wrong partition class on the chain (unexpected) — conservative.
                 return Ok(true);
             }
@@ -669,8 +669,8 @@ fn mem_chain_is_dirty(
                     }
                     Ok(StepResult::Continue(inputs[1]))
                 }
-                NodeKind::MemPartition { .. } => {
-                    // MemPartition: synthetic boundary tagging a unified
+                NodeKind::MemProject { .. } => {
+                    // MemProject: synthetic boundary tagging a unified
                     // memory edge with a single partition.  Pass through to
                     // the single unified-memory predecessor (input 0).
                     let inputs = graph.node_inputs(node);

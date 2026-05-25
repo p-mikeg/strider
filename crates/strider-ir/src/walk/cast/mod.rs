@@ -89,7 +89,7 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::SegmentOp { .. }
         | NodeKind::CPoolRef
         | NodeKind::New
-        | NodeKind::MemPartition { .. }
+        | NodeKind::MemProject { .. }
         | NodeKind::MemUnion => CastMask::empty(),
     }
 }

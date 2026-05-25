@@ -100,7 +100,7 @@ pub enum NodeKind {
     /// NOT phi-shaped: no phi_token, no control input.  Position
     /// identity matters (deduping two split boundaries at different
     /// program points would conflate them).
-    MemPartition { class: crate::mem_partition::AliasClass },
+    MemProject { class: crate::mem_project::AliasClass },
 
     /// Memory partition join boundary.  Bundles partition tokens back
     /// into unified memory.  Inserted by the AliasSplit optimization
@@ -108,7 +108,7 @@ pub enum NodeKind {
     /// function, Return, unknown-address Store, IndirectBranch,
     /// CallOther with a non-empty `mem_clobbers` set).
     ///
-    /// Inputs: `[mem_partition_0, mem_partition_1, ...]` — variadic
+    /// Inputs: `[mem_project_0, mem_project_1, ...]` — variadic
     /// data inputs in canonical partition-id order, each
     /// `Memory(Some(_))`.
     /// Outputs: `[Memory(None)]`.
@@ -268,7 +268,7 @@ impl NodeKind {
             | Self::CallOther { .. }
             | Self::Load(..)
             | Self::Store(..)
-            | Self::MemPartition { .. }
+            | Self::MemProject { .. }
             | Self::MemUnion
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
@@ -362,7 +362,7 @@ impl NodeKind {
             | Self::CPoolRef
             | Self::New
             // Memory partition boundaries: positional identity matters.
-            | Self::MemPartition { .. }
+            | Self::MemProject { .. }
             | Self::MemUnion => false,
         }
     }
@@ -393,7 +393,7 @@ impl NodeKind {
             // Memory partition boundaries: synthetic boundary nodes whose
             // fingerprints are inherited from contributing writes via the
             // superset-only contract.
-            | Self::MemPartition { .. }
+            | Self::MemProject { .. }
             | Self::MemUnion => true,
 
             // Non-exempt: everything else requires fingerprints.

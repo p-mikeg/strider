@@ -232,8 +232,8 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             ),
 
             // ── memory partition boundaries ───────────────────────────────────
-            NodeKind::MemPartition { class } => {
-                format!("MemPartition\n{}", class.as_str())
+            NodeKind::MemProject { class } => {
+                format!("MemProject\n{}", class.as_str())
             }
             NodeKind::MemUnion => "MemUnion".to_string(),
 

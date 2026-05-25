@@ -16,13 +16,13 @@ use crate::opt::stack_load_forward::is_stack_partition_input;
 #[cfg(test)]
 mod tests;
 
-/// Returns `true` when the function contains at least one `MemPartition`
+/// Returns `true` when the function contains at least one `MemProject`
 /// node — the sign that `AliasSplit` successfully partitioned this function.
 /// Pre-computed once per pass invocation to gate the fast path in
 /// [`collect_stack_args_in_chain_order`].
 #[inline]
 fn was_partitioned(function: &strider_ir::Function) -> bool {
-    function.has_kind(|k| matches!(k, NodeKind::MemPartition { .. }))
+    function.has_kind(|k| matches!(k, NodeKind::MemProject { .. }))
 }
 
 /// Fast-path stack-arg collection for functions partitioned by `AliasSplit`.
@@ -32,7 +32,7 @@ fn was_partitioned(function: &strider_ir::Function) -> bool {
 ///
 /// * Relies on `Function::stack_offsets` for O(1) offset lookup — no
 ///   `decompose_sp` call per Store.
-/// * Terminates at `MemPartition(Stack)` (the entry boundary inserted by
+/// * Terminates at `MemProject(Stack)` (the entry boundary inserted by
 ///   `AliasSplit`).
 /// * Falls back to `None` for any unexpected node kind (MemPhi within the
 ///   Stack chain, a Store without a side-table entry, etc.), letting the
@@ -85,11 +85,11 @@ fn collect_stack_args_partitioned(
     loop {
         let node = ctx.function_ref().get_node_from_output(cur);
         match *ctx.function_ref().node_kind(node) {
-            NodeKind::MemPartition { class: AliasClass::Stack } => {
+            NodeKind::MemProject { class: AliasClass::Stack } => {
                 // Reached the function-entry Stack boundary — chain exhausted cleanly.
                 return Some(dense_prefix(slots));
             }
-            NodeKind::MemPartition { .. } | NodeKind::MemPhi => {
+            NodeKind::MemProject { .. } | NodeKind::MemPhi => {
                 // Unexpected non-Stack partition or control-flow join inside the
                 // Stack chain — not produced by v1 AliasSplit; fall back.
                 return None;
@@ -322,11 +322,11 @@ fn collect_stack_args_in_chain_order(
                     }
                 }
             }
-            // `MemPartition { class }` — boundary inserted by AliasSplit
+            // `MemProject { class }` — boundary inserted by AliasSplit
             // that tags a unified memory edge with a single alias class.
             // The walker passes straight through to the single predecessor
             // (input 0, the unified-memory side).
-            NodeKind::MemPartition { .. } => {
+            NodeKind::MemProject { .. } => {
                 let inputs = ctx.node_inputs(node);
                 if inputs.is_empty() {
                     return dense_prefix(slots);

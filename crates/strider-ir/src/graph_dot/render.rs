@@ -2,7 +2,7 @@ use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
 use super::{
-    GraphDotDumper, GraphDotDumperState, edge_style, mem_partition_fillcolor, node_fillcolor,
+    GraphDotDumper, GraphDotDumperState, edge_style, mem_project_fillcolor, node_fillcolor,
     node_shape,
 };
 use crate::graph::Graph;
@@ -119,9 +119,9 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             base_label
         };
 
-        // Per-class fillcolor override for MemPartition nodes.
-        let fillcolor = if let NodeKind::MemPartition { class } = kind {
-            mem_partition_fillcolor(class)
+        // Per-class fillcolor override for MemProject nodes.
+        let fillcolor = if let NodeKind::MemProject { class } = kind {
+            mem_project_fillcolor(class)
         } else {
             node_fillcolor(&kind)
         };

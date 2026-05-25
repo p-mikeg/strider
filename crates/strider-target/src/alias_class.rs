@@ -2,7 +2,7 @@
 //!
 //! [`AliasClass`] is the closed enum used both on
 //! [`crate::call_other_abi::CallOtherAbi::mem_clobbers`] (per-user-op
-//! memory-clobber set) and on `strider_ir::NodeKind::MemPartition` /
+//! memory-clobber set) and on `strider_ir::NodeKind::MemProject` /
 //! `NodeOutputKind::Memory(_)` (partition tag carried on the IR memory
 //! edge).  It lives in `strider-target` (not `strider-ir`) because
 //! `CallOtherAbi`'s clobber set is a target-description fact —

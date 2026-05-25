@@ -180,7 +180,7 @@ impl Graph {
     pub fn set_memory_partition(
         &mut self,
         output_id: NodeOutputId,
-        partition: Option<crate::mem_partition::AliasClass>,
+        partition: Option<crate::mem_project::AliasClass>,
     ) -> crate::error::Result<()> {
         let current = self.outputs[output_id].kind;
         if !matches!(current, NodeOutputKind::Memory(_)) {

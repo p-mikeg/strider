@@ -517,21 +517,21 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     );
 }
 
-/// `MemPartition` nodes must render with the alias-class name in the label.
+/// `MemProject` nodes must render with the alias-class name in the label.
 #[test]
 fn mempartition_label_uses_alias_class_name() {
-    use crate::mem_partition::AliasClass;
+    use crate::mem_project::AliasClass;
 
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    // Create a MemPartition node with AliasClass::Stack stored directly.
+    // Create a MemProject node with AliasClass::Stack stored directly.
     let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
     let mp = f.create_node(
-        NodeKind::MemPartition { class: AliasClass::Stack },
+        NodeKind::MemProject { class: AliasClass::Stack },
         [mem_out],
         [NodeOutputKind::Memory(Some(AliasClass::Stack))],
     );
@@ -542,11 +542,11 @@ fn mempartition_label_uses_alias_class_name() {
 
     assert!(
         dot.contains("Stack"),
-        "MemPartition label must contain the alias class 'Stack':\n{dot}",
+        "MemProject label must contain the alias class 'Stack':\n{dot}",
     );
     assert!(
-        !dot.contains("MemPartitionId("),
-        "raw MemPartitionId debug repr must not appear in label:\n{dot}",
+        !dot.contains("MemProjectId("),
+        "raw MemProjectId debug repr must not appear in label:\n{dot}",
     );
 }
 

@@ -332,12 +332,12 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
 
         // ── Memory partition boundary nodes ─────────────────────────────────
-        // MemPartition: [unified_memory] → [Memory(Some(partition))].
+        // MemProject: [unified_memory] → [Memory(Some(partition))].
         // The output kind carries the specific partition id at runtime;
         // the signature declares the slot kind as Memory (any partition)
         // — the validator's kind_matches treats Memory(_) as matching
         // ExpectedOutputKind::Memory regardless of the Option payload.
-        NodeKind::MemPartition { .. } => sig!(inputs: [MEM], outputs: [MEM]),
+        NodeKind::MemProject { .. } => sig!(inputs: [MEM], outputs: [MEM]),
         // MemUnion: [...partition_memories] → [Memory(None)].
         // Variadic partition-typed inputs; unified output.
         NodeKind::MemUnion => sig!(inputs: []; in_tail: MEM, outputs: [MEM]),
@@ -641,7 +641,7 @@ mod tests {
     /// time, but a forgotten append here would silently shrink coverage.
     #[test]
     fn expected_signature_covers_every_node_kind() {
-        use crate::mem_partition::AliasClass;
+        use crate::mem_project::AliasClass;
         use crate::ops::{
             BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
             IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -661,7 +661,7 @@ mod tests {
             NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
-            NodeKind::MemPartition { class: AliasClass::Stack },
+            NodeKind::MemProject { class: AliasClass::Stack },
             NodeKind::MemUnion,
             NodeKind::IntConst(0),
             NodeKind::IntUnaryOp(IntUnaryOp::BitNot),

@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap;
 
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::mem_partition::AliasClass;
+use crate::mem_project::AliasClass;
 use crate::node::{NodeId, NodeKind, NodeOutputId};
 use crate::node_signature::{SlotRole, expected_signature};
 
@@ -28,7 +28,7 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::Load(_)
         | NodeKind::Store(_) => "box3d",
 
-        NodeKind::MemPartition { .. } => "note",
+        NodeKind::MemProject { .. } => "note",
         NodeKind::MemUnion => "cds",
 
         NodeKind::Call => "rarrow",
@@ -60,11 +60,11 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
 
-        // MemPartition fillcolor is class-specific; see `mem_partition_fillcolor`.
+        // MemProject fillcolor is class-specific; see `mem_project_fillcolor`.
         // This fallback is only reached when the render path bypasses the
         // per-class override (e.g. in tests that emit nodes via node_fillcolor
         // directly without going through try_declare_node).
-        NodeKind::MemPartition { .. } => "\"#444444\"", // gray fallback
+        NodeKind::MemProject { .. } => "\"#444444\"", // gray fallback
         NodeKind::MemUnion => "\"#3a1a4a\"", // deep purple — alias-split boundary
 
         NodeKind::Call => "\"#3a1010\"",
@@ -91,8 +91,8 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
     }
 }
 
-/// Per-class fill color for `MemPartition` nodes on the dark theme.
-pub(super) fn mem_partition_fillcolor(class: AliasClass) -> &'static str {
+/// Per-class fill color for `MemProject` nodes on the dark theme.
+pub(super) fn mem_project_fillcolor(class: AliasClass) -> &'static str {
     match class {
         AliasClass::Stack => "\"#1a5c5c\"",   // dark cyan
         AliasClass::Heap => "\"#5c3a1a\"",    // dark orange

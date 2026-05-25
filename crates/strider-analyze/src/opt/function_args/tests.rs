@@ -978,13 +978,13 @@ fn function_args_combine_phi_or_semantics_pinned() {
     );
 }
 
-// ── MemPartition / MemUnion boundary traversal ─────────────────────────────
+// ── MemProject / MemUnion boundary traversal ─────────────────────────────
 
-/// `mem_chain_is_dirty` walks through a `MemPartition` boundary.
+/// `mem_chain_is_dirty` walks through a `MemProject` boundary.
 ///
 /// After `AliasSplit` runs, the memory chain leading to a `Load[sp+4]`
-/// candidate contains a `MemPartition(Stack)` node between `InitialMemory`
-/// and the load.  Without the new arm the `_` catch-all treated `MemPartition`
+/// candidate contains a `MemProject(Stack)` node between `InitialMemory`
+/// and the load.  Without the new arm the `_` catch-all treated `MemProject`
 /// as an unknown producer and conservatively returned `dirty=true`, blocking
 /// the load from being registered as arg 0.  With the fix, the walk passes
 /// through to the single unified-memory predecessor (`InitialMemory`) and
@@ -1006,9 +1006,9 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
     })?;
 
     // Pipeline: ConstantFold → RedundantPhis → AliasSplit
-    //           (inserts MemPartition + MemUnion) → FunctionArgDetect.
-    // After AliasSplit the Load's memory chain passes through a MemPartition
-    // node.  Without the fix, mem_chain_is_dirty treats MemPartition as
+    //           (inserts MemProject + MemUnion) → FunctionArgDetect.
+    // After AliasSplit the Load's memory chain passes through a MemProject
+    // node.  Without the fix, mem_chain_is_dirty treats MemProject as
     // unknown and returns dirty=true, suppressing arg registration.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -1017,26 +1017,26 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run_built(&mut fg)?;
 
-    // AliasSplit must have inserted MemPartition nodes at function
+    // AliasSplit must have inserted MemProject nodes at function
     // entry — one per active partition (Stack / Heap / Unknown).
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
     assert!(
         n_part >= 1,
-        "AliasSplit must insert at least one MemPartition; got {n_part}"
+        "AliasSplit must insert at least one MemProject; got {n_part}"
     );
     let stack_parts = fg.count_kind(
-        |k| matches!(k, NodeKind::MemPartition { class: strider_ir::AliasClass::Stack }),
+        |k| matches!(k, NodeKind::MemProject { class: strider_ir::AliasClass::Stack }),
     );
     assert!(
         stack_parts >= 1,
-        "AliasSplit must insert at least one Stack MemPartition; got {stack_parts}",
+        "AliasSplit must insert at least one Stack MemProject; got {stack_parts}",
     );
 
     // FunctionArgDetect must have registered the load as arg 0.
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
         !arg0_nodes.is_empty(),
-        "mem_chain_is_dirty must pass through MemPartition: Load[sp+4] should be registered as arg 0"
+        "mem_chain_is_dirty must pass through MemProject: Load[sp+4] should be registered as arg 0"
     );
     assert!(
         matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
@@ -1053,13 +1053,13 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
 ///
 /// Graph structure (manually wired):
 ///
-///   `InitialMemory → MemPartition(Stack) → MemUnion → Load[sp+4]`
+///   `InitialMemory → MemProject(Stack) → MemUnion → Load[sp+4]`
 ///
-/// The `MemUnion` has a single Stack-partition input (from `MemPartition`).
+/// The `MemUnion` has a single Stack-partition input (from `MemProject`).
 /// The `Load`'s memory input is the `MemUnion` output (`Memory(None)`).
 /// Without the new arm the `_` catch-all returned dirty=true, blocking
 /// registration.  With the fix the walk routes through `MemUnion` to
-/// `MemPartition` and then to `InitialMemory`, confirming cleanliness.
+/// `MemProject` and then to `InitialMemory`, confirming cleanliness.
 #[test]
 fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -1087,12 +1087,12 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
         prep.run_built(&mut fg)?;
     }
 
-    // Step 3: manually wire MemPartition + MemUnion so the Load's memory
+    // Step 3: manually wire MemProject + MemUnion so the Load's memory
     //         input passes through MemUnion rather than going directly to
     //         InitialMemory.
     //
     //   Before:  InitialMemory → Load[sp+4]
-    //   After:   InitialMemory → MemPartition(Stack) → MemUnion → Load[sp+4]
+    //   After:   InitialMemory → MemProject(Stack) → MemUnion → Load[sp+4]
     {
         let im_node = fg
             .all_node_ids()
@@ -1105,16 +1105,16 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
 
         let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
 
-        // Create MemPartition(Stack) consuming InitialMemory output.
+        // Create MemProject(Stack) consuming InitialMemory output.
         let part_node = fg.create_node_attributed(
-            NodeKind::MemPartition { class: AliasClass::Stack },
+            NodeKind::MemProject { class: AliasClass::Stack },
             [im_out],
             [NodeOutputKind::Memory(Some(AliasClass::Stack))],
             &[im_node],
         );
         let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
 
-        // Create MemUnion consuming the MemPartition output.
+        // Create MemUnion consuming the MemProject output.
         let union_node = fg.create_node_attributed(
             NodeKind::MemUnion,
             [part_out],
@@ -1136,7 +1136,7 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
     // Step 5: run FunctionArgDetect.  Without the MemUnion arm the walk
     //         hits MemUnion's _ arm and returns dirty=true, suppressing
     //         arg registration.  With the fix the walk routes through
-    //         MemUnion to MemPartition to InitialMemory, returning dirty=false.
+    //         MemUnion to MemProject to InitialMemory, returning dirty=false.
     let pass = FunctionArgDetect::new(vec![], sp, vec![4]);
     pass.optimize(&mut fg, entry)?;
 
@@ -1159,10 +1159,10 @@ fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
 /// answer as the unified-form walk.
 ///
 /// Builds a function with a `Load[sp+4]` (clean — no prior SP-relative
-/// stores), then runs `AliasSplit` so the graph is partitioned (MemPartition
+/// stores), then runs `AliasSplit` so the graph is partitioned (MemProject
 /// nodes inserted, `Function::stack_offsets` populated).  The fast path in
 /// `check_no_shadow_partitioned` should walk the Stack-only chain to the
-/// `MemPartition(Stack)` entry boundary and register the Load as arg 0.
+/// `MemProject(Stack)` entry boundary and register the Load as arg 0.
 ///
 /// Implicitly validates that the partitioned fast path agrees with the
 /// unified-form result by checking the same assertions as
@@ -1202,8 +1202,8 @@ fn function_arg_detect_fast_path_on_partitioned_function() -> Result<()> {
     pipeline.run_built(&mut fg)?;
 
     // Confirm the graph IS partitioned (fast path was eligible).
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
-    assert!(n_part >= 1, "AliasSplit must have inserted MemPartition nodes; got {n_part}");
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
+    assert!(n_part >= 1, "AliasSplit must have inserted MemProject nodes; got {n_part}");
 
     // Load[sp+4] is not shadowed by Store[sp+8] — must be registered as arg 0.
     let arg0_nodes = fg.arg_index_to_nodes(0);
@@ -1251,8 +1251,8 @@ fn function_arg_detect_fast_path_shadow_rejected_on_partitioned_function() -> Re
     pipeline.run_built(&mut fg)?;
 
     // Confirm the graph IS partitioned.
-    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
-    assert!(n_part >= 1, "AliasSplit must have inserted MemPartition nodes; got {n_part}");
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemProject { .. }));
+    assert!(n_part >= 1, "AliasSplit must have inserted MemProject nodes; got {n_part}");
 
     // Store[sp+4] shadows Load[sp+4] — must NOT be registered as arg.
     let arg0_nodes = fg.arg_index_to_nodes(0);

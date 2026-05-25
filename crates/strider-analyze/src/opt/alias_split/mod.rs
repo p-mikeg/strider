@@ -69,14 +69,14 @@
 //!   to touch one of them.  Conservatively over-projecting (never
 //!   under-projecting) keeps the algorithm sound when a downstream pass
 //!   inserts a new partition consumer; idle partition heads cost one
-//!   `MemPartition` node each and become dead unless wired up.
+//!   `MemProject` node each and become dead unless wired up.
 //! * `MemPhi` joins (the lifter's per-Region memory-φ) are partitioned
 //!   sibling-style: every non-entry `MemPhi` M with N CFG predecessors
 //!   gets N+1 per-partition mirror `MemPhi[P]` nodes (one per active
 //!   partition), all sharing M's `phi_token` from the owning `Region`,
 //!   so each partition keeps its own SSA join across branches and
 //!   loops.  The entry `MemPhi` (single arm = `InitialMemory`) stays
-//!   the chain root and gets `MemPartition[P]` projections instead of
+//!   the chain root and gets `MemProject[P]` projections instead of
 //!   sibling mirrors — degenerate single-arm partition phis would
 //!   just be collapsed by `RedundantPhis`.
 //! * Back-edges at loop-header `MemPhi`s are wired in a second pass:
@@ -85,7 +85,7 @@
 //!   haven't been computed yet as deferred, and the second pass closes
 //!   those slots once every chain node has been processed.
 //! * Idempotent: re-running on already-partitioned IR (any pre-existing
-//!   `MemPartition` / `MemUnion`) is a no-op.
+//!   `MemProject` / `MemUnion`) is a no-op.
 
 use entity_utils::DenseEntitySet;
 use rustc_hash::FxHashMap;
@@ -162,9 +162,9 @@ impl Optimizer for AliasSplit {
         function: &mut Function,
         _entry: NodeId,
     ) -> Result<OptimizationResult> {
-        // Idempotency: any existing MemPartition / MemUnion ⇒ NoChange.
+        // Idempotency: any existing MemProject / MemUnion ⇒ NoChange.
         if function.has_kind(|k| {
-            matches!(k, NodeKind::MemPartition { .. } | NodeKind::MemUnion)
+            matches!(k, NodeKind::MemProject { .. } | NodeKind::MemUnion)
         }) {
             return Ok(OptimizationResult::NoChange);
         }
@@ -192,7 +192,7 @@ impl Optimizer for AliasSplit {
         // memory input is `InitialMemory.out`.  Partition chains START
         // at this MemPhi's memory output rather than at `InitialMemory`
         // directly, preserving the shape
-        //   InitialMemory → MemPhi → MemPartition[P] → … → barrier
+        //   InitialMemory → MemPhi → MemProject[P] → … → barrier
         // that consumer passes (`StackLoadForward`,
         // `find_stack_stored_value_at_offset`, `CallStackArgCollect`)
         // already handle.  Non-entry MemPhis are sibling-partitioned
@@ -247,7 +247,7 @@ impl Optimizer for AliasSplit {
 ///
 /// Returns `None` if no such `MemPhi` exists (e.g. a synthesised IR
 /// without region structure).  In that case the caller projects the
-/// per-partition `MemPartition` nodes directly from `InitialMemory`.
+/// per-partition `MemProject` nodes directly from `InitialMemory`.
 ///
 /// We pick the entry `MemPhi` structurally (single mem input = IM.out)
 /// rather than by preorder position because preorder may visit a
@@ -360,7 +360,7 @@ fn classify_all(
                 // partition gets a sibling-mirror MemPhi at the same
                 // Region.  The entry MemPhi is the chain root, not a
                 // join, and is excluded so its mem output stays the
-                // projection anchor for `MemPartition[P]` nodes.
+                // projection anchor for `MemProject[P]` nodes.
                 if Some(node) != entry_mem_phi {
                     mem_chain_consumers.push(node);
                 }
@@ -408,7 +408,7 @@ type PartitionHeads = [Option<NodeOutputId>; 3];
 
 /// `outgoing_heads[output_id][P]` = the partition-P memory token that
 /// flows out of the node defining `output_id`.  Seeded at the chain
-/// root with `MemPartition[P]` projections, then advanced node-by-node
+/// root with `MemProject[P]` projections, then advanced node-by-node
 /// in [`build_forked_chains`] as each chain consumer's per-partition
 /// outgoing tokens are computed.
 type OutgoingHeadsMap = FxHashMap<NodeOutputId, PartitionHeads>;
@@ -467,13 +467,13 @@ struct DeferredBackEdge {
 }
 
 /// Build the forked chains.  Returns `Changed` iff at least one
-/// boundary (`MemPartition` / `MemUnion`) was inserted.
+/// boundary (`MemProject` / `MemUnion`) was inserted.
 ///
 /// Algorithm:
 ///   1. Compute the chain consumers' topological order over Memory
 ///      edges (MemPhi joins contribute one chain-edge per predecessor;
 ///      cycles fall to a deferred sweep).
-///   2. Insert one `MemPartition[P]` per active partition at the
+///   2. Insert one `MemProject[P]` per active partition at the
 ///      function entry, all projecting from the chain root's memory
 ///      output.  Seed `outgoing_heads[chain_root_out] = [MP[P]…]`.
 ///   3. Pass 1 — walk the topological order.  For each chain node:
@@ -511,13 +511,13 @@ fn build_forked_chains(
     // preorder so they're visited at least once.
     let chain_order = topological_mem_order(function, chain_root_out, classified)?;
 
-    // Insert one MemPartition[P] per active partition projecting from
+    // Insert one MemProject[P] per active partition projecting from
     // the chain root's memory output (typically the lifter's entry
     // MemPhi).
     let mut entry_heads: PartitionHeads = [None; 3];
     for &p in &ACTIVE_PARTITIONS {
         let mp = function.create_node_attributed(
-            NodeKind::MemPartition { class: p },
+            NodeKind::MemProject { class: p },
             [chain_root_out],
             [NodeOutputKind::Memory(Some(p))],
             &[chain_root_node],
@@ -902,7 +902,7 @@ fn mem_input_values(function: &Function, node: NodeId) -> Vec<NodeOutputId> {
 
 /// Wire a barrier's memory input through a `MemUnion` of **all
 /// active partition heads** and, for each *clobbered* partition,
-/// re-project a fresh `MemPartition[P]` from the barrier's memory
+/// re-project a fresh `MemProject[P]` from the barrier's memory
 /// output (when the barrier has one).
 ///
 /// Including non-clobbered partition heads in the `MemUnion` keeps the
@@ -961,7 +961,7 @@ fn splice_barrier(
     if let Some(barrier_mem_out) = mem_out {
         for &p in clobbers {
             let mp = function.create_node_attributed(
-                NodeKind::MemPartition { class: p },
+                NodeKind::MemProject { class: p },
                 [barrier_mem_out],
                 [NodeOutputKind::Memory(Some(p))],
                 &[barrier],

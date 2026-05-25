@@ -288,8 +288,8 @@ fn probe(
                         preds,
                     })
                 }
-                NodeKind::MemPartition { .. } => {
-                    // MemPartition: [unified_memory] → [Memory(Some(p))].
+                NodeKind::MemProject { .. } => {
+                    // MemProject: [unified_memory] → [Memory(Some(p))].
                     // Pass through to the single unified-memory predecessor.
                     let inputs = graph.node_inputs(node);
                     if inputs.is_empty() {
@@ -645,7 +645,7 @@ pub(crate) fn find_stack_stored_value_at_offset(
                     }
                 }
             }
-            NodeKind::MemPartition { .. } => {
+            NodeKind::MemProject { .. } => {
                 // Pass through to the single unified-memory predecessor.
                 let inputs = graph.node_inputs(node);
                 if inputs.is_empty() {

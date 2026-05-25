@@ -3,7 +3,7 @@
 //!
 //! Each test builds a small synthetic function exhibiting a specific
 //! memory-chain shape, runs `AliasSplit` once, and pins the resulting
-//! IR structure (presence/absence of `MemPartition` / `MemUnion`
+//! IR structure (presence/absence of `MemProject` / `MemUnion`
 //! nodes, the partition-typed memory edges, and — critically — the
 //! per-partition bypass shape that makes a disjoint-partition store
 //! flow through a `Call` or skip over an unrelated-partition store).
@@ -86,12 +86,12 @@ fn unique_node(
     first
 }
 
-/// Helper: collect the AliasClass of every reachable MemPartition.
-fn mem_partition_classes(function: &Function) -> Vec<AliasClass> {
+/// Helper: collect the AliasClass of every reachable MemProject.
+fn mem_project_classes(function: &Function) -> Vec<AliasClass> {
     function
-        .preorder_kind(|k| matches!(k, NodeKind::MemPartition { .. }))
+        .preorder_kind(|k| matches!(k, NodeKind::MemProject { .. }))
         .map(|n| match function.node_kind(n) {
-            NodeKind::MemPartition { class } => *class,
+            NodeKind::MemProject { class } => *class,
             _ => unreachable!(),
         })
         .collect()
@@ -112,7 +112,7 @@ fn entry_projects_all_three_active_partitions() {
     assert_eq!(r, OptimizationResult::Changed);
 
     use std::collections::HashSet;
-    let classes: HashSet<AliasClass> = mem_partition_classes(&f).into_iter().collect();
+    let classes: HashSet<AliasClass> = mem_project_classes(&f).into_iter().collect();
     assert!(classes.contains(&AliasClass::Stack), "Stack partition projected");
     assert!(classes.contains(&AliasClass::Heap), "Heap partition projected");
     assert!(classes.contains(&AliasClass::Unknown), "Unknown partition projected");
@@ -131,10 +131,10 @@ fn empty_chain_with_return_partitions_for_terminator() {
     let r = run_split(&mut f, sp);
     assert_eq!(r, OptimizationResult::Changed);
 
-    // 3 entry MemPartitions + 1 MemUnion at Return.
-    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemPartition { .. }));
+    // 3 entry MemProjects + 1 MemUnion at Return.
+    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject { .. }));
     let n_union = count_reachable(&f, |k| matches!(k, NodeKind::MemUnion));
-    assert_eq!(n_part, 3, "3 entry MemPartitions (Stack/Heap/Unknown)");
+    assert_eq!(n_part, 3, "3 entry MemProjects (Stack/Heap/Unknown)");
     assert_eq!(n_union, 1, "1 MemUnion at Return");
 
     let entry = f.entry().unwrap();
@@ -213,7 +213,7 @@ fn forked_chains_skip_other_partition() {
     // Each Stack store's mem-input traces back via a Stack-typed
     // producer.  In particular: the second Stack store (c) MUST
     // trace to another Stack node (the first Stack store a or via
-    // a Stack-typed MemPhi / MemPartition), NEVER through the
+    // a Stack-typed MemPhi / MemProject), NEVER through the
     // Unknown store b — the test that the Stack chain bypasses the
     // Unknown chain.
     for &stack_store in &stack_stores {
@@ -257,7 +257,7 @@ fn call_clobbers_stack_chain() {
     // store sp-4; call f; load sp-4 — Call clobbers [Stack, Heap,
     // Unknown] by default (sound floor: callee may hold &local_var and
     // mutate the caller's stack frame).  The Stack Load's mem-input must
-    // trace through a Call-emitted MemPartition[Stack] re-projection,
+    // trace through a Call-emitted MemProject[Stack] re-projection,
     // NOT directly back to the Store.
     let sp = sp_vn_x86();
     let mut f = stack_call_stack_return(sp);
@@ -272,9 +272,9 @@ fn call_clobbers_stack_chain() {
     assert!(
         matches!(
             producer_kind,
-            NodeKind::MemPartition { class: AliasClass::Stack }
+            NodeKind::MemProject { class: AliasClass::Stack }
         ),
-        "Stack load's mem-input must re-enter via a fresh MemPartition[Stack] \
+        "Stack load's mem-input must re-enter via a fresh MemProject[Stack] \
          after the Call (not a direct edge back to the Store); got {producer_kind:?}",
     );
 
@@ -289,7 +289,7 @@ fn callother_with_full_clobber_breaks_stack_chain() {
     // store sp-4; software_interrupt (FullClobber); load sp-4 —
     // software_interrupt's ABI is MEM_CLOBBER_FULL so the Stack
     // chain IS broken.  The Load's mem-input must trace through a
-    // CallOther-emitted MemPartition[Stack], not directly back to
+    // CallOther-emitted MemProject[Stack], not directly back to
     // the Store.
     let sp = sp_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
@@ -327,10 +327,10 @@ fn callother_with_full_clobber_breaks_stack_chain() {
     assert!(
         matches!(
             producer_kind,
-            NodeKind::MemPartition { class: AliasClass::Stack }
+            NodeKind::MemProject { class: AliasClass::Stack }
         ),
         "after a full-clobber CallOther, the Stack load must re-enter via a fresh \
-         MemPartition[Stack]; got {producer_kind:?}",
+         MemProject[Stack]; got {producer_kind:?}",
     );
 
     strider_ir::validate::validate(&f, entry)
@@ -383,9 +383,9 @@ fn indirect_branch_function_is_left_unified_v1() {
         "AliasSplit must bail (NoChange) on functions with an IndirectBranch in v1",
     );
     assert_eq!(
-        count_reachable(&f, |k| matches!(k, NodeKind::MemPartition { .. })),
+        count_reachable(&f, |k| matches!(k, NodeKind::MemProject { .. })),
         0,
-        "no MemPartition nodes should be inserted when the pass bails",
+        "no MemProject nodes should be inserted when the pass bails",
     );
 
     let entry = f.entry().unwrap();
@@ -690,7 +690,7 @@ fn loop_back_edge_partition_memphi_closes_correctly() {
 /// Diamond CFG where only ONE branch writes to Stack; the other branch
 /// has no Stack writes.  The Stack mirror MemPhi at the join must
 /// still have a valid Memory(Some(Stack)) input for the inactive
-/// branch — sourced from the function-entry MemPartition[Stack] as
+/// branch — sourced from the function-entry MemProject[Stack] as
 /// the canonical default.
 #[test]
 fn partition_inactive_on_branch_uses_entry_default() {
@@ -744,10 +744,10 @@ fn partition_inactive_on_branch_uses_entry_default() {
     // The Stack mirror MemPhi at the join must have:
     //   inputs[0] = PhiToken
     //   inputs[1] = the Store's mem-output (true-branch's Stack tail)
-    //   inputs[2] = MemPartition[Stack] from entry  (false-branch's
+    //   inputs[2] = MemProject[Stack] from entry  (false-branch's
     //               Stack head is the unmodified entry projection)
     // Both value inputs MUST be Memory(Some(Stack)) — the entry
-    // MemPartition[Stack] is the canonical default.
+    // MemProject[Stack] is the canonical default.
     let mem_phis: Vec<_> = f
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::MemPhi))
@@ -785,7 +785,7 @@ fn partition_inactive_on_branch_uses_entry_default() {
 /// Sanity: a function with a multi-pred MemPhi that previously
 /// triggered the `has_multi_pred_mem_phi` bail now partitions
 /// successfully — `OptimizationResult::Changed` and at least one
-/// `MemPartition[Stack]` node appears.
+/// `MemProject[Stack]` node appears.
 #[test]
 fn previously_bailed_functions_now_partition() {
     use strider_ir_test_utils::RegisterSet;
@@ -827,6 +827,6 @@ fn previously_bailed_functions_now_partition() {
         OptimizationResult::Changed,
         "AliasSplit must succeed on functions with a multi-pred MemPhi"
     );
-    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemPartition { .. }));
-    assert!(n_part >= 1, "≥1 MemPartition node must be emitted");
+    let n_part = count_reachable(&f, |k| matches!(k, NodeKind::MemProject { .. }));
+    assert!(n_part >= 1, "≥1 MemProject node must be emitted");
 }
