@@ -315,6 +315,18 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             container_ty,
         )?;
 
+        // SOUNDNESS NOTE: on AArch64, writing a scalar FP/SIMD sub-register
+        // (s0/d0/h0/b0) is ISA-mandated to ZERO the upper bits of the
+        // containing 128-bit V-register.  This codepath preserves them,
+        // which produces wrong IR for any AArch64 binary that writes a
+        // scalar FP register and later reads the full container width.
+        //
+        // Closing this gap requires either threading ArchPreset into
+        // write_reg_vn or adding a per-container policy (q0/q1/... are
+        // zero-extending containers on AArch64; xmm0/xmm1/... are NOT on
+        // x86 SSE).  See the ignored regression test
+        // `aarch64_scalar_fp_write_zeroes_upper_bits_of_simd_container`.
+
         // The "preserve" mask is the bits of the container that don't belong
         // to reg — i.e. the container's full mask minus the positioned reg
         // mask.
@@ -575,6 +587,21 @@ mod positioned_mask_tests {
             0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
             "d0 (lower 8) write must preserve the upper 8 bytes of q0"
         );
+    }
+
+    #[test]
+    #[ignore = "tracks AAPCS64 scalar FP zero-extension; fix deferred — see SOUNDNESS NOTE in vn_io.rs"]
+    fn aarch64_scalar_fp_write_zeroes_upper_bits_of_simd_container() {
+        // Spec: writing s0 (low 4 bytes of q0) must zero bits 32..127.
+        // Writing d0 (low 8 bytes of q0) must zero bits 64..127.
+        //
+        // Today's lifter preserves bits 32..127 instead of zeroing them.
+        // When the fix lands, this test should pin the post-fix shape:
+        // the container update term has mask = 0, NOT mask = ~reg_mask.
+        //
+        // Construction pattern: see the existing positioned-mask tests
+        // in this module for how to set up a write_reg_vn call.
+        panic!("test not yet implemented; remove #[ignore] when fixing AAPCS64");
     }
 
     /// 4-byte container with byte-sized sub-registers at each offset —
