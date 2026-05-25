@@ -817,6 +817,7 @@ fn topological_mem_order(
     classified: &Classified,
 ) -> Result<Vec<NodeId>> {
     let mut order: Vec<NodeId> = Vec::with_capacity(classified.mem_chain_consumers.len());
+    let mut in_order: DenseEntitySet<NodeId> = DenseEntitySet::new();
 
     // Pass 1 of 2: all MemPhis first, in classifier preorder.  Each
     // MemPhi's value inputs may include back-edges; pass 1 wires the
@@ -824,6 +825,7 @@ fn topological_mem_order(
     for &n in &classified.mem_chain_consumers {
         if matches!(function.node_kind(n), NodeKind::MemPhi) {
             order.push(n);
+            in_order.insert(n);
         }
     }
 
@@ -882,6 +884,7 @@ fn topological_mem_order(
     let mut ready: std::collections::VecDeque<NodeId> = roots.into_iter().collect();
     while let Some(n) = ready.pop_front() {
         order.push(n);
+        in_order.insert(n);
         if let Some(succs) = successors.get(&n) {
             let mut sorted: Vec<NodeId> = succs.clone();
             sorted.sort_by_key(|x| x.index());
@@ -903,8 +906,9 @@ fn topological_mem_order(
     // shape — `outgoing_heads[loop_header_MemPhi.out]` was populated
     // in pass 1.
     for &n in &classified.mem_chain_consumers {
-        if !order.contains(&n) {
+        if !in_order.contains(n) {
             order.push(n);
+            in_order.insert(n);
         }
     }
 

@@ -54,10 +54,18 @@ pub struct Cfg<R: rsleigh::MemReader> {
     /// not once per CFG rebuild.  See `tests/sleigh_reuse.rs` for the
     /// round-trip pin.
     ///
-    /// Reusing one Sleigh across many `lift_one` calls is sound:
-    /// `lift_one` mutates only Sleigh's internal decode buffers,
-    /// which are reset on every call; there is no per-CFG state in
-    /// Sleigh.
+    /// Reusing one Sleigh across many `lift_one` calls is sound only
+    /// within a single function's lifetime: `lift_one(&mut self)`
+    /// carries context-register state (ARM Thumb mode, x86 segment
+    /// selectors, MIPS16 mode) across calls.  Within a region, decoding
+    /// must be sequential.  Across regions of the same function, the
+    /// context register is assumed fixed at function entry.  The
+    /// `DecodeCache` must therefore stay scoped to one Sleigh handle
+    /// (which the orchestrator enforces by constructing one `DecodeCache`
+    /// per `strider::run` call).  For ARM binaries that switch
+    /// Thumb/ARM mode mid-function via `bx lr`, the cache can return
+    /// stale `LiftRes`; this is a known limitation, not exercised by
+    /// any fixture today.
     ///
     /// The field is also retained so register names can be resolved
     /// for visualisation.

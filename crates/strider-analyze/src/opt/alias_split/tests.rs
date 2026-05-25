@@ -992,3 +992,75 @@ fn two_memory_ops_does_emit_project_and_union() {
     let entry = f.entry().unwrap();
     strider_ir::validate::validate(&f, entry).expect("must validate");
 }
+
+/// Build a function with N consecutive stack stores (`store sp+i*4 = i` for
+/// i in 0..N) followed by a Return.  AliasSplit must process all N stores
+/// via `topological_mem_order` and emit exactly N partition-typed Store nodes
+/// (no duplicates, none dropped).  This exercises the cycle-fallback path in
+/// `topological_mem_order`: although no genuine cycle exists here, the check
+/// `if !in_order.contains(n)` fires in the fallback sweep for every consumer
+/// that the Kahn phase already placed in `order`.  With the old Vec::contains
+/// approach this was O(n²); with DenseEntitySet it is O(n).  More critically,
+/// the test pins that the cycle-fallback does NOT double-emit nodes — if it
+/// did, AliasSplit would wire duplicate memory edges and the validator would
+/// reject the result.
+fn n_consecutive_stack_stores(sp: rsleigh::Vn, n: u64) -> Function {
+    make_sp_fn(sp, |b, sp_v| {
+        for i in 0..n {
+            let offset = b.build_int_const(i * 4, NodeOutputType::U32)?;
+            let addr = b.build_int_binary_operation(
+                sp_v,
+                offset,
+                strider_ir::IntBinaryOp::Add,
+                NodeOutputType::U32,
+            )?;
+            let data = b.build_int_const(i, NodeOutputType::U32)?;
+            b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        }
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+        b.build_return(Some(zero), &[])?;
+        Ok(())
+    })
+    .unwrap()
+}
+
+#[test]
+fn topological_mem_order_includes_every_mem_chain_consumer() {
+    // 8 consecutive stack stores — large enough to exercise the topo
+    // ordering in `topological_mem_order` while keeping the test fast.
+    // After AliasSplit the Stack partition must contain exactly 8
+    // partition-typed Store nodes and the IR must validate (which proves
+    // no consumer was dropped or duplicated).
+    let sp = sp_vn_x86();
+    let n: usize = 8;
+    let mut f = n_consecutive_stack_stores(sp, n as u64);
+    let r = run_split(&mut f, sp);
+    assert_eq!(r, OptimizationResult::Changed, "N-store function must be partitioned");
+
+    // Count partition-typed Store nodes (Memory(Some(_)) output) —
+    // there must be exactly N, one per original store.
+    let stack_stores: Vec<_> = f
+        .all_node_ids()
+        .filter(|&node| {
+            matches!(f.node_kind(node), NodeKind::Store(_))
+                && f.node_outputs(node).iter().any(|&out| {
+                    matches!(
+                        f.output_kind(out),
+                        NodeOutputKind::Memory(Some(AliasClass::Stack))
+                    )
+                })
+        })
+        .collect();
+    assert_eq!(
+        stack_stores.len(),
+        n,
+        "expected {n} Stack-partition Stores after AliasSplit, got {}",
+        stack_stores.len()
+    );
+
+    // Full validation — catches any duplicate or missing memory edge.
+    let entry = f.entry().unwrap();
+    strider_ir::validate::validate(&f, entry)
+        .expect("post-AliasSplit IR must validate for N-store chain");
+}
