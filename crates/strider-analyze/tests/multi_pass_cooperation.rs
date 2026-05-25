@@ -129,7 +129,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> Result<()> {
 }
 
 /// `if(true)` with one arm doing a stack spill + reload:
-/// `StackStoreDetect + ConstantFold + RedundantPhis` must collapse the
+/// `AliasSplit + ConstantFold + RedundantPhis` must collapse the
 /// single-predecessor join region and leave an `IntConst` as the
 /// return value (the forwarded constant).
 #[test]

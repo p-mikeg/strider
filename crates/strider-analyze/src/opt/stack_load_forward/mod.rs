@@ -20,14 +20,14 @@ use crate::opt::worklist::seeded_kind;
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
-/// Runs inside the main fixed-point loop so that specializations produced by
-/// `StackStoreDetect` become visible to the walker on subsequent iterations,
+/// Runs inside the main fixed-point loop so that stack stores classified by
+/// `AliasSplit` become visible to the walker on subsequent iterations,
 /// and so that forwarded constants fed into expressions are in turn
 /// simplified by `ConstantFold` / `KnownBits`.
 #[derive(Clone)]
 pub struct StackLoadForward {
     /// Calling convention this pass was built from.  See the comment
-    /// on `StackStoreDetect::cc` for the per-pass-shared-Arc rationale.
+    /// Shared `Arc` so all CC-aware passes can hold the same allocation.
     /// This pass consults only `cc.stack_ptr_vn`.
     cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
     /// Target endianness — controls how a narrow load from a wider store is
@@ -519,7 +519,7 @@ fn realize_with_depth(
 //     return the stored `data` output.  This is sound because no later
 //     write can have aliased the slot — we walked here from the load's
 //     memory input through strictly-earlier stores, and the offset
-//     equality check is exact (StackStoreDetect tagged it).
+//     equality check is exact (AliasSplit tagged it).
 //   * `StackStore` at a different offset: skip iff the byte ranges are
 //     provably disjoint (`ranges_disjoint`); recurse on the prior
 //     memory.

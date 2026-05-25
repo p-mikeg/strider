@@ -5,9 +5,8 @@ edition = { workspace = true }
 
 # Proc-macro crate emitting Rust + PyO3 pattern builders from a single
 # annotated struct definition.  See `EMISSION_SPEC.md` for the exact
-# emission contract and `crates/strider-py/src/pattern_reference.rs`
-# for the hand-written reference shape this macro replicates
-# byte-for-byte at the `.pyi` level.
+# emission contract and `crates/strider-py/src/pattern.rs` for the
+# canonical macro-emitted shape.
 [lib]
 proc-macro = true
 # Doctests for proc-macros require setting up a full pyo3 + pattern

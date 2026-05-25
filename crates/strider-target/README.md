@@ -46,7 +46,7 @@ names the same types.
   DTO below.
 - `PositionalArgLayout` / `PositionalArg` — canonical positional-arg
   enumeration DTO consumed by `FunctionArgDetect`,
-  `CallStackArgCollect`, `StackStoreDetect`, and `StackLoadForward`.
+  `CallStackArgCollect`, and `StackLoadForward`.
   Indices `0..arg_passing_regs.len()` are register slots; indices
   `arg_passing_regs.len()..` are stack slots at the convention's
   `stack_arg_offsets`.  Construct via

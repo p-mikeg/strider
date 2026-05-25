@@ -382,7 +382,7 @@ fn presets_resolve_correct_register_sets() {
 
 /// Every register resolved by a preset (including the stack pointer) must
 /// have the architecture's natural word size.  SP is included because
-/// `StackStoreDetect` and the analyzer's stack-arg machinery assume an
+/// `AliasSplit` and the analyzer's stack-arg machinery assume an
 /// SP-sized address — an undersized SP would silently miscompute offsets
 /// downstream and produce no diagnostic from this crate.
 #[test]

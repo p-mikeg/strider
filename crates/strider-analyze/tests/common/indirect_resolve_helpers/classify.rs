@@ -135,7 +135,7 @@ pub fn build_value_phi_target_scenario(
     );
 
     // 4-byte stack pointer VN — register space, offset 0x20, size 4.
-    // Doesn't have to match a real arch's SP; StackStoreDetect /
+    // Doesn't have to match a real arch's SP; AliasSplit /
     // StackLoadForward only care that it's the SP register passed
     // into the pass constructors.
     let sp = rsleigh::Vn {

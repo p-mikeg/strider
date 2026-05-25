@@ -59,7 +59,7 @@ impl SpExpr {
 /// shape (`Add(_, IntConst(-K))`).  Without this peephole the SP-expression
 /// walker would return `None` during fixed-point iterations where
 /// `ConstantFold` hasn't yet collapsed the `Neg` of a constant, breaking
-/// `StackStoreDetect`'s ability to make progress on the same iteration.
+/// `AliasSplit`'s ability to make progress on the same iteration.
 #[must_use]
 pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     if let Some(c) = g.int_const_val(out) {
@@ -81,7 +81,7 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     // semantics (modular two's-complement) yield `0x80000000_U32` which
     // sign-extends to `-2^31`.  The pre-fold and post-fold view of the
     // same SP-relative subtraction would then return different offsets
-    // and `StackStoreDetect` could classify the same store inconsistently.
+    // and `AliasSplit` could classify the same store inconsistently.
     let node = g.get_node_from_output(out);
     if matches!(g.node_kind(node), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)) {
         let inputs = g.node_inputs(node);
@@ -262,8 +262,8 @@ fn decompose_sp_inner(
             // and serves as a stable opaque base for every subsequent stack
             // address.  Return `Terminal { base: <And output>, offset: 0 }`
             // so downstream Adds / Subs of constants chain through normally
-            // and `StackStoreDetect` can rewrite the post-alignment stores
-            // into `StackStore`s sharing this base.
+            // and `AliasSplit` can classify the post-alignment stores
+            // as stack-aliased using this base.
             //
             // Only matches when the non-mask operand is itself an SP-rooted
             // expression — guards against `And(rax, mask)` accidentally
@@ -381,7 +381,7 @@ mod tests {
         // peephole here must NOT return `+2^31` (which is what
         // `checked_neg(-2^31i128)` produces) — that would silently disagree
         // with `ConstantFold::IntUnaryOp::Neg`'s `wrapping_neg` evaluator
-        // and `StackStoreDetect` could classify the same store inconsistently
+        // and `AliasSplit` could classify the same store inconsistently
         // depending on whether the inner Neg had been folded yet.
         let mut b = FunctionBuilder::empty()?;
         let region = b.create_region()?;

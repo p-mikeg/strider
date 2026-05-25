@@ -11,7 +11,7 @@ combination — construct the pipeline yourself.
 
 This example lifts `array_sum` twice: once raw (no optimization) and
 once with a hand-built pipeline that includes only ConstantFold + KnownBits
-+ StackStoreDetect + StackLoadForward. We compare graph node counts to
++ StackLoadForward. We compare graph node counts to
 show that the optimization actually shrank the IR.
 
 Run from the workspace root:
@@ -65,7 +65,6 @@ sleigh = strider.Sleigh(arch, mem)
 pipe = strider.OptimizerPipeline.empty()
 pipe.add(strider.opt.ConstantFold())
 pipe.add(strider.opt.KnownBits())
-pipe.add(strider.opt.StackStoreDetect(sleigh, cc))
 pipe.add(strider.opt.StackLoadForward(sleigh, cc, arch))
 
 partial = lift(pipeline=pipe)

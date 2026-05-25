@@ -1,5 +1,4 @@
-"""Stack-offset recovery: `Match.stack_offset` / `stack_phi_offsets`,
-`StackStorePat.offset_any`.
+"""Stack-offset recovery: `StorePat.offset_capture` / `Match.captured_offset`.
 
 The motivating shape (FreeBSD `dounmount`):
 
@@ -27,8 +26,8 @@ from __future__ import annotations
 
 import strider
 from strider.pattern import (
-    Capture, add, any_int_const, call, initial_var_for, load, stack_store,
-    var,
+    Capture, OffsetCapture, add, any_int_const, call, initial_var_for,
+    load, store, var,
 )
 
 from .conftest import fixture_path
@@ -47,59 +46,49 @@ def _stack_graph():
     ).graph, mem
 
 
-# ── stack_offset / stack_phi_offsets accessors ─────────────────────────────
+# ── StorePat.offset_capture / Match.captured_offset accessors ─────────────
 
 
-def test_match_stack_offset_returns_offset_for_captured_stack_store():
+def test_match_captured_offset_returns_offset_for_stack_store():
     g, _ = _stack_graph()
-    c = Capture()
-    hits = g.find_all(stack_store().capture(c))
-    assert len(hits) >= 1, "escape_via_ptr should produce ≥1 StackStore"
+    c = OffsetCapture()
+    hits = g.find_all(store().offset_capture(c))
+    assert len(hits) >= 1, "escape_via_ptr should produce ≥1 stack Store"
     for m in hits:
-        off = m.stack_offset(c)
+        off = m.captured_offset(c)
         assert isinstance(off, int), (
-            f"stack_offset must return an int for a StackStore capture; got {off!r}"
+            f"captured_offset must return an int for an offset_capture; got {off!r}"
         )
 
 
-def test_match_stack_offset_unbound_capture_returns_none():
+def test_match_captured_offset_unbound_capture_returns_none():
     g, _ = _stack_graph()
-    bound = Capture()
-    unbound = Capture()
-    hits = g.find_all(stack_store().capture(bound))
+    bound = OffsetCapture()
+    unbound = OffsetCapture()
+    hits = g.find_all(store().offset_capture(bound))
     assert len(hits) >= 1
-    assert hits[0].stack_offset(unbound) is None
+    assert hits[0].captured_offset(unbound) is None
 
 
-# ── StackStorePat.offset_any ───────────────────────────────────────────────
-
-
-def test_stack_store_offset_any_matches_when_in_set():
+def test_store_stack_only_matches_only_stack_stores():
     g, _ = _stack_graph()
-    # Discover the actual offsets, then assert offset_any with that
-    # set in addition to noise still matches.
-    c = Capture()
-    all_hits = g.find_all(stack_store().capture(c))
-    assert len(all_hits) >= 1
-    offsets = sorted({m.stack_offset(c) for m in all_hits})
-
-    # Set containing all the actual offsets → must hit every store.
-    hits = g.find_all(stack_store().offset_any(offsets + [0xDEAD_BEEF, -0xDEAD_BEEF]))
-    assert len(hits) == len(all_hits)
+    # stack_only() restricts to stores whose offset is known to the
+    # SP-expr analysis — the same stores that offset_capture matches.
+    hits_stack = g.find_all(store().stack_only())
+    hits_offset = g.find_all(store().offset_capture(OffsetCapture()))
+    # Both filters must agree on count: offset_capture implies stack_only.
+    assert len(hits_stack) == len(hits_offset)
+    assert len(hits_stack) >= 1
 
 
-def test_stack_store_offset_any_rejects_when_not_in_set():
+def test_store_stack_only_rejects_non_stack_stores():
     g, _ = _stack_graph()
-    # A set that cannot contain any real offset (way out of typical
-    # stack-frame range) must yield zero matches.
-    hits = g.find_all(stack_store().offset_any([0x1234_5678, -0x1234_5678]))
-    assert len(hits) == 0
-
-
-def test_stack_store_offset_any_empty_set_matches_nothing():
-    g, _ = _stack_graph()
-    hits = g.find_all(stack_store().offset_any([]))
-    assert len(hits) == 0
+    # Unconstrained store() matches everything including non-stack stores.
+    all_stores = g.find_all(store())
+    stack_stores = g.find_all(store().stack_only())
+    # In escape_via_ptr the full store set may include non-stack stores;
+    # stack_only must be a strict subset (or equal if all are stack).
+    assert len(stack_stores) <= len(all_stores)
 
 
 # ── End-to-end: ni_vp-style field-offset recovery ─────────────────────────

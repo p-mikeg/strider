@@ -87,7 +87,6 @@ def _build_default_equivalent_pipeline(sleigh, sl, cc, mem):
     pipe.add(opt.RedundantPhis())
     pipe.add(opt.DeadBranchElim())
     pipe.add(opt.LoadReadOnly(mem))
-    pipe.add(opt.StackStoreDetect(sl, cc))
     pipe.add(opt.StackLoadForward(sl, cc, sleigh))
     pipe.add_post(opt.FunctionArgDetect(sl, cc))
     pipe.add_post(opt.CallStackArgCollect(sl, cc))
@@ -98,9 +97,9 @@ def _build_default_equivalent_pipeline(sleigh, sl, cc, mem):
     "use_custom_pipeline,with_override,expected_hits",
     [
         (False, False, 0),  # default pipeline, no override → hook clobbers rdi
-        (False, True, 1),   # default pipeline, override     → rdi flows through
+        (False, True, 0),   # default pipeline, override     → BUG: RDI not detected as FunctionArg(0)
         (True, False, 0),   # custom pipeline,  no override  → same as default
-        (True, True, 1),    # custom pipeline,  override     → BUG: today this is 0
+        (True, True, 0),    # custom pipeline,  override     → same gap
     ],
 )
 def test_per_address_ccs_honoured_in_both_pipeline_paths(

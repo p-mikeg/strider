@@ -2,9 +2,8 @@
 //! annotated struct definition.
 //!
 //! See `EMISSION_SPEC.md` next to this file for the emission contract
-//! and `crates/strider-py/src/pattern_reference.rs` for the
-//! hand-written `PyStackStorePatV2` reference this macro must
-//! replicate at the `.pyi` level.
+//! and `crates/strider-py/src/pattern.rs` for the canonical
+//! macro-emitted shape this macro must replicate at the `.pyi` level.
 //!
 //! ## Usage
 //!

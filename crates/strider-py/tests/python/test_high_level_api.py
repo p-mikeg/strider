@@ -1,4 +1,4 @@
-"""Tests for the high-level Python API facade (Phase 5 Task 5.2).
+"""Tests for the high-level Python API facade.
 
 Covers `strider.load(path)`, `Strider.analyze(name)`,
 `Analysis.find(pat)`, `Analysis.fingerprint(node)`, and the

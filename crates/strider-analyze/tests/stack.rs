@@ -1,4 +1,4 @@
-//! Stack-frame allocation, StackStoreDetect, and volatile preservation.
+//! Stack-frame allocation and volatile store preservation.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 

@@ -241,8 +241,8 @@ so the resolver-bearing dependency stays one-way.
     `PositionalArgLayout::from_convention(&cc)`).  Single source of
     truth for positional argument slot order (register slots first,
     then stack slots at the convention's `stack_arg_offsets`); consumed
-    by `FunctionArgDetect`, `CallStackArgCollect`, `StackStoreDetect`,
-    and `StackLoadForward` so each pass sees the same slot order.
+    by `FunctionArgDetect`, `CallStackArgCollect`, and `StackLoadForward`
+    so each pass sees the same slot order.
 
 - **`strider-reader`** — `ReadOnlyMemory` + `rsleigh::MemReader`
   backends.

@@ -50,13 +50,7 @@ EXPECTED_TOP = {
 }
 
 EXPECTED_ERRORS = {
-    "LiftError",
-    "PatternError",
-    "ReaderError",
-    "RewriteError",
     "StriderError",
-    "UnknownCallOtherError",
-    "UnresolvedIndirectBranchError",
 }
 
 EXPECTED_OPT = {
@@ -70,7 +64,6 @@ EXPECTED_OPT = {
     "LoadReadOnly",
     "RedundantPhis",
     "StackLoadForward",
-    "StackStoreDetect",
 }
 
 EXPECTED_PATTERN = {
@@ -87,9 +80,10 @@ EXPECTED_PATTERN = {
     "FunctionArgPat",
     "IfPat",
     "LoadPat", "StorePat",
-    "MemPhiPat", "PhiPat", "ValuePhiPat",
+    "MemPhiPat", "MemProjectPat", "MemUnionPat",
+    "OffsetCapture",
+    "PhiPat", "ValuePhiPat",
     "RetPat",
-    "StackStorePat", "StackStorePhiPat",
     # Wildcards / consts / phi / initial.
     "any_", "var", "predicate",
     "int_const", "signed_int_const", "bool_const", "float_const",
@@ -121,7 +115,7 @@ EXPECTED_PATTERN = {
     "truncate", "popcount", "lzcount",
     "zero_extend", "sign_extend", "extend",
     # Memory & control flow.
-    "load", "store", "stack_store", "stack_store_phi",
+    "load", "store", "mem_project", "mem_union",
     "call", "call_other", "ret", "if_",
     # Typed family dispatchers.
     "int_binary", "bool_binary", "float_binary",

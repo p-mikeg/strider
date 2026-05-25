@@ -52,8 +52,8 @@ use crate::opt::worklist::seeded_kind;
 /// after the fixed-point loop has converged.
 #[derive(Clone)]
 pub struct FunctionArgDetect {
-    /// Calling convention this pass was built from.  See the comment
-    /// on `StackStoreDetect::cc` for the per-pass-shared-Arc rationale.
+    /// Calling convention this pass was built from.  Shared `Arc` so all
+    /// CC-aware passes hold the same allocation.
     /// Consults `cc.arg_passing_regs`, `cc.stack_ptr_vn`, and
     /// `cc.stack_arg_offsets` indirectly through [`Self::layout`].
     cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
@@ -537,7 +537,6 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 /// Sub-frame results aren't cached because their cleanliness depends
 /// on the cycle set populated above them, not just on `(mem, offset,
 /// load_size)`.
-
 /// [`MemChainStep`] implementation for [`mem_chain_is_dirty`].
 struct DirtyStep<'a> {
     offset: i64,

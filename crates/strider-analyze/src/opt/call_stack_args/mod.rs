@@ -218,8 +218,8 @@ fn collect_stack_args_partitioned(
 /// would be unsound.  The first base seen pins the chain; a store using a
 /// different base terminates collection.
 ///
-/// Plain `Store` nodes (those not rewritten to `StackStore` by
-/// `StackStoreDetect`) require alias analysis: if the store's address is
+/// Plain `Store` nodes (those not classified as stack stores by
+/// `AliasSplit`) require alias analysis: if the store's address is
 /// proven *not* to alias the stack-arg space (e.g. a global write to a
 /// constant `.data` address), the walker continues through it.  This makes
 /// stack-arg collection robust against compiler-emitted volatile global
@@ -507,8 +507,8 @@ fn try_collect_stack_args(
 /// stores remain chain-terminating.
 #[derive(Clone)]
 pub struct CallStackArgCollect {
-    /// Calling convention this pass was built from.  See the comment
-    /// on `StackStoreDetect::cc` for the per-pass-shared-Arc rationale.
+    /// Calling convention this pass was built from.  Shared `Arc` so all
+    /// CC-aware passes hold the same allocation.
     /// Consults `cc.stack_arg_offsets` and `cc.stack_ptr_vn`.
     cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
     /// Cached positional-arg layout derived from `cc` at construction

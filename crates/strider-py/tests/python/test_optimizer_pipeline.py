@@ -106,18 +106,16 @@ def test_cc_aware_passes_construct(x86_memory_elf):
 
     # Construct each CC/arch-aware pass to confirm their constructors
     # accept the (sleigh, cc[, arch]) triples.
-    a = strider.opt.StackStoreDetect(sleigh, cc)
     b = strider.opt.StackLoadForward(sleigh, cc, arch)
     c = strider.opt.FunctionArgDetect(sleigh, cc)
     d = strider.opt.CallStackArgCollect(sleigh, cc)
     e = strider.opt.LoadReadOnly(mem)
     pipe = strider.OptimizerPipeline.empty()
-    pipe.add(a)
     pipe.add(b)
     pipe.add(e)
     pipe.add_post(c)
     pipe.add_post(d)
-    assert pipe.pass_count() == 3
+    assert pipe.pass_count() == 2
     assert pipe.post_pass_count() == 2
 
 

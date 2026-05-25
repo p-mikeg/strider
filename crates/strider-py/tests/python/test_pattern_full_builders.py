@@ -1,8 +1,7 @@
 """End-to-end tests for the typed pattern builders newly exposed in
 strider-py — `RetPat`, `IfPat`, `CallOtherPat`, `LoadPat`,
-`StorePat`, `StackStorePat`, `StackStorePhiPat`, `PhiPat`,
-`FunctionArgPat` — plus the free constructors `phi_for`,
-`initial_var_for`, `function_arg_reg`, `function_arg_stack`,
+`StorePat`, `PhiPat`, `FunctionArgPat` — plus the free constructors
+`phi_for`, `initial_var_for`, `function_arg_reg`, `function_arg_stack`,
 `int_cmp`, the op-variant accessors on `Match`, and the
 `CastMask` matcher option.
 
@@ -18,8 +17,8 @@ import pytest
 
 import strider
 from strider.pattern import (
-    Capture, Pat, CastMask, any_, var, add, mul, load, store,
-    stack_store, stack_store_phi, call, call_other, ret, if_, phi,
+    Capture, OffsetCapture, Pat, CastMask, any_, var, add, mul, load, store,
+    call, call_other, ret, if_, phi,
     phi_for, initial_var, initial_var_for, function_arg,
     function_arg_any, function_arg_reg, function_arg_stack,
     int_const, signed_int_const, int_cmp, int_bin_any, int_cmp_any,
@@ -81,16 +80,15 @@ def test_ret_pat_ret_val_constraint_chains():
 
 
 def test_ret_pat_capture_finalises():
-    # Phase 4 Task 4.2c — `.capture(c)` returns the same builder after
-    # the strider_pattern macro migration; call `.into_pat()` to get a
-    # `Pat`.
+    # `.capture(c)` returns the same builder after the strider_pattern
+    # macro migration; call `.into_pat()` to get a `Pat`.
     c = Capture()
     b = ret().capture(c)
     assert isinstance(b.into_pat(), Pat)
 
 
 def test_ret_pat_when_finalises():
-    # Phase 4 Task 4.2c — same builder-chain contract as `.capture(c)`.
+    # Same builder-chain contract as `.capture(c)`.
     b = ret().when(lambda m: True)
     assert isinstance(b.into_pat(), Pat)
 
@@ -131,10 +129,10 @@ def test_call_other_pat_chain_compiles():
 
 
 def test_call_other_pat_capture_finalises():
-    # Phase 4 Task 4.2c — after the strider_pattern macro migration,
-    # `.capture(c)` returns the same builder (so subsequent .arg/.ret
-    # chains stay typed).  Call `.into_pat()` (or pass the builder
-    # directly as a PatLike) to materialise.
+    # `.capture(c)` returns the same builder after the strider_pattern
+    # macro migration (so subsequent .arg/.ret chains stay typed).
+    # Call `.into_pat()` (or pass the builder directly as a PatLike)
+    # to materialise.
     c = Capture()
     b = call_other().user_op_id(0).capture(c)
     assert isinstance(b.into_pat(), Pat)
@@ -174,16 +172,18 @@ def test_load_pat_via_addr_chain():
     assert isinstance(hits, list)
 
 
-# ── StackStorePat / StackStorePhiPat ─────────────────────────────────
+# ── StorePat stack_only / offset_capture ─────────────────────────────
 
 
-def test_stack_store_pat_offset_chain():
-    p = stack_store(offset=-8).data(int_const(42))
+def test_store_stack_only_chain():
+    # stack_only() restricts the match to stores whose SP offset is known.
+    p = store().stack_only().data(int_const(42))
     assert isinstance(p.into_pat(), Pat)
 
 
-def test_stack_store_phi_pat_offsets_constraint():
-    p = stack_store_phi().offsets([-8, -16])
+def test_store_offset_capture_chain():
+    c = OffsetCapture()
+    p = store().offset_capture(c)
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -320,7 +320,7 @@ def test_int_cmp_concrete_op():
 
 
 def test_int_cmp_unknown_op_raises():
-    with pytest.raises(strider.errors.PatternError):
+    with pytest.raises(strider.errors.StriderError):
         int_cmp("NotARealOp", "x", "y")
 
 
@@ -328,7 +328,7 @@ def test_int_cmp_no_not_equal_op():
     # The IR doesn't have a NotEqual variant — the lifter expresses
     # `a != b` as `BoolNeg(IntEqual(a, b))`.  `int_cmp("NotEqual",
     # ...)` must therefore raise rather than silently accepting.
-    with pytest.raises(strider.errors.PatternError):
+    with pytest.raises(strider.errors.StriderError):
         int_cmp("NotEqual", "x", "y")
 
 
@@ -407,7 +407,7 @@ def test_find_all_accepts_ignore_casts_mask():
 
 def test_find_all_rejects_both_ignore_casts_options():
     g = _patterns_graph()
-    with pytest.raises(strider.errors.PatternError):
+    with pytest.raises(strider.errors.StriderError):
         g.find_all(
             add(any_(), any_()),
             ignore_casts=True,

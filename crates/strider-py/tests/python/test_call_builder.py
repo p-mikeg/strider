@@ -56,11 +56,11 @@ def test_into_pat_returns_pat():
     assert isinstance(p, Pat)
 
 
-# Phase 4 Task 4.2c — after the `#[strider_pattern]` macro migration
-# the `.capture(c)` / `.cap(name)` / `.when(f)` builder methods return
-# the same builder (so further chaining stays typed), not an eagerly
-# finalised `Pat`.  Call `.into_pat()` (or pass the builder directly
-# as a `PatLike`) to materialise.
+# After the `#[strider_pattern]` macro migration the `.capture(c)` /
+# `.cap(name)` / `.when(f)` builder methods return the same builder
+# (so further chaining stays typed), not an eagerly finalised `Pat`.
+# Call `.into_pat()` (or pass the builder directly as a `PatLike`) to
+# materialise.
 def test_capture_returns_builder_with_into_pat_then_pat():
     c = Capture()
     b = call().capture(c)

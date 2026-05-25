@@ -158,7 +158,7 @@ fn remove_phis(
                     let [output] = ctx.node_outputs_exact::<1>(node_id)?;
                     // Absorb the phi's asm-fingerprint into the surviving
                     // value producer.  Phis are exempt-empty by default, but
-                    // an earlier opt pass (e.g. StackStoreDetect) may have
+                    // an earlier opt pass (e.g. AliasSplit) may have
                     // unioned addresses into them; preserve those here.
                     let value_node = ctx.get_node_from_output(value);
                     ctx.extend_asm_fingerprint_from(value_node, node_id);
