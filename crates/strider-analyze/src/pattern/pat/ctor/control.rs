@@ -10,8 +10,8 @@ use strider_ir::node::{FunctionArgSource, NodeKind};
 
 use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat, exemplar_vn};
 use crate::pattern::pat::{
-    CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, MemPhiPat, Pat, PhiPat, RetPat,
-    StorePat, ValuePhiPat,
+    CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, MemPhiPat, MemProjectPat, MemUnionPat,
+    Pat, PhiPat, RetPat, StorePat, ValuePhiPat,
 };
 
 // ── Memory ops ────────────────────────────────────────────────────────────────
@@ -24,6 +24,17 @@ pub fn load() -> LoadPat { LoadPat::new() }
 /// to add constraints.
 #[must_use]
 pub fn store() -> StorePat { StorePat::new() }
+/// Starts building a `MemProject` pattern.  Matches the partition-boundary node
+/// that splits a unified memory chain into per-`AliasClass` outputs.  Chain
+/// `.class(c)` to require that the node exposes a specific partition.
+#[must_use]
+pub fn mem_project() -> MemProjectPat { MemProjectPat::new() }
+/// Starts building a `MemUnion` pattern.  Matches the partition-boundary node
+/// that merges per-`AliasClass` memory inputs back into a unified output.
+/// Chain `.class(c)` to require that the node accepts input from a specific
+/// partition.
+#[must_use]
+pub fn mem_union() -> MemUnionPat { MemUnionPat::new() }
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
 /// Starts building a tagged-`Phi` pattern.  Matches `Phi` nodes whose

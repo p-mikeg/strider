@@ -21,11 +21,12 @@ pub use match_result::Match;
 /// Optional behaviors that change how the matcher walks through "transparent"
 /// producer / consumer nodes during input or control-chain matching.
 ///
-/// Defaults are strict exact-walk semantics: `ignore_cast_mask` is empty
-/// and `ignore_regions` is `false`.  Enable selective cast
-/// walk-through via [`Matcher::ignore_casts_mask`] /
-/// [`Matcher::ignore_casts`], and control-state walk-through via
-/// [`Matcher::ignore_regions`].
+/// Defaults are strict exact-walk semantics: `ignore_cast_mask` is empty,
+/// `ignore_regions` is `false`, and `ignore_mem_boundaries` is `false`.
+/// Enable selective cast walk-through via [`Matcher::ignore_casts_mask`] /
+/// [`Matcher::ignore_casts`], control-state walk-through via
+/// [`Matcher::ignore_regions`], and memory-partition walk-through via
+/// [`Matcher::ignore_mem_boundaries`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct MatcherOptions {
     /// Mask of value-passthrough cast `NodeKind`s the matcher walks
@@ -44,6 +45,13 @@ pub(crate) struct MatcherOptions {
     /// control chains.  Lets `ret(call(...))`, `if_node().true_branch(p)`
     /// etc. cross region joins without intermediate awareness.
     pub ignore_regions: bool,
+    /// When set, the matcher skips through `MemProject` and `MemUnion`
+    /// nodes when walking memory inputs.  Useful for patterns that
+    /// operate at a higher level than the alias-partition split — e.g.
+    /// `store(addr, val).mem_in(…)` should match even when a `MemProject`
+    /// sits between the chain root and the store.  Analogue of the
+    /// value-edge `ignore_cast_mask` flag.
+    pub ignore_mem_boundaries: bool,
 }
 
 /// Executes pattern queries against a [`Graph`].
@@ -165,6 +173,18 @@ impl<'g> Matcher<'g> {
     #[must_use]
     pub fn ignore_regions(mut self) -> Self {
         self.options.ignore_regions = true;
+        self
+    }
+
+    /// Enables transparent walk-through of `MemProject` and `MemUnion`
+    /// nodes when walking memory inputs.  When set, the matcher skips past
+    /// partition-boundary nodes so patterns that do not care about the
+    /// alias-partition split still match.
+    ///
+    /// Analogue of [`Self::ignore_casts`] for memory edges.  Default: off.
+    #[must_use]
+    pub fn ignore_mem_boundaries(mut self) -> Self {
+        self.options.ignore_mem_boundaries = true;
         self
     }
 
@@ -616,6 +636,10 @@ impl<'g> Matcher<'g> {
         // walk-through cast, advance `out` to its value input and
         // re-try.  Restores bindings between attempts so a successful
         // match never sees stale partial state from a failed sibling.
+        //
+        // Memory-boundary skip (MemProject) is also handled here: when
+        // `ignore_mem_boundaries` is set and the producer is a
+        // `MemProject`, advance `out` to its single unified memory input.
         let mut out = out;
         loop {
             let mark = b.mark();
@@ -627,27 +651,35 @@ impl<'g> Matcher<'g> {
             // Cast walk-through: if `out`'s producer is a registered
             // cast, unwrap and loop.  Inlines what
             // `try_walk_through_cast` did via recursion.
-            if self.options.ignore_cast_mask.is_empty() {
-                break;
+            if !self.options.ignore_cast_mask.is_empty() {
+                let producer = self.graph.get_node_from_output(out);
+                let bit = cast_mask::cast_mask_of(
+                    self.graph.node_kind(producer),
+                );
+                if !bit.is_empty()
+                    && self.options.ignore_cast_mask.contains(bit)
+                    && let Some(value_input) = self.graph.node_inputs(producer).into_iter().next()
+                {
+                    out = value_input;
+                    continue;
+                }
             }
-            let producer = self.graph.get_node_from_output(out);
-            let bit = cast_mask::cast_mask_of(
-                self.graph.node_kind(producer),
-            );
-            if bit.is_empty() || !self.options.ignore_cast_mask.contains(bit) {
-                break;
+
+            // MemProject skip: one unified memory input → advance
+            // iteratively, same as cast walk-through above.
+            if self.options.ignore_mem_boundaries {
+                let producer = self.graph.get_node_from_output(out);
+                if matches!(self.graph.node_kind(producer), strider_ir::node::NodeKind::MemProject) {
+                    // MemProject has exactly 1 memory input (the unified chain).
+                    let inputs = self.graph.node_inputs(producer);
+                    if let Some(mem_input) = inputs.into_iter().next() {
+                        out = mem_input;
+                        continue;
+                    }
+                }
             }
-            let inputs = self.graph.node_inputs(producer);
-            if inputs.len() != 1 {
-                break;
-            }
-            let Some(value_input) = inputs.into_iter().next() else {
-                break;
-            };
-            out = value_input;
-            // Loop: at the new `out`, try direct match (which may
-            // succeed if the inner pattern matches the unwrapped
-            // value), and on failure unwrap further.
+
+            break;
         }
 
         // Region walk-through fan-out — try each region join
@@ -656,6 +688,17 @@ impl<'g> Matcher<'g> {
         // helper stays recursive.
         if self.options.ignore_regions
             && walk_through::try_walk_through_region(&self.ctx(), out, pat, b)
+        {
+            return true;
+        }
+
+        // MemUnion skip (fan-out): MemUnion has N memory inputs; try each
+        // one as an alternative.  Like region walk-through, this fans out
+        // so it stays recursive (depth bounded by partition-boundary depth
+        // in the IR, which is O(1) in practice — at most one MemUnion per
+        // barrier site).
+        if self.options.ignore_mem_boundaries
+            && walk_through::try_walk_through_mem_union(&self.ctx(), out, pat, b)
         {
             return true;
         }
@@ -822,5 +865,56 @@ mod tests {
             .ignore_regions();
         assert_eq!(m.options.ignore_cast_mask, CastMask::all());
         assert!(m.options.ignore_regions);
+    }
+
+    #[test]
+    fn ignore_mem_boundaries_defaults_to_false() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g).expect("matcher");
+        assert!(
+            !m.options.ignore_mem_boundaries,
+            "ignore_mem_boundaries must default to false"
+        );
+    }
+
+    #[test]
+    fn ignore_mem_boundaries_sets_flag() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g)
+            .expect("matcher")
+            .ignore_mem_boundaries();
+        assert!(
+            m.options.ignore_mem_boundaries,
+            "ignore_mem_boundaries() must set the flag"
+        );
+    }
+
+    #[test]
+    fn ignore_mem_boundaries_does_not_touch_other_flags() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g)
+            .expect("matcher")
+            .ignore_mem_boundaries();
+        assert!(
+            m.options.ignore_cast_mask.is_empty(),
+            "ignore_mem_boundaries() must not touch ignore_cast_mask"
+        );
+        assert!(
+            !m.options.ignore_regions,
+            "ignore_mem_boundaries() must not touch ignore_regions"
+        );
+    }
+
+    #[test]
+    fn all_three_flags_chain_independently() {
+        let g = trivial_graph();
+        let m = Matcher::try_new(&g)
+            .expect("matcher")
+            .ignore_casts()
+            .ignore_regions()
+            .ignore_mem_boundaries();
+        assert_eq!(m.options.ignore_cast_mask, CastMask::all());
+        assert!(m.options.ignore_regions);
+        assert!(m.options.ignore_mem_boundaries);
     }
 }

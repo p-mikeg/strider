@@ -263,6 +263,8 @@ pub enum PatLike<'py> {
     PhiPat(Bound<'py, PyPhiPat>),
     MemPhiPat(Bound<'py, PyMemPhiPat>),
     ValuePhiPat(Bound<'py, PyValuePhiPat>),
+    MemProjectPat(Bound<'py, PyMemProjectPat>),
+    MemUnionPat(Bound<'py, PyMemUnionPat>),
     FunctionArgPat(Bound<'py, PyFunctionArgPat>),
     IntBinaryPat(Bound<'py, PyIntBinaryPat>),
     BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
@@ -314,6 +316,8 @@ impl PatLike<'_> {
             PatLike::PhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::MemPhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::ValuePhiPat(b) => Ok(b.borrow().finalise()),
+            PatLike::MemProjectPat(b) => Ok(b.borrow().finalise()),
+            PatLike::MemUnionPat(b) => Ok(b.borrow().finalise()),
             PatLike::FunctionArgPat(b) => Ok(b.borrow().finalise()),
             PatLike::IntBinaryPat(b) => Ok(b.borrow().finalise()),
             PatLike::BoolBinaryPat(b) => Ok(b.borrow().finalise()),
@@ -789,6 +793,139 @@ pub struct ValuePhiPatDef {
 
 #[pyfunction]
 pub fn value_phi() -> PyValuePhiPat { PyValuePhiPat::new() }
+
+// ── MemProjectPat / MemUnionPat ──────────────────────────────────────
+//
+// Hand-written (not macro-emitted) because the `.class()` field accepts
+// an `AliasClass` enum value (passed as a string: `"Stack"` or
+// `"Unknown"`), not a sub-pattern, which is outside the `#[strider_pattern]`
+// macro's per-field `Option<Pat>` model.
+
+fn parse_alias_class(name: &str) -> PyResult<strider_analyze::pattern::AliasClass> {
+    match name {
+        "Stack" | "stack" => Ok(strider_analyze::pattern::AliasClass::Stack),
+        "Unknown" | "unknown" => Ok(strider_analyze::pattern::AliasClass::Unknown),
+        _ => Err(into_strider_err(anyhow::anyhow!(
+            "unknown AliasClass {name:?}; expected \"Stack\" or \"Unknown\""
+        ))),
+    }
+}
+
+/// Builder for `MemProject` node patterns.
+///
+/// `MemProject` splits a unified memory chain into per-`AliasClass`
+/// partition outputs.  Without `.class()`, matches any `MemProject`
+/// node.  With `.class("Stack")` or `.class("Unknown")`, the match
+/// requires that at least one of the node's output slots carries the
+/// requested partition class.
+#[pyclass(name = "MemProjectPat", module = "strider.pattern")]
+pub struct PyMemProjectPat {
+    class: std::cell::RefCell<Option<strider_analyze::pattern::AliasClass>>,
+}
+
+impl PyMemProjectPat {
+    fn new() -> Self {
+        Self { class: std::cell::RefCell::new(None) }
+    }
+    pub(crate) fn finalise(&self) -> strider_analyze::pattern::Pat {
+        let mut b = strider_analyze::pattern::mem_project();
+        if let Some(c) = *self.class.borrow() {
+            b = b.class(c);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyMemProjectPat {
+    /// Restrict the match to `MemProject` nodes exposing the given
+    /// partition class (`"Stack"` or `"Unknown"`).
+    fn class(slf: Py<Self>, py: Python<'_>, name: &str) -> PyResult<Py<Self>> {
+        let c = parse_alias_class(name)?;
+        slf.borrow(py).class.replace(Some(c));
+        Ok(slf)
+    }
+    /// Capture this pattern's matched node under the given [`Capture`].
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use strider_analyze::pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    /// Capture this pattern under a string name (auto-interned).
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use strider_analyze::pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    /// Attach a Python predicate that runs after the match.
+    fn when(&self, f: PyObject) -> PyPat {
+        PyPat::from_pat(wrap_when(self.finalise(), f))
+    }
+    /// Finalise into a [`PyPat`].
+    fn into_pat(&self) -> PyPat {
+        PyPat::from_pat(self.finalise())
+    }
+}
+
+#[pyfunction]
+pub fn mem_project() -> PyMemProjectPat { PyMemProjectPat::new() }
+
+/// Builder for `MemUnion` node patterns.
+///
+/// `MemUnion` merges per-`AliasClass` partition chains back into a
+/// single unified memory output.  Without `.class()`, matches any
+/// `MemUnion` node.  With `.class("Stack")` or `.class("Unknown")`,
+/// the match requires that at least one of the node's input edges
+/// originates from the requested partition class.
+#[pyclass(name = "MemUnionPat", module = "strider.pattern")]
+pub struct PyMemUnionPat {
+    class: std::cell::RefCell<Option<strider_analyze::pattern::AliasClass>>,
+}
+
+impl PyMemUnionPat {
+    fn new() -> Self {
+        Self { class: std::cell::RefCell::new(None) }
+    }
+    pub(crate) fn finalise(&self) -> strider_analyze::pattern::Pat {
+        let mut b = strider_analyze::pattern::mem_union();
+        if let Some(c) = *self.class.borrow() {
+            b = b.class(c);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyMemUnionPat {
+    /// Restrict the match to `MemUnion` nodes accepting an input from
+    /// the given partition class (`"Stack"` or `"Unknown"`).
+    fn class(slf: Py<Self>, py: Python<'_>, name: &str) -> PyResult<Py<Self>> {
+        let c = parse_alias_class(name)?;
+        slf.borrow(py).class.replace(Some(c));
+        Ok(slf)
+    }
+    /// Capture this pattern's matched node under the given [`Capture`].
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use strider_analyze::pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    /// Capture this pattern under a string name (auto-interned).
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use strider_analyze::pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    /// Attach a Python predicate that runs after the match.
+    fn when(&self, f: PyObject) -> PyPat {
+        PyPat::from_pat(wrap_when(self.finalise(), f))
+    }
+    /// Finalise into a [`PyPat`].
+    fn into_pat(&self) -> PyPat {
+        PyPat::from_pat(self.finalise())
+    }
+}
+
+#[pyfunction]
+pub fn mem_union() -> PyMemUnionPat { PyMemUnionPat::new() }
 
 // ── FunctionArgPat ───────────────────────────────────────────────────
 
@@ -1752,6 +1889,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPhiPat>()?;
     m.add_class::<PyMemPhiPat>()?;
     m.add_class::<PyValuePhiPat>()?;
+    m.add_class::<PyMemProjectPat>()?;
+    m.add_class::<PyMemUnionPat>()?;
     m.add_class::<PyFunctionArgPat>()?;
     m.add_class::<PyCastMask>()?;
 
@@ -1781,6 +1920,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(phi_for);
     add_fn!(mem_phi);
     add_fn!(value_phi);
+    add_fn!(mem_project);
+    add_fn!(mem_union);
     add_fn!(predicate);
     add_fn!(int_cmp);
     // int binary
