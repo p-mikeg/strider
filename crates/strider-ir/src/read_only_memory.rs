@@ -2,7 +2,7 @@
 //! memory (typically a binary's `.rodata` or `.text` section).
 //!
 //! Defined here rather than in `strider-reader` so optimizer passes can depend
-//! on the trait without back-edging through `strider-binary`.  Concrete impls
+//! on the trait without back-edging through `strider-reader`.  Concrete impls
 //! (e.g. `strider_reader::ElfFileMemReader`) live in the `strider-reader` crate.
 
 /// Provides read access to a statically-known region of memory (e.g. a

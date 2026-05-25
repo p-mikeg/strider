@@ -2,11 +2,10 @@
 resolver = "2"
 members = ["crates/*"]
 default-members = ["crates/*"]
-# Phase 4 Task 4.1 — `strider-pattern-macros` is the proc-macro crate
-# that emits Rust + PyO3 pattern builders from a single annotated
-# struct.  See `crates/strider-pattern-macros/EMISSION_SPEC.md` for the
-# emission contract and `crates/strider-py/src/pattern_reference.rs`
-# for the hand-written shape it must mirror.
+# `strider-pattern-macros` is the proc-macro crate that emits the
+# PyO3 mirror of the hand-written Rust pattern builders from one
+# annotated `*Def` struct.  See `crates/strider-pattern-macros/EMISSION_SPEC.md`
+# for the emission contract.
 
 
 [workspace.package]

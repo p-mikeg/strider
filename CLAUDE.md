@@ -128,11 +128,15 @@ so the resolver-bearing dependency stays one-way.
     - **`PrimaryMap`:** `wide_consts` (`WideConstId → WideConstStorage`,
       consulted by `IntConstWide(WideConstId)` nodes for U256 / U512
       payloads that don't fit in the regular `IntConst(u128)`).
-    - **Side-table registry (`SecondaryMap<NodeId, _>`):**
-      `stack_phi_offsets`, `call_other_names`, `asm_fingerprints`,
-      `call_clobbered_overrides`, and `phi_var_tag` (the per-node
-      `Option<Vn>` source-varnode tag for `Phi` nodes — see the
-      "Initial state" / "Region / join" bullets below).
+    - **Side-table registry on `Function` (`SecondaryMap<NodeId, _>`):**
+      `stack_offsets` (SP-relative offset metadata for Store/Load
+      populated by `AliasSplit`), `call_other_names`,
+      `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`
+      (per-node `Option<Vn>` source-varnode tag for `Phi` nodes),
+      `call_stack_arg_offsets_overrides`, and `arg_index_to_nodes`
+      (populated by `FunctionArgDetect`).  `Graph` itself only
+      holds structural state (nodes, edges, dedup cache,
+      `wide_consts`); per-function overlay state lives on `Function`.
   - `FunctionBuilder` — builds the IR with SSA-like variable tracking.
     Variables map `rsleigh::Vn` → `VarId`.  Each region gets a
     `Region` node and per-variable `Phi` nodes whose source
@@ -140,7 +144,7 @@ so the resolver-bearing dependency stays one-way.
     Carries `lift_addr: Option<u64>` for centralised lift-time
     fingerprint attribution.  `FunctionBuilder::new` accepts
     `&strider_target::BuiltCallingConvention` directly.
-  - `FunctionBuilder::build` returns the populated `Graph` directly —
+  - `FunctionBuilder::build` returns the populated `Function` directly —
     `entry` and `cc_metadata` are `Some(_)` after `build` succeeds.
   - `ReadOnlyMemory` trait — `read(&self, addr: u64, size: usize) ->
     Option<u64>`; returns up to 8 bytes as a target-endian-decoded
@@ -165,7 +169,7 @@ so the resolver-bearing dependency stays one-way.
     exposed to downstream crates.
   - `node_signature::{ExpectedOutputKind, expected_signature}` — single
     source of truth for expected input/output slot kinds per `NodeKind`.
-  - `validate::validate(&graph, entry) -> Result<(), ValidationErrors>`
+  - `validate::validate(function: &Function, entry: NodeId) -> Result<(), ValidationErrors>`
     — whole-graph validator split into three groups by file:
     - `validate/local_typing.rs` — per-node local typing against
       `expected_signature` (scoped to nodes reachable via `walk_graph`).
@@ -192,9 +196,9 @@ so the resolver-bearing dependency stays one-way.
     ancestor's addresses.  Two structurally identical (cacheable) nodes
     share one entry that is the **union** of every contributor's
     address.  Region / phi / initial-state kinds (`Entry`,
-    `InitialMemory`, `InitialVar`, `FunctionArg`, `Region`,
-    `MemPhi`, `Phi`, `StackStorePhi`) are exempt from the non-empty
-    check.  Public API on `Graph`: `asm_fingerprint(id)`,
+    `InitialMemory`, `InitialVar`, `Region`,
+    `MemPhi`, `Phi`, `MemProject`, `MemUnion`) are exempt from the
+    non-empty check.  Public API on `Graph`: `asm_fingerprint(id)`,
     `set_asm_fingerprint`, `extend_asm_fingerprint`,
     `extend_asm_fingerprint_from`.
 
@@ -205,7 +209,7 @@ so the resolver-bearing dependency stays one-way.
     `x86`, `aarch64` / `aarch64be`, `arm` / `arm_be` / `arm_thumb`,
     `mipsbe32` / `mipsle32` / `mipsbe64` / `mipsle64`, `ppc32be` /
     `ppc32le` / `ppc64be` / `ppc64le`.
-  - `ArchPreset` / `ArchContext` — closed enum + bundle threaded into
+  - `ArchPreset` — closed enum threaded into
     `strider_lift::cfg::Builder::for_arch` and `CallOther`
     classification.
   - `CallingConvention` / `BuiltCallingConvention` — names-of-registers
@@ -300,8 +304,10 @@ so the resolver-bearing dependency stays one-way.
       dead control edges.
     - `LoadReadOnly` — folds constant-address loads via
       `&dyn ReadOnlyMemory`.
-    - `StackStoreDetect` — promotes SP-relative `Store` to
-      `StackStore { offset }`.
+    - `AliasSplit` — partitions unified memory chain into per-alias-class
+      forked SSA (`Stack` / `Unknown`) via `MemProject` / `MemUnion`
+      boundary nodes; also annotates SP-relative `Store` offsets in
+      `Function::stack_offsets`.
     - `StackLoadForward` — forwards values from `StackStore` to
       subsequent same-offset `Load`.
     - `FunctionArgDetect` (post-pass) — canonicalises register / stack
@@ -347,8 +353,9 @@ so the resolver-bearing dependency stays one-way.
     `pattern::rewrite_rule`.
   - `dump_per_region` / `dump_neighborhood` — visualisation helpers
     re-exported at the crate root.  `dump_per_region` writes one
-    `region_<addr>.html` per region (membership built via
-    `strider_ir::walk::region_membership_from_exit`).
+    `region_{idx}_{addr}.html` per region (index prevents collisions
+    when two regions share a leading fingerprint address) (membership
+    built via `strider_ir::walk::region_membership_from_exit`).
     `dump_neighborhood` writes a single depth-bounded HTML around a
     seed node for focused inspection.
   - `errors` — typed error catalogue, including
@@ -397,8 +404,12 @@ The IR is a sea-of-nodes graph where each `Node` has typed inputs
 in `crates/strider-ir/src/node_signature.rs` is the single source of
 truth for every node's input/output shape.  Node kinds, grouped:
 
-- **Initial state:** `Entry`, `InitialMemory`, `InitialVar(Vn)`,
-  `FunctionArg { source, index }` (introduced by `FunctionArgDetect`).
+- **Initial state:** `Entry`, `InitialMemory`, `InitialVar(Vn)`.
+  arg tracking (introduced by `FunctionArgDetect`) is recorded in the
+  `Function::arg_index_to_nodes` side-table mapping each CC argument
+  index to its carrier `NodeId` (`InitialVar` for register args,
+  `Load` for stack args) — there is no `FunctionArg` `NodeKind`
+  variant.
 - **Region / join:** `Region` (variadic Control inputs; outputs
   `Control` + `PhiToken`), `MemPhi` (φ for the memory token), `Phi`
   (unit-variant node kind covering both tagged and anonymous forms).
@@ -416,10 +427,13 @@ truth for every node's input/output shape.  Node kinds, grouped:
 - **Calls / returns:** `Call` (clobbers caller-saved registers and
   memory; variadic args), `CallOther { user_op_id }`, `Return`
   (variadic return values).
-- **Memory:** `Load(VnSpace)`, `Store(VnSpace)`; after
-  `StackStoreDetect`: `StackStore { space, offset }`,
-  `StackStorePhi { space }` (per-predecessor offsets in
-  `Graph::stack_phi_offsets`).
+- **Memory:** `Load(VnSpace)`, `Store(VnSpace)`.
+  Stack-relative offset metadata (populated by `AliasSplit`) lives in
+  `Function::stack_offsets` as a side-table keyed by `NodeId`; the
+  underlying node kind stays `Store(VnSpace)`.  Two synthetic boundary
+  nodes `MemProject` (projects partitioned memory out of unified
+  memory) and `MemUnion` (rejoins partition tokens) are inserted by
+  `AliasSplit` to mark partition boundaries.
 - **Integer:** `IntConst(u128)`, `IntConstWide(WideConstId)` (U256 /
   U512, interned in `Graph::wide_consts`), `IntUnaryOp` (`BitNot` for
   `~x`, `Neg` for `-x`), `IntBinaryOp` (no `Sub`; lifter lowers to
