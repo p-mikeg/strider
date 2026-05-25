@@ -558,7 +558,8 @@ fn realize_with_depth(
 /// has [`AliasClass::Stack`].  Used by the `MemUnion` arms of both the
 /// forking probe walk and the linear `find_stack_stored_value_at_offset`
 /// walk to identify the Stack-partition input to pass through.
-fn is_stack_partition_input(graph: &strider_ir::Function, inp: NodeOutputId) -> bool {
+/// Also used by [`super::stack_store::call_args`] for the same purpose.
+pub(crate) fn is_stack_partition_input(graph: &strider_ir::Function, inp: NodeOutputId) -> bool {
     let Some(partition_id) = graph.output_kind(inp).memory_partition() else {
         return false;
     };

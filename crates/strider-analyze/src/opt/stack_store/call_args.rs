@@ -7,6 +7,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{SpExprMemo, decompose_sp};
+use crate::opt::stack_load_forward::is_stack_partition_input;
 
 /// Walks memory backward from `mem`, collecting `StackStore` data outputs as
 /// positional call arguments by matching each store's offset against the
@@ -140,6 +141,36 @@ fn collect_stack_args_in_chain_order(
                         continue;
                     }
                     Some(_) => return dense_prefix(slots),
+                }
+            }
+            // `MemPartition { partition }` — boundary inserted by AliasSplit
+            // that tags a unified memory edge with a single partition.
+            // The walker passes straight through to the single predecessor
+            // (input 0, the unified-memory side).
+            NodeKind::MemPartition { .. } => {
+                let inputs = ctx.node_inputs(node);
+                if inputs.is_empty() {
+                    return dense_prefix(slots);
+                }
+                cur = inputs[0];
+                continue;
+            }
+            // `MemUnion` — merges N partition-typed edges back into a
+            // single unified memory edge.  Only the Stack-partition input
+            // is relevant for stack-arg collection; follow it and ignore
+            // the rest.  If no Stack-partition input exists the chain is
+            // opaque and we terminate.
+            NodeKind::MemUnion => {
+                let inputs = ctx.node_inputs(node);
+                let stack_input = inputs
+                    .iter()
+                    .find(|&inp| is_stack_partition_input(ctx.function_ref(), inp));
+                match stack_input {
+                    Some(inp) => {
+                        cur = inp;
+                        continue;
+                    }
+                    None => return dense_prefix(slots),
                 }
             }
             // `StackStorePhi` (ambiguous offsets), `MemPhi` (control-flow

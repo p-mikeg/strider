@@ -3,9 +3,9 @@ use anyhow::anyhow;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::count;
-use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use strider_ir::{Graph, IntBinaryOp};
+use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::{AliasClass, Graph, IntBinaryOp};
 use strider_ir_test_utils::{sp_vn_x86 as sp_vn, RegisterSet};
 
 /// Simple straight-line program: `*(sp - 4) = 0x11; return *(sp - 4)`.  After
@@ -1176,6 +1176,267 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     assert!(
         matches!(arg1_kind, NodeKind::IntConst(22)),
         "arg1 should be 22, got {arg1_kind:?}"
+    );
+    Ok(())
+}
+
+// ── MemPartition / MemUnion boundary traversal ─────────────────────────────
+
+/// `CallStackArgCollect` walks through a `MemPartition` boundary node
+/// inserted by `AliasSplit`.
+///
+/// After `AliasSplit` runs on a function with only stack stores, the
+/// memory chain into the `Call` passes through a `MemPartition(Stack)`
+/// boundary.  The backward walk must traverse it transparently rather
+/// than treating it as an opaque barrier.
+///
+/// Chain (backwards from Call): `Call ← StackStore{+4} ← MemPartition(Stack) ← InitialMemory`
+///
+/// The single arg at offset +4 must be collected even with the
+/// `MemPartition` boundary in place.
+#[test]
+fn call_stack_args_collected_through_mempartition() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
+        // Store arg0 = 11 at sp + 4.  The anchor store at sp + 0 (below)
+        // exercises the is_first_store exception (offset 0 is outside the
+        // slot table {4}).
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let sp_plus_4 = b.build_int_binary_operation(
+            sp_v0,
+            four,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )?;
+        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
+
+        // Anchor store at sp + 0 — x86 ret-addr-push role.
+        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, retaddr, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    // Pipeline: ConstantFold → RedundantPhis → StackStoreDetect →
+    //           AliasSplit → CallStackArgCollect (post-pass).
+    // AliasSplit inserts MemPartition(Stack) and MemUnion around the
+    // stack stores; the backward walk must see through the partition
+    // boundary.
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add(AliasSplit::new(sp));
+    // x86-cdecl-style table: ret-addr at offset 0, arg0 at +4.
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
+    pipeline.run_built(&mut fg)?;
+
+    // Confirm AliasSplit actually inserted a MemPartition.
+    let n_part = fg.count_kind(|k| matches!(k, NodeKind::MemPartition { .. }));
+    assert!(
+        n_part >= 1,
+        "AliasSplit must insert at least one MemPartition"
+    );
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + arg0 = 4 inputs.
+    assert_eq!(
+        inputs.len(),
+        4,
+        "arg0 must be collected through the MemPartition boundary; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(11)),
+        "arg0 should be IntConst(11), got {arg0_kind:?}"
+    );
+    Ok(())
+}
+
+/// `CallStackArgCollect` walks through a `MemUnion` boundary to the
+/// Stack-partition input.
+///
+/// Graph manually wired so the Call's memory input is a `MemUnion`:
+///
+///   `InitialMemory → MemPartition(Stack) → StackStore{+0} → StackStore{+4} → MemUnion → Call[mem]`
+///
+/// Without the new `MemUnion` arm the walk bails and collects nothing.
+/// With it the walk routes through the Stack-partition input and appends
+/// `IntConst(99)` as arg 0.
+#[test]
+fn call_stack_args_collected_through_memunion_to_stack_input() -> Result<()> {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    let sp = sp_vn();
+
+    // Step 1: build a simple function with stack stores before a call.
+    // Store order: arg0 first (farther from Call), then anchor (closer to
+    // Call), so the backward walk sees: anchor → arg0 → InitialMemory.
+    // The anchor at rel=0 triggers is_first_store; then arg0 at rel=4 fills
+    // slot 0 of the table [4, 8].
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
+        // arg0 = 99 at sp + 4 (farther from Call — stored first in program order).
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let sp_plus_4 = b.build_int_binary_operation(
+            sp_v0,
+            four,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )?;
+        let arg0 = b.build_int_const(99u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
+
+        // Anchor store at sp + 0 — ret-addr-push role, closest to Call in the
+        // memory chain.  Triggers is_first_store exception for offset 0 not
+        // in the slot table [4, 8].
+        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, retaddr, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    // Step 2: promote Stores to StackStores.
+    {
+        let mut prep = OptimizerPipeline::new();
+        prep.add(ConstantFold);
+        prep.add(RedundantPhis);
+        prep.add(StackStoreDetect::new(sp));
+        let entry = fg.entry().unwrap();
+        prep.run(&mut fg, entry)?;
+    }
+
+    // Step 3: manually wire MemPartition + MemUnion so the Call's memory
+    //         input arrives through a MemUnion.
+    //
+    //         Before: InitialMemory → StackStore{+4} → StackStore{0} → Call[mem]
+    //         After:  InitialMemory → MemPartition(Stack) → StackStore{+4}
+    //                               → StackStore{0} → MemUnion → Call[mem]
+    //
+    //         Walking backward from the Call through MemUnion:
+    //           MemUnion → StackStore{0}(anchor, is_first_store) →
+    //           StackStore{+4}(arg0, fills slot 0) → MemPartition → InitialMemory
+    {
+        let im_node = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+            .expect("InitialMemory must exist");
+        let call_node = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+            .expect("Call must exist");
+
+        let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
+
+        // Create a Stack partition.
+        let stack_part = fg.partitions_mut().create(AliasClass::Stack);
+
+        // Create MemPartition(stack_part) consuming InitialMemory output.
+        let part_node = fg.create_node_attributed(
+            NodeKind::MemPartition { partition: stack_part },
+            [im_out],
+            [NodeOutputKind::Memory(Some(stack_part))],
+            &[im_node],
+        );
+        let [part_out] = fg.node_outputs_exact::<1>(part_node).unwrap();
+
+        // Find the first StackStore in chain order: the one whose memory
+        // predecessor (slot 0) is InitialMemory.
+        let first_ss_node = fg
+            .all_node_ids()
+            .find(|&n| {
+                if !matches!(fg.node_kind(n), NodeKind::StackStore { .. }) {
+                    return false;
+                }
+                let inputs = fg.node_inputs(n);
+                !inputs.is_empty()
+                    && matches!(
+                        fg.node_kind(fg.get_node_from_output(inputs[0])),
+                        NodeKind::InitialMemory
+                    )
+            })
+            .expect("first StackStore (consuming InitialMemory) must exist");
+
+        // Rewire first StackStore's memory input to MemPartition output.
+        let ss_mem_input_id = fg.graph().node_input_id_at(first_ss_node, 0).unwrap();
+        fg.graph_mut().update_input(ss_mem_input_id, part_out);
+
+        // Retype all StackStore memory outputs to Memory(Some(stack_part))
+        // and walk to the last StackStore in the chain.
+        let mut cur_node = first_ss_node;
+        loop {
+            let ss_mem_out = fg.graph().memory_output_of(cur_node).unwrap();
+            fg.graph_mut()
+                .set_memory_partition(ss_mem_out, Some(stack_part))
+                .unwrap();
+
+            // Find the next StackStore in the chain (consumes this node's
+            // memory output at its memory-input slot 0).
+            let uses: Vec<(NodeId, u32)> = fg.graph().output_uses(ss_mem_out).collect();
+            let next_ss = uses.iter().find_map(|&(user_node, slot)| {
+                if matches!(fg.node_kind(user_node), NodeKind::StackStore { .. })
+                    && slot == 0
+                {
+                    Some(user_node)
+                } else {
+                    None
+                }
+            });
+            match next_ss {
+                Some(next) => cur_node = next,
+                None => break,
+            }
+        }
+
+        // cur_node is now the last StackStore; its memory output currently
+        // feeds the Call's memory input.
+        let last_ss_mem_out = fg.graph().memory_output_of(cur_node).unwrap();
+
+        // Create MemUnion consuming the last StackStore's partition-typed output.
+        let union_node = fg.create_node_attributed(
+            NodeKind::MemUnion,
+            [last_ss_mem_out],
+            [NodeOutputKind::Memory(None)],
+            &[cur_node],
+        );
+        let [union_out] = fg.node_outputs_exact::<1>(union_node).unwrap();
+
+        // Rewire Call's memory input (slot 1) to MemUnion output.
+        let call_mem_input_id = fg.graph().node_input_id_at(call_node, 1).unwrap();
+        fg.graph_mut().update_input(call_mem_input_id, union_out);
+    }
+
+    // Step 4: validate the manually-wired graph.
+    let entry = fg.entry().unwrap();
+    strider_ir::validate::validate(&fg, entry)
+        .expect("manually-wired graph must pass IR validation");
+
+    // Step 5: run CallStackArgCollect.  Without the MemUnion arm the
+    //         walk bails immediately and collects nothing.  With it the
+    //         walk routes through MemUnion → StackStore chain and appends
+    //         IntConst(99) as arg 0.
+    let pass = CallStackArgCollect::new(vec![4, 8], sp);
+    pass.optimize(&mut fg, entry)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + arg0 = 4 inputs.
+    assert_eq!(
+        inputs.len(),
+        4,
+        "arg0 must be collected through the MemUnion boundary; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(99)),
+        "arg0 should be IntConst(99), got {arg0_kind:?}"
     );
     Ok(())
 }
