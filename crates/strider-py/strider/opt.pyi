@@ -11,6 +11,12 @@ class ConstantFold:
 class KnownBits:
     def __init__(self) -> None: ...
 
+class FlagCmpCanonicalize:
+    def __init__(self) -> None: ...
+
+class IfCondInversion:
+    def __init__(self) -> None: ...
+
 class RedundantPhis:
     def __init__(self) -> None: ...
 
@@ -19,6 +25,9 @@ class DeadBranchElim:
 
 # CC/arch-aware passes.
 class StackLoadForward:
+    def __init__(self, sleigh: Any, cc: Any, arch: Any) -> None: ...
+
+class AliasSplit:
     def __init__(self, sleigh: Any, cc: Any, arch: Any) -> None: ...
 
 class FunctionArgDetect:

@@ -194,9 +194,11 @@ def count_loads(g) -> int:
 
 
 def count_stores(g) -> int:
-    # `stack_store` is a structural variant of `store`; either counts as
-    # a write to memory.
-    return count_pat(g, pat.store()) + count_pat(g, pat.stack_store())
+    # Every memory write is a `Store(VnSpace)` — stack-relative writes
+    # are the same node kind, just with the SP-relative offset recorded
+    # in `Function::stack_offsets`.  A single `pat.store()` count is
+    # the right answer.
+    return count_pat(g, pat.store())
 
 
 def count_loops(g) -> int:

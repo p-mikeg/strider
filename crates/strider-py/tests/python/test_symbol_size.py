@@ -32,7 +32,7 @@ def test_symbol_size_raises_on_unknown_symbol():
     elf = fixture_path("x64", "elf_relocs")
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(elf))
-    with pytest.raises(strider.errors.ReaderError):
+    with pytest.raises(strider.errors.StriderError):
         mem.symbol_size("definitely_not_a_symbol")
 
 
