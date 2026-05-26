@@ -252,27 +252,11 @@ impl Graph {
             self.node_to_id.insert(key, new_node_id);
         }
 
-        // 8. The four NodeId-keyed overlay tables (call_other_names,
-        // asm_fingerprints, call_clobbered_overrides, phi_var_tag) live on
-        // Function, not on Graph.  Function::compact applies the returned
-        // remap to those tables after this call.
-
-        // Remap the InitialVar Vn→NodeId index.  Entries whose NodeId
-        // didn't survive compaction (i.e. the InitialVar became
-        // unreachable and was dropped) are silently elided — the
-        // orchestrator's `read_or_init_var` fallback will lazily
-        // re-create them as needed.
-        let mut new_initial_var_index: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
-            rustc_hash::FxHashMap::with_capacity_and_hasher(
-                self.initial_var_index.len(),
-                Default::default(),
-            );
-        for (vn, old_id) in self.initial_var_index.drain() {
-            if let Some(new_id) = remap.nodes[old_id] {
-                new_initial_var_index.insert(vn, new_id);
-            }
-        }
-        self.initial_var_index = new_initial_var_index;
+        // 8. The NodeId-keyed overlay tables (call_other_names,
+        // asm_fingerprints, call_clobbered_overrides, phi_var_tag,
+        // stack_offsets) and the Vn-keyed `initial_var_index` all
+        // live on `Function`, not on `Graph`.  `Function::compact`
+        // applies the returned remap to those tables after this call.
 
         Ok(remap)
     }
@@ -381,54 +365,9 @@ mod tests {
     // compact_tests module in function.rs.
 
 
-    /// `initial_var_index` is Vn-keyed (`FxHashMap<Vn, NodeId>`) and
-    /// inline-remapped by `retain_reachable` — NOT part of the
-    /// SecondaryMap registry.  Verify that reachable mappings survive,
-    /// dropped-NodeId mappings are removed entirely (so callers don't
-    /// see stale Vn→old_id entries pointing into the freshly-rebuilt
-    /// arena).
-    #[test]
-    fn initial_var_index_remap_through_retain() {
-        let mut graph = Graph::new();
-        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-        let live_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x20,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        let zombie_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x28,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        let live_iv = graph.create_node(
-            NodeKind::InitialVar(live_vn),
-            [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
-        );
-        let zombie_iv = graph.create_node(
-            NodeKind::InitialVar(zombie_vn),
-            [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
-        );
-        graph.register_initial_var(live_vn, live_iv);
-        graph.register_initial_var(zombie_vn, zombie_iv);
-
-        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
-        let [live_iv_out] = graph.node_outputs_exact::<1>(live_iv).unwrap();
-        // Only live_iv is wired into Return.
-        let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, live_iv_out], []);
-
-        let remap = graph.retain_reachable(entry).unwrap();
-        let new_live_iv = remap.node_old_to_new(live_iv).unwrap();
-        assert_eq!(graph.initial_var_for(live_vn), Some(new_live_iv));
-        // The zombie Vn→id mapping must be gone (not stale, not None
-        // accidentally pointing into garbage).
-        assert_eq!(graph.initial_var_for(zombie_vn), None);
-        assert!(remap.node_old_to_new(zombie_iv).is_none());
-    }
+    // NOTE: `initial_var_index` is Vn-keyed and lives on `Function`,
+    // not `Graph`.  The remap behaviour is covered by
+    // `initial_var_index_remap_through_compact` in `function.rs`.
 
     /// The `NodeIdRemap` accessors return `None` for old ids whose
     /// source node was unreachable and therefore dropped during
@@ -541,9 +480,7 @@ mod tests {
         assert_eq!(one_a, one_b, "dedup cache must be rebuilt by retain_reachable");
     }
 
-    /// A graph with no side-table entries must compact cleanly — no panic,
-    /// no garbage entries.  The `initial_var_index` (Vn-keyed; Graph-owned)
-    /// starts empty and stays empty.
+    /// A graph with no side-table entries must compact cleanly — no panic.
     #[test]
     fn empty_side_table_compacts_cleanly() {
         let mut graph = Graph::new();
@@ -553,12 +490,9 @@ mod tests {
         let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
         let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
 
-        // Compact must tolerate an empty initial_var_index.
         let remap = graph.retain_reachable(entry).unwrap();
 
         assert!(remap.node_old_to_new(entry).is_some());
         assert!(remap.node_old_to_new(mem).is_some());
-        // The Vn-keyed index started empty and stays empty.
-        assert_eq!(graph.initial_var_index.len(), 0);
     }
 }

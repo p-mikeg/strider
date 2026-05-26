@@ -87,6 +87,14 @@ pub struct Function {
     /// phi of different constants per branch) is not recorded — consumers
     /// can re-decompose via `decompose_sp` if needed.
     stack_offsets: SecondaryMap<NodeId, Option<i64>>,
+
+    /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
+    /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
+    /// fallback.  Maintained at every canonical `InitialVar`
+    /// creation site (the lift-time path and the orchestrator
+    /// fallback) and remapped through [`NodeIdRemap`] by
+    /// [`Self::compact`].
+    initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
 }
 
 impl std::ops::Deref for Function {
@@ -333,6 +341,29 @@ impl Function {
             .filter_map(|(id, o)| o.map(|off| (id, off)))
     }
 
+    // ── initial_var_index accessors ───────────────────────────────────────
+
+    /// Returns the [`NodeId`] of the canonical `InitialVar(vn)` node for
+    /// `vn`, or `None` if none is registered.  O(1).
+    ///
+    /// Callers that want to skip detached zombie nodes must validate the
+    /// returned id themselves (typically by checking that the node's
+    /// single output's use-list is non-empty via [`Graph::output_uses`]).
+    #[inline]
+    #[must_use]
+    pub fn initial_var_for(&self, vn: rsleigh::Vn) -> Option<NodeId> {
+        self.initial_var_index.get(&vn).copied()
+    }
+
+    /// Registers `(vn, node_id)` in the `InitialVar` index.  Replaces
+    /// any prior entry for `vn`.  Callers must guarantee that
+    /// `node_id`'s kind is `NodeKind::InitialVar(vn)` — the index is
+    /// advisory and never re-checked.
+    #[inline]
+    pub fn register_initial_var(&mut self, vn: rsleigh::Vn, node_id: NodeId) {
+        self.initial_var_index.insert(vn, node_id);
+    }
+
     /// Returns the asm-instruction-address fingerprint of `node_id` as a
     /// sorted-deduplicated slice.  Returns an empty slice when no
     /// contributors have been recorded.
@@ -472,6 +503,20 @@ impl Function {
         self.phi_var_tag.remap_node_keyed(&remap);
         self.call_stack_arg_offsets_overrides.remap_node_keyed(&remap);
         self.stack_offsets.remap_node_keyed(&remap);
+        // `initial_var_index` is `FxHashMap<Vn, NodeId>` — Vn-keyed, not
+        // NodeId-keyed, so the standard `SecondaryMap` remap helper
+        // doesn't fit.  Entries whose NodeId didn't survive compaction
+        // (the InitialVar became unreachable and was dropped) are
+        // silently elided — the orchestrator's `read_or_init_var`
+        // fallback will lazily re-create them as needed.
+        let mut new_index: FxHashMap<rsleigh::Vn, NodeId> =
+            FxHashMap::with_capacity_and_hasher(self.initial_var_index.len(), Default::default());
+        for (vn, old_id) in self.initial_var_index.drain() {
+            if let Some(new_id) = remap.node_old_to_new(old_id) {
+                new_index.insert(vn, new_id);
+            }
+        }
+        self.initial_var_index = new_index;
         Ok(remap)
     }
 

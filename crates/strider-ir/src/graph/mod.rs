@@ -109,13 +109,6 @@ pub struct Graph {
         crate::wide_const::WideConstStorage,
         crate::wide_const::WideConstId,
     >,
-    /// Maps each `InitialVar(vn)`'s varnode to the [`NodeId`] of that
-    /// node, providing O(1) lookup at indirect-resolve sites that
-    /// previously scanned `preorder()` to find the matching
-    /// `InitialVar`.  Maintained at every canonical `InitialVar`
-    /// creation site; remapped through [`NodeIdRemap`] by
-    /// [`Self::retain_reachable`].
-    pub(crate) initial_var_index: rustc_hash::FxHashMap<rsleigh::Vn, NodeId>,
     /// Monotonic version counter incremented by every operation that
     /// invalidates pre-existing `NodeId` / `NodeOutputId` /
     /// `NodeInputId` values — currently [`Self::retain_reachable`] (and
@@ -145,7 +138,6 @@ impl Graph {
             node_to_id: HashMap::new(),
             wide_consts: PrimaryMap::new(),
             wide_const_dedup: rustc_hash::FxHashMap::default(),
-            initial_var_index: rustc_hash::FxHashMap::default(),
             generation: 0,
         }
     }

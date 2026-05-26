@@ -944,7 +944,7 @@ fn override_clobber_vars<'a>(
 /// output (the `node_signature` invariant guarantees this; the error
 /// path exists only for defensive completeness).
 fn read_or_init_var(
-    graph: &mut strider_ir::Graph,
+    function: &mut strider_ir::Function,
     region: Option<&ExitVnToValue>,
     vn: rsleigh::Vn,
 ) -> Result<NodeOutputId> {
@@ -953,30 +953,30 @@ fn read_or_init_var(
     {
         return Ok(out);
     }
-    // Consult the graph's maintained `InitialVar` index.  Skip detached
-    // zombies by validating that the registered node's single output
-    // still has live uses — a zero-use entry indicates the index points
-    // at a detached node, so we fall through and mint a fresh
-    // `InitialVar` instead of resurrecting the zombie.
-    if let Some(nid) = graph.graph().initial_var_for(vn) {
-        let [out] = graph.node_outputs_exact::<1>(nid).map_err(|e| {
+    // Consult the maintained `InitialVar` index.  Skip detached zombies
+    // by validating that the registered node's single output still has
+    // live uses — a zero-use entry indicates the index points at a
+    // detached node, so we fall through and mint a fresh `InitialVar`
+    // instead of resurrecting the zombie.
+    if let Some(nid) = function.initial_var_for(vn) {
+        let [out] = function.node_outputs_exact::<1>(nid).map_err(|e| {
             anyhow!(
                 "read_or_init_var: InitialVar({vn:?}) at {nid:?} has wrong output \
                  arity (expected 1): {e}"
             )
         })?;
-        if graph.graph().output_uses(out).next().is_some() {
+        if function.output_uses(out).next().is_some() {
             return Ok(out);
         }
     }
     let ty = vn_size_to_node_output_type(&vn)?;
-    let nid = graph.graph_mut().create_node(
+    let nid = function.graph_mut().create_node(
         strider_ir::node::NodeKind::InitialVar(vn),
         [],
         [strider_ir::node::NodeOutputKind::OutputType(ty)],
     );
-    let [out] = graph.node_outputs_exact::<1>(nid)?;
-    graph.graph_mut().register_initial_var(vn, nid);
+    let [out] = function.node_outputs_exact::<1>(nid)?;
+    function.register_initial_var(vn, nid);
     Ok(out)
 }
 
