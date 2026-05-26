@@ -1155,7 +1155,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         let data = b.build_int_const(0x99u64, NodeOutputType::U32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        // Emit a LOCK CallOther.  LOCK is now FullClobber, so AliasSplit
+        // Emit a LOCK CallOther.  LOCK is now FullClobber, so StackOffsetDetect
         // must break the Stack chain here.
         let (lock_node, _v, _w) = b.build_call_other_modeled(
             0x1234, "LOCK", &[], None, &[], &[], &[],
@@ -1167,8 +1167,8 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         Ok(())
     })?;
 
-    // Pipeline: ConstantFold → RedundantPhis → AliasSplit → StackLoadForward.
-    // AliasSplit must break the Stack chain at LOCK (FullClobber).
+    // Pipeline: ConstantFold → RedundantPhis → StackOffsetDetect → StackLoadForward.
+    // StackOffsetDetect must break the Stack chain at LOCK (FullClobber).
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);

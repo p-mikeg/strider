@@ -2,9 +2,8 @@
 //!
 //! Pins: (a) SP-relative stores / loads get a concrete offset stamped
 //! on `Function::stack_offsets`, (b) non-SP-rooted addresses leave the
-//! side-table untouched, (c) no `MemProject` / `MemUnion` is ever
-//! inserted, (d) re-running the pass on the same function reports
-//! `NoChange`.
+//! side-table untouched, (c) re-running the pass on the same function
+//! reports `NoChange`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -56,17 +55,6 @@ fn sp_relative_store_and_load_get_offset_stamped() {
 
     assert_eq!(store_offsets, vec![-4]);
     assert_eq!(load_offsets, vec![-4]);
-}
-
-#[test]
-fn store_inserts_no_partition_boundary_nodes() {
-    let sp = sp_vn_x86();
-    let mut f = stack_store_load_return(sp);
-
-    run(&mut f, sp);
-
-    let boundaries = f.count_kind(|k| matches!(k, NodeKind::MemProject | NodeKind::MemUnion));
-    assert_eq!(boundaries, 0, "StackOffsetDetect must not insert partition nodes");
 }
 
 #[test]

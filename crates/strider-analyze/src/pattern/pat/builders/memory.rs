@@ -99,7 +99,7 @@ impl LoadPat {
     /// `sp + k`.  Reads `Function::stack_offset` in O(1) — no
     /// per-match address re-decomposition.
     ///
-    /// Requires that `AliasSplit` has run before the matcher is invoked
+    /// Requires that `StackOffsetDetect` has run before the matcher is invoked
     /// (the side-table is populated by that pass).
     #[must_use]
     pub fn stack_offset(mut self, k: i64) -> Self {
@@ -129,7 +129,7 @@ impl LoadPat {
     /// Implies `stack_only`: if `Function::stack_offset(node)` is `None`
     /// (i.e. the load is not SP-relative) the match fails.
     ///
-    /// Requires that `AliasSplit` has run before the matcher is invoked.
+    /// Requires that `StackOffsetDetect` has run before the matcher is invoked.
     #[must_use]
     pub fn offset_capture(mut self, c: OffsetCapture) -> Self {
         self.offset_capture = Some(c);
@@ -277,7 +277,7 @@ impl StorePat {
     /// `sp + k`.  Reads `Function::stack_offset` in O(1) — no
     /// per-match address re-decomposition.
     ///
-    /// Requires that `AliasSplit` has run before the matcher is invoked
+    /// Requires that `StackOffsetDetect` has run before the matcher is invoked
     /// (the side-table is populated by that pass).
     #[must_use]
     pub fn stack_offset(mut self, k: i64) -> Self {
@@ -307,7 +307,7 @@ impl StorePat {
     /// Implies `stack_only`: if `Function::stack_offset(node)` is `None`
     /// (i.e. the store is not SP-relative) the match fails.
     ///
-    /// Requires that `AliasSplit` has run before the matcher is invoked.
+    /// Requires that `StackOffsetDetect` has run before the matcher is invoked.
     #[must_use]
     pub fn offset_capture(mut self, c: OffsetCapture) -> Self {
         self.offset_capture = Some(c);

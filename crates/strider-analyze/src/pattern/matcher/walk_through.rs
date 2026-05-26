@@ -21,7 +21,7 @@
 //! unwraps a value-passthrough cast and loops, which is cheaper as a
 //! tail-loop than a recursive call.
 
-use strider_ir::node::{NodeKind, NodeOutputId};
+use strider_ir::node::NodeOutputId;
 use strider_ir::walk::region_predecessors;
 
 use crate::pattern::matcher::Bindings;
@@ -52,40 +52,6 @@ pub(crate) fn try_walk_through_region(
 ) -> bool {
     let mark = b.mark();
     for input in region_predecessors(ctx.graph, target) {
-        if ctx.matcher.match_output_with_walk_through(input, pat, b) {
-            return true;
-        }
-        b.restore(mark);
-    }
-    false
-}
-
-/// Backward walk-through of a `MemUnion` node.  If `target`'s producer
-/// is a `MemUnion`, try matching `pat` against each of the `MemUnion`'s
-/// memory inputs (one per active partition).  Returns true on first
-/// success.
-///
-/// Rolls back bindings between failed attempts.  Recurses via the
-/// walk-through entry point so that chained `MemProject → MemUnion`
-/// boundaries (which occur at every barrier site) are also resolved.
-///
-/// Called by
-/// [`crate::pattern::matcher::Matcher::match_output_with_walk_through`]
-/// when [`crate::pattern::matcher::MatcherOptions::ignore_mem_boundaries`]
-/// is set.  Returns `false` when the producer is not a `MemUnion`.
-#[must_use]
-pub(crate) fn try_walk_through_mem_union(
-    ctx: &MatchCtx,
-    target: NodeOutputId,
-    pat: &Pat,
-    b: &mut Bindings,
-) -> bool {
-    let producer = ctx.graph.get_node_from_output(target);
-    if !matches!(ctx.graph.node_kind(producer), NodeKind::MemUnion) {
-        return false;
-    }
-    let mark = b.mark();
-    for input in ctx.graph.node_inputs(producer) {
         if ctx.matcher.match_output_with_walk_through(input, pat, b) {
             return true;
         }

@@ -98,7 +98,7 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
 fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
     match expected {
         ExpectedOutputKind::Control => matches!(actual, NodeOutputKind::Control),
-        ExpectedOutputKind::Memory => matches!(actual, NodeOutputKind::Memory(_)),
+        ExpectedOutputKind::Memory => matches!(actual, NodeOutputKind::Memory),
         ExpectedOutputKind::PhiToken => matches!(actual, NodeOutputKind::PhiToken),
         ExpectedOutputKind::Bool => {
             matches!(actual, NodeOutputKind::OutputType(NodeOutputType::Bool))

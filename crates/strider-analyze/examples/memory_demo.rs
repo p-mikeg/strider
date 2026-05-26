@@ -11,17 +11,11 @@
 //! `array_fill`, `array_sum`, `pointer_chase`, `struct_field_load`,
 //! `struct_field_store`, `tagged_union_read`).
 //!
-//! After AliasSplit + optimizer pipeline, the rendered graph exercises
-//! every memory-related dot-rendering feature added in the recent rounds:
-//!
-//! * Single-node MemProject with two outputs labelled `mem:Stack` and
-//!   `mem:Unknown` (#180 + #181).
-//! * MemUnion barriers at each Call site re-projecting both partitions
-//!   afterwards (#181).
-//! * Store/Load nodes whose addr-input edge is SUPPRESSED in the render
-//!   because their `stack_offsets` side-table entry is present — the
-//!   offset label (e.g. `[sp+0x10]`) on the node itself replaces the
-//!   redundant addr edge (#179).
+//! After the optimizer pipeline runs, the rendered graph exercises
+//! the stack-aware dot-rendering features: Store/Load nodes whose
+//! addr-input edge is SUPPRESSED because their `stack_offsets`
+//! side-table entry is present — the offset label (e.g. `[sp+0x10]`)
+//! on the node itself replaces the redundant addr edge.
 
 use object::{Object, ObjectSymbol};
 
@@ -74,10 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!();
     println!("open memory-graph-opt.html in a browser to see:");
-    println!("  - MemProject with two outputs (mem:Stack + mem:Unknown labels)");
-    println!("  - MemUnion barriers at each Call site");
     println!("  - Stack stores with [sp+OFF] labels and no addr edge");
-    println!("  - Per-partition memory SSA chains threading across calls");
 
     Ok(())
 }

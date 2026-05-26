@@ -108,7 +108,7 @@ impl FunctionBuilder {
     /// (this would indicate a graph-construction bug, not a user error).
     /// Other variants from `build_control_phi` propagate.
     pub fn create_region(&mut self) -> Result<RegionId> {
-        let memory_node = self.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory(None)]);
+        let memory_node = self.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
         let [memory] = self.graph().node_outputs_exact(memory_node)?;
 
         let control_node = self.create_node(

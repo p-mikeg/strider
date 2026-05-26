@@ -105,11 +105,6 @@
 //! * [`Matcher::ignore_regions`] — walk through `Region`
 //!   (region-join) nodes when traversing control chains.  Lets
 //!   `ret(call(...))` cross region joins between the Return and the Call.
-//! * [`Matcher::ignore_mem_boundaries`] — skip through `MemProject` and
-//!   `MemUnion` nodes when walking memory inputs.  Useful for patterns
-//!   that do not want to be aware of the alias-partition split
-//!   (`AliasSplit` is an analysis-level artefact; many user queries
-//!   operate at a higher level).
 //!
 //! All flags default to off; all are sticky on the matcher instance.  Direct
 //! match is always tried first, so strict patterns (e.g. `truncate(x)`
@@ -131,8 +126,7 @@
 //!
 //! let m = Matcher::try_new(&graph).unwrap()
 //!     .ignore_casts()
-//!     .ignore_regions()
-//!     .ignore_mem_boundaries();
+//!     .ignore_regions();
 //! # let _ = m;
 //! ```
 
@@ -215,12 +209,12 @@ pub use pat::{
     signed_int_const,
 };
 
-// ── Memory, phi, function-arg, partition-boundary ────────────────────────────
+// ── Memory, phi, function-arg ────────────────────────────────────────────────
 
 #[rustfmt::skip]
 pub use pat::{
     function_arg, function_arg_any, function_arg_reg, function_arg_stack,
-    load, mem_phi, mem_project, mem_union, phi, phi_for, store, value_phi,
+    load, mem_phi, phi, phi_for, store, value_phi,
 };
 
 // ── Control flow & entry values ──────────────────────────────────────────────
@@ -239,4 +233,3 @@ pub use strider_ir::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
     IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
-pub use strider_target::AliasClass;

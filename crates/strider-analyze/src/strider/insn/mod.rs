@@ -176,7 +176,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // 6. Memory edge: strider decides whether to advance.  Any
         //    non-empty mem-clobber set advances the unified memory
         //    token so subsequent loads/stores observe the call.
-        //    AliasSplit (the post-pass) reads `abi.mem_clobbers` to
+        //    StackOffsetDetect (the post-pass) reads `abi.mem_clobbers` to
         //    decide which per-partition chains to break across this
         //    CallOther.
         if abi.has_memory_edge() {

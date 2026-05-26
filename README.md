@@ -163,7 +163,7 @@ for hit in g.find_all(call().capture(c)):
           + ", ".join(f"{a:#x}" for a in addrs))
 ```
 
-`Match.asm_fingerprint` returns `[]` for "structural" node kinds (Entry, InitialMemory, Region, MemPhi, Phi, MemProject, MemUnion, InitialVar) whose existence is synthesised by the IR builder rather than tied to a specific asm instruction.
+`Match.asm_fingerprint` returns `[]` for "structural" node kinds (Entry, InitialMemory, Region, MemPhi, Phi, InitialVar) whose existence is synthesised by the IR builder rather than tied to a specific asm instruction.
 
 ### Predicate guards
 
@@ -218,7 +218,7 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 | `RedundantPhis` | Eliminates `Phi`/`MemPhi`/`Region` with a single reachable predecessor.  (The phi's optional source-varnode tag lives in `Graph::phi_var_tag`.) |
 | `DeadBranchElimination` | Removes `If` whose condition is constant; strips dead control edges. |
 | `LoadReadOnly` | Folds `Load`s of constant addresses against a caller-supplied ROM. |
-| `AliasSplit` | Partitions the unified memory chain into per-alias-class (`Stack` / `Unknown`) forked SSA via `MemProject`/`MemUnion` boundary nodes; populates `Function::stack_offsets` with the SP-relative offset of every stack-tagged `Store`. |
+| `StackOffsetDetect` | Populates `Function::stack_offsets` with the SP-relative offset of every Store/Load whose address resolves to `sp + K`. |
 | `StackLoadForward` | Forwards stack-tagged `Store` values to subsequent same-offset `Load`s. |
 | `CallStackArgCollect` (post-pass) | Collects positional stack args at `Call` sites. |
 | `FunctionArgDetect` (post-pass) | Canonicalises register- and stack-passed arg reads at the function boundary by populating `Function::arg_index_to_nodes` (carrier `NodeId` is `InitialVar` for register args, `Load` for stack args).  There is no `FunctionArg` `NodeKind` variant. |

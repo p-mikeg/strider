@@ -35,7 +35,7 @@ use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackLoadForwar
 /// those calls on the returned pipeline.
 ///
 /// Only replace the verbatim `new() → add(CF) → add(RP)` sequences
-/// with this helper — pipelines that include `AliasSplit`,
+/// with this helper — pipelines that include `StackOffsetDetect`,
 /// `DeadBranchElimination`, or other passes must still build their
 /// own pipeline explicitly.
 pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {

@@ -2,19 +2,9 @@
 //! concrete SP-relative offset for every Store / Load whose address
 //! decomposes to a single `sp + K` terminal.
 //!
-//! Replaces the older `AliasSplit` pass, which additionally forked the
-//! memory chain into per-class partitions.  Per-class partitioning
-//! turned out not to pay for itself: GCC/LLVM don't model memory that
-//! way either, and the downstream passes already use the side-table
-//! directly to decide whether a Store / Load touches the stack frame.
-//!
-//! After this pass:
-//!
-//! * `function.stack_offset(node)` returns `Some(K)` for every Store /
-//!   Load whose address is unambiguously `sp + K`, and `None` for
-//!   everything else (Phi-of-offsets, non-SP-rooted addresses).
-//! * The memory chain stays unified — there is no `MemProject` /
-//!   `MemUnion` boundary inserted.
+//! `function.stack_offset(node)` returns `Some(K)` for every Store /
+//! Load whose address is unambiguously `sp + K`, and `None` for
+//! everything else (Phi-of-offsets, non-SP-rooted addresses).
 
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};

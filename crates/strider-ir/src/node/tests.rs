@@ -99,7 +99,7 @@ fn is_value_only_for_output_type() {
     assert!(NodeOutputKind::OutputType(NodeOutputType::U64).is_value());
     assert!(!NodeOutputKind::Control.is_value());
     assert!(!NodeOutputKind::PhiToken.is_value());
-    assert!(!NodeOutputKind::Memory(None).is_value());
+    assert!(!NodeOutputKind::Memory.is_value());
 }
 
 /// `is_bool` must be `true` only when the wrapped type is `Bool`.
@@ -140,7 +140,7 @@ fn is_integer_for_all_integer_output_types() {
         );
     }
     assert!(!NodeOutputKind::Control.is_integer());
-    assert!(!NodeOutputKind::Memory(None).is_integer());
+    assert!(!NodeOutputKind::Memory.is_integer());
 }
 
 // ── NodeKind ─────────────────────────────────────────────────────────────
@@ -377,9 +377,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         // memory operations
         NodeKind::Load(space),
         NodeKind::Store(space),
-        // memory partition boundaries
-        NodeKind::MemProject,
-        NodeKind::MemUnion,
         // pure value: integer
         NodeKind::IntConst(0),
         NodeKind::IntConstWide(crate::wide_const::WideConstId::new(0)),
@@ -432,8 +429,6 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
             | NodeKind::CallOther { .. }
             | NodeKind::CPoolRef
             | NodeKind::New
-            | NodeKind::MemProject
-            | NodeKind::MemUnion
     )
 }
 
@@ -447,8 +442,6 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
             | NodeKind::Region
             | NodeKind::MemPhi
             | NodeKind::Phi
-            | NodeKind::MemProject
-            | NodeKind::MemUnion
     )
 }
 
@@ -478,68 +471,3 @@ fn asm_fingerprint_exempt_matches_legacy() {
     }
 }
 
-// ── MemProject / MemUnion ───────────────────────────────────────────────
-
-#[test]
-fn mem_project_is_not_cacheable_and_is_exempt() {
-    let k = NodeKind::MemProject;
-
-    assert!(!k.is_cacheable(), "MemProject must NOT be cacheable");
-    assert!(k.asm_fingerprint_exempt(), "MemProject must be fingerprint-exempt");
-}
-
-#[test]
-fn mem_union_is_not_cacheable_and_is_exempt() {
-    let k = NodeKind::MemUnion;
-    assert!(!k.is_cacheable(), "MemUnion must NOT be cacheable");
-    assert!(k.asm_fingerprint_exempt(), "MemUnion must be fingerprint-exempt");
-}
-
-#[test]
-fn mem_project_signature_has_single_memory_input_and_two_memory_outputs() {
-    use crate::node_signature::{ExpectedOutputKind, expected_signature};
-
-    let sig = expected_signature(&NodeKind::MemProject);
-
-    // Fixed-arity: exactly one input, two outputs (one per active partition).
-    assert!(!sig.inputs.is_variadic(), "MemProject inputs should be fixed-arity");
-    assert_eq!(sig.inputs.head_len(), 1, "MemProject takes exactly one memory input");
-    assert_eq!(sig.inputs.at(0).unwrap().kind, ExpectedOutputKind::Memory);
-
-    assert!(!sig.outputs.is_variadic(), "MemProject outputs should be fixed-arity");
-    assert_eq!(sig.outputs.head_len(), 2, "MemProject has two memory outputs (one per partition)");
-    assert_eq!(sig.outputs.at(0).unwrap().kind, ExpectedOutputKind::Memory);
-    assert_eq!(sig.outputs.at(1).unwrap().kind, ExpectedOutputKind::Memory);
-}
-
-#[test]
-fn mem_union_signature_has_variadic_memory_inputs_and_unified_output() {
-    use crate::node_signature::{ExpectedOutputKind, expected_signature};
-
-    let sig = expected_signature(&NodeKind::MemUnion);
-
-    // Variadic memory inputs (zero fixed-head, memory tail).
-    assert!(sig.inputs.is_variadic(), "MemUnion inputs should be variadic");
-    assert_eq!(sig.inputs.head_len(), 0, "MemUnion has no fixed-head inputs");
-    assert_eq!(
-        sig.inputs.tail.unwrap().kind,
-        ExpectedOutputKind::Memory,
-        "MemUnion variadic tail must be Memory"
-    );
-
-    // Fixed single Memory(None) output.
-    assert!(!sig.outputs.is_variadic(), "MemUnion outputs should be fixed-arity");
-    assert_eq!(sig.outputs.head_len(), 1, "MemUnion has exactly one output");
-    assert_eq!(sig.outputs.at(0).unwrap().kind, ExpectedOutputKind::Memory);
-}
-
-#[test]
-fn mem_project_is_not_const() {
-    let k = NodeKind::MemProject;
-    assert!(!k.is_const(), "MemProject must not be a constant");
-}
-
-#[test]
-fn mem_union_is_not_const() {
-    assert!(!NodeKind::MemUnion.is_const(), "MemUnion must not be a constant");
-}

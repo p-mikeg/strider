@@ -124,7 +124,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     Ok(())
 }
 
-/// `LoadReadOnly` must fold a constant-address Load even when `AliasSplit`
+/// `LoadReadOnly` must fold a constant-address Load even when `StackOffsetDetect`
 /// has already run on the same graph and partitioned the memory chain.
 ///
 /// The graph has a Stack-relative store before a `Call` barrier (so

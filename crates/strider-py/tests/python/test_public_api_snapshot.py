@@ -80,7 +80,7 @@ EXPECTED_PATTERN = {
     "FunctionArgPat",
     "IfPat",
     "LoadPat", "StorePat",
-    "MemPhiPat", "MemProjectPat", "MemUnionPat",
+    "MemPhiPat",
     "OffsetCapture",
     "PhiPat", "ValuePhiPat",
     "RetPat",
@@ -115,7 +115,7 @@ EXPECTED_PATTERN = {
     "truncate", "popcount", "lzcount",
     "zero_extend", "sign_extend", "extend",
     # Memory & control flow.
-    "load", "store", "mem_project", "mem_union",
+    "load", "store",
     "call", "call_other", "ret", "if_",
     # Typed family dispatchers.
     "int_binary", "bool_binary", "float_binary",

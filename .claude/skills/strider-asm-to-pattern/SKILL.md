@@ -62,9 +62,9 @@ lifter and constant-folder collapse it to a self-AND and then to
 a zero-check via the flag-tree decomposition.
 
 `mov eax, [rsp+8]` → `Load(Add(InitialVar(rsp), IntConst(8)))`.
-After `AliasSplit` (which annotates stack-relative `Store`/`Load`
-in `Function::stack_offsets`) and `StackLoadForward`, a same-offset
-preceding store forwards through.
+After `StackOffsetDetect` (which annotates stack-relative `Store` /
+`Load` in `Function::stack_offsets`) and `StackLoadForward`, a
+same-offset preceding store forwards through.
 
 `call <imm>` → `Call(at=<imm>)` (resolved jump-target).  Indirect
 `call rax` lifts to `IndirectBranch` that the orchestrator's
@@ -141,7 +141,7 @@ asm → Sleigh pcode → ValueLifter::lift → IR nodes (+ side-tables)
                                        optimizer pipeline
                                          (FlagCmpCanonicalize,
                                           ConstantFold, KnownBits,
-                                          AliasSplit, …)
+                                          StackOffsetDetect, …)
                                          ↓
                                        canonical IR shape (Pat targets this)
 ```

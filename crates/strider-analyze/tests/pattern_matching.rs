@@ -81,6 +81,3 @@ mod get_vn_call_other_clobber;
 
 #[path = "pattern_matching/load_store_stack_offset_capture.rs"]
 mod load_store_stack_offset_capture;
-
-#[path = "pattern_matching/mem_partition.rs"]
-mod mem_partition;

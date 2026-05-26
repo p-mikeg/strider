@@ -40,7 +40,6 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_store,
 };
-use crate::opt::stack_load_forward::is_stack_partition_input;
 use crate::opt::worklist::seeded_kind;
 
 /// Detects register-passed and stack-passed argument reads and records their
@@ -461,23 +460,6 @@ impl<'a> MemChainStep for DirtyStep<'a> {
                     }
                 }
                 Ok(StepResult::Continue(inputs[1]))
-            }
-            NodeKind::MemProject => {
-                let inputs = graph.node_inputs(node);
-                if inputs.is_empty() {
-                    return Ok(StepResult::Verdict(true));
-                }
-                Ok(StepResult::Continue(inputs[0]))
-            }
-            NodeKind::MemUnion => {
-                let inputs = graph.node_inputs(node);
-                match inputs
-                    .iter()
-                    .find(|&inp| is_stack_partition_input(graph, inp))
-                {
-                    Some(stack_input) => Ok(StepResult::Continue(stack_input)),
-                    None => Ok(StepResult::Verdict(true)),
-                }
             }
             _ => Ok(StepResult::Verdict(true)),
         }

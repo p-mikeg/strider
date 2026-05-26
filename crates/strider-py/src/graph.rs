@@ -371,12 +371,7 @@ impl PyGraph {
     /// * `ignore_regions=True` — walk through `Region`
     ///   region-join nodes between an `If`'s output and the
     ///   matched consumer.
-    /// * `ignore_mem_boundaries=True` — skip through `MemProject`
-    ///   and `MemUnion` nodes when walking memory inputs.  Useful for
-    ///   patterns that do not want to be aware of the alias-partition
-    ///   split (`AliasSplit` is an analysis-level artefact; many
-    ///   queries operate at a higher level).
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None, ignore_mem_boundaries=false))]
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
     fn find_all(
         slf: Py<Self>,
         py: Python<'_>,
@@ -384,7 +379,6 @@ impl PyGraph {
         ignore_casts: bool,
         ignore_regions: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
-        ignore_mem_boundaries: bool,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
         if ignore_casts && ignore_casts_mask.is_some() {
             return Err(crate::errors::into_strider_err(anyhow::anyhow!(
@@ -403,9 +397,6 @@ impl PyGraph {
         }
         if ignore_regions {
             matcher = matcher.ignore_regions();
-        }
-        if ignore_mem_boundaries {
-            matcher = matcher.ignore_mem_boundaries();
         }
         let raw = matcher.find_all(&pat);
         let generation = graph_guard.generation();
@@ -455,9 +446,9 @@ impl PyGraph {
     /// * Any pattern with zero matches → empty result.
     ///
     /// The matcher walk-through flags (`ignore_casts`,
-    /// `ignore_casts_mask`, `ignore_regions`, `ignore_mem_boundaries`)
-    /// apply uniformly to every pattern, mirroring `find_all`.
-    #[pyo3(signature = (pats, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None, ignore_mem_boundaries=false))]
+    /// `ignore_casts_mask`, `ignore_regions`) apply uniformly to every
+    /// pattern, mirroring `find_all`.
+    #[pyo3(signature = (pats, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
     fn find_all_requirements(
         slf: Py<Self>,
         py: Python<'_>,
@@ -465,7 +456,6 @@ impl PyGraph {
         ignore_casts: bool,
         ignore_regions: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
-        ignore_mem_boundaries: bool,
     ) -> PyResult<Vec<Vec<crate::matcher::PyMatch>>> {
         if ignore_casts && ignore_casts_mask.is_some() {
             return Err(crate::errors::into_strider_err(anyhow::anyhow!(
@@ -488,9 +478,6 @@ impl PyGraph {
         }
         if ignore_regions {
             matcher = matcher.ignore_regions();
-        }
-        if ignore_mem_boundaries {
-            matcher = matcher.ignore_mem_boundaries();
         }
         let raw = matcher.find_all_requirements(&pat_refs);
         let generation = graph_guard.generation();

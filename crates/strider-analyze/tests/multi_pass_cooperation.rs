@@ -129,7 +129,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> Result<()> {
 }
 
 /// `if(true)` with one arm doing a stack spill + reload:
-/// `AliasSplit + ConstantFold + RedundantPhis` must collapse the
+/// `StackOffsetDetect + ConstantFold + RedundantPhis` must collapse the
 /// single-predecessor join region and leave an `IntConst` as the
 /// return value (the forwarded constant).
 #[test]
@@ -272,7 +272,7 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
     Ok(())
 }
 
-/// A pre-`AliasSplit` memory chain with no SP-relative stores must be left
+/// A pre-`StackOffsetDetect` memory chain with no SP-relative stores must be left
 /// structurally intact by `ConstantFold` (negative invariant).  The
 /// `Load` node and its `Store`-derived memory chain must both remain
 /// reachable.
@@ -306,7 +306,7 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
     pipeline.run_built(&mut fg)?;
 
     // ConstantFold alone must NOT remove the Store or Load
-    // (StackLoadForward / AliasSplit handle memory forwarding).
+    // (StackLoadForward / StackOffsetDetect handle memory forwarding).
     let stores_after = count_reachable(&fg, |k| matches!(k, NodeKind::Store(_)));
     let loads_after = count_reachable(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(

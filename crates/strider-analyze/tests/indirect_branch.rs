@@ -10,7 +10,7 @@
 //! value.
 //!
 //! Resolving this lowering requires **cross-region stack-load
-//! forwarding** (`AliasSplit` + `StackLoadForward` joined
+//! forwarding** (`StackOffsetDetect` + `StackLoadForward` joined
 //! across the function's region graph), routed through the
 //! IR-level resolver's stack-array classifier arm
 //! (`strider_analyze::opt::classify_stack_array`).  The

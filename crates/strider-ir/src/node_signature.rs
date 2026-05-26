@@ -331,19 +331,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // program point.
         NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
 
-        // ── Memory partition boundary nodes ─────────────────────────────────
-        // MemProject: [unified_memory] → [Memory(Some(Stack)), Memory(Some(Unknown))].
-        // One output slot per active partition, in canonical partition order
-        // (Stack=0, Unknown=1).  The per-slot class is recoverable from the
-        // slot's NodeOutputKind.  The signature declares each output slot kind
-        // as Memory (any partition) — the validator's kind_matches treats
-        // Memory(_) as matching ExpectedOutputKind::Memory regardless of the
-        // Option payload.
-        NodeKind::MemProject => sig!(inputs: [MEM], outputs: [MEM, MEM]),
-        // MemUnion: [...partition_memories] → [Memory(None)].
-        // Variadic partition-typed inputs; unified output.
-        NodeKind::MemUnion => sig!(inputs: []; in_tail: MEM, outputs: [MEM]),
-
         // ── Memory operations ───────────────────────────────────────────────
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
         NodeKind::Store(_) => sig!(inputs: [MEM, ADDR, DATA], outputs: [MEM]),
@@ -662,8 +649,6 @@ mod tests {
             NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
-            NodeKind::MemProject,
-            NodeKind::MemUnion,
             NodeKind::IntConst(0),
             NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
@@ -728,7 +713,6 @@ mod tests {
             (NodeKind::Return, K::AnyValue),
             (NodeKind::CPoolRef, K::AnyInt),
             (NodeKind::New, K::AnyValue),
-            (NodeKind::MemUnion, K::Memory),
         ];
         for (k, expected) in cases {
             let sig = expected_signature(k);
@@ -745,37 +729,4 @@ mod tests {
         assert_eq!(tail.kind, K::AnyValue);
     }
 
-    #[test]
-    fn expected_signature_mem_project() {
-        let sig = expected_signature(&NodeKind::MemProject);
-        // MemProject: 1 Memory input → 2 Memory outputs (Stack, Unknown).
-        assert_eq!(sig.inputs.head_len(), 1, "MemProject has 1 input");
-        assert_eq!(
-            sig.outputs.head_len(), 2,
-            "MemProject has 2 outputs (Stack + Unknown)"
-        );
-        // Both outputs must be Memory.
-        for i in 0..2 {
-            let slot = sig.outputs.at(i).expect("output slot present");
-            assert_eq!(slot.kind, ExpectedOutputKind::Memory, "output {i} must be Memory");
-        }
-    }
-
-    #[test]
-    fn expected_signature_mem_union() {
-        let sig = expected_signature(&NodeKind::MemUnion);
-        // MemUnion: variadic Memory inputs → 1 Memory output.
-        assert_eq!(
-            sig.outputs.head_len(), 1,
-            "MemUnion has 1 unified Memory output"
-        );
-        assert_eq!(
-            sig.outputs.at(0).expect("output slot").kind,
-            ExpectedOutputKind::Memory,
-        );
-        // Inputs are variadic (tail is Memory-kinded).
-        assert!(sig.inputs.is_variadic(), "MemUnion inputs are variadic");
-        let tail = sig.inputs.tail.expect("MemUnion variadic input tail");
-        assert_eq!(tail.kind, ExpectedOutputKind::Memory);
-    }
 }

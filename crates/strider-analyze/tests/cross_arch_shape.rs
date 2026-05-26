@@ -138,8 +138,6 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
         NodeKind::SegmentOp { .. } => "SegmentOp",
         NodeKind::CPoolRef => "CPoolRef",
         NodeKind::New => "New",
-        NodeKind::MemProject => "MemProject",
-        NodeKind::MemUnion => "MemUnion",
     }
 }
 
@@ -239,7 +237,7 @@ fn structural_fingerprint(g: &strider_ir::Function) -> Fingerprint {
         for input in g.node_inputs(nid) {
             match g.output_kind(input) {
                 NodeOutputKind::Control => edges_control += 1,
-                NodeOutputKind::Memory(_) => edges_memory += 1,
+                NodeOutputKind::Memory => edges_memory += 1,
                 NodeOutputKind::OutputType(_) => edges_value += 1,
                 // PhiToken edges are an internal phi-bookkeeping detail and
                 // not part of the user-visible data/control shape; we omit

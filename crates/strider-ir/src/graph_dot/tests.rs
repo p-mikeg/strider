@@ -248,7 +248,7 @@ fn mem_phi_label_is_phi_mem() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let mem_phi = f.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory(None)]);
+    let mem_phi = f.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
     // mem_phi is only reachable as a data input of Return (graph walk follows inputs)
     let [mp_out] = f.node_outputs_exact::<1>(mem_phi).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -398,7 +398,7 @@ fn cast_to_int_label_reflects_actual_input_type() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
 
@@ -429,7 +429,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let target = f.create_node(
@@ -444,7 +444,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         [entry_ctrl, mem, target_out],
         [
             NodeOutputKind::Control,
-            NodeOutputKind::Memory(None),
+            NodeOutputKind::Memory,
             NodeOutputKind::OutputType(NodeOutputType::Bool),
         ],
     );
@@ -465,13 +465,13 @@ fn call_other_label_includes_resolved_name() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let co = f.create_node(
         NodeKind::CallOther { user_op_id: 62 },
         [entry_ctrl, mem],
-        [NodeOutputKind::Control, NodeOutputKind::Memory(None)],
+        [NodeOutputKind::Control, NodeOutputKind::Memory],
     );
     f.set_call_other_name(co, "setISAMode".to_string());
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
@@ -493,13 +493,13 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let co = f.create_node(
         NodeKind::CallOther { user_op_id: 7 },
         [entry_ctrl, mem],
-        [NodeOutputKind::Control, NodeOutputKind::Memory(None)],
+        [NodeOutputKind::Control, NodeOutputKind::Memory],
     );
     // Intentionally do NOT call `set_call_other_name`.
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
@@ -517,122 +517,6 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     );
 }
 
-/// `MemProject` nodes must render as "MemProject" in the label.
-#[test]
-fn mempartition_label_is_memproject() {
-    let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    f.set_entry(entry);
-    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-
-    // One MemProject node with two output slots (Stack=0, Unknown=1).
-    use strider_target::AliasClass;
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
-    let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
-    let mp = f.create_node(
-        NodeKind::MemProject,
-        [mem_out],
-        [
-            NodeOutputKind::Memory(Some(AliasClass::Stack)),
-            NodeOutputKind::Memory(Some(AliasClass::Unknown)),
-        ],
-    );
-    let mp_outs = f.node_outputs(mp).to_vec();
-    // Use the Stack output (slot 0) to feed Return.
-    let mu = f.create_node(
-        NodeKind::MemUnion,
-        [mp_outs[0], mp_outs[1]],
-        [NodeOutputKind::Memory(None)],
-    );
-    let [mu_out] = f.node_outputs_exact::<1>(mu).unwrap();
-    f.create_node(NodeKind::Return, [entry_ctrl, mu_out], []);
-
-    let dot = render(&f, entry);
-
-    assert!(
-        dot.contains("MemProject"),
-        "MemProject label must contain 'MemProject':\n{dot}",
-    );
-    assert!(
-        !dot.contains("MemProjectId("),
-        "raw MemProjectId debug repr must not appear in label:\n{dot}",
-    );
-}
-
-/// Edges from a `MemProject` node's output slots must carry alias-class labels
-/// (e.g. `"mem:Stack"` / `"mem:Unknown"`) derived from the slot's
-/// `NodeOutputKind`.  A `MemUnion` consuming both outputs must also show the
-/// class labels on each incoming edge.
-#[test]
-fn mem_project_edges_carry_alias_class_label() {
-    use strider_target::AliasClass;
-
-    let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    f.set_entry(entry);
-    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-
-    // InitialMemory → MemProject[Stack, Unknown] → MemUnion → Return
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
-    let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
-
-    let mp = f.create_node(
-        NodeKind::MemProject,
-        [mem_out],
-        [
-            NodeOutputKind::Memory(Some(AliasClass::Stack)),
-            NodeOutputKind::Memory(Some(AliasClass::Unknown)),
-        ],
-    );
-    let mp_outs = f.node_outputs(mp).to_vec();
-
-    // MemUnion joins both partitions back to a unified memory.
-    let mu = f.create_node(
-        NodeKind::MemUnion,
-        [mp_outs[0], mp_outs[1]],
-        [NodeOutputKind::Memory(None)],
-    );
-    let [mu_out] = f.node_outputs_exact::<1>(mu).unwrap();
-
-    f.create_node(NodeKind::Return, [entry_ctrl, mu_out], []);
-
-    let dot = render(&f, entry);
-
-    // Edge labels for MemProject outputs.
-    assert!(
-        dot.contains("mem:Stack"),
-        "partitioned memory edges from MemProject slot 0 must be labelled 'mem:Stack':\n{dot}",
-    );
-    assert!(
-        dot.contains("mem:Unknown"),
-        "partitioned memory edges from MemProject slot 1 must be labelled 'mem:Unknown':\n{dot}",
-    );
-
-    // At least two edge lines must carry an alias-class label.
-    let labelled_edges = edge_lines(&dot)
-        .into_iter()
-        .filter(|l| l.contains("mem:Stack") || l.contains("mem:Unknown"))
-        .count();
-    assert!(
-        labelled_edges >= 2,
-        "expected ≥2 alias-class-labelled edges (one per partition), got {labelled_edges}:\n{dot}",
-    );
-
-    // The colon in the label is reserved in unquoted dot identifiers
-    // (used for `node:port` references), so the partition labels must
-    // appear quoted in the emitted dot.  Unquoted `label=mem:Stack`
-    // would be a parse error in any strict dot consumer (viz.js,
-    // graphviz).
-    assert!(
-        dot.contains("label=\"mem:Stack\"") && dot.contains("label=\"mem:Unknown\""),
-        "partition-class labels must be quoted in the emitted dot (colon is reserved in unquoted IDs):\n{dot}",
-    );
-    assert!(
-        !dot.contains("label=mem:Stack") && !dot.contains("label=mem:Unknown"),
-        "partition-class labels must NEVER appear unquoted in the emitted dot:\n{dot}",
-    );
-}
-
 // ── stack_offsets addr-edge suppression ──────────────────────────────────
 
 /// A `Store` whose `stack_offsets` entry is populated must NOT have an edge
@@ -647,7 +531,7 @@ fn store_addr_edge_suppressed_when_stack_offset_present() {
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let [mem0] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     let region = f.create_node(
@@ -677,7 +561,7 @@ fn store_addr_edge_suppressed_when_stack_offset_present() {
     let store = f.create_node(
         NodeKind::Store(rsleigh::VnSpace::RAM),
         [mem0, addr_out, val_out],
-        [NodeOutputKind::Memory(None)],
+        [NodeOutputKind::Memory],
     );
     let [store_mem] = f.node_outputs_exact::<1>(store).unwrap();
 
@@ -730,7 +614,7 @@ fn load_addr_edge_suppressed_when_stack_offset_present() {
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let [mem0] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     // addr.
@@ -832,7 +716,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let [im_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     // BoolConst(true) so DBE/DCE leave the If alone for the test.
@@ -900,7 +784,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let mem_phi = f.create_node(
         NodeKind::MemPhi,
         [join_phi_token, im_out, im_out],
-        [NodeOutputKind::Memory(None)],
+        [NodeOutputKind::Memory],
     );
     let [mp_out] = f.node_outputs_exact::<1>(mem_phi).unwrap();
 

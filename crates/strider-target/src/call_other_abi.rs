@@ -142,7 +142,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_writes: &["r0"],
             // Linux SVC/SWI is a kernel entry: the kernel can read/write
             // any user-mode memory including the user stack.  Use the
-            // full-clobber set so AliasSplit breaks the Stack chain too.
+            // full-clobber set so StackOffsetDetect breaks the Stack chain too.
             clobbers_memory: true,
         }),
     },

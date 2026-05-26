@@ -83,7 +83,7 @@ pub struct Function {
 
     /// Stack offset for Store/Load nodes whose address decomposes to
     /// `sp + K` for a single concrete `K`.  Populated by the
-    /// `AliasSplit` classifier.  The phi-of-offsets case (address is a
+    /// `StackOffsetDetect` classifier.  The phi-of-offsets case (address is a
     /// phi of different constants per branch) is not recorded — consumers
     /// can re-decompose via `decompose_sp` if needed.
     stack_offsets: SecondaryMap<NodeId, Option<i64>>,
@@ -551,7 +551,7 @@ mod function_skeleton_tests {
             .create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let n2 = f
             .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+            .create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
 
         // Register two NodeIds for arg index 3 (the stack-args multi-Load case).
         f.register_arg_node(3, n1);
@@ -626,7 +626,7 @@ mod compact_tests {
             no_memory_clobber: false,
         });
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
         // Reachable IntConst whose Return-input consumer keeps it live.
@@ -675,7 +675,7 @@ mod compact_tests {
         });
         // Entry + InitialMemory + a Return (minimal reachable graph).
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
         let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
@@ -719,7 +719,7 @@ mod compact_tests {
             no_memory_clobber: false,
         });
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
         let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_out], []);

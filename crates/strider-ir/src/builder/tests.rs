@@ -557,7 +557,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
         &[],
     )?;
     let mem_out = b.graph().memory_output_of(node)?;
-    assert_eq!(b.graph().output_kind(mem_out), NodeOutputKind::Memory(None));
+    assert_eq!(b.graph().output_kind(mem_out), NodeOutputKind::Memory);
     Ok(())
 }
 
@@ -747,7 +747,7 @@ fn build_call_other_terminal_emits_ctrl_mem_only() -> Result<()> {
     assert_eq!(outs.len(), 2, "terminal CallOther has exactly [Control, Memory]");
     let kinds: Vec<_> = outs.iter().map(|o| b.graph().output_kind(*o)).collect();
     assert!(matches!(kinds[0], NodeOutputKind::Control), "slot 0 must be Control");
-    assert!(matches!(kinds[1], NodeOutputKind::Memory(_)), "slot 1 must be Memory(_)");
+    assert!(matches!(kinds[1], NodeOutputKind::Memory), "slot 1 must be Memory");
     Ok(())
 }
 

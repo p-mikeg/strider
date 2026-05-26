@@ -559,7 +559,7 @@ mod tests {
         let phi = fg.create_node(
             NodeKind::MemPhi,
             inputs.iter().copied(),
-            [strider_ir::node::NodeOutputKind::Memory(None)],
+            [strider_ir::node::NodeOutputKind::Memory],
         );
         fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
         fg.node_outputs_exact::<1>(phi).unwrap()[0]
@@ -626,7 +626,7 @@ mod tests {
         let phi = fg.create_node(
             NodeKind::MemPhi,
             [phi_token, store_mem, im_out],
-            [strider_ir::node::NodeOutputKind::Memory(None)],
+            [strider_ir::node::NodeOutputKind::Memory],
         );
         fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
         let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];

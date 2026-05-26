@@ -367,9 +367,9 @@ impl Optimizer for CallStackArgCollect {
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
             .collect();
         // Share the SP-decomposition memo across all Call sites in the
-        // function.  When `AliasSplit` has populated `Function::stack_offsets`,
+        // function.  When `StackOffsetDetect` has populated `Function::stack_offsets`,
         // the walker uses the side-table (O(1)) and the memo is only consulted
-        // for stores not in the side-table.  Without `AliasSplit`, many stack
+        // for stores not in the side-table.  Without `StackOffsetDetect`, many stack
         // pushes near each other share intermediate `sp − K` outputs that hit
         // the memo on the second access.
         let mut sp_memo: SpExprMemo = Default::default();

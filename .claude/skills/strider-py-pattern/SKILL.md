@@ -2,10 +2,9 @@
 name: strider-py-pattern
 description: Use when a Python user wants to write a strider pattern (strider.pattern.*) to match
   an IR shape on a lifted binary — produces correct Python pattern code given a natural-language
-  description. Knows the full Python builder surface (including OffsetCapture, mem_project,
-  mem_union, stack_only, CastMask, ignore_mem_boundaries), lift-time canonicalisations, and
-  commutative ops so the generated pattern matches the canonical IR shape rather than the
-  source-level shape.
+  description. Knows the full Python builder surface (including OffsetCapture, stack_only,
+  CastMask), lift-time canonicalisations, and commutative ops so the generated pattern matches
+  the canonical IR shape rather than the source-level shape.
 ---
 
 # strider-py-pattern
@@ -115,8 +114,6 @@ enumerates every registered name).
 | `p.phi_for(vn)` | `Phi` tagged with `vn` | `phi_for(vn: Vn) -> PhiPat` | n/a |
 | `p.mem_phi()` | `MemPhi` | `mem_phi() -> MemPhiPat` | n/a |
 | `p.value_phi()` | `Phi(None)` (anonymous, from `StackLoadForward`) | `value_phi() -> ValuePhiPat` | n/a |
-| `p.mem_project()` | `MemProject` (memory-partition split) | `mem_project() -> MemProjectPat` w/ `.class_("Stack"\|"Unknown")` | n/a |
-| `p.mem_union()` | `MemUnion` (memory-partition merge) | `mem_union() -> MemUnionPat` w/ `.class_("Stack"\|"Unknown")` | n/a |
 | `p.predicate(f)` | match-any + Python guard | `predicate(f) -> Pat` | n/a |
 | `p.add(a, b)` | `IntBinaryOp(Add)` | `add(l, r) -> Pat` | **yes** |
 | `p.sub(a, b)` | `Add(a, Neg(b))` lowered | `sub(l, r) -> Pat` | no (lowered) |
@@ -175,34 +172,6 @@ pat = p.load().offset_capture(oc)   # implies stack_only
 pat = p.store().stack_only().offset_capture(oc)
 ```
 
-**MemProjectPat / MemUnionPat — memory partition nodes:**
-
-These nodes appear after `AliasSplit` partitions the memory chain into `Stack` and `Unknown` alias
-classes.  Most patterns targeting values don't need to match these; they're useful when tracing
-memory-chain topology.
-
-```python
-# Match any MemProject node:
-p.mem_project()
-
-# Match a MemProject that exposes the Stack alias class:
-p.mem_project().class_("Stack")   # "Stack" or "Unknown"
-
-# Match any MemUnion node:
-p.mem_union()
-
-# Match a MemUnion that accepts Stack-class input:
-p.mem_union().class_("Stack")
-```
-
-`ignore_mem_boundaries=True` on `find_all` / `find_all_requirements` makes the matcher skip through
-`MemProject` / `MemUnion` nodes transparently when walking memory edges — useful when you want to
-match a `Load` regardless of whether the memory chain has been partitioned:
-
-```python
-hits = graph.find_all(pat, ignore_mem_boundaries=True)
-```
-
 **CastMask — granular cast walk-through:**
 
 ```python
@@ -251,9 +220,9 @@ form before writing the pattern.
   So `sub(x, int_const(8))` may not match if `ConstantFold` ran;
   prefer `add(x, signed_int_const(-8))` against optimised graphs.
 - `Load(IntConst(addr))` may fold to a value via `LoadReadOnly` if a ROM was passed.
-- SP-relative `Store` annotation lives in `Function::stack_offsets` after `AliasSplit`; for
-  `Load`/`Store`, use `p.load().stack_only()` / `p.store().stack_only()` or `.offset_capture(oc)`
-  to filter to stack-relative ops without hard-coding the SP varnode.
+- SP-relative `Store` / `Load` annotation lives in `Function::stack_offsets` after
+  `StackOffsetDetect`; for `Load`/`Store`, use `p.load().stack_only()` / `p.store().stack_only()`
+  or `.offset_capture(oc)` to filter to stack-relative ops without hard-coding the SP varnode.
 - After `StackLoadForward`, a same-offset load-after-store may become a `Phi(None)` (`value_phi`)
   when the forwarding crossed a `MemPhi`.
 
@@ -301,9 +270,6 @@ graph.find_all(pat, ignore_casts=True)
 # Skip specific cast kinds only:
 graph.find_all(pat, ignore_casts_mask=p.CastMask.zero_extend() | p.CastMask.truncate())
 
-# Skip MemProject / MemUnion nodes when walking memory edges:
-graph.find_all(pat, ignore_mem_boundaries=True)
-
 # Skip phi/region nodes (match across control-flow joins):
 graph.find_all(pat, ignore_regions=True)
 ```
@@ -334,9 +300,8 @@ Notes:
 
 ### Example 2: "match stack-relative loads and retrieve the offset"
 
-Unlike `Store`, `Load` is not promoted to a distinct NodeKind; the SP-offset annotation lives in
-`Function::stack_offsets` after `AliasSplit`.  Use `stack_only()` to filter and `offset_capture`
-to retrieve the SP-relative offset:
+The SP-offset annotation lives in `Function::stack_offsets` after `StackOffsetDetect`.  Use
+`stack_only()` to filter and `offset_capture` to retrieve the SP-relative offset:
 
 ```python
 from strider import pattern as p
@@ -432,15 +397,6 @@ or `ignore_casts=True` so the pattern matches the load regardless of intervening
 oc = p.OffsetCapture()
 load_pat = p.load().offset_capture(oc)
 hits = graph.find_all(load_pat, ignore_casts=True)
-```
-
-### Example 13: "Match loads ignoring memory partition boundaries"
-
-After `AliasSplit` runs, some `Load` nodes have their memory input routed through
-`MemProject` / `MemUnion` nodes.  To match a load regardless of partitioning:
-
-```python
-hits = graph.find_all(p.load().stack_only(), ignore_mem_boundaries=True)
 ```
 
 ## Anti-patterns

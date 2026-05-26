@@ -27,14 +27,6 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::Load(_)
         | NodeKind::Store(_) => "box3d",
 
-        // MemProject fans one unified input out to N per-class outputs;
-        // MemUnion fans N per-class inputs back into one unified output.
-        // The trapezium/inverted-trapezium pair reads as "splits down"
-        // / "joins down" at a glance and avoids visual collision with
-        // Call's rarrow.
-        NodeKind::MemProject => "trapezium",
-        NodeKind::MemUnion => "invtrapezium",
-
         NodeKind::Call => "rarrow",
         NodeKind::CallOther { .. } => "doubleoctagon",
         NodeKind::SegmentOp { .. } => "parallelogram",
@@ -63,9 +55,6 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
         NodeKind::If => "\"#3a2a10\"",
 
         NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
-
-        NodeKind::MemProject => "\"#1a5c8c\"", // medium blue — partition fan-out
-        NodeKind::MemUnion => "\"#3a1a4a\"",   // deep purple — partition fan-in
 
         NodeKind::Call => "\"#3a1010\"",
         NodeKind::CallOther { .. } => "\"#3a2810\"", // amber — opaque intrinsic

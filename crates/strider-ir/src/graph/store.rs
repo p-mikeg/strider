@@ -160,44 +160,6 @@ impl Graph {
         node_id
     }
 
-    /// Re-types the `Memory(_)` output `output_id` to carry partition
-    /// `partition` (use `None` to revert to unified).  Errors if the
-    /// output is not a `Memory(_)` slot.
-    ///
-    /// Used by the `AliasSplit` optimization to retype the memory
-    /// outputs of `Store` / `MemPhi`
-    /// nodes that fall inside a single-alias-class subgraph.  The
-    /// cacheable owner's stale dedup-cache entry is evicted *before*
-    /// the mutation (same discipline as [`Graph::update_input`]) so a
-    /// later `create_node` with the pre-change `(kind, inputs, outputs)`
-    /// key cannot resurrect this now-modified node.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `output_id` is not a `Memory(_)` slot —
-    /// repartitioning a Control / Value / PhiToken output is meaningless
-    /// and indicates a caller bug.
-    pub fn set_memory_partition(
-        &mut self,
-        output_id: NodeOutputId,
-        partition: Option<strider_target::AliasClass>,
-    ) -> crate::error::Result<()> {
-        let current = self.outputs[output_id].kind;
-        if !matches!(current, NodeOutputKind::Memory(_)) {
-            return Err(anyhow::anyhow!(
-                "Graph::set_memory_partition: output {output_id:?} is not a Memory slot \
-                 (current kind = {current:?})"
-            ));
-        }
-        // Evict the owner's stale cache entry before mutating so the
-        // pre-change key cannot resurrect this node from a later
-        // `create_node` call.
-        let owner = self.outputs[output_id].source_id;
-        self.evict_cache_entry_if_cacheable(owner);
-        self.outputs[output_id].kind = NodeOutputKind::Memory(partition);
-        Ok(())
-    }
-
     /// Removes `node_id` from the dedup cache (using its *current* inputs and
     /// output kinds as the key) when its kind is cacheable. No-op for
     /// non-cacheable kinds, which were never inserted in the first place.

@@ -17,10 +17,7 @@ pub enum NodeOutputKind {
     /// Carries no data — it says "fire your phi for this region."
     PhiToken,
     /// Memory token tracking the current state of memory through the graph.
-    ///
-    /// `None` = unified memory (the default until `AliasSplit` promotes it to a
-    /// partition).  `Some(c)` = memory restricted to alias class `c`.
-    Memory(Option<strider_target::AliasClass>),
+    Memory,
 }
 
 impl NodeOutputKind {
@@ -47,7 +44,7 @@ impl NodeOutputKind {
     ///
     /// # Errors
     ///
-    /// Returns an error when `self` is `Control`, `Memory(_)`, or `PhiToken`.
+    /// Returns an error when `self` is `Control`, `Memory`, or `PhiToken`.
     pub fn as_value_or_err(self) -> crate::Result<NodeOutputType> {
         self.as_value()
             .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
@@ -86,19 +83,7 @@ impl NodeOutputKind {
     #[inline]
     #[must_use]
     pub fn is_memory(self) -> bool {
-        matches!(self, Self::Memory(_))
-    }
-
-    /// Returns the alias class if this is a partition-typed memory output.
-    /// Returns `None` for unified `Memory` (or non-memory).
-    #[inline]
-    #[must_use]
-    pub fn memory_partition(self) -> Option<strider_target::AliasClass> {
-        if let NodeOutputKind::Memory(Some(c)) = self {
-            Some(c)
-        } else {
-            None
-        }
+        matches!(self, Self::Memory)
     }
 
     /// Returns `true` if this is a value output carrying a `Bool` type.
@@ -121,28 +106,5 @@ impl NodeOutputKind {
         } else {
             false
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::NodeOutputKind;
-    use strider_target::AliasClass;
-
-    #[test]
-    fn memory_variant_carries_optional_alias_class() {
-        // Unified memory (the default)
-        let m_unified = NodeOutputKind::Memory(None);
-        assert!(m_unified.is_memory());
-        assert_eq!(m_unified.memory_partition(), None);
-
-        // Partitioned memory
-        let m_part = NodeOutputKind::Memory(Some(AliasClass::Stack));
-        assert!(m_part.is_memory());
-        assert_eq!(m_part.memory_partition(), Some(AliasClass::Stack));
-
-        // Non-memory variants
-        assert!(!NodeOutputKind::Control.is_memory());
-        assert_eq!(NodeOutputKind::Control.memory_partition(), None);
     }
 }

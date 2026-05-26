@@ -18,14 +18,10 @@
 //!
 //! Owns the pure data that describes the machine and ABI being analysed.
 
-pub mod alias_class;
 pub mod arch;
 pub mod calling_convention;
 pub mod call_other_abi;
 
-pub use alias_class::{
-    AliasClass, MEM_CLOBBER_FULL, MEM_CLOBBER_HEAP_UNKNOWN, MEM_CLOBBER_NONE,
-};
 pub use arch::{ArchPreset, Endianness, SleighArch};
 pub use calling_convention::{
     BuiltCallingConvention, CallingConvention, MissingPresetError, PositionalArg,

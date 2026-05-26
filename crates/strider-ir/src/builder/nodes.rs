@@ -458,7 +458,7 @@ impl FunctionBuilder {
         self.graph.set_entry(entry_node);
 
         let memory_node =
-            self.create_node(NodeKind::InitialMemory, [], vec![NodeOutputKind::Memory(None)]);
+            self.create_node(NodeKind::InitialMemory, [], vec![NodeOutputKind::Memory]);
         let [memory] = self.graph().node_outputs_exact(memory_node)?;
         self.entry_memory = memory;
         Ok(())
@@ -668,7 +668,7 @@ impl FunctionBuilder {
         let node_id = self.create_node(
             NodeKind::Store(space),
             [memory, addr, data],
-            [NodeOutputKind::Memory(None)],
+            [NodeOutputKind::Memory],
         );
         let [new_mem] = self.graph().node_outputs_exact(node_id)?;
         self.advance_cur_region_memory(new_mem)

@@ -130,7 +130,7 @@ so the resolver-bearing dependency stays one-way.
       payloads that don't fit in the regular `IntConst(u128)`).
     - **Side-table registry on `Function` (`SecondaryMap<NodeId, _>`):**
       `stack_offsets` (SP-relative offset metadata for Store/Load
-      populated by `AliasSplit`), `call_other_names`,
+      populated by `StackOffsetDetect`), `call_other_names`,
       `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`
       (per-node `Option<Vn>` source-varnode tag for `Phi` nodes),
       `call_stack_arg_offsets_overrides`, and `arg_index_to_nodes`
@@ -196,9 +196,8 @@ so the resolver-bearing dependency stays one-way.
     ancestor's addresses.  Two structurally identical (cacheable) nodes
     share one entry that is the **union** of every contributor's
     address.  Region / phi / initial-state kinds (`Entry`,
-    `InitialMemory`, `InitialVar`, `Region`,
-    `MemPhi`, `Phi`, `MemProject`, `MemUnion`) are exempt from the
-    non-empty check.  Public API on `Graph`: `asm_fingerprint(id)`,
+    `InitialMemory`, `InitialVar`, `Region`, `MemPhi`, `Phi`) are
+    exempt from the non-empty check.  Public API on `Graph`: `asm_fingerprint(id)`,
     `set_asm_fingerprint`, `extend_asm_fingerprint`,
     `extend_asm_fingerprint_from`.
 
@@ -304,10 +303,9 @@ so the resolver-bearing dependency stays one-way.
       dead control edges.
     - `LoadReadOnly` — folds constant-address loads via
       `&dyn ReadOnlyMemory`.
-    - `AliasSplit` — partitions unified memory chain into per-alias-class
-      forked SSA (`Stack` / `Unknown`) via `MemProject` / `MemUnion`
-      boundary nodes; also annotates SP-relative `Store` offsets in
-      `Function::stack_offsets`.
+    - `StackOffsetDetect` — annotates SP-relative `Store` / `Load`
+      offsets in `Function::stack_offsets`; the unified memory chain
+      is left intact.
     - `StackLoadForward` — forwards values from stack-tagged `Store`
       (via `Function::stack_offsets`) to subsequent same-offset `Load`.
     - `FunctionArgDetect` (post-pass) — canonicalises register / stack
@@ -431,12 +429,10 @@ truth for every node's input/output shape.  Node kinds, grouped:
   memory; variadic args), `CallOther { user_op_id }`, `Return`
   (variadic return values).
 - **Memory:** `Load(VnSpace)`, `Store(VnSpace)`.
-  Stack-relative offset metadata (populated by `AliasSplit`) lives in
-  `Function::stack_offsets` as a side-table keyed by `NodeId`; the
-  underlying node kind stays `Store(VnSpace)`.  Two synthetic boundary
-  nodes `MemProject` (projects partitioned memory out of unified
-  memory) and `MemUnion` (rejoins partition tokens) are inserted by
-  `AliasSplit` to mark partition boundaries.
+  Stack-relative offset metadata (populated by `StackOffsetDetect`)
+  lives in `Function::stack_offsets` as a side-table keyed by
+  `NodeId`; the underlying node kind stays `Store(VnSpace)` /
+  `Load(VnSpace)`.
 - **Integer:** `IntConst(u128)`, `IntConstWide(WideConstId)` (U256 /
   U512, interned in `Graph::wide_consts`), `IntUnaryOp` (`BitNot` for
   `~x`, `Neg` for `-x`), `IntBinaryOp` (no `Sub`; lifter lowers to

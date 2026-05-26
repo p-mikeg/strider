@@ -1,8 +1,8 @@
 //! Tests for the `stack_only`, `offset_capture` features on `LoadPat` and `StorePat`.
 //!
 //! The `Function::stack_offset` side-table is populated manually via
-//! `Function::set_stack_offset` — the same side-table that `AliasSplit`
-//! populates in production.  We bypass `AliasSplit` here so tests stay
+//! `Function::set_stack_offset` — the same side-table that `StackOffsetDetect`
+//! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
 use strider_analyze::pattern::{Capture, IntoPat, Matcher, OffsetCapture, load, store};

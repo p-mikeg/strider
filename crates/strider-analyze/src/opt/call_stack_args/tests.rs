@@ -910,7 +910,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
 /// `IntConst(0xDEAD_BEEF)` node so `decompose_sp` would return `None` for it
 /// (non-SP-rooted → pass-through in the old path, skipped entirely).  Then
 /// `Function::stack_offsets` is populated manually with offset 4 for that
-/// store (mimicking what `AliasSplit` would record).
+/// store (mimicking what `StackOffsetDetect` would record).
 ///
 /// With the side-table as the source of truth the arg is collected.  Without
 /// it, `decompose_sp` would pass through the store (non-SP-rooted → `None`)
@@ -982,7 +982,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR],
     );
 
-    // Populate the side-table: offset 4 for arg0_store (what AliasSplit would
+    // Populate the side-table: offset 4 for arg0_store (what StackOffsetDetect would
     // have recorded from the original sp+4 address before we clobbered it).
     fg.set_stack_offset(arg0_store, 4);
 

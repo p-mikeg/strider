@@ -234,7 +234,7 @@ pub fn apply_tail_call(
     let mut call_outputs: Vec<NodeOutputKind> =
         Vec::with_capacity(2 + clobbered_kinds.len());
     call_outputs.push(NodeOutputKind::Control);
-    call_outputs.push(NodeOutputKind::Memory(None));
+    call_outputs.push(NodeOutputKind::Memory);
     call_outputs.extend_from_slice(clobbered_kinds);
     let call = graph.create_node(NodeKind::Call, call_inputs, call_outputs);
     graph.extend_asm_fingerprint(call, &fingerprint);

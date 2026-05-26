@@ -358,7 +358,7 @@ mod tests {
     /// plus a known value-producing node in that set.
     fn build_anchor(graph: &mut Graph, value: u128) -> (NodeId, NodeId, NodeId, NodeId) {
         let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let const_node = graph.create_node(
             NodeKind::IntConst(value),
             [],
@@ -391,7 +391,7 @@ mod tests {
     fn initial_var_index_remap_through_retain() {
         let mut graph = Graph::new();
         let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let live_vn = rsleigh::Vn {
             size: 8,
             addr_off: 0x20,
@@ -548,7 +548,7 @@ mod tests {
     fn empty_side_table_compacts_cleanly() {
         let mut graph = Graph::new();
         let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
         let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
         let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);

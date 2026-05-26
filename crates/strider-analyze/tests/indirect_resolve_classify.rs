@@ -49,7 +49,7 @@ use common::indirect_resolve_helpers::{
 /// single-region mini-graph lacks `StackLoadForward`, so it can't
 /// fold the load — it returns `None` and the cfg builder defers via
 /// `UnresolvedIndirectBranch`.  The full pipeline DOES run
-/// `AliasSplit + StackLoadForward`, which together collapse
+/// `StackOffsetDetect + StackLoadForward`, which together collapse
 /// the load back to the pushed constant K.  The classifier then
 /// sees `IntConst(K)` and returns `Single(K)`.
 #[test]
@@ -90,7 +90,7 @@ fn initial_var_non_lr_returns_none() {
 ///
 /// The fixture uses an if/else diamond where each arm stores a
 /// distinct constant at the same SP-relative slot, then loads
-/// from that slot at the merge.  `AliasSplit +
+/// from that slot at the merge.  `StackOffsetDetect +
 /// StackLoadForward` collapse the merge's `Load` into a synthesised
 /// `ValuePhi` whose value inputs are exactly the two stored
 /// constants — the producer-shape this arm classifies.
@@ -133,7 +133,7 @@ fn phi_of_three_int_consts_to_multiple() {
 /// entry pseudo-push of lr to a stack slot, followed by a load from
 /// the same slot at the function exit, is the natural shape gcc
 /// emits for `pop {pc}` / `ldr pc, [sp]` epilogues.  After
-/// `AliasSplit` rewrites the push as a `StackStore` and
+/// `StackOffsetDetect` rewrites the push as a `StackStore` and
 /// `StackLoadForward` resolves the load against that store, the
 /// loaded value is **structurally identical** to `InitialVar(lr)`
 /// — i.e. the function-entry value of the link register.  No
@@ -158,7 +158,7 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 
 /// Spec test #10 (THE SOUNDNESS GATE): `push 0x1000; pop pc`
 /// produces a `Load(IntSub(InitialVar(sp), 4))`-shaped target
-/// before the optimiser folds it.  After `AliasSplit` +
+/// before the optimiser folds it.  After `StackOffsetDetect` +
 /// `StackLoadForward` the load resolves to the **stored constant**
 /// `0x1000`, NOT `InitialVar(lr)`.  The classifier therefore
 /// returns `Single(0x1000)` — a tail call — NOT `LinkRegister`.
