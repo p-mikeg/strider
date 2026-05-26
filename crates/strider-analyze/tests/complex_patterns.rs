@@ -467,7 +467,7 @@ fn multi_arg_call_in_branch_assertions(g: &strider_ir::Function) {
 per_arch_test!("complex", "complex_dispatch", complex_dispatch_assertions);
 
 fn complex_dispatch_assertions(g: &strider_ir::Function) {
-    let n = g.preorder().count();
+    let n = g.walk().count();
     // Larger function (many locals, several stack-allocated structs,
     // 3 loops, ≥10 branches, mixed-width compute) → expect a much
     // larger IR than the original 30-node smoke.  100 is comfortably
@@ -535,7 +535,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
     // {Store, Load, Region, ValuePhi}.
     // If we hit another Call, the test passes — that's proof of
     // Call→Call dataflow.
-    let calls: Vec<NodeId> = g.preorder()
+    let calls: Vec<NodeId> = g.walk()
         .filter(|&n| matches!(g.node_kind(n), NodeKind::Call))
         .collect();
     let chained = calls.iter().any(|&outer| {

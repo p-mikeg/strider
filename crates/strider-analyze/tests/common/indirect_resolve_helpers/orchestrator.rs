@@ -25,7 +25,7 @@ use strider_target::{CallingConvention, SleighArch};
 /// `[control, memory, target_value]`.
 pub fn anchor_value_input(graph: &Function) -> Option<strider_ir::Value> {
     let mut found: Option<strider_ir::Value> = None;
-    for nid in graph.preorder() {
+    for nid in graph.walk() {
         if !matches!(graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }

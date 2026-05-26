@@ -74,7 +74,7 @@ fn fire_anywhere<F>(g: &mut strider_ir::Function, rule: F) -> bool
 where
     F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<bool>,
 {
-    let nodes: Vec<NodeId> = g.preorder().collect();
+    let nodes: Vec<NodeId> = g.walk().collect();
     g.with_rewrite_ctx(|ctx| {
         let mut any = false;
         for n in nodes {
@@ -208,7 +208,7 @@ fn rewrite_rule_on_call_root_returns_err() {
 
     let rule = rewrite_rule(call(), int_const(0u64));
     let call_node = g
-        .preorder()
+        .walk()
         .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
         .expect("Call node");
     let err = g

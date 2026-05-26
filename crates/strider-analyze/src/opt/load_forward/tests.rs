@@ -13,7 +13,7 @@ use strider_target::Endianness;
 /// reads) are excluded.
 fn reachable_anonymous_phi_count(fg: &strider_ir::Function) -> usize {
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.preorder().collect();
+        fg.walk().collect();
     fg.all_node_ids()
         .filter(|n| reachable.contains(*n)
             && matches!(fg.node_kind(*n), NodeKind::Phi)
@@ -26,7 +26,7 @@ fn find_reachable_anonymous_phi(
     fg: &strider_ir::Function,
 ) -> Option<strider_ir::node::NodeId> {
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.preorder().collect();
+        fg.walk().collect();
     fg.all_node_ids().find(|n| reachable.contains(*n)
         && matches!(fg.node_kind(*n), NodeKind::Phi)
         && fg.phi_var_tag(*n).is_none())
@@ -547,7 +547,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     // The ValuePhi's phi-token (input 0) must come from the same
     // Region as the MemPhi's phi-token.
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.preorder().collect();
+        fg.walk().collect();
     let value_phi = find_reachable_anonymous_phi(&fg)
         .expect("ValuePhi found above");
     let mem_phi = fg

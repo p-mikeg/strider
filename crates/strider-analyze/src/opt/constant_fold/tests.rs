@@ -558,7 +558,7 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
     );
     // Belt-and-suspenders: walk all reachable nodes and verify no
     // Truncate/Extend survives the chain to the Return.
-    for nid in fg.preorder() {
+    for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Truncate | NodeKind::Extend(_)),
@@ -586,7 +586,7 @@ fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
         let entry = fg.entry().unwrap();
         changed = ConstantFold.optimize(&mut fg, entry)?.changed();
     }
-    for nid in fg.preorder() {
+    for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Truncate | NodeKind::Extend(_)),
@@ -624,7 +624,7 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
     // After narrowing-through-Mul + constant fold: 3 * 7 = 21 at U32.
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(21));
     // Nothing wider than U32 should survive (no SignExtend/Mul@U64/Truncate).
-    for nid in fg.preorder() {
+    for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Extend(ExtendOp::SignExtend) | NodeKind::Truncate),
@@ -676,7 +676,7 @@ fn fold_cast_to_bool_of_cast_to_int_round_trip() -> Result<()> {
     // No reachable `CastToBool` may have a `CastToInt` immediately
     // upstream — if any survives, the round-trip rule didn't fire.
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.preorder().collect();
+        fg.walk().collect();
     for n in fg.all_node_ids().filter(|n| reachable.contains(*n)) {
         if !matches!(fg.node_kind(n), NodeKind::CastToBool) {
             continue;
@@ -721,7 +721,7 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
     // After dropping the high half + folding 0xAA | 0xAA = 0xAA at U32:
     // the result is IntConst(0xAA).  No Or remains.
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xAA));
-    for nid in fg.preorder() {
+    for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Or)),

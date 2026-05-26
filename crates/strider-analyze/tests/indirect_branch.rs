@@ -90,7 +90,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // for each per-iteration classify — but here we just consume
         // the surviving placeholder on the post-optimizer graph.
         let mut live_anchors: Vec<strider_ir::node::NodeOutputId> = Vec::new();
-        for n in graph.preorder() {
+        for n in graph.walk() {
             if matches!(graph.node_kind(n), strider_ir::node::NodeKind::IndirectBranch) {
                 let inputs: Vec<strider_ir::node::NodeOutputId> =
                     graph.node_inputs(n).into_iter().collect();

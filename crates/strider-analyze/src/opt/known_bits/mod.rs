@@ -444,7 +444,7 @@ impl Optimizer for KnownBits {
         // via Worklist so a rewritten node's consumers are re-checked in the
         // same call: a freshly-introduced IntConst can let a sibling whose
         // *other* operand was previously unknown become fully-determined.
-        let mut work: Worklist<NodeId> = ctx.preorder().collect();
+        let mut work: Worklist<NodeId> = ctx.walk().collect();
         let mut result = OptimizationResult::NoChange;
         // Inline up to 4 outputs / 8 consumers per iteration — these
         // bounds cover the vast majority of IR nodes (most ops have

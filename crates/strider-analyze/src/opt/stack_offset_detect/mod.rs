@@ -48,7 +48,7 @@ impl Optimizer for StackOffsetDetect {
         let mut memo = SpExprMemo::default();
         let mut to_stamp: Vec<(NodeId, i64)> = Vec::new();
 
-        for node in function.preorder() {
+        for node in function.walk() {
             // Skip nodes whose offset is already known — keeps the
             // pass idempotent inside the fixed-point loop.
             if function.stack_offset(node).is_some() {

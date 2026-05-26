@@ -15,7 +15,7 @@ use crate::opt::pipeline::OptimizationResult;
 /// Seeds a worklist with every node reachable from `ctx.entry()` whose
 /// [`NodeKind`] satisfies `pred`.
 ///
-/// Replaces the recurring `ctx.preorder_kind(...).collect::<Vec<_>>()`
+/// Replaces the recurring `ctx.walk_kind(...).collect::<Vec<_>>()`
 /// followed by a `for node in collected { ... }` loop: the seeded
 /// worklist gives the same one-shot iteration semantics (kind-filtered,
 /// no re-enqueue unless a rule explicitly pushes consumers) without
@@ -25,7 +25,7 @@ pub(crate) fn seeded_kind<P>(ctx: &crate::pattern::RewriteCtx<'_>, mut pred: P) 
 where
     P: FnMut(&NodeKind) -> bool,
 {
-    ctx.preorder_kind(|k| pred(k)).collect()
+    ctx.walk_kind(|k| pred(k)).collect()
 }
 
 /// Detaches the inputs of every node not reachable from the function entry.
@@ -139,7 +139,7 @@ mod tests {
 
         // Pre-conditions: orphan exists, has inputs, is unreachable.
         assert_eq!(fg.node_inputs(orphan_node).len(), 2);
-        let reachable_pre: DenseEntitySet<NodeId> = fg.preorder().collect();
+        let reachable_pre: DenseEntitySet<NodeId> = fg.walk().collect();
         assert!(!reachable_pre.contains(orphan_node), "fixture must orphan the Add");
 
         let entry = fg.entry().unwrap();
@@ -165,7 +165,7 @@ mod tests {
         .unwrap();
         // Locate the reachable Add for later assertion.
         let reachable_add = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
             .expect("reachable Add must exist");
         assert_eq!(fg.node_inputs(reachable_add).len(), 2);

@@ -78,7 +78,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     // placeholder, did not double-emit, and did not lift the
     // BranchIndirect via the pre-fix ABI handle_return path.
     let placeholder_count = graph
-        .preorder()
+        .walk()
         .filter(|nid| matches!(graph.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
         .count();
     assert_eq!(
@@ -89,7 +89,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     // The placeholder must have a value-input slot wired — its layout
     // is [control, memory, target_value].  That's exactly 3 inputs.
     let placeholder = graph
-        .preorder()
+        .walk()
         .find(|nid| matches!(graph.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
         .expect("must have an IndirectBranch node");
     let inputs = graph.node_inputs(placeholder);

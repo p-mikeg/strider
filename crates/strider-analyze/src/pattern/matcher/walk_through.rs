@@ -271,7 +271,7 @@ mod tests {
         // Sanity: at least two Region nodes are reachable (mid +
         // tail) before we run the matcher.
         let cs_count = fg
-            .preorder()
+            .walk()
             .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
             .count();
         assert!(cs_count >= 2, "chain produces >=2 Region nodes (got {cs_count})");

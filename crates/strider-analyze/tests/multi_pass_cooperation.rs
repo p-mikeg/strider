@@ -31,7 +31,7 @@ fn count_reachable<F>(fg: &strider_ir::Function, pred: F) -> usize
 where
     F: Fn(&NodeKind) -> bool,
 {
-    fg.preorder()
+    fg.walk()
         .filter(|&n| pred(fg.node_kind(n)))
         .count()
 }
@@ -116,7 +116,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> Result<()> {
 
     // The return value must now source from IntConst(3).
     let ret = fg
-        .preorder()
+        .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return node");
     let ret_val = fg.node_inputs(ret)[2];
@@ -171,7 +171,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
 
     // The return value should have been forwarded to the stored constant.
     let ret = fg
-        .preorder()
+        .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return node");
     let ret_val = fg.node_inputs(ret)[2];
@@ -221,7 +221,7 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
 
     // The reachable Return must return IntConst(1) — the true branch.
     let ret = fg
-        .preorder()
+        .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return node");
     let ret_val = fg.node_inputs(ret)[2];
@@ -358,12 +358,12 @@ fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     // First run: must converge and leave no If nodes.
     pipeline.run_built(&mut fg)?;
     let ifs_after_first = count_reachable(&fg, |k| matches!(k, NodeKind::If));
-    let nodes_after_first = fg.preorder().count();
+    let nodes_after_first = fg.walk().count();
     assert_eq!(ifs_after_first, 0, "first run must eliminate If(true)");
 
     // Second run: graph is already at fixed-point; node count must not change.
     pipeline.run_built(&mut fg)?;
-    let nodes_after_second = fg.preorder().count();
+    let nodes_after_second = fg.walk().count();
     assert_eq!(
         nodes_after_first, nodes_after_second,
         "second pipeline run must be idempotent (fixed-point reached after first run)"

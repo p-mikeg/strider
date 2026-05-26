@@ -52,7 +52,7 @@ pub fn first(g: &Function, pat: impl Into<Pat>) -> Match {
 /// none exists.
 #[track_caller]
 pub fn find_node<F: Fn(&NodeKind) -> bool>(g: &Function, pred: F) -> NodeId {
-    g.preorder()
+    g.walk()
         .find(|&n| pred(g.node_kind(n)))
         .expect("expected node kind not found in graph")
 }

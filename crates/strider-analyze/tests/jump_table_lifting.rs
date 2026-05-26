@@ -199,7 +199,7 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // BranchIndirect was fully classified to Multiple before lift
     // (no UnresolvedIndirectBranch placeholder generated).
     let placeholder_count = g
-        .preorder()
+        .walk()
         .filter(|nid| matches!(g.node_kind(*nid), NodeKind::IndirectBranch))
         .count();
     assert_eq!(

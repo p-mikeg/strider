@@ -73,7 +73,7 @@ fn bounded_lift_handles_tail_call_terminator() {
     // is an `IntConst(0x9000)`, and a `Return` node downstream.
     let mut had_call_with_target = false;
     let mut had_return = false;
-    for nid in graph.preorder() {
+    for nid in graph.walk() {
         match graph.node_kind(nid) {
             NodeKind::Call => {
                 // Call inputs: [ctrl, mem, target, args...].  Slot 2 is the target.
@@ -108,7 +108,7 @@ fn bounded_lift_handles_tail_call_terminator() {
 fn graph_has_tail_call_to(graph: &strider_ir::Function, target: u64) -> bool {
     let mut had_call = false;
     let mut had_return = false;
-    for nid in graph.preorder() {
+    for nid in graph.walk() {
         match graph.node_kind(nid) {
             NodeKind::Call => {
                 let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
@@ -177,7 +177,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     );
     // Sanity: a 10-byte function tail-calling out should produce a
     // small graph — not the tens-of-thousands-of-nodes pre-fix shape.
-    let node_count = graph.preorder().count();
+    let node_count = graph.walk().count();
     assert!(
         node_count < 200,
         "lifted graph should be tight (~tens of nodes); got {node_count}",

@@ -392,7 +392,7 @@ proptest! {
             return Ok(());
         };
         use std::collections::HashSet;
-        let visited: Vec<_> = fg.preorder().collect();
+        let visited: Vec<_> = fg.walk().collect();
         let unique: HashSet<_> = visited.iter().copied().collect();
         prop_assert_eq!(
             visited.len(),

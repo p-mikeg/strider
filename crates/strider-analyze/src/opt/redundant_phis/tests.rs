@@ -59,7 +59,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.preorder().collect();
+        fg.walk().collect();
     let surviving_sp_phis = fg
         .all_node_ids()
         .filter(|&n| reachable.contains(n)
@@ -104,7 +104,7 @@ fn mem_phi_single_pred_eliminated() -> crate::opt::Result<()> {
     // arity-additional check is inline below — `preorder()` is the
     // reachable iterator the helper itself uses internally.
     let surviving = fg
-        .preorder()
+        .walk()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::MemPhi))
         .filter(|&n| fg.node_inputs(n).len() <= 2)
         .count();

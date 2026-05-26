@@ -309,7 +309,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
-    for nid in fg.preorder() {
+    for nid in fg.walk() {
         if !matches!(fg.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
@@ -391,7 +391,7 @@ pub fn build_push_target_pop_pc_scenario(
     pipeline.run(&mut fg, entry).expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
-    for nid in fg.preorder() {
+    for nid in fg.walk() {
         if !matches!(fg.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }

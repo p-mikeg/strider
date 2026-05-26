@@ -294,7 +294,7 @@ mod tests {
         let built = builder.build().expect("build");
         // Locate the unique IndirectBranch placeholder.
         let mut found: Option<NodeId> = None;
-        for nid in built.preorder() {
+        for nid in built.walk() {
             if matches!(built.node_kind(nid), NodeKind::IndirectBranch) {
                 assert!(found.is_none(), "more than one IndirectBranch");
                 found = Some(nid);

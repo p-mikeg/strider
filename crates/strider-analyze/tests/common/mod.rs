@@ -413,7 +413,7 @@ pub fn count_returns(g: &strider_ir::Function) -> usize { count_kind(g, |k| matc
 /// "≥ 2 return paths" assertions in this suite.
 pub fn count_return_paths(g: &strider_ir::Function) -> usize {
     let mut total = 0usize;
-    for nid in g.preorder() {
+    for nid in g.walk() {
         if !matches!(g.node_kind(nid), NodeKind::Return) {
             continue;
         }
@@ -449,7 +449,7 @@ pub fn count_return_paths(g: &strider_ir::Function) -> usize {
 pub fn count_loops(g: &strider_ir::Function) -> usize {
     use entity_utils::DenseEntitySet;
     let mut count = 0;
-    let reachable: DenseEntitySet<strider_ir::node::NodeId> = g.preorder().collect();
+    let reachable: DenseEntitySet<strider_ir::node::NodeId> = g.walk().collect();
     for n in g.all_node_ids() {
         if !reachable.contains(n) {
             continue;

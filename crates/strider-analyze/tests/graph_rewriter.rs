@@ -213,11 +213,11 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
 
     let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
     { let __entry = rewriter.entry(); pipeline.run(rewriter.function_mut(), __entry) }?; // first run: collapses Add(7,0)
-    let count_after_first = g.preorder().count();
+    let count_after_first = g.walk().count();
 
     let mut rewriter2 = GraphRewriter::try_wrap_built(&mut g)?;
     { let __entry = rewriter2.entry(); pipeline.run(rewriter2.function_mut(), __entry) }?; // second run: no-op
-    let count_after_second = g.preorder().count();
+    let count_after_second = g.walk().count();
 
     assert_eq!(
         count_after_first, count_after_second,

@@ -431,7 +431,7 @@ mod tests {
         .expect("build graph");
 
         let mut ids = g
-            .preorder()
+            .walk()
             .filter(|&n| matches!(g.node_kind(n), NodeKind::IntConst(_)));
         let n1 = ids.next().expect("first const node");
         let n2 = ids.next().expect("second const node");
@@ -562,7 +562,7 @@ mod tests {
         let g = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
             .expect("build graph");
         let n = g
-            .preorder()
+            .walk()
             .find(|&n| matches!(g.node_kind(n), NodeKind::IntConst(_)))
             .expect("int const node");
 
@@ -602,7 +602,7 @@ mod tests {
         let g = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
             .expect("build graph");
         let n = g
-            .preorder()
+            .walk()
             .find(|&n| matches!(g.node_kind(n), NodeKind::IntConst(_)))
             .expect("int const node");
 

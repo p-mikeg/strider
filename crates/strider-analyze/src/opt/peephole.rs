@@ -25,7 +25,7 @@ use crate::opt::pipeline::OptimizationResult;
 /// A kind-filtered, per-node rewrite pass.  See module docs.
 pub(crate) trait PeepholePass {
     /// Which `NodeKind`s does this pass care about?  Seeded into the
-    /// worklist by [`run_peephole`] via `ctx.preorder_kind`.
+    /// worklist by [`run_peephole`] via `ctx.walk_kind`.
     fn matches_kind(&self, kind: &NodeKind) -> bool;
 
     /// Attempt to rewrite at `root`.  Returns `Changed` if a rewrite
@@ -70,7 +70,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
 ) -> Result<OptimizationResult> {
     let mut work: Worklist<NodeId> =
-        ctx.preorder_kind(|k| pass.matches_kind(k)).collect();
+        ctx.walk_kind(|k| pass.matches_kind(k)).collect();
     let mut overall = OptimizationResult::NoChange;
     let propagate = pass.propagate_to_consumers();
     // Reused per iteration to snapshot consumer NodeIds BEFORE running

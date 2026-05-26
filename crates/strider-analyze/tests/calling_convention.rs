@@ -381,7 +381,7 @@ fn uses_return_assertions(g: &strider_ir::Function) {
     // chain must trace back to ANOTHER Call.  Modeled on
     // `complex_patterns.rs::call_uses_call_return`.
     use strider_ir::node::NodeId;
-    let calls: Vec<NodeId> = g.preorder()
+    let calls: Vec<NodeId> = g.walk()
         .filter(|&n| matches!(g.node_kind(n), NodeKind::Call))
         .collect();
     assert!(!calls.is_empty(),

@@ -72,7 +72,7 @@ fn orchestrator_resolves_switch_jump_table_x86() {
         .expect("orchestrator must converge on switch fixture");
     // The IR must have NO IndirectBranch placeholder remaining.
     let placeholders = g
-        .preorder()
+        .walk()
         .filter(|nid| matches!(g.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
         .count();
     assert_eq!(placeholders, 0, "switch jump table must lower to switch edges");

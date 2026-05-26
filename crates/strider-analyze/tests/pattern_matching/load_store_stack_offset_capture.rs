@@ -27,7 +27,7 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
 
     // Find the load nodes; mark the 0x1000 load as stack-relative.
     let loads: Vec<NodeId> = g
-        .preorder()
+        .walk()
         .filter(|&n| matches!(g.node_kind(n), NodeKind::Load(_)))
         .collect();
     assert_eq!(loads.len(), 2, "expected exactly 2 Load nodes");
@@ -69,7 +69,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
 
     // Identify the two stores.
     let stores: Vec<NodeId> = g
-        .preorder()
+        .walk()
         .filter(|&n| matches!(g.node_kind(n), NodeKind::Store(_)))
         .collect();
     assert_eq!(stores.len(), 2, "expected exactly 2 Store nodes");

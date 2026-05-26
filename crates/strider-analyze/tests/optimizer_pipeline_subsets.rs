@@ -100,7 +100,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
     // stable subset get phi preservation.
     let (mut graph, _) = build_initial_var_target_scenario_x86_64();
     let phi_count_before = graph
-        .preorder()
+        .walk()
         .filter(|&nid| {
             (matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Phi)
                 && graph.phi_var_tag(nid).is_some())
@@ -110,7 +110,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
     let entry = graph.entry().unwrap();
     stable_default_pipeline().run(&mut graph, entry).expect("stable");
     let phi_count_after = graph
-        .preorder()
+        .walk()
         .filter(|&nid| {
             (matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Phi)
                 && graph.phi_var_tag(nid).is_some())

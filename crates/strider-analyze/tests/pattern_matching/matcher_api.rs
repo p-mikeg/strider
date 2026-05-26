@@ -45,7 +45,7 @@ fn kind_prefilter_skips_incompatible_nodes() {
 fn match_at_hits_correct_node() {
     let g = shapes::add_consts(5, 3);
     let add_node = g
-        .preorder()
+        .walk()
         .find(|&n| matches!(g.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
         .expect("add node exists");
 
@@ -60,7 +60,7 @@ fn match_at_hits_correct_node() {
 fn match_at_on_wrong_kind_returns_none() {
     let g = shapes::add_consts(5, 3);
     let add_node = g
-        .preorder()
+        .walk()
         .find(|&n| matches!(g.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
         .unwrap();
     let pat: Pat = load().into();
@@ -72,7 +72,7 @@ fn match_at_on_wrong_kind_returns_none() {
 fn match_at_is_scoped_to_that_node_only() {
     let g = shapes::add_consts(5, 3);
     let add_node = g
-        .preorder()
+        .walk()
         .find(|&n| matches!(g.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
         .unwrap();
     let pat: Pat = int_const(5);
@@ -167,7 +167,7 @@ fn bindings_clone_outlives_match() {
     let bindings = {
         let matcher = Matcher::try_new(&g).unwrap();
         let node = g
-            .preorder()
+            .walk()
             .find(|&n| matches!(g.node_kind(n), NodeKind::IntConst(5)))
             .unwrap();
         let m = matcher

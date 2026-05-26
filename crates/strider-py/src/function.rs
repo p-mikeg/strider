@@ -220,7 +220,7 @@ impl PyFunction {
         use strider_ir::node::NodeKind;
         self.with_read_value(|graph| {
             graph
-                .preorder_kind(|k| matches!(k, NodeKind::Region))
+                .walk_kind(|k| matches!(k, NodeKind::Region))
                 .count()
         })
     }

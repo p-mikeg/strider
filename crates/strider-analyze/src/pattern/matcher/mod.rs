@@ -61,7 +61,7 @@ pub struct Matcher<'g> {
     pub(super) entry: NodeId,
     pub(crate) options: MatcherOptions,
     /// Lazily-cached preorder traversal of `graph`.  Built on
-    /// first call to [`Self::preorder_cached`]; stays valid for the
+    /// first call to [`Self::walk_cached`]; stays valid for the
     /// `Matcher`'s lifetime because the matcher holds an immutable
     /// borrow of `graph` (any mutation would require a fresh
     /// `&mut Graph`, which forces this `Matcher` out of scope).
@@ -69,7 +69,7 @@ pub struct Matcher<'g> {
     /// Used by [`Self::find_all`], [`Self::find_all_multi`], and the
     /// kind-index bootstrap to avoid M independent preorder walks per
     /// session.
-    preorder: std::cell::OnceCell<Vec<NodeId>>,
+    walk: std::cell::OnceCell<Vec<NodeId>>,
     /// Lazily-cached `Discriminant<NodeKind> → Vec<NodeId>` index of
     /// the graph.  Populated on first call to [`Self::kind_index`];
     /// consulted by [`Self::find_all`] and [`Self::find_all_multi`]
@@ -106,15 +106,15 @@ impl<'g> Matcher<'g> {
             function,
             entry,
             options: MatcherOptions::default(),
-            preorder: std::cell::OnceCell::new(),
+            walk: std::cell::OnceCell::new(),
             kind_index: std::cell::OnceCell::new(),
         }
     }
 
     /// Returns the cached preorder traversal of the graph, computing
     /// it on first call.
-    fn preorder_cached(&self) -> &[NodeId] {
-        self.preorder
+    fn walk_cached(&self) -> &[NodeId] {
+        self.walk
             .get_or_init(|| self.function.walk_from(self.entry).collect())
             .as_slice()
     }
@@ -130,7 +130,7 @@ impl<'g> Matcher<'g> {
                 std::mem::Discriminant<strider_ir::node::NodeKind>,
                 Vec<NodeId>,
             > = rustc_hash::FxHashMap::default();
-            for &node in self.preorder_cached() {
+            for &node in self.walk_cached() {
                 let d = std::mem::discriminant(self.function.node_kind(node));
                 index.entry(d).or_default().push(node);
             }
@@ -176,7 +176,7 @@ impl<'g> Matcher<'g> {
     ///   matcher consults its lazy `kind_index` and iterates only the
     ///   bucket of nodes whose discriminant matches.
     /// * Wildcard root (`KindSpec::Any`) — falls back to the lazy
-    ///   `preorder_cached` traversal.
+    ///   `walk_cached` traversal.
     ///
     /// Both indices are computed once per `Matcher` and reused across
     /// every `find_all` / `find_all_multi` call on that matcher.
@@ -209,7 +209,7 @@ impl<'g> Matcher<'g> {
                 }
             }
             None => {
-                for &node in self.preorder_cached() {
+                for &node in self.walk_cached() {
                     let mark = bindings.mark();
                     if self.match_node_id(node, pat, &mut bindings) {
                         hits.push(Match {
@@ -288,7 +288,7 @@ impl<'g> Matcher<'g> {
         // Wildcard pass: visit every node in cached preorder, try
         // every wildcard pattern.  Skipped when `wildcards` is empty.
         if !wildcards.is_empty() {
-            for &node in self.preorder_cached() {
+            for &node in self.walk_cached() {
                 for &i in &wildcards {
                     let mark = bindings.mark();
                     if self.match_node_id(node, pats[i], &mut bindings) {
@@ -303,7 +303,7 @@ impl<'g> Matcher<'g> {
         }
 
         // No post-sort: `kind_index` was populated by iterating
-        // `preorder_cached()` once, so each bucket's `Vec<NodeId>`
+        // `walk_cached()` once, so each bucket's `Vec<NodeId>`
         // is already in preorder.  Iterating one bucket per
         // pattern preserves per-pattern preorder of `find_all`.
         results

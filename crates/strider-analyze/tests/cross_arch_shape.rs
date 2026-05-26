@@ -222,7 +222,7 @@ fn structural_fingerprint(g: &strider_ir::Function) -> Fingerprint {
     let mut edges_memory = 0usize;
     let mut edges_value = 0usize;
 
-    for nid in g.preorder() {
+    for nid in g.walk() {
         reachable_nodes += 1;
         let kind = g.node_kind(nid);
         *kind_histogram.entry(kind_bucket(g, nid)).or_insert(0) += 1;

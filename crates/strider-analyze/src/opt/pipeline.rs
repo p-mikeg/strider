@@ -322,9 +322,9 @@ mod tests {
         let mut g = one_const_fn(3);
         let pipeline = crate::opt::default_pipeline();
         let entry = g.entry().unwrap();
-        let before = g.preorder().count();
+        let before = g.walk().count();
         pipeline.run(&mut g, entry)?;
-        let after = g.preorder().count();
+        let after = g.walk().count();
         // The default pipeline on an already-folded constant cannot fold
         // further; the reachable-count is stable.  This pins that
         // `run(graph, entry)` doesn't accidentally mutate the graph
@@ -547,9 +547,9 @@ mod tests {
         // After fixed point, the 50-deep chain has folded to a single
         // `IntConst(50)`; the reachable set is small.
         assert!(
-            g.preorder().count() < 20,
+            g.walk().count() < 20,
             "50-deep chain should fold; reachable={}",
-            g.preorder().count()
+            g.walk().count()
         );
         Ok(())
     }

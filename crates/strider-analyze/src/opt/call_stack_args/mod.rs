@@ -389,7 +389,7 @@ impl Optimizer for CallStackArgCollect {
     ) -> Result<OptimizationResult> {
         let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         let calls: Vec<NodeId> = ctx
-            .preorder()
+            .walk()
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
             .collect();
         let mut sp_memo: SpExprMemo = Default::default();

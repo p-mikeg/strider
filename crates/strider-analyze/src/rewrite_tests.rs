@@ -96,7 +96,7 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::Function {
 /// Counts reachable Add nodes — the easy way to assert "the rule
 /// fired" without poking at internal graph slot ids.
 fn count_adds(g: &strider_ir::Function) -> usize {
-    g.preorder()
+    g.walk()
         .filter(|nid| {
             matches!(
                 g.node_kind(*nid),
@@ -110,7 +110,7 @@ fn count_adds(g: &strider_ir::Function) -> usize {
 /// `IntBinaryOp::Sub` is not a primitive in this IR — `build_int_sub`
 /// produces this two-node shape, and `crate::pattern::sub(_, _)` matches it.
 fn count_subs(g: &strider_ir::Function) -> usize {
-    g.preorder()
+    g.walk()
         .filter(|&nid| {
             // Outer node must be Add with exactly two value inputs.
             if !matches!(
@@ -240,11 +240,11 @@ fn re_optimize_is_idempotent() -> anyhow::Result<()> {
     let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
     let entry = rewriter.entry();
     pipeline.run(rewriter.function_mut(), entry)?;
-    let count_after_first = built.preorder().count();
+    let count_after_first = built.walk().count();
     let mut rewriter2 = GraphRewriter::try_wrap_built(&mut built)?;
     let entry2 = rewriter2.entry();
     pipeline.run(rewriter2.function_mut(), entry2)?;
-    let count_after_second = built.preorder().count();
+    let count_after_second = built.walk().count();
     assert_eq!(
         count_after_first, count_after_second,
         "re_optimize is idempotent — graph shape stable across repeated runs",

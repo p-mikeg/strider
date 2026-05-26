@@ -24,7 +24,7 @@ fn find<F: Fn(&NodeKind) -> bool>(
     fg: &strider_ir::Function,
     pred: F,
 ) -> Option<NodeId> {
-    fg.preorder().find(|&n| pred(fg.node_kind(n)))
+    fg.walk().find(|&n| pred(fg.node_kind(n)))
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn known_bits_fold_preserves_fingerprints() {
     // The eventual return value should be an IntConst with at least one
     // of the rewritten addresses absorbed into it.
     let ret = fg
-        .preorder()
+        .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return");
     let ret_inputs: Vec<_> = fg.node_inputs(ret).into_iter().collect();
@@ -175,7 +175,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     // Whatever value reaches the Return must carry the outer-And's
     // address — that's the canonical "rewrite root".
     let ret = fg
-        .preorder()
+        .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return");
     let ret_inputs: Vec<_> = fg.node_inputs(ret).into_iter().collect();

@@ -427,7 +427,7 @@ mod tests {
         let fg = make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap();
         // Locate the InitialMemory node and its output.
         let im = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
             .expect("InitialMemory must exist");
         let im_out = fg.node_outputs_exact::<1>(im).unwrap()[0];
@@ -453,7 +453,7 @@ mod tests {
         // head of the chain.  Following its prev_mem (Store inputs[0])
         // walks backward to InitialMemory.
         let ret = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .expect("Return must exist");
         let mem_out = fg.node_inputs(ret)[1];
@@ -538,11 +538,11 @@ mod tests {
     ) -> NodeOutputId {
         // Find InitialMemory and Region; use them to build a MemPhi.
         let im_node = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
             .expect("InitialMemory must exist");
         let region_node = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
             .expect("Region must exist");
         let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
@@ -609,15 +609,15 @@ mod tests {
         .unwrap();
         // Locate IM, Store, Region, then build a MemPhi[token, im_out, store_mem_out].
         let im_node = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
             .unwrap();
         let store_node = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
             .unwrap();
         let region_node = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
             .unwrap();
         let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];

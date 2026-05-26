@@ -334,7 +334,7 @@ fn resolve_const_loads(
     fg: &mut strider_ir::Function,
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
-    let nodes: Vec<_> = fg.preorder().collect();
+    let nodes: Vec<_> = fg.walk().collect();
     let mut any_folded = false;
     for node_id in nodes {
         let kind = *fg.node_kind(node_id);
@@ -397,7 +397,7 @@ fn resolve_const_loads(
 /// Zero or more than one Return signals a graph-construction bug in
 /// this module and propagates as an error.
 fn find_unique_return(fg: &strider_ir::Function) -> Result<strider_ir::node::NodeId> {
-    let mut iter = fg.preorder_kind(|k| matches!(k, strider_ir::node::NodeKind::Return));
+    let mut iter = fg.walk_kind(|k| matches!(k, strider_ir::node::NodeKind::Return));
     let first = iter
         .next()
         .ok_or_else(|| anyhow::anyhow!("indirect_resolve mini-graph contains no Return node"))?;

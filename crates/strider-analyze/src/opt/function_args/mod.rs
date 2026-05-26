@@ -193,7 +193,7 @@ fn detect_register_args(
     // matching every other pass in this crate.
     let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
         rustc_hash::FxHashMap::default();
-    for n in ctx.preorder() {
+    for n in ctx.walk() {
         if let NodeKind::InitialVar(vn) = *ctx.node_kind(n) {
             initial_vars.insert(vn, n);
         }

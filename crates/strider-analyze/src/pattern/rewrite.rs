@@ -201,21 +201,21 @@ impl<'g> RewriteCtx<'g> {
 
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
     /// `Graph::preorder` so optimizer pass bodies that
-    /// call `ctx.preorder()` look the same as if they held a
+    /// call `ctx.walk()` look the same as if they held a
     /// `Graph` directly.
     #[must_use]
-    pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
+    pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
         self.function.walk_from(self.entry)
     }
 
     /// kind-filtered pre-order walk.  Mirrors
-    /// `Graph::preorder_kind`.
-    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
+    /// `Graph::walk_kind`.
+    pub fn walk_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
     {
         let g: &Graph = self.function;
-        self.preorder().filter(move |&n| pred(g.node_kind(n)))
+        self.walk().filter(move |&n| pred(g.node_kind(n)))
     }
 
     /// Read-only access to the wrapped structural [`Graph`].
@@ -268,21 +268,21 @@ impl<'g> RewriteCtx<'g> {
 impl<'g> RewriteCtxView<'g> {
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
     /// `Graph::preorder` so optimizer pass bodies that
-    /// call `ctx.preorder()` look the same as if they held a
+    /// call `ctx.walk()` look the same as if they held a
     /// `Graph` directly.
     #[must_use]
-    pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
+    pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
         self.function.walk_from(self.entry)
     }
 
     /// kind-filtered pre-order walk.  Mirrors
-    /// `Graph::preorder_kind`.
-    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
+    /// `Graph::walk_kind`.
+    pub fn walk_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
     {
         let g: &Graph = self.function;
-        self.preorder().filter(move |&n| pred(g.node_kind(n)))
+        self.walk().filter(move |&n| pred(g.node_kind(n)))
     }
 
     /// Read-only access to the wrapped `Graph`.
@@ -493,7 +493,7 @@ mod tests {
 
     /// Returns the unique Add node in `fg`, or panics.
     fn unique_add(fg: &strider_ir::Function) -> strider_ir::node::NodeId {
-        fg.preorder()
+        fg.walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
             .expect("unique Add must exist")
     }
@@ -506,7 +506,7 @@ mod tests {
         let x = Capture::new();
         let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
-        let pre_count = fg.preorder().count();
+        let pre_count = fg.walk().count();
         // Pick any reachable node (Return) as the root candidate; rule
         // won't match it because its kind isn't Add.
         let ret = fg
@@ -516,7 +516,7 @@ mod tests {
         let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = rule(&mut ctx, ret).unwrap();
         assert!(!r, "no match → returns false");
-        assert_eq!(fg.preorder().count(), pre_count, "graph unchanged");
+        assert_eq!(fg.walk().count(), pre_count, "graph unchanged");
     }
 
     #[test]
@@ -563,7 +563,7 @@ mod tests {
         .unwrap();
         // Find the inner Add: the one whose second input is the IntConst(0).
         let inner_add = fg
-            .preorder()
+            .walk()
             .find(|&n| {
                 if !matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)) {
                     return false;
@@ -585,7 +585,7 @@ mod tests {
 
         // The outer Add now has both inputs pointing at the IntConst(13).
         let outer_add = fg
-            .preorder()
+            .walk()
             .find(|&n| {
                 matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add))
                     && {
@@ -610,7 +610,7 @@ mod tests {
         let mut fg = add_x_zero();
         let add_node = unique_add(&fg);
 
-        let pre_count = fg.preorder().count();
+        let pre_count = fg.walk().count();
 
         let x = Capture::new();
         // RHS that always returns the skip sentinel.
@@ -620,7 +620,7 @@ mod tests {
         let mut ctx = RewriteCtx::try_for_built(&mut fg).unwrap();
         let changed = rule(&mut ctx, add_node).unwrap();
         assert!(!changed, "RHS skip → Ok(false)");
-        assert_eq!(fg.preorder().count(), pre_count, "graph unchanged after skip");
+        assert_eq!(fg.walk().count(), pre_count, "graph unchanged after skip");
     }
 
     #[test]
@@ -775,7 +775,7 @@ mod tests {
             boxed_rule(rewrite_rule(add(var(y), any()), var(y))),
         ];
         let apply = apply_rules_in_order(&rules);
-        let nodes: Vec<_> = g.preorder().collect();
+        let nodes: Vec<_> = g.walk().collect();
         let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
         let mut any_fired = false;
         for n in nodes {
@@ -840,7 +840,7 @@ mod tests {
             truncate(any_int_const(v)),
             int_const_with!([v: uint, ty] => { let _ = ty; v }),
         );
-        let nodes: Vec<_> = g.preorder().collect();
+        let nodes: Vec<_> = g.walk().collect();
         let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
         for n in nodes {
             // Rule should not fire (input is an Add, not an IntConst),
@@ -896,7 +896,7 @@ mod tests {
         let mut fg = make_empty_fn(|b| b.build_int_const(42u64, NodeOutputType::U64)).unwrap();
         // Locate the IntConst node.
         let c_node = fg
-            .preorder()
+            .walk()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::IntConst(_)))
             .unwrap();
         let c = Capture::new();

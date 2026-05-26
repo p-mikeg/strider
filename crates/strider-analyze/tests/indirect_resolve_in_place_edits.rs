@@ -23,7 +23,7 @@ use strider_analyze::pattern::GraphRewriteCtxExt;
 /// if 0 or multiple are found.
 fn locate_placeholder_return(graph: &strider_ir::Function) -> NodeId {
     let mut found: Option<NodeId> = None;
-    for nid in graph.preorder() {
+    for nid in graph.walk() {
         if !matches!(graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
@@ -41,7 +41,7 @@ fn locate_placeholder_return(graph: &strider_ir::Function) -> NodeId {
 /// reachable Return is sufficient.
 fn locate_fresh_return(graph: &strider_ir::Function) -> NodeId {
     let mut found: Option<NodeId> = None;
-    for nid in graph.preorder() {
+    for nid in graph.walk() {
         if !matches!(graph.node_kind(nid), NodeKind::Return) {
             continue;
         }
@@ -117,7 +117,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     // must not be.
     let mut new_seen = false;
     let mut old_seen = false;
-    for nid in graph.preorder() {
+    for nid in graph.walk() {
         if nid == new_return {
             new_seen = true;
         }

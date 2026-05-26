@@ -727,7 +727,7 @@ fn build_pred_if_graph(
     let g = b.build().unwrap();
     // The placeholder Return is the 3-input one in dispatch.
     let mut anchor = None;
-    for nid in g.preorder() {
+    for nid in g.walk() {
         if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
@@ -805,7 +805,7 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
 
     let g = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.preorder() {
+    for nid in g.walk() {
         if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
@@ -850,7 +850,7 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
     b.set_lift_addr(None);
     let g = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.preorder() {
+    for nid in g.walk() {
         if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
@@ -907,7 +907,7 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
 
     let g = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.preorder() {
+    for nid in g.walk() {
         if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
@@ -1096,7 +1096,7 @@ fn build_diamond_two_bounds(
 
     let g = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.preorder() {
+    for nid in g.walk() {
         if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
@@ -1185,7 +1185,7 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
 
     let g = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.preorder() {
+    for nid in g.walk() {
         if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }

@@ -212,7 +212,7 @@ impl Optimizer for RedundantPhis {
         // Only phi-like nodes can be simplified by `remove_phis`, so don't
         // walk every node — pre-filter on the kinds we care about.
         let candidates: Vec<NodeId> = ctx
-            .preorder()
+            .walk()
             .filter(|&n| {
                 matches!(
                     ctx.node_kind(n),

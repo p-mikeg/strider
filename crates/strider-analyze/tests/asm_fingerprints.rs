@@ -66,7 +66,7 @@ fn arithmetic_x86_add_node_fingerprint_is_inside_function_extent() {
     // record pcode-insn-index values or other garbage.
     let g = analyze(Arch::X86, "arithmetic", "add");
     let mut saw_any = false;
-    for node in g.preorder() {
+    for node in g.walk() {
         let fp = g.asm_fingerprint(node);
         for &addr in fp {
             assert_ne!(addr, 0, "asm-fingerprint addr 0 is suspicious");

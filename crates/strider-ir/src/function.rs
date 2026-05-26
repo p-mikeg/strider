@@ -457,26 +457,26 @@ impl Function {
     /// starting from [`Function::entry`].  Yields an empty walk on a
     /// function whose entry has not yet been set.
     #[must_use]
-    pub fn preorder(&self) -> crate::walk::GraphWalk<'_> {
+    pub fn walk(&self) -> crate::walk::GraphWalk<'_> {
         crate::walk::walk_graph_opt(&self.graph, self.entry)
     }
 
     /// Reachable preorder filtered by a predicate over the node's kind.
-    pub fn preorder_kind<'a, P>(
+    pub fn walk_kind<'a, P>(
         &'a self,
         mut pred: P,
     ) -> impl Iterator<Item = NodeId> + 'a
     where
         P: FnMut(&crate::node::NodeKind) -> bool + 'a,
     {
-        self.preorder()
+        self.walk()
             .filter(move |&n| pred(self.graph.node_kind(n)))
     }
 
     /// Counts reachable nodes whose [`crate::node::NodeKind`] satisfies
     /// `predicate`.  Walks in pre-order from [`Self::entry`].
     pub fn count_kind<F: Fn(&crate::node::NodeKind) -> bool>(&self, predicate: F) -> usize {
-        self.preorder()
+        self.walk()
             .filter(|nid| predicate(self.graph.node_kind(*nid)))
             .count()
     }
@@ -484,7 +484,7 @@ impl Function {
     /// Returns `true` when at least one reachable node satisfies
     /// `predicate`.  Short-circuits at the first match.
     pub fn has_kind<F: Fn(&crate::node::NodeKind) -> bool>(&self, predicate: F) -> bool {
-        self.preorder().any(|nid| predicate(self.graph.node_kind(nid)))
+        self.walk().any(|nid| predicate(self.graph.node_kind(nid)))
     }
 
     /// Rebuilds the function's graph to retain only nodes reachable from
