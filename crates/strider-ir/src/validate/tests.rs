@@ -1058,3 +1058,92 @@ fn validate_accepts_mem_project_and_union_chain() {
         "MemProject → MemUnion chain must pass validate"
     );
 }
+
+// ── CC arity check ───────────────────────────────────────────────────────
+
+/// Build a minimal Function whose `cc_metadata` declares
+/// `ret_val_regs = [v1, v2]`.  Used by the cc-arity tests below.
+fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
+    use cranelift_entity::PrimaryMap;
+    let mut f = Function::new();
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    stamp(&mut f, entry);
+    f.set_entry(entry);
+    let mk_vn = |off: u64| rsleigh::Vn {
+        addr_off: off,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn> = PrimaryMap::new();
+    variables.push(mk_vn(0x10));
+    variables.push(mk_vn(0x18));
+    f.set_cc_metadata(crate::graph::CcMetadata {
+        variables,
+        call_clobbered: Box::new([]),
+        ret_val_regs: Box::new([mk_vn(0x10), mk_vn(0x18)]),
+        call_other_clobbered: Box::new([]),
+        no_memory_clobber: false,
+    });
+    (f, entry)
+}
+
+#[test]
+fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
+    // Function declares ret_val_regs = [v1, v2] (count 2).  We build
+    // a Return with only [ctrl, mem, v1_val] — one short.  The
+    // validator's cc-arity check must fire with NodeInputCountMismatch.
+    // This is the bug class A6-H1 in the multi-round review: a
+    // synthesised Return dropping ret_val_regs_float silently produces
+    // a too-short Return.
+    let (mut f, entry) = fn_with_declared_cc();
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    stamp(&mut f, mem);
+    let v1 = f.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [v1_out] = f.node_outputs_exact::<1>(v1).unwrap();
+    stamp(&mut f, v1);
+    // Return with only ONE ret-val input — dropping v2's slot.
+    let ret = f.create_node(NodeKind::Return, [ctrl, mem_out, v1_out], []);
+    stamp(&mut f, ret);
+
+    let err = validate(&f, entry).expect_err("expected cc-arity violation");
+    assert!(
+        err.0.iter().any(|e| matches!(
+            e,
+            ValidationError::NodeInputCountMismatch { expected: 4, actual: 3, .. }
+        )),
+        "expected NodeInputCountMismatch {{ expected: 4, actual: 3 }} for the Return, got: {err:?}"
+    );
+}
+
+#[test]
+fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
+    let (mut f, entry) = fn_with_declared_cc();
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    stamp(&mut f, mem);
+    let v1 = f.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [v1_out] = f.node_outputs_exact::<1>(v1).unwrap();
+    stamp(&mut f, v1);
+    let v2 = f.create_node(
+        NodeKind::IntConst(8),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [v2_out] = f.node_outputs_exact::<1>(v2).unwrap();
+    stamp(&mut f, v2);
+    let ret = f.create_node(NodeKind::Return, [ctrl, mem_out, v1_out, v2_out], []);
+    stamp(&mut f, ret);
+
+    validate(&f, entry).expect("Return with declared 2 ret-val regs and 2 value inputs must validate");
+}

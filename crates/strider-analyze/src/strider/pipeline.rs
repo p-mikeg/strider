@@ -172,6 +172,29 @@ impl Strider {
         })
     }
 
+    /// Constructs a `Strider` from an already-resolved
+    /// `BuiltCallingConvention`.  Use this when the CC was built
+    /// outside the standard preset path (e.g. a custom CC constructed
+    /// from runtime register-name lists at the Python boundary).
+    ///
+    /// Unlike [`Self::new`], no name resolution runs — the caller is
+    /// responsible for ensuring `calling_convention`'s varnodes resolve
+    /// against `sleigh_regs`.  ABI invariants are pinned at
+    /// [`strider_target::BuiltCallingConvention::try_new`] construction
+    /// time; this constructor trusts that contract.
+    #[must_use]
+    pub fn new_with_built_cc(
+        arch: strider_target::SleighArch,
+        sleigh_regs: rsleigh::SleighRegs,
+        calling_convention: strider_target::BuiltCallingConvention,
+    ) -> Self {
+        Self {
+            arch,
+            calling_convention,
+            sleigh_regs,
+        }
+    }
+
     /// Returns the resolved calling convention this Strider was built with.
     #[must_use]
     pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {

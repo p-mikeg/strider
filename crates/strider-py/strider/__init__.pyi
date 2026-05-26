@@ -65,6 +65,20 @@ class CallingConvention:
     def powerpc64_elf_v2(cls) -> CallingConvention: ...
     @classmethod
     def x86_cdecl(cls) -> CallingConvention: ...
+    @classmethod
+    def custom(
+        cls,
+        sleigh: "Sleigh",
+        arg_passing_regs: list[str],
+        callee_saved_regs: list[str],
+        ret_val_regs: list[str],
+        ret_val_regs_float: list[str],
+        stack_pointer: str,
+        stack_arg_offsets: list[int],
+        ret_stack_pop: int,
+        link_register: Optional[str] = ...,
+        no_memory_clobber: bool = ...,
+    ) -> CallingConvention: ...
     def name(self) -> str: ...
 
 # ── Memory readers ──────────────────────────────────────────────────────

@@ -6,10 +6,25 @@ use pyo3::types::PyType;
 
 use crate::macros::forall_preset;
 
+/// Backing storage for [`PyCallingConvention`].
+///
+/// `Preset` carries a built-in `CallingConvention` whose static-string
+/// register names are resolved lazily against a Sleigh at consumption
+/// time.  `Custom` carries an already-resolved
+/// `BuiltCallingConvention` produced by [`PyCallingConvention::custom`]
+/// from user-supplied register-name lists — pre-resolution allows
+/// validation to surface bad inputs (typos, ABI-invariant violations)
+/// at construction time rather than at first use.
+#[derive(Clone)]
+pub(crate) enum CcImpl {
+    Preset(strider_target::CallingConvention),
+    Custom(Box<strider_target::BuiltCallingConvention>),
+}
+
 #[pyclass(name = "CallingConvention", module = "strider", frozen)]
 #[derive(Clone)]
 pub struct PyCallingConvention {
-    pub(crate) inner: strider_target::CallingConvention,
+    pub(crate) inner: CcImpl,
     pub(crate) preset_name: &'static str,
 }
 
@@ -61,8 +76,101 @@ impl PyCallingConvention {
         let inner = strider_target::CallingConvention::x86_64_all_preserving()
             .map_err(|e| crate::errors::into_strider_err(e.into()))?;
         Ok(Self {
-            inner,
+            inner: CcImpl::Preset(inner),
             preset_name: "x86_64_all_preserving",
+        })
+    }
+
+    /// Build a custom calling convention from explicit register-name
+    /// lists.  Resolves every name against `sleigh`'s register table
+    /// and validates the canonical ABI invariants via
+    /// [`strider_target::BuiltCallingConvention::try_new`] — typos
+    /// (unknown register name) and invariant violations
+    /// (SP listed in arg_passing_regs, LR not in callee_saved, etc.)
+    /// surface as `StriderError` at construction time.
+    ///
+    /// Use this when none of the built-in presets matches the binary's
+    /// ABI (custom hardware ABIs, in-house RPC dispatchers, hot-patch
+    /// trampolines that pin a non-standard register set).
+    ///
+    /// Args:
+    ///     sleigh: The `Sleigh` instance to resolve register names against.
+    ///     arg_passing_regs: Register names passing positional args, in ABI order.
+    ///     callee_saved_regs: Registers the callee must preserve.  When
+    ///         `link_register` is set, it MUST appear here.
+    ///     ret_val_regs: Integer return-value registers, in ABI order.
+    ///     ret_val_regs_float: Float return-value registers, in ABI order.
+    ///     stack_pointer: Register name of the hardware stack pointer.
+    ///     stack_arg_offsets: Byte offsets from call-time SP for each
+    ///         positional stack arg (after register args are exhausted).
+    ///     ret_stack_pop: Net byte change `ret` inflicts on caller SP
+    ///         (typically 4/8 on stack-push ISAs, 0 on link-register ISAs).
+    ///     link_register: Optional register name of the link register
+    ///         (ARM/AArch64/MIPS/PowerPC); pass `None` on x86/x86_64.
+    ///     no_memory_clobber: `True` for transparent hooks
+    ///         (`__fentry__`/`mcount`-style) that preserve memory.
+    #[classmethod]
+    #[pyo3(signature = (
+        sleigh,
+        arg_passing_regs,
+        callee_saved_regs,
+        ret_val_regs,
+        ret_val_regs_float,
+        stack_pointer,
+        stack_arg_offsets,
+        ret_stack_pop,
+        link_register=None,
+        no_memory_clobber=false,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn custom(
+        _cls: &Bound<'_, PyType>,
+        py: Python<'_>,
+        sleigh: Py<crate::sleigh::PySleigh>,
+        arg_passing_regs: Vec<String>,
+        callee_saved_regs: Vec<String>,
+        ret_val_regs: Vec<String>,
+        ret_val_regs_float: Vec<String>,
+        stack_pointer: String,
+        stack_arg_offsets: Vec<i64>,
+        ret_stack_pop: i64,
+        link_register: Option<String>,
+        no_memory_clobber: bool,
+    ) -> PyResult<Self> {
+        let sleigh_borrow = sleigh.borrow(py);
+        let regs = sleigh_borrow.regs.clone();
+        drop(sleigh_borrow);
+        let resolve = |name: &str| {
+            regs.name_to_vn(name).ok_or_else(|| {
+                crate::errors::into_strider_err(anyhow::anyhow!(
+                    "CallingConvention.custom: unknown register name {name:?}"
+                ))
+            })
+        };
+        let resolve_list = |names: &[String]| -> PyResult<Vec<rsleigh::Vn>> {
+            names.iter().map(|n| resolve(n)).collect()
+        };
+        let arg_vns = resolve_list(&arg_passing_regs)?;
+        let callee_vns = resolve_list(&callee_saved_regs)?;
+        let ret_vns = resolve_list(&ret_val_regs)?;
+        let ret_float_vns = resolve_list(&ret_val_regs_float)?;
+        let sp_vn = resolve(&stack_pointer)?;
+        let lr_vn = link_register.as_deref().map(resolve).transpose()?;
+        let built = strider_target::BuiltCallingConvention::try_new(
+            arg_vns,
+            callee_vns,
+            ret_vns,
+            ret_float_vns,
+            sp_vn,
+            stack_arg_offsets,
+            ret_stack_pop,
+            lr_vn,
+            no_memory_clobber,
+        )
+        .map_err(|e| crate::errors::into_strider_err(e.into()))?;
+        Ok(Self {
+            inner: CcImpl::Custom(Box::new(built)),
+            preset_name: "custom",
         })
     }
 
@@ -92,8 +200,14 @@ pub(crate) fn build_cc_for_sleigh(
     sleigh: &Py<crate::sleigh::PySleigh>,
     cc: &PyCallingConvention,
 ) -> PyResult<strider_target::BuiltCallingConvention> {
-    let sleigh_borrow = sleigh.borrow(py);
-    let regs = sleigh_borrow.regs.clone();
-    drop(sleigh_borrow);
-    cc.inner.build(&regs).map_err(crate::errors::into_strider_err)
+    match &cc.inner {
+        CcImpl::Preset(preset) => {
+            let sleigh_borrow = sleigh.borrow(py);
+            let regs = sleigh_borrow.regs.clone();
+            drop(sleigh_borrow);
+            preset.build(&regs).map_err(crate::errors::into_strider_err)
+        }
+        // Already resolved at `custom()` time; just clone.
+        CcImpl::Custom(built) => Ok(*built.clone()),
+    }
 }

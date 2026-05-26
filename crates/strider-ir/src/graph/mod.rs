@@ -64,6 +64,7 @@ pub struct CcMetadata {
     pub(crate) no_memory_clobber: bool,
 }
 
+
 /// The core IR graph structure.
 ///
 /// Stores nodes, their input/output slots, and a deduplication cache for

@@ -152,6 +152,92 @@ pub(super) fn check_graph_invariants_phis(
     }
 }
 
+/// Graph invariant: every reachable `Call` node's output count and
+/// every reachable `Return` node's input count match the function's
+/// calling-convention metadata.
+///
+/// * `Call` outputs: `2 + clobber_count` where `clobber_count` is
+///   the per-`Call` override length (when set) or the function-default
+///   `call_clobbered_regs` length.  Slots 0/1 are Control / Memory(_);
+///   slots 2.. are the clobber values.
+/// * `Return` inputs: `2 + ret_val_count` where `ret_val_count` is
+///   the function's combined int+float ret-val register count.
+///
+/// Catches the class of bugs where the orchestrator's
+/// indirect-resolve in-place edits synthesise Returns / Calls whose
+/// arity drifts from the function-default shape (e.g. silently
+/// dropping `ret_val_regs_float`).
+///
+/// Skips the check when:
+///
+/// * `cc_metadata` is absent (synthetic graph that hasn't been built
+///   through `FunctionBuilder::build`), OR
+/// * the relevant CC list is empty — `Call` arity is unchecked when
+///   `call_clobbered_regs` is empty AND no per-`Call` override is set;
+///   `Return` arity is unchecked when `ret_val_regs` is empty.  This
+///   is the synthetic-test escape hatch: `RegisterSet`-built fixtures
+///   commonly track SP without declaring any ret-val regs and rely on
+///   the variadic Return tail to ship an arbitrary value to assert
+///   against.  Pinning arity against an empty CC list would block
+///   that intentional usage without catching any real-world bug class
+///   (the bug class — synthesised Return drops some declared
+///   ret-val regs — only manifests when at least one ret-val reg IS
+///   declared).
+pub(super) fn check_graph_invariants_cc_arity(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph: &Graph = function;
+    if function.cc_metadata().is_none() {
+        return;
+    }
+    let ret_val_count = function.ret_val_regs().len();
+    let default_clobber_count = function.call_clobbered_regs().len();
+    for (node, kind) in graph.reachable_kind_iter(reachable) {
+        match kind {
+            NodeKind::Call => {
+                // Per-Call override length wins over the function
+                // default; falls back to function-default when no
+                // override was recorded.
+                let override_count = function
+                    .call_clobbered_override(node)
+                    .map(<[_]>::len);
+                let clobber_count = override_count.unwrap_or(default_clobber_count);
+                // Synthetic-test escape: skip when both the function
+                // default and the per-Call override are empty.
+                if clobber_count == 0 {
+                    continue;
+                }
+                let expected = 2 + clobber_count;
+                let actual = graph.node_outputs(node).len();
+                if actual != expected {
+                    errs.push(ValidationError::NodeOutputCountMismatch {
+                        node,
+                        expected,
+                        actual,
+                    });
+                }
+            }
+            NodeKind::Return => {
+                if ret_val_count == 0 {
+                    continue;
+                }
+                let expected = 2 + ret_val_count;
+                let actual = graph.node_inputs(node).len();
+                if actual != expected {
+                    errs.push(ValidationError::NodeInputCountMismatch {
+                        node,
+                        expected,
+                        actual,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Graph invariant: every reachable, non-exempt node must carry at
 /// least one asm-fingerprint contributor.  See
 /// [`crate::function::Function::asm_fingerprint`] for the full contract.

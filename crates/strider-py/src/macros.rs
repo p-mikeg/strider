@@ -18,7 +18,8 @@
 //!   `CallingConvention`).
 
 macro_rules! forall_preset {
-    // Fallible: inner ctor returns Result; lift the error.
+    // Fallible: inner ctor returns Result; lift the error.  The CC
+    // wrapper stores the result in `CcImpl::Preset(...)`.
     (try $self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
         #[pymethods]
         impl $self_ty {
@@ -28,7 +29,7 @@ macro_rules! forall_preset {
                     let inner = <$inner_ty>::$name()
                         .map_err(|e| crate::errors::into_strider_err(e.into()))?;
                     Ok(Self {
-                        inner,
+                        inner: crate::cc::CcImpl::Preset(inner),
                         preset_name: stringify!($name),
                     })
                 }

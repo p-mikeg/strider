@@ -156,6 +156,18 @@ impl Function {
             .map_or(&[], |cc| &cc.call_clobbered)
     }
 
+    /// Read the calling convention's combined return-value register
+    /// list (integer + float, in ABI order).  Convenience accessor
+    /// over `cc_metadata().ret_val_regs`; returns an empty slice when
+    /// `cc_metadata` is `None`.
+    #[inline]
+    #[must_use]
+    pub fn ret_val_regs(&self) -> &[rsleigh::Vn] {
+        self.cc_metadata
+            .as_ref()
+            .map_or(&[], |cc| &cc.ret_val_regs)
+    }
+
     /// Function-default `no_memory_clobber` flag.  Returns `false` when
     /// `cc_metadata` is `None`.
     #[inline]

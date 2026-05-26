@@ -905,9 +905,10 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Nod
 /// Mirrors the body of the `override_cc.is_some()` arm of
 /// [`crate::opt::AnchorCallingContext::for_anchor`]'s clobber
 /// computation and the post-splice clobber rebuild in
-/// [`apply_in_place_edit`] — extracted so
-/// the same projection (`!callee_saved && != stack_ptr`) is defined in
-/// exactly one place.
+/// [`apply_in_place_edit`] — delegates the actual projection to
+/// [`BuiltCallingConvention::clobbers_override_var`] so the
+/// `!callee_saved && != stack_ptr` rule lives in exactly one place
+/// (mirrored by `FunctionBuilder::build_call_with_cc`).
 ///
 /// Returns owned `Vn`s for caller flexibility (collect into a `Vec` for
 /// `set_call_clobbered_override`, or iterate directly to feed
@@ -922,7 +923,7 @@ fn override_clobber_vars<'a>(
         .variables_map()
         .into_iter()
         .flat_map(|m| m.values().copied())
-        .filter(move |v| !cc.callee_saved_regs.contains(v) && *v != stack_ptr_vn)
+        .filter(move |v| cc.clobbers_override_var(v, stack_ptr_vn))
 }
 
 /// Resolve a varnode to its IR value at the placeholder site.

@@ -46,10 +46,7 @@ impl PyStrider {
         sleigh: Py<PySleigh>,
         cc: PyCallingConvention,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_strider_err)?;
+        let inner = build_strider(py, arch, &sleigh, &cc)?;
         Ok(Self { inner })
     }
 
@@ -98,11 +95,35 @@ impl PyStrider {
         sleigh: &Py<PySleigh>,
         cc: PyCallingConvention,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let inner = strider_analyze::Strider::new(arch.inner, regs, cc.inner).map_err(into_strider_err)?;
+        let inner = build_strider(py, arch, sleigh, &cc)?;
         Ok(Self { inner })
+    }
+}
+
+/// Build a `strider_analyze::Strider` from a `PyCallingConvention`.
+/// Routes through either `Strider::new` (presets — does name
+/// resolution against `sleigh`'s regs) or `Strider::new_with_built_cc`
+/// (custom — CC is already resolved at construction time).
+fn build_strider(
+    py: Python<'_>,
+    arch: PySleighArch,
+    sleigh: &Py<PySleigh>,
+    cc: &PyCallingConvention,
+) -> PyResult<strider_analyze::Strider> {
+    let sleigh_borrow = sleigh.borrow(py);
+    let regs = sleigh_borrow.regs.clone();
+    drop(sleigh_borrow);
+    match &cc.inner {
+        crate::cc::CcImpl::Preset(preset) => {
+            strider_analyze::Strider::new(arch.inner, regs, *preset).map_err(into_strider_err)
+        }
+        crate::cc::CcImpl::Custom(built) => {
+            Ok(strider_analyze::Strider::new_with_built_cc(
+                arch.inner,
+                regs,
+                *built.clone(),
+            ))
+        }
     }
 }
 

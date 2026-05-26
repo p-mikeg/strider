@@ -168,11 +168,27 @@ fn run_via_orchestrator(
         let borrow = strider_obj.borrow(py);
         borrow.inner.clone()
     };
+    // per_address_ccs currently only supports preset-form CCs (the
+    // orchestrator's Config field resolves them against Sleigh at
+    // startup).  Custom CCs are already resolved, so feeding them
+    // here would mean carrying two parallel maps through Config —
+    // not yet wired.  Surface a clear error rather than silently
+    // dropping the override.
     let per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::CallingConvention> =
         per_address_ccs_py
             .into_iter()
-            .map(|(addr, py_cc)| (addr, py_cc.inner))
-            .collect();
+            .map(|(addr, py_cc)| match py_cc.inner {
+                crate::cc::CcImpl::Preset(preset) => Ok((addr, preset)),
+                crate::cc::CcImpl::Custom(_) => Err(crate::errors::into_strider_err(
+                    anyhow::anyhow!(
+                        "per_address_ccs[{addr:#x}] = a custom CallingConvention; \
+                         this field currently only accepts preset CCs.  Use \
+                         a preset (e.g. x86_64_all_preserving) or open an issue \
+                         for custom-CC per-address-override support."
+                    )
+                )),
+            })
+            .collect::<PyResult<_>>()?;
     let graph = py.allow_threads(|| {
         let config = strider_analyze::Config {
             strider: &strider_owned,
@@ -253,17 +269,18 @@ fn run_with_custom_pipeline(
             per_address_ccs_py
                 .into_iter()
                 .map(|(addr, py_cc)| {
-                    py_cc
-                        .inner
-                        .build(&regs)
-                        .map(|built| (addr, built))
-                        .map_err(|e| {
+                    let built = match py_cc.inner {
+                        crate::cc::CcImpl::Preset(preset) => preset.build(&regs).map_err(|e| {
                             into_strider_err(anyhow::anyhow!(
                                 "per-address CC at {addr:#x} unresolved: {e:?}"
                             ))
-                        })
+                        })?,
+                        // Custom CCs are already resolved at construction time.
+                        crate::cc::CcImpl::Custom(built) => *built,
+                    };
+                    Ok((addr, built))
                 })
-                .collect::<Result<_, _>>()?
+                .collect::<PyResult<_>>()?
         };
 
     let strider_borrow = strider_obj.borrow(py);

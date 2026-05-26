@@ -137,13 +137,24 @@ impl FunctionBuilder {
                     .copied()
                     .filter(|v| self.variable_to_id.contains_key(v))
                     .collect();
-                let callee_saved = &cc.callee_saved_regs;
-                let stack_ptr_vn = self.stack_ptr_vn;
+                // SP is a function-stable register; an override only
+                // sees it via the function-default's `stack_ptr_vn`.
+                // When the FunctionBuilder was built without a CC
+                // (the `new_raw` path), `stack_ptr_vn` is None — in
+                // that case no variable can equal "the function's SP"
+                // so the comparison degenerates to "not callee-saved",
+                // which the helper short-circuits via a sentinel
+                // unreachable Vn.
+                let function_sp = self.stack_ptr_vn.unwrap_or(rsleigh::Vn {
+                    addr_off: u64::MAX,
+                    addr_space: rsleigh::VnSpace::CONST,
+                    size: 0,
+                });
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
                     .variables
                     .values()
                     .copied()
-                    .filter(|v| !callee_saved.contains(v) && Some(*v) != stack_ptr_vn)
+                    .filter(|v| cc.clobbers_override_var(v, function_sp))
                     .collect();
                 CallAbiSelection {
                     arg_vars,

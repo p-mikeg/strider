@@ -30,8 +30,8 @@ mod use_list_consistency;
 mod tests;
 
 use graph_invariants::{
-    check_graph_invariants_asm_fingerprints, check_graph_invariants_region,
-    check_graph_invariants_phis,
+    check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
+    check_graph_invariants_phis, check_graph_invariants_region,
     check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
 };
 use local_typing::check_local_typing;
@@ -77,6 +77,7 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
     check_graph_invariants_region(graph, &reachable, &mut errs);
     check_graph_invariants_phis(graph, &reachable, &mut errs);
     check_graph_invariants_wide_consts(graph, &reachable, &mut errs);
+    check_graph_invariants_cc_arity(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
 
     if errs.is_empty() {
