@@ -52,23 +52,21 @@ fn x86_64_indirect_jmp_to_const_bytes() -> (Vec<u8>, u64, u64) {
     (bs, 0x1000, 0x9000)
 }
 
-/// Indirect-branch-via-constant-fold path: emits an IndirectBranch
-/// placeholder, then ConstantFold + KnownBits prove the target is a
-/// runtime constant, the orchestrator's classify_anchor returns
-/// `Single(K)`, and apply_in_place_edit splices a Call+Return with
-/// the per-address override.
+/// Indirect-branch-via-known-targets path: the first iteration sees
+/// `jmp rax` as an `UnresolvedIndirectBranch`.  Once the orchestrator
+/// resolves `rax = 0x9000` via constant-fold + classify_anchor, the
+/// CFG rebuild seeds `known_targets` and the cfg builder treats the
+/// `jmp rax` as a `TailCall(0x9000)`.  The per-region driver's
+/// `handle_tail_call` then splices in `Call+Return` honouring the
+/// per-address override.
 ///
-/// The lift-time tail-call test below already covers the
-/// `ResolvedTargets::Single + override` arm of `apply_in_place_edit`
-/// (the orchestrator routes both through the same code path).  This
-/// `#[ignore]`d test exists to pin the higher-level shape — a real
-/// `mov reg, K; jmp reg` shape — once the cfg builder / orchestrator
-/// handles the "region already terminated" interaction without error.
-/// Currently fails with "attempted to insert into terminated region 0"
-/// at the orchestrator's apply_in_place_edit step.
+/// Regression guard for the bug where `SpecialTerm::TailCall::
+/// skips_opcode` only skipped `Branch`/`CondBranch`, so the
+/// `BranchIndirect` insn was lifted by the per-insn loop (emitting
+/// `IndirectBranch` + terminating the region) and `handle_tail_call`
+/// crashed with "attempted to insert into terminated region 0".
+/// Fixed by extending the skip-set to include `BranchIndirect`.
 #[test]
-#[ignore = "region-termination interaction not yet handled when the resolver \
-            splices into a region that the indirect jmp already terminated"]
 fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list() {
     let (bytes, entry, call_target) = x86_64_indirect_jmp_to_const_bytes();
     let strider = make_strider();

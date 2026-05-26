@@ -644,10 +644,19 @@ impl SpecialTerm {
     /// Returns true when the per-region per-insn loop should skip
     /// `opcode` because the post-loop dispatcher will lift it via a
     /// dedicated handler.  `PendingIndirect`/`Switch` skip
-    /// `BranchIndirect`; `TailCall` skips both `Branch` (the standard
-    /// direct-tail-call case) AND `CondBranch` (the
-    /// `strider_lift::cfg::RegionBuilder` collapse path for a conditional jump whose
-    /// successors all leave the function).
+    /// `BranchIndirect`; `TailCall` skips `Branch` (the standard
+    /// direct-tail-call case), `CondBranch` (the
+    /// `strider_lift::cfg::RegionBuilder` collapse path for a
+    /// conditional jump whose successors all leave the function),
+    /// AND `BranchIndirect` — when the orchestrator hints a
+    /// `known_targets` resolution for an indirect-jump address whose
+    /// target lies outside the function, the cfg builder treats the
+    /// `jmp reg` as a tail call (`RegionTerminator::TailCall`).  The
+    /// per-insn loop must NOT process the underlying `BranchIndirect`
+    /// (which would emit an `IndirectBranch` node and terminate the
+    /// region), or `handle_tail_call`'s `build_call_with_cc` /
+    /// `build_return` would crash on "attempted to insert into
+    /// terminated region".
     ///
     /// Safe by region-closure invariant: `RegionBuilder::process_new_insn`
     /// finishes a region the moment ANY control-flow opcode (`Branch`,
@@ -663,7 +672,9 @@ impl SpecialTerm {
             }
             SpecialTerm::TailCall(..) => matches!(
                 opcode,
-                rsleigh::Opcode::Branch | rsleigh::Opcode::CondBranch
+                rsleigh::Opcode::Branch
+                    | rsleigh::Opcode::CondBranch
+                    | rsleigh::Opcode::BranchIndirect
             ),
         }
     }

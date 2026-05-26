@@ -321,11 +321,11 @@ ppc64be:
     Truncate: 3
 ppc64le:
   status: OK
-  reachable_nodes: 69
+  reachable_nodes: 73
   regions: 1
   edges_control: 4
-  edges_memory: 18
-  edges_value: 81
+  edges_memory: 19
+  edges_value: 82
   var_phis: 0
   mem_phis: 1
   value_phis: 0
@@ -334,10 +334,10 @@ ppc64le:
     CastToInt: 3
     Entry: 1
     Extend(SignExtend): 3
-    Extend(ZeroExtend): 4
+    Extend(ZeroExtend): 3
     If: 1
     InitialMemory: 1
-    InitialVar: 5
+    InitialVar: 7
     IntBinaryOp(Add): 10
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
@@ -345,14 +345,14 @@ ppc64le:
     IntBinaryOp(ShiftRight): 1
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
-    IntConst: 8
+    IntConst: 10
     Load: 6
     MemPhi: 1
     MemProject: 1
     MemUnion: 1
     Region: 1
     Return: 1
-    Store: 6
+    Store: 7
     Truncate: 3
 x64:
   status: OK
