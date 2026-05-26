@@ -27,7 +27,7 @@ EXPECTED_TOP = {
     "AnalyzeOutcome",
     "CallingConvention",
     "Cfg",
-    "Graph",
+    "Function",
     "Match",
     "MemoryMap",
     "MemReader",

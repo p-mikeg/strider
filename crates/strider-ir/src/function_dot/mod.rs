@@ -103,7 +103,7 @@ fn role_color(role: SlotRole) -> &'static str {
 /// the consumer's [`Signature`]: the slot's `name` is the label and the
 /// slot's `role` selects the colour via [`role_color`].
 pub(super) fn edge_style<R: MemReader>(
-    dumper: &GraphDotDumper<'_, R>,
+    dumper: &FunctionDotDumper<'_, R>,
     consumer: NodeId,
     input_idx: usize,
     _output: NodeOutputId,
@@ -118,7 +118,7 @@ pub(super) fn edge_style<R: MemReader>(
 
 // ── dumper ────────────────────────────────────────────────────────────────────
 
-pub struct GraphDotDumper<'a, R: MemReader> {
+pub struct FunctionDotDumper<'a, R: MemReader> {
     pub(crate) entry: NodeId,
     /// Function overlay (including structural graph via `Deref`).
     /// Provides access to both structural graph data and overlay tables
@@ -146,7 +146,7 @@ pub struct GraphDotDumper<'a, R: MemReader> {
 
 /// Build the `node_to_arg_indices` reverse map from `function.arg_indices()`.
 /// Called once at construction time inside [`Function::dot_dumper`] and in
-/// test helpers that construct a [`GraphDotDumper`] directly.
+/// test helpers that construct a [`FunctionDotDumper`] directly.
 pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>> {
     let mut map: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
     for idx in function.arg_indices() {
@@ -161,7 +161,7 @@ pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>>
     map
 }
 
-impl<'a, R: MemReader> GraphDotDumper<'a, R> {
+impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// Returns a copy of this dumper with `node_filter = Some(filter)`.
     /// See the field doc for the filtering contract.
     #[must_use]
@@ -177,7 +177,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     }
 }
 
-pub struct GraphDotDumperState {
+pub struct FunctionDotDumperState {
     pub(super) visited_node_id: FxHashMap<NodeId, String>,
     /// Synthetic (virtual) DOT nodes inserted between a producer output and
     /// its consumers.  Keyed by the `NodeOutputId` they represent.
@@ -185,7 +185,7 @@ pub struct GraphDotDumperState {
     pub(super) next_unique_id: u32,
 }
 
-impl GraphDotDumperState {
+impl FunctionDotDumperState {
     fn alloc_id(&mut self, node_id: NodeId) -> String {
         let id = self.next_unique_id;
         let s = id.to_string();

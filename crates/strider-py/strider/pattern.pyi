@@ -63,7 +63,7 @@ class CallPat:
     the same builder for chaining; finaliser methods (`capture`,
     `cap`, `when`, `into_pat`) return a `Pat`.
 
-    `Graph.find_all` / `Graph.rewrite` accept un-finalised builders
+    `Function.find_all` / `Function.rewrite` accept un-finalised builders
     via `PatLike`, so `g.find_all(call().arg(0, int_const(8)))` works
     without an explicit `.into_pat()`.
     """

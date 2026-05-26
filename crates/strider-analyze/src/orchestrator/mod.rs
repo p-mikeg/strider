@@ -1115,7 +1115,7 @@ fn edge_set_of(
 ///    [`strider_ir::walk::region_membership_from_exit`] to collect the
 ///    region's visualisation membership (control spine, halted at
 ///    `Region` join nodes, then the data-ancestor closure).
-/// 2. Build a `strider_ir::graph_dot::GraphDotDumper` limited to that
+/// 2. Build a `strider_ir::function_dot::FunctionDotDumper` limited to that
 ///    membership.
 /// 3. Write `region_<idx>_<addr>.html` into `out_dir`, where `<idx>` is
 ///    the region's enumeration index and `<addr>` is the first
@@ -1132,7 +1132,7 @@ fn edge_set_of(
 ///
 /// `lift_generation` is the snapshot of [`strider_ir::Graph::generation`]
 /// taken when the `exit_controls` ids were minted — pass
-/// [`crate::AnalyzeOutcome::lift_generation`].  If the live `graph`'s
+/// `outcome.function.generation()`.  If the live `graph`'s
 /// generation has advanced since (the graph was compacted), the
 /// `exit_controls` ids are stale and dereferencing them would address
 /// the wrong region; this function returns a typed error instead.

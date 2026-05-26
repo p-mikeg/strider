@@ -1,4 +1,4 @@
-"""Tests for `Graph.find_all_requirements` — multi-pattern queries that
+"""Tests for `Function.find_all_requirements` — multi-pattern queries that
 intersect on shared `Capture` objects.
 
 The Rust matcher's algorithm is covered exhaustively in

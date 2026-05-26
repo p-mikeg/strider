@@ -1,4 +1,4 @@
-//! Shared dot-rendering helpers used by `PyCfg` and `PyGraph`.
+//! Shared dot-rendering helpers used by `PyCfg` and `PyFunction`.
 //!
 //! Centralizes the style-name → `dot::DotStyle` mapping so the two
 //! Python wrappers share one rendering code path.

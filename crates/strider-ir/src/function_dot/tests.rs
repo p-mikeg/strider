@@ -24,7 +24,7 @@ fn probe_sleigh() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<Vec<u8>>
 /// Renders every node reachable from `entry` and returns the DOT string.
 fn render(function: &Function, entry: NodeId) -> String {
     let sleigh = probe_sleigh();
-    let dumper = GraphDotDumper {
+    let dumper = FunctionDotDumper {
         entry,
         function,
         sleigh: &sleigh,
@@ -336,7 +336,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     f.create_node(NodeKind::Return, [cs_false_ctrl], []);
 
     let sleigh = probe_sleigh();
-    let dumper = GraphDotDumper {
+    let dumper = FunctionDotDumper {
         entry,
         function: &f,
         sleigh: &sleigh,

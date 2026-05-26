@@ -1,7 +1,7 @@
 """High-level Python facade for the strider pipeline.
 
 The lower-level building blocks (`MemoryMap`, `Sleigh`, `Strider`,
-`Graph`, `Matcher`, `OptimizerPipeline`, etc.) remain on the
+`Function`, `Matcher`, `OptimizerPipeline`, etc.) remain on the
 top-level `strider` namespace for users who need granular control.
 This module adds the three-line convenience workflow:
 
@@ -26,7 +26,7 @@ from typing import Iterator, Optional, Union
 from . import strider as _ext  # the PyO3 cdylib re-exported here
 from .strider import (
     CallingConvention,
-    Graph,
+    Function,
     MemoryMap,
     SleighArch,
 )
@@ -327,8 +327,8 @@ class Analysis:
     # ── Properties ──────────────────────────────────────────────────
 
     @property
-    def graph(self) -> Graph:
-        """The underlying `Graph` for direct access to the IR
+    def graph(self) -> Function:
+        """The underlying `Function` for direct access to the IR
         (preorder walks, `node_count`, `validate`, etc.)."""
         return self._result.graph
 
@@ -368,14 +368,14 @@ class Analysis:
     def find(self, pattern, **matcher_options) -> list:
         """Run a pattern against this function's IR.  Returns the
         list of `Match` objects.  Forwards every kwarg to
-        `Graph.find_all` (`ignore_casts`, `ignore_casts_mask`,
+        `Function.find_all` (`ignore_casts`, `ignore_casts_mask`,
         `ignore_regions`)."""
         return self._result.graph.find_all(pattern, **matcher_options)
 
     def find_all_requirements(self, patterns, **matcher_options) -> list:
         """Run multiple patterns and intersect their matches on
         shared `Capture` objects.  See
-        `Graph.find_all_requirements` for the full contract."""
+        `Function.find_all_requirements` for the full contract."""
         return self._result.graph.find_all_requirements(
             patterns, **matcher_options
         )

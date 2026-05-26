@@ -1,8 +1,8 @@
-//! `PyGraph` — wraps `strider_ir::Function` and exposes dot rendering
+//! `PyFunction` — wraps `strider_ir::Function` and exposes dot rendering
 //! plus pattern queries and rewrites.
 //!
 //! The IR graph's dot dumper requires a borrowed `Sleigh` for
-//! register-name resolution.  PyGraph keeps a `Py<PyCfg>` reference
+//! register-name resolution.  PyFunction keeps a `Py<PyCfg>` reference
 //! so the Sleigh stays alive for the graph's lifetime and is
 //! reachable through `strider_lift::cfg::Cfg::sleigh`.
 
@@ -17,18 +17,18 @@ use crate::dot::dot_style_for;
 /// Opaque wrapper over `strider_ir::Function`.
 ///
 /// The graph is held in `Arc<RwLock<...>>` so optimization passes can
-/// mutate it without requiring `&mut self` on the PyGraph wrapper,
+/// mutate it without requiring `&mut self` on the PyFunction wrapper,
 /// and so the same graph can be shared across multiple Python
 /// references.
-#[pyclass(name = "Graph", module = "strider")]
-pub struct PyGraph {
+#[pyclass(name = "Function", module = "strider")]
+pub struct PyFunction {
     pub(crate) inner: Arc<RwLock<strider_ir::Function>>,
     /// Strong reference to the parent Cfg; keeps the Sleigh alive for
     /// dot rendering and ensures destruction order is graph-then-cfg.
     pub(crate) cfg: Py<PyCfg>,
 }
 
-/// Discriminator for [`PyGraph::dispatch_dot`].  Each variant carries
+/// Discriminator for [`PyFunction::dispatch_dot`].  Each variant carries
 /// the per-op arguments the public accessor `to_html` / `to_dot` /
 /// `html_str` would otherwise duplicate the cfg-borrow / graph-borrow
 /// / dumper-construction ritual for.
@@ -38,7 +38,7 @@ enum DotOp<'a> {
     HtmlStr,
 }
 
-/// Return shape of [`PyGraph::dispatch_dot`].  Returning a sum lets a
+/// Return shape of [`PyFunction::dispatch_dot`].  Returning a sum lets a
 /// single helper cover both unit-returning dump methods and the
 /// string-returning `html_str` without separate variants per
 /// dispatch.
@@ -61,7 +61,7 @@ fn node_id_from_u32(graph: &strider_ir::Function, node_id: u32) -> PyResult<stri
     Ok(nid)
 }
 
-impl PyGraph {
+impl PyFunction {
     pub(crate) fn new(graph: strider_ir::Function, cfg: Py<PyCfg>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(graph)),
@@ -74,7 +74,7 @@ impl PyGraph {
     pub(crate) fn read_inner(&self) -> anyhow::Result<std::sync::RwLockReadGuard<'_, strider_ir::Function>> {
         self.inner
             .read()
-            .map_err(|_| anyhow::anyhow!("Graph lock poisoned"))
+            .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
     }
 
     /// Borrow the inner graph for write.  Returns an `anyhow::Error`
@@ -82,7 +82,7 @@ impl PyGraph {
     pub(crate) fn write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
         self.inner
             .write()
-            .map_err(|_| anyhow::anyhow!("Graph lock poisoned"))
+            .map_err(|_| anyhow::anyhow!("Function lock poisoned"))
     }
 
     /// Try to acquire the write lock without blocking.  Used by mutating
@@ -93,11 +93,11 @@ impl PyGraph {
     pub(crate) fn try_write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, strider_ir::Function>> {
         use std::sync::TryLockError;
         self.inner.try_write().map_err(|e| match e {
-            TryLockError::Poisoned(_) => anyhow::anyhow!("Graph lock poisoned"),
+            TryLockError::Poisoned(_) => anyhow::anyhow!("Function lock poisoned"),
             TryLockError::WouldBlock => anyhow::anyhow!(
-                "Graph mutation rejected: the graph is currently borrowed for read \
+                "Function mutation rejected: the function is currently borrowed for read \
                  (typically because this call is from inside a `.when()` predicate \
-                 invoked by `find_all`/`find_all_requirements`).  Mutating the graph \
+                 invoked by `find_all`/`find_all_requirements`).  Mutating the function \
                  from within a pattern predicate is not supported — collect matches \
                  first and mutate after `find_all` returns."
             ),
@@ -166,7 +166,7 @@ impl PyGraph {
 }
 
 #[pymethods]
-impl PyGraph {
+impl PyFunction {
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, py: Python<'_>, path: &str, style: Option<&str>) -> PyResult<()> {
         self.dispatch_dot(py, Some(style.unwrap_or("dark")), DotOp::DumpHtml(path))
@@ -296,7 +296,7 @@ impl PyGraph {
         self.with_read(|graph| {
             let entry = graph.entry().ok_or_else(|| {
                 crate::errors::into_strider_err(anyhow::anyhow!(
-                    "Graph.validate: graph has not been built (entry is None)"
+                    "Function.validate: graph has not been built (entry is None)"
                 ))
             })?;
             match strider_ir::validate::validate(graph, entry) {
@@ -324,7 +324,7 @@ impl PyGraph {
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         let entry = graph.entry().ok_or_else(|| {
             crate::errors::into_strider_err(anyhow::anyhow!(
-                "Graph.optimize: graph has not been built (entry is None)"
+                "Function.optimize: graph has not been built (entry is None)"
             ))
         })?;
         real_pipeline
@@ -346,7 +346,7 @@ impl PyGraph {
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         let entry = graph.entry().ok_or_else(|| {
             crate::errors::into_strider_err(anyhow::anyhow!(
-                "Graph.reoptimize: graph has not been built (entry is None)"
+                "Function.reoptimize: graph has not been built (entry is None)"
             ))
         })?;
         pipe.run(&mut graph, entry).map_err(|e| {
@@ -550,5 +550,5 @@ impl PyGraph {
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyGraph>()
+    m.add_class::<PyFunction>()
 }

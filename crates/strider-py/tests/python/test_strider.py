@@ -14,7 +14,7 @@ def test_analyze_cfg_returns_graph(x86_memory_elf):
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     outcome = s.analyze_cfg(cfg)
-    assert isinstance(outcome.graph, strider.Graph)
+    assert isinstance(outcome.graph, strider.Function)
 
 
 def test_analyze_outcome_has_unresolved_branches_attr(x86_memory_elf):

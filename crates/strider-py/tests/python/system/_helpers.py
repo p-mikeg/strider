@@ -1,7 +1,7 @@
 """Shared helpers for the per-arch system test suite.
 
 Mirror of `crates/strider/tests/common/mod.rs` for the Python bindings:
-provides an `analyze(arch_id, case, fn_name) → Graph` entry that runs
+provides an `analyze(arch_id, case, fn_name) → Function` entry that runs
 the full strider pipeline (CFG → IR → indirect-branch fixed-point loop
 → optimiser pipeline) against a fixture ELF, plus the same
 `count_*` / `has_*` assertion vocabulary the Rust suite exposes.
@@ -74,7 +74,7 @@ def analyze(
 ):
     """Lift fixtures/out/<arch>/<case>.elf::<fn_name> to IR and run the
     full optimiser pipeline + LoadReadOnly against it.  Returns the
-    Graph.  Skip the test if the fixture is missing.
+    Function.  Skip the test if the fixture is missing.
 
     Mirrors `crates/strider/tests/common/mod.rs::analyze` — uses the
     custom-pipeline path of `strider.run` so unresolved indirect

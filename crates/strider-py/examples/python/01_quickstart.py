@@ -35,7 +35,7 @@ print(f"array_sum @ {addr:#x}")
 # 3. Run the full pipeline. This wraps:
 #       Sleigh build → CFG build → IR lift → optimization
 #       → indirect-branch fixed-point loop → final IR
-#    in one call, returning the CFG, the lifted Graph, and the Sleigh
+#    in one call, returning the CFG, the lifted Function, and the Sleigh
 #    handle that produced them.
 result = strider.run(
     arch=strider.SleighArch.x86(),

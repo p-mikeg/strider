@@ -6,32 +6,32 @@
 //! call constructs a fresh `Matcher`, runs the query, and converts
 //! every `strider_analyze::pattern::Match` to a `PyMatch` that carries:
 //! - The `strider_analyze::pattern::Match` itself (for capture lookup).
-//! - A `Py<PyGraph>` reference so accessors like `get_uint` can
-//!   re-borrow the graph and call `Match::get_uint(c, &graph)`.
+//! - A `Py<PyFunction>` reference so accessors like `get_uint` can
+//!   re-borrow the function and call `Match::get_uint(c, &function)`.
 //!
-//! The `Graph.find_all` / `Graph.match_at` / `Graph.matcher` entry
-//! points live on PyGraph in `graph.rs`.
+//! The `Function.find_all` / `Function.match_at` / `Function.matcher` entry
+//! points live on PyFunction in `function.rs`.
 
 use pyo3::prelude::*;
 
 use crate::errors::into_strider_err;
-use crate::graph::PyGraph;
+use crate::function::PyFunction;
 use crate::pattern::{intern_str, PyCapture, PyOffsetCapture};
 
 /// Result of a successful pattern match.
 ///
-/// Snapshots the graph's generation counter at construction so that
-/// any subsequent arena-reshuffling op (`Graph.compact`,
-/// `retain_reachable`, etc.) bumps `Graph::generation()` and every
+/// Snapshots the function's generation counter at construction so that
+/// any subsequent arena-reshuffling op (`Function.compact`,
+/// `retain_reachable`, etc.) bumps `Function::generation()` and every
 /// subsequent capture accessor returns a typed `StriderError` rather
 /// than silently dereferencing a stale `NodeOutputId` on the
 /// post-bump arena.
 #[pyclass(name = "Match", module = "strider")]
 pub struct PyMatch {
     pub(crate) inner: strider_analyze::pattern::Match,
-    pub(crate) graph: Py<PyGraph>,
+    pub(crate) graph: Py<PyFunction>,
     /// Generation counter sampled at `PyMatch` construction time.
-    /// Compared against `Graph::generation()` on every accessor; a
+    /// Compared against `Function::generation()` on every accessor; a
     /// mismatch means the underlying arena was reshuffled since the
     /// match was created and the stored `NodeOutputId`s are stale.
     pub(crate) generation: u64,
@@ -58,7 +58,7 @@ impl PyMatch {
     /// Resolve `key` to a `Capture`, borrow the graph for read, and run
     /// `f` against `(capture, &graph)`.  Centralises the boilerplate that
     /// every typed accessor on `PyMatch` would otherwise repeat (resolve
-    /// the key → borrow the PyGraph → read the inner RwLock → poison-map
+    /// the key → borrow the PyFunction → read the inner RwLock → poison-map
     /// → check the generation hasn't drifted).
     fn with_graph<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
     where
@@ -73,7 +73,7 @@ impl PyMatch {
 
     /// Confirm the graph's generation counter is still what it was
     /// when this `PyMatch` was constructed.  A mismatch indicates an
-    /// arena-reshuffling op (`Graph.compact`, `retain_reachable`,
+    /// arena-reshuffling op (`Function.compact`, `retain_reachable`,
     /// `optimize`) ran between match construction and this accessor —
     /// the stored `NodeOutputId`s are stale.  Returns a
     /// `StriderError` rather than silently dereferencing the wrong

@@ -2,7 +2,7 @@ use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
 use super::{
-    GraphDotDumper, GraphDotDumperState, edge_style, node_fillcolor,
+    FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor,
     node_shape,
 };
 use crate::graph::Graph;
@@ -19,10 +19,10 @@ fn all_uses_go_through_inline(graph: &Graph, node: NodeId) -> bool {
     graph.output_uses(out).count() == 0
 }
 
-impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
+impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
     type Node = crate::node::NodeId;
     type Error = std::io::Error;
-    type State = GraphDotDumperState;
+    type State = FunctionDotDumperState;
 
     fn create_initial_state(&self) -> Self::State {
         Self::State {
@@ -70,7 +70,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for GraphDotDumper<'a, R> {
     }
 }
 
-impl<'a, R: MemReader> GraphDotDumper<'a, R> {
+impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// First step of [`dump_as_dot`]: apply the skip-checks and emit
     /// the dot node declaration when the node passes.  Returns
     /// `Ok(Some(id))` (the dot id) when the node was declared,
@@ -84,7 +84,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         &self,
         node: NodeId,
         out: &mut ::dot::DotEmitter,
-        state: &mut GraphDotDumperState,
+        state: &mut FunctionDotDumperState,
     ) -> std::io::Result<Option<String>> {
         // Defense in depth: even though `iter_nodes` filters, a caller
         // that drives `dump_as_dot` directly (e.g. some tests) might
@@ -142,7 +142,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         node: NodeId,
         cur_id: &str,
         out: &mut ::dot::DotEmitter,
-        state: &mut GraphDotDumperState,
+        state: &mut FunctionDotDumperState,
     ) {
         let outputs = self.function.node_outputs(node);
         let branch_labels = ["if.true", "if.false"];
@@ -174,7 +174,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     /// before the producing If) can be the first to materialise the
     /// virtual; the get-or-create dance lets both paths share state.
     fn get_or_create_if_branch_virtual(
-        state: &mut GraphDotDumperState,
+        state: &mut FunctionDotDumperState,
         out_id: crate::node::NodeOutputId,
         blabel: &str,
         out: &mut ::dot::DotEmitter,
@@ -204,7 +204,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         idx: usize,
         parent_output: crate::node::NodeOutputId,
         out: &mut ::dot::DotEmitter,
-        state: &mut GraphDotDumperState,
+        state: &mut FunctionDotDumperState,
     ) -> core::result::Result<(), std::io::Error> {
         // Suppress the addr-input edge (slot 1) for Store and Load nodes whose
         // stack_offset side-table entry is populated.  The node label already

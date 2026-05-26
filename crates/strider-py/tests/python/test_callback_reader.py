@@ -4,7 +4,7 @@ ABCs.
 Subclassing either ABC and providing `read(...)` lets the analysis
 pipeline call back into Python for byte fetches.  These tests verify:
 1. The Rust adapter actually invokes the Python `read` method.
-2. A real ELF lifted via the callback path produces a Graph with at
+2. A real ELF lifted via the callback path produces a Function with at
    least one `Return` node — equivalent functionality to the fast
    MemoryMap path.
 3. `ReadOnlyMemory` subclasses fold loads of constants when supplied

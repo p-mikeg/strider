@@ -32,7 +32,7 @@ fn dump_per_region_writes_one_html_per_region() {
     strider_analyze::dump_per_region(
         &outcome.function,
         exit_controls.iter().copied(),
-        outcome.lift_generation(),
+        outcome.function.generation(),
         cfg.sleigh(),
         tmp,
     )
@@ -83,7 +83,7 @@ fn dump_per_region_emits_one_html_for_each_branch_region() {
     strider_analyze::dump_per_region(
         &outcome.function,
         exit_controls.iter().copied(),
-        outcome.lift_generation(),
+        outcome.function.generation(),
         cfg.sleigh(),
         tmp,
     )
@@ -127,7 +127,7 @@ fn dump_per_region_rejects_post_compaction() {
     let exit_controls: Vec<_> = outcome.region_exit_controls().collect();
     assert!(!exit_controls.is_empty());
 
-    let lift_gen = outcome.lift_generation();
+    let lift_gen = outcome.function.generation();
     outcome.function.compact().expect("compact");
     assert_ne!(
         outcome.function.generation(),

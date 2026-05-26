@@ -16,7 +16,7 @@ orchestrator must:
 After resolution the IR carries one `add(FunctionArg(x), IntConst(K))`
 expression per case (K = 1..8).  We assert the orchestrator converged
 (no exception), that the user can `find_all` on the case bodies, and
-that `Graph.rewrite` can collapse a recognisable case shape — proving
+that `Function.rewrite` can collapse a recognisable case shape — proving
 the post-collapse pattern surface still composes with the optimised
 graph.
 """

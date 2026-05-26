@@ -1,5 +1,5 @@
 """Regression: `pattern.mem_phi()` and `pattern.value_phi()` are
-accepted by `Graph.find_all` without raising `TypeError`.
+accepted by `Function.find_all` without raising `TypeError`.
 
 These pat builders were added but missing from `PatLike` (the union
 the Python boundary uses to coerce Pat-like inputs), so calling

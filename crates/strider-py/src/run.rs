@@ -18,7 +18,7 @@ use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
 use crate::errors::into_strider_err;
-use crate::graph::PyGraph;
+use crate::function::PyFunction;
 use crate::reader::{AnyMemReader, MemInput};
 use crate::sleigh::PySleigh;
 use crate::strider_cls::PyStrider;
@@ -36,7 +36,7 @@ pub struct PyRunResult {
     #[pyo3(get)]
     cfg: Py<PyCfg>,
     #[pyo3(get)]
-    graph: Py<PyGraph>,
+    graph: Py<PyFunction>,
     #[pyo3(get)]
     sleigh: Py<PySleigh>,
 }
@@ -213,7 +213,7 @@ fn run_via_orchestrator(
         return Err(err);
     }
 
-    let py_graph = Py::new(py, PyGraph::new(function, cfg_obj.clone_ref(py)))?;
+    let py_graph = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
 
     Ok(PyRunResult {
         cfg: cfg_obj,
@@ -305,7 +305,7 @@ fn run_with_custom_pipeline(
         .map_err(into_strider_err)?;
     let function = outcome.function;
     drop(strider_borrow);
-    let py_graph = Py::new(py, PyGraph::new(function, cfg_obj.clone_ref(py)))?;
+    let py_graph = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
 
     let actual_pipeline = pipeline.drain_into_pipeline()?;
     {

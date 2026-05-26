@@ -12,7 +12,7 @@ use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
 use crate::errors::into_strider_err;
-use crate::graph::PyGraph;
+use crate::function::PyFunction;
 use crate::sleigh::PySleigh;
 
 #[pyclass(name = "Strider", module = "strider")]
@@ -30,7 +30,7 @@ pub struct PyStrider {
 #[pyclass(name = "AnalyzeOutcome", module = "strider")]
 pub struct PyAnalyzeOutcome {
     #[pyo3(get)]
-    pub(crate) graph: Py<PyGraph>,
+    pub(crate) graph: Py<PyFunction>,
     #[pyo3(get)]
     pub(crate) unresolved_branch_count: usize,
     #[pyo3(get)]
@@ -60,7 +60,7 @@ impl PyStrider {
         let region_count = outcome.region_count();
         let function = outcome.function;
         drop(cfg_borrow);
-        let py_graph = Py::new(py, PyGraph::new(function, cfg))?;
+        let py_graph = Py::new(py, PyFunction::new(function, cfg))?;
         Ok(PyAnalyzeOutcome {
             graph: py_graph,
             unresolved_branch_count,

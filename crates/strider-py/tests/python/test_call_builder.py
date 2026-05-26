@@ -97,7 +97,7 @@ def test_arg_accepts_pat_like():
 
 
 def test_find_all_accepts_unfinalised_builder():
-    # Graph.find_all takes PatLike; passing the builder directly
+    # Function.find_all takes PatLike; passing the builder directly
     # (no .into_pat()) must work and find the case-5 call site.
     g = _switch_graph()
     hits = g.find_all(call())

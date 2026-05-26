@@ -1,7 +1,7 @@
 use rsleigh::MemReader;
 use std::io;
 
-use super::{GraphDotDumper, node_fillcolor, node_shape};
+use super::{FunctionDotDumper, node_fillcolor, node_shape};
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
 /// Render a varnode to its display name by delegating to rsleigh's
@@ -27,7 +27,7 @@ pub(crate) fn vn_to_display_name<R: MemReader>(
     Ok(vn.ctx_fmt(sleigh, &regs).to_string())
 }
 
-impl<'a, R: MemReader> GraphDotDumper<'a, R> {
+impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     fn vn_to_name(&self, vn: &rsleigh::Vn) -> io::Result<String> {
         vn_to_display_name(self.sleigh, vn).map_err(|e| io::Error::other(e.to_string()))
     }

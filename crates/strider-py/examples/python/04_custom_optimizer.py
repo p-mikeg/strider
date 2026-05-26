@@ -36,8 +36,8 @@ mem.add_region_from_elf(str(FIXTURE))
 addr = mem.symbol("array_sum")
 
 
-def lift(pipeline: strider.OptimizerPipeline | None) -> strider.Graph:
-    """Lift array_sum, optionally apply `pipeline`, return the Graph."""
+def lift(pipeline: strider.OptimizerPipeline | None) -> strider.Function:
+    """Lift array_sum, optionally apply `pipeline`, return the Function."""
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, entry=addr, allow_code_before_start_addr=True)
@@ -47,7 +47,7 @@ def lift(pipeline: strider.OptimizerPipeline | None) -> strider.Graph:
     return g
 
 
-def shape(g: strider.Graph) -> dict[str, int]:
+def shape(g: strider.Function) -> dict[str, int]:
     """A small grab-bag summary so we can compare two lifts cheaply."""
     return {
         "loads": len(g.find_all(load())),

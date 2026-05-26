@@ -152,7 +152,7 @@ def build_cfg(
 ) -> Cfg: ...
 
 class AnalyzeOutcome:
-    graph: Graph
+    graph: Function
     unresolved_branch_count: int
     region_count: int
 
@@ -165,7 +165,7 @@ class Strider:
     def build_stable_optimizer_pipeline(self) -> OptimizerPipeline: ...
     def build_destructive_optimizer_pipeline(self) -> OptimizerPipeline: ...
 
-class Graph:
+class Function:
     def to_html(self, path: str, style: Optional[str] = ...) -> None: ...
     def to_dot(self, path: str) -> None: ...
     def html_str(self, style: Optional[str] = ...) -> str: ...
@@ -207,7 +207,7 @@ class OptimizerPipeline:
 
 class RunResult:
     cfg: Cfg
-    graph: Graph
+    graph: Function
     sleigh: Sleigh
 
 def run(

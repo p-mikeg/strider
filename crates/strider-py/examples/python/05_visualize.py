@@ -2,7 +2,7 @@
 
 The `dot` Rust crate produces self-contained HTML files (graphviz +
 embedded JavaScript renderer) that work in any browser without a
-running graphviz binary. Both `Cfg` and `Graph` expose the same trio:
+running graphviz binary. Both `Cfg` and `Function` expose the same trio:
 
     .to_html(path, style=...)    # write HTML file
     .to_dot(path)                # write raw .dot source

@@ -336,7 +336,7 @@ impl PatLike<'_> {
 // Instead: stash the first control-flow PyErr in a thread-local cell.
 // `wrap_when` short-circuits subsequent predicate invocations once the
 // cell is non-empty (no more `call_bound`), and the outer `find_all`
-// boundary in `graph.rs` drains the cell via [`take_pending_control_flow`]
+// boundary in `function.rs` drains the cell via [`take_pending_control_flow`]
 // and surfaces the stored `PyErr` as `Err(...)`.
 //
 // Thread-local because the matcher's predicate callback chain is

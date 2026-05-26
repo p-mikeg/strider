@@ -183,7 +183,7 @@ so the resolver-bearing dependency stays one-way.
       ≥1 fingerprint).
     - Errors are aggregated into a `ValidationErrors` bundle rather than
       failing fast.
-  - `graph_dot` module — IR-specific Graphviz / HTML rendering on top
+  - `function_dot` module — IR-specific Graphviz / HTML rendering on top
     of the generic `dot` crate.
   - **Asm-fingerprint side-table** (`Graph::asm_fingerprints`) — every
     `NodeId` carries a sorted-deduplicated list of machine-instruction

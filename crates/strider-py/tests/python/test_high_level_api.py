@@ -107,7 +107,7 @@ def test_analyze_wrong_type_raises():
 
 
 def test_find_against_pattern_returns_list():
-    """`Analysis.find(pat)` forwards to `Graph.find_all`."""
+    """`Analysis.find(pat)` forwards to `Function.find_all`."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load(str(elf))
     a = s.analyze("add")

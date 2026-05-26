@@ -193,7 +193,7 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
 
 def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     """Regression: a wrapper that has
-    already been drained by a prior `Graph.optimize` (or
+    already been drained by a prior `Function.optimize` (or
     `strider.run`) call must surface a typed error on a second call,
     not silently no-op with an empty pipeline.
     """

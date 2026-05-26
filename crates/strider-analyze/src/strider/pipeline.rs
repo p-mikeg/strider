@@ -66,17 +66,6 @@ impl AnalyzeOutcome {
         self.region_handles.iter().map(|h| h.exit_control)
     }
 
-    /// Returns the [`strider_ir::Graph::generation`] of the owned
-    /// function.  Equivalent to `self.function.generation()` — exposed as a
-    /// named accessor because callers historically used it as a
-    /// snapshot to compare against post-compaction generations.
-    /// Since `AnalyzeOutcome` owns the function and no consumer can
-    /// mutate it between construction and access, this is identical
-    /// to reading the live function's generation.
-    #[must_use]
-    pub fn lift_generation(&self) -> u64 {
-        self.function.generation()
-    }
 }
 
 impl std::fmt::Display for AnalyzeOutcome {

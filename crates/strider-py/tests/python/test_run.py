@@ -18,7 +18,7 @@ def test_run_returns_run_result(x86_memory_elf):
         allow_code_before_start_addr=True,
     )
     assert isinstance(result.cfg, strider.Cfg)
-    assert isinstance(result.graph, strider.Graph)
+    assert isinstance(result.graph, strider.Function)
     assert isinstance(result.sleigh, strider.Sleigh)
     assert result.graph.node_count() > 0
 
