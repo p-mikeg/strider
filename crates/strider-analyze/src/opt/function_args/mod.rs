@@ -114,6 +114,10 @@ impl Optimizer for FunctionArgDetect {
             self.layout.register_args().map(|(_, vn)| vn).collect();
         let stack_arg_offsets: Vec<i64> =
             self.layout.stack_args().map(|(_, o)| o).collect();
+        // Rebuild the side-table from scratch so the pass is idempotent when
+        // re-run on the same function across stable iterations (otherwise
+        // carrier ids would accumulate duplicates).
+        ctx.function_mut().clear_arg_nodes();
         detect_register_args(&mut ctx, &arg_passing_regs)?;
         detect_stack_args(
             &mut ctx,

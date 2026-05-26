@@ -57,6 +57,46 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     Ok(())
 }
 
+/// `FunctionArgDetect` runs as a post-pass on every stable iteration of
+/// the orchestrator's fixed-point loop, so it can be applied repeatedly to
+/// the same `Function`.  It must be idempotent: re-running it must not
+/// accumulate duplicate carrier ids in `arg_index_to_nodes`.
+#[test]
+fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
+    let rdi = rdi_like_vn();
+    let sp = stack_vn();
+    let mut b = RegisterSet::new()
+        .tracked(rdi)
+        .tracked(sp)
+        .callee_saved(rdi)
+        .ret(rdi)
+        .build_fn_single_region()?;
+
+    let v = b.read_variable(&rdi)?;
+    b.build_return(Some(v), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
+    let entry = fg.entry().unwrap();
+    pass.optimize(&mut fg, entry)?;
+    let after_first = fg.arg_index_to_nodes(0).to_vec();
+    // Re-run on the same function (simulating a second StableOnly iteration).
+    pass.optimize(&mut fg, entry)?;
+    let after_second = fg.arg_index_to_nodes(0).to_vec();
+
+    assert_eq!(
+        after_first, after_second,
+        "re-running FunctionArgDetect must not change the carrier set (idempotent)"
+    );
+    assert_eq!(
+        after_second.len(),
+        1,
+        "exactly one carrier for register arg 0 after re-run, not a duplicate"
+    );
+    Ok(())
+}
+
 /// x86 cdecl reads its first stack arg at `[sp + 4]`.  With no
 /// register args in the convention, `arg_index_to_nodes(0)` should contain
 /// the `Load[sp+4]` node.  The original Load must remain reachable.

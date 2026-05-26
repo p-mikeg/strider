@@ -329,6 +329,17 @@ impl Function {
         self.arg_index_to_nodes.keys().copied()
     }
 
+    /// Drop every registered argument carrier.
+    ///
+    /// Lets the arg-detection pass rebuild the side-table idempotently from
+    /// the live graph: it can be re-run on the same `Function` (e.g. on each
+    /// stable iteration of the orchestrator's fixed-point loop) without
+    /// accumulating duplicate carrier ids.
+    #[inline]
+    pub fn clear_arg_nodes(&mut self) {
+        self.arg_index_to_nodes.clear();
+    }
+
     // ── stack_offsets accessors ───────────────────────────────────────────
 
     /// Returns the stack offset recorded for a Store/Load node, or `None`
@@ -530,6 +541,22 @@ impl Function {
             }
         }
         self.initial_var_index = new_index;
+        // `arg_index_to_nodes` is `FxHashMap<u32, Vec<NodeId>>` — index-keyed
+        // with NodeId payloads, so (like `initial_var_index`) it needs an
+        // inline remap.  Carrier ids whose node didn't survive compaction are
+        // dropped; an index whose carriers all vanished is removed entirely.
+        let mut new_arg_index: FxHashMap<u32, Vec<NodeId>> =
+            FxHashMap::with_capacity_and_hasher(self.arg_index_to_nodes.len(), Default::default());
+        for (index, old_ids) in self.arg_index_to_nodes.drain() {
+            let mapped: Vec<NodeId> = old_ids
+                .into_iter()
+                .filter_map(|old_id| remap.node_old_to_new(old_id))
+                .collect();
+            if !mapped.is_empty() {
+                new_arg_index.insert(index, mapped);
+            }
+        }
+        self.arg_index_to_nodes = new_arg_index;
         Ok(remap)
     }
 
@@ -851,5 +878,76 @@ mod compact_tests {
             !surviving_with_offset,
             "stack_offset -8 must not survive compaction on a surviving node"
         );
+    }
+
+    /// The `arg_index_to_nodes` side-table must be remapped through the
+    /// compaction translation, like every other `NodeId`-keyed overlay.
+    /// Regression guard: the orchestrator's default finalize path runs the
+    /// destructive pipeline (which removes nodes) and then `compact()`,
+    /// while `FunctionArgDetect` (the pass that populates
+    /// `arg_index_to_nodes`) runs only in the *stable* pipeline — so the
+    /// carrier ids stored before compaction must be translated to their
+    /// post-compaction ids, otherwise `function_arg(N)` pattern queries and
+    /// dot rendering read stale / aliased NodeIds.
+    #[test]
+    fn compact_remaps_arg_index_to_nodes() {
+        use crate::node::NodeOutputType;
+
+        let mut f = Function::new();
+        f.cc_metadata = CcMetadata {
+            variables: PrimaryMap::new(),
+            variable_to_id: FxHashMap::default(),
+            call_clobbered: Vec::new(),
+            ret_val_regs: Vec::new(),
+            call_other_clobbered: Vec::new(),
+            arg_passing_vars: Vec::new(),
+            cc: None,
+        };
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        // A zombie created *before* the arg carrier so that compaction
+        // reassigns the carrier's NodeId (the zombie's slot is dropped).
+        let _zombie = f.graph_mut().create_node(
+            NodeKind::IntConst(0xDEAD_u128),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        // The arg carrier: a register-arg-style InitialVar kept live by Return.
+        let arg_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let arg_node = f.graph_mut().create_node(
+            NodeKind::InitialVar(arg_vn),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+        let [arg_out] = f.node_outputs_exact::<1>(arg_node).unwrap();
+        let _ret = f
+            .graph_mut()
+            .create_node(NodeKind::Return, [entry_ctrl, mem_out, arg_out], []);
+        f.set_entry(entry);
+        f.register_arg_node(0, arg_node);
+
+        let remap = f.compact().expect("compact must succeed");
+        let new_arg = remap
+            .node_old_to_new(arg_node)
+            .expect("the live arg carrier must survive compaction");
+
+        assert_eq!(
+            f.arg_index_to_nodes(0),
+            &[new_arg],
+            "arg_index_to_nodes must carry the carrier's post-compaction NodeId"
+        );
+        // Every stored carrier id must be a live node in the compacted graph.
+        for &id in f.arg_index_to_nodes(0) {
+            assert!(
+                f.all_node_ids().any(|n| n == id),
+                "arg carrier id {id:?} must be a live post-compaction node"
+            );
+        }
     }
 }
