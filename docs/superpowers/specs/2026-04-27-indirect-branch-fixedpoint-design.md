@@ -2,7 +2,7 @@
 
 > **Supersedes:** [2026-04-27-indirect-branch-resolution-design.md](2026-04-27-indirect-branch-resolution-design.md).
 >
-> The earlier design routed `BranchIndirect` resolution through a **single-region mini IR graph** built lazily inside the cfg builder.  In practice that mini-graph couldn't see across regions and could not run stack-aware passes (`StackLoadForward`, `StackStoreDetect`), so it failed to resolve gcc-ARM `pop {pc}` and any jump-table shape.  This document replaces that approach with a **fixed-point iterative analysis** that runs the *full* optimizer on the *whole* function and feeds resolved targets back into a CFG rebuild until convergence.
+> The earlier design routed `BranchIndirect` resolution through a **single-region mini IR graph** built lazily inside the cfg builder.  In practice that mini-graph couldn't see across regions and could not run stack-aware passes (`LoadForward`, `StackStoreDetect`), so it failed to resolve gcc-ARM `pop {pc}` and any jump-table shape.  This document replaces that approach with a **fixed-point iterative analysis** that runs the *full* optimizer on the *whole* function and feeds resolved targets back into a CFG rebuild until convergence.
 
 ## Goal
 
@@ -12,13 +12,13 @@ Resolve every `BranchIndirect` in the constructed function — including stack-p
 
 The single-region mini-graph approach had three concrete failures:
 
-1. **`pop pc`.**  gcc-ARM `pop {pc}` lifts to `tmp = load[sp]; sp += 4; BranchIndirect tmp`.  The mini-graph cannot prove `tmp == InitialVar(lr)` because it lacks `StackLoadForward`, which depends on the entry region's `push {lr}` being visible.  Phase 5 left 4 ARM tests ignored under BUG-5 for this reason.
+1. **`pop pc`.**  gcc-ARM `pop {pc}` lifts to `tmp = load[sp]; sp += 4; BranchIndirect tmp`.  The mini-graph cannot prove `tmp == InitialVar(lr)` because it lacks `LoadForward`, which depends on the entry region's `push {lr}` being visible.  Phase 5 left 4 ARM tests ignored under BUG-5 for this reason.
 
 2. **`push X; pop pc` tail call.**  A naïve "load address starts with `InitialVar(sp)`" heuristic would misclassify this as a return.  The user's binding constraint: the load must be from the **function-entry** sp, not the **region-entry** sp.  Distinguishing requires cross-region sp tracking.
 
 3. **Jump tables.**  `jmp *load(table_base + idx * stride)` with a bounded `idx` requires reading the `.rodata` table contents (one Load per entry) and bounding `idx` (via `KnownBits` or a predecessor `If`-walk) — both impossible inside a stripped single-region mini-graph.
 
-All three need the optimizer to run on the **constructed graph**.  The optimizer is what turns "untouched stack location" into "InitialVar(lr) value" (via `StackLoadForward`), what turns "constant table base + bounded index" into "list of load addresses" (via `LoadReadOnly` + `KnownBits`), and what proves cross-region sp invariants.
+All three need the optimizer to run on the **constructed graph**.  The optimizer is what turns "untouched stack location" into "InitialVar(lr) value" (via `LoadForward`), what turns "constant table base + bounded index" into "list of load addresses" (via `LoadReadOnly` + `KnownBits`), and what proves cross-region sp invariants.
 
 ## Architecture
 
@@ -49,7 +49,7 @@ A two-tier resolver inside an outer fixed-point loop **that only runs when the C
                   │   ┌────────────────────────────────────────┐   │
                   │   │ run full optimizer pipeline            │   │
                   │   │   ConstantFold KnownBits RedundantPhis │   │
-                  │   │   StackStoreDetect StackLoadForward    │   │
+                  │   │   StackStoreDetect LoadForward    │   │
                   │   │   LoadReadOnly DeadBranchElimination   │   │
                   │   │   CallStackArgCollect …                │   │
                   │   └────────────────────────────────────────┘   │
@@ -93,12 +93,12 @@ A new strider-level pass that runs **after** the full optimizer pipeline.  For e
 1. Locate the placeholder `Return` node that anchors `target_vn` in the optimised IR (see `lifting strategy` below).
 2. Inspect the producer of `target_vn`'s value-input slot:
    * `IntConst(k)` → `ResolvedTargets::Single(k as u64)`.
-   * `InitialVar(vn)` where `vn == cc_link_register_vn` → `ResolvedTargets::LinkRegister`.  **Stack-popped return addresses** land here naturally — after `StackLoadForward` runs on the full graph, a properly-popped return address simplifies to `InitialVar(lr)`.  No special heuristic, no calling-convention stack arithmetic in the resolver.
+   * `InitialVar(vn)` where `vn == cc_link_register_vn` → `ResolvedTargets::LinkRegister`.  **Stack-popped return addresses** land here naturally — after `LoadForward` runs on the full graph, a properly-popped return address simplifies to `InitialVar(lr)`.  No special heuristic, no calling-convention stack arithmetic in the resolver.
    * `ValuePhi` whose every input folds to `IntConst(k_i)` → `ResolvedTargets::Multiple([k_1, …, k_n])`.  This is how an indirect branch with multiple constant predecessors resolves correctly across iterations: iteration N might see `Single(k_1)` (only one pred wired so far), iteration N+1 with both preds wired sees the Phi and upgrades to `Multiple([k_1, k_2])`.
    * **Jump-table shape** (round R4 only) — pattern-match `Load(IntAdd(IntConst(base), IntMul(idx, IntConst(stride))))` where `idx`'s range is bounded.  Bounds via `KnownBits.max()` first; predecessor `If`-walk fallback.  Read N entries from `.rodata` via the existing `MemReader`; produce `ResolvedTargets::Multiple(vec![target_0, …, target_{N-1}])`.
    * Anything else → still unresolved (no error; the outer loop decides at fixed point).
 
-Tier 2's value is **power**: it sees the full IR after `StackLoadForward` + `LoadReadOnly` + cross-region phis.  This is where `pop pc` and jump tables resolve.
+Tier 2's value is **power**: it sees the full IR after `LoadForward` + `LoadReadOnly` + cross-region phis.  This is where `pop pc` and jump tables resolve.
 
 ### IR caching across iterations — every instruction is lifted exactly once
 
@@ -128,7 +128,7 @@ The persistent state across the loop is the IR `Graph` itself, plus a `RegionIrC
 | `ConstantFold` | ✓ | Rewrites operands; old nodes become dead but stay in the arena; phi inputs widen without disturbing folded successors. |
 | `KnownBits` | ✓ | Annotation-driven rewrites; recomputes from current phi inputs on each run. |
 | `LoadReadOnly` | ✓ | Rewrites a `Load` to an `IntConst`; the new `IntConst` becomes a stable consumer. |
-| `StackStoreDetect`, `StackLoadForward` | ✓ | Rewrite Store/Load nodes in place; no removal of dependents. |
+| `StackStoreDetect`, `LoadForward` | ✓ | Rewrite Store/Load nodes in place; no removal of dependents. |
 | `RedundantPhis` | ✗ | Removes phi / ControlState nodes by detaching inputs and rewiring consumers.  When a later iteration adds a new predecessor, the consumers now point past the phi and cannot be restored. |
 | `DeadBranchElimination` | ✗ | Removes If-true/false edges based on a transient `BoolConst` condition.  A later iteration may make the condition Phi-dependent again, but the branch is gone. |
 
@@ -352,7 +352,7 @@ Each unit has a clear API surface: tier 1 takes `(insns, target_vn, sleigh, …)
 
 7. `tier_2_int_const_to_single` — target VN's producer is `IntConst(k)` after `ConstantFold` → `Single(k)`.
 8. `tier_2_initial_var_lr_to_link_register` — producer is `InitialVar(lr_vn)` → `LinkRegister`.
-9. `tier_2_pop_pc_resolves_via_stack_load_forward` — pcode-level `tmp = load[sp]; sp += 4; bx tmp` after the stable optimizer subset (incl. `StackLoadForward`) produces `InitialVar(lr_vn)` for the target → `LinkRegister`.  This is the test that proves the design closes the 4 ARM regressions.
+9. `tier_2_pop_pc_resolves_via_stack_load_forward` — pcode-level `tmp = load[sp]; sp += 4; bx tmp` after the stable optimizer subset (incl. `LoadForward`) produces `InitialVar(lr_vn)` for the target → `LinkRegister`.  This is the test that proves the design closes the 4 ARM regressions.
 10. `tier_2_push_target_pop_pc_does_not_resolve_to_link_register` — `push 0x1000; pop pc` produces `Load(IntSub(InitialVar(sp),4))`-shaped target after the stable subset → NOT classified as LinkRegister.  Negative test for the soundness gap that killed the prior heuristic.
 11. `tier_2_phi_of_int_consts_to_multiple` — `ValuePhi(IntConst(K1), IntConst(K2))` → `Multiple([K1,K2])`.
 12. `tier_2_phi_with_non_const_input_unresolved` — `ValuePhi(IntConst(K), InitialVar(r0))` → still unresolved.

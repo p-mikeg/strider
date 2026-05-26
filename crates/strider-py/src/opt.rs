@@ -281,7 +281,7 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion);
 // (sleigh, cc) -> from_convention shape would otherwise repeat
 // verbatim for every CC-aware pass.  The sibling `pure_pass_class!`
 // macro above covers the zero-arg pass shape; CC + extra-arg passes
-// (e.g. StackLoadForward's `arch` param) stay hand-written below.
+// (e.g. LoadForward's `arch` param) stay hand-written below.
 
 macro_rules! cc_aware_pass_class {
     ($pyname:literal => $rust:ident, $analyze:ty) => {
@@ -306,10 +306,10 @@ macro_rules! cc_aware_pass_class {
     };
 }
 
-/// `StackLoadForward(sleigh, cc, arch)`
-#[pyclass(name = "StackLoadForward", module = "strider.opt")]
+/// `LoadForward(sleigh, cc, arch)`
+#[pyclass(name = "LoadForward", module = "strider.opt")]
 pub struct PyStackLoadForward {
-    pub(crate) inner: strider_analyze::opt::StackLoadForward,
+    pub(crate) inner: strider_analyze::opt::LoadForward,
 }
 #[pymethods]
 impl PyStackLoadForward {
@@ -322,7 +322,7 @@ impl PyStackLoadForward {
     ) -> PyResult<Self> {
         let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
-            inner: strider_analyze::opt::StackLoadForward::from_convention(&built_cc, &arch.inner),
+            inner: strider_analyze::opt::LoadForward::from_convention(&built_cc, &arch.inner),
         })
     }
 }
@@ -393,7 +393,7 @@ pub enum PyOptPass<'py> {
     DeadBranchElim(PyDeadBranchElim),
     FlagCmpCanonicalize(PyFlagCmpCanonicalize),
     IfCondInversion(PyIfCondInversion),
-    StackLoadForward(Bound<'py, PyStackLoadForward>),
+    LoadForward(Bound<'py, PyStackLoadForward>),
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
     CallStackArgCollect(Bound<'py, PyCallStackArgCollect>),
     LoadReadOnly(Bound<'py, PyLoadReadOnly>),
@@ -409,7 +409,7 @@ impl PyOptPass<'_> {
             PyOptPass::DeadBranchElim(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
             PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize),
             PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion),
-            PyOptPass::StackLoadForward(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::LoadReadOnly(b) => {

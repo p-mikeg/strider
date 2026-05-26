@@ -85,7 +85,7 @@ strider.pattern                    # mirror of Rust pattern crate (Q2/A+B)
 strider.opt                        # one wrapper class per Rust opt pass
   ConstantFold, KnownBits, RedundantPhis, DeadBranchElim, CallOtherElide,
   LoadReadOnly(rom),
-  StackStoreDetect(cc), StackLoadForward(cc, arch),
+  StackStoreDetect(cc), LoadForward(cc, arch),
   FunctionArgDetect(cc), CallStackArgCollect(cc)
 ```
 
@@ -298,7 +298,7 @@ pipe.add(strider.opt.ConstantFold())
 pipe.add(strider.opt.KnownBits())
 pipe.add(strider.opt.LoadReadOnly(rom))
 pipe.add(strider.opt.StackStoreDetect(cc))
-pipe.add(strider.opt.StackLoadForward(cc, arch))
+pipe.add(strider.opt.LoadForward(cc, arch))
 pipe.add_post(strider.opt.FunctionArgDetect(cc))
 pipe.add_post(strider.opt.CallStackArgCollect(cc))
 
@@ -314,7 +314,7 @@ s.build_destructive_optimizer_pipeline()
 ```
 
 `strider.opt` submodule holds one wrapper class per Rust pass. CC/arch-
-bearing passes (`StackStoreDetect`, `StackLoadForward`, `FunctionArgDetect`,
+bearing passes (`StackStoreDetect`, `LoadForward`, `FunctionArgDetect`,
 `CallStackArgCollect`) take the relevant configuration in their
 constructor; pure passes (`ConstantFold`, `KnownBits`, `RedundantPhis`,
 `DeadBranchElim`, `CallOtherElide`) are zero-arg. `LoadReadOnly` takes

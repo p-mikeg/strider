@@ -304,7 +304,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // Phi: SSA φ.  The optional source-level varnode tag lives in
         //   `Graph::phi_var_tag` (a side-table) — `Some(vn)` is the
         //   lift-time tagged shape; `None` is the anonymous value-phi
-        //   synthesised by StackLoadForward.  Both share this shape:
+        //   synthesised by LoadForward.  Both share this shape:
         //   `[phi_token, ...per-predecessor values]`.
         // Output is AnyValue (not AnyInt): the phi's output type matches its
         // value inputs, which routinely include Bool-typed flag-register phis.

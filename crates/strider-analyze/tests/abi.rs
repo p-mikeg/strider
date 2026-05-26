@@ -16,7 +16,7 @@ per_arch_test!("abi", "make_pair",       make_pair_has_return);
 // tail_caller: closed under the indirect-branch fixed-point
 // design (per `2026-04-27-indirect-branch-fixedpoint.md`).
 // the IR-level orchestrator resolver's `LinkRegister` arm classifies arm `pop {pc}` (load + bx)
-// once `StackLoadForward` simplifies the loaded target back to
+// once `LoadForward` simplifies the loaded target back to
 // `InitialVar(lr)`, so the placeholder Return resolves to a real
 // Return at the cfg-rebuild step.  All arches, including arm, now
 // pass without an ignore.

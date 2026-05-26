@@ -63,7 +63,7 @@ EXPECTED_OPT = {
     "KnownBits",
     "LoadReadOnly",
     "RedundantPhis",
-    "StackLoadForward",
+    "LoadForward",
 }
 
 EXPECTED_PATTERN = {

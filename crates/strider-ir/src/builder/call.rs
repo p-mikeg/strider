@@ -246,7 +246,7 @@ impl FunctionBuilder {
         // *clobbers]`).  When the CC declares `no_memory_clobber`, we
         // keep the Memory output but leave it dangling — the region's
         // memory chain is NOT advanced, so subsequent loads see the
-        // pre-call memory edge.  LoadReadOnly / StackLoadForward can
+        // pre-call memory edge.  LoadReadOnly / LoadForward can
         // therefore forward through the call.
         let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
             .into_iter()

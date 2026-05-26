@@ -15,7 +15,7 @@ per_arch_test!("control", "sum_to_n",       sum_to_n_has_loop);
 per_arch_test!("control", "factorial",      factorial_has_loop);
 per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);
 // nested_loops: arm's `pop {pc}` resolves via the indirect-branch
-// resolver's `LinkRegister` arm once `StackLoadForward` simplifies the
+// resolver's `LinkRegister` arm once `LoadForward` simplifies the
 // loaded target back to `InitialVar(lr)`.
 per_arch_test!("control", "nested_loops", nested_loops_has_two_loops);
 // early_return uses count_return_paths (sum of Region fan-in at

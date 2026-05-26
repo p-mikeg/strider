@@ -82,7 +82,7 @@ fn outer_loop_unresolved_at_fixed_point_returns_error() {
 #[test]
 fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     // `push imm32; pop rax; jmp rax` — structurally a tail call.
-    // After StackOffsetDetect + StackLoadForward the placeholder
+    // After StackOffsetDetect + LoadForward the placeholder
     // Return's value-input folds to IntConst(K), and IR-level indirect-branch resolver
     // classifies as `Single(K)`.  K must lie OUTSIDE the function
     // range so the orchestrator treats it as a tail call.

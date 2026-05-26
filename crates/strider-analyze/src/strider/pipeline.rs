@@ -229,7 +229,7 @@ impl Strider {
     ///    redundant-phi, dead-branch).
     /// 2. [`crate::opt::StackOffsetDetect`] to stamp `Function::stack_offsets`
     ///    with each SP-relative Store / Load's concrete offset.
-    /// 3. [`crate::opt::StackLoadForward`] inside the fixed-point loop, using
+    /// 3. [`crate::opt::LoadForward`] inside the fixed-point loop, using
     ///    the convention's stack-pointer varnode.
     /// 4. [`crate::opt::CallStackArgCollect`] as a post-pass (runs once after
     ///    convergence), using the convention's positional stack-arg offsets.
@@ -242,7 +242,7 @@ impl Strider {
             &self.calling_convention,
         ));
         p.add(
-            crate::opt::StackLoadForward::from_convention(&self.calling_convention, &self.arch)
+            crate::opt::LoadForward::from_convention(&self.calling_convention, &self.arch)
                 .alias_mode(self.alias_mode),
         );
         p.add_post_pass(
@@ -263,7 +263,7 @@ impl Strider {
     /// adds new phi inputs.  Inherits `ConstantFold`, `KnownBits`,
     /// `FlagCmpCanonicalize`, and `IfCondInversion` from
     /// `crate::opt::stable_default_pipeline()`, then adds
-    /// `StackOffsetDetect`, `StackLoadForward`, and the
+    /// `StackOffsetDetect`, `LoadForward`, and the
     /// `FunctionArgDetect` post-pass.  The destructive passes
     /// (`RedundantPhis` / `DeadBranchElimination`) are deferred to the
     /// final iteration because they remove nodes that the
@@ -275,7 +275,7 @@ impl Strider {
             &self.calling_convention,
         ));
         p.add(
-            crate::opt::StackLoadForward::from_convention(&self.calling_convention, &self.arch)
+            crate::opt::LoadForward::from_convention(&self.calling_convention, &self.arch)
                 .alias_mode(self.alias_mode),
         );
         p.add_post_pass(

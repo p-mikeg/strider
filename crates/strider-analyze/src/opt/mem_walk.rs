@@ -1,6 +1,6 @@
 //! Shared backward memory-chain walker used by SP-aware analyses.
 //!
-//! Both `stack_load_forward::probe` and `function_args::mem_chain_is_dirty`
+//! Both `load_forward::probe` and `function_args::mem_chain_is_dirty`
 //! traverse the memory chain backward from a `mem: NodeOutputId`, treat
 //! `Store(VnSpace)` (whose stack-relative offset metadata lives in
 //! `Function::stack_offsets` when applicable) as pass-through-or-
@@ -40,7 +40,7 @@
 //!   force it to declare a `JoinPhi` arm that is dead code at every
 //!   call site and a `combine_phi` impl that is never invoked.
 //!
-//! * [`crate::opt::stack_load_forward::find_stack_stored_value_at_offset`]
+//! * [`crate::opt::load_forward::find_stack_stored_value_at_offset`]
 //!   walks the chain looking for one stack-`Store` at a specific
 //!   SP-relative offset.  It bails on `MemPhi` rather than branching,
 //!   and it memoises EVERY prefix on the way back into a caller-

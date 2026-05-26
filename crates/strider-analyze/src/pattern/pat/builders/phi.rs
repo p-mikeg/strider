@@ -3,7 +3,7 @@
 //! `PhiPat` matches Vn-tagged `Phi` nodes (the SSA phi for a tracked
 //! variable); `MemPhiPat` matches `MemPhi` (the memory-token phi at
 //! join points); `ValuePhiPat` matches anonymous `Phi` (the value-phi
-//! synthesised by `StackLoadForward`).  All three carry an optional
+//! synthesised by `LoadForward`).  All three carry an optional
 //! per-predecessor input constraint.
 //!
 //! The Vn tag for a `Phi` node lives in the
@@ -116,7 +116,7 @@ impl From<MemPhiPat> for Pat {
 /// [`crate::pattern::pat::value_phi`].
 ///
 /// Anonymous phis (those with no `phi_var_tag` entry) are synthesised
-/// by `StackLoadForward` to phi together stack-store values that flow
+/// by `LoadForward` to phi together stack-store values that flow
 /// into a load through a control-flow join.  Patterns that walk
 /// forwarded stack values may need this.
 pub struct ValuePhiPat {

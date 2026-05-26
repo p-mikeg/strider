@@ -24,7 +24,7 @@ class DeadBranchElim:
     def __init__(self) -> None: ...
 
 # CC/arch-aware passes.
-class StackLoadForward:
+class LoadForward:
     def __init__(self, sleigh: Any, cc: Any, arch: Any) -> None: ...
 
 class StackOffsetDetect:

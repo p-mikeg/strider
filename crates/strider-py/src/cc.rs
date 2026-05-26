@@ -191,7 +191,7 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// against `sleigh`'s register table to produce a [`strider_target::BuiltCallingConvention`].
 ///
 /// Centralises the pattern that the strider-py FFI layer used to repeat
-/// at every constructor that needs a built CC (StackLoadForward,
+/// at every constructor that needs a built CC (LoadForward,
 /// FunctionArgDetect, CallStackArgCollect, Strider).
 /// The pattern was: borrow Sleigh, clone regs, drop borrow, call
 /// `cc.inner.build(&regs)`, map StriderError.

@@ -219,7 +219,7 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 | `DeadBranchElimination` | Removes `If` whose condition is constant; strips dead control edges. |
 | `LoadReadOnly` | Folds `Load`s of constant addresses against a caller-supplied ROM. |
 | `StackOffsetDetect` | Populates `Function::stack_offsets` with the SP-relative offset of every Store/Load whose address resolves to `sp + K`. |
-| `StackLoadForward` | Forwards stack-tagged `Store` values to subsequent same-offset `Load`s. |
+| `LoadForward` | Forwards stack-tagged `Store` values to subsequent same-offset `Load`s. |
 | `CallStackArgCollect` (post-pass) | Collects positional stack args at `Call` sites. |
 | `FunctionArgDetect` (post-pass) | Canonicalises register- and stack-passed arg reads at the function boundary by populating `Function::arg_index_to_nodes` (carrier `NodeId` is `InitialVar` for register args, `Load` for stack args).  There is no `FunctionArg` `NodeKind` variant. |
 
@@ -237,7 +237,7 @@ A few common surprises when a pattern that "should obviously match" returns no h
 
 3. **Commutativity.**  `add` / `mul` / `and` / `or` / `xor` (and the boolean equivalents) and `IntCmpOp::{Equal,Carry,Scarry}` plus `FloatCmpOp::Equal` automatically try both operand orderings.  Non-commutative ops (`sub`, `div`, `shl`, `int_lt`, …) keep stated order.  Use `int_binary("Add", l, r).ordered()` to force left-to-right matching on a typed binary builder.  `.ordered()` on a finalised `Pat` (returned by free constructors like `add(x, y)`) raises `PatternError` because commutativity is baked in at construction.
 
-4. **`phi()` matches a tagged `Phi` only** (one whose `Graph::phi_var_tag` entry is `Some`, i.e. the lifter-emitted SSA φ for a register-aliased read).  Use `mem_phi()` for the memory-token phi at join points; `value_phi()` for the anonymous value phi `StackLoadForward` synthesises (its `phi_var_tag` is `None`).
+4. **`phi()` matches a tagged `Phi` only** (one whose `Graph::phi_var_tag` entry is `Some`, i.e. the lifter-emitted SSA φ for a register-aliased read).  Use `mem_phi()` for the memory-token phi at join points; `value_phi()` for the anonymous value phi `LoadForward` synthesises (its `phi_var_tag` is `None`).
 
 5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `Region`, `Or(BoolConst(false), x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
 

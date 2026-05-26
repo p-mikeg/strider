@@ -6,7 +6,7 @@
 //! phi-token.
 //!
 //! Must be wired into the pipeline with the calling convention's stack-pointer
-//! varnode and the target's endianness (see [`StackLoadForward::new`]).
+//! varnode and the target's endianness (see [`LoadForward::new`]).
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use strider_target::Endianness;
@@ -24,7 +24,7 @@ use crate::opt::worklist::seeded_kind;
 /// and so that forwarded constants fed into expressions are in turn
 /// simplified by `ConstantFold` / `KnownBits`.
 #[derive(Clone)]
-pub struct StackLoadForward {
+pub struct LoadForward {
     /// Calling convention this pass was built from.  See the comment
     /// Shared `Arc` so all CC-aware passes can hold the same allocation.
     /// This pass consults only `cc.stack_ptr_vn`.
@@ -42,7 +42,7 @@ pub struct StackLoadForward {
     alias_mode: crate::opt::AliasMode,
 }
 
-impl StackLoadForward {
+impl LoadForward {
     /// Creates a new pass for the given stack-pointer varnode and target
     /// endianness.  Convenience constructor; production paths prefer
     /// [`Self::from_convention`] so the same CC is shared with the
@@ -79,7 +79,7 @@ impl StackLoadForward {
     }
 }
 
-impl Optimizer for StackLoadForward {
+impl Optimizer for LoadForward {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
@@ -97,9 +97,11 @@ impl Optimizer for StackLoadForward {
     }
 }
 
-/// Tries to forward a single `Load[sp + K]` to the value of a matching
-/// upstream `StackStore{offset: K}`.  Returns `Changed` iff the load's uses
-/// were rewired.
+/// Tries to forward a single `Load` to the value of a matching
+/// upstream `Store`.  Address-class dispatch lives in
+/// [`classify_addr`] and the per-pair match/disjoint/may-alias verdict
+/// in [`alias_verdict`].  Returns `Changed` iff the load's uses were
+/// rewired.
 fn try_forward_load(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     load: NodeId,
@@ -115,12 +117,7 @@ fn try_forward_load(
         return Ok(OptimizationResult::NoChange);
     };
 
-    let Some(SpExpr::Terminal { base: _, offset }) =
-        decompose_sp(ctx.function_ref(), addr, sp_vn, memo)
-    else {
-        return Ok(OptimizationResult::NoChange);
-    };
-
+    let load_class = classify_addr(ctx.function_ref(), addr, sp_vn, memo);
     let load_size = load_ty.byte_size() as i64;
     // Two-phase walk: probe is read-only and decides whether forwarding
     // can succeed; only on full success does realize commit fresh nodes
@@ -131,7 +128,7 @@ fn try_forward_load(
     let Some(shape) = probe(
         ctx,
         mem,
-        offset,
+        load_class,
         load_size,
         load_ty,
         sp_vn,
@@ -189,9 +186,118 @@ enum ResolveShape {
     },
 }
 
+/// Coarse classification of a Load / Store address.  The verdict
+/// table in [`alias_verdict`] is keyed on the `(load_class,
+/// store_class)` pair: matching addresses use the diagonal of the
+/// table, disjointness uses the off-diagonal.
+#[derive(Clone, Copy, Debug)]
+enum AddrClass {
+    /// `decompose_sp` returned `Terminal { offset, .. }`.  Two
+    /// `SpRooted` addresses with equal offsets refer to the same byte
+    /// range; disjoint offsets are proven non-overlapping via
+    /// [`ranges_disjoint`].
+    SpRooted { offset: i64 },
+    /// `NodeKind::IntConst(_)` address — a literal `.data`/`.rodata`/
+    /// `.bss`/MMIO pointer.  Two `Constant` addresses with equal
+    /// values refer to the same byte range; disjoint values are
+    /// proven non-overlapping via [`ranges_disjoint`].
+    Constant { addr: i64 },
+    /// Anything else (`Load`-of-pointer, `Add` of opaque values,
+    /// `Phi`-of-offsets, …).  Two `Anchor` addresses are proven equal
+    /// only by `NodeOutputId` equality; different ids can compute to
+    /// the same address at runtime, so we treat them as
+    /// possibly-aliasing.
+    Anchor { out: NodeOutputId },
+}
+
+/// Classifies a load / store address.  Cheap: `decompose_sp` is memoised
+/// across the function, the `IntConst` peek is a single match.
+fn classify_addr(
+    graph: &strider_ir::Function,
+    addr: NodeOutputId,
+    sp_vn: rsleigh::Vn,
+    memo: &mut SpExprMemo,
+) -> AddrClass {
+    match decompose_sp(graph, addr, sp_vn, memo) {
+        Some(SpExpr::Terminal { offset, .. }) => AddrClass::SpRooted { offset },
+        Some(SpExpr::Phi { .. }) => AddrClass::Anchor { out: addr },
+        None => {
+            let node = graph.get_node_from_output(addr);
+            match graph.node_kind(node) {
+                NodeKind::IntConst(c) => AddrClass::Constant { addr: *c as i64 },
+                _ => AddrClass::Anchor { out: addr },
+            }
+        }
+    }
+}
+
+/// Pairwise verdict between a Load's address class + size and an
+/// intervening Store's address class + size.  Implements the table
+/// described in the [`crate::opt::AliasMode`] module docs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AliasVerdict {
+    /// Same byte range — caller treats this Store as the forwarding
+    /// source.
+    Match,
+    /// Provably non-overlapping byte range — caller steps through.
+    Disjoint,
+    /// Cannot prove either; caller bails.
+    MayAlias,
+}
+
+fn alias_verdict(
+    load_class: AddrClass,
+    load_size: i64,
+    store_class: AddrClass,
+    store_size: i64,
+    mode: crate::opt::AliasMode,
+) -> AliasVerdict {
+    use AddrClass::*;
+    match (load_class, store_class) {
+        // Diagonal: in-class equality + range-disjoint.
+        (SpRooted { offset: lo }, SpRooted { offset: so }) => {
+            if lo == so {
+                AliasVerdict::Match
+            } else if ranges_disjoint(lo, load_size, so, store_size) {
+                AliasVerdict::Disjoint
+            } else {
+                AliasVerdict::MayAlias
+            }
+        }
+        (Constant { addr: la }, Constant { addr: sa }) => {
+            if la == sa {
+                AliasVerdict::Match
+            } else if ranges_disjoint(la, load_size, sa, store_size) {
+                AliasVerdict::Disjoint
+            } else {
+                AliasVerdict::MayAlias
+            }
+        }
+        (Anchor { out: lout }, Anchor { out: sout }) => {
+            if lout == sout {
+                AliasVerdict::Match
+            } else {
+                // Different NodeOutputIds can compute to the same
+                // address at runtime; no disjointness proof available.
+                AliasVerdict::MayAlias
+            }
+        }
+        // Off-diagonal: cross-class.  Strict cannot prove disjoint;
+        // AssumeStackConstDisjoint admits SP↔Constant pairs.
+        (SpRooted { .. }, Constant { .. }) | (Constant { .. }, SpRooted { .. }) => match mode {
+            crate::opt::AliasMode::Strict => AliasVerdict::MayAlias,
+            crate::opt::AliasMode::AssumeStackConstDisjoint => AliasVerdict::Disjoint,
+        },
+        // Every other cross-class pair (Anchor vs anything) still
+        // bails under both modes; closing this requires escape
+        // analysis.
+        _ => AliasVerdict::MayAlias,
+    }
+}
+
 /// [`MemChainStep`] implementation for [`probe`].
 struct ProbeStep<'a> {
-    offset: i64,
+    load_class: AddrClass,
     load_size: i64,
     load_ty: strider_ir::node::NodeOutputType,
     sp_vn: rsleigh::Vn,
@@ -217,56 +323,38 @@ impl<'a> MemChainStep for ProbeStep<'a> {
                 }
                 let addr = inputs[1];
                 let data = inputs[2];
-                match decompose_sp(graph, addr, self.sp_vn, self.memo) {
-                    Some(SpExpr::Terminal { base: _, offset: k }) => {
-                        let Some(data_ty) = graph.output_kind(data).as_value() else {
-                            return Ok(StepResult::Verdict(None));
-                        };
-                        let store_size = data_ty.byte_size() as i64;
-                        if k == self.offset {
-                            // Exact-offset match: forward the stored value.
-                            if data_ty == self.load_ty {
-                                Ok(StepResult::Verdict(Some(ResolveShape::Existing(data))))
-                            } else if data_ty.is_integer()
-                                && self.load_ty.is_integer()
-                                && self.load_ty.byte_size() < data_ty.byte_size()
-                            {
-                                Ok(StepResult::Verdict(Some(ResolveShape::Narrow {
-                                    data,
-                                    data_ty,
-                                })))
-                            } else {
-                                Ok(StepResult::Verdict(None))
-                            }
-                        } else if ranges_disjoint(k, store_size, self.offset, self.load_size) {
-                            // Disjoint SP-relative offset: pass through.
-                            Ok(StepResult::Continue(inputs[0]))
+                let Some(data_ty) = graph.output_kind(data).as_value() else {
+                    return Ok(StepResult::Verdict(None));
+                };
+                let store_size = data_ty.byte_size() as i64;
+                let store_class = classify_addr(graph, addr, self.sp_vn, self.memo);
+                match alias_verdict(
+                    self.load_class,
+                    self.load_size,
+                    store_class,
+                    store_size,
+                    self.alias_mode,
+                ) {
+                    AliasVerdict::Match => {
+                        // Forward the stored value, applying the
+                        // narrow-from-wider rewrite when the load
+                        // reads fewer bytes than the store wrote.
+                        if data_ty == self.load_ty {
+                            Ok(StepResult::Verdict(Some(ResolveShape::Existing(data))))
+                        } else if data_ty.is_integer()
+                            && self.load_ty.is_integer()
+                            && self.load_ty.byte_size() < data_ty.byte_size()
+                        {
+                            Ok(StepResult::Verdict(Some(ResolveShape::Narrow {
+                                data,
+                                data_ty,
+                            })))
                         } else {
-                            // Overlapping SP-relative store: may alias.
                             Ok(StepResult::Verdict(None))
                         }
                     }
-                    Some(SpExpr::Phi { .. }) => {
-                        // SP-rooted Phi address: conservatively may alias.
-                        Ok(StepResult::Verdict(None))
-                    }
-                    None => match self.alias_mode {
-                        // Strict: cross-class store may alias the
-                        // SP-rooted load.  Bail.
-                        crate::opt::AliasMode::Strict => Ok(StepResult::Verdict(None)),
-                        // Permissive: an `IntConst` store address is
-                        // assumed to live outside the stack region.
-                        // Step through it; any other non-SP-rooted
-                        // (Anchor) address still bails.
-                        crate::opt::AliasMode::AssumeStackConstDisjoint => {
-                            let addr_node = graph.get_node_from_output(addr);
-                            if matches!(graph.node_kind(addr_node), NodeKind::IntConst(_)) {
-                                Ok(StepResult::Continue(inputs[0]))
-                            } else {
-                                Ok(StepResult::Verdict(None))
-                            }
-                        }
-                    },
+                    AliasVerdict::Disjoint => Ok(StepResult::Continue(inputs[0])),
+                    AliasVerdict::MayAlias => Ok(StepResult::Verdict(None)),
                 }
             }
             NodeKind::MemPhi => {
@@ -326,7 +414,7 @@ impl<'a> MemChainStep for ProbeStep<'a> {
 fn probe(
     ctx: &crate::pattern::RewriteCtx<'_>,
     initial_mem: NodeOutputId,
-    offset: i64,
+    load_class: AddrClass,
     load_size: i64,
     load_ty: strider_ir::node::NodeOutputType,
     sp_vn: rsleigh::Vn,
@@ -335,7 +423,7 @@ fn probe(
     alias_mode: crate::opt::AliasMode,
 ) -> Result<Option<ResolveShape>> {
     let mut step = ProbeStep {
-        offset,
+        load_class,
         load_size,
         load_ty,
         sp_vn,
@@ -391,7 +479,7 @@ fn realize_with_depth(
 ) -> crate::opt::Result<NodeOutputId> {
     if depth > MAX_RESOLVE_DEPTH {
         return Err(anyhow::anyhow!(
-            "stack_load_forward::realize exceeded MAX_RESOLVE_DEPTH={MAX_RESOLVE_DEPTH} \
+            "load_forward::realize exceeded MAX_RESOLVE_DEPTH={MAX_RESOLVE_DEPTH} \
              — refusing to recurse on pathological nested-MemPhi shape"
         ));
     }
@@ -555,7 +643,7 @@ pub type StackStoredValueMemo =
 ///   types return `None` (no Truncate / ShiftRight synthesis here).
 /// - `sp_vn` — the calling convention's stack-pointer varnode (used
 ///   to interpret raw `Store(_)` addresses; matches the pass's
-///   [`StackLoadForward::stack_ptr_vn`] field).
+///   [`LoadForward::stack_ptr_vn`] field).
 /// - `sp_memo` — a per-call SP-decomposition memo.  Reuse the same memo
 ///   across multiple calls for the same graph to amortise the cost
 ///   of decomposing repeated SP expressions.

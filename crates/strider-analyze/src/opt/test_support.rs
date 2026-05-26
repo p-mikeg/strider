@@ -26,7 +26,7 @@ use strider_target::Endianness;
 
 pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
-use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, StackLoadForward};
+use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, LoadForward};
 
 /// Returns a fresh pipeline containing exactly `ConstantFold` +
 /// `RedundantPhis` — the most common two-pass pair used across the
@@ -47,7 +47,7 @@ pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
 
 /// Builds the canonical 3-pass optimizer pipeline used across the
 /// opt white-box tests: `ConstantFold` → `RedundantPhis` →
-/// `StackLoadForward(sp, endianness)`.
+/// `LoadForward(sp, endianness)`.
 ///
 /// `sp` is the stack-pointer varnode for the fixture's target;
 /// `endianness` matches the fixture's IR.  Tests that need a
@@ -58,11 +58,11 @@ pub(crate) fn standard_test(sp: rsleigh::Vn, endianness: Endianness) -> Optimize
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackLoadForward::new(sp, endianness));
+    pipeline.add(LoadForward::new(sp, endianness));
     pipeline
 }
 
-/// Variant of [`standard_test`] whose `StackLoadForward` runs under
+/// Variant of [`standard_test`] whose `LoadForward` runs under
 /// [`crate::opt::AliasMode::AssumeStackConstDisjoint`].  Used by white-box
 /// tests that pin permissive-mode behaviour.
 pub(crate) fn standard_test_permissive(
@@ -73,7 +73,7 @@ pub(crate) fn standard_test_permissive(
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(
-        StackLoadForward::new(sp, endianness)
+        LoadForward::new(sp, endianness)
             .alias_mode(crate::opt::AliasMode::AssumeStackConstDisjoint),
     );
     pipeline

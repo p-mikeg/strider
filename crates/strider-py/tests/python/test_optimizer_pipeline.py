@@ -106,7 +106,7 @@ def test_cc_aware_passes_construct(x86_memory_elf):
 
     # Construct each CC/arch-aware pass to confirm their constructors
     # accept the (sleigh, cc[, arch]) triples.
-    b = strider.opt.StackLoadForward(sleigh, cc, arch)
+    b = strider.opt.LoadForward(sleigh, cc, arch)
     c = strider.opt.FunctionArgDetect(sleigh, cc)
     d = strider.opt.CallStackArgCollect(sleigh, cc)
     e = strider.opt.LoadReadOnly(mem)

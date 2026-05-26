@@ -69,7 +69,7 @@ impl PyStrider {
     }
 
     /// Mirror of `strider_analyze::Strider::build_optimizer_pipeline`.  Adds
-    /// the convention-aware StackLoadForward fixed-point pass plus
+    /// the convention-aware LoadForward fixed-point pass plus
     /// CallStackArgCollect / FunctionArgDetect post passes on top of the
     /// default pipeline.
     fn build_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {

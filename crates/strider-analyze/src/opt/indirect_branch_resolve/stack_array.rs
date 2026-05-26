@@ -20,7 +20,7 @@
 //!     [`super::jump_table::bound_via_predecessor_if`] machinery.
 //!   * For each `i in 0..N`, look up the stored value at SP-offset
 //!     `K + i*stride` via the new
-//!     `opt::stack_load_forward::find_stack_stored_value_at_offset`
+//!     `opt::load_forward::find_stack_stored_value_at_offset`
 //!     helper.
 //!   * Each stored value must be `IntConst`; collect into
 //!     `ResolvedTargets::Multiple([c0, c1, ...])`.
@@ -49,7 +49,7 @@ use strider_ir::node::{NodeKind, NodeOutputId};
 use strider_ir::{Graph, IntBinaryOp};
 use strider_lift::cfg::ResolvedTargets;
 use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
-use crate::opt::stack_load_forward::{StackStoredValueMemo, find_stack_stored_value_at_offset};
+use crate::opt::load_forward::{StackStoredValueMemo, find_stack_stored_value_at_offset};
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
@@ -120,7 +120,7 @@ pub fn classify_stack_array(
         // checking for a constant.  AArch64-BE's lifter wraps stored
         // label addresses in `Truncate` for 32-bit ARM Thumb-interworking
         // (mask to pointer width); ConstantFold rules 4-6 normally fold
-        // these, but the StackStore→StackLoadForward path can land us on
+        // these, but the StackStore→LoadForward path can land us on
         // a not-yet-folded shape.  SOUND: both wrappers are deterministic
         // functions of the inner constant, exactly mirroring the
         // `Truncate(IntConst)` / `Extend(IntConst)` arms in
@@ -143,13 +143,13 @@ pub fn classify_stack_array(
 /// `flatten_add_tree` Or-arm fix: AArch64-BE lifter shapes wrap stored
 /// label addresses in `Truncate(IntConst, U32)` (32-bit ARM
 /// Thumb-interworking); ConstantFold normally folds these but the
-/// `StackStore` → `StackLoadForward` propagation can leave the wrapper
+/// `StackStore` → `LoadForward` propagation can leave the wrapper
 /// in place when the load's declared output type matches the truncate.
 ///
 /// Implements the `Truncate(IntConst)` / `Extend(IntConst)` peel that
 /// `classify.rs`'s top-level arm explicitly delegates to ConstantFold
 /// (rules 4-6).  This peel handles the stack-array path where the
-/// `StackStore` → `StackLoadForward` propagation can leave the
+/// `StackStore` → `LoadForward` propagation can leave the
 /// `Truncate` wrapper in place if the load's declared output type
 /// matches the truncate width.
 ///
@@ -621,7 +621,7 @@ mod tests {
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("Load survives — StackLoadForward not in pipeline");
+            .expect("Load survives — LoadForward not in pipeline");
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
         (fg, load_out)
     }
@@ -1081,7 +1081,7 @@ mod tests {
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("Load survives — StackLoadForward not in pipeline");
+            .expect("Load survives — LoadForward not in pipeline");
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
         (fg, load_out)
     }

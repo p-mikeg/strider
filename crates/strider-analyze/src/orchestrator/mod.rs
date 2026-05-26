@@ -717,7 +717,7 @@ fn apply_in_place_edit(
             )?;
             // Memory-preserving CCs (the override's flag, or the function
             // default when no override is in play) suppress the spliced
-            // Call's memory clobber so LoadReadOnly / StackLoadForward
+            // Call's memory clobber so LoadReadOnly / LoadForward
             // chains stay intact across the tail call.
             let no_memory_clobber = override_cc.map_or_else(
                 || strider.calling_convention().no_memory_clobber,

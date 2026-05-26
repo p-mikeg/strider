@@ -623,7 +623,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
 // `mem_chain_is_dirty` plain-`Store` arm.
 //
 // The two prior fixes (commit 57005b9) updated `CallStackArgCollect` and
-// `stack_load_forward::probe` so a plain `Store` whose address provably
+// `load_forward::probe` so a plain `Store` whose address provably
 // is NOT `sp + K` no longer terminates the memory-chain walk.  The same
 // pattern bit `mem_chain_is_dirty`: its catch-all `_ => true` arm marked
 // any plain `Store` as a shadow, so a stack-arg `Load[sp+K]` whose memory

@@ -378,7 +378,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // IA32_KERNEL_GS_BASE.  No GPR or RAM write on its own, but the
     // MSR swap silently changes the virtual base used by every
     // subsequent `%gs:`-relative load/store.  Without a non-empty
-    // mem_clobbers, StackLoadForward / LoadReadOnly would forward
+    // mem_clobbers, LoadForward / LoadReadOnly would forward
     // `%gs:`-loads across the swap.  Analogous to wr{fs,gs}base above —
     // %gs accesses are heap-resident; the stack pointer is not
     // GS-relative, so MEM_CLOBBER_HEAP_UNKNOWN is sufficient.  Arch-
@@ -554,7 +554,7 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // Stack-class load across any of them is unsound.
         //
         // Conservative choice: clobber Stack + Unknown.  This prevents
-        // StackLoadForward from forwarding a value that a prior barrier
+        // LoadForward from forwarding a value that a prior barrier
         // has made stale from the point of view of any aliased observer.
         // Precision loss is acceptable — these primitives appear in
         // synchronisation code where forwarding is rarely beneficial.
@@ -679,7 +679,7 @@ mod tests {
     /// serialization barriers that make all prior stores (including
     /// another CPU's writes to an escaped stack pointer) visible across
     /// the barrier.  Using only MEM_CLOBBER_HEAP_UNKNOWN would allow
-    /// StackLoadForward to forward a Stack-class value across a barrier,
+    /// LoadForward to forward a Stack-class value across a barrier,
     /// which is unsound in the presence of shared-stack / aliased-frame
     /// patterns.
     #[test]
@@ -800,7 +800,7 @@ mod tests {
         // SWAPGS exchanges IA32_GS_BASE ↔ IA32_KERNEL_GS_BASE.  Subsequent
         // %gs:-relative loads/stores depend on the new base, so swapgs must
         // be on the IR memory chain — analogous to wr{fs,gs}base, which use
-        // PURE_WITH_MEM_EDGE.  Without memory_edge=true, StackLoadForward /
+        // PURE_WITH_MEM_EDGE.  Without memory_edge=true, LoadForward /
         // LoadReadOnly could incorrectly forward across swapgs in kernel
         // entry/exit code.
         let cls = classify(crate::ArchPreset::X86_64, "swapgs").unwrap();

@@ -384,7 +384,7 @@ fn apply_tail_call_with_no_memory_clobber_wires_pre_call_memory_into_return() {
     // branch).  The Call still emits `[Control, Memory(None), ...]`
     // (Call's `expected_signature` requires Memory), but the Memory
     // output is left dangling and the new Return wires the *pre-Call*
-    // memory edge so LoadReadOnly / StackLoadForward chains stay
+    // memory edge so LoadReadOnly / LoadForward chains stay
     // intact across the spliced tail call.  Required for
     // `x86_64_all_preserving`-style tracing pre-ambles where the tail
     // call provably doesn't touch memory.

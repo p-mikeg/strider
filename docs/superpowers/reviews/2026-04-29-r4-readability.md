@@ -111,10 +111,10 @@ checkpoint.
   `crates/ir/tests/builder_extended_use.rs`,
   `crates/opt/src/{call_other_elide,constant_fold,dead_branch,
   function_args,known_bits,load_readonly,redundant_phis,
-  stack_load_forward,stack_store/{call_args,detect}}/...`,
+  load_forward,stack_store/{call_args,detect}}/...`,
   `crates/opt/src/pipeline.rs`,
   `crates/opt/src/indirect_branch_resolve/classify.rs`,
-  `crates/opt/src/stack_load_forward/tests.rs`,
+  `crates/opt/src/load_forward/tests.rs`,
   `crates/opt/tests/indirect_branch_resolve.rs`,
   `crates/strider/src/{lib,strider/pipeline,
   indirect_resolve_tier2/orchestrator}.rs`.

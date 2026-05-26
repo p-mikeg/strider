@@ -144,7 +144,7 @@ graph.optimize(pipe)
 > handle.  The Python `Sleigh` wrapper holds it inside an `Option`, and
 > after `build_cfg` returns the wrapper is left empty — any subsequent
 > use of that same Python `Sleigh` object (e.g. handing it to
-> `Strider.analyze_cfg`, `opt.StackLoadForward`,
+> `Strider.analyze_cfg`, `opt.LoadForward`,
 > or another `build_cfg` call) will raise.  Construct any consumers
 > that need it (`Strider`, the stack passes) *before* the `build_cfg`
 > call as the snippet above shows, or rebuild a fresh handle via
@@ -158,7 +158,7 @@ graph.optimize(pipe)
 pipe = strider.OptimizerPipeline.empty()
 pipe.add(strider.opt.ConstantFold())
 pipe.add(strider.opt.KnownBits())
-pipe.add(strider.opt.StackLoadForward(sleigh, cc, arch))
+pipe.add(strider.opt.LoadForward(sleigh, cc, arch))
 pipe.add_post(strider.opt.FunctionArgDetect(sleigh, cc))
 pipe.add_post(strider.opt.CallStackArgCollect(sleigh, cc))
 graph.optimize(pipe)

@@ -202,7 +202,7 @@ Each commit ran:
 
 - I initially scoped R1 to "look for endianness propagation bugs and
   arch-specific layouts."  Read register-aliasing, jump-table
-  reading, stack_load_forward, function_args' BE-aware register
+  reading, load_forward, function_args' BE-aware register
   fallback — all clean, well-tested.  The bug I actually found was
   arch-INDEPENDENT: a Sleigh-vs-LLVM-style semantic choice in a
   shared evaluator.  The lesson: per-arch correctness audits should

@@ -245,7 +245,7 @@ pub fn apply_tail_call(
     // Memory-preserving CCs (e.g. `x86_64_all_preserving`,
     // `__fentry__`-style tracing pre-ambles) leave the Call's Memory
     // output dangling and wire the pre-Call memory edge into the new
-    // Return directly, so LoadReadOnly / StackLoadForward chains stay
+    // Return directly, so LoadReadOnly / LoadForward chains stay
     // intact across the spliced tail call.  Mirrors
     // `FunctionBuilder::build_call_with_cc`'s `no_memory_clobber` branch
     // (`builder/call.rs` — same Call output shape; only the

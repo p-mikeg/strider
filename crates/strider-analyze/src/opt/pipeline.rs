@@ -406,7 +406,7 @@ mod tests {
         Ok(())
     }
 
-    /// `StackLoadForward` must forward a SP-relative store to the subsequent
+    /// `LoadForward` must forward a SP-relative store to the subsequent
     /// load at the same offset.
     /// Build `store sp-4 = 0x42; load sp-4` and assert the load is
     /// forwarded to `IntConst(0x42)`.  Pins the in-pipeline ordering
@@ -415,7 +415,7 @@ mod tests {
     fn store_then_load_at_same_offset_forwarded() -> crate::opt::Result<()> {
         use crate::opt::{
             ConstantFold, DeadBranchElimination, KnownBits, OptimizerPipeline, RedundantPhis,
-            StackLoadForward,
+            LoadForward,
         };
         use strider_ir::node::NodeKind;
         use strider_target::Endianness;
@@ -446,7 +446,7 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(DeadBranchElimination);
-        p.add(StackLoadForward::new(sp, Endianness::Little));
+        p.add(LoadForward::new(sp, Endianness::Little));
         p.run(&mut g, entry)?;
 
         let ret = g
@@ -469,7 +469,7 @@ mod tests {
     fn full_call_pipeline_collects_args() -> crate::opt::Result<()> {
         use crate::opt::{
             CallStackArgCollect, ConstantFold, DeadBranchElimination, KnownBits,
-            OptimizerPipeline, RedundantPhis, StackLoadForward,
+            OptimizerPipeline, RedundantPhis, LoadForward,
         };
         use strider_ir::node::NodeKind;
         use strider_target::Endianness;
@@ -506,7 +506,7 @@ mod tests {
         p.add(KnownBits);
         p.add(RedundantPhis);
         p.add(DeadBranchElimination);
-        p.add(StackLoadForward::new(sp, Endianness::Little));
+        p.add(LoadForward::new(sp, Endianness::Little));
         p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
         p.run(&mut g, entry)?;
 

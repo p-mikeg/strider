@@ -56,7 +56,7 @@ precision they need.
    one value slot; no other tracked variable is rebound.
 
 4. **Memory edge is precise.**  An op with `memory_edge: false`
-   does not advance the IR's memory token — `StackLoadForward` and
+   does not advance the IR's memory token — `LoadForward` and
    similar opt passes can still forward across it.  An op with
    `memory_edge: true` advances the token, breaking forwarding (as
    would happen across any real memory write).

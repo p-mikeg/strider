@@ -44,7 +44,7 @@ names the same types.
   `CallingConvention` but with `Vn`s in place of static strings.
 - `PositionalArgLayout` / `PositionalArg` — canonical positional-arg
   enumeration DTO consumed by `FunctionArgDetect` and
-  `CallStackArgCollect` (`AliasSplit` and `StackLoadForward` only need
+  `CallStackArgCollect` (`AliasSplit` and `LoadForward` only need
   `sp_vn`, not the layout).
   Indices `0..arg_passing_regs.len()` are register slots; indices
   `arg_passing_regs.len()..` are stack slots at the convention's

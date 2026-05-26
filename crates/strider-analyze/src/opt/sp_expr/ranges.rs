@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn ranges_disjoint_max_size_left_does_not_panic_and_is_conservative() {
         // The three memory-chain walkers (CallStackArgCollect,
-        // stack_load_forward::probe, function_args::mem_chain_is_dirty)
+        // load_forward::probe, function_args::mem_chain_is_dirty)
         // pass `i64::MAX` as a soundness-pessimistic fallback when a Store's
         // `value_byte_size` is unknown. With plain `+`, `a_off + i64::MAX`
         // would panic in debug and wrap in release for any positive `a_off`.

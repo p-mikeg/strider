@@ -9,7 +9,7 @@
 //!
 //! | Helper                                            | Anchor shape                                |
 //! |---------------------------------------------------|---------------------------------------------|
-//! | `build_int_const_target_scenario_via_stack`       | `IntConst(K)` after StackLoadForward        |
+//! | `build_int_const_target_scenario_via_stack`       | `IntConst(K)` after LoadForward        |
 //! | `build_initial_var_target_scenario_x86_64`        | `InitialVar(rax)` (no lr on x86_64)         |
 //! | `build_value_phi_target_scenario`                 | `ValuePhi(IntConst, …)` over diamond merge  |
 //! | `build_pop_pc_via_stack_load_forward_scenario`    | `InitialVar(lr)` via push-lr / pop-pc       |
@@ -50,7 +50,7 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// `LoadReadOnly` for synthetic regions and doesn't track stack
 /// stores / loads, so the BranchIndirect defers via
 /// `UnresolvedIndirectBranch`.  After strider runs the full
-/// optimiser pipeline (including `StackLoadForward`), the loaded
+/// optimiser pipeline (including `LoadForward`), the loaded
 /// value folds to `IntConst(k)` —
 /// exactly the shape IR-level indirect-branch resolver's IntConst arm classifies.
 pub fn build_int_const_target_scenario_via_stack(
@@ -61,9 +61,9 @@ pub fn build_int_const_target_scenario_via_stack(
     //   58                   pop rax          (rax = pushed K; rsp += 8)
     //   ff e0                jmp rax
     // The `pop rax` step gives the optimiser an SP-rooted load that
-    // `StackLoadForward` can simplify back to the pushed constant
+    // `LoadForward` can simplify back to the pushed constant
     // K, while keeping cfg-time resolver's single-region mini-graph (which
-    // lacks StackLoadForward) unable to classify the target.
+    // lacks LoadForward) unable to classify the target.
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![
         0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
@@ -97,7 +97,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
 /// value-input is a `ValuePhi` whose every value slot folds to an
 /// `IntConst(k_i)` taken from `per_pred`.
 ///
-/// The fixture mirrors `crates/opt/src/stack_load_forward/tests.rs::
+/// The fixture mirrors `crates/opt/src/load_forward/tests.rs::
 /// phi_both_branches_store_same_offset` — an if/else diamond where
 /// each arm stores a distinct constant at `sp + 4`, and the merge
 /// loads from that slot.  After the strider optimiser runs the
@@ -111,7 +111,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
 /// shape requires a `mov [rsp+K], imm; ...; jmp *[rsp+K]` flow with
 /// a real conditional branch — that's a 25+-byte fixture that adds
 /// nothing the FunctionBuilder path doesn't already exercise more
-/// directly.  The optimiser's `StackLoadForward` is the same code
+/// directly.  The optimiser's `LoadForward` is the same code
 /// path either way.
 ///
 /// `RedundantPhis` is **deliberately omitted** from the inline
@@ -126,7 +126,7 @@ pub fn build_value_phi_target_scenario(
     use strider_ir::node::NodeOutputType;
     use strider_ir::IntBinaryOp;
     use strider_ir_test_utils::RegisterSet;
-    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, LoadForward};
     use strider_target::Endianness;
 
     assert!(
@@ -136,7 +136,7 @@ pub fn build_value_phi_target_scenario(
 
     // 4-byte stack pointer VN — register space, offset 0x20, size 4.
     // Doesn't have to match a real arch's SP; StackOffsetDetect /
-    // StackLoadForward only care that it's the SP register passed
+    // LoadForward only care that it's the SP register passed
     // into the pass constructors.
     let sp = rsleigh::Vn {
         addr_off: 0x20,
@@ -216,7 +216,7 @@ pub fn build_value_phi_target_scenario(
     // ValuePhi shape (otherwise the trivial-phi rule collapses it).
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new(sp, Endianness::Little));
     let entry = fg.entry().unwrap();
     pipeline.run(&mut fg, entry).expect("opt pipeline");
 
@@ -234,18 +234,18 @@ pub fn build_value_phi_target_scenario(
 ///   3. Load `*(sp - 4)` — this is the "pop into pc".
 ///   4. Placeholder `Return(loaded)` — anchors the dispatch value.
 ///
-/// `StackLoadForward` then collapses the load directly to
+/// `LoadForward` then collapses the load directly to
 /// `InitialVar(lr)` (same offset, no aliasing stores in between).
 /// The classifier's LinkRegister arm matches the resulting shape.
 ///
 /// This is the headline soundness test — it pins the design's
 /// claim that the natural pop-pc shape resolves to LinkRegister
-/// via StackLoadForward without any special-cased heuristic.
+/// via LoadForward without any special-cased heuristic.
 pub fn build_pop_pc_via_stack_load_forward_scenario(
 ) -> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::NodeOutputType;
     use strider_ir_test_utils::RegisterSet;
-    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, LoadForward};
     use strider_target::Endianness;
 
     let sp = rsleigh::Vn {
@@ -278,7 +278,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 
     // Load from the same slot and use as the placeholder anchor.
     // The address is structurally identical (sp - 4), so
-    // StackLoadForward will fold the load directly to lr_v.
+    // LoadForward will fold the load directly to lr_v.
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
     let four2 = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let load_addr = b
@@ -300,8 +300,8 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(strider_analyze::opt::RedundantPhis);
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    // RedundantPhis again post-StackLoadForward to collapse any
+    pipeline.add(LoadForward::new(sp, Endianness::Little));
+    // RedundantPhis again post-LoadForward to collapse any
     // single-input VarPhi the forward inserts (e.g. wrapping
     // the loaded InitialVar(lr) in a phi at the merge region).
     pipeline.add(strider_analyze::opt::RedundantPhis);
@@ -331,7 +331,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 /// "Load(InitialVar(sp)+K) means return" classifier would mark
 /// this as LinkRegister, sending the analyser down the
 /// wrong-edge-set path.  the IR-level orchestrator resolver dodges that trap because
-/// StackLoadForward folds the load to the **stored constant** K,
+/// LoadForward folds the load to the **stored constant** K,
 /// not to InitialVar(lr); the IntConst arm then classifies as
 /// Single(K).
 ///
@@ -343,7 +343,7 @@ pub fn build_push_target_pop_pc_scenario(
 ) -> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::NodeOutputType;
     use strider_ir_test_utils::RegisterSet;
-    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, StackLoadForward};
+    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, LoadForward};
     use strider_target::Endianness;
 
     let sp = rsleigh::Vn {
@@ -386,7 +386,7 @@ pub fn build_push_target_pop_pc_scenario(
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new(sp, Endianness::Little));
     let entry = fg.entry().unwrap();
     pipeline.run(&mut fg, entry).expect("opt pipeline");
 
@@ -673,7 +673,7 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
 /// * stride)]`.
 ///
 /// Pipeline run: `ConstantFold + KnownBits + RedundantPhis`.
-/// `StackLoadForward` is **deliberately omitted** — including it
+/// `LoadForward` is **deliberately omitted** — including it
 /// would forward the Load to the matching IntConst directly,
 /// eliminating the Load entirely and turning the anchor into an
 /// IntConst (the Single-target arm), defeating the stack-array
@@ -788,7 +788,7 @@ pub fn build_stack_array_dispatch_scenario(
     p.add(ConstantFold);
     p.add(KnownBits);
     p.add(RedundantPhis);
-    // NOTE: StackLoadForward is intentionally NOT in this pipeline;
+    // NOTE: LoadForward is intentionally NOT in this pipeline;
     // see the doc-comment above.
     let entry = fg.entry().unwrap();
     p.run(&mut fg, entry).expect("opt pipeline");

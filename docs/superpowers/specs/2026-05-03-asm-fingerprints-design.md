@@ -184,7 +184,7 @@ Layer C never expects shrinkage).
 | `CallOtherElide` | Drops a `CallOther` whose user-op is a no-op.  The call's *output* (if any) was already the input to its consumers via the IR's standard path — but elide-able call-others have no value output (their output is the memory token).  Memory token uses are redirected to the previous memory; we absorb the elided `CallOther`'s fingerprint into the surviving memory producer. |
 | `LoadReadOnly` | Replaces a `Load` with an `IntConst`.  Absorb the `Load`'s fingerprint into the new const. |
 | `StackStoreDetect` | Replaces `Store` with `StackStore { offset }` / `StackStorePhi`.  The replacement node is created via `set_node_kind` on the *same* `NodeId` (non-cacheable kinds), so the existing fingerprint is preserved automatically — no work needed. |
-| `StackLoadForward` | Forwards stored value to a later `Load`.  Absorb the `Load`'s fingerprint into whatever value-producer node receives the redirected uses (if a fresh truncation/extension is created, it absorbs both the `Load`'s and the `Store`'s fingerprints). |
+| `LoadForward` | Forwards stored value to a later `Load`.  Absorb the `Load`'s fingerprint into whatever value-producer node receives the redirected uses (if a fresh truncation/extension is created, it absorbs both the `Load`'s and the `Store`'s fingerprints). |
 | `IndirectBranchResolve` (the classifier) | Read-only inspection; no rewrites; nothing to do. |
 | `CallStackArgCollect` (post-pass) | Adds new value inputs to a `Call` node by re-pointing existing memory loads.  No fresh nodes other than the existing argument loads, which already carry their own attribution.  Nothing to do. |
 | `FunctionArgDetect` (post-pass) | Replaces an `InitialVar(arg_reg)` use with a freshly-minted `FunctionArg` node.  `FunctionArg` is in the exempt-empty set, so no attribution required; existing consumers' attribution is unchanged. |
@@ -300,7 +300,7 @@ through `feature-dev:code-reviewer` before commit.)
    every strider-side handler.  Update `indirect_resolve` rewrites.
 5. `opt`: per-pass propagation + per-pass test.  Order:
    `ConstantFold` → `KnownBits` → `LoadReadOnly` → `StackStoreDetect` →
-   `StackLoadForward` → `RedundantPhis` → `DeadBranchElimination` →
+   `LoadForward` → `RedundantPhis` → `DeadBranchElimination` →
    `CallOtherElide` → `IfCondInversion` (no-op).
 6. `pattern`: `Match::asm_fingerprint`.
 7. `strider-py`: Python accessor + Python test.

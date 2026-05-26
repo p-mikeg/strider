@@ -75,7 +75,7 @@ pub struct CallingConvention {
     /// state, including memory.  When set, `strider_ir::FunctionBuilder::build_call_with_cc`
     /// skips emitting a Memory output on the resulting Call node and does not
     /// advance the region's memory chain — so passes like `LoadReadOnly` and
-    /// `StackLoadForward` can forward loads across the call.
+    /// `LoadForward` can forward loads across the call.
     ///
     /// `false` for every standard ABI; `true` only on
     /// [`Self::x86_64_all_preserving`] and analogous "transparent hook"
@@ -121,7 +121,7 @@ pub struct BuiltCallingConvention {
     /// `true` when calls under this CC preserve memory (zero-side-effect
     /// hooks like `__fentry__` / `mcount`).  Consumed by the IR builder's
     /// `build_call_with_cc` to suppress the Call's Memory output so
-    /// `LoadReadOnly` / `StackLoadForward` can forward across the call.
+    /// `LoadReadOnly` / `LoadForward` can forward across the call.
     pub no_memory_clobber: bool,
 }
 
@@ -464,7 +464,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             link_register_reg_name: None,
             // The defining property of "all-preserving": memory is also
             // preserved.  build_call_with_cc skips the Memory output so
-            // LoadReadOnly / StackLoadForward forward across the call.
+            // LoadReadOnly / LoadForward forward across the call.
             no_memory_clobber: true,
         },
     },

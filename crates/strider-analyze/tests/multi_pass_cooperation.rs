@@ -15,7 +15,7 @@
 
 use strider_analyze::opt::{
     ConstantFold, DeadBranchElimination, OptimizerPipeline, RedundantPhis,
-    StackLoadForward,
+    LoadForward,
 };
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir::node::{NodeKind, NodeOutputType};
@@ -166,7 +166,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new(sp, Endianness::Little));
     pipeline.run_built(&mut fg)?;
 
     // The return value should have been forwarded to the stored constant.
@@ -178,7 +178,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     assert_eq!(
         *fg.kind_of_output(ret_val),
         NodeKind::IntConst(0x42),
-        "StackLoadForward must forward the stored value 0x42 to the load"
+        "LoadForward must forward the stored value 0x42 to the load"
     );
     Ok(())
 }
@@ -306,7 +306,7 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
     pipeline.run_built(&mut fg)?;
 
     // ConstantFold alone must NOT remove the Store or Load
-    // (StackLoadForward / StackOffsetDetect handle memory forwarding).
+    // (LoadForward / StackOffsetDetect handle memory forwarding).
     let stores_after = count_reachable(&fg, |k| matches!(k, NodeKind::Store(_)));
     let loads_after = count_reachable(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(

@@ -4,7 +4,7 @@
 
 - **Files audited**: 18 across `crates/opt/src/{indirect_branch_resolve,
   constant_fold, dead_branch, load_readonly, redundant_phis, stack_store,
-  stack_load_forward, function_args, call_other_elide, sp_expr.rs}` and
+  load_forward, function_args, call_other_elide, sp_expr.rs}` and
   `crates/strider/src/{indirect_resolve_tier2/{orchestrator, inplace},
   strider/insn/control.rs}`. Test files in
   `crates/strider/tests/{tier2_*, jump_table_lifting,
@@ -204,7 +204,7 @@ not (yet) pay off.
    `add(any_int_const(c), var(other))` with auto-commutativity — same
    pattern as R2-1. **Why we rejected it for now**: `decompose_sp` is
    the hot path for every SP-aware pass (`StackStoreDetect`,
-   `StackLoadForward`, `FunctionArgDetect`, `CallStackArgCollect`,
+   `LoadForward`, `FunctionArgDetect`, `CallStackArgCollect`,
    plus the tier-2 stack-array classifier); a per-call `Pat` /
    `Matcher` allocation might be measurable. Additionally, the
    function takes `&Graph` but `Matcher` requires `&BuiltFunctionGraph`,
@@ -236,7 +236,7 @@ not (yet) pay off.
    side-table semantics. Patterns can't express "kth phi input
    corresponds to kth ControlState predecessor".
 
-9. **`crates/opt/src/stack_load_forward/mod.rs:175-292,442-517`** —
+9. **`crates/opt/src/load_forward/mod.rs:175-292,442-517`** —
    `probe` and `find_stack_stored_value_at_offset`. **Reject**:
    transitive memory-chain DFS through `StackStore` / `Store` /
    `MemPhi` with cycle detection and per-arm aliasing analysis. Not

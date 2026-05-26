@@ -32,7 +32,7 @@ pub fn store() -> StorePat { StorePat::new() }
 ///
 /// For other phi kinds use [`mem_phi`] (memory-token phi) or
 /// [`value_phi`] (anonymous value phi, `phi_var_tag` is `None`, e.g.
-/// the one `StackLoadForward` synthesises).
+/// the one `LoadForward` synthesises).
 #[must_use]
 pub fn phi() -> PhiPat {
     PhiPat::new()
@@ -46,7 +46,7 @@ pub fn mem_phi() -> MemPhiPat {
 }
 
 /// Starts building a `ValuePhi` pattern.  Matches the value phi
-/// `StackLoadForward` synthesises when forwarding stack-store values
+/// `LoadForward` synthesises when forwarding stack-store values
 /// across a control-flow join.
 #[must_use]
 pub fn value_phi() -> ValuePhiPat {

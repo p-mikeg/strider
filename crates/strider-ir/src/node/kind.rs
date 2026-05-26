@@ -47,7 +47,7 @@ pub enum NodeKind {
     ///
     /// Some phis carry a source-level varnode tag (lifter-emitted SSA
     /// φ for register-aliased reads); others are anonymous value phis
-    /// synthesised by `StackLoadForward` when forwarding a
+    /// synthesised by `LoadForward` when forwarding a
     /// `Load[sp+K]` across a `MemPhi`.  The tag (when present) is
     /// stored in [`crate::graph::Graph::phi_var_tag`] (an
     /// `Option<Vn>` side-table); query it via

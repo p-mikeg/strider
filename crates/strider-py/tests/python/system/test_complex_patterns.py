@@ -38,7 +38,7 @@ def test_write_struct_fields(arch_id, fixtures_dir):
 def test_nested_struct_field(arch_id, fixtures_dir):
     g = analyze(arch_id, "complex", "nested_struct_field", fixtures_dir=fixtures_dir)
     # The C source dereferences `outer->inner->x`.  At -O2 most arches
-    # collapse the chain via ConstantFold + StackLoadForward into a
+    # collapse the chain via ConstantFold + LoadForward into a
     # single surviving Load (the innermost field read).  Pin ≥1 — the
     # structural property we care about is "the field-read shape
     # survives the optimiser".

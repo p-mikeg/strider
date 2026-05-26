@@ -27,7 +27,7 @@
 //! | Pass | What it does |
 //! |------|-------------|
 //! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
-//! | [`StackLoadForward`] | Forwards values from SP-relative `Store` to subsequent same-offset `Load` |
+//! | [`LoadForward`] | Forwards values from SP-relative `Store` to subsequent same-offset `Load` |
 //! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_nodes` side-table |
 //! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
 //!
@@ -54,7 +54,7 @@ pub(crate) mod indirect_branch_resolve;
 mod known_bits;
 mod load_readonly;
 mod redundant_phis;
-pub(crate) mod stack_load_forward;
+pub(crate) mod load_forward;
 mod stack_offset_detect;
 mod call_stack_args;
 #[cfg(test)]
@@ -79,7 +79,7 @@ pub use load_readonly::LoadReadOnly;
 pub use strider_ir::ReadOnlyMemory;
 pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
-pub use stack_load_forward::StackLoadForward;
+pub use load_forward::LoadForward;
 pub use stack_offset_detect::StackOffsetDetect;
 pub use call_stack_args::CallStackArgCollect;
 /// Stable subset of the default pipeline — passes whose rewrites survive

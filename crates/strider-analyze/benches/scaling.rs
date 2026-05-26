@@ -20,7 +20,7 @@ use strider_ir::node::{NodeOutputType, NodeOutputKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::{sp_vn_aarch64, RegisterSet};
 use strider_analyze::opt::{
-    ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward,
+    ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, LoadForward,
 };
 
 #[derive(Clone, Copy)]
@@ -137,7 +137,7 @@ mod synthetic {
 
     /// Synthetic 8-byte stack-pointer VN.  Same shape used in the
     /// existing `stack_array.rs` tests.  Doesn't have to match a real
-    /// arch — `StackLoadForward` only cares that it's the SP varnode
+    /// arch — `LoadForward` only cares that it's the SP varnode
     /// passed into the pass constructor.
     pub fn sp_vn() -> rsleigh::Vn {
         sp_vn_aarch64()
@@ -147,9 +147,9 @@ mod synthetic {
     /// offsets (`-8 * (i+1)`), each storing a fresh `IntConst(i)`,
     /// followed by `n` `Load`s at the matching offsets that feed a
     /// chain of `Add`s producing the function's return value.
-    /// The returned graph is ready to feed into `StackLoadForward`
+    /// The returned graph is ready to feed into `LoadForward`
     /// for the bench.  Pre-pass: `ConstantFold` is run inside the
-    /// helper so the bench measures `StackLoadForward` in isolation.
+    /// helper so the bench measures `LoadForward` in isolation.
     pub fn build_stack_store_chain(n: usize) -> strider_ir::Function {
         let sp = sp_vn();
         let mut b = RegisterSet::new()
@@ -185,7 +185,7 @@ mod synthetic {
         b.build_return(Some(acc), &[]).unwrap();
         let mut fg = b.build().unwrap();
         // Pre-pass: ConstantFold so the graph the bench measures
-        // is ready for StackLoadForward.  This isolates the
+        // is ready for LoadForward.  This isolates the
         // forward-pass cost from the fold-pass cost.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
@@ -367,7 +367,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
             b.iter_batched(
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
-                    let pass = StackLoadForward::new(sp, strider_target::Endianness::Little);
+                    let pass = LoadForward::new(sp, strider_target::Endianness::Little);
                     let entry = fg.entry().unwrap();
                     let _ = pass.optimize(&mut fg, entry);
                     black_box(fg);

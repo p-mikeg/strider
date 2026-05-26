@@ -113,7 +113,7 @@ enumerates every registered name).
 | `p.phi()` | any `Phi` (tagged or anonymous) | builder w/ `.for_vn(vn)` `.input(idx, p)` | n/a |
 | `p.phi_for(vn)` | `Phi` tagged with `vn` | `phi_for(vn: Vn) -> PhiPat` | n/a |
 | `p.mem_phi()` | `MemPhi` | `mem_phi() -> MemPhiPat` | n/a |
-| `p.value_phi()` | `Phi(None)` (anonymous, from `StackLoadForward`) | `value_phi() -> ValuePhiPat` | n/a |
+| `p.value_phi()` | `Phi(None)` (anonymous, from `LoadForward`) | `value_phi() -> ValuePhiPat` | n/a |
 | `p.predicate(f)` | match-any + Python guard | `predicate(f) -> Pat` | n/a |
 | `p.add(a, b)` | `IntBinaryOp(Add)` | `add(l, r) -> Pat` | **yes** |
 | `p.sub(a, b)` | `Add(a, Neg(b))` lowered | `sub(l, r) -> Pat` | no (lowered) |
@@ -223,7 +223,7 @@ form before writing the pattern.
 - SP-relative `Store` / `Load` annotation lives in `Function::stack_offsets` after
   `StackOffsetDetect`; for `Load`/`Store`, use `p.load().stack_only()` / `p.store().stack_only()`
   or `.offset_capture(oc)` to filter to stack-relative ops without hard-coding the SP varnode.
-- After `StackLoadForward`, a same-offset load-after-store may become a `Phi(None)` (`value_phi`)
+- After `LoadForward`, a same-offset load-after-store may become a `Phi(None)` (`value_phi`)
   when the forwarding crossed a `MemPhi`.
 
 ### Commutative ops (matcher tries both operand orderings)

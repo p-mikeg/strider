@@ -145,7 +145,7 @@ code review (`feature-dev:code-reviewer`) against this spec; address findings.
 ## Risks
 
 1. **Phase 4 (Sub) is the dangerous phase.** Touches every opt pass that
-   pattern-matches address arithmetic: `StackStoreDetect`, `StackLoadForward`,
+   pattern-matches address arithmetic: `StackStoreDetect`, `LoadForward`,
    the indirect-branch jump-table classifier, and the constant-fold reassoc
    rules. Sequenced last among the variant removals so prior phases stabilize
    the test loop first.

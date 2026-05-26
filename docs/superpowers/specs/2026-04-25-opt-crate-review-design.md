@@ -33,7 +33,7 @@ crates/opt/src/
 ├── load_readonly.rs                                              151
 ├── pipeline.rs                                                   126
 ├── redundant_phis.rs                                             274
-├── stack_load_forward.rs                                         853
+├── load_forward.rs                                         853
 └── stack_store.rs                                               1023
                                                           total ~6100 lines
 ```
@@ -42,7 +42,7 @@ crates/opt/src/
 - Existing test coverage is uneven: `constant_fold` is rich (~50 tests in a sibling `tests.rs`), every other pass keeps its tests inline as `#[cfg(test)] mod tests` mixed with the implementation.
 - Clippy on `opt --all-targets`: 15 warnings (mostly `must_use_candidate`, a few `match_same_arms` and `map(...).unwrap_or(...)`).
 - The `make_fn` / `return_kind` / `return_value` / `sp_vn` / `count` test helpers are duplicated verbatim across 5+ test modules.
-- `decompose_sp`, `SpExpr`, `ranges_disjoint` live in `stack_store.rs` and are imported from there by `function_args` and `stack_load_forward` — re-exported `pub(crate)` from a module whose primary purpose is something else.
+- `decompose_sp`, `SpExpr`, `ranges_disjoint` live in `stack_store.rs` and are imported from there by `function_args` and `load_forward` — re-exported `pub(crate)` from a module whose primary purpose is something else.
 
 ## Final structure
 
@@ -63,7 +63,7 @@ crates/opt/
 │   │   ├── detect.rs                    # StackStoreDetect (was 1st half of stack_store.rs)
 │   │   ├── call_args.rs                 # CallStackArgCollect (was 2nd half)
 │   │   └── tests.rs                     # white-box tests for both passes
-│   ├── stack_load_forward/{mod,tests}.rs
+│   ├── load_forward/{mod,tests}.rs
 │   └── function_args/
 │       ├── mod.rs                       # FunctionArgDetect entry + struct
 │       ├── register_args.rs             # detect_register_args
@@ -159,14 +159,14 @@ For every pass, three tiers:
 | `load_readonly` | (already covered) | oversize read returning None, cross-`VnSpace`, mismatched output type masking |
 | `stack_store::detect` | (already rich) | multi-region SP-arithmetic chain through MemPhi, cycle in SP defs, mixed Add/Sub of negative consts, non-SP base |
 | `stack_store::call_args` | (cdecl 2-arg, AArch64 0-offset, missing slot) | chain broken by un-decomposed Store, chain broken by Call/MemPhi, multiple call frames in one function |
-| `stack_load_forward` | (rich) | forward through MemPhi to ValuePhi when a predecessor is `StackStorePhi` of the same offsets, aliasing store breaks forward, load width > store width must not forward |
+| `load_forward` | (rich) | forward through MemPhi to ValuePhi when a predecessor is `StackStorePhi` of the same offsets, aliasing store breaks forward, load width > store width must not forward |
 | `function_args` | (rich) | register-arg with truncated reads, stack arg shadowed by same-offset store, gap-truncation, multiple call frames |
 | pipeline (black-box) | default pipeline reaches fixed-point | running the pipeline twice is idempotent, `run` always validates IR, large-graph pipeline run completes in expected time bound |
 
 ## Scaling work (in scope)
 
-1. **Memoize `decompose_sp`** — per-pass `FxHashMap<NodeOutputId, Option<SpExpr>>` cache. Threaded through every call site in `StackStoreDetect`, `StackLoadForward`, and `function_args::stack_args`.
-2. **Worklist-based fixed-point inside each pass** — replace the full-rescan with a `WorkSet`-driven loop. `ConstantFold`, `KnownBits` (Phase 1), `RedundantPhis`, `DeadBranchElimination`, `LoadReadOnly`, `StackStoreDetect`, `StackLoadForward`. (`CallStackArgCollect` and `FunctionArgDetect` are post-passes and naturally one-shot — left as-is.)
+1. **Memoize `decompose_sp`** — per-pass `FxHashMap<NodeOutputId, Option<SpExpr>>` cache. Threaded through every call site in `StackStoreDetect`, `LoadForward`, and `function_args::stack_args`.
+2. **Worklist-based fixed-point inside each pass** — replace the full-rescan with a `WorkSet`-driven loop. `ConstantFold`, `KnownBits` (Phase 1), `RedundantPhis`, `DeadBranchElimination`, `LoadReadOnly`, `StackStoreDetect`, `LoadForward`. (`CallStackArgCollect` and `FunctionArgDetect` are post-passes and naturally one-shot — left as-is.)
 3. **`KnownBits` worklist** — Phase-1 inner fixed-point becomes worklist-driven: re-evaluate node only when one of its inputs' `Kb` changed.
 4. **Memoize `function_args` shadow walk** — per-pass-call cache keyed on `(NodeOutputId, offset, size)` for the shadow-walk DFS through `MemPhi`.
 5. **`FxHashMap` / `FxHashSet` in hot paths** — replace `std::collections::HashMap` / `HashSet` with `rustc-hash` types in `KnownBits` (known map), `RedundantPhis` (reachability + live values), `decompose_sp` (visiting set), and the new memo caches.

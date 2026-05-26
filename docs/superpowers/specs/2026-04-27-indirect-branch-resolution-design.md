@@ -202,7 +202,7 @@ fn classify(
 
 #### Optimizer passes deliberately omitted
 
-* `StackStoreDetect` / `CallStackArgCollect` / `StackLoadForward` —
+* `StackStoreDetect` / `CallStackArgCollect` / `LoadForward` —
   no calls or stack frames in a stripped value-only mini-graph.
 * `CallOtherElide` — no callother nodes (control-flow is filtered
   out of the mini-graph).

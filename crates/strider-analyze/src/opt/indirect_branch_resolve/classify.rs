@@ -54,7 +54,7 @@ use crate::opt::ReadOnlyMemory;
 /// (`Load(InitialVar(sp))` for `pop pc`-style returns) are
 /// deliberately NOT included here: a `push X; pop pc` tail call
 /// has the same Load-shape and would be misclassified as a return.
-/// We rely on `StackLoadForward` having already simplified
+/// We rely on `LoadForward` having already simplified
 /// properly-popped return addresses to `InitialVar(lr_vn)` directly
 /// — that's the shape the LinkRegister arm matches.
 ///
@@ -94,7 +94,7 @@ pub fn classify_anchor(
         // SOUND: `InitialVar(vn)` is the function-entry value of
         // varnode `vn`.  When `vn == lr_vn`, the indirect branch
         // dispatches to the caller-provided return address — i.e. a
-        // standard return.  This is the shape `StackLoadForward`
+        // standard return.  This is the shape `LoadForward`
         // produces for properly-popped return addresses.
         NodeKind::InitialVar(vn) if Some(vn) == link_register_vn => {
             Some(ResolvedTargets::LinkRegister)

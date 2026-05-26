@@ -72,7 +72,7 @@ def _build_user_pipeline_with_fcc(sl, sleigh, cc, mem):
     pipe.add(opt.RedundantPhis())
     pipe.add(opt.DeadBranchElim())
     pipe.add(opt.LoadReadOnly(mem))
-    pipe.add(opt.StackLoadForward(sl, cc, sleigh))
+    pipe.add(opt.LoadForward(sl, cc, sleigh))
     pipe.add_post(opt.FunctionArgDetect(sl, cc))
     pipe.add_post(opt.CallStackArgCollect(sl, cc))
     return pipe

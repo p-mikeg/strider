@@ -724,7 +724,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
 fn x86_64_all_preserving_has_no_memory_clobber_true() {
     // The "all-preserving" CC (used for __fentry__ / mcount-style hooks)
     // promises zero observable side-effects.  The Call's memory output must
-    // be suppressible at IR-build time so LoadReadOnly / StackLoadForward
+    // be suppressible at IR-build time so LoadReadOnly / LoadForward
     // can forward across these calls.
     assert!(
         CallingConvention::x86_64_all_preserving().unwrap().no_memory_clobber(),

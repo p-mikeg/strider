@@ -208,7 +208,7 @@ fn nested_struct_field_assertions(g: &strider_ir::Function) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // arm `pop {pc}` resolves via the indirect-branch resolver's
-// `LinkRegister` arm once `StackLoadForward` simplifies the loaded
+// `LinkRegister` arm once `LoadForward` simplifies the loaded
 // target back to `InitialVar(lr)`.
 per_arch_test!("complex", "bit_test_zero", bit_test_zero_assertions);
 
@@ -253,7 +253,7 @@ fn if_bit_clear_call_assertions(g: &strider_ir::Function) {
 
     // Decoupled background fact: some Call has arg(0) = function_arg(1)
     // — the `p` parameter (`mask` is arg 0).  Cross-arch, this exercises
-    // the optimizer's StackLoadForward pass: at -O0, `p` is spilled to
+    // the optimizer's LoadForward pass: at -O0, `p` is spilled to
     // stack at function entry and reloaded before the call, so for the
     // pattern to match the spill round-trip MUST collapse so
     // Call.arg(0) ↔ FunctionArg(1).
@@ -275,7 +275,7 @@ fn if_bit_clear_call_assertions(g: &strider_ir::Function) {
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected Call(arg(0) = carrier(arg 1)) in if_bit_clear_call \
-             (proves StackLoadForward connects the spilled `p` parameter \
+             (proves LoadForward connects the spilled `p` parameter \
              through to the call site)");
 
     // STRICT composition: "If whose true branch is a Call(arg(0) =
@@ -518,10 +518,10 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
     // return value of the inner Call.  IR shape (-O0):
     //   call_inner = Call(produce, x)
     //   ret = Call_inner output (possibly via spill round-trip)
-    //   spill chain = Store → Load (optional, collapsed by StackLoadForward)
+    //   spill chain = Store → Load (optional, collapsed by LoadForward)
     //   call_outer = Call(consume, …chain to ret…)
     //
-    // Whether the spill round-trip is collapsed by StackLoadForward,
+    // Whether the spill round-trip is collapsed by LoadForward,
     // and whether the result is even loaded back via the
     // calling-convention return register — all vary per arch.  What's
     // universal: at least one outer Call's input chain MUST trace back

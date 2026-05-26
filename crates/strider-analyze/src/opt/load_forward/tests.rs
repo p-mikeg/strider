@@ -8,7 +8,7 @@ use strider_ir::IntBinaryOp;
 use strider_target::Endianness;
 
 /// Counts reachable anonymous (Vn-untagged) `Phi` nodes — the shape
-/// `StackLoadForward` synthesises when forwarding a load across a
+/// `LoadForward` synthesises when forwarding a load across a
 /// `MemPhi`.  Vn-tagged phis (created at lift time for register-aliased
 /// reads) are excluded.
 fn reachable_anonymous_phi_count(fg: &strider_ir::Function) -> usize {
@@ -319,6 +319,120 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
     Ok(())
 }
 
+// ── Const-address forwarding (Test B from the design plan) ──────────────────
+
+/// `Store(IntConst(0x1000), 0xAA); Store(IntConst(0x2000), 0xBB);
+///  Load(IntConst(0x1000))` — the load matches the matching store by
+/// IntConst equality, and the intervening const-address store is
+/// proven disjoint via `ranges_disjoint`.  Forwards under both modes.
+#[test]
+fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
+        let addr1 = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        let addr2 = b.build_int_const(0x2000u64, NodeOutputType::U32)?;
+        let data_a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        let data_b = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        b.build_store(addr1, data_a, rsleigh::VnSpace::RAM)?;
+        b.build_store(addr2, data_b, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr1, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    pipeline.run_built(&mut fg)?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 0,
+        "Constant-address Load must forward across a disjoint constant-address \
+         intervening Store; the matching store provides 0xAA"
+    );
+    let ret_kind = crate::opt::test_support::return_kind(fg.graph())?;
+    assert!(
+        matches!(ret_kind, NodeKind::IntConst(0xAA)),
+        "forwarded value must be IntConst(0xAA), got {ret_kind:?}"
+    );
+    Ok(())
+}
+
+// ── Same-NodeOutputId forwarding (Test C from the design plan) ──────────────
+
+/// `p = Load(IntConst(0x100)); Store(p, 0xCC); Load(p)` — the load
+/// matches the store by `NodeOutputId` equality on the address slot.
+/// Forwards under both modes.
+#[test]
+fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
+        let table_base = b.build_int_const(0x100u64, NodeOutputType::U32)?;
+        let p = b.build_load(table_base, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let data = b.build_int_const(0xCCu64, NodeOutputType::U32)?;
+        b.build_store(p, data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    pipeline.run_built(&mut fg)?;
+
+    // Exactly one Load should remain: the `p = Load(IntConst(0x100))`
+    // address-producer.  The Load(p) we wanted to forward must be gone.
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 1,
+        "Anchor-address Load with same-NodeOutputId Store and no interferer \
+         must forward; only the address-producer Load(IntConst(0x100)) survives"
+    );
+    let ret_kind = crate::opt::test_support::return_kind(fg.graph())?;
+    assert!(
+        matches!(ret_kind, NodeKind::IntConst(0xCC)),
+        "forwarded value must be IntConst(0xCC), got {ret_kind:?}"
+    );
+    Ok(())
+}
+
+// ── Same-NodeOutputId load with different-NodeOutputId interferer ────────────
+// (Test D from the design plan.)
+
+/// `p = Load(0x100); q = Load(0x200); Store(p, 0xCC); Store(q, 0xDD);
+///  Load(p)` — even though the matching Store(p, 0xCC) exists upstream,
+/// the intervening `Store(q, 0xDD)` carries a DIFFERENT NodeOutputId so
+/// we cannot prove `q ≠ p` at runtime.  Forwarding must bail.
+#[test]
+fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
+        let base1 = b.build_int_const(0x100u64, NodeOutputType::U32)?;
+        let base2 = b.build_int_const(0x200u64, NodeOutputType::U32)?;
+        let p = b.build_load(base1, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let q = b.build_load(base2, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let data_c = b.build_int_const(0xCCu64, NodeOutputType::U32)?;
+        let data_d = b.build_int_const(0xDDu64, NodeOutputType::U32)?;
+        b.build_store(p, data_c, rsleigh::VnSpace::RAM)?;
+        b.build_store(q, data_d, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    pipeline.run_built(&mut fg)?;
+
+    // The matching Load(p) we wanted to forward must remain, alongside
+    // the two address-producer Loads.
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert!(
+        reachable_loads >= 3,
+        "Anchor-address Load with different-NodeOutputId Anchor interferer \
+         must NOT forward; expected ≥3 Load nodes (2 address-producers + \
+         the unforwarded Load(p)), got {reachable_loads}"
+    );
+    Ok(())
+}
+
 /// A call between store and load clobbers memory; forwarding across it is
 /// unsafe, so the load must remain.  Uses a
 /// link-register-style convention (ret_stack_pop=0) so SP stays stable
@@ -605,11 +719,11 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     })?;
 
     // Intentionally omit `ConstantFold` so both encodings reach
-    // `decompose_sp` as-lifted.  StackLoadForward's `Store` arm
+    // `decompose_sp` as-lifted.  LoadForward's `Store` arm
     // decomposes addresses directly.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new(sp, Endianness::Little));
     pipeline.run_built(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -747,7 +861,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
-    pipeline.add(StackLoadForward::new(sp, Endianness::Big));
+    pipeline.add(LoadForward::new(sp, Endianness::Big));
     pipeline.run_built(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -858,11 +972,11 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
             && fg.phi_var_tag(n).is_none())
         .count();
 
-    // Run StackLoadForward in isolation so the leak attributable to it is
+    // Run LoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
     let entry = fg.entry().unwrap();
-    StackLoadForward::new(sp, Endianness::Little).optimize(&mut fg, entry)?;
+    LoadForward::new(sp, Endianness::Little).optimize(&mut fg, entry)?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
@@ -918,7 +1032,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
         Ok(())
     })?;
 
-    // Run only ConstantFold + RedundantPhis (not StackLoadForward) so the
+    // Run only ConstantFold + RedundantPhis (not LoadForward) so the
     // load + its memory input survive for inspection.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -929,7 +1043,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     let load = fg
         .all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .expect("Load survives without StackLoadForward");
+        .expect("Load survives without LoadForward");
     let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
@@ -1239,13 +1353,13 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         Ok(())
     })?;
 
-    // Pipeline: ConstantFold → RedundantPhis → StackOffsetDetect → StackLoadForward.
+    // Pipeline: ConstantFold → RedundantPhis → StackOffsetDetect → LoadForward.
     // StackOffsetDetect must break the Stack chain at LOCK (FullClobber).
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackOffsetDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new(sp, Endianness::Little));
 
     let entry = fg.entry().unwrap();
     pipeline.run(&mut fg, entry)?;

@@ -46,10 +46,10 @@ use common::indirect_resolve_helpers::{
 ///
 /// The fixture pushes a constant onto the stack and pops it into the
 /// dispatch register (`push K; pop rax; jmp *rax`).  the cfg-time mini-graph resolver's
-/// single-region mini-graph lacks `StackLoadForward`, so it can't
+/// single-region mini-graph lacks `LoadForward`, so it can't
 /// fold the load — it returns `None` and the cfg builder defers via
 /// `UnresolvedIndirectBranch`.  The full pipeline DOES run
-/// `StackOffsetDetect + StackLoadForward`, which together collapse
+/// `StackOffsetDetect + LoadForward`, which together collapse
 /// the load back to the pushed constant K.  The classifier then
 /// sees `IntConst(K)` and returns `Single(K)`.
 #[test]
@@ -91,7 +91,7 @@ fn initial_var_non_lr_returns_none() {
 /// The fixture uses an if/else diamond where each arm stores a
 /// distinct constant at the same SP-relative slot, then loads
 /// from that slot at the merge.  `StackOffsetDetect +
-/// StackLoadForward` collapse the merge's `Load` into a synthesised
+/// LoadForward` collapse the merge's `Load` into a synthesised
 /// `ValuePhi` whose value inputs are exactly the two stored
 /// constants — the producer-shape this arm classifies.
 #[test]
@@ -125,7 +125,7 @@ fn phi_of_three_int_consts_to_multiple() {
 
 /// Spec test #9 (THE HEADLINE TEST): pcode-level
 /// `tmp = load[sp]; sp += 4; bx tmp` after the stable optimiser
-/// subset (incl. `StackLoadForward`) produces `InitialVar(lr_vn)`
+/// subset (incl. `LoadForward`) produces `InitialVar(lr_vn)`
 /// for the target → `LinkRegister`.
 ///
 /// **Soundness rationale (pinned):** this is the test that proves
@@ -134,7 +134,7 @@ fn phi_of_three_int_consts_to_multiple() {
 /// the same slot at the function exit, is the natural shape gcc
 /// emits for `pop {pc}` / `ldr pc, [sp]` epilogues.  After
 /// `StackOffsetDetect` rewrites the push as a `StackStore` and
-/// `StackLoadForward` resolves the load against that store, the
+/// `LoadForward` resolves the load against that store, the
 /// loaded value is **structurally identical** to `InitialVar(lr)`
 /// — i.e. the function-entry value of the link register.  No
 /// special-cased "load-from-sp = return" heuristic is needed; the
@@ -151,7 +151,7 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
     assert_eq!(
         result,
         Some(ResolvedTargets::LinkRegister),
-        "StackLoadForward must turn pop pc's target into InitialVar(lr); \
+        "LoadForward must turn pop pc's target into InitialVar(lr); \
          classifier must then recognise it as LinkRegister",
     );
 }
@@ -159,7 +159,7 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 /// Spec test #10 (THE SOUNDNESS GATE): `push 0x1000; pop pc`
 /// produces a `Load(IntSub(InitialVar(sp), 4))`-shaped target
 /// before the optimiser folds it.  After `StackOffsetDetect` +
-/// `StackLoadForward` the load resolves to the **stored constant**
+/// `LoadForward` the load resolves to the **stored constant**
 /// `0x1000`, NOT `InitialVar(lr)`.  The classifier therefore
 /// returns `Single(0x1000)` — a tail call — NOT `LinkRegister`.
 ///
@@ -168,7 +168,7 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 /// as a return.  Under that rule, this fixture would misclassify
 /// as LinkRegister — wiring a return where the program actually
 /// tail-calls 0x1000.  The test pins the soundness gate that
-/// motivates routing through `StackLoadForward` instead of
+/// motivates routing through `LoadForward` instead of
 /// pattern-matching on the load shape.
 ///
 /// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`

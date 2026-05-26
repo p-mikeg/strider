@@ -10,14 +10,14 @@
 //! value.
 //!
 //! Resolving this lowering requires **cross-region stack-load
-//! forwarding** (`StackOffsetDetect` + `StackLoadForward` joined
+//! forwarding** (`StackOffsetDetect` + `LoadForward` joined
 //! across the function's region graph), routed through the
 //! IR-level resolver's stack-array classifier arm
 //! (`strider_analyze::opt::classify_stack_array`).  The
 //! cfg-time mini-graph resolver runs `ConstantFold` + `KnownBits` on
 //! a single region only and cannot prove the loaded target is one of
 //! the pushed label addresses; the IR-level resolver gets visibility
-//! into cross-region flow + `StackLoadForward` results and resolves
+//! into cross-region flow + `LoadForward` results and resolves
 //! the dispatch into `ResolvedTargets::Multiple`.
 //!
 //! Consequence: x86, x86_64, AArch64, ARM (LE/BE/Thumb), and MIPS-32

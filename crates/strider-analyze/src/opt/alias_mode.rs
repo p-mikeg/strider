@@ -1,6 +1,6 @@
 //! Alias-analysis precision knob.
 //!
-//! The SP-aware passes (`StackLoadForward`, `FunctionArgDetect`,
+//! The SP-aware passes (`LoadForward`, `FunctionArgDetect`,
 //! `CallStackArgCollect`) all face the same soundness/coverage trade-off
 //! when walking back across an intervening Store whose address is NOT
 //! SP-rooted: under the strict floor we cannot prove the store does

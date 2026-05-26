@@ -33,7 +33,7 @@
 - `crates/ir/src/graph/store.rs` + `crates/ir/src/node/fingerprint.rs` — F1 dedup + auto-merge
 - `crates/ir/src/ops/rewrite.rs` — replace_all_uses
 - `crates/opt/src/sp_expr.rs` — decompose_sp soundness
-- `crates/opt/src/stack_load_forward/mod.rs` — narrow-load BE handling
+- `crates/opt/src/load_forward/mod.rs` — narrow-load BE handling
 - `crates/opt/src/{constant_fold, known_bits, load_readonly, redundant_phis, dead_branch, stack_store, call_other_elide}/mod.rs` — fold-rule fingerprint propagation
 - `crates/opt/src/pipeline.rs` — final-validate, pipeline composition
 - `crates/pattern/src/rewrite.rs` — root_fp merge into producer_fp

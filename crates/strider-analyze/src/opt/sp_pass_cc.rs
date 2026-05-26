@@ -1,5 +1,5 @@
 //! Helpers shared by the SP-aware opt passes
-//! ([`StackLoadForward`][crate::opt::StackLoadForward],
+//! ([`LoadForward`][crate::opt::LoadForward],
 //! [`CallStackArgCollect`][crate::opt::CallStackArgCollect],
 //! [`FunctionArgDetect`][crate::opt::FunctionArgDetect]) when they
 //! synthesise a minimal calling convention from raw constructor

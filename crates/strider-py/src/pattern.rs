@@ -869,7 +869,7 @@ pub struct MemPhiPatDef {
 pub fn mem_phi() -> PyMemPhiPat { PyMemPhiPat::new() }
 
 /// Builder for `ValuePhi` patterns.  ValuePhi is synthesised by
-/// `StackLoadForward` to phi together stack-store values across a
+/// `LoadForward` to phi together stack-store values across a
 /// control-flow join.
 #[strider_pattern(
     rust_name = "PyValuePhiPat",

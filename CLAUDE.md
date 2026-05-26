@@ -240,7 +240,7 @@ so the resolver-bearing dependency stays one-way.
     `PositionalArgLayout::from_convention(&cc)`).  Single source of
     truth for positional argument slot order (register slots first,
     then stack slots at the convention's `stack_arg_offsets`); consumed
-    by `FunctionArgDetect`, `CallStackArgCollect`, and `StackLoadForward`
+    by `FunctionArgDetect`, `CallStackArgCollect`, and `LoadForward`
     so each pass sees the same slot order.
 
 - **`strider-reader`** — `ReadOnlyMemory` + `rsleigh::MemReader`
@@ -306,7 +306,7 @@ so the resolver-bearing dependency stays one-way.
     - `StackOffsetDetect` — annotates SP-relative `Store` / `Load`
       offsets in `Function::stack_offsets`; the unified memory chain
       is left intact.
-    - `StackLoadForward` — forwards values from stack-tagged `Store`
+    - `LoadForward` — forwards values from stack-tagged `Store`
       (via `Function::stack_offsets`) to subsequent same-offset `Load`.
     - `FunctionArgDetect` (post-pass) — canonicalises register / stack
       arg reads by populating the `Function::arg_index_to_nodes`
@@ -418,7 +418,7 @@ truth for every node's input/output shape.  Node kinds, grouped:
   `Graph::phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>` side-
   table: `Some(vn)` marks the lifter-emitted SSA φ for the register-
   aliased read of varnode `vn`; `None` (the default) marks an anonymous
-  value phi synthesised by `StackLoadForward` when forwarding a
+  value phi synthesised by `LoadForward` when forwarding a
   `Load[sp+K]` across a `MemPhi`.
 - **Conditional branch:** `If` (outputs true / false `Control` edges).
 - **Indirect branch:** `IndirectBranch` (placeholder consumed by the

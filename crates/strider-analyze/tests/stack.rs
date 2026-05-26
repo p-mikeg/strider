@@ -9,7 +9,7 @@ per_arch_test!("stack", "volatile_three_writes", volatile_preserves_three_stores
 // escape_via_ptr keeps the call alive via an asm-volatile barrier in
 // external_take_ptr's body — see fixtures/cases/stack.c.  arm's
 // `pop {pc}` placeholder resolves via the indirect-branch resolver's
-// `LinkRegister` arm once `StackLoadForward` simplifies the loaded
+// `LinkRegister` arm once `LoadForward` simplifies the loaded
 // target back to `InitialVar(lr)`.
 per_arch_test!("stack", "escape_via_ptr", escape_has_stack_store_and_call);
 per_arch_test!("stack", "large_local_array",     large_local_has_stack_store_and_loop);

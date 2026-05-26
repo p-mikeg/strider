@@ -63,7 +63,7 @@ a zero-check via the flag-tree decomposition.
 
 `mov eax, [rsp+8]` → `Load(Add(InitialVar(rsp), IntConst(8)))`.
 After `StackOffsetDetect` (which annotates stack-relative `Store` /
-`Load` in `Function::stack_offsets`) and `StackLoadForward`, a
+`Load` in `Function::stack_offsets`) and `LoadForward`, a
 same-offset preceding store forwards through.
 
 `call <imm>` → `Call(at=<imm>)` (resolved jump-target).  Indirect
@@ -156,7 +156,7 @@ For pattern authoring, decide which layer you're querying:
   cmp canonicalisation, redundant phi removal, alias-split have all
   run.
 - **Destructive-opt-output IR** (after the full pipeline) —
-  `FunctionArgDetect`, `CallStackArgCollect`, `StackLoadForward`
+  `FunctionArgDetect`, `CallStackArgCollect`, `LoadForward`
   have all run as post-passes.  Function args are canonicalised via
   `Function::arg_index_to_nodes`; stack offsets are visible via
   `Function::stack_offsets`.

@@ -82,7 +82,7 @@ implementation → green).
 ## Phase 6 — stack passes
 
 * `StackStoreDetect`: same `NodeId` (uses `set_node_kind`); no work.
-* `StackLoadForward`: absorb both `Load`'s and forwarded `Store`'s
+* `LoadForward`: absorb both `Load`'s and forwarded `Store`'s
   fingerprints into the survivor.
 * Per-pass test.
 * Commit: `opt: stack passes preserve asm-fingerprints`.

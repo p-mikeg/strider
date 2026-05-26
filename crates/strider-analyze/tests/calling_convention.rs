@@ -15,7 +15,7 @@
 //!   (b) For at least one `i` in `0..N`, the pattern
 //!       `call().arg(i, function_arg(i))` matches — proves the call
 //!       site's arg slot threads through to a `FunctionArg` node via
-//!       the `StackLoadForward` + sub-register-fallback chain, including
+//!       the `LoadForward` + sub-register-fallback chain, including
 //!       the walker's ability to pass through non-stack-aliasing
 //!       `Store` nodes.
 //!
@@ -261,7 +261,7 @@ fn forward_8_assertions(g: &strider_ir::Function) {
     // Strict: the `function_args::mem_chain_is_dirty` `Store(_)` arm
     // lets all 8 stack-passed args be detected on x86 cdecl, mirroring
     // the resilience in `CallStackArgCollect` and
-    // `stack_load_forward::probe`.  Every arch detects all 8.
+    // `load_forward::probe`.  Every arch detects all 8.
     assert_function_args_present(g, 8, 8, "forward_8");
     assert_some_call_arg_threads_through(g, 8, "forward_8");
 }
@@ -408,7 +408,7 @@ fn uses_return_assertions(g: &strider_ir::Function) {
                         producer = g.get_node_from_output(first);
                     }
                     NodeKind::Phi if g.phi_var_tag(producer).is_none() => {
-                        // Anonymous phi (ValuePhi from StackLoadForward) —
+                        // Anonymous phi (ValuePhi from LoadForward) —
                         // pass through its first input.
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
