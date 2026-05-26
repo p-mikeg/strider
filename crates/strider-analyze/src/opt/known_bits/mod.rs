@@ -10,13 +10,13 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 #[cfg(test)]
 mod tests;
 
-/// Per-output known-bits side-table.  Defaults to `Kb::default()`
+/// Per-output known-bits side-table.  Defaults to `KnownBitsFacts::default()`
 /// (`{ones: 0, zeros: 0}` = "no info") for unrecorded outputs, which is
 /// equivalent to "absent" in the previous `FxHashMap`-based form.
-/// Migrated from `FxHashMap<NodeOutputId, Kb>` to `SecondaryMap` to
+/// Migrated from `FxHashMap<NodeOutputId, KnownBitsFacts>` to `SecondaryMap` to
 /// avoid hashing in the inner loop — at 10k+ nodes this is the
 /// hottest probe in the entire `KnownBits` pass.
-pub type KnownBitsMap = SecondaryMap<NodeOutputId, Kb>;
+pub type KnownBitsMap = SecondaryMap<NodeOutputId, KnownBitsFacts>;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 
@@ -35,25 +35,25 @@ fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
 /// Both `ones` and `zeros` are masked to the output type's width and must
 /// never overlap (`ones & zeros == 0`).
 ///
-/// Construct via [`Kb::from_const`] / [`Kb::default`] / [`Kb::merge`],
+/// Construct via [`KnownBitsFacts::from_const`] / [`KnownBitsFacts::default`] / [`KnownBitsFacts::merge`],
 /// which preserve the invariant by construction; struct-literal
 /// construction is `pub(crate)` and only used inside the analysis
-/// where the masks are derived from already-validated `Kb` values.
+/// where the masks are derived from already-validated `KnownBitsFacts` values.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub struct Kb {
+pub struct KnownBitsFacts {
     /// Bits that are definitely 1.
     ///
     /// `pub(crate)` because the `ones & zeros == 0` invariant is
-    /// enforced only by [`Kb::merge`] / [`Kb::from_const`] — external
-    /// struct-literal construction (`Kb { ones: 0xFF, zeros: 0xFF }`)
+    /// enforced only by [`KnownBitsFacts::merge`] / [`KnownBitsFacts::from_const`] — external
+    /// struct-literal construction (`KnownBitsFacts { ones: 0xFF, zeros: 0xFF }`)
     /// would silently violate it.
     pub(crate) ones: u64,
     /// Bits that are definitely 0.  Same caveat as [`Self::ones`].
     pub(crate) zeros: u64,
 }
 
-impl Kb {
-    /// Build the `Kb` for an integer constant.  Returns `None` for
+impl KnownBitsFacts {
+    /// Build the `KnownBitsFacts` for an integer constant.  Returns `None` for
     /// types this analysis doesn't track (`Bool`, floats, U128, U256):
     /// the caller treats `None` as "fully unknown" and skips
     /// propagation, which is the correct sound behaviour for a
@@ -64,7 +64,7 @@ impl Kb {
         let type_mask = u64_type_mask(ty)?;
         let masked = ty.get_unsigned_int(val)?;
         let masked_u64 = u64::try_from(masked).ok()?;
-        Some(Kb {
+        Some(KnownBitsFacts {
             ones: masked_u64,
             zeros: type_mask ^ masked_u64,
         })
@@ -78,10 +78,10 @@ impl Kb {
     /// IR contains incompatible constants reaching the same output.  Both
     /// are real bugs we want to surface rather than silently let `ones`
     /// win and lose the conflicting `zeros` info.
-    fn merge(&mut self, other: Kb) -> Result<bool> {
+    fn merge(&mut self, other: KnownBitsFacts) -> Result<bool> {
         if self.ones & other.zeros != 0 || self.zeros & other.ones != 0 {
             return Err(anyhow::anyhow!(
-                "Kb::merge contradiction: self={{ones:{:#x}, zeros:{:#x}}} other={{ones:{:#x}, zeros:{:#x}}}",
+                "KnownBitsFacts::merge contradiction: self={{ones:{:#x}, zeros:{:#x}}} other={{ones:{:#x}, zeros:{:#x}}}",
                 self.ones, self.zeros, other.ones, other.zeros,
             ));
         }
@@ -117,13 +117,13 @@ impl Kb {
 // ── Per-node known-bits computation ───────────────────────────────────────────
 
 /// Computes the known bits contributed by `node_id` toward its single integer
-/// value output.  Returns `(output_id, Kb)` or `None` if the node has no
+/// value output.  Returns `(output_id, KnownBitsFacts)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
 pub(crate) fn node_known_bits(
     ctx: crate::pattern::RewriteCtxView<'_>,
     node_id: NodeId,
     known: &KnownBitsMap,
-) -> Result<Option<(NodeOutputId, Kb)>> {
+) -> Result<Option<(NodeOutputId, KnownBitsFacts)>> {
     let kind = *ctx.node_kind(node_id);
 
     // Find the first integer value output.
@@ -143,7 +143,7 @@ pub(crate) fn node_known_bits(
     };
 
     let kb = match kind {
-        NodeKind::IntConst(v) => match Kb::from_const(v, ty) {
+        NodeKind::IntConst(v) => match KnownBitsFacts::from_const(v, ty) {
             Some(kb) => kb,
             // Untracked type (Bool, float, U128, U256) — defer to default
             // "fully unknown" via the worklist's missing-entry path.
@@ -155,15 +155,15 @@ pub(crate) fn node_known_bits(
             let l = known[lhs];
             let r = known[rhs];
             match op {
-                IntBinaryOp::And => Kb {
+                IntBinaryOp::And => KnownBitsFacts {
                     ones: l.ones & r.ones,
                     zeros: (l.zeros | r.zeros) & type_mask,
                 },
-                IntBinaryOp::Or => Kb {
+                IntBinaryOp::Or => KnownBitsFacts {
                     ones: (l.ones | r.ones) & type_mask,
                     zeros: l.zeros & r.zeros,
                 },
-                IntBinaryOp::Xor => Kb {
+                IntBinaryOp::Xor => KnownBitsFacts {
                     // bit is known 1 if exactly one input is known 1.
                     ones: (l.ones & r.zeros) | (l.zeros & r.ones),
                     // bit is known 0 if both inputs agree (both 0 or both 1).
@@ -192,7 +192,7 @@ pub(crate) fn node_known_bits(
                         if rhs_kb.ones >= bit_width {
                             return Ok(Some((
                                 out,
-                                Kb {
+                                KnownBitsFacts {
                                     ones: 0,
                                     zeros: type_mask,
                                 },
@@ -204,7 +204,7 @@ pub(crate) fn node_known_bits(
                         let shifted_zeros = ((l.zeros << shift) & type_mask) | lower_mask;
                         return Ok(Some((
                             out,
-                            Kb {
+                            KnownBitsFacts {
                                 ones: shifted_ones,
                                 zeros: shifted_zeros & !shifted_ones,
                             },
@@ -232,7 +232,7 @@ pub(crate) fn node_known_bits(
                         if rhs_kb.ones >= bit_width {
                             return Ok(Some((
                                 out,
-                                Kb {
+                                KnownBitsFacts {
                                     ones: 0,
                                     zeros: type_mask,
                                 },
@@ -244,7 +244,7 @@ pub(crate) fn node_known_bits(
                         let shifted_zeros = ((l.zeros & type_mask) >> shift) | upper_mask;
                         return Ok(Some((
                             out,
-                            Kb {
+                            KnownBitsFacts {
                                 ones: shifted_ones,
                                 zeros: shifted_zeros & !shifted_ones,
                             },
@@ -263,7 +263,7 @@ pub(crate) fn node_known_bits(
             // input's bits, so it falls through to the unknown case.)
             let [input] = ctx.node_inputs_exact::<1>(node_id)?;
             let kb = known[input];
-            Kb {
+            KnownBitsFacts {
                 ones: kb.zeros & type_mask,
                 zeros: kb.ones & type_mask,
             }
@@ -273,7 +273,7 @@ pub(crate) fn node_known_bits(
             // Upper bits of the source are discarded; lower bits are preserved.
             let [input] = ctx.node_inputs_exact::<1>(node_id)?;
             let kb = known[input];
-            Kb {
+            KnownBitsFacts {
                 ones: kb.ones & type_mask,
                 zeros: kb.zeros & type_mask,
             }
@@ -294,7 +294,7 @@ pub(crate) fn node_known_bits(
                 return Ok(None);
             };
             let kb = known[input];
-            Kb {
+            KnownBitsFacts {
                 ones: kb.ones,
                 zeros: kb.zeros | (type_mask ^ input_mask), // upper bits are 0
             }
@@ -316,19 +316,19 @@ pub(crate) fn node_known_bits(
             let upper_mask = type_mask & !input_mask;
             if kb.ones & sign_bit != 0 {
                 // Sign bit known 1 → upper bits all known 1.
-                Kb {
+                KnownBitsFacts {
                     ones: (kb.ones & input_mask) | upper_mask,
                     zeros: kb.zeros & input_mask,
                 }
             } else if kb.zeros & sign_bit != 0 {
                 // Sign bit known 0 → upper bits all known 0.
-                Kb {
+                KnownBitsFacts {
                     ones: kb.ones & input_mask,
                     zeros: (kb.zeros & input_mask) | upper_mask,
                 }
             } else {
                 // Sign bit unknown → keep only the lower bits' knowledge.
-                Kb {
+                KnownBitsFacts {
                     ones: kb.ones & input_mask,
                     zeros: kb.zeros & input_mask,
                 }
@@ -352,7 +352,7 @@ pub(crate) fn node_known_bits(
                 (1u64 << bits_needed) - 1
             };
             let upper_zeros = type_mask & !result_mask;
-            Kb {
+            KnownBitsFacts {
                 ones: 0,
                 zeros: upper_zeros,
             }
@@ -367,7 +367,7 @@ pub(crate) fn node_known_bits(
 // ── Read-only analyzer ────────────────────────────────────────────────────────
 
 /// Runs the known-bits worklist analysis to fixed point and returns the
-/// resulting `Kb` map keyed by [`NodeOutputId`].  Pure — does not mutate
+/// resulting `KnownBitsFacts` map keyed by [`NodeOutputId`].  Pure — does not mutate
 /// the graph; the [`KnownBits`] optimizer pass is layered on top of this
 /// to perform constant-replacement rewrites.
 ///
@@ -378,12 +378,12 @@ pub(crate) fn node_known_bits(
 /// node kinds and follows data-dependency chains farther.
 ///
 /// Outputs absent from the returned map have no statically-proven bit
-/// information; treat them as the all-unknown default `Kb { ones: 0,
+/// information; treat them as the all-unknown default `KnownBitsFacts { ones: 0,
 /// zeros: 0 }`.
 ///
 /// # Errors
 ///
-/// Returns an `Err` if a per-node Kb derivation fails — e.g. a node
+/// Returns an `Err` if a per-node KnownBitsFacts derivation fails — e.g. a node
 /// whose recorded output type is wider than 64 bits combined with a
 /// shape that requires `node_inputs_exact` to read a fixed input
 /// arity.  In practice the only path to error is malformed IR;
@@ -471,7 +471,7 @@ impl Optimizer for KnownBits {
                 let Some(type_mask) = u64_type_mask(ty) else {
                     continue;
                 };
-                // SecondaryMap returns `Kb::default()` (zero-known) for
+                // SecondaryMap returns `KnownBitsFacts::default()` (zero-known) for
                 // unrecorded outputs — `all_known` then returns false,
                 // which short-circuits the same way the prior
                 // `Some(&kb) = known.get(&out) else { continue };` did.

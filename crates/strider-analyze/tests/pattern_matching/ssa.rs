@@ -190,7 +190,7 @@ fn function_arg_reg_and_stack_carry_different_kinds() {
     assert!(matches!(g_stack.node_kind(stack_carriers[0]), NodeKind::Load(_)));
 }
 
-// ── arg_indices / arg_index_to_nodes API ─────────────────────────────────────
+// ── iter_arg_indices / arg_index_to_nodes API ─────────────────────────────────────
 
 /// `arg_index_to_nodes(i)` for a registered index returns a non-empty slice.
 #[test]
@@ -206,12 +206,12 @@ fn arg_index_to_nodes_empty_for_unregistered() {
     assert!(g.arg_index_to_nodes(99).is_empty(), "arg 99 must not be registered");
 }
 
-/// `arg_indices()` returns exactly the set of registered indices.
+/// `iter_arg_indices()` returns exactly the set of registered indices.
 #[test]
 fn arg_indices_iterator_sorted() {
     let (g, _reg) = shapes::function_arg_reg();
     let indices: Vec<u32> = {
-        let mut v: Vec<u32> = g.arg_indices().collect();
+        let mut v: Vec<u32> = g.iter_arg_indices().collect();
         v.sort();
         v
     };

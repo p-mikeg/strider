@@ -102,7 +102,7 @@ impl PyStrider {
 
 /// Build a `strider_analyze::Strider` from a `PyCallingConvention`.
 /// Routes through either `Strider::new` (presets — does name
-/// resolution against `sleigh`'s regs) or `Strider::new_with_built_cc`
+/// resolution against `sleigh`'s regs) or `Strider::from_built_cc`
 /// (custom — CC is already resolved at construction time).
 fn build_strider(
     py: Python<'_>,
@@ -118,7 +118,7 @@ fn build_strider(
             strider_analyze::Strider::new(arch.inner, regs, *preset).map_err(into_strider_err)
         }
         crate::cc::CcImpl::Custom(built) => {
-            Ok(strider_analyze::Strider::new_with_built_cc(
+            Ok(strider_analyze::Strider::from_built_cc(
                 arch.inner,
                 regs,
                 *built.clone(),

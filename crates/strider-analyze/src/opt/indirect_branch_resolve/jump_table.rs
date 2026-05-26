@@ -309,7 +309,7 @@ pub(super) fn bound_via_known_bits(
     let type_mask = u64::try_from(ty.get_unsigned_int(u128::from(u64::MAX))?).ok()?;
 
     // Outputs absent from the map have no proven bit info; treat them
-    // as the all-unknown default — `SecondaryMap` returns `Kb::default()`
+    // as the all-unknown default — `SecondaryMap` returns `KnownBitsFacts::default()`
     // (the all-unknown sentinel) for unrecorded entries via `Index`.
     let kb = known[idx_output];
     let max = kb.max_value(type_mask);
@@ -743,7 +743,7 @@ fn is_sign_bit_known_zero(
         return false;
     }
     let sign_bit_mask: u64 = 1u64 << (bit_width - 1);
-    // Kb defaults to all-unknown for unrecorded outputs, so the check
+    // KnownBitsFacts defaults to all-unknown for unrecorded outputs, so the check
     // naturally fails closed when the analyzer hasn't seen `idx_output`.
     let kb = known[idx_output];
     kb.zeros & sign_bit_mask == sign_bit_mask

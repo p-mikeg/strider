@@ -65,7 +65,7 @@ fn matcher(g: &strider_ir::Function) -> Matcher<'_> {
 /// `Function::arg_index_to_nodes` (the side-table populated by
 /// `FunctionArgDetect`).
 fn function_arg_indices(g: &strider_ir::Function) -> HashSet<u32> {
-    g.arg_indices().collect()
+    g.iter_arg_indices().collect()
 }
 
 /// Asserts at least `min` distinct arg indices in `0..n` are registered

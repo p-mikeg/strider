@@ -84,7 +84,7 @@ impl FunctionArgPattern {
             None => {
                 // No index constraint — accept if the node is in ANY index.
                 ctx.function
-                    .arg_indices()
+                    .iter_arg_indices()
                     .any(|idx| ctx.function.arg_index_to_nodes(idx).contains(&node_id))
                     && self.source_matches(ctx, node_id)
             }

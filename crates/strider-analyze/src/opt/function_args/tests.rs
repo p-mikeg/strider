@@ -337,7 +337,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     );
     // No indices at all.
     assert_eq!(
-        fg.arg_indices().count(), 0,
+        fg.iter_arg_indices().count(), 0,
         "side-table must be empty when no arg reads are live"
     );
     Ok(())
@@ -575,7 +575,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     pipeline.run_built(&mut fg)?;
 
     assert_eq!(
-        fg.arg_indices().count(), 0,
+        fg.iter_arg_indices().count(), 0,
         "isolated sp+12 load must not be registered without arg 0/1"
     );
     Ok(())

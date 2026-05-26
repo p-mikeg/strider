@@ -473,7 +473,7 @@ impl<'g> Matcher<'g> {
     /// handle)` pairs for the first carrier of each index, sorted ascending
     /// by index.
     pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'g>)> + '_ {
-        let mut indices: Vec<u32> = self.function.arg_indices().collect();
+        let mut indices: Vec<u32> = self.function.iter_arg_indices().collect();
         indices.sort_unstable();
         indices.into_iter().filter_map(move |idx| {
             self.function_arg(idx).map(|h| (idx, h))
@@ -490,7 +490,7 @@ impl<'g> Matcher<'g> {
     /// [`Self::function_arg_count`] for the actual population count.
     pub fn function_arg_index_upper_bound(&self) -> usize {
         self.function
-            .arg_indices()
+            .iter_arg_indices()
             .max()
             .map_or(0, |m| (m as usize) + 1)
     }
@@ -498,7 +498,7 @@ impl<'g> Matcher<'g> {
     /// Returns the number of distinct argument indices registered in the
     /// side-table.
     pub fn function_arg_count(&self) -> usize {
-        self.function.arg_indices().count()
+        self.function.iter_arg_indices().count()
     }
 
     // ── Dispatch entry points ────────────────────────────────────────────────

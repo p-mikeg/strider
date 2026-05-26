@@ -325,7 +325,7 @@ impl Function {
 
     /// Iterate over all registered argument indices (unordered).
     #[inline]
-    pub fn arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
+    pub fn iter_arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
         self.arg_index_to_nodes.keys().copied()
     }
 
@@ -618,8 +618,8 @@ mod function_skeleton_tests {
         assert!(nodes.contains(&n1));
         assert!(nodes.contains(&n2));
 
-        // arg_indices contains the registered index.
-        assert!(f.arg_indices().any(|i| i == 3));
+        // iter_arg_indices contains the registered index.
+        assert!(f.iter_arg_indices().any(|i| i == 3));
     }
 }
 

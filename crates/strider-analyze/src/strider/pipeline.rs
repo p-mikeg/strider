@@ -170,7 +170,7 @@ impl Strider {
     /// [`strider_target::BuiltCallingConvention::try_new`] construction
     /// time; this constructor trusts that contract.
     #[must_use]
-    pub fn new_with_built_cc(
+    pub fn from_built_cc(
         arch: strider_target::SleighArch,
         sleigh_regs: rsleigh::SleighRegs,
         calling_convention: strider_target::BuiltCallingConvention,

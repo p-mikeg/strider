@@ -340,7 +340,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // `analyze_known_bits` deliberately scopes its worklist to
     // entry-reachable nodes (the local-typing reachability boundary).
     // An output whose producer is not in the preorder traversal
-    // gets `Kb::default()` (all-unknown), which yields `max ==
+    // gets `KnownBitsFacts::default()` (all-unknown), which yields `max ==
     // type_mask` and `bound_via_known_bits` returns None.
     //
     // This test pins the documented contract: callers may safely
@@ -394,7 +394,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), detached_idx, &known);
     assert_eq!(
         bound, None,
-        "unreachable output must yield None (default Kb, no narrowing)",
+        "unreachable output must yield None (default KnownBitsFacts, no narrowing)",
     );
 }
 
