@@ -1,9 +1,9 @@
 
-use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
+use crate::opt::worklist::seeded_kind;
 
 #[cfg(test)]
 mod tests;
@@ -273,12 +273,13 @@ impl Optimizer for DeadBranchElimination {
         entry: NodeId,
     ) -> crate::opt::Result<OptimizationResult> {
         let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
-        // DBE only fires on `If` nodes whose outputs are control edges. We
-        // drain the seeded preorder once: chained constant-branch patterns
-        // (where one elimination exposes another) are caught by the outer
-        // OptimizerPipeline fixed-point loop, which re-runs this pass until
-        // it reports NoChange.
-        let mut work: Worklist<NodeId> = ctx.preorder().collect();
+        // DBE only fires on `If` nodes; pre-filter via `seeded_kind` for
+        // symmetry with the other peephole-style passes (ConstantFold,
+        // IfCondInversion, LoadReadOnly).  Chained constant-branch
+        // patterns are caught by the outer OptimizerPipeline fixed-
+        // point loop, which re-runs this pass until it reports
+        // NoChange.
+        let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::If));
         let mut result = OptimizationResult::NoChange;
         while let Some(node_id) = work.dequeue() {
             result |= try_eliminate_dead_branch(&mut ctx, node_id)?;

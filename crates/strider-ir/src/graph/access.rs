@@ -212,10 +212,13 @@ impl Graph {
         &'a self,
         reachable: &'a crate::walk::NodeIdSet,
     ) -> impl Iterator<Item = (NodeId, &'a NodeKind)> + 'a {
-        self.nodes
-            .keys()
-            .filter(move |&n| reachable.contains(n))
-            .map(move |n| (n, self.node_kind(n)))
+        // Iterate the reachable set directly rather than `self.nodes.keys()
+        // .filter(reachable.contains)`: `DenseEntitySet::iter` walks in
+        // ascending NodeId order at the size of the reachable set, not
+        // the (potentially zombie-bloated) arena.  Saves O(arena -
+        // reachable) per validator call, which matters for graphs where
+        // destructive passes have left many detached zombies behind.
+        reachable.iter().map(move |n| (n, self.node_kind(n)))
     }
 
 }

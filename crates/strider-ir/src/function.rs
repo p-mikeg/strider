@@ -50,7 +50,15 @@ pub struct Function {
     pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
     /// Per-node sorted-deduplicated list of machine-instruction addresses
     /// whose lifting or rewrite contributed to the node's value.
-    pub(crate) asm_fingerprints: SecondaryMap<NodeId, Vec<u64>>,
+    // `SmallVec<[u64; 2]>` because the common case is 1–2 contributor
+    // addresses per node.  Inlining those avoids a heap allocation per
+    // non-empty entry — on graphs with thousands of nodes this drops
+    // thousands of small allocations from the lift+optimize pipeline.
+    // The wider lifter contract (`set_asm_fingerprint`,
+    // `extend_asm_fingerprint`) keeps using `&[u64]` /
+    // `impl IntoIterator<Item = u64>` so callers are unaffected.
+    pub(crate) asm_fingerprints:
+        SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
     /// Per-Call clobber-list override (shadows `CcMetadata::call_clobbered`
     /// for a specific call site).
     pub(crate) call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>,
@@ -345,7 +353,7 @@ impl Function {
     pub fn set_asm_fingerprint(&mut self, id: NodeId, mut addrs: Vec<u64>) {
         addrs.sort_unstable();
         addrs.dedup();
-        self.asm_fingerprints[id] = addrs;
+        self.asm_fingerprints[id] = addrs.into_iter().collect();
     }
 
     /// Unions `contributors` into `node_id`'s fingerprint.  Result is kept
