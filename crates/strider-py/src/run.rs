@@ -36,7 +36,7 @@ pub struct PyRunResult {
     #[pyo3(get)]
     cfg: Py<PyCfg>,
     #[pyo3(get)]
-    graph: Py<PyFunction>,
+    function: Py<PyFunction>,
     #[pyo3(get)]
     sleigh: Py<PySleigh>,
 }
@@ -213,11 +213,11 @@ fn run_via_orchestrator(
         return Err(err);
     }
 
-    let py_graph = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
+    let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
 
     Ok(PyRunResult {
         cfg: cfg_obj,
-        graph: py_graph,
+        function: py_function,
         sleigh: sleigh_arc,
     })
 }
@@ -305,22 +305,22 @@ fn run_with_custom_pipeline(
         .map_err(into_strider_err)?;
     let function = outcome.function;
     drop(strider_borrow);
-    let py_graph = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
+    let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
 
     let actual_pipeline = pipeline.drain_into_pipeline()?;
     {
-        let py_graph_borrow = py_graph.borrow(py);
-        let mut graph = py_graph_borrow.write_inner().map_err(into_strider_err)?;
-        let entry = graph.entry().ok_or_else(|| {
+        let py_function_borrow = py_function.borrow(py);
+        let mut function = py_function_borrow.write_inner().map_err(into_strider_err)?;
+        let entry = function.entry().ok_or_else(|| {
             into_strider_err(anyhow::anyhow!(
-                "strider.run: graph has not been built (entry is None)"
+                "strider.run: function has not been built (entry is None)"
             ))
         })?;
         actual_pipeline
-            .run(&mut graph, entry)
+            .run(&mut function, entry)
             .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
         if compact {
-            graph.compact().map_err(into_strider_err)?;
+            function.compact().map_err(into_strider_err)?;
         }
     }
 
@@ -334,7 +334,7 @@ fn run_with_custom_pipeline(
 
     Ok(PyRunResult {
         cfg: cfg_obj,
-        graph: py_graph,
+        function: py_function,
         sleigh,
     })
 }

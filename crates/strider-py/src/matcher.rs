@@ -1,6 +1,6 @@
 //! `PyMatch` — result wrapper for a successful pattern match.
 //!
-//! The Rust `strider_analyze::pattern::Matcher` borrows the Graph
+//! The Rust `strider_analyze::pattern::Matcher` borrows the Function
 //! immutably for its lifetime; we cannot store one across Python
 //! method calls without an unsafe lifetime extension.  Instead each
 //! call constructs a fresh `Matcher`, runs the query, and converts
@@ -29,7 +29,7 @@ use crate::pattern::{intern_str, PyCapture, PyOffsetCapture};
 #[pyclass(name = "Match", module = "strider")]
 pub struct PyMatch {
     pub(crate) inner: strider_analyze::pattern::Match,
-    pub(crate) graph: Py<PyFunction>,
+    pub(crate) function: Py<PyFunction>,
     /// Generation counter sampled at `PyMatch` construction time.
     /// Compared against `Function::generation()` on every accessor; a
     /// mismatch means the underlying arena was reshuffled since the
@@ -55,37 +55,37 @@ impl CaptureKey<'_> {
 }
 
 impl PyMatch {
-    /// Resolve `key` to a `Capture`, borrow the graph for read, and run
-    /// `f` against `(capture, &graph)`.  Centralises the boilerplate that
+    /// Resolve `key` to a `Capture`, borrow the function for read, and run
+    /// `f` against `(capture, &function)`.  Centralises the boilerplate that
     /// every typed accessor on `PyMatch` would otherwise repeat (resolve
     /// the key → borrow the PyFunction → read the inner RwLock → poison-map
     /// → check the generation hasn't drifted).
-    fn with_graph<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
+    fn with_function<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
     where
         F: FnOnce(strider_analyze::pattern::Capture, &strider_ir::Function) -> R,
     {
         let cap = key.resolve()?;
-        let g = self.graph.borrow(py);
-        let g = g.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&g)?;
-        Ok(f(cap, &g))
+        let function = self.function.borrow(py);
+        let function = function.read_inner().map_err(into_strider_err)?;
+        self.assert_generation(&function)?;
+        Ok(f(cap, &function))
     }
 
-    /// Confirm the graph's generation counter is still what it was
+    /// Confirm the function's generation counter is still what it was
     /// when this `PyMatch` was constructed.  A mismatch indicates an
     /// arena-reshuffling op (`Function.compact`, `retain_reachable`,
     /// `optimize`) ran between match construction and this accessor —
     /// the stored `NodeOutputId`s are stale.  Returns a
     /// `StriderError` rather than silently dereferencing the wrong
     /// node.
-    fn assert_generation(&self, g: &strider_ir::Graph) -> PyResult<()> {
-        if g.generation() != self.generation {
+    fn assert_generation(&self, function: &strider_ir::Function) -> PyResult<()> {
+        if function.generation() != self.generation {
             return Err(into_strider_err(anyhow::anyhow!(
-                "Match is stale: graph was compacted / reshuffled after this Match was \
-                 created (match generation = {}, graph generation = {}).  Re-run the \
-                 pattern against the post-compaction graph.",
+                "Match is stale: function was compacted / reshuffled after this Match was \
+                 created (match generation = {}, function generation = {}).  Re-run the \
+                 pattern against the post-compaction function.",
                 self.generation,
-                g.generation(),
+                function.generation(),
             )));
         }
         Ok(())
@@ -107,7 +107,7 @@ impl PyMatch {
     /// `m["name"]` / `m[capture]` — best-effort: integer if value
     /// output is an int, bool if it's a bool, raw bits otherwise.
     fn __getitem__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<PyObject> {
-        self.with_graph(py, key, |cap, g| {
+        self.with_function(py, key, |cap, g| {
             if let Some(v) = self.inner.get_uint(cap, g) {
                 // Pass `u128` directly — PyO3 handles the conversion to a
                 // Python int.  Casting to `i128` first would silently sign-
@@ -132,21 +132,21 @@ impl PyMatch {
     }
 
     fn uint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u128>> {
-        self.with_graph(py, key, |c, g| self.inner.get_uint(c, g))
+        self.with_function(py, key, |c, g| self.inner.get_uint(c, g))
     }
 
     #[pyo3(name = "int")]
     fn int_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<i128>> {
-        self.with_graph(py, key, |c, g| self.inner.get_int(c, g))
+        self.with_function(py, key, |c, g| self.inner.get_int(c, g))
     }
 
     #[pyo3(name = "bool")]
     fn bool_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<bool>> {
-        self.with_graph(py, key, |c, g| self.inner.get_bool(c, g))
+        self.with_function(py, key, |c, g| self.inner.get_bool(c, g))
     }
 
     fn float_bits(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u64>> {
-        self.with_graph(py, key, |c, g| self.inner.get_float_bits(c, g))
+        self.with_function(py, key, |c, g| self.inner.get_float_bits(c, g))
     }
 
     /// Returns True if the capture has a binding.
@@ -167,45 +167,45 @@ impl PyMatch {
     /// Recover the matched `IntBinaryOp` variant name from `c`,
     /// e.g. `"Add"`, `"Sub"`, `"And"`.
     fn int_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| self.inner.get_int_binary_op(c, g).map(op_name))
+        self.with_function(py, key, |c, g| self.inner.get_int_binary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `IntUnaryOp` variant name from `c`.
     fn int_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| self.inner.get_int_unary_op(c, g).map(op_name))
+        self.with_function(py, key, |c, g| self.inner.get_int_unary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `IntCmpOp` variant name from `c`,
     /// e.g. `"Less"`, `"Equal"`, `"Sless"`.
     fn int_cmp_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| self.inner.get_int_cmp_op(c, g).map(op_name))
+        self.with_function(py, key, |c, g| self.inner.get_int_cmp_op(c, g).map(op_name))
     }
 
     /// Recover the matched `BoolBinaryOp` variant name from `c`.
     fn bool_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| self.inner.get_bool_binary_op(c, g).map(op_name))
+        self.with_function(py, key, |c, g| self.inner.get_bool_binary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `BoolUnaryOp` variant name from `c`.
     fn bool_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| self.inner.get_bool_unary_op(c, g).map(op_name))
+        self.with_function(py, key, |c, g| self.inner.get_bool_unary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `FloatBinaryOp` variant name from `c`.
     fn float_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| {
+        self.with_function(py, key, |c, g| {
             self.inner.get_float_binary_op(c, g).map(op_name)
         })
     }
 
     /// Recover the matched `FloatUnaryOp` variant name from `c`.
     fn float_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| self.inner.get_float_unary_op(c, g).map(op_name))
+        self.with_function(py, key, |c, g| self.inner.get_float_unary_op(c, g).map(op_name))
     }
 
     /// Recover the matched `FloatCmpOp` variant name from `c`.
     fn float_cmp_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_graph(py, key, |c, g| self.inner.get_float_cmp_op(c, g).map(op_name))
+        self.with_function(py, key, |c, g| self.inner.get_float_cmp_op(c, g).map(op_name))
     }
 
     /// Recover the matched varnode from `c`.  Returns the `Vn`
@@ -213,7 +213,7 @@ impl PyMatch {
     /// (via `Graph::phi_var_tag`) / `FunctionArg` node, or `None`
     /// when `c` doesn't bind such a node.
     fn vn(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
-        self.with_graph(py, key, |c, g| {
+        self.with_function(py, key, |c, g| {
             self.inner.get_vn(c, g).map(crate::sleigh::PyVn::from_inner)
         })
     }
@@ -251,10 +251,10 @@ impl PyMatch {
         key: CaptureKey<'_>,
     ) -> PyResult<Vec<u64>> {
         let cap = key.resolve()?;
-        let g = self.graph.borrow(py);
-        let g = g.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&g)?;
-        Ok(self.inner.asm_fingerprint(cap, &g).to_vec())
+        let function = self.function.borrow(py);
+        let function = function.read_inner().map_err(into_strider_err)?;
+        self.assert_generation(&function)?;
+        Ok(self.inner.asm_fingerprint(cap, &function).to_vec())
     }
 }
 

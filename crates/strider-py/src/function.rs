@@ -49,22 +49,22 @@ enum DotResult {
 
 /// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
 /// returning `StriderError` on lookup failure.
-fn node_id_from_u32(graph: &strider_ir::Function, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
-    let nid = graph
+fn node_id_from_u32(function: &strider_ir::Function, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
+    let nid = function
         .all_node_ids()
         .find(|n| n.as_u32() == node_id)
         .ok_or_else(|| {
             crate::errors::into_strider_err(anyhow::anyhow!(
-                "no node with id {node_id} in graph"
+                "no node with id {node_id} in function"
             ))
         })?;
     Ok(nid)
 }
 
 impl PyFunction {
-    pub(crate) fn new(graph: strider_ir::Function, cfg: Py<PyCfg>) -> Self {
+    pub(crate) fn new(function: strider_ir::Function, cfg: Py<PyCfg>) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(graph)),
+            inner: Arc::new(RwLock::new(function)),
             cfg,
         }
     }
@@ -142,8 +142,8 @@ impl PyFunction {
         op: DotOp<'_>,
     ) -> PyResult<DotResult> {
         let cfg_borrow = self.cfg.borrow(py);
-        self.with_read(|graph| {
-            let dumper = graph
+        self.with_read(|function| {
+            let dumper = function
                 .dot_dumper(cfg_borrow.inner.sleigh())
                 .map_err(crate::errors::into_strider_err)?;
             let d = dot::GraphDot::new(dumper, dot_style_for(style));
@@ -190,7 +190,7 @@ impl PyFunction {
     }
 
     fn node_count(&self) -> PyResult<usize> {
-        self.with_read_value(|graph| graph.all_node_ids().count())
+        self.with_read_value(|function| function.all_node_ids().count())
     }
 
     /// Returns the count of `Region` join nodes reachable from
@@ -218,8 +218,8 @@ impl PyFunction {
     /// through the canonical IR traversal helper.
     fn count_loop_headers(&self) -> PyResult<usize> {
         use strider_ir::node::NodeKind;
-        self.with_read_value(|graph| {
-            graph
+        self.with_read_value(|function| {
+            function
                 .walk_kind(|k| matches!(k, NodeKind::Region))
                 .count()
         })
@@ -229,7 +229,7 @@ impl PyFunction {
     /// integers.  Useful for iterating from Python without going
     /// through pattern matching.
     fn node_ids(&self) -> PyResult<Vec<u32>> {
-        self.with_read_value(|graph| graph.all_node_ids().map(|n| n.as_u32()).collect())
+        self.with_read_value(|function| function.all_node_ids().map(|n| n.as_u32()).collect())
     }
 
     /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
@@ -239,9 +239,9 @@ impl PyFunction {
     ///
     /// Raises `StriderError` for an invalid `node_id`.
     fn node_kind(&self, node_id: u32) -> PyResult<String> {
-        self.with_read(|graph| {
-            let nid = node_id_from_u32(graph, node_id)?;
-            Ok(format!("{:?}", graph.node_kind(nid)))
+        self.with_read(|function| {
+            let nid = node_id_from_u32(function, node_id)?;
+            Ok(format!("{:?}", function.node_kind(nid)))
         })
     }
 
@@ -253,9 +253,9 @@ impl PyFunction {
     /// Region, FunctionArg) whose existence is synthesised by
     /// the IR builder rather than tied to a specific asm instruction.
     fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
-        self.with_read(|graph| {
-            let nid = node_id_from_u32(graph, node_id)?;
-            Ok(graph.asm_fingerprint(nid).to_vec())
+        self.with_read(|function| {
+            let nid = node_id_from_u32(function, node_id)?;
+            Ok(function.asm_fingerprint(nid).to_vec())
         })
     }
 
@@ -267,11 +267,11 @@ impl PyFunction {
     /// doesn't fit in `u128`; narrow constants (≤ U128) are accessible
     /// via `Match.get_uint(c)` instead.
     fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
-        self.with_read(|graph| {
-            let nid = node_id_from_u32(graph, node_id)?;
-            match graph.node_kind(nid) {
+        self.with_read(|function| {
+            let nid = node_id_from_u32(function, node_id)?;
+            match function.node_kind(nid) {
                 strider_ir::node::NodeKind::IntConstWide(id) => {
-                    Ok(Some(graph.wide_const(*id).to_le_bytes()))
+                    Ok(Some(function.wide_const(*id).to_le_bytes()))
                 }
                 _ => Ok(None),
             }
@@ -281,9 +281,9 @@ impl PyFunction {
     /// Returns the Sleigh user-op name attached to a `CallOther` node,
     /// or `None` for any other node kind.
     fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
-        self.with_read(|graph| {
-            let nid = node_id_from_u32(graph, node_id)?;
-            Ok(graph.call_other_name(nid).map(str::to_owned))
+        self.with_read(|function| {
+            let nid = node_id_from_u32(function, node_id)?;
+            Ok(function.call_other_name(nid).map(str::to_owned))
         })
     }
 
@@ -293,13 +293,13 @@ impl PyFunction {
     /// The asm-fingerprint Layer-C check is always-on: every reachable
     /// non-exempt node must carry a non-empty contributor list.
     fn validate(&self) -> PyResult<Option<String>> {
-        self.with_read(|graph| {
-            let entry = graph.entry().ok_or_else(|| {
+        self.with_read(|function| {
+            let entry = function.entry().ok_or_else(|| {
                 crate::errors::into_strider_err(anyhow::anyhow!(
-                    "Function.validate: graph has not been built (entry is None)"
+                    "Function.validate: function has not been built (entry is None)"
                 ))
             })?;
-            match strider_ir::validate::validate(graph, entry) {
+            match strider_ir::validate::validate(function, entry) {
                 Ok(()) => Ok(None),
                 Err(e) => Ok(Some(format!("{e}"))),
             }
@@ -310,8 +310,8 @@ impl PyFunction {
     /// `entry` via [`strider_ir::graph::Graph::walk_from`].  Mutates in place.
     /// Pre-compaction node ids become invalid across this call.
     fn compact(&self) -> PyResult<()> {
-        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let _remap = graph.compact().map_err(crate::errors::into_strider_err)?;
+        let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let _remap = function.compact().map_err(crate::errors::into_strider_err)?;
         Ok(())
     }
 
@@ -321,14 +321,14 @@ impl PyFunction {
     /// or the equivalent classmethods if you need to apply it again.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
-        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let entry = graph.entry().ok_or_else(|| {
+        let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let entry = function.entry().ok_or_else(|| {
             crate::errors::into_strider_err(anyhow::anyhow!(
-                "Function.optimize: graph has not been built (entry is None)"
+                "Function.optimize: function has not been built (entry is None)"
             ))
         })?;
         real_pipeline
-            .run(&mut graph, entry)
+            .run(&mut function, entry)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -343,13 +343,13 @@ impl PyFunction {
             pipe.add(strider_analyze::opt::RedundantPhis);
             pipe.add(strider_analyze::opt::DeadBranchElimination);
         }
-        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let entry = graph.entry().ok_or_else(|| {
+        let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let entry = function.entry().ok_or_else(|| {
             crate::errors::into_strider_err(anyhow::anyhow!(
-                "Function.reoptimize: graph has not been built (entry is None)"
+                "Function.reoptimize: function has not been built (entry is None)"
             ))
         })?;
-        pipe.run(&mut graph, entry).map_err(|e| {
+        pipe.run(&mut function, entry).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }
@@ -386,9 +386,9 @@ impl PyFunction {
             )));
         }
         let pat = pat.into_pat()?;
-        let g_borrow = slf.borrow(py);
-        let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_analyze::pattern::Matcher::try_new(&graph_guard)
+        let function_borrow = slf.borrow(py);
+        let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
+        let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
         if ignore_casts {
             matcher = matcher.ignore_casts();
@@ -399,9 +399,9 @@ impl PyFunction {
             matcher = matcher.ignore_regions();
         }
         let raw = matcher.find_all(&pat);
-        let generation = graph_guard.generation();
-        drop(graph_guard);
-        drop(g_borrow);
+        let generation = function_guard.generation();
+        drop(function_guard);
+        drop(function_borrow);
         // If a `.when()` predicate stashed a control-flow exception
         // (KeyboardInterrupt / SystemExit) or a bad return-type PyErr
         // in the thread-local pending-control-flow cell, surface it
@@ -417,7 +417,7 @@ impl PyFunction {
         for m in raw {
             out.push(crate::matcher::PyMatch {
                 inner: m,
-                graph: slf.clone_ref(py),
+                function: slf.clone_ref(py),
                 generation,
             });
         }
@@ -467,9 +467,9 @@ impl PyFunction {
             owned.push(p.into_pat()?);
         }
         let pat_refs: Vec<&strider_analyze::pattern::Pat> = owned.iter().collect();
-        let g_borrow = slf.borrow(py);
-        let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_analyze::pattern::Matcher::try_new(&graph_guard)
+        let function_borrow = slf.borrow(py);
+        let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
+        let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
         if ignore_casts {
             matcher = matcher.ignore_casts();
@@ -480,9 +480,9 @@ impl PyFunction {
             matcher = matcher.ignore_regions();
         }
         let raw = matcher.find_all_requirements(&pat_refs);
-        let generation = graph_guard.generation();
-        drop(graph_guard);
-        drop(g_borrow);
+        let generation = function_guard.generation();
+        drop(function_guard);
+        drop(function_borrow);
         // Same propagation as `find_all` — pending control-flow
         // exceptions from `.when()` predicates surface here via the
         // thread-local cell.
@@ -495,7 +495,7 @@ impl PyFunction {
             for m in tuple {
                 py_tuple.push(crate::matcher::PyMatch {
                     inner: m,
-                    graph: slf.clone_ref(py),
+                    function: slf.clone_ref(py),
                     generation,
                 });
             }
@@ -517,8 +517,8 @@ impl PyFunction {
         let lhs = find.into_pat()?;
         let rhs = replace.into_pat()?;
         let rule = strider_analyze::pattern::rewrite_rule(lhs, rhs);
-        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut graph)
+        let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut function)
             .map_err(crate::errors::into_strider_err)?;
         rewriter.apply_rule(rule).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("rewrite failed: {e:?}"))
@@ -540,8 +540,8 @@ impl PyFunction {
             let rhs_pat = (*rhs.borrow(py).as_inner()).clone();
             rules.push(strider_analyze::pattern::boxed_rule(strider_analyze::pattern::rewrite_rule(lhs_pat, rhs_pat)));
         }
-        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut graph)
+        let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut function)
             .map_err(crate::errors::into_strider_err)?;
         rewriter.apply_rules(&rules).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))

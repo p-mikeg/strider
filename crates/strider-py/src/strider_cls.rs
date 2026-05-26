@@ -30,7 +30,7 @@ pub struct PyStrider {
 #[pyclass(name = "AnalyzeOutcome", module = "strider")]
 pub struct PyAnalyzeOutcome {
     #[pyo3(get)]
-    pub(crate) graph: Py<PyFunction>,
+    pub(crate) function: Py<PyFunction>,
     #[pyo3(get)]
     pub(crate) unresolved_branch_count: usize,
     #[pyo3(get)]
@@ -60,9 +60,9 @@ impl PyStrider {
         let region_count = outcome.region_count();
         let function = outcome.function;
         drop(cfg_borrow);
-        let py_graph = Py::new(py, PyFunction::new(function, cfg))?;
+        let py_function = Py::new(py, PyFunction::new(function, cfg))?;
         Ok(PyAnalyzeOutcome {
-            graph: py_graph,
+            function: py_function,
             unresolved_branch_count,
             region_count,
         })
