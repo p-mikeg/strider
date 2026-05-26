@@ -176,3 +176,58 @@ fn full_pipeline_pass_count_equals_stable_plus_destructive() {
     let full_count = strider_analyze::opt::default_pipeline().passes().len();
     assert_eq!(stable_count + destructive_count, full_count);
 }
+
+// ── Pass-membership pins ──────────────────────────────────────────────────
+//
+// The four tests below pin the BY-NAME registration contract that the
+// orchestrator's fixed-point loop relies on: `RedundantPhis` and
+// `DeadBranchElimination` are destructive (invalidate the orchestrator's
+// `RegionIndex` when run mid-iteration); `ConstantFold` and `KnownBits`
+// are stable (safe to re-run between iterations).  A future refactor
+// must NOT silently move passes between buckets.
+
+fn pass_names(p: &strider_analyze::opt::OptimizerPipeline) -> Vec<&'static str> {
+    p.passes().iter().map(|o| o.name()).collect()
+}
+
+#[test]
+fn stable_subset_does_not_include_redundant_phis() {
+    let names = pass_names(&stable_default_pipeline());
+    assert!(
+        !names.iter().any(|n| n.contains("RedundantPhis")),
+        "stable subset must NOT include RedundantPhis (destructive — \
+         invalidates orchestrator's RegionIndex).  Got: {names:?}"
+    );
+}
+
+#[test]
+fn stable_subset_does_not_include_dead_branch_elimination() {
+    let names = pass_names(&stable_default_pipeline());
+    assert!(
+        !names.iter().any(|n| n.contains("DeadBranchElimination")),
+        "stable subset must NOT include DeadBranchElimination (destructive).  \
+         Got: {names:?}"
+    );
+}
+
+#[test]
+fn stable_subset_includes_constant_fold_and_known_bits() {
+    let names = pass_names(&stable_default_pipeline());
+    for required in ["ConstantFold", "KnownBits"] {
+        assert!(
+            names.iter().any(|n| n.contains(required)),
+            "stable subset missing {required}: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn destructive_subset_includes_redundant_phis_and_dead_branch_elim() {
+    let names = pass_names(&destructive_default_pipeline());
+    for required in ["RedundantPhis", "DeadBranchElimination"] {
+        assert!(
+            names.iter().any(|n| n.contains(required)),
+            "destructive subset missing {required}: {names:?}"
+        );
+    }
+}

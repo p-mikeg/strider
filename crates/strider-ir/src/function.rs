@@ -588,6 +588,55 @@ mod compact_tests {
         assert!(f.output_kind(outs[0]).is_control());
     }
 
+    /// Asm-fingerprints survive compaction on every reachable node.
+    /// Regression guard: a node remap must carry the fingerprint side-
+    /// table through to its new NodeId.  Otherwise pattern queries
+    /// against optimised IR lose contributor-asm attribution for any
+    /// surviving node whose id was remapped.
+    #[test]
+    fn retain_reachable_preserves_asm_fingerprint_on_surviving_node() {
+        use crate::node::NodeOutputType;
+
+        let mut f = Function::new();
+        f.set_cc_metadata(CcMetadata {
+            variables: PrimaryMap::new(),
+            call_clobbered: Box::new([]),
+            ret_val_regs: Box::new([]),
+            call_other_clobbered: Box::new([]),
+            no_memory_clobber: false,
+        });
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+        // Reachable IntConst whose Return-input consumer keeps it live.
+        let surviving = f.graph_mut().create_node(
+            NodeKind::IntConst(0xCAFE_u128),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [surv_out] = f.node_outputs_exact::<1>(surviving).unwrap();
+        let _ret = f.graph_mut().create_node(
+            NodeKind::Return,
+            [entry_ctrl, mem_out, surv_out],
+            [],
+        );
+        f.set_entry(entry);
+
+        // Stamp three asm addresses on the surviving IntConst before compact.
+        f.set_asm_fingerprint(surviving, vec![0x1000, 0x1004, 0x1008]);
+
+        let remap = f.compact().expect("compact must succeed");
+        let new_id = remap
+            .node_old_to_new(surviving)
+            .expect("surviving IntConst must remain after compact");
+        assert_eq!(
+            f.asm_fingerprint(new_id),
+            &[0x1000, 0x1004, 0x1008],
+            "surviving node's asm-fingerprint must transfer to its post-compact NodeId"
+        );
+    }
+
     /// A cacheable zombie node that has no live uses must be absent after
     /// `Function::compact`.  Regression guard against compaction skipping
     /// detached-but-still-arena-present nodes.

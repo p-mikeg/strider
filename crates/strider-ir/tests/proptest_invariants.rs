@@ -381,4 +381,53 @@ proptest! {
             res.err()
         );
     }
+
+    /// `Function::preorder` visits each reachable node at most once.
+    /// The walker's `DenseEntitySet`-backed visited check is the
+    /// load-bearing invariant; this proptest exercises it against
+    /// arbitrary action-driven graphs.
+    #[test]
+    fn prop_preorder_visits_each_node_at_most_once(steps in step_seq()) {
+        let Some(fg) = replay(&steps) else {
+            return Ok(());
+        };
+        use std::collections::HashSet;
+        let visited: Vec<_> = fg.preorder().collect();
+        let unique: HashSet<_> = visited.iter().copied().collect();
+        prop_assert_eq!(
+            visited.len(),
+            unique.len(),
+            "preorder produced a duplicate visit: {:?}",
+            visited
+        );
+    }
+
+    /// Cacheable kinds dedup deterministically: creating an `IntConst`
+    /// node with the same `(kind, inputs, output_kinds)` returns the
+    /// same `NodeId` regardless of construction history.  Pins the
+    /// `Graph::node_to_id` dedup cache's correctness against an
+    /// arbitrary prior construction sequence.
+    #[test]
+    fn prop_dedup_determinism(steps in step_seq()) {
+        let Some(mut fg) = replay(&steps) else {
+            return Ok(());
+        };
+        // IntConst(42 : U32) — cacheable, no input dependencies, so
+        // construction is independent of the graph's prior state.
+        use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+        let a = fg.graph_mut().create_node(
+            NodeKind::IntConst(42),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let b = fg.graph_mut().create_node(
+            NodeKind::IntConst(42),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        prop_assert_eq!(
+            a, b,
+            "dedup cache returned distinct NodeIds for identical IntConst(42:U32)"
+        );
+    }
 }

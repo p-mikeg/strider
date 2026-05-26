@@ -736,6 +736,22 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
 }
 
 #[test]
+fn build_call_other_terminal_emits_ctrl_mem_only() -> Result<()> {
+    // Pin the terminal CallOther's output shape: exactly two outputs,
+    // both structural (Control + Memory).  No value, no implicit-write
+    // clobber slots.  Distinguishes the terminal form from the modeled
+    // form (which CAN carry value + clobber outputs).
+    let mut b = builder_with_region()?;
+    let node = b.build_call_other_terminal(0, "ud2")?;
+    let outs: Vec<_> = b.graph().node_outputs(node).to_vec();
+    assert_eq!(outs.len(), 2, "terminal CallOther has exactly [Control, Memory]");
+    let kinds: Vec<_> = outs.iter().map(|o| b.graph().output_kind(*o)).collect();
+    assert!(matches!(kinds[0], NodeOutputKind::Control), "slot 0 must be Control");
+    assert!(matches!(kinds[1], NodeOutputKind::Memory(_)), "slot 1 must be Memory(_)");
+    Ok(())
+}
+
+#[test]
 fn build_call_other_terminal_closes_region() -> Result<()> {
     // Regression: build_call_other_terminal must terminate the region so
     // subsequent region-bound builder calls correctly fail.  Mirrors the

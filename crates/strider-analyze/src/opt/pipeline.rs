@@ -118,6 +118,16 @@ pub trait Optimizer: OptimizerClone + Send + Sync {
         function: &mut strider_ir::Function,
         entry: strider_ir::node::NodeId,
     ) -> crate::opt::Result<OptimizationResult>;
+
+    /// Symbolic name of this pass.  Defaults to
+    /// `std::any::type_name::<Self>()`, which yields fully-qualified
+    /// paths like `strider_analyze::opt::constant_fold::ConstantFold`
+    /// — sufficient for substring-match assertions in tests pinning
+    /// pipeline composition.  Override only if you need a friendlier
+    /// short name (and document why).
+    fn name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
 }
 
 /// Object-safe clone shim for [`Optimizer`].

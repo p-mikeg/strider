@@ -6,7 +6,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntUnaryOp,
+    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
+    IntUnaryOp,
 };
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::make_empty_fn;
@@ -190,4 +191,86 @@ fn region_join_with_phi_validates() {
     b.set_lift_addr(None);
 
     b.build().expect("region_join_with_phi_validates: build() must succeed");
+}
+
+#[test]
+fn const_then_return_validates() {
+    // Pin: a graph consisting of just `Return(IntConst(K))` validates,
+    // for both narrow and wide integer return-value widths.  Catches
+    // regressions in the Return's value-input typing or the IntConst
+    // node's output-kind plumbing.
+    for (val, ty) in [
+        (0u128, NodeOutputType::U32),
+        (0xCAFE_BABE_u128, NodeOutputType::U64),
+        (0u128, NodeOutputType::U8),
+        (0xFF_u128, NodeOutputType::U8),
+    ] {
+        make_empty_fn(|b| b.build_int_const(val, ty)).unwrap_or_else(|e| {
+            panic!("const_then_return failed for ({val:#x}, {ty:?}): {e}")
+        });
+    }
+}
+
+#[test]
+fn every_int_cmp_op_validates() {
+    // Pin: every IntCmpOp variant (Equal, Less, Sless, Carry, Scarry,
+    // Sborrow) builds-validates against same-typed operands.  Two
+    // lowered shapes (LessEqual / SlessEqual / NotEqual) are
+    // intentionally absent — the lifter lowers them at lift time
+    // (see CLAUDE.md lift-time canonicalisations).
+    for op in [
+        IntCmpOp::Equal,
+        IntCmpOp::Less,
+        IntCmpOp::Sless,
+        IntCmpOp::Carry,
+        IntCmpOp::Scarry,
+        IntCmpOp::Sborrow,
+    ] {
+        make_empty_fn(|b| {
+            let lhs = b.build_int_const(1u64, NodeOutputType::U32)?;
+            let rhs = b.build_int_const(2u64, NodeOutputType::U32)?;
+            b.build_int_cmp_operation(lhs, rhs, op, NodeOutputType::U32)
+        })
+        .unwrap_or_else(|e| panic!("IntCmpOp::{op:?} invalid: {e}"));
+    }
+}
+
+#[test]
+fn extend_and_truncate_validate() {
+    // Pin: zero-extend, sign-extend, and truncate all produce
+    // validate-acceptable graphs.  Catches regressions in
+    // `extend_if_needed` / `truncate_if_needed` / the underlying
+    // Extend(ExtendOp) / Truncate node types.
+    make_empty_fn(|b| {
+        let v8 = b.build_int_const(0xFFu64, NodeOutputType::U8)?;
+        let v32_zero = b.extend_if_needed(v8, NodeOutputType::U32, ExtendOp::ZeroExtend)?;
+        let v32_sign = b.extend_if_needed(v8, NodeOutputType::U32, ExtendOp::SignExtend)?;
+        let _back_to_u8 = b.truncate_if_needed(v32_sign, NodeOutputType::U8)?;
+        // Combine both extensions so neither becomes dead.
+        b.build_int_binary_operation(
+            v32_zero,
+            v32_sign,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )
+    })
+    .expect("extend_and_truncate must validate");
+}
+
+#[test]
+fn float_int_conversions_validate() {
+    // Pin: every int↔float conversion op
+    // (IntToFloat, FloatToInt, IntBitsToFloat, FloatBitsToInt,
+    // FloatToFloat) builds-validates.  Catches regressions in the
+    // conversion node typing (input vs output width + kind).
+    make_empty_fn(|b| {
+        let i = b.build_int_const(42u64, NodeOutputType::U32)?;
+        let f32_via_to_float = b.build_int_to_float(i, NodeOutputType::F32)?;
+        let _back_u32 = b.build_float_to_int(f32_via_to_float, NodeOutputType::U32)?;
+        let f32_via_bits = b.build_int_bits_to_float(i, NodeOutputType::F32)?;
+        let _bits_back = b.build_float_bits_to_int(f32_via_bits, NodeOutputType::U32)?;
+        let f64v = b.build_float_to_float(f32_via_to_float, NodeOutputType::F64)?;
+        Ok(f64v)
+    })
+    .expect("float_int_conversions must validate");
 }

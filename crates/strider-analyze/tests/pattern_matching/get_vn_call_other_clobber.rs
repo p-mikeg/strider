@@ -252,3 +252,62 @@ fn get_vn_for_call_clobber_slot_uses_function_default() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].get_vn(c, &g), Some(rax));
 }
+
+// ── Call: per-Call override shadows function-default ─────────────────────────
+
+#[test]
+fn get_vn_for_call_clobber_slot_uses_override_when_set() {
+    // A plain `Call` (no `_with_cc` override at build time) whose
+    // per-Call clobber override is set explicitly via
+    // `set_call_clobbered_override`.  The override must shadow the
+    // function-default `call_clobbered_regs` at `get_vn` time.
+    //
+    // Pin against A9-M3: the orchestrator stamps overrides after
+    // splicing tail-call edits, so pattern queries against those
+    // spliced Calls must read the override list, not the function
+    // default.
+    let arch = SleighArch::x86_64();
+    let regs = arch.probe_regs().unwrap();
+    let rax = regs.name_to_vn("RAX").unwrap();
+    let rbx = regs.name_to_vn("RBX").unwrap();
+
+    // Function-default: tracked = [rax].  rax becomes the single
+    // function-default clobber.
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
+    let addr = b.build_int_const(0xdead_u64, NodeOutputType::U64).unwrap();
+    b.build_call(addr).expect("build_call");
+    b.build_return(None, &[rax]).expect("ret");
+    let mut g = b.build().expect("build");
+    // Manually stamp the per-Call override on the side-table after
+    // build.  The override list `[rbx]` differs from the
+    // function-default `[rax]` and includes a register that isn't
+    // even tracked — `get_vn` must still resolve it.
+    let call_node = g
+        .all_node_ids()
+        .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
+        .expect("Call must exist");
+    g.set_call_clobbered_override(call_node, vec![rbx]);
+
+    // Sanity: function-default has rax; the override has rbx.
+    assert_eq!(g.call_clobbered_regs(), &[rax][..]);
+    let call_id = g
+        .all_node_ids()
+        .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
+        .unwrap();
+    assert_eq!(g.call_clobbered_override(call_id), Some(&[rbx][..]));
+
+    // get_vn on slot 2 (the first clobber output) reads the override.
+    let c = Capture::new();
+    let hits = Matcher::try_new(&g)
+        .unwrap()
+        .find_all(&call().at(0xdead_u64).ret_output(0, var(c)).into());
+    assert_eq!(hits.len(), 1);
+    assert_eq!(
+        hits[0].get_vn(c, &g),
+        Some(rbx),
+        "per-Call override must shadow function-default at get_vn time"
+    );
+}
