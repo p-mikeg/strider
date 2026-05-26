@@ -7,7 +7,7 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
+//! ```text
 //! use std::collections::BTreeSet;
 //! use strider_pattern_macros::strider_pattern;
 //!
@@ -24,6 +24,10 @@
 //!     #[field(accepts = "VnSpace")] space: Option<rsleigh::VnSpace>,
 //! }
 //! ```
+//!
+//! (Not a runnable doctest: a proc-macro crate cannot invoke its own
+//! macros from a doctest.  The snippet is the canonical call shape
+//! downstream consumers like `strider-py` use.)
 //!
 //! emits a `PyStackStorePatV2` `#[pyclass]` whose generated `.pyi`
 //! matches the hand-written reference byte-for-byte.

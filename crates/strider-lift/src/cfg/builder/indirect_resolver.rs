@@ -92,7 +92,7 @@ pub enum ResolvedTargets {
 /// builds a mini IR and runs the opt pipeline.  An installation
 /// pattern looks like:
 ///
-/// ```ignore
+/// ```text
 /// use std::sync::Arc;
 /// use strider_lift::cfg::Builder;
 /// use strider_analyze::indirect_resolver::resolve_indirect_target;
@@ -105,6 +105,10 @@ pub enum ResolvedTargets {
 ///     .with_indirect_resolver(resolver)
 ///     .build()?;
 /// ```
+///
+/// (Not a runnable doctest: this crate cannot depend on
+/// `strider-analyze` — that would create a back-edge.  The snippet is
+/// the canonical pattern downstream consumers wire up.)
 ///
 /// `Send + Sync` is required because resolvers may be shared across
 /// builders in multi-threaded analysis pipelines.

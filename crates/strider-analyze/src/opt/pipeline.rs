@@ -94,10 +94,23 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// authors that want the ergonomic `RewriteCtx` API construct one
 /// internally at the top of `optimize`:
 ///
-/// ```ignore
-/// fn optimize(&self, function: &mut Function, entry: NodeId) -> Result<OptimizationResult> {
-///     let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
-///     // ... pass body operating on `ctx` ...
+/// ```
+/// # use strider_analyze::opt::{OptimizationResult, Optimizer};
+/// # use strider_analyze::pattern::RewriteCtx;
+/// # use strider_ir::Function;
+/// # use strider_ir::node::NodeId;
+/// #[derive(Clone)]
+/// struct MyPass;
+/// impl Optimizer for MyPass {
+///     fn optimize(
+///         &self,
+///         function: &mut Function,
+///         entry: NodeId,
+///     ) -> anyhow::Result<OptimizationResult> {
+///         let _ctx = RewriteCtx::new(function, entry);
+///         // ... pass body operating on `_ctx` ...
+///         Ok(OptimizationResult::NoChange)
+///     }
 /// }
 /// ```
 ///

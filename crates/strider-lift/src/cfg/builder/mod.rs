@@ -127,7 +127,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// orchestrator, the example binary) must call this with the
     /// canonical implementation:
     ///
-    /// ```ignore
+    /// ```text
     /// use std::sync::Arc;
     /// use strider_lift::cfg::Builder;
     /// use strider_analyze::indirect_resolver::resolve_indirect_target;
@@ -140,6 +140,11 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///     .with_indirect_resolver(resolver)
     ///     .build()?;
     /// ```
+    ///
+    /// (Not a runnable doctest: this crate cannot depend on
+    /// `strider-analyze` — that would create a back-edge.  The
+    /// snippet is the canonical pattern downstream consumers
+    /// wire up.)
     ///
     /// Keeps the dep direction forward: the resolver implementation
     /// lives **above** strider-lift in the crate-dependency order, so

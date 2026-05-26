@@ -106,9 +106,12 @@ pub(crate) fn run_peephole<P: PeepholePass>(
 ///
 /// Use from a pass module after the `PeepholePass` impl block:
 ///
-/// ```ignore
+/// ```text
 /// impl_optimizer_from_peephole!(MyPass);
 /// ```
+///
+/// (Not a runnable doctest because the macro + `PeepholePass` trait are
+/// `pub(crate)`; the snippet is shown for in-crate pass authors.)
 macro_rules! impl_optimizer_from_peephole {
     ($t:ty) => {
         impl $crate::opt::pipeline::Optimizer for $t {
