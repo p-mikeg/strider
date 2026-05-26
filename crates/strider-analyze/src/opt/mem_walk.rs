@@ -99,7 +99,7 @@ pub(crate) trait MemChainStep {
     /// specific output port carrying the token).
     fn classify(
         &mut self,
-        graph: &Function,
+        function: &Function,
         mem: NodeOutputId,
         node: NodeId,
     ) -> Result<StepResult<Self::Verdict>>;
@@ -165,7 +165,7 @@ pub(crate) enum CyclePolicy {
 /// full `strider_ir::node::NodeKind` dependency into a "what kind is
 /// this?" branch that only the existing passes really need.
 pub(crate) fn walk_mem_chain<S: MemChainStep>(
-    graph: &Function,
+    function: &Function,
     initial_mem: NodeOutputId,
     cycle_policy: CyclePolicy,
     seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
@@ -201,7 +201,7 @@ pub(crate) fn walk_mem_chain<S: MemChainStep>(
                 results.push(step.combine_phi(phi_node, phi_token, preds));
             }
             Frame::Visit(cur_mem) => {
-                let node = graph.get_node_from_output(cur_mem);
+                let node = function.get_node_from_output(cur_mem);
                 let guard_here = match cycle_policy {
                     CyclePolicy::GuardEveryNode => true,
                     CyclePolicy::GuardPhiOnly => is_mem_phi(node),
@@ -210,7 +210,7 @@ pub(crate) fn walk_mem_chain<S: MemChainStep>(
                     results.push(step.cycle_verdict());
                     continue;
                 }
-                match step.classify(graph, cur_mem, node)? {
+                match step.classify(function, cur_mem, node)? {
                     StepResult::Verdict(v) => {
                         results.push(v);
                     }

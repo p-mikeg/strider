@@ -132,13 +132,13 @@ pub(crate) const MAX_DECOMPOSE_DEPTH: u32 = 512;
 /// `And(sp_root, mask)`) dispatch to handlers that recurse only when
 /// graph topology actually requires (phi predecessors).
 pub fn decompose_sp(
-    g: &Function,
+    function: &Function,
     out: NodeOutputId,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> Option<SpExpr> {
     let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-    decompose_sp_inner(g, out, sp_vn, memo, &mut visiting, 0)
+    decompose_sp_inner(function, out, stack_vn, memo, &mut visiting, 0)
 }
 
 /// Inner form of [`decompose_sp`] that threads a shared `visiting` set
@@ -184,9 +184,9 @@ fn commit_spine_to_memo(
 /// iterative spine of a single call).  Callers outside this module use
 /// the 4-arg [`decompose_sp`] wrapper.
 fn decompose_sp_inner(
-    g: &Function,
+    function: &Function,
     out: NodeOutputId,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visiting: &mut entity_utils::DenseEntitySet<NodeId>,
     depth: u32,
@@ -214,7 +214,7 @@ fn decompose_sp_inner(
         if let Some(cached) = memo.get(&current).cloned() {
             break cached.map(|e| e.shifted(accumulated));
         }
-        let node = g.get_node_from_output(current);
+        let node = function.get_node_from_output(current);
         if !visiting.insert(node) {
             // Cycle: do NOT cache (a different call path may resolve it).
             // Roll the spine back before bailing.
@@ -225,29 +225,29 @@ fn decompose_sp_inner(
         }
         spine.push((current, node, accumulated));
 
-        match *g.node_kind(node) {
-            NodeKind::InitialVar(vn) if vn == sp_vn => {
+        match *function.node_kind(node) {
+            NodeKind::InitialVar(vn) if vn == stack_vn => {
                 break Some(SpExpr::Terminal {
                     base: current,
                     offset: accumulated,
                 });
             }
-            NodeKind::Phi if g.phi_var_tag(node) == Some(sp_vn) => {
-                break decompose_sp_phi(g, node, sp_vn, memo, visiting, depth + 1)
+            NodeKind::Phi if function.phi_var_tag(node) == Some(stack_vn) => {
+                break decompose_sp_phi(function, node, stack_vn, memo, visiting, depth + 1)
                     .map(|e| e.shifted(accumulated));
             }
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                let inputs = g.node_inputs(node);
+                let inputs = function.node_inputs(node);
                 if inputs.len() != 2 {
                     break None;
                 }
                 let l = inputs[0];
                 let r = inputs[1];
-                if let Some(c) = int_const_signed(g, r) {
+                if let Some(c) = int_const_signed(function, r) {
                     accumulated = accumulated.wrapping_add(c);
                     current = l;
                     continue;
-                } else if let Some(c) = int_const_signed(g, l) {
+                } else if let Some(c) = int_const_signed(function, l) {
                     accumulated = accumulated.wrapping_add(c);
                     current = r;
                     continue;
@@ -269,15 +269,15 @@ fn decompose_sp_inner(
             // expression — guards against `And(rax, mask)` accidentally
             // producing a fake stack base.
             NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                let inputs = g.node_inputs(node);
+                let inputs = function.node_inputs(node);
                 if inputs.len() != 2 {
                     break None;
                 }
                 let l = inputs[0];
                 let r = inputs[1];
-                let sp_input = if int_const_signed(g, r).is_some() {
+                let sp_input = if int_const_signed(function, r).is_some() {
                     l
-                } else if int_const_signed(g, l).is_some() {
+                } else if int_const_signed(function, l).is_some() {
                     r
                 } else {
                     break None;
@@ -285,7 +285,7 @@ fn decompose_sp_inner(
                 // The sub-call resolves to anything SP-rooted; we discard
                 // its concrete decomposition because the And's output is a
                 // fresh opaque base (offset 0) for downstream walkers.
-                let sub = decompose_sp_inner(g, sp_input, sp_vn, memo, visiting, depth + 1);
+                let sub = decompose_sp_inner(function, sp_input, stack_vn, memo, visiting, depth + 1);
                 break sub.map(|_| SpExpr::Terminal {
                     base: current,
                     offset: accumulated,
@@ -300,9 +300,9 @@ fn decompose_sp_inner(
 }
 
 fn decompose_sp_phi(
-    g: &Function,
+    function: &Function,
     node: NodeId,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visiting: &mut entity_utils::DenseEntitySet<NodeId>,
     depth: u32,
@@ -310,7 +310,7 @@ fn decompose_sp_phi(
     if depth > MAX_DECOMPOSE_DEPTH {
         return None;
     }
-    let inputs = g.node_inputs(node);
+    let inputs = function.node_inputs(node);
     // A VarPhi has inputs[0] = dispatch token, inputs[1..] = per-pred
     // values. Fewer than 2 inputs means no actual predecessor — the phi is
     // either malformed or has been simplified mid-pass; we cannot prove
@@ -329,7 +329,7 @@ fn decompose_sp_phi(
         // stack_arg_offsets[0] == 0 a fabricated `offset = 0` would be
         // silently misclassified as the first stack arg.
         let SpExpr::Terminal { base, offset } =
-            decompose_sp_inner(g, pred_input, sp_vn, memo, visiting, depth + 1)?
+            decompose_sp_inner(function, pred_input, stack_vn, memo, visiting, depth + 1)?
         else {
             return None;
         };

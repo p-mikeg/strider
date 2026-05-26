@@ -50,9 +50,9 @@ pub fn rewrite_rule(
     let rhs: Pat = rhs.into();
     move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<bool> {
         // 1. Match LHS.  Keep the matcher borrow in a tight scope so we can
-        //    mutate `ctx.graph` afterwards.
+        //    mutate `ctx.function` afterwards.
         let bindings = {
-            let matcher = Matcher::for_graph(ctx.graph, ctx.entry);
+            let matcher = Matcher::for_function(ctx.function, ctx.entry);
             match matcher.match_at(node, &lhs) {
                 Some(m) => m.bindings_clone(),
                 None => return Ok(false),
@@ -60,8 +60,8 @@ pub fn rewrite_rule(
         };
 
         // 2. Fetch root's single value output and its type.
-        let [root_out] = ctx.graph.node_outputs_exact::<1>(node)?;
-        let root_ty = ctx.graph.output_kind(root_out).as_value_or_err()?;
+        let [root_out] = ctx.function.node_outputs_exact::<1>(node)?;
+        let root_ty = ctx.function.output_kind(root_out).as_value_or_err()?;
 
         // 3. Materialize RHS.  A closure inside the tree may opt out of the
         //    rewrite by returning `Err(pattern::Error::skip())`; catch that
@@ -70,10 +70,10 @@ pub fn rewrite_rule(
         //    BEFORE the build so we can identify which interior nodes are
         //    freshly allocated (vs returned as cache hits on pre-existing
         //    nodes) — see the asm-fingerprint walk after `BuildOutcome::Out`.
-        let pre_build_node_id = ctx.graph.next_node_id();
+        let pre_build_node_id = ctx.function.next_node_id();
         let outcome = {
             let mut bctx = BuildCtx {
-                graph: ctx.graph,
+                function: ctx.function,
                 bindings: &bindings,
                 root: node,
                 root_ty,
@@ -103,11 +103,11 @@ pub fn rewrite_rule(
                 // Fresh nodes (id ≥ snapshot) all inherit the
                 // contributor's history via the union semantics of
                 // `extend_asm_fingerprint_from`.
-                let new_node = ctx.graph.get_node_from_output(new_out);
+                let new_node = ctx.function.get_node_from_output(new_out);
                 // Always attribute the rewrite root: even when the dedup
                 // cache returns a pre-existing node, it now ALSO carries
                 // the rewritten root's history (union semantics).
-                ctx.graph.extend_asm_fingerprint_from(new_node, node);
+                ctx.function.extend_asm_fingerprint_from(new_node, node);
                 // Walk freshly-allocated interior nodes (id >= snapshot)
                 // and absorb the contributor's history into each one.
                 // Pre-existing input nodes (id < snapshot) bound the
@@ -115,10 +115,10 @@ pub fn rewrite_rule(
                 let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
                 visited.insert(new_node);
                 let mut stack: Vec<NodeId> = ctx
-                    .graph
+                    .function
                     .node_inputs(new_node)
                     .into_iter()
-                    .map(|inp| ctx.graph.get_node_from_output(inp))
+                    .map(|inp| ctx.function.get_node_from_output(inp))
                     .collect();
                 while let Some(cur) = stack.pop() {
                     if !visited.insert(cur) {
@@ -128,14 +128,14 @@ pub fn rewrite_rule(
                         // Pre-existing node — outside the rewrite.
                         continue;
                     }
-                    ctx.graph.extend_asm_fingerprint_from(cur, node);
-                    let inputs: Vec<_> = ctx.graph.node_inputs(cur).into_iter().collect();
+                    ctx.function.extend_asm_fingerprint_from(cur, node);
+                    let inputs: Vec<_> = ctx.function.node_inputs(cur).into_iter().collect();
                     for inp in inputs {
-                        stack.push(ctx.graph.get_node_from_output(inp));
+                        stack.push(ctx.function.get_node_from_output(inp));
                     }
                 }
 
-                let changed = ctx.graph.replace_all_uses(root_out, new_out)?;
+                let changed = ctx.function.replace_all_uses(root_out, new_out)?;
                 Ok(changed)
             }
         }
@@ -161,7 +161,7 @@ pub fn rewrite_rule(
 /// aimed at a different function than `entry` belongs to, silently
 /// corrupting subsequent walks.
 pub struct RewriteCtx<'g> {
-    pub(crate) graph: &'g mut Function,
+    pub(crate) function: &'g mut Function,
     pub(crate) entry: NodeId,
 }
 
@@ -170,7 +170,7 @@ pub struct RewriteCtx<'g> {
 /// (via `as_view`) or `&Function` (via `from_built`).
 #[derive(Clone, Copy)]
 pub struct RewriteCtxView<'g> {
-    pub(crate) graph: &'g Function,
+    pub(crate) function: &'g Function,
     pub(crate) entry: NodeId,
 }
 
@@ -179,7 +179,7 @@ impl<'g> RewriteCtx<'g> {
     /// the rewrite-only path used by `opt::with_rewrite_ctx`,
     /// `strider::rewrite::GraphRewriter::apply_rule`, and similar.
     pub fn new(function: &'g mut Function, entry: NodeId) -> Self {
-        Self { graph: function, entry }
+        Self { function, entry }
     }
 
     /// Constructs a `RewriteCtx` borrowing from a [`Function`]'s built
@@ -190,13 +190,13 @@ impl<'g> RewriteCtx<'g> {
     /// Returns an error if the function has not been built (i.e. `entry`
     /// is `None`).  Use [`Self::new`] when you already have an explicit
     /// `(function, entry)` pair.
-    pub fn try_for_built(fn_graph: &'g mut strider_ir::Function) -> anyhow::Result<Self> {
-        let entry = fn_graph.entry().ok_or_else(|| {
+    pub fn try_for_built(function: &'g mut strider_ir::Function) -> anyhow::Result<Self> {
+        let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!(
                 "RewriteCtx::try_for_built: entry node is not set"
             )
         })?;
-        Ok(Self { graph: fn_graph, entry })
+        Ok(Self { function, entry })
     }
 
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
@@ -205,7 +205,7 @@ impl<'g> RewriteCtx<'g> {
     /// `Graph` directly.
     #[must_use]
     pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
-        self.graph.walk_from(self.entry)
+        self.function.walk_from(self.entry)
     }
 
     /// kind-filtered pre-order walk.  Mirrors
@@ -214,20 +214,20 @@ impl<'g> RewriteCtx<'g> {
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
     {
-        let g: &Graph = self.graph;
+        let g: &Graph = self.function;
         self.preorder().filter(move |&n| pred(g.node_kind(n)))
     }
 
     /// Read-only access to the wrapped structural [`Graph`].
     #[must_use]
     pub fn graph_ref(&self) -> &Graph {
-        self.graph
+        self.function
     }
 
     /// Read-only access to the wrapped [`Function`] (graph + overlay).
     #[must_use]
     pub fn function_ref(&self) -> &Function {
-        self.graph
+        self.function
     }
 
     /// Function-entry `NodeId` anchor.
@@ -243,26 +243,25 @@ impl<'g> RewriteCtx<'g> {
     /// pass the same `RewriteCtxView<'_>`.
     #[must_use]
     pub fn as_view(&self) -> RewriteCtxView<'_> {
-        RewriteCtxView { graph: self.graph, entry: self.entry }
+        RewriteCtxView { function: self.function, entry: self.entry }
     }
 
     /// Mutable access to the wrapped structural [`Graph`].
     pub fn graph_mut(&mut self) -> &mut Graph {
-        #[allow(clippy::explicit_auto_deref)]
-        &mut **self.graph
+        self.function.graph_mut()
     }
 
     /// Mutable access to the wrapped [`Function`] (graph + overlay).
     pub fn function_mut(&mut self) -> &mut Function {
-        self.graph
+        self.function
     }
 
     /// Build a [`Matcher`] anchored at this context's `(graph, entry)`.
-    /// Single-source the `Matcher::for_graph(ctx.graph_ref(), ctx.entry())`
+    /// Single-source the `Matcher::for_function(ctx.graph_ref(), ctx.entry())`
     /// pairing so call sites don't have to spell out both fields.
     #[must_use]
     pub fn matcher(&self) -> Matcher<'_> {
-        Matcher::for_graph(self.graph, self.entry)
+        Matcher::for_function(self.function, self.entry)
     }
 }
 
@@ -273,7 +272,7 @@ impl<'g> RewriteCtxView<'g> {
     /// `Graph` directly.
     #[must_use]
     pub fn preorder(&self) -> strider_ir::walk::GraphWalk<'_> {
-        self.graph.walk_from(self.entry)
+        self.function.walk_from(self.entry)
     }
 
     /// kind-filtered pre-order walk.  Mirrors
@@ -282,20 +281,20 @@ impl<'g> RewriteCtxView<'g> {
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
     {
-        let g: &Graph = self.graph;
+        let g: &Graph = self.function;
         self.preorder().filter(move |&n| pred(g.node_kind(n)))
     }
 
     /// Read-only access to the wrapped `Graph`.
     #[must_use]
     pub fn graph_ref(&self) -> &Graph {
-        self.graph
+        self.function
     }
 
     /// Read-only access to the wrapped [`Function`] (graph + overlay).
     #[must_use]
     pub fn function_ref(&self) -> &Function {
-        self.graph
+        self.function
     }
 
     /// Function-entry `NodeId` anchor.
@@ -305,11 +304,11 @@ impl<'g> RewriteCtxView<'g> {
     }
 
     /// Build a [`Matcher`] anchored at this view's `(graph, entry)`.
-    /// Single-source the `Matcher::for_graph(ctx.graph_ref(), ctx.entry())`
+    /// Single-source the `Matcher::for_function(ctx.graph_ref(), ctx.entry())`
     /// pairing so call sites don't have to spell out both fields.
     #[must_use]
     pub fn matcher(&self) -> Matcher<'g> {
-        Matcher::for_graph(self.graph, self.entry)
+        Matcher::for_function(self.function, self.entry)
     }
 
     /// Borrows a built [`strider_ir::Graph`] as a shared
@@ -319,11 +318,11 @@ impl<'g> RewriteCtxView<'g> {
     ///
     /// Returns an error if the graph has not been built (i.e. `entry`
     /// is `None`).
-    pub fn from_built(fn_graph: &'g strider_ir::Function) -> anyhow::Result<Self> {
-        let entry = fn_graph.entry().ok_or_else(|| {
+    pub fn from_built(function: &'g strider_ir::Function) -> anyhow::Result<Self> {
+        let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!("RewriteCtxView::from_built: entry node is not set")
         })?;
-        Ok(Self { graph: fn_graph, entry })
+        Ok(Self { function, entry })
     }
 }
 
@@ -373,7 +372,7 @@ impl<'a, 'g> From<&'a RewriteCtx<'g>> for RewriteCtxView<'a> {
 impl<'g> std::ops::Deref for RewriteCtxView<'g> {
     type Target = Graph;
     fn deref(&self) -> &Graph {
-        self.graph
+        self.function
     }
 }
 
@@ -385,13 +384,13 @@ impl<'g> std::ops::Deref for RewriteCtxView<'g> {
 impl<'g> std::ops::Deref for RewriteCtx<'g> {
     type Target = Function;
     fn deref(&self) -> &Function {
-        self.graph
+        self.function
     }
 }
 
 impl<'g> std::ops::DerefMut for RewriteCtx<'g> {
     fn deref_mut(&mut self) -> &mut Function {
-        self.graph
+        self.function
     }
 }
 

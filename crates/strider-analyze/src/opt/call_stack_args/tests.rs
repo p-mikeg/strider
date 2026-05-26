@@ -5,7 +5,7 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use strider_ir::{Graph, IntBinaryOp};
-use strider_ir_test_utils::{sp_vn_x86 as sp_vn};
+use strider_ir_test_utils::{stack_vn_x86 as stack_vn};
 
 /// A prologue local-variable zero-init writes to offsets that happen to
 /// land in the arg-slot range for a later call, but *chronologically*
@@ -18,7 +18,7 @@ use strider_ir_test_utils::{sp_vn_x86 as sp_vn};
 /// nodes ended up with 4× `const 0` + an `init EBX` tacked on.
 #[test]
 fn buf_init_does_not_leak_into_args() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp0| {
         // Simulate: `push ebx` + `sub esp, 16` + 4× zero-init + push arg1 +
         // push arg0 + implicit-call ret-push.
@@ -122,7 +122,7 @@ fn find_call(graph: &Graph) -> Result<NodeId> {
 /// `[arg0, arg1]` in positional order.
 #[test]
 fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 (= 22) at sp - 4
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
@@ -181,7 +181,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 /// missing" path.
 #[test]
 fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
@@ -217,7 +217,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
 /// no store — dense prefix is empty → no args appended.
 #[test]
 fn missing_slot_zero_skips_collection() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
 
@@ -263,7 +263,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
 /// extra inputs.
 #[test]
 fn call_with_no_stack_stores_unchanged() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
         let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
         b.build_call(target)?;
@@ -295,7 +295,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
 /// chain-terminating.
 #[test]
 fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 (= 22) at sp - 4.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
@@ -364,7 +364,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 /// upstream args lands with `AliasMode::AssumeStackConstDisjoint`.
 #[test]
 fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 = 22 at sp - 4.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
@@ -421,7 +421,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
 /// args lands with `AliasMode::AssumeStackConstDisjoint`.
 #[test]
 fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let arg_vals: [u64; 4] = [11, 22, 33, 44];
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_initial| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
@@ -491,7 +491,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
 /// most-recent stack store on the chain.
 #[test]
 fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // arg0 = 11 stored at sp + 0  (cdecl: outgoing-args region is at the
         // bottom of the frame, written without first decrementing SP).
@@ -555,7 +555,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
 /// must land in the right slots.
 #[test]
 fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
@@ -621,7 +621,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
 /// must be ignored.
 #[test]
 fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
 
@@ -685,7 +685,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
 /// to be added) arg slot if the convention table grows.
 #[test]
 fn out_of_window_stack_store_terminates_walk() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sixteen = b.build_int_const(16u64, NodeOutputType::U32)?;
@@ -776,7 +776,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
 /// `Function` side-table.  Asserts the arg is collected.
 #[test]
 fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // Store arg0 = 77 at sp + 4.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
@@ -836,7 +836,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
 fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     #![allow(clippy::unwrap_used)]
 
-    let sp = sp_vn();
+    let sp = stack_vn();
 
     // Store IntConst(66) at sp + 0 (offset 0 — slot 0 under the override
     // table [0, 4], but NOT in the default table [4, 8]).
@@ -902,7 +902,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
 fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result<()> {
     #![allow(clippy::unwrap_used)]
 
-    let sp = sp_vn();
+    let sp = stack_vn();
     // Build a minimal function: store arg0=77 at sp+4, anchor at sp+0, call.
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // arg0 = 77 at sp + 4.

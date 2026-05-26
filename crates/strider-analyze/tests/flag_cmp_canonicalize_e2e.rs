@@ -37,7 +37,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let regs = arch.probe_regs().expect("probe regs");
     let strider = Strider::new(arch, regs, cc).expect("Strider::new");
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
-    let mut graph = outcome.graph;
+    let mut graph = outcome.function;
 
     let p = strider.build_optimizer_pipeline();
     let entry = graph.entry().unwrap();

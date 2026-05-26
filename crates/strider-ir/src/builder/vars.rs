@@ -18,7 +18,7 @@ impl FunctionBuilder {
     /// Returns `NoCurrentRegion` when no region is active. (Does
     /// not error when the variable is not tracked — that returns `Ok(None)`.)
     pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
-        if let Some(variable_id) = self.graph.cc_metadata.variable_to_id.get(var) {
+        if let Some(variable_id) = self.function.cc_metadata.variable_to_id.get(var) {
             Ok(Some(self.read_variable_from_id(*variable_id)?))
         } else {
             Ok(None)
@@ -36,7 +36,7 @@ impl FunctionBuilder {
     /// active.
     pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<NodeOutputId> {
         let &id = self
-            .graph
+            .function
             .cc_metadata
             .variable_to_id
             .get(variable)
@@ -53,7 +53,7 @@ impl FunctionBuilder {
     /// active.
     pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: NodeOutputId) -> Result<()> {
         let var_id = *self
-            .graph
+            .function
             .cc_metadata
             .variable_to_id
             .get(variable)
@@ -75,19 +75,19 @@ impl FunctionBuilder {
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
         #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
         let entry_node = self
-            .graph
+            .function
             .entry()
             .expect("entry is always set by build_entry(), which new_raw() calls unconditionally");
-        let [entry_control] = self.graph().node_outputs_exact(entry_node)?;
+        let [entry_control] = self.function().node_outputs_exact(entry_node)?;
         let entry_memory = self.entry_memory;
         self.link_control_regions(region_id, entry_control)?;
         self.link_memory_regions(region_id, entry_memory)?;
 
         // Create initial variables
-        let var_ids: Vec<_> = self.graph.cc_metadata.variables.keys().collect();
+        let var_ids: Vec<_> = self.function.cc_metadata.variables.keys().collect();
         let mut initial_variables = SecondaryMap::new();
         for var_id in var_ids {
-            let var = self.graph.cc_metadata.variables[var_id];
+            let var = self.function.cc_metadata.variables[var_id];
             let output_type = var.size.try_into()?;
             let out =
                 self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
@@ -96,8 +96,8 @@ impl FunctionBuilder {
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`
             // to locate it.
-            let (node_id, _slot) = self.graph().output_definition(out);
-            self.graph_mut().register_initial_var(var, node_id);
+            let (node_id, _slot) = self.function().output_definition(out);
+            self.function_mut().register_initial_var(var, node_id);
         }
         self.link_region_variables(region_id, &initial_variables)
     }
@@ -113,26 +113,26 @@ impl FunctionBuilder {
     /// Other variants from `build_control_phi` propagate.
     pub fn create_region(&mut self) -> Result<RegionId> {
         let memory_node = self.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
-        let [memory] = self.graph().node_outputs_exact(memory_node)?;
+        let [memory] = self.function().node_outputs_exact(memory_node)?;
 
         let control_node = self.create_node(
             NodeKind::Region,
             [],
             [NodeOutputKind::Control, NodeOutputKind::PhiToken],
         );
-        let [control, phi_token] = self.graph().node_outputs_exact(control_node)?;
+        let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
 
         // Wire the PhiToken as MemPhi.inputs[0], mirroring how
         // VarPhi nodes are linked.  This gives MemPhi a direct back-reference to
         // its Region so that dead-branch elimination and redundant-phi removal
         // can treat MemPhi and VarPhi identically (same positional logic, same
         // automatic discovery via output_uses(cs_phi_out)).
-        self.graph_mut().add_node_input(memory_node, phi_token)?;
+        self.function_mut().add_node_input(memory_node, phi_token)?;
 
-        let var_ids: Vec<_> = self.graph.cc_metadata.variables.keys().collect();
+        let var_ids: Vec<_> = self.function.cc_metadata.variables.keys().collect();
         let mut variables = SecondaryMap::new();
         for var_id in var_ids {
-            let var = self.graph.cc_metadata.variables[var_id];
+            let var = self.function.cc_metadata.variables[var_id];
             variables[var_id] = self.build_control_phi(var, phi_token, &[])?;
         }
         self.create_region_helper(control_node, control, memory_node, memory, variables)

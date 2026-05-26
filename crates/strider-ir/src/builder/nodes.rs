@@ -77,10 +77,10 @@ impl FunctionBuilder {
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
         let addr = self.lift_addr;
-        let out = self.graph_mut().make_int_const(val, output_type)?;
+        let out = self.function_mut().make_int_const(val, output_type)?;
         if let Some(addr) = addr {
-            let node = self.graph().get_node_from_output(out);
-            self.graph_mut().extend_asm_fingerprint(node, &[addr]);
+            let node = self.function().get_node_from_output(out);
+            self.function_mut().extend_asm_fingerprint(node, &[addr]);
         }
         Ok(out)
     }
@@ -120,7 +120,7 @@ impl FunctionBuilder {
                 value.byte_size()
             ));
         }
-        let id = self.graph_mut().intern_wide_const(value);
+        let id = self.function_mut().intern_wide_const(value);
         Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
     }
 
@@ -400,7 +400,7 @@ impl FunctionBuilder {
         // doesn't fit — skip the immediate-fold and emit the node
         // unchanged.  The graph keeps the IntBitsToFloat node opaque,
         // which is fine for pattern matching.
-        if let NodeKind::IntConst(bits) = *self.graph().kind_of_output(input)
+        if let NodeKind::IntConst(bits) = *self.function().kind_of_output(input)
             && float_type != NodeOutputType::F80
         {
             // FloatConst stores bits as u64; F32/F64 fit, so the value
@@ -433,7 +433,7 @@ impl FunctionBuilder {
         // FloatConst at F80 type somehow appeared, its u64 payload
         // wouldn't fully represent the 80-bit pattern.  Emit the node
         // unchanged.
-        if let NodeKind::FloatConst(bits) = *self.graph().kind_of_output(input)
+        if let NodeKind::FloatConst(bits) = *self.function().kind_of_output(input)
             && input_ty != NodeOutputType::F80
         {
             return self.build_int_const(bits, int_type);
@@ -454,16 +454,16 @@ impl FunctionBuilder {
         // Synthetic test builders call `build_entry` via `new_raw`;
         // resetting in-place keeps the entry/InitialMemory pair as
         // nodes 0/1.
-        let cc_metadata = std::mem::take(&mut self.graph.cc_metadata);
-        self.graph = crate::function::Function::new();
-        self.graph.cc_metadata = cc_metadata;
+        let cc_metadata = std::mem::take(&mut self.function.cc_metadata);
+        self.function = crate::function::Function::new();
+        self.function.cc_metadata = cc_metadata;
 
         let entry_node = self.create_node(NodeKind::Entry, [], vec![NodeOutputKind::Control]);
-        self.graph.set_entry(entry_node);
+        self.function.set_entry(entry_node);
 
         let memory_node =
             self.create_node(NodeKind::InitialMemory, [], vec![NodeOutputKind::Memory]);
-        let [memory] = self.graph().node_outputs_exact(memory_node)?;
+        let [memory] = self.function().node_outputs_exact(memory_node)?;
         self.entry_memory = memory;
         Ok(())
     }
@@ -576,7 +576,7 @@ impl FunctionBuilder {
             [res.control, cond],
             [NodeOutputKind::Control, NodeOutputKind::Control],
         );
-        let [true_ctrl_id, false_ctrl_id] = self.graph().node_outputs_exact(brcond)?;
+        let [true_ctrl_id, false_ctrl_id] = self.function().node_outputs_exact(brcond)?;
 
         self.link_region(true_region, true_ctrl_id, res.memory, res.region_id)?;
         self.link_region(false_region, false_ctrl_id, res.memory, res.region_id)
@@ -623,7 +623,7 @@ impl FunctionBuilder {
             refs.iter().copied(),
             [NodeOutputKind::OutputType(output_type)],
         );
-        let [out] = self.graph().node_outputs_exact(node)?;
+        let [out] = self.function().node_outputs_exact(node)?;
         Ok(out)
     }
 
@@ -645,7 +645,7 @@ impl FunctionBuilder {
             args.iter().copied(),
             [NodeOutputKind::OutputType(output_type)],
         );
-        let [out] = self.graph().node_outputs_exact(node)?;
+        let [out] = self.function().node_outputs_exact(node)?;
         Ok(out)
     }
 
@@ -674,7 +674,7 @@ impl FunctionBuilder {
             [memory, addr, data],
             [NodeOutputKind::Memory],
         );
-        let [new_mem] = self.graph().node_outputs_exact(node_id)?;
+        let [new_mem] = self.function().node_outputs_exact(node_id)?;
         self.advance_cur_region_memory(new_mem)
     }
 
@@ -719,8 +719,8 @@ impl FunctionBuilder {
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        let (node_id, _slot) = self.graph().output_definition(out);
-        self.graph_mut().set_phi_var_tag(node_id, var);
+        let (node_id, _slot) = self.function().output_definition(out);
+        self.function_mut().set_phi_var_tag(node_id, var);
         Ok(out)
     }
 }

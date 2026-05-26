@@ -3,7 +3,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::{StackOffsetDetect, ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{sp_vn_aarch64 as sp64_vn, sp_vn_x86 as sp32_vn, RegisterSet, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{stack_vn_aarch64 as sp64_vn, stack_vn_x86 as sp32_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::IntBinaryOp;
 use strider_target::Endianness;
 
@@ -444,7 +444,7 @@ fn bail_on_call_between() -> Result<()> {
     let mut b = RegisterSet::new()
         .tracked(sp)
         .callee_saved(sp)
-        .sp(sp)
+        .stack_vn(sp)
         .build_fn_single_region()?;
 
     let sp_val = b.read_variable(&sp)?;
@@ -1346,7 +1346,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         let (lock_node, _v, _w) = b.build_call_other_modeled(
             0x1234, "LOCK", &[], None, &[], &[], &[],
         )?;
-        let lock_mem_out = b.graph().memory_output_of(lock_node)?;
+        let lock_mem_out = b.function().memory_output_of(lock_node)?;
         b.advance_cur_region_memory(lock_mem_out)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         b.build_return(Some(loaded), &[])?;

@@ -394,7 +394,7 @@ fn presets_resolved_registers_have_expected_size() {
             .iter()
             .chain(&built.callee_saved_regs)
             .chain(&built.ret_val_regs)
-            .chain(std::iter::once(&built.stack_ptr_vn))
+            .chain(std::iter::once(&built.stack_vn))
         {
             assert_eq!(
                 vn.size, c.reg_size_bytes,
@@ -420,14 +420,14 @@ fn presets_stack_pointer_and_arg_offsets() {
         let sp = regs
             .name_to_vn(c.stack_ptr_name)
             .unwrap_or_else(|| panic!("{}: {} must resolve", c.name, c.stack_ptr_name));
-        assert_eq!(built.stack_ptr_vn, sp, "{}: stack_ptr_vn", c.name);
+        assert_eq!(built.stack_vn, sp, "{}: stack_vn", c.name);
         for (label, set) in [
             ("arg_passing_regs", &built.arg_passing_regs),
             ("callee_saved_regs", &built.callee_saved_regs),
             ("ret_val_regs", &built.ret_val_regs),
         ] {
             assert!(
-                !set.contains(&built.stack_ptr_vn),
+                !set.contains(&built.stack_vn),
                 "{}: stack pointer must not appear in {label}",
                 c.name,
             );
@@ -820,7 +820,7 @@ fn positional_arg_layout_x86_64_systemv() {
     let cc = CallingConvention::x86_64_systemv().unwrap().build(&regs).unwrap();
     let layout = PositionalArgLayout::from_convention(&cc);
 
-    assert_eq!(layout.stack_ptr_vn, cc.stack_ptr_vn);
+    assert_eq!(layout.stack_vn, cc.stack_vn);
     // 6 reg args + 6 stack args = 12 entries.
     assert_eq!(layout.entries.len(), 12);
     assert_eq!(layout.first_stack_index(), 6);

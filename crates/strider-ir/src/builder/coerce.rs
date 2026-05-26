@@ -31,7 +31,7 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `output_id` is a control,
     /// memory, or control-phi edge.
     pub fn get_output_type(&self, output_id: NodeOutputId) -> Result<NodeOutputType> {
-        let kind = self.graph().output_kind(output_id);
+        let kind = self.function().output_kind(output_id);
         kind.as_value()
             .ok_or_else(|| anyhow!("output {output_id:?} is not a value edge (got {kind:?})"))
     }
@@ -46,7 +46,7 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `output_id` is not a value edge.
     pub(crate) fn const_value(&self, output_id: NodeOutputId) -> Result<Option<ConstValue>> {
         let ty = self.get_output_type(output_id)?;
-        Ok(match self.graph().kind_of_output(output_id) {
+        Ok(match self.function().kind_of_output(output_id) {
             NodeKind::IntConst(val) if ty.is_integer() => Some(ConstValue::Int { val: *val, ty }),
             NodeKind::BoolConst(val) if ty.is_bool() => Some(ConstValue::Bool(*val)),
             NodeKind::FloatConst(bits) if ty.is_float() => {
@@ -81,7 +81,7 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn convert_to_bool_if_needed(&mut self, output_id: NodeOutputId) -> Result<NodeOutputId> {
-        let output_kind = self.graph().output_kind(output_id);
+        let output_kind = self.function().output_kind(output_id);
         if !output_kind.is_value() {
             return Err(anyhow!(
                 "output {output_id:?} is not a value edge (got {output_kind:?})"

@@ -50,7 +50,7 @@ pub(crate) struct TerminatedRegion {
 impl FunctionBuilder {
     /// Returns `Ok(())` if `output` has `Control` kind; otherwise an error.
     pub(crate) fn require_control_kind(&self, output: NodeOutputId) -> Result<()> {
-        let kind = self.graph().output_kind(output);
+        let kind = self.function().output_kind(output);
         if !kind.is_control() {
             return Err(anyhow!(
                 "output {output:?} is not a control edge (got {kind:?})"
@@ -61,7 +61,7 @@ impl FunctionBuilder {
 
     /// Returns `Ok(())` if `output` has `Memory` kind; otherwise an error.
     pub(crate) fn require_memory_kind(&self, output: NodeOutputId) -> Result<()> {
-        let kind = self.graph().output_kind(output);
+        let kind = self.function().output_kind(output);
         if !kind.is_memory() {
             return Err(anyhow!(
                 "output {output:?} is not a memory edge (got {kind:?})"
@@ -160,9 +160,9 @@ impl FunctionBuilder {
     ) -> Result<()> {
         for var_id in variables.keys() {
             let region_variable_output_id = self.regions[region].initial_variables[var_id];
-            let region_variable_id = self.graph().get_node_from_output(region_variable_output_id);
+            let region_variable_id = self.function().get_node_from_output(region_variable_output_id);
             let current_variable = variables[var_id];
-            self.graph_mut()
+            self.function_mut()
                 .add_node_input(region_variable_id, current_variable)?;
         }
         Ok(())
@@ -215,7 +215,7 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.require_control_kind(control)?;
         let control_node = self.regions[region].control_node;
-        self.graph_mut().add_node_input(control_node, control)
+        self.function_mut().add_node_input(control_node, control)
     }
 
     /// Adds `memory` as an incoming memory edge to `region`'s `MemPhi` node.
@@ -226,7 +226,7 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.require_memory_kind(memory)?;
         let memory_node = self.regions[region].memory_node;
-        self.graph_mut().add_node_input(memory_node, memory)
+        self.function_mut().add_node_input(memory_node, memory)
     }
 
     /// Links `region` as a successor of `cur_region`.

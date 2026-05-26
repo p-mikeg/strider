@@ -189,7 +189,7 @@ fn callother_next_mem_matches_following_store() {
     // CallOther outputs = [ctrl, mem, ...].  Advance the region memory
     // cursor to LOCK's mem_out so the next Store's mem_in is LOCK's
     // mem_out.
-    let lock_mem_out = b.graph().node_outputs(lock)[1];
+    let lock_mem_out = b.function().node_outputs(lock)[1];
     b.advance_cur_region_memory(lock_mem_out)
         .expect("advance mem to LOCK mem_out");
     let addr = b
@@ -227,7 +227,7 @@ fn matches_store_bracketed_by_lock_and_unlock() {
     let (lock, _, _) = b
         .build_call_other_modeled(1, "LOCK", &[], None, &[], &[], &[])
         .expect("LOCK");
-    let lock_mem_out = b.graph().node_outputs(lock)[1];
+    let lock_mem_out = b.function().node_outputs(lock)[1];
     b.advance_cur_region_memory(lock_mem_out)
         .expect("advance to LOCK mem_out");
 
@@ -247,7 +247,7 @@ fn matches_store_bracketed_by_lock_and_unlock() {
     let (unlock, _, _) = b
         .build_call_other_modeled(2, "UNLOCK", &[], None, &[], &[], &[])
         .expect("UNLOCK");
-    let unlock_mem_out = b.graph().node_outputs(unlock)[1];
+    let unlock_mem_out = b.function().node_outputs(unlock)[1];
     b.advance_cur_region_memory(unlock_mem_out)
         .expect("advance to UNLOCK mem_out");
 

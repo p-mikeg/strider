@@ -10,4 +10,4 @@ pub mod assertions;
 pub mod graph;
 pub mod shapes;
 
-pub use graph::{Tb, reg_vn, sp_vn};
+pub use graph::{Tb, reg_vn, stack_vn};

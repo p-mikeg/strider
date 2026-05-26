@@ -18,7 +18,7 @@ use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{NodeOutputType, NodeOutputKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
-use strider_ir_test_utils::{sp_vn_aarch64, RegisterSet};
+use strider_ir_test_utils::{stack_vn_aarch64, RegisterSet};
 use strider_analyze::opt::{
     ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, LoadForward,
 };
@@ -95,7 +95,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .expect("Cfg build");
-    let mut graph = ana.analyze_cfg(&cfg).expect("analyze_cfg").graph;
+    let mut graph = ana.analyze_cfg(&cfg).expect("analyze_cfg").function;
     let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));
@@ -139,8 +139,8 @@ mod synthetic {
     /// existing `stack_array.rs` tests.  Doesn't have to match a real
     /// arch — `LoadForward` only cares that it's the SP varnode
     /// passed into the pass constructor.
-    pub fn sp_vn() -> rsleigh::Vn {
-        sp_vn_aarch64()
+    pub fn stack_vn() -> rsleigh::Vn {
+        stack_vn_aarch64()
     }
 
     /// Build a function with `n` SP-relative `Store`s at distinct
@@ -151,7 +151,7 @@ mod synthetic {
     /// for the bench.  Pre-pass: `ConstantFold` is run inside the
     /// helper so the bench measures `LoadForward` in isolation.
     pub fn build_stack_store_chain(n: usize) -> strider_ir::Function {
-        let sp = sp_vn();
+        let sp = stack_vn();
         let mut b = RegisterSet::new()
             .tracked(sp)
             .callee_saved(sp)
@@ -200,7 +200,7 @@ mod synthetic {
     /// Used to bench scaling of the validator + optimiser loop on
     /// merge-heavy IRs.
     pub fn run_diamond_cfg(n: usize) -> strider_ir::Function {
-        let sp = sp_vn();
+        let sp = stack_vn();
         let mut b = RegisterSet::new()
             .tracked(sp)
             .callee_saved(sp)
@@ -273,7 +273,7 @@ mod synthetic {
             "jump-table fixture requires n = power of 2",
         );
         let mask = (n - 1) as u64;
-        let sp = sp_vn();
+        let sp = stack_vn();
         let arg_vn = rsleigh::Vn {
             addr_off: 0x38,
             addr_space: rsleigh::VnSpace::REGISTER,
@@ -297,22 +297,22 @@ mod synthetic {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let arg_u32 = b.graph_mut().create_node(
+        let arg_u32 = b.function_mut().create_node(
             strider_ir::node::NodeKind::Truncate,
             [arg_val],
             [NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
-        let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let mask_c = b.build_int_const(mask, NodeOutputType::U32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::U32)
             .unwrap();
-        let idx_u64 = b.graph_mut().create_node(
+        let idx_u64 = b.function_mut().create_node(
             strider_ir::node::NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
             [masked],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride = b.build_int_const(8u64, NodeOutputType::U64).unwrap();
         let idx_scaled = b
             .build_int_binary_operation(idx_u64_out, stride, IntBinaryOp::Mul, NodeOutputType::U64)
@@ -361,7 +361,7 @@ mod synthetic {
 
 fn bench_stack_store_chain(c: &mut Criterion) {
     let mut group = c.benchmark_group("synthetic/stack_store_chain");
-    let sp = synthetic::sp_vn();
+    let sp = synthetic::stack_vn();
     for n in [100usize, 500, 1_000] {
         group.bench_function(format!("n_{n}"), |b| {
             b.iter_batched(

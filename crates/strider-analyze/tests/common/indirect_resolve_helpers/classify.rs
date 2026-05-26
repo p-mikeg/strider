@@ -732,7 +732,7 @@ pub fn build_stack_array_dispatch_scenario(
 
     // Index = (arg as u32) & MASK, zero-extended to u64.
     let arg_val = b.read_variable(&arg_vn).expect("read arg");
-    let arg_u32_node = b.graph_mut().create_node(
+    let arg_u32_node = b.function_mut().create_node(
         strider_ir::node::NodeKind::Truncate,
         [arg_val],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
@@ -740,21 +740,21 @@ pub fn build_stack_array_dispatch_scenario(
     // Direct `graph_mut().create_node` bypasses FunctionBuilder's
     // auto-stamping; manually attribute these nodes to the sentinel
     // lift address so Layer-C asm-fingerprint validation accepts them.
-    b.graph_mut().set_asm_fingerprint(arg_u32_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-    let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
+    b.function_mut().set_asm_fingerprint(arg_u32_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+    let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
     let mask_c = b
         .build_int_const(mask, NodeOutputType::U32)
         .unwrap();
     let masked = b
         .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::U32)
         .expect("idx & mask");
-    let idx_u64_node = b.graph_mut().create_node(
+    let idx_u64_node = b.function_mut().create_node(
         strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend),
         [masked],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    b.graph_mut().set_asm_fingerprint(idx_u64_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-    let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
+    b.function_mut().set_asm_fingerprint(idx_u64_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+    let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
     let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
     let idx_scaled = b
         .build_int_binary_operation(
@@ -855,7 +855,7 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     let outcome = strider
         .analyze_cfg(&cfg)
         .expect("analyze_cfg");
-    let mut graph = outcome.graph;
+    let mut graph = outcome.function;
     let p = strider.build_optimizer_pipeline();
     let entry = graph.entry().unwrap();
     p.run(&mut graph, entry).expect("optimizer pipeline");

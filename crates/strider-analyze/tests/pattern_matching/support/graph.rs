@@ -17,7 +17,7 @@ use strider_ir_test_utils::RegisterSet;
 // ── Varnode helpers ───────────────────────────────────────────────────────────
 
 pub use strider_ir_test_utils::reg_vn;
-pub use strider_ir_test_utils::sp_vn_x86_64 as sp_vn;
+pub use strider_ir_test_utils::stack_vn_x86_64 as stack_vn;
 
 /// Shared `RegisterSet` populater for [`Tb::raw`] and [`Tb::bare`].  Both
 /// constructors take the same six DTO-style parameters and feed them
@@ -45,7 +45,7 @@ fn build_rs(
         rs = rs.ret(*v);
     }
     if let Some(s) = sp {
-        rs = rs.sp(s);
+        rs = rs.stack_vn(s);
     }
     rs.ret_stack_pop(ret_stack_pop)
 }

@@ -189,7 +189,7 @@ fn run_via_orchestrator(
                 )),
             })
             .collect::<PyResult<_>>()?;
-    let graph = py.allow_threads(|| {
+    let function = py.allow_threads(|| {
         let config = strider_analyze::Config {
             strider: &strider_owned,
             start_addr: entry.into(),
@@ -213,7 +213,7 @@ fn run_via_orchestrator(
         return Err(err);
     }
 
-    let py_graph = Py::new(py, PyGraph::new(graph, cfg_obj.clone_ref(py)))?;
+    let py_graph = Py::new(py, PyGraph::new(function, cfg_obj.clone_ref(py)))?;
 
     Ok(PyRunResult {
         cfg: cfg_obj,
@@ -303,9 +303,9 @@ fn run_with_custom_pipeline(
             },
         )
         .map_err(into_strider_err)?;
-    let graph = outcome.graph;
+    let function = outcome.function;
     drop(strider_borrow);
-    let py_graph = Py::new(py, PyGraph::new(graph, cfg_obj.clone_ref(py)))?;
+    let py_graph = Py::new(py, PyGraph::new(function, cfg_obj.clone_ref(py)))?;
 
     let actual_pipeline = pipeline.drain_into_pipeline()?;
     {

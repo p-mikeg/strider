@@ -98,7 +98,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
         n >= 1,
         "rule must fire at least once (matched the K_0 cmp); fired {n} times",
     );
-    { let __entry = rewriter.entry(); pipeline.run(rewriter.graph_mut(), __entry) }?;
+    { let __entry = rewriter.entry(); pipeline.run(rewriter.function_mut(), __entry) }?;
 
     // After ConstantFold + DeadBranchElim collapse the now-true
     // first If, the second If's condition is reachable only via the
@@ -141,7 +141,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
         fired >= 2,
         "rule must fire on both equality cmps in the ladder; fired {fired}",
     );
-    { let __entry = rewriter.entry(); pipeline.run(rewriter.graph_mut(), __entry) }?;
+    { let __entry = rewriter.entry(); pipeline.run(rewriter.function_mut(), __entry) }?;
     // After all conditions become BoolConst(false), every If's true
     // branch goes dead; DeadBranchElim collapses the ladder.
     assert_eq!(
@@ -189,7 +189,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     let n1 = rewriter.apply_rule(&rule_x_plus_zero)?;
     assert_eq!(n1, 1, "first rewrite collapses Add(7,0)");
     // re-optimise — propagates the constant through the second Add.
-    { let __entry = rewriter.entry(); pipeline.run(rewriter.graph_mut(), __entry) }?;
+    { let __entry = rewriter.entry(); pipeline.run(rewriter.function_mut(), __entry) }?;
 
     // Edit 2: after re-optimize, ConstantFold has already
     // collapsed Add(7, 1) → IntConst(8), so the rewriter has nothing
@@ -212,11 +212,11 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     let pipeline = strider_analyze::opt::default_pipeline();
 
     let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
-    { let __entry = rewriter.entry(); pipeline.run(rewriter.graph_mut(), __entry) }?; // first run: collapses Add(7,0)
+    { let __entry = rewriter.entry(); pipeline.run(rewriter.function_mut(), __entry) }?; // first run: collapses Add(7,0)
     let count_after_first = g.preorder().count();
 
     let mut rewriter2 = GraphRewriter::try_wrap_built(&mut g)?;
-    { let __entry = rewriter2.entry(); pipeline.run(rewriter2.graph_mut(), __entry) }?; // second run: no-op
+    { let __entry = rewriter2.entry(); pipeline.run(rewriter2.function_mut(), __entry) }?; // second run: no-op
     let count_after_second = g.preorder().count();
 
     assert_eq!(

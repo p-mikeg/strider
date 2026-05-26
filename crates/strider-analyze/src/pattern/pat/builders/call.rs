@@ -239,7 +239,7 @@ impl From<CallOtherPat> for Pat {
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(ref want) = want_name {
                     let ok = ctx
-                        .graph
+                        .function
                         .call_other_name(node)
                         .is_some_and(|s| s == want.as_str());
                     if !ok {

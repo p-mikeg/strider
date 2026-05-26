@@ -28,7 +28,7 @@ pub struct LoadForward {
     /// Stack-pointer varnode used by [`decompose_sp`] to recognise
     /// SP-relative addresses.  Extracted from the calling convention at
     /// construction time — the pass consults nothing else from the CC.
-    stack_ptr_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     /// Target endianness — controls how a narrow load from a wider store is
     /// synthesised (LE: low bytes via `Truncate`; BE: high bytes via
     /// `Truncate(ShiftRight(data, (store_size - load_size) * 8))`).
@@ -48,9 +48,9 @@ impl LoadForward {
     /// [`Self::from_convention`] so the same CC is shared with the
     /// other SP-aware passes.
     #[must_use]
-    pub const fn new(stack_ptr_vn: rsleigh::Vn, endianness: Endianness) -> Self {
+    pub const fn new(stack_vn: rsleigh::Vn, endianness: Endianness) -> Self {
         Self {
-            stack_ptr_vn,
+            stack_vn,
             endianness,
             alias_mode: crate::opt::AliasMode::Strict,
         }
@@ -63,7 +63,7 @@ impl LoadForward {
         cc: &strider_target::BuiltCallingConvention,
         arch: &strider_target::SleighArch,
     ) -> Self {
-        Self::new(cc.stack_ptr_vn, arch.endianness())
+        Self::new(cc.stack_vn, arch.endianness())
     }
 
     /// Overrides the alias-analysis precision used by the chain walk.
@@ -85,9 +85,9 @@ impl Optimizer for LoadForward {
         let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        let sp_vn = self.stack_ptr_vn;
+        let stack_vn = self.stack_vn;
         while let Some(load) = work.dequeue() {
-            result |= try_forward_load(&mut ctx, load, sp_vn, self.endianness, &mut memo, self.alias_mode)?;
+            result |= try_forward_load(&mut ctx, load, stack_vn, self.endianness, &mut memo, self.alias_mode)?;
         }
         Ok(result)
     }
@@ -101,7 +101,7 @@ impl Optimizer for LoadForward {
 fn try_forward_load(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     load: NodeId,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     endianness: Endianness,
     memo: &mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
@@ -113,7 +113,7 @@ fn try_forward_load(
         return Ok(OptimizationResult::NoChange);
     };
 
-    let load_class = classify_addr(ctx.function_ref(), addr, sp_vn, memo);
+    let load_class = classify_addr(ctx.function_ref(), addr, stack_vn, memo);
     let load_size = load_ty.byte_size() as i64;
     // Two-phase walk: probe is read-only and decides whether forwarding
     // can succeed; only on full success does realize commit fresh nodes
@@ -127,7 +127,7 @@ fn try_forward_load(
         load_class,
         load_size,
         load_ty,
-        sp_vn,
+        stack_vn,
         memo,
         &mut visited,
         alias_mode,
@@ -209,17 +209,17 @@ enum AddrClass {
 /// Classifies a load / store address.  Cheap: `decompose_sp` is memoised
 /// across the function, the `IntConst` peek is a single match.
 fn classify_addr(
-    graph: &strider_ir::Function,
+    function: &strider_ir::Function,
     addr: NodeOutputId,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> AddrClass {
-    match decompose_sp(graph, addr, sp_vn, memo) {
+    match decompose_sp(function, addr, stack_vn, memo) {
         Some(SpExpr::Terminal { offset, .. }) => AddrClass::SpRooted { offset },
         Some(SpExpr::Phi { .. }) => AddrClass::Anchor { out: addr },
         None => {
-            let node = graph.get_node_from_output(addr);
-            match graph.node_kind(node) {
+            let node = function.get_node_from_output(addr);
+            match function.node_kind(node) {
                 NodeKind::IntConst(c) => AddrClass::Constant { addr: *c as i64 },
                 _ => AddrClass::Anchor { out: addr },
             }
@@ -296,7 +296,7 @@ struct ProbeStep<'a> {
     load_class: AddrClass,
     load_size: i64,
     load_ty: strider_ir::node::NodeOutputType,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     memo: &'a mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
 }
@@ -306,24 +306,24 @@ impl<'a> MemChainStep for ProbeStep<'a> {
 
     fn classify(
         &mut self,
-        graph: &strider_ir::Function,
+        function: &strider_ir::Function,
         _mem: NodeOutputId,
         node: NodeId,
     ) -> Result<StepResult<Option<ResolveShape>>> {
-        match *graph.node_kind(node) {
+        match *function.node_kind(node) {
             NodeKind::Store(_) => {
                 // Store inputs: [memory, addr, data].
-                let inputs = graph.node_inputs(node);
+                let inputs = function.node_inputs(node);
                 if inputs.len() < 3 {
                     return Ok(StepResult::Verdict(None));
                 }
                 let addr = inputs[1];
                 let data = inputs[2];
-                let Some(data_ty) = graph.output_kind(data).as_value() else {
+                let Some(data_ty) = function.output_kind(data).as_value() else {
                     return Ok(StepResult::Verdict(None));
                 };
                 let store_size = data_ty.byte_size() as i64;
-                let store_class = classify_addr(graph, addr, self.sp_vn, self.memo);
+                let store_class = classify_addr(function, addr, self.stack_vn, self.memo);
                 match alias_verdict(
                     self.load_class,
                     self.load_size,
@@ -355,7 +355,7 @@ impl<'a> MemChainStep for ProbeStep<'a> {
             }
             NodeKind::MemPhi => {
                 // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                let inputs = graph.node_inputs(node);
+                let inputs = function.node_inputs(node);
                 if inputs.len() < 2 {
                     return Ok(StepResult::Verdict(None));
                 }
@@ -413,7 +413,7 @@ fn probe(
     load_class: AddrClass,
     load_size: i64,
     load_ty: strider_ir::node::NodeOutputType,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visited: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     alias_mode: crate::opt::AliasMode,
@@ -422,7 +422,7 @@ fn probe(
         load_class,
         load_size,
         load_ty,
-        sp_vn,
+        stack_vn,
         memo,
         alias_mode,
     };
@@ -639,7 +639,7 @@ pub type StackStoredValueMemo =
 ///   types return `None` (no Truncate / ShiftRight synthesis here).
 /// - `sp_vn` — the calling convention's stack-pointer varnode (used
 ///   to interpret raw `Store(_)` addresses; matches the pass's
-///   [`LoadForward::stack_ptr_vn`] field).
+///   [`LoadForward::stack_vn`] field).
 /// - `sp_memo` — a per-call SP-decomposition memo.  Reuse the same memo
 ///   across multiple calls for the same graph to amortise the cost
 ///   of decomposing repeated SP expressions.
@@ -648,11 +648,11 @@ pub type StackStoredValueMemo =
 ///   indirect-branch classifier so shared chain prefixes pay O(1) per node.
 #[must_use]
 pub(crate) fn find_stack_stored_value_at_offset(
-    graph: &strider_ir::Function,
+    function: &strider_ir::Function,
     mem: NodeOutputId,
     offset: i64,
     value_type: NodeOutputType,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     walk_memo: &mut StackStoredValueMemo,
 ) -> Option<NodeOutputId> {
@@ -674,18 +674,18 @@ pub(crate) fn find_stack_stored_value_at_offset(
             break cached;
         }
         visited.push(key);
-        let node = graph.get_node_from_output(cur_mem);
-        match *graph.node_kind(node) {
+        let node = function.get_node_from_output(cur_mem);
+        match *function.node_kind(node) {
             NodeKind::Store(_) => {
-                let inputs = graph.node_inputs(node);
+                let inputs = function.node_inputs(node);
                 if inputs.len() < 3 {
                     break None;
                 }
                 let addr = inputs[1];
                 let data = inputs[2];
-                match decompose_sp(graph, addr, sp_vn, sp_memo) {
+                match decompose_sp(function, addr, stack_vn, sp_memo) {
                     Some(SpExpr::Terminal { base: _, offset: k }) => {
-                        let data_ty = graph.output_kind(data).as_value();
+                        let data_ty = function.output_kind(data).as_value();
                         match data_ty {
                             None => break None,
                             Some(data_ty) if k == offset => {

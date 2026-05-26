@@ -190,8 +190,8 @@ impl Function {
     /// synthetic test functions that don't model an SP.
     #[inline]
     #[must_use]
-    pub(crate) fn stack_ptr_vn(&self) -> Option<rsleigh::Vn> {
-        self.cc_metadata.cc.as_ref().map(|c| c.stack_ptr_vn)
+    pub(crate) fn stack_vn(&self) -> Option<rsleigh::Vn> {
+        self.cc_metadata.cc.as_ref().map(|c| c.stack_vn)
     }
 
     /// Net byte change the callee's `ret` inflicts on the caller's

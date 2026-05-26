@@ -12,13 +12,13 @@ use common::dump_helpers::{
 #[test]
 fn dump_neighborhood_writes_one_html_for_the_anchor() {
     let (outcome, cfg) = lift_ret_snippet_x86_64();
-    let entry_node = outcome.graph.entry().expect("entry should be set after analyze_cfg");
+    let entry_node = outcome.function.entry().expect("entry should be set after analyze_cfg");
 
     let scratch = ScratchDir::new("dump-neighborhood");
     let out = scratch.path().join("focus.html");
 
     strider_analyze::dump_neighborhood(
-        &outcome.graph,
+        &outcome.function,
         entry_node,
         /* depth */ 1,
         cfg.sleigh(),
@@ -48,7 +48,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
     let (outcome_b, _cfg_b) = lift_ret_snippet_x86_64();
 
     let foreign_anchor = outcome_b
-        .graph
+        .function
         .all_node_ids()
         .last()
         .expect("graph b has at least one node");
@@ -62,7 +62,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
     // A's ids and synthesise a fresh one.
     use cranelift_entity::EntityRef;
     let a_max = outcome_a
-        .graph
+        .function
         .all_node_ids()
         .map(|id| id.index())
         .max()
@@ -72,7 +72,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
 
     // Sanity: the foreign id must NOT be a live arena slot in A.
     assert!(
-        !outcome_a.graph.has_node(foreign_id),
+        !outcome_a.function.has_node(foreign_id),
         "test precondition: foreign_id must not collide with a live A slot",
     );
 
@@ -80,7 +80,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
     let out = scratch.path().join("focus.html");
 
     let err = strider_analyze::dump_neighborhood(
-        &outcome_a.graph,
+        &outcome_a.function,
         foreign_id,
         /* depth */ 1,
         cfg.sleigh(),
@@ -95,7 +95,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
 
     // Sanity reference: `foreign_anchor` exists in graph B (covers
     // the warning-only branch and keeps the variable in use).
-    assert!(outcome_b.graph.has_node(foreign_anchor));
+    assert!(outcome_b.function.has_node(foreign_anchor));
 }
 
 /// Deeper-depth coverage: a snippet with four chained `add rax,rax`
@@ -110,21 +110,21 @@ fn dump_neighborhood_rejects_foreign_node_id() {
 fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
     let (outcome, cfg) = lift_add_chain_snippet_x86_64();
     let entry_node = outcome
-        .graph
+        .function
         .entry()
         .expect("entry should be set after analyze_cfg");
 
     // Sanity: the chained-add snippet really does produce a deeper
     // graph than the trivial `ret` snippet — otherwise the test isn't
     // exercising what its name claims.
-    let total_nodes = outcome.graph.all_node_ids().count();
+    let total_nodes = outcome.function.all_node_ids().count();
     assert!(
         total_nodes >= 5,
         "add-chain snippet must produce at least 5 nodes, got {total_nodes}",
     );
 
-    let near = strider_ir::walk::collect_neighborhood(&outcome.graph, entry_node, 1);
-    let far = strider_ir::walk::collect_neighborhood(&outcome.graph, entry_node, 3);
+    let near = strider_ir::walk::collect_neighborhood(&outcome.function, entry_node, 1);
+    let far = strider_ir::walk::collect_neighborhood(&outcome.function, entry_node, 3);
 
     let near_count = near.len();
     let far_count = far.len();
@@ -137,7 +137,7 @@ fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
 
     // Every depth=1 node must also be reachable at depth=3 — the
     // expansion is monotonic.
-    for id in outcome.graph.all_node_ids() {
+    for id in outcome.function.all_node_ids() {
         if near.contains(id) {
             assert!(
                 far.contains(id),
@@ -153,7 +153,7 @@ fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
     let out = scratch.path().join("focus.html");
 
     strider_analyze::dump_neighborhood(
-        &outcome.graph,
+        &outcome.function,
         entry_node,
         /* depth */ 3,
         cfg.sleigh(),

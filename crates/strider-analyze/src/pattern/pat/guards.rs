@@ -67,8 +67,8 @@ impl Pattern for GuardPat {
             return false;
         };
         let ok = match &self.func {
-            GuardFn::Output(f) => f(ctx.graph, out_ty, target),
-            GuardFn::Bindings(f) => f(ctx.graph, out_ty, b),
+            GuardFn::Output(f) => f(ctx.function, out_ty, target),
+            GuardFn::Bindings(f) => f(ctx.function, out_ty, b),
         };
         if ok {
             true

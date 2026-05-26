@@ -30,7 +30,7 @@ fn dump_per_region_writes_one_html_per_region() {
     let scratch = ScratchDir::new("dump-per-region");
     let tmp = scratch.path();
     strider_analyze::dump_per_region(
-        &outcome.graph,
+        &outcome.function,
         exit_controls.iter().copied(),
         outcome.lift_generation(),
         cfg.sleigh(),
@@ -81,7 +81,7 @@ fn dump_per_region_emits_one_html_for_each_branch_region() {
     let scratch = ScratchDir::new("dump-per-region-branch");
     let tmp = scratch.path();
     strider_analyze::dump_per_region(
-        &outcome.graph,
+        &outcome.function,
         exit_controls.iter().copied(),
         outcome.lift_generation(),
         cfg.sleigh(),
@@ -128,16 +128,16 @@ fn dump_per_region_rejects_post_compaction() {
     assert!(!exit_controls.is_empty());
 
     let lift_gen = outcome.lift_generation();
-    outcome.graph.compact().expect("compact");
+    outcome.function.compact().expect("compact");
     assert_ne!(
-        outcome.graph.generation(),
+        outcome.function.generation(),
         lift_gen,
         "compact must bump generation",
     );
 
     let scratch = ScratchDir::new("dump-per-region-stale");
     let err = strider_analyze::dump_per_region(
-        &outcome.graph,
+        &outcome.function,
         exit_controls.iter().copied(),
         lift_gen,
         cfg.sleigh(),

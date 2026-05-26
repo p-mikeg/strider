@@ -295,7 +295,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
             b.set_lift_addr(Some(0x908));
             let second_neg = b
                 .build_boolean_unary_operation(neg_cond, strider_ir::BoolUnaryOp::Neg)?;
-            let second_neg_node = b.graph().get_node_from_output(second_neg);
+            let second_neg_node = b.function().get_node_from_output(second_neg);
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, second_neg_node))
         })?;

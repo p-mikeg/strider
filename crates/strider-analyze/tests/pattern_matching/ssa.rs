@@ -9,7 +9,7 @@ use strider_analyze::pattern::*;
 use strider_ir::IntCmpOp;
 use strider_ir::node::{NodeKind, NodeOutputType};
 
-use super::support::{Tb, assertions as a, reg_vn, shapes, sp_vn};
+use super::support::{Tb, assertions as a, reg_vn, shapes, stack_vn};
 
 // ── InitialVar ───────────────────────────────────────────────────────────────
 
@@ -106,7 +106,7 @@ fn phi_for_wrong_vn_rejects() {
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
 fn graph_fn_arg_stack() -> strider_ir::Function {
     use strider_analyze::opt::{FunctionArgDetect, Optimizer};
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut t = Tb::raw(vec![sp], &[], &[sp], &[], None, 0);
 
     // `read *(sp + 4)` — the first stack arg in cdecl-style.

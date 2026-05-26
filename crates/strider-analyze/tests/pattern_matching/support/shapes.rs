@@ -7,7 +7,7 @@ use strider_ir::{
     BoolBinaryOp, BoolUnaryOp, Function, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
-use super::graph::{Tb, reg_vn, sp_vn};
+use super::graph::{Tb, reg_vn, stack_vn};
 
 // ── Minimal op-rooted graphs ─────────────────────────────────────────────────
 // Each builds `return(op(5, 3))` (or similar) at U64 width.  Parameterising
@@ -202,7 +202,7 @@ pub fn single_initial_var() -> (Function, rsleigh::Vn) {
 pub fn function_arg_reg() -> (Function, rsleigh::Vn) {
     use strider_analyze::opt::{FunctionArgDetect, Optimizer};
     let reg = reg_vn(0x38, 8);
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut t = Tb::raw(vec![reg, sp], &[], &[reg], &[reg], None, 0);
     let v = t.read_var(&reg);
     let mut g = t.ret_val(v);

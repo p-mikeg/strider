@@ -223,17 +223,17 @@ fn lift_segment_op_recognised() {
 /// Returns true if the graph contains at least one node of `target` kind.
 fn graph_has_kind(builder: &FunctionBuilder, target: NodeKind) -> bool {
     builder
-        .graph()
+        .function()
         .all_node_ids()
-        .any(|id| builder.graph().node_kind(id) == &target)
+        .any(|id| builder.function().node_kind(id) == &target)
 }
 
 /// Returns the first node-id in the graph matching `target`, or `None`.
 fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId> {
     builder
-        .graph()
+        .function()
         .all_node_ids()
-        .find(|id| builder.graph().node_kind(*id) == &target)
+        .find(|id| builder.function().node_kind(*id) == &target)
 }
 
 #[test]
@@ -252,15 +252,15 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
     }
     let add_node = find_first_node(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
         .expect("IntAdd lift must produce an Add node");
-    let fp = builder.graph().asm_fingerprint(add_node);
+    let fp = builder.function().asm_fingerprint(add_node);
     assert_eq!(fp, &[0x4242], "Add node fingerprint should record 0x4242");
     // The two IntConst inputs should also carry the address.
     let const3 = find_first_node(&builder, NodeKind::IntConst(3))
         .expect("IntConst(3) must be present");
     let const4 = find_first_node(&builder, NodeKind::IntConst(4))
         .expect("IntConst(4) must be present");
-    assert_eq!(builder.graph().asm_fingerprint(const3), &[0x4242]);
-    assert_eq!(builder.graph().asm_fingerprint(const4), &[0x4242]);
+    assert_eq!(builder.function().asm_fingerprint(const3), &[0x4242]);
+    assert_eq!(builder.function().asm_fingerprint(const4), &[0x4242]);
 }
 
 #[test]
@@ -280,7 +280,7 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
     let add_node = find_first_node(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
         .expect("IntAdd lift must produce an Add node");
     assert!(
-        builder.graph().asm_fingerprint(add_node).is_empty(),
+        builder.function().asm_fingerprint(add_node).is_empty(),
         "Add fingerprint should be empty when no lift addr is set"
     );
 }
@@ -308,7 +308,7 @@ fn lift_dedup_unions_two_addresses() {
     }
     let add_node = find_first_node(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
         .expect("Add must dedup to a single node");
-    let fp = builder.graph().asm_fingerprint(add_node);
+    let fp = builder.function().asm_fingerprint(add_node);
     assert_eq!(fp, &[0x1000, 0x2000], "both addresses should be unioned");
 }
 
@@ -373,9 +373,9 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let count = |b: &FunctionBuilder, target: NodeKind| -> usize {
-        b.graph()
+        b.function()
             .all_node_ids()
-            .filter(|&id| b.graph().node_kind(id) == &target)
+            .filter(|&id| b.function().node_kind(id) == &target)
             .count()
     };
     {
@@ -423,9 +423,9 @@ fn lift_int_sub_caches_lowered_shape() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let count_subs_in_graph = |b: &FunctionBuilder| -> usize {
-        b.graph()
+        b.function()
             .all_node_ids()
-            .filter(|&id| matches!(b.graph().node_kind(id), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+            .filter(|&id| matches!(b.function().node_kind(id), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
             .count()
     };
     {
@@ -580,8 +580,8 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
     let value = lifter.read_vn(&reg(0)).expect("read_vn should succeed");
-    let producer = lifter.builder.graph().get_node_from_output(value);
-    let kind = lifter.builder.graph().node_kind(producer);
+    let producer = lifter.builder.function().get_node_from_output(value);
+    let kind = lifter.builder.function().node_kind(producer);
     assert!(
         matches!(kind, NodeKind::InitialVar(_) | NodeKind::Phi),
         "first read of an unwritten register should produce InitialVar or Phi, got {kind:?}"
@@ -601,8 +601,8 @@ fn write_vn_then_read_vn_round_trip() {
     lifter.write_vn(&reg(0), const_42).expect("write_vn");
     // Read it back.
     let value = lifter.read_vn(&reg(0)).expect("read_vn");
-    let producer = lifter.builder.graph().get_node_from_output(value);
-    let kind = lifter.builder.graph().node_kind(producer);
+    let producer = lifter.builder.function().get_node_from_output(value);
+    let kind = lifter.builder.function().node_kind(producer);
     match kind {
         NodeKind::IntConst(n) => assert_eq!(*n, 42u128),
         other => panic!("expected IntConst(42), got {other:?}"),

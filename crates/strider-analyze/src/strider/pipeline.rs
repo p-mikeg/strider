@@ -26,11 +26,11 @@ pub(crate) struct RegionLiftHandles {
 /// plus per-region IR-handle snapshots.
 ///
 /// Returned by [`Strider::analyze_cfg`].  Callers that only need the
-/// graph can use `outcome.graph` directly; indirect-branch-resolver-aware
+/// function can use `outcome.function` directly; indirect-branch-resolver-aware
 /// callers read `unresolved_branches` and `region_handles`.
 pub struct AnalyzeOutcome {
     /// The lifted IR ready for the optimiser pipeline.
-    pub graph: strider_ir::Function,
+    pub function: strider_ir::Function,
     /// One entry per region whose CFG terminator was
     /// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode
@@ -67,15 +67,15 @@ impl AnalyzeOutcome {
     }
 
     /// Returns the [`strider_ir::Graph::generation`] of the owned
-    /// graph.  Equivalent to `self.graph.generation()` — exposed as a
+    /// function.  Equivalent to `self.function.generation()` — exposed as a
     /// named accessor because callers historically used it as a
     /// snapshot to compare against post-compaction generations.
-    /// Since `AnalyzeOutcome` owns the graph and no consumer can
+    /// Since `AnalyzeOutcome` owns the function and no consumer can
     /// mutate it between construction and access, this is identical
-    /// to reading the live graph's generation.
+    /// to reading the live function's generation.
     #[must_use]
     pub fn lift_generation(&self) -> u64 {
-        self.graph.generation()
+        self.function.generation()
     }
 }
 
@@ -436,7 +436,7 @@ where
         let ir_region = ir_region_of(cfg_rid)?;
         driver.builder.set_region(ir_region);
         let region = cfg
-            .graph()
+            .region_graph()
             .node_weight(cfg_rid)
             .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
         // Regions with non-trivial terminators have their terminator
@@ -521,11 +521,11 @@ where
     R: rsleigh::MemReader,
     F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
 {
-    for edge_idx in cfg.graph().edge_indices() {
-        let Some(weight) = cfg.graph().edge_weight(edge_idx) else {
+    for edge_idx in cfg.region_graph().edge_indices() {
+        let Some(weight) = cfg.region_graph().edge_weight(edge_idx) else {
             continue;
         };
-        let Some((src, tgt)) = cfg.graph().edge_endpoints(edge_idx) else {
+        let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
             continue;
         };
         match weight {
@@ -536,7 +536,7 @@ where
             }
             strider_lift::cfg::RegionEdgeKind::Branch => {
                 let src_region = cfg
-                    .graph()
+                    .region_graph()
                     .node_weight(src)
                     .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?;
                 if src_region.insns.is_empty() {
@@ -592,9 +592,9 @@ where
     }
 
     let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
-    let graph = driver.builder.build()?;
+    let function = driver.builder.build()?;
     Ok(AnalyzeOutcome {
-        graph,
+        function,
         unresolved_branches,
         region_handles,
     })

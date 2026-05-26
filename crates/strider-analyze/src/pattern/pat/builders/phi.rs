@@ -65,10 +65,10 @@ impl From<PhiPat> for Pat {
         let kind = KindSpec::variant(&NodeKind::Phi);
         let post_match = match vn {
             None => Arc::new(|ctx: &crate::pattern::pat::traits::MatchCtx, node: strider_ir::node::NodeId, _b: &mut crate::pattern::matcher::Bindings| {
-                ctx.graph.phi_var_tag(node).is_some()
+                ctx.function.phi_var_tag(node).is_some()
             }) as crate::pattern::pat::node_pat::NodeKindCheck,
             Some(expected) => Arc::new(move |ctx: &crate::pattern::pat::traits::MatchCtx, node: strider_ir::node::NodeId, _b: &mut crate::pattern::matcher::Bindings| {
-                ctx.graph.phi_var_tag(node) == Some(expected)
+                ctx.function.phi_var_tag(node) == Some(expected)
             }) as crate::pattern::pat::node_pat::NodeKindCheck,
         };
         NodePat::matcher(kind, InputsSpec::Indexed(inputs))
@@ -145,7 +145,7 @@ impl From<ValuePhiPat> for Pat {
         let kind = KindSpec::variant(&NodeKind::Phi);
         // Post-match: anonymous phis have no entry in phi_var_tag.
         let post_match = Arc::new(|ctx: &crate::pattern::pat::traits::MatchCtx, node: strider_ir::node::NodeId, _b: &mut crate::pattern::matcher::Bindings| {
-            ctx.graph.phi_var_tag(node).is_none()
+            ctx.function.phi_var_tag(node).is_none()
         }) as crate::pattern::pat::node_pat::NodeKindCheck;
         NodePat::matcher(kind, InputsSpec::Indexed(inputs))
             .with_post_match(post_match)

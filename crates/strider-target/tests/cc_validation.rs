@@ -30,8 +30,8 @@ fn try_new_rejects_sp_in_arg_passing_regs() {
     assert!(res.is_err(), "SP listed in arg_passing_regs must be rejected");
     let msg = res.unwrap_err().to_string();
     assert!(
-        msg.contains("stack_ptr_vn") && msg.contains("arg_passing_regs"),
-        "error must name both stack_ptr_vn and the offending list, got: {msg}",
+        msg.contains("stack_vn") && msg.contains("arg_passing_regs"),
+        "error must name both stack_vn and the offending list, got: {msg}",
     );
 }
 

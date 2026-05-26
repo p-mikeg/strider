@@ -29,7 +29,7 @@ pub(crate) enum AliasStep {
 pub(crate) fn step_through_store(
     graph: &Function,
     node: NodeId,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     query_off: i64,
     query_size: i64,
@@ -40,7 +40,7 @@ pub(crate) fn step_through_store(
     if inputs.len() < 3 {
         return AliasStep::MayAlias;
     }
-    match decompose_sp(graph, inputs[1], sp_vn, sp_memo) {
+    match decompose_sp(graph, inputs[1], stack_vn, sp_memo) {
         None => match mode {
             // Strict: cannot prove disjoint from an SP-rooted query
             // without a memory-layout assumption.  Bail.

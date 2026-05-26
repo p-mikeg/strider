@@ -170,11 +170,11 @@ impl From<LoadPat> for Pat {
             let do_stack_only = stack_only || offset_capture.is_some();
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(want) = want_width {
-                    let outs = ctx.graph.node_outputs(node);
+                    let outs = ctx.function.node_outputs(node);
                     let Some(&value_out) = outs.first() else {
                         return false;
                     };
-                    let Some(ty) = ctx.graph.output_kind(value_out).as_value() else {
+                    let Some(ty) = ctx.function.output_kind(value_out).as_value() else {
                         return false;
                     };
                     if ty.bit_width() != want as usize {
@@ -182,7 +182,7 @@ impl From<LoadPat> for Pat {
                     }
                 }
                 if do_stack_only || off_filter.is_some() {
-                    let Some(offset) = ctx.graph.stack_offset(node) else {
+                    let Some(offset) = ctx.function.stack_offset(node) else {
                         return false;
                     };
                     if let Some(ref f) = off_filter
@@ -366,11 +366,11 @@ impl From<StorePat> for Pat {
                 if let Some(w) = want_width {
                     // Store's data input is at `inputs[2]`; its producer's
                     // output type tells us the width.
-                    let inputs = ctx.graph.node_inputs(node);
+                    let inputs = ctx.function.node_inputs(node);
                     let Some(&data_in) = inputs.get(2) else {
                         return false;
                     };
-                    let Some(ty) = ctx.graph.output_kind(data_in).as_value() else {
+                    let Some(ty) = ctx.function.output_kind(data_in).as_value() else {
                         return false;
                     };
                     if ty.bit_width() != w as usize {
@@ -383,7 +383,7 @@ impl From<StorePat> for Pat {
                     return false;
                 }
                 if do_stack_only || off_filter.is_some() {
-                    let Some(offset) = ctx.graph.stack_offset(node) else {
+                    let Some(offset) = ctx.function.stack_offset(node) else {
                         return false;
                     };
                     if let Some(ref f) = off_filter

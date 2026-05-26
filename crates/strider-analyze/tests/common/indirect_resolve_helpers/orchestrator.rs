@@ -74,7 +74,7 @@ pub fn run_pipeline_x86_64(
     let outcome = strider
         .analyze_cfg(&cfg)
         .expect("analyze_cfg");
-    let mut graph = outcome.graph;
+    let mut graph = outcome.function;
 
     // Run the full optimiser pipeline so the placeholder's anchor
     // value reaches the producer-shape the classifier looks at.

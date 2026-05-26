@@ -89,7 +89,7 @@ impl RegisterSet {
     /// Set the stack-pointer varnode (fifth positional arg of
     /// `FunctionBuilder::new_raw`).
     #[must_use]
-    pub fn sp(mut self, vn: rsleigh::Vn) -> Self {
+    pub fn stack_vn(mut self, vn: rsleigh::Vn) -> Self {
         self.sp = Some(vn);
         self
     }
@@ -425,13 +425,13 @@ impl ReadOnlyMemory for MockRom {
 
 /// Stack-pointer varnode at REGISTER:0x20 with x86 ESP width (4 bytes).
 #[must_use]
-pub fn sp_vn_x86() -> rsleigh::Vn {
+pub fn stack_vn_x86() -> rsleigh::Vn {
     reg_vn(0x20, 4)
 }
 
 /// Stack-pointer varnode at REGISTER:0x20 with x86_64 RSP width (8 bytes).
 #[must_use]
-pub fn sp_vn_x86_64() -> rsleigh::Vn {
+pub fn stack_vn_x86_64() -> rsleigh::Vn {
     reg_vn(0x20, 8)
 }
 
@@ -439,7 +439,7 @@ pub fn sp_vn_x86_64() -> rsleigh::Vn {
 /// (8 bytes).  Same offset used by the AArch64 Sleigh spec and by the
 /// `sp64_vn` / `sp64` helpers that appear in several opt-pass test modules.
 #[must_use]
-pub fn sp_vn_aarch64() -> rsleigh::Vn {
+pub fn stack_vn_aarch64() -> rsleigh::Vn {
     reg_vn(0x40, 8)
 }
 
@@ -453,15 +453,15 @@ pub fn sp_vn_aarch64() -> rsleigh::Vn {
 /// # Errors
 ///
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
-pub fn make_sp_fn<F>(sp_vn: rsleigh::Vn, f: F) -> Result<Function>
+pub fn make_sp_fn<F>(stack_vn: rsleigh::Vn, f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<()>,
 {
     let mut b = RegisterSet::new()
-        .tracked(sp_vn)
-        .callee_saved(sp_vn)
+        .tracked(stack_vn)
+        .callee_saved(stack_vn)
         .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp_vn)?;
+    let sp_val = b.read_variable(&stack_vn)?;
     f(&mut b, sp_val)?;
     b.set_lift_addr(None);
     b.build()

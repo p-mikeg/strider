@@ -25,7 +25,7 @@ use strider_target::BuiltCallingConvention;
 /// The struct literal is the simplest infallible construction path.
 #[must_use]
 pub(crate) fn minimal_cc(
-    stack_ptr_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     arg_passing_regs: Vec<rsleigh::Vn>,
     stack_arg_offsets: Vec<i64>,
 ) -> BuiltCallingConvention {
@@ -34,7 +34,7 @@ pub(crate) fn minimal_cc(
         callee_saved_regs: Vec::new(),
         ret_val_regs: Vec::new(),
         ret_val_regs_float: Vec::new(),
-        stack_ptr_vn,
+        stack_vn,
         stack_arg_offsets,
         ret_stack_pop: 0,
         link_register_vn: None,

@@ -145,7 +145,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 
     let strider = common::strider_x86_64();
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
-    let mut graph = outcome.graph;
+    let mut graph = outcome.function;
 
     // Sanity: pre-optimization, the `build_switch_if_ladder` if-ladder produced N-1 = 2
     // If nodes.  After the default pipeline collapses the

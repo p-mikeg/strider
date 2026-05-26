@@ -47,7 +47,7 @@ mod tests;
 /// `no_memory_clobber`, link register, etc.) live on the embedded
 /// [`Self::cc`] copy rather than being mirrored here — they are read
 /// through `cc.as_ref().map(...)` and surfaced by the
-/// [`crate::Function`] accessors ([`crate::Function::stack_ptr_vn`] /
+/// [`crate::Function`] accessors ([`crate::Function::stack_vn`] /
 /// [`crate::Function::ret_stack_pop`] /
 /// [`crate::Function::no_memory_clobber`]).  The fields below are the
 /// per-function-effective lists, which differ from the raw ABI lists
@@ -84,7 +84,7 @@ pub struct CcMetadata {
     /// functions constructed via [`crate::FunctionBuilder::new_raw`]
     /// without a real CC.
     ///
-    /// Reads of pure ABI facts (`stack_ptr_vn`, `ret_stack_pop`,
+    /// Reads of pure ABI facts (`stack_vn`, `ret_stack_pop`,
     /// `no_memory_clobber`, `link_register_vn`) delegate here rather
     /// than duplicating those scalars on this struct.
     pub(crate) cc: Option<strider_target::BuiltCallingConvention>,

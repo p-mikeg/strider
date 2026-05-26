@@ -3,7 +3,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{reg_vn, sp_vn_aarch64, sp_vn_x86 as sp32_vn, sp_vn_x86_64 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{reg_vn, stack_vn_aarch64, stack_vn_x86 as sp32_vn, stack_vn_x86_64 as stack_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 fn rdi_like_vn() -> rsleigh::Vn {
@@ -18,7 +18,7 @@ fn rdi_like_vn() -> rsleigh::Vn {
 #[test]
 fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let rdi = rdi_like_vn();
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut b = RegisterSet::new()
         .tracked(rdi)
         .tracked(sp)
@@ -260,7 +260,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
-    let sp = sp_vn_aarch64();
+    let sp = stack_vn_aarch64();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Read sp+0 as U32, then sp+0 as U64.  Combine so neither is dead.
         let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
@@ -311,7 +311,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     use crate::opt::{OptimizerPipeline, RedundantPhis};
 
     let rdi = rdi_like_vn();
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut b = RegisterSet::new()
         .tracked(rdi)
         .tracked(sp)
@@ -356,7 +356,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let sp = sp_vn();
+    let sp = stack_vn();
     // No ret-val regs declared on the CC; this test exercises arg
     // detection, not return-value handling.  Without the `.ret(...)`
     // declarations the validator's CC-arity check leaves the Return
@@ -423,7 +423,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 #[test]
 fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 
-    let sp = sp_vn_aarch64();
+    let sp = stack_vn_aarch64();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // *(sp+0) = U64(0xDEAD_BEEF_CAFE_BABE)
         let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::U64)?;
@@ -589,7 +589,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
 fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     use crate::opt::{OptimizerPipeline, RedundantPhis};
 
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // 0xFFFFFFFFFFFFFFFC_U64 == -4 when interpreted as signed i64.
         let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, NodeOutputType::U64)?;
@@ -894,7 +894,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
         &[],
         &[],
     )?;
-    let call_mem_out = b.graph().memory_output_of(call_node)?;
+    let call_mem_out = b.function().memory_output_of(call_node)?;
     b.advance_cur_region_memory(call_mem_out)?;
 
     // After the call, read *(sp + 0).

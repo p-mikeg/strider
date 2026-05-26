@@ -266,14 +266,14 @@ where
     /// resulting `Cfg::into_sleigh()`.  `None` only momentarily inside
     /// `build_lift_stable`.
     sleigh: Option<rsleigh::Sleigh<R>>,
-    /// The current optimised IR graph.  Initialised to an empty
+    /// The current optimised IR function.  Initialised to an empty
     /// placeholder by [`LoopState::new`] and overwritten with the real
     /// lift result by [`LoopState::build_initial_iteration`] before any
     /// consumer reads it; the empty placeholder is never observed past
     /// construction.  No `Option` wrapper because the post-init
     /// invariant is "always populated" — paying `as_ref().ok_or_else`
     /// on every read for an unreachable `None` branch is pure cost.
-    graph: strider_ir::Function,
+    function: strider_ir::Function,
     /// Pending placeholder anchors for the current iteration.
     unresolved: Vec<(PcodeInsnAddr, strider_ir::Value)>,
     /// Pending count at iter 0; sets the cap.
@@ -288,7 +288,7 @@ where
     /// Cached link-register / stack-pointer varnodes (stable across
     /// iterations).
     lr_vn: Option<rsleigh::Vn>,
-    sp_vn: Option<rsleigh::Vn>,
+    stack_vn: Option<rsleigh::Vn>,
     /// Decode cache shared across CFG rebuilds.  The Sleigh handle
     /// persists for the whole `run`, so this cache stays valid for
     /// every iteration; threaded into each fresh `strider_lift::cfg::Builder` so
@@ -320,7 +320,7 @@ where
 {
     fn new(config: Config<'a, R>) -> Result<Self> {
         let lr_vn = config.strider.calling_convention().link_register_vn;
-        let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
+        let stack_vn = Some(config.strider.calling_convention().stack_vn);
         // Pre-resolve per-address CC overrides against the same Sleigh
         // register table the function-default CC was built against.
         let per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
@@ -349,7 +349,7 @@ where
             known_targets: FxHashMap::default(),
             // Empty placeholder; overwritten by `build_initial_iteration`
             // before any consumer reads it.
-            graph: strider_ir::Function::new(),
+            function: strider_ir::Function::new(),
             unresolved: Vec::new(),
             pending_at_iter_0: 0,
             stall_budget: 0,
@@ -357,7 +357,7 @@ where
                 by_exit_control: rustc_hash::FxHashMap::default(),
             },
             lr_vn,
-            sp_vn,
+            stack_vn,
             decode_cache: DecodeCache::new(),
             vn_cache: rustc_hash::FxHashSet::default(),
             vn_cache_region_count: 0,
@@ -395,10 +395,10 @@ where
             .sleigh
             .take()
             .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at {phase}"))?;
-        let (graph, unresolved, region_index, sleigh) = self.build_lift_stable(sleigh)?;
+        let (function, unresolved, region_index, sleigh) = self.build_lift_stable(sleigh)?;
         self.sleigh = Some(sleigh);
         self.region_index = region_index;
-        self.graph = graph;
+        self.function = function;
         self.unresolved = unresolved;
         Ok(())
     }
@@ -443,19 +443,19 @@ where
             },
         )?;
         let region_index = RegionIndex::from_handles(outcome.region_handles);
-        let mut graph = outcome.graph;
+        let mut function = outcome.function;
         let unresolved = outcome.unresolved_branches;
 
         let pipeline = self.strider.build_stable_optimizer_pipeline();
-        let entry = graph.entry().ok_or_else(|| {
+        let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!("seat: entry node is not set")
         })?;
-        pipeline.run(&mut graph, entry)?;
+        pipeline.run(&mut function, entry)?;
 
         // Harvest the Sleigh handle out of the consumed Cfg so the next
         // iteration can re-use it without re-loading the SLA spec.
         let harvested = cfg.into_sleigh();
-        Ok((graph, unresolved, region_index, harvested))
+        Ok((function, unresolved, region_index, harvested))
     }
 
     fn no_unresolved(&self) -> bool {
@@ -519,10 +519,10 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.strider.build_stable_optimizer_pipeline();
-        let entry = self.graph.entry().ok_or_else(|| {
+        let entry = self.function.entry().ok_or_else(|| {
             anyhow::anyhow!("run_stable_only: entry node is not set")
         })?;
-        pipeline.run(&mut self.graph, entry)?;
+        pipeline.run(&mut self.function, entry)?;
         Ok(())
     }
 
@@ -549,14 +549,14 @@ where
     fn finalize(mut self) -> Result<strider_ir::Function> {
         let pipeline = self.strider.build_destructive_optimizer_pipeline();
         let compact = self.compact;
-        let entry = self.graph.entry().ok_or_else(|| {
+        let entry = self.function.entry().ok_or_else(|| {
             anyhow::anyhow!("finalize: graph has not been built (entry is None)")
         })?;
-        pipeline.run(&mut self.graph, entry)?;
+        pipeline.run(&mut self.function, entry)?;
         if compact {
-            self.graph.compact()?;
+            self.function.compact()?;
         }
-        Ok(self.graph)
+        Ok(self.function)
     }
 
     /// Classify every unresolved anchor; partition into
@@ -568,7 +568,7 @@ where
         FxHashMap<PcodeInsnAddr, ResolvedTargets>,
         Vec<(NodeId, ResolvedTargets)>,
     )> {
-        let graph = &self.graph;
+        let function = &self.function;
         let rom_ref: Option<&dyn ReadOnlyMemory> = self.rom.as_deref();
         // Start from the previous iteration's resolutions so anchors
         // already lowered to switch edges by an earlier Rebuild stay in
@@ -577,10 +577,10 @@ where
         // oscillate between resolved and unresolved.
         let mut next_known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = self.known_targets.clone();
         let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
-        // Compute known-bits once across all anchors: the graph doesn't
+        // Compute known-bits once across all anchors: the function doesn't
         // change between iterations of this loop, so a single pass
         // suffices for every anchor we classify.
-        let view = crate::pattern::RewriteCtxView::from_built(graph)?;
+        let view = crate::pattern::RewriteCtxView::from_built(function)?;
         let known = crate::opt::analyze_known_bits(view)?;
         for (addr, anchor_output) in &self.unresolved {
             let resolved_opt = classify_anchor(
@@ -588,14 +588,14 @@ where
                 *anchor_output,
                 self.lr_vn,
                 rom_ref,
-                self.sp_vn,
+                self.stack_vn,
                 &known,
             );
             let Some(resolved) = resolved_opt else {
                 continue;
             };
             let placeholder_return =
-                crate::opt::find_placeholder_return_for_anchor(graph.graph(), *anchor_output);
+                crate::opt::find_placeholder_return_for_anchor(function.graph(), *anchor_output);
             let can_inplace = match (&resolved, placeholder_return) {
                 (ResolvedTargets::LinkRegister, Some(_)) => true,
                 (ResolvedTargets::Single(target), Some(_)) => is_tail_call(
@@ -624,7 +624,7 @@ where
         let strider = self.strider;
         let region_index = &self.region_index;
         let per_address_built_ccs = &self.per_address_built_ccs;
-        let graph = &mut self.graph;
+        let function = &mut self.function;
         // `Graph::initial_var_for` is maintained on the graph itself
         // (populated by `FunctionBuilder::set_entry_region` at lift
         // time and by `read_or_init_var` for lazily-minted nodes), so
@@ -635,7 +635,7 @@ where
         // `FunctionArgDetect`.
         for (placeholder, resolved) in in_place_edits {
             apply_in_place_edit(
-                graph,
+                function,
                 strider,
                 region_index,
                 *placeholder,
@@ -660,7 +660,7 @@ where
         Ok(unresolved
             .into_iter()
             .filter(|(_, anchor)| {
-                crate::opt::find_placeholder_return_for_anchor(self.graph.graph(), *anchor).is_some()
+                crate::opt::find_placeholder_return_for_anchor(self.function.graph(), *anchor).is_some()
             })
             .collect())
     }
@@ -685,7 +685,7 @@ fn is_tail_call(
 }
 
 fn apply_in_place_edit(
-    graph: &mut strider_ir::Function,
+    function: &mut strider_ir::Function,
     strider: &Strider,
     region_index: &RegionIndex,
     placeholder: NodeId,
@@ -695,13 +695,13 @@ fn apply_in_place_edit(
     match resolved {
         ResolvedTargets::LinkRegister => {
             let ctx = crate::opt::AnchorCallingContext::for_anchor(
-                graph,
+                function,
                 placeholder,
                 strider,
                 region_index,
                 None,
             )?;
-            let _new_return = graph.with_rewrite_ctx(|rctx| {
+            let _new_return = function.with_rewrite_ctx(|rctx| {
                 apply_link_register(rctx, placeholder, &ctx.ret_val_outputs)
             })?;
             Ok(())
@@ -709,7 +709,7 @@ fn apply_in_place_edit(
         ResolvedTargets::Single(target) => {
             let override_cc = per_address_built_ccs.get(target);
             let ctx = crate::opt::AnchorCallingContext::for_anchor(
-                graph,
+                function,
                 placeholder,
                 strider,
                 region_index,
@@ -723,7 +723,7 @@ fn apply_in_place_edit(
                 || strider.calling_convention().no_memory_clobber,
                 |cc| cc.no_memory_clobber,
             );
-            let new_return = graph.with_rewrite_ctx(|rctx| {
+            let new_return = function.with_rewrite_ctx(|rctx| {
                 apply_tail_call(
                     rctx,
                     placeholder,
@@ -741,14 +741,14 @@ fn apply_in_place_edit(
             // `new_return`'s ctrl predecessor.  Reuses
             // [`override_clobber_vars`] (also called from
             // [`crate::opt::AnchorCallingContext::for_anchor`]) so the
-            // projection over `graph.variables` is defined once.
+            // projection over `function.variables` is defined once.
             if let Some(cc) = override_cc
-                && let Some(call_id) = locate_spliced_call(graph, new_return)
+                && let Some(call_id) = locate_spliced_call(function, new_return)
             {
                 let clobber_vars: Vec<rsleigh::Vn> =
-                    override_clobber_vars(graph, cc, strider).collect();
-                graph.set_call_clobbered_override(call_id, clobber_vars);
-                graph.set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
+                    override_clobber_vars(function, cc, strider).collect();
+                function.set_call_clobbered_override(call_id, clobber_vars);
+                function.set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
             }
             Ok(())
         }
@@ -807,7 +807,7 @@ impl crate::opt::AnchorCallingContext {
     /// computation through `cc` (per-target-address override);
     /// `None` uses the strider's function-default convention.
     fn for_anchor(
-        graph: &mut strider_ir::Function,
+        function: &mut strider_ir::Function,
         placeholder: NodeId,
         strider: &Strider,
         region_index: &RegionIndex,
@@ -818,10 +818,10 @@ impl crate::opt::AnchorCallingContext {
         // function-default.
         let cc: &strider_target::BuiltCallingConvention = override_cc
             .unwrap_or_else(|| strider.calling_convention());
-        let region = region_index.region_for_placeholder(graph, placeholder);
+        let region = region_index.region_for_placeholder(function, placeholder);
         let mut ctx = Self::default();
 
-        // Each `read_or_init_var` call is O(1) against the graph's
+        // Each `read_or_init_var` call is O(1) against the function's
         // maintained `Graph::initial_var_for` index — no per-iteration
         // arena scan, no per-edit threading.
 
@@ -835,7 +835,7 @@ impl crate::opt::AnchorCallingContext {
             // surface unsupported reg sizes as Err instead
             // of silently dropping the slot (which under-models the Call
             // and can cause downstream pattern queries to miss args).
-            let out = read_or_init_var(graph, region, vn)?;
+            let out = read_or_init_var(function, region, vn)?;
             ctx.arg_passing_outputs.push(out);
         }
         // Clobber list: with an override, recompute from the override's
@@ -851,10 +851,10 @@ impl crate::opt::AnchorCallingContext {
         // of the indirect-branch resolution loop.
         let override_clobbers: Vec<rsleigh::Vn>;
         let clobber_iter: smallvec::SmallVec<[&rsleigh::Vn; 16]> = if let Some(cc) = override_cc {
-            override_clobbers = override_clobber_vars(graph, cc, strider).collect();
+            override_clobbers = override_clobber_vars(function, cc, strider).collect();
             override_clobbers.iter().collect()
         } else {
-            graph.call_clobbered_regs().iter().collect()
+            function.call_clobbered_regs().iter().collect()
         };
         for vn in clobber_iter {
             // surface unsupported clobber-reg sizes as Err rather than
@@ -871,7 +871,7 @@ impl crate::opt::AnchorCallingContext {
         // x86_64 XMM0/XMM1, MIPS f0/f2, PPC f1/f2, ARM d0/d1 slots
         // silently vanish for indirect-branch-resolved Returns.
         for vn in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
-            let out = read_or_init_var(graph, region, *vn)?;
+            let out = read_or_init_var(function, region, *vn)?;
             ctx.ret_val_outputs.push(out);
         }
         Ok(ctx)
@@ -914,16 +914,16 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Nod
 /// `set_call_clobbered_override`, or iterate directly to feed
 /// `clobbered_kinds`).
 fn override_clobber_vars<'a>(
-    graph: &'a strider_ir::Function,
+    function: &'a strider_ir::Function,
     cc: &'a strider_target::BuiltCallingConvention,
     strider: &'a Strider,
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
-    let stack_ptr_vn = strider.calling_convention().stack_ptr_vn;
-    graph
+    let stack_vn = strider.calling_convention().stack_vn;
+    function
         .variables_map()
         .values()
         .copied()
-        .filter(move |v| cc.clobbers_override_var(v, stack_ptr_vn))
+        .filter(move |v| cc.clobbers_override_var(v, stack_vn))
 }
 
 /// Resolve a varnode to its IR value at the placeholder site.
@@ -1143,7 +1143,7 @@ fn edge_set_of(
 /// not built), if HTML rendering fails, if a write to `out_dir` fails,
 /// or if the graph's generation no longer matches `lift_generation`.
 pub fn dump_per_region<R, I>(
-    graph: &strider_ir::Function,
+    function: &strider_ir::Function,
     exit_controls: I,
     lift_generation: u64,
     sleigh: &rsleigh::Sleigh<R>,
@@ -1153,27 +1153,27 @@ where
     R: rsleigh::MemReader,
     I: IntoIterator<Item = NodeOutputId>,
 {
-    if graph.generation() != lift_generation {
+    if function.generation() != lift_generation {
         return Err(anyhow!(
-            "dump_per_region: graph generation {} does not match lift snapshot {}; \
-             the graph was compacted after lift and exit_controls are stale",
-            graph.generation(),
+            "dump_per_region: function generation {} does not match lift snapshot {}; \
+             the function was compacted after lift and exit_controls are stale",
+            function.generation(),
             lift_generation,
         ));
     }
     for (idx, exit_control) in exit_controls.into_iter().enumerate() {
-        let membership = strider_ir::walk::region_membership_from_exit(graph, exit_control);
+        let membership = strider_ir::walk::region_membership_from_exit(function, exit_control);
         // Construct a fresh dumper per region via the public
         // `Graph::dot_dumper` + `with_node_filter` chain.  The dumper
-        // borrows from `graph` / `sleigh`, so we can't reuse one across
+        // borrows from `function` / `sleigh`, so we can't reuse one across
         // iterations (each `with_node_filter` consumes the value).
-        let dumper = graph.dot_dumper(sleigh)?.with_node_filter(membership);
+        let dumper = function.dot_dumper(sleigh)?.with_node_filter(membership);
 
-        let producer = graph.get_node_from_output(exit_control);
+        let producer = function.get_node_from_output(exit_control);
         // Include `idx` unconditionally: two regions whose producers
         // share a first asm-fingerprint would otherwise collide via
         // `std::fs::write` (silent overwrite).
-        let addr_part: String = graph
+        let addr_part: String = function
             .asm_fingerprint(producer)
             .first()
             .map_or_else(|| "nofp".to_string(), |a| format!("{a:016x}"));
@@ -1193,19 +1193,19 @@ where
 /// Uses [`strider_ir::walk::collect_neighborhood`] to build the visible
 /// node set and renders via [`strider_ir::Graph::dot_dumper`]'s
 /// `with_node_filter` chain.  Useful for "focus on this node" debug
-/// dumps when the whole-graph view is too dense.
+/// dumps when the whole-function view is too dense.
 ///
 /// `depth = 0` produces a singleton viewer; `depth = 1` includes
 /// immediate predecessors and successors; larger depths walk further.
 ///
 /// # Errors
 ///
-/// Returns an error when `anchor` is not a live node in `graph` (e.g.
+/// Returns an error when `anchor` is not a live node in `function` (e.g.
 /// a stale id from a pre-compaction snapshot, or a foreign id from a
-/// different `Graph`), when dumper construction fails (graph not
+/// different `Graph`), when dumper construction fails (function not
 /// built), HTML rendering fails, or the write to `out_path` fails.
 pub fn dump_neighborhood<R>(
-    graph: &strider_ir::Function,
+    function: &strider_ir::Function,
     anchor: NodeId,
     depth: u32,
     sleigh: &rsleigh::Sleigh<R>,
@@ -1214,14 +1214,14 @@ pub fn dump_neighborhood<R>(
 where
     R: rsleigh::MemReader,
 {
-    if !graph.has_node(anchor) {
+    if !function.has_node(anchor) {
         return Err(anyhow!(
-            "dump_neighborhood: anchor {anchor:?} is not a live node in this graph \
+            "dump_neighborhood: anchor {anchor:?} is not a live node in this function \
              (stale id from a pre-compaction snapshot, or a foreign id)",
         ));
     }
-    let visible = strider_ir::walk::collect_neighborhood(graph, anchor, depth);
-    let dumper = graph.dot_dumper(sleigh)?.with_node_filter(visible);
+    let visible = strider_ir::walk::collect_neighborhood(function, anchor, depth);
+    let dumper = function.dot_dumper(sleigh)?.with_node_filter(visible);
     ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
         .dump_as_html(out_path)
         .map_err(|e| {

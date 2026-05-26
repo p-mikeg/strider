@@ -33,7 +33,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         addr: PcodeInsnAddr,
     ) -> Result<NodeIndex> {
         let second_region = self
-            .graph
+            .region_graph
             .node_weight_mut(region_id)
             .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
         // Round-down fallback for split addresses that fall in a
@@ -102,7 +102,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
 
         // second region inherits all parents of the original region
         let parent_edges: Vec<_> = self
-            .graph
+            .region_graph
             .edges_directed(region_id, petgraph::Incoming)
             .map(|e| (e.id(), e.source(), *e.weight()))
             .collect();
@@ -110,11 +110,11 @@ impl<R: rsleigh::MemReader> Builder<R> {
         // Re-target each incoming edge from the original (now second) region onto
         // the freshly-created first region, then drop the original edge.
         for (edge_id, parent_id, edge_data) in parent_edges {
-            self.graph.add_edge(parent_id, first_region, edge_data);
-            self.graph.remove_edge(edge_id);
+            self.region_graph.add_edge(parent_id, first_region, edge_data);
+            self.region_graph.remove_edge(edge_id);
         }
         // link the first and the second regions with fallthrough
-        self.graph
+        self.region_graph
             .add_edge(first_region, region_id, RegionEdgeKind::Fallthrough);
         Ok(region_id)
     }

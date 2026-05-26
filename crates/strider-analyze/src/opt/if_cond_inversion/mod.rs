@@ -99,17 +99,17 @@ fn is_inverted_cond(graph: &strider_ir::Graph, if_node: NodeId) -> bool {
 /// Performs the inversion in place:
 ///   1. Re-points the `If`'s cond input from `BoolNeg(X)` to `X`.
 ///   2. Swaps the consumers of the two control outputs.
-fn invert(graph: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
+fn invert(function: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     // Redirect cond input.
     //
     // Read the BoolNeg node's input first, then call `update_input` on the
     // If's cond slot to consume it directly.  After this step the BoolNeg
     // is unreferenced from the If; its other consumers (if any) keep using
     // it, which is fine.
-    let cond_input_id = graph.node_input_id_at(if_node, 1)?;
-    let cond_out = graph.input_output_id(cond_input_id);
-    let bool_neg_node = graph.get_node_from_output(cond_out);
-    let [inner] = graph.node_inputs_exact::<1>(bool_neg_node)?;
+    let cond_input_id = function.node_input_id_at(if_node, 1)?;
+    let cond_out = function.input_output_id(cond_input_id);
+    let bool_neg_node = function.get_node_from_output(cond_out);
+    let [inner] = function.node_inputs_exact::<1>(bool_neg_node)?;
     // Count BoolNeg's consumers BEFORE redirecting: if we are the only
     // user, BoolNeg becomes dead after the redirect and its
     // contributing-asm history needs to be absorbed by the inner-cond
@@ -120,11 +120,11 @@ fn invert(graph: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     // (false positives violate the contract that a fingerprint names
     // the asm insns whose lifting or rewrite contributed to that
     // node's value).
-    let bool_neg_uses_before = graph.output_uses(cond_out).count();
-    graph.update_input(cond_input_id, inner);
+    let bool_neg_uses_before = function.output_uses(cond_out).count();
+    function.update_input(cond_input_id, inner);
     if bool_neg_uses_before == 1 {
-        let inner_node = graph.get_node_from_output(inner);
-        graph.extend_asm_fingerprint_from(inner_node, bool_neg_node);
+        let inner_node = function.get_node_from_output(inner);
+        function.extend_asm_fingerprint_from(inner_node, bool_neg_node);
     }
 
     // Swap consumers between output[0] (true) and output[1] (false).
@@ -134,20 +134,20 @@ fn invert(graph: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     // pairs; resolve each to a stable `NodeInputId` before mutating, since
     // `update_input` rewrites the use-list and would invalidate any
     // half-consumed iterator.  Collect both lists before any redirect.
-    let [true_out, false_out] = graph.node_outputs_exact::<2>(if_node)?;
-    let true_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = graph
+    let [true_out, false_out] = function.node_outputs_exact::<2>(if_node)?;
+    let true_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = function
         .output_uses(true_out)
-        .map(|(consumer, idx)| graph.node_input_id_at(consumer, idx as usize))
+        .map(|(consumer, idx)| function.node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
-    let false_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = graph
+    let false_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = function
         .output_uses(false_out)
-        .map(|(consumer, idx)| graph.node_input_id_at(consumer, idx as usize))
+        .map(|(consumer, idx)| function.node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
     for use_id in true_use_ids {
-        graph.update_input(use_id, false_out);
+        function.update_input(use_id, false_out);
     }
     for use_id in false_use_ids {
-        graph.update_input(use_id, true_out);
+        function.update_input(use_id, true_out);
     }
     Ok(())
 }

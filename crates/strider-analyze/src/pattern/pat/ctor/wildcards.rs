@@ -52,15 +52,15 @@ pub fn int_const(v: impl Into<i128>) -> Pat {
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.function.node_kind(node) else {
             return false;
         };
         // Determine the output type from the node's single value output.
         let ty = ctx
-            .graph
+            .function
             .node_outputs(node)
             .iter()
-            .find_map(|&out| ctx.graph.output_kind(out).as_value());
+            .find_map(|&out| ctx.function.output_kind(out).as_value());
         let Some(ty) = ty else { return false; };
         let mask = ty.bit_mask_u128();
         (stored & mask) == (v_unsigned & mask)
@@ -106,14 +106,14 @@ where
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.function.node_kind(node) else {
             return false;
         };
         let ty = ctx
-            .graph
+            .function
             .node_outputs(node)
             .iter()
-            .find_map(|&out| ctx.graph.output_kind(out).as_value());
+            .find_map(|&out| ctx.function.output_kind(out).as_value());
         let Some(ty) = ty else { return false; };
         let mask = ty.bit_mask_u128();
         let stored_masked = stored & mask;
@@ -162,14 +162,14 @@ pub fn signed_int_const(v: impl Into<i128>) -> Pat {
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.function.node_kind(node) else {
             return false;
         };
         let Some(ty) = ctx
-            .graph
+            .function
             .node_outputs(node)
             .iter()
-            .find_map(|&out| ctx.graph.output_kind(out).as_value())
+            .find_map(|&out| ctx.function.output_kind(out).as_value())
         else {
             return false;
         };

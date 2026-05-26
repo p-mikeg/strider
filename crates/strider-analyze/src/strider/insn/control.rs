@@ -72,7 +72,7 @@ pub(crate) fn build_switch_if_ladder(
     // IntCmpOp output type.  The cmp's output is always Bool but
     // `build_int_cmp_operation` takes `output_type` for the
     // input-side coercion.
-    let idx_ty = builder.graph().output_kind(idx).as_value_or_err()?;
+    let idx_ty = builder.function().output_kind(idx).as_value_or_err()?;
     // Walk every case except the last; the last comparison's false
     // branch is the final target's region (no extra dispatcher).
     for i in 0..n - 1 {
@@ -246,7 +246,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         let call_id = self.builder.build_call_with_cc(call_address, override_cc)?;
         if let Some(cc) = override_cc {
             self.builder
-                .graph_mut()
+                .function_mut()
                 .set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
         }
         Ok(())
@@ -282,7 +282,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         let call_id = self.builder.build_call_with_cc(call_address, override_cc)?;
         if let Some(cc) = override_cc {
             self.builder
-                .graph_mut()
+                .function_mut()
                 .set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
         }
         let ret_regs = self.builder.ret_val_vars().to_vec();

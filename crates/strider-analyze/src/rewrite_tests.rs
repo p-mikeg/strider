@@ -239,11 +239,11 @@ fn re_optimize_is_idempotent() -> anyhow::Result<()> {
     let pipeline = crate::opt::default_pipeline();
     let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
     let entry = rewriter.entry();
-    pipeline.run(rewriter.graph_mut(), entry)?;
+    pipeline.run(rewriter.function_mut(), entry)?;
     let count_after_first = built.preorder().count();
     let mut rewriter2 = GraphRewriter::try_wrap_built(&mut built)?;
     let entry2 = rewriter2.entry();
-    pipeline.run(rewriter2.graph_mut(), entry2)?;
+    pipeline.run(rewriter2.function_mut(), entry2)?;
     let count_after_second = built.preorder().count();
     assert_eq!(
         count_after_first, count_after_second,

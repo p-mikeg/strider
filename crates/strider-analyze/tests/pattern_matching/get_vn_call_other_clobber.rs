@@ -46,7 +46,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         vec![rax, rdx, xmm0, xmm1],      // callee_saved_regs (every tracked var)
         vec![],                          // ret_val_regs
         vec![],                          // ret_val_regs_float
-        rsp,                             // stack_ptr_vn
+        rsp,                             // stack_vn
         vec![],                          // stack_arg_offsets
         0,                               // ret_stack_pop
         None,                            // link_register_vn

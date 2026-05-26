@@ -59,9 +59,9 @@ use strider_ir::node::NodeId;
 pub struct GraphRewriter<'a> {
     /// The function to rewrite.  `crate::pattern::rewrite_rule`'s
     /// closure expects `&mut RewriteCtx<'_>`, so [`Self::apply_rule`]
-    /// builds a fresh `RewriteCtx::new(&mut *self.graph, self.entry)`
+    /// builds a fresh `RewriteCtx::new(&mut *self.function, self.entry)`
     /// per call — same shape as `crate::opt::with_rewrite_ctx`.
-    graph: &'a mut strider_ir::Function,
+    function: &'a mut strider_ir::Function,
     /// The function's entry [`NodeId`] — needed by the validator's
     /// reachable-set walk and by [`crate::opt::OptimizerPipeline::run`].
     entry: NodeId,
@@ -79,7 +79,7 @@ impl<'a> GraphRewriter<'a> {
             anyhow::anyhow!("GraphRewriter::try_wrap_built: entry node is not set")
         })?;
         Ok(Self {
-            graph: built,
+            function: built,
             entry,
         })
     }
@@ -92,7 +92,7 @@ impl<'a> GraphRewriter<'a> {
     /// hands back —
     /// `Fn(&mut crate::pattern::RewriteCtx<'_>, NodeId) -> crate::pattern::Result<bool>`.
     /// Each candidate root gets a freshly-constructed
-    /// `RewriteCtx::new(&mut *self.graph, self.entry)` so the closure
+    /// `RewriteCtx::new(&mut *self.function, self.entry)` so the closure
     /// has the input shape the `pattern` crate's rewrite engine was
     /// designed for.  `RewriteCtx` exposes only `graph` and `entry`;
     /// `crate::pattern::rewrite_rule` only touches those two fields,
@@ -126,7 +126,7 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// `apply_rule` does **NOT** call [`strider_ir::validate::validate`] after
     /// the rule fires.  Callers building unusual rules should run an
-    /// [`crate::opt::OptimizerPipeline`] (via [`Self::graph_mut`] /
+    /// [`crate::opt::OptimizerPipeline`] (via [`Self::function_mut`] /
     /// [`Self::entry`]) — `OptimizerPipeline::run` validates as its
     /// last step — or call [`strider_ir::validate::validate`] explicitly
     /// before relying on the graph being well-formed.
@@ -137,9 +137,9 @@ impl<'a> GraphRewriter<'a> {
         let mut applied: usize = 0;
         // Pre-collect candidate roots before mutating; the walk's
         // iterator borrows the graph immutably.
-        let candidates: Vec<NodeId> = self.graph.walk_from(self.entry).collect();
+        let candidates: Vec<NodeId> = self.function.walk_from(self.entry).collect();
         for node in candidates {
-            let mut ctx = crate::pattern::RewriteCtx::new(&mut *self.graph, self.entry);
+            let mut ctx = crate::pattern::RewriteCtx::new(&mut *self.function, self.entry);
             // `cranelift_entity::PrimaryMap` doesn't reuse keys, so
             // every id from the pre-collected preorder is still a
             // valid arena slot — even if the node was detached by an
@@ -170,7 +170,7 @@ impl<'a> GraphRewriter<'a> {
         self.apply_rule(composed)
     }
 
-    /// Mutable access to the wrapped graph.  Pairs with
+    /// Mutable access to the wrapped function.  Pairs with
     /// [`Self::entry`] for callers that want to drive an
     /// [`crate::opt::OptimizerPipeline`] directly after a rewrite —
     /// typical flow: "rewrite, then re-optimize so the rewrite's
@@ -178,12 +178,12 @@ impl<'a> GraphRewriter<'a> {
     /// branches it enabled) settle".  `pipeline.run` itself runs to a
     /// fixed point internally, so re-running it on an unchanged graph
     /// is a no-op.
-    pub fn graph_mut(&mut self) -> &mut strider_ir::Function {
-        self.graph
+    pub fn function_mut(&mut self) -> &mut strider_ir::Function {
+        self.function
     }
 
     /// The function's entry [`NodeId`].  Stable for the lifetime of
-    /// the wrapped graph; pair with [`Self::graph_mut`] when feeding a
+    /// the wrapped function; pair with [`Self::function_mut`] when feeding a
     /// pipeline.
     #[must_use]
     pub fn entry(&self) -> NodeId {

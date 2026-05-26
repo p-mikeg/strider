@@ -36,7 +36,7 @@ use crate::opt::ReadOnlyMemory;
 /// can be no LR match without a known LR varnode.
 ///
 /// When `rom` is `None`, the rodata-jump-table arm is short-circuited.
-/// When `stack_ptr_vn` is `None`, the stack-array arm is
+/// When `stack_vn` is `None`, the stack-array arm is
 /// short-circuited.
 ///
 /// The orchestrator passes both: the rom for the binary-image rodata,
@@ -70,7 +70,7 @@ pub fn classify_anchor(
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-    stack_ptr_vn: Option<rsleigh::Vn>,
+    stack_vn: Option<rsleigh::Vn>,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
     let graph = ctx.graph_ref();
@@ -145,7 +145,7 @@ pub fn classify_anchor(
             if let Some(r) = classify_jump_table(ctx, anchor_output, rom, known) {
                 return Some(r);
             }
-            if let Some(sp) = stack_ptr_vn {
+            if let Some(sp) = stack_vn {
                 return super::stack_array::classify_stack_array(ctx, anchor_output, sp, known);
             }
             None
@@ -157,7 +157,7 @@ pub fn classify_anchor(
         // route And-anchors through the same arm — but only when the
         // SP varnode is supplied.
         NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
-            if let Some(sp) = stack_ptr_vn {
+            if let Some(sp) = stack_vn {
                 return super::stack_array::classify_stack_array(ctx, anchor_output, sp, known);
             }
             None

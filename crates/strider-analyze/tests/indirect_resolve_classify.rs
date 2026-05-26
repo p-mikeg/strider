@@ -242,7 +242,7 @@ fn stack_array_four_targets_resolves_to_multiple() {
 
 /// Without the SP varnode, the stack-array arm is short-circuited.
 /// The fixture's anchor is a `Load` whose address is SP-rooted, but
-/// without `stack_ptr_vn` the classifier can't decompose it; the
+/// without `stack_vn` the classifier can't decompose it; the
 /// rodata-jump-table arm also fails (the address isn't a constant
 /// base), so the classifier returns `None`.
 ///

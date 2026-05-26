@@ -108,7 +108,7 @@ pub struct BuiltCallingConvention {
     /// Hardware stack-pointer varnode.  Deliberately absent from the three
     /// register-list fields above — SP's cross-call behaviour is expressed
     /// through [`Self::ret_stack_pop`] instead.
-    pub stack_ptr_vn: rsleigh::Vn,
+    pub stack_vn: rsleigh::Vn,
     /// Byte offsets from the call-time SP for each positional stack arg.
     pub stack_arg_offsets: Vec<i64>,
     /// Net byte change the callee's `ret` inflicts on the caller's SP.
@@ -133,7 +133,7 @@ impl BuiltCallingConvention {
     /// - `arg_passing_regs ∩ callee_saved_regs == ∅`
     /// - `ret_val_regs ∩ callee_saved_regs == ∅`
     /// - `ret_val_regs_float ∩ callee_saved_regs == ∅`
-    /// - `stack_ptr_vn` is not in any of the four register lists
+    /// - `stack_vn` is not in any of the four register lists
     /// - No duplicates within any single list
     /// - When `link_register_vn` is `Some`, it must be present in
     ///   `callee_saved_regs` (CLAUDE.md "Note (link-register
@@ -153,7 +153,7 @@ impl BuiltCallingConvention {
         callee_saved_regs: Vec<rsleigh::Vn>,
         ret_val_regs: Vec<rsleigh::Vn>,
         ret_val_regs_float: Vec<rsleigh::Vn>,
-        stack_ptr_vn: rsleigh::Vn,
+        stack_vn: rsleigh::Vn,
         stack_arg_offsets: Vec<i64>,
         ret_stack_pop: i64,
         link_register_vn: Option<rsleigh::Vn>,
@@ -189,11 +189,11 @@ impl BuiltCallingConvention {
             ("ret_val_regs", &ret_val_regs),
             ("ret_val_regs_float", &ret_val_regs_float),
         ] {
-            if list.contains(&stack_ptr_vn) {
+            if list.contains(&stack_vn) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: stack_ptr_vn {:?} appears in {} \
+                    "BuiltCallingConvention: stack_vn {:?} appears in {} \
                      (the SP is implicit and must not be in any reg list)",
-                    stack_ptr_vn,
+                    stack_vn,
                     list_name,
                 ));
             }
@@ -231,7 +231,7 @@ impl BuiltCallingConvention {
             callee_saved_regs,
             ret_val_regs,
             ret_val_regs_float,
-            stack_ptr_vn,
+            stack_vn,
             stack_arg_offsets,
             ret_stack_pop,
             link_register_vn,
@@ -241,7 +241,7 @@ impl BuiltCallingConvention {
 
     /// Predicate: is `var` clobbered by a call under THIS CC when used
     /// as an override on a function whose stack pointer is
-    /// `function_stack_ptr_vn`?
+    /// `function_stack_vn`?
     ///
     /// A variable is clobbered iff it's neither in this CC's
     /// `callee_saved_regs` nor the function's stack pointer.  The
@@ -258,9 +258,9 @@ impl BuiltCallingConvention {
     pub fn clobbers_override_var(
         &self,
         var: &rsleigh::Vn,
-        function_stack_ptr_vn: rsleigh::Vn,
+        function_stack_vn: rsleigh::Vn,
     ) -> bool {
-        !self.callee_saved_regs.contains(var) && *var != function_stack_ptr_vn
+        !self.callee_saved_regs.contains(var) && *var != function_stack_vn
     }
 }
 
@@ -307,8 +307,8 @@ pub struct PositionalArgLayout {
     /// slots (matching `stack_arg_offsets`).
     pub(crate) entries: Vec<PositionalArg>,
     /// Stack-pointer varnode used by the SP-relative recognisers.
-    /// Mirrors `BuiltCallingConvention::stack_ptr_vn`.
-    pub(crate) stack_ptr_vn: rsleigh::Vn,
+    /// Mirrors `BuiltCallingConvention::stack_vn`.
+    pub(crate) stack_vn: rsleigh::Vn,
 }
 
 impl PositionalArgLayout {
@@ -332,7 +332,7 @@ impl PositionalArgLayout {
         }
         Self {
             entries,
-            stack_ptr_vn: cc.stack_ptr_vn,
+            stack_vn: cc.stack_vn,
         }
     }
 
@@ -1078,7 +1078,7 @@ impl CallingConvention {
         let callee_saved_regs = regs_to_vns(sleigh_regs, self.callee_saved_regs)?;
         let ret_val_regs = regs_to_vns(sleigh_regs, self.ret_val_regs)?;
         let ret_val_regs_float = regs_to_vns(sleigh_regs, self.ret_val_regs_float)?;
-        let stack_ptr_vn = vn_for_name(sleigh_regs, self.stack_ptr_reg_name)?;
+        let stack_vn = vn_for_name(sleigh_regs, self.stack_ptr_reg_name)?;
         // Resolve the link-register name when one is declared; propagate
         // any `UnknownRegName` from `vn_for_name` so a typo in the preset
         // surfaces at build time rather than later in the indirect-branch
@@ -1100,7 +1100,7 @@ impl CallingConvention {
             callee_saved_regs,
             ret_val_regs,
             ret_val_regs_float,
-            stack_ptr_vn,
+            stack_vn,
             self.stack_arg_offsets.to_vec(),
             self.ret_stack_pop,
             link_register_vn,

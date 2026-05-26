@@ -563,7 +563,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             terminator,
         })?;
         if let Some((parent_id, edge_kind)) = self.parent_edge {
-            self.builder.graph.add_edge(parent_id, region, edge_kind);
+            self.builder.region_graph.add_edge(parent_id, region, edge_kind);
         }
         Ok(region)
     }
@@ -624,14 +624,14 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             if self.insns.is_empty() {
                 if let Some((parent_id, edge_kind)) = self.parent_edge {
                     self.builder
-                        .graph
+                        .region_graph
                         .add_edge(parent_id, existing_region_id, edge_kind);
                 }
                 return Ok(ProcessInsnRes::FinishedProcessing);
             }
             let region = self.finish_current_region(RegionTerminator::Fallthrough)?;
             self.builder
-                .graph
+                .region_graph
                 .add_edge(region, existing_region_id, RegionEdgeKind::Fallthrough);
             return Ok(ProcessInsnRes::FinishedProcessing);
         }
@@ -1158,7 +1158,7 @@ mod tests {
         let res = rb.process_new_insn(&ret_insn, addr_at(base, pos), &lift).unwrap();
         assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 
-        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].terminator, RegionTerminator::Return);
     }
@@ -1180,7 +1180,7 @@ mod tests {
             .expect("unresolvable BranchIndirect must defer, not error");
         assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 
-        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
         match &regions[0].terminator {
             RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
@@ -1203,7 +1203,7 @@ mod tests {
         let res = rb.process_new_insn(&cbr, addr_at(base, pos), &lift).unwrap();
         assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 
-        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].terminator, RegionTerminator::CondBranch);
 
@@ -1238,7 +1238,7 @@ mod tests {
         let res = rb.process_new_insn(&branch, addr_at(base, pos), &lift).unwrap();
         assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 
-        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].terminator, RegionTerminator::Branch);
     }
@@ -1262,7 +1262,7 @@ mod tests {
             0,
             "tail-call must not enqueue successor"
         );
-        let regions: Vec<&Region> = b.graph.node_weights().collect();
+        let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
         assert_eq!(
             regions[0].terminator,

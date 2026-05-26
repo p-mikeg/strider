@@ -91,7 +91,7 @@ fn dot_output_mentions_every_region() {
     let bytes = vec![0x31, 0xc0, 0x74, 0x02, 0x31, 0xc0, 0xc3];
     let cfg = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg);
-    let expected = cfg.graph().node_count();
+    let expected = cfg.region_graph().node_count();
     let actual = s.matches("Instruction(addr=").count();
     assert_eq!(
         actual, expected,

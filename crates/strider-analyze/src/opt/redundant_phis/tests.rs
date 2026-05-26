@@ -3,7 +3,7 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::OptimizerPipeline;
 use crate::opt::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{sp_vn_x86 as sp_vn, RegisterSet, SENTINEL_LIFT_ADDR};
+use strider_ir_test_utils::{stack_vn_x86 as stack_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 
 // ── Original test ─────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ use strider_ir::{FunctionBuilder, IntBinaryOp};
 /// spurious `φ ESP` in the output.
 #[test]
 fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
-    let sp = sp_vn();
+    let sp = stack_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
     let entry = b.create_region()?;
     let a = b.create_region()?;

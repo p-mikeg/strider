@@ -121,10 +121,10 @@ impl FunctionBuilder {
         &self,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> CallAbiSelection {
-        let cc_meta = &self.graph.cc_metadata;
-        let function_default_no_memory_clobber = self.graph.no_memory_clobber();
-        let function_default_ret_stack_pop = self.graph.ret_stack_pop();
-        let function_stack_ptr_vn = self.graph.stack_ptr_vn();
+        let cc_meta = &self.function.cc_metadata;
+        let function_default_no_memory_clobber = self.function.no_memory_clobber();
+        let function_default_ret_stack_pop = self.function.ret_stack_pop();
+        let function_stack_vn = self.function.stack_vn();
         let no_memory_clobber =
             override_cc.map_or(function_default_no_memory_clobber, |cc| cc.no_memory_clobber);
         match override_cc {
@@ -142,14 +142,14 @@ impl FunctionBuilder {
                     .filter(|v| cc_meta.variable_to_id.contains_key(v))
                     .collect();
                 // SP is a function-stable register; an override only
-                // sees it via the function-default's `stack_ptr_vn`.
+                // sees it via the function-default's `stack_vn`.
                 // When the FunctionBuilder was built without a CC
-                // (the `new_raw` path), `stack_ptr_vn` is None — in
+                // (the `new_raw` path), `stack_vn` is None — in
                 // that case no variable can equal "the function's SP"
                 // so the comparison degenerates to "not callee-saved",
                 // which the helper short-circuits via a sentinel
                 // unreachable Vn.
-                let function_sp = function_stack_ptr_vn.unwrap_or(rsleigh::Vn {
+                let function_sp = function_stack_vn.unwrap_or(rsleigh::Vn {
                     addr_off: u64::MAX,
                     addr_space: rsleigh::VnSpace::CONST,
                     size: 0,
@@ -190,14 +190,14 @@ impl FunctionBuilder {
         let mut clobbered_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
         for var in clobber_vars {
             let out = self.read_variable(var)?;
-            let k = self.graph().output_kind(out);
+            let k = self.function().output_kind(out);
             if !k.is_value() {
                 return Err(anyhow!("output {out:?} is not a value edge (got {k:?})"));
             }
             clobbered_kinds.push(k);
         }
 
-        let addr_kind = self.graph().output_kind(call_address);
+        let addr_kind = self.function().output_kind(call_address);
         if !addr_kind.is_value() {
             return Err(anyhow!(
                 "output {call_address:?} is not a value edge (got {addr_kind:?})"
@@ -219,7 +219,7 @@ impl FunctionBuilder {
         &mut self,
         ret_stack_pop: i64,
     ) -> Result<Option<(rsleigh::Vn, NodeOutputId)>> {
-        match self.graph.stack_ptr_vn() {
+        match self.function.stack_vn() {
             Some(sp) if ret_stack_pop != 0 => {
                 Ok(self.read_variable_optional(&sp)?.map(|out| (sp, out)))
             }
@@ -256,7 +256,7 @@ impl FunctionBuilder {
             .into_iter()
             .chain(clobbered_kinds);
         let call = self.create_node(NodeKind::Call, inputs, outputs);
-        let call_outputs: Vec<_> = self.graph().node_outputs(call).to_vec();
+        let call_outputs: Vec<_> = self.function().node_outputs(call).to_vec();
 
         self.advance_cur_region_ctrl(call_outputs[0])?;
         if !no_memory_clobber {
@@ -270,7 +270,7 @@ impl FunctionBuilder {
         // was used.
         if is_override {
             let list: Vec<rsleigh::Vn> = clobber_vars.to_vec();
-            self.graph_mut().set_call_clobbered_override(call, list);
+            self.function_mut().set_call_clobbered_override(call, list);
         }
         Ok(call)
     }
@@ -340,7 +340,7 @@ impl FunctionBuilder {
             inputs,
             output_kinds,
         );
-        self.graph_mut().set_call_other_name(node, name.to_string());
+        self.function_mut().set_call_other_name(node, name.to_string());
         // Outputs intentionally dangle — no link_region.  The cfg layer
         // already terminates the region with `RegionTerminator::NoReturn`.
         Ok(node)
@@ -454,7 +454,7 @@ impl FunctionBuilder {
             output_kinds,
         );
         let outputs: SmallVec<[NodeOutputId; 8]> =
-            self.graph().node_outputs(node).iter().copied().collect();
+            self.function().node_outputs(node).iter().copied().collect();
 
         // Advance ctrl only.  Memory is the strider layer's call.
         self.advance_cur_region_ctrl(outputs[0])?;
@@ -469,7 +469,7 @@ impl FunctionBuilder {
 
         // Stamp the user-op name + per-CallOther clobber override.
         let writes_vec: Vec<rsleigh::Vn> = implicit_writes_vns.to_vec();
-        let graph = self.graph_mut();
+        let graph = self.function_mut();
         graph.set_call_other_name(node, name.to_string());
         if !writes_vec.is_empty() {
             graph.set_call_clobbered_override(node, writes_vec);

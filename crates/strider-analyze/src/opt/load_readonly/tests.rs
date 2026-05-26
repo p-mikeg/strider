@@ -136,9 +136,9 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
 #[test]
 fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     use crate::opt::{StackOffsetDetect, Optimizer as _};
-    use strider_ir_test_utils::{make_sp_fn, sp_vn_x86, SENTINEL_LIFT_ADDR};
+    use strider_ir_test_utils::{make_sp_fn, stack_vn_x86, SENTINEL_LIFT_ADDR};
 
-    let sp = sp_vn_x86();
+    let sp = stack_vn_x86();
 
     // Build: stack-store (SP-4) → call 0xCAFE → load 0x1000 → return loaded.
     let mut fg = make_sp_fn(sp, |b, sp_v| {

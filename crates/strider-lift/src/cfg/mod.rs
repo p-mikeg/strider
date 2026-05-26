@@ -80,21 +80,21 @@ pub struct Cfg<R: rsleigh::MemReader> {
     /// with [`RegionEdgeKind`].
     ///
     /// **Read-only by convention.**  Direct mutation
-    /// (`cfg.graph.remove_node(...)`) would desync
+    /// (`cfg.region_graph.remove_node(...)`) would desync
     /// `start_addr_to_region_id` from the petgraph and silently
     /// corrupt subsequent `region_id_at_start` lookups — a prior bug
     /// where direct map mutation produced exactly this divergence
     /// motivated the `pub(crate)` tightening on the index.  New code
     /// should read via
-    /// [`Self::graph`].  Field kept `pub` because the
+    /// [`Self::region_graph`].  Field kept `pub` because the
     /// orchestrator's `sleigh_reuse.rs` test pattern partial-moves
-    /// `sleigh` out and continues to read `graph` afterward; a
-    /// `pub(crate)` tightening with a `graph(&self)` accessor would
+    /// `sleigh` out and continues to read `region_graph` afterward; a
+    /// `pub(crate)` tightening with a `region_graph(&self)` accessor would
     /// fail to borrow `&self` after the partial move.
-    pub graph: RegionGraph,
+    pub region_graph: RegionGraph,
     /// The [`NodeIndex`] of the function entry-point region.
     /// Read-only by convention; same partial-move rationale as
-    /// [`Self::graph`].
+    /// [`Self::region_graph`].
     pub entry: NodeIndex,
     /// Index from a region's start address to its [`NodeIndex`], for
     /// O(log R) `region_id_at_start` lookups instead of an O(R) graph
@@ -110,10 +110,10 @@ pub struct Cfg<R: rsleigh::MemReader> {
 }
 
 impl<R: rsleigh::MemReader> Cfg<R> {
-    /// Read-only access to the underlying directed graph.
+    /// Read-only access to the underlying directed region graph.
     #[must_use]
-    pub fn graph(&self) -> &RegionGraph {
-        &self.graph
+    pub fn region_graph(&self) -> &RegionGraph {
+        &self.region_graph
     }
 
     /// [`NodeIndex`] of the function entry-point region.
@@ -146,7 +146,7 @@ pub type RegionId = NodeIndex;
 /// work on a `Cfg` the same way they work on `strider_ir::Graph`.  Successors
 /// are the petgraph out-neighbors of `node` regardless of edge kind
 /// (Fallthrough / Branch / IfCaseTrue / IfCaseFalse); callers that
-/// need edge-kind filtering should walk `cfg.graph().edges(node)`
+/// need edge-kind filtering should walk `cfg.region_graph().edges(node)`
 /// directly.
 impl<R: rsleigh::MemReader> graphwalk::GraphRef for Cfg<R> {
     type NodeId = NodeIndex;
@@ -156,7 +156,7 @@ impl<R: rsleigh::MemReader> graphwalk::GraphRef for Cfg<R> {
         node: NodeIndex,
         mut f: impl FnMut(NodeIndex) -> std::ops::ControlFlow<()>,
     ) -> std::ops::ControlFlow<()> {
-        for succ in self.graph.neighbors(node) {
+        for succ in self.region_graph.neighbors(node) {
             f(succ)?;
         }
         std::ops::ControlFlow::Continue(())

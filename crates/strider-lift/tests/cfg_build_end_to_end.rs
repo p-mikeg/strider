@@ -54,8 +54,8 @@ fn build_from_bytes_opts(
 #[test]
 fn single_ret_produces_one_region_without_tail_call_flag() {
     let cfg = build_from_bytes(vec![0xc3], 0x1000);
-    assert_eq!(cfg.graph.node_count(), 1);
-    assert_eq!(cfg.graph[cfg.entry].terminator, RegionTerminator::Return);
+    assert_eq!(cfg.region_graph.node_count(), 1);
+    assert_eq!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::Return);
 }
 
 // ── region-split tests ───────────────────────────────────────────────────
@@ -67,12 +67,12 @@ fn back_jump_splits_region() {
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
     let cfg = build_from_bytes(bytes, 0x1000);
     assert!(
-        cfg.graph.node_count() >= 2,
+        cfg.region_graph.node_count() >= 2,
         "expected at least 2 regions after back-jump split; got {}",
-        cfg.graph.node_count()
+        cfg.region_graph.node_count()
     );
     let branch_edges = cfg
-        .graph
+        .region_graph
         .edge_references()
         .filter(|e| *e.weight() == RegionEdgeKind::Branch)
         .count();
@@ -88,7 +88,7 @@ fn split_first_half_becomes_fallthrough_second_half_branch() {
 
     let mut first_half = None;
     let mut second_half = None;
-    for r in cfg.graph.node_weights() {
+    for r in cfg.region_graph.node_weights() {
         if r.start_addr.machine_addr.addr == 0x1000 {
             first_half = Some(r);
         } else if r.start_addr.machine_addr.addr == 0x1002 {
@@ -111,9 +111,9 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
     let bytes = vec![0xeb, 0x10];
     let opts = OptionsBuilder::new().set_function_max_size(0x10);
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
-    assert_eq!(cfg.graph.node_count(), 1);
+    assert_eq!(cfg.region_graph.node_count(), 1);
     assert_eq!(
-        cfg.graph[cfg.entry].terminator,
+        cfg.region_graph[cfg.entry].terminator,
         RegionTerminator::TailCall { target: 0x1012 }
     );
 }
@@ -133,12 +133,12 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     let cfg = Builder::for_arch(&arch, sleigh, 0x1000, opts).build().unwrap();
 
     assert_ne!(
-        cfg.graph[cfg.entry].terminator,
+        cfg.region_graph[cfg.entry].terminator,
         RegionTerminator::TailCall { target: 0x0ff2 },
         "entry region must NOT be a TailCall when allow_code_before_start_addr is set"
     );
     assert!(
-        cfg.graph
+        cfg.region_graph
             .edge_references()
             .any(|e| *e.weight() == RegionEdgeKind::Branch),
         "expected at least one Branch edge since the below-start target is followed"
@@ -155,7 +155,7 @@ fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
 
     assert!(
-        !matches!(cfg.graph[cfg.entry].terminator, RegionTerminator::CondBranch),
+        !matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::CondBranch),
         "entry region must not retain CondBranch when one successor is OOB"
     );
 }
@@ -170,9 +170,9 @@ fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
 
     assert!(
-        matches!(cfg.graph[cfg.entry].terminator, RegionTerminator::TailCall { .. }),
+        matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::TailCall { .. }),
         "entry region must collapse to TailCall when both CondBranch successors are OOB; got {:?}",
-        cfg.graph[cfg.entry].terminator
+        cfg.region_graph[cfg.entry].terminator
     );
 }
 
@@ -187,7 +187,7 @@ fn fall_through_past_fn_max_size_terminates_as_tail_call() {
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
 
     assert_eq!(
-        cfg.graph[cfg.entry].terminator,
+        cfg.region_graph[cfg.entry].terminator,
         RegionTerminator::TailCall { target: 0x1002 }
     );
 }
@@ -204,18 +204,18 @@ fn ud2_region_finishes_as_noreturn() {
     let cfg = build_from_bytes(bytes, 0x1000);
 
     let any_noreturn = cfg
-        .graph
+        .region_graph
         .node_weights()
         .any(|r| matches!(r.terminator, RegionTerminator::NoReturn));
     assert!(
         any_noreturn,
         "expected at least one NoReturn region; got terminators: {:?}",
-        cfg.graph
+        cfg.region_graph
             .node_weights()
             .map(|r| &r.terminator)
             .collect::<Vec<_>>()
     );
-    let any_unresolved = cfg.graph.node_weights().any(|r| {
+    let any_unresolved = cfg.region_graph.node_weights().any(|r| {
         matches!(
             r.terminator,
             RegionTerminator::UnresolvedIndirectBranch { .. }
@@ -242,11 +242,11 @@ fn cfg_sleigh_field_round_trip() {
     let sleigh = make_sleigh_x86_64(bytes, 0x1000);
 
     let cfg1 = build_one(sleigh, 0x1000);
-    assert!(cfg1.graph.node_count() >= 1);
+    assert!(cfg1.region_graph.node_count() >= 1);
 
     let recovered_sleigh = cfg1.into_sleigh();
     let cfg2 = build_one(recovered_sleigh, 0x1000);
-    assert!(cfg2.graph.node_count() >= 1);
+    assert!(cfg2.region_graph.node_count() >= 1);
 }
 
 #[test]
@@ -254,13 +254,13 @@ fn sleigh_can_be_used_for_multiple_cfg_builds() {
     let bytes_a = vec![0xc3u8];
     let sleigh = make_sleigh_x86_64(bytes_a, 0x1000);
     let cfg1 = build_one(sleigh, 0x1000);
-    let count1 = cfg1.graph.node_count();
+    let count1 = cfg1.region_graph.node_count();
     let cfg2 = build_one(cfg1.into_sleigh(), 0x1000);
-    let count2 = cfg2.graph.node_count();
+    let count2 = cfg2.region_graph.node_count();
     let cfg3 = build_one(cfg2.into_sleigh(), 0x1000);
     assert!(count1 >= 1);
     assert!(count2 >= 1);
-    assert!(cfg3.graph.node_count() >= 1);
+    assert!(cfg3.region_graph.node_count() >= 1);
     let _ = cfg3.entry;
     let _final_sleigh = cfg3.into_sleigh();
 }
@@ -281,7 +281,7 @@ fn build_unresolved_jmp_rax_cfg() -> Cfg<TestReader> {
 
 fn locate_unresolved_addr(cfg: &Cfg<TestReader>) -> PcodeInsnAddr {
     for region_id in cfg.region_ids() {
-        let region = cfg.graph.node_weight(region_id).expect("region");
+        let region = cfg.region_graph.node_weight(region_id).expect("region");
         if let RegionTerminator::UnresolvedIndirectBranch { addr, .. } = &region.terminator {
             return *addr;
         }

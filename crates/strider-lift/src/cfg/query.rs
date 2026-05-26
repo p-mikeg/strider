@@ -66,7 +66,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// attached to `region_id`.
     fn unique_outgoing(&self, region_id: RegionId, kind: RegionEdgeKind) -> Result<Option<NodeIndex>> {
         let mut found: Option<NodeIndex> = None;
-        for edge in self.graph.edges_directed(region_id, petgraph::Outgoing) {
+        for edge in self.region_graph.edges_directed(region_id, petgraph::Outgoing) {
             if *edge.weight() != kind {
                 continue;
             }
@@ -115,12 +115,12 @@ impl<R: rsleigh::MemReader> Cfg<R> {
 
     /// Iterates over all [`Region`]s in the CFG (unordered).
     pub fn regions(&self) -> impl Iterator<Item = &Region> {
-        self.graph.node_weights()
+        self.region_graph.node_weights()
     }
 
     /// Iterates over the [`RegionId`] of every region in the CFG (unordered).
     pub fn region_ids(&self) -> impl Iterator<Item = RegionId> {
-        self.graph.node_indices()
+        self.region_graph.node_indices()
     }
 
     /// Returns the `RegionId` of the region whose **start machine
@@ -256,13 +256,13 @@ mod tests {
     #[test]
     fn regions_iterator_count_matches_node_count() {
         let cfg = real_cfg("control", "sum_to_n");
-        assert_eq!(cfg.regions().count(), cfg.graph.node_count());
+        assert_eq!(cfg.regions().count(), cfg.region_graph.node_count());
     }
 
     #[test]
     fn region_ids_iterator_count_matches_node_count() {
         let cfg = real_cfg("control", "sum_to_n");
-        assert_eq!(cfg.region_ids().count(), cfg.graph.node_count());
+        assert_eq!(cfg.region_ids().count(), cfg.region_graph.node_count());
     }
 
     // ── region_branch ────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ mod tests {
 
         let cfg = Cfg {
             sleigh: empty_sleigh(),
-            graph,
+            region_graph: graph,
             entry: src,
             start_addr_to_region_id: BTreeMap::new(),
         };
@@ -332,7 +332,7 @@ mod tests {
 
         let cfg = Cfg {
             sleigh: empty_sleigh(),
-            graph,
+            region_graph: graph,
             entry: src,
             start_addr_to_region_id: BTreeMap::new(),
         };
@@ -353,7 +353,7 @@ mod tests {
     fn region_id_at_start_returns_some_for_real_function_entry() {
         let cfg = real_cfg("arithmetic", "add");
         let entry_region = cfg
-            .graph
+            .region_graph
             .node_weight(cfg.entry)
             .expect("entry region exists");
         let entry_addr = entry_region.start_addr.machine_addr;

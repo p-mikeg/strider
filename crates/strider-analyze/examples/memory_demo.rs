@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark_cfg());
     dot.dump_as_html("memory-cfg.html")?;
 
-    let mut function = strider.analyze_cfg(&cfg)?.graph;
+    let mut function = strider.analyze_cfg(&cfg)?.function;
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh)?, dot::DotStyle::dark());
     println!("dumping pre-opt IR graph -> memory-graph.html");

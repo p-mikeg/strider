@@ -61,7 +61,7 @@ impl FunctionArgPattern {
         let Some(ref expected) = self.source else {
             return true;
         };
-        match (expected, ctx.graph.node_kind(node_id)) {
+        match (expected, ctx.function.node_kind(node_id)) {
             (FunctionArgSource::Register(expected_vn), NodeKind::InitialVar(actual_vn)) => {
                 expected_vn == actual_vn
             }
@@ -76,16 +76,16 @@ impl FunctionArgPattern {
         match self.index {
             Some(idx) => {
                 // Check if node_id is in the side-table for this index.
-                if !ctx.graph.arg_index_to_nodes(idx).contains(&node_id) {
+                if !ctx.function.arg_index_to_nodes(idx).contains(&node_id) {
                     return false;
                 }
                 self.source_matches(ctx, node_id)
             }
             None => {
                 // No index constraint — accept if the node is in ANY index.
-                ctx.graph
+                ctx.function
                     .arg_indices()
-                    .any(|idx| ctx.graph.arg_index_to_nodes(idx).contains(&node_id))
+                    .any(|idx| ctx.function.arg_index_to_nodes(idx).contains(&node_id))
                     && self.source_matches(ctx, node_id)
             }
         }
@@ -102,7 +102,7 @@ impl Pattern for FunctionArgPattern {
     }
 
     fn try_match(&self, ctx: &MatchCtx<'_, '_>, target: NodeOutputId, b: &mut Bindings) -> bool {
-        let node_id = ctx.graph.get_node_from_output(target);
+        let node_id = ctx.function.get_node_from_output(target);
         if !self.is_match(ctx, node_id) {
             return false;
         }

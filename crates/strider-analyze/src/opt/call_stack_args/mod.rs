@@ -101,7 +101,7 @@ fn collect_stack_args_in_chain_order(
     ctx: crate::pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     stack_arg_offsets: &[i64],
-    stack_ptr_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
 ) -> Vec<NodeOutputId> {
@@ -148,7 +148,7 @@ fn collect_stack_args_in_chain_order(
                     (offset, space, inputs[2], prev)
                 } else {
                     // Slow path: no side-table entry.
-                    match decompose_sp(ctx.function_ref(), addr, stack_ptr_vn, sp_memo) {
+                    match decompose_sp(ctx.function_ref(), addr, stack_vn, sp_memo) {
                         None => match alias_mode {
                             // Strict: cross-class store may alias an
                             // outgoing stack-arg slot.  Bail.
@@ -287,7 +287,7 @@ fn try_collect_stack_args(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
-    stack_ptr_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
 ) -> Result<OptimizationResult> {
@@ -307,7 +307,7 @@ fn try_collect_stack_args(
         ctx.as_view(),
         mem_in,
         stack_arg_offsets,
-        stack_ptr_vn,
+        stack_vn,
         sp_memo,
         alias_mode,
     );
@@ -340,7 +340,7 @@ pub struct CallStackArgCollect {
     /// Stack-pointer varnode used by [`decompose_sp`] when classifying
     /// chain stores as SP-relative.  Extracted from the calling
     /// convention at construction time.
-    stack_ptr_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     /// Cached positional-arg layout derived from `cc` at construction
     /// time.  Single source of truth for "what is positional arg `i`?";
     /// keeps the pass's stack-arg-offsets read aligned with the
@@ -356,8 +356,8 @@ impl CallStackArgCollect {
     /// and stack-pointer varnode.  Convenience constructor; production
     /// paths prefer [`Self::from_convention`].
     #[must_use]
-    pub fn new(stack_arg_offsets: Vec<i64>, stack_ptr_vn: rsleigh::Vn) -> Self {
-        let cc = crate::opt::sp_pass_cc::minimal_cc(stack_ptr_vn, Vec::new(), stack_arg_offsets);
+    pub fn new(stack_arg_offsets: Vec<i64>, stack_vn: rsleigh::Vn) -> Self {
+        let cc = crate::opt::sp_pass_cc::minimal_cc(stack_vn, Vec::new(), stack_arg_offsets);
         Self::from_convention(&cc)
     }
 
@@ -366,7 +366,7 @@ impl CallStackArgCollect {
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self {
-            stack_ptr_vn: cc.stack_ptr_vn,
+            stack_vn: cc.stack_vn,
             layout: strider_target::PositionalArgLayout::from_convention(cc),
             alias_mode: crate::opt::AliasMode::Strict,
         }
@@ -395,7 +395,7 @@ impl Optimizer for CallStackArgCollect {
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         let default_offsets = self.layout.stack_arg_offsets();
-        let stack_ptr_vn = self.stack_ptr_vn;
+        let stack_vn = self.stack_vn;
         for call_id in calls {
             let override_offsets: Option<Vec<i64>> = ctx
                 .function_ref()
@@ -408,7 +408,7 @@ impl Optimizer for CallStackArgCollect {
                 &mut ctx,
                 call_id,
                 stack_arg_offsets,
-                stack_ptr_vn,
+                stack_vn,
                 &mut sp_memo,
                 self.alias_mode,
             )?;

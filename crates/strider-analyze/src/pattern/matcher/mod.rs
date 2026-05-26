@@ -57,7 +57,7 @@ pub(crate) struct MatcherOptions {
 /// `Function::arg_index_to_nodes` side-table directly — O(1) per call,
 /// no scan.
 pub struct Matcher<'g> {
-    pub(super) graph: &'g strider_ir::Function,
+    pub(super) function: &'g strider_ir::Function,
     pub(super) entry: NodeId,
     pub(crate) options: MatcherOptions,
     /// Lazily-cached preorder traversal of `graph`.  Built on
@@ -83,27 +83,27 @@ pub struct Matcher<'g> {
 }
 
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher` over a built [`Graph`].  Wrapper around
-    /// [`Self::for_graph`] for callers that hold the fully-built form
+    /// Creates a new `Matcher` over a built [`Function`].  Wrapper around
+    /// [`Self::for_function`] for callers that hold the fully-built form
     /// (the common query path).  Rewrite-only callers that have just
-    /// `&Graph + NodeId` should use [`Self::for_graph`] directly.
+    /// `&Function + NodeId` should use [`Self::for_function`] directly.
     ///
     /// # Errors
     ///
-    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// Returns an error if the function has not been built (i.e. `entry`
     /// is `None`).
-    pub fn try_new(fn_graph: &'g strider_ir::Function) -> anyhow::Result<Self> {
-        let entry = fn_graph.entry().ok_or_else(|| {
+    pub fn try_new(function: &'g strider_ir::Function) -> anyhow::Result<Self> {
+        let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!("Matcher::try_new: entry node is not set")
         })?;
-        Ok(Self::for_graph(fn_graph, entry))
+        Ok(Self::for_function(function, entry))
     }
 
     /// Creates a new `Matcher` over a `(function, entry)` pair.
     #[must_use]
-    pub fn for_graph(graph: &'g strider_ir::Function, entry: NodeId) -> Self {
+    pub fn for_function(function: &'g strider_ir::Function, entry: NodeId) -> Self {
         Self {
-            graph,
+            function,
             entry,
             options: MatcherOptions::default(),
             preorder: std::cell::OnceCell::new(),
@@ -115,7 +115,7 @@ impl<'g> Matcher<'g> {
     /// it on first call.
     fn preorder_cached(&self) -> &[NodeId] {
         self.preorder
-            .get_or_init(|| self.graph.walk_from(self.entry).collect())
+            .get_or_init(|| self.function.walk_from(self.entry).collect())
             .as_slice()
     }
 
@@ -131,7 +131,7 @@ impl<'g> Matcher<'g> {
                 Vec<NodeId>,
             > = rustc_hash::FxHashMap::default();
             for &node in self.preorder_cached() {
-                let d = std::mem::discriminant(self.graph.node_kind(node));
+                let d = std::mem::discriminant(self.function.node_kind(node));
                 index.entry(d).or_default().push(node);
             }
             index
@@ -461,10 +461,10 @@ impl<'g> Matcher<'g> {
     /// at the same SP-relative offset); this method returns the first.  Use
     /// [`Self::function_args`] to iterate all carriers for an index.
     pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'g>> {
-        let node_id = *self.graph.arg_index_to_nodes(index).first()?;
+        let node_id = *self.function.arg_index_to_nodes(index).first()?;
         Some(FunctionArgHandle {
             node_id,
-            function: self.graph,
+            function: self.function,
             index,
         })
     }
@@ -473,7 +473,7 @@ impl<'g> Matcher<'g> {
     /// handle)` pairs for the first carrier of each index, sorted ascending
     /// by index.
     pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'g>)> + '_ {
-        let mut indices: Vec<u32> = self.graph.arg_indices().collect();
+        let mut indices: Vec<u32> = self.function.arg_indices().collect();
         indices.sort_unstable();
         indices.into_iter().filter_map(move |idx| {
             self.function_arg(idx).map(|h| (idx, h))
@@ -489,7 +489,7 @@ impl<'g> Matcher<'g> {
     /// while `function_arg(0)` and `function_arg(1)` return `None`.  Use
     /// [`Self::function_arg_len`] for the actual population count.
     pub fn function_arg_count(&self) -> usize {
-        self.graph
+        self.function
             .arg_indices()
             .max()
             .map_or(0, |m| (m as usize) + 1)
@@ -499,7 +499,7 @@ impl<'g> Matcher<'g> {
     /// side-table.  Unlike [`Self::function_arg_count`] this is insensitive
     /// to gaps in the index space.
     pub fn function_arg_len(&self) -> usize {
-        self.graph.arg_indices().count()
+        self.function.arg_indices().count()
     }
 
     // ── Dispatch entry points ────────────────────────────────────────────────
@@ -514,7 +514,7 @@ impl<'g> Matcher<'g> {
     /// [`Self::match_node_id`] dispatch.
     pub(crate) fn ctx(&self) -> crate::pattern::pat::traits::MatchCtx<'g, '_> {
         crate::pattern::pat::traits::MatchCtx {
-            graph: self.graph,
+            function: self.function,
             matcher: self,
         }
     }
@@ -611,13 +611,13 @@ impl<'g> Matcher<'g> {
             // cast, unwrap and loop.  Inlines what
             // `try_walk_through_cast` did via recursion.
             if !self.options.ignore_cast_mask.is_empty() {
-                let producer = self.graph.get_node_from_output(out);
+                let producer = self.function.get_node_from_output(out);
                 let bit = cast_mask::cast_mask_of(
-                    self.graph.node_kind(producer),
+                    self.function.node_kind(producer),
                 );
                 if !bit.is_empty()
                     && self.options.ignore_cast_mask.contains(bit)
-                    && let Some(value_input) = self.graph.node_inputs(producer).into_iter().next()
+                    && let Some(value_input) = self.function.node_inputs(producer).into_iter().next()
                 {
                     out = value_input;
                     continue;

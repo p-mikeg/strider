@@ -180,7 +180,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         //    decide which per-partition chains to break across this
         //    CallOther.
         if abi.has_memory_edge() {
-            let mem_out = self.builder.graph().memory_output_of(node)?;
+            let mem_out = self.builder.function().memory_output_of(node)?;
             self.builder.advance_cur_region_memory(mem_out)?;
         }
 

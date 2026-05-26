@@ -66,8 +66,8 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// (e.g. a big-endian binary decoded as LE, or AArch64 `brk`
     /// classified as the x86 stub) without losing ergonomics.
     pub(super) arch: strider_target::SleighArch,
-    /// The graph being constructed.
-    pub(super) graph: RegionGraph,
+    /// The region graph being constructed.
+    pub(super) region_graph: RegionGraph,
     /// Maps each region's `start_addr` to its [`NodeIndex`].
     /// Used by `find_region_containing_addr` and `split_region`.
     pub(super) start_addr_to_region_id: BTreeMap<PcodeInsnAddr, NodeIndex>,
@@ -111,7 +111,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
             start_addr: start_addr.into(),
             options,
             arch: *arch,
-            graph: RegionGraph::new(),
+            region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
             decode_cache: None,
@@ -194,7 +194,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
 
         let start_addr = region.start_addr;
-        let region_id = self.graph.add_node(region);
+        let region_id = self.region_graph.add_node(region);
         self.start_addr_to_region_id.insert(start_addr, region_id);
         Ok(region_id)
     }
@@ -208,7 +208,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         // Find the last region whose start_addr <= addr
         let (_, &region_id) = self.start_addr_to_region_id.range(..=addr).next_back()?;
 
-        let region = self.graph.node_weight(region_id)?;
+        let region = self.region_graph.node_weight(region_id)?;
         if region.contains_addr(addr) {
             Some((region_id, region))
         } else {
@@ -243,12 +243,12 @@ impl<R: rsleigh::MemReader> Builder<R> {
                 parent_region.ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
             if region.start_addr == addr {
                 // The address lands on the start of an existing region — wire an edge.
-                self.graph.add_edge(parent_region_id, region_id, edge_kind);
+                self.region_graph.add_edge(parent_region_id, region_id, edge_kind);
             } else {
                 // The address lands inside an existing region — split it and
                 // wire the edge to the new "second half".
                 let second_region = self.split_region(region_id, addr)?;
-                self.graph
+                self.region_graph
                     .add_edge(parent_region_id, second_region, edge_kind);
             }
         } else {
@@ -305,7 +305,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
             })?;
 
         Ok(Cfg {
-            graph: self.graph,
+            region_graph: self.region_graph,
             sleigh: self.sleigh,
             entry: starting_region,
             start_addr_to_region_id: self.start_addr_to_region_id,
@@ -382,7 +382,7 @@ mod tests {
         let r = make_region(&[(0x1000, 0), (0x1004, 0)]);
         let id = b.add_region(r).unwrap();
 
-        assert!(b.graph.node_weight(id).is_some());
+        assert!(b.region_graph.node_weight(id).is_some());
         assert_eq!(b.start_addr_to_region_id.get(&addr(0x1000, 0)), Some(&id));
     }
 
@@ -407,7 +407,7 @@ mod tests {
         let id2 = b.add_region(r2).unwrap();
 
         assert_ne!(id1, id2);
-        assert_eq!(b.graph.node_count(), 2);
+        assert_eq!(b.region_graph.node_count(), 2);
         assert_eq!(b.start_addr_to_region_id[&addr(0x1000, 0)], id1);
         assert_eq!(b.start_addr_to_region_id[&addr(0x1010, 0)], id2);
     }
@@ -496,13 +496,13 @@ mod tests {
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
-        let edges_before = b.graph.edge_references().count();
+        let edges_before = b.region_graph.edge_references().count();
         let map_len_before = b.start_addr_to_region_id.len();
 
         let result = b.split_region(id, addr(0x1000, 0)).unwrap();
         assert_eq!(result, id);
-        assert_eq!(b.graph.node_count(), 1);
-        assert_eq!(b.graph.edge_references().count(), edges_before);
+        assert_eq!(b.region_graph.node_count(), 1);
+        assert_eq!(b.region_graph.edge_references().count(), edges_before);
         assert_eq!(b.start_addr_to_region_id.len(), map_len_before);
     }
 
@@ -519,7 +519,7 @@ mod tests {
             .unwrap();
         let second = b.split_region(original, addr(0x1008, 0)).unwrap();
         assert_eq!(second, original, "second half retains original NodeIndex");
-        assert_eq!(b.graph.node_count(), 2);
+        assert_eq!(b.region_graph.node_count(), 2);
     }
 
     #[test]
@@ -535,12 +535,12 @@ mod tests {
             .unwrap();
         b.split_region(original, addr(0x1008, 0)).unwrap();
 
-        assert_eq!(b.graph[original].start_addr, addr(0x1008, 0));
-        assert_eq!(b.graph[original].insns.len(), 2);
+        assert_eq!(b.region_graph[original].start_addr, addr(0x1008, 0));
+        assert_eq!(b.region_graph[original].insns.len(), 2);
 
         let first_id = b.start_addr_to_region_id[&addr(0x1000, 0)];
-        assert_eq!(b.graph[first_id].start_addr, addr(0x1000, 0));
-        assert_eq!(b.graph[first_id].insns.len(), 2);
+        assert_eq!(b.region_graph[first_id].start_addr, addr(0x1000, 0));
+        assert_eq!(b.region_graph[first_id].insns.len(), 2);
     }
 
     #[test]
@@ -551,7 +551,7 @@ mod tests {
             .unwrap();
         b.split_region(original, addr(0x1008, 0)).unwrap();
 
-        let edges: Vec<_> = b.graph.edge_references().collect();
+        let edges: Vec<_> = b.region_graph.edge_references().collect();
         assert_eq!(edges.len(), 1);
         assert_eq!(*edges[0].weight(), RegionEdgeKind::Fallthrough);
         assert_eq!(edges[0].target(), original);
@@ -564,18 +564,18 @@ mod tests {
         let b_id = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
-        b.graph.add_edge(a, b_id, RegionEdgeKind::Branch);
+        b.region_graph.add_edge(a, b_id, RegionEdgeKind::Branch);
 
         b.split_region(b_id, addr(0x1004, 0)).unwrap();
 
         let first = b.start_addr_to_region_id[&addr(0x1000, 0)];
-        let incoming: Vec<_> = b.graph.edges_directed(first, petgraph::Incoming).collect();
+        let incoming: Vec<_> = b.region_graph.edges_directed(first, petgraph::Incoming).collect();
         assert_eq!(incoming.len(), 1);
         assert_eq!(*incoming[0].weight(), RegionEdgeKind::Branch);
         assert_eq!(incoming[0].source(), a);
 
         let second_branch_incoming: Vec<_> = b
-            .graph
+            .region_graph
             .edges_directed(b_id, petgraph::Incoming)
             .filter(|e| *e.weight() == RegionEdgeKind::Branch)
             .collect();
@@ -594,13 +594,13 @@ mod tests {
         let second = b.split_region(original, addr(0x1008, 0)).unwrap();
         assert_eq!(second, original);
 
-        assert_eq!(b.graph[original].start_addr, addr(0x1008, 0));
-        assert_eq!(b.graph[original].insns.len(), 1);
-        assert_eq!(b.graph[original].insns[0].addr, addr(0x100c, 0));
+        assert_eq!(b.region_graph[original].start_addr, addr(0x1008, 0));
+        assert_eq!(b.region_graph[original].insns.len(), 1);
+        assert_eq!(b.region_graph[original].insns[0].addr, addr(0x100c, 0));
 
         let first_id = b.start_addr_to_region_id[&addr(0x1000, 0)];
-        assert_eq!(b.graph[first_id].insns.len(), 2);
-        assert_eq!(b.graph[first_id].insns.last().unwrap().addr, addr(0x1004, 0));
+        assert_eq!(b.region_graph[first_id].insns.len(), 2);
+        assert_eq!(b.region_graph[first_id].insns.last().unwrap().addr, addr(0x1004, 0));
 
         assert_eq!(b.start_addr_to_region_id[&addr(0x1008, 0)], original);
     }

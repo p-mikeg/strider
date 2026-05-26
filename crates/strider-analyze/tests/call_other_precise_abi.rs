@@ -58,7 +58,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let mut found_name: Option<&'static str> = None;
     for n in cpuid_names {
         let pat = strider_analyze::pattern::Pat::from(call_other().name(n));
-        let matches = Matcher::try_new(&outcome.graph).unwrap().find_all(&pat);
+        let matches = Matcher::try_new(&outcome.function).unwrap().find_all(&pat);
         if let Some(m) = matches.first() {
             found_node = Some(m.root());
             found_name = Some(n);
@@ -71,7 +71,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     // Outputs: [ctrl, mem, value(tmpptr)].  Empty implicit_writes
     // (Sleigh handles register writes via subsequent Loads from the
     // returned tmpptr).  3 outputs total.
-    let n_outs = outcome.graph.node_outputs(node).len();
+    let n_outs = outcome.function.node_outputs(node).len();
     assert_eq!(
         n_outs, 3,
         "{name} CallOther: ctrl + mem + value (tmpptr); got {n_outs}"
@@ -106,7 +106,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let outcome = strider_h.analyze_cfg(&cfg).expect("analyze_cfg");
 
     let pat = strider_analyze::pattern::Pat::from(call_other().name("UnkSytemRegRead"));
-    let matches = Matcher::try_new(&outcome.graph).unwrap().find_all(&pat);
+    let matches = Matcher::try_new(&outcome.function).unwrap().find_all(&pat);
     assert_eq!(
         matches.len(),
         1,
@@ -116,7 +116,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
 
     // Outputs: [ctrl, mem, value(x0)].  No implicit clobbers.
     // 3 outputs total.
-    let n_outs = outcome.graph.node_outputs(node).len();
+    let n_outs = outcome.function.node_outputs(node).len();
     assert_eq!(
         n_outs, 3,
         "UnkSytemRegRead CallOther: ctrl + mem + value (x0); got {n_outs}"

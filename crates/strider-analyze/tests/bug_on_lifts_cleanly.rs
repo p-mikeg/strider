@@ -36,7 +36,7 @@ fn x86_64_ud2_terminates_cleanly() {
         outcome.unresolved_branches.len(),
     );
     assert!(
-        cfg.graph()
+        cfg.region_graph()
             .node_weights()
             .any(|r| matches!(r.terminator, RegionTerminator::NoReturn)),
         "expected at least one NoReturn region in cfg",
@@ -64,7 +64,7 @@ fn aarch64_brk_terminates_cleanly() {
         outcome.unresolved_branches.len(),
     );
     assert!(
-        cfg.graph()
+        cfg.region_graph()
             .node_weights()
             .any(|r| matches!(r.terminator, RegionTerminator::NoReturn)),
         "expected at least one NoReturn region in cfg",

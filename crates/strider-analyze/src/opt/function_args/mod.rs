@@ -53,7 +53,7 @@ pub struct FunctionArgDetect {
     /// Stack-pointer varnode used by [`decompose_sp`] when classifying
     /// stack-arg `Load` addresses.  Extracted from the calling
     /// convention at construction time.
-    stack_ptr_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     /// Cached positional-arg layout derived from `cc` at construction
     /// time.  The pass reads `layout.first_stack_index()` to compute
     /// the register-vs-stack boundary instead of the
@@ -72,10 +72,10 @@ impl FunctionArgDetect {
     #[must_use]
     pub fn new(
         arg_passing_regs: Vec<rsleigh::Vn>,
-        stack_ptr_vn: rsleigh::Vn,
+        stack_vn: rsleigh::Vn,
         stack_arg_offsets: Vec<i64>,
     ) -> Self {
-        let cc = crate::opt::sp_pass_cc::minimal_cc(stack_ptr_vn, arg_passing_regs, stack_arg_offsets);
+        let cc = crate::opt::sp_pass_cc::minimal_cc(stack_vn, arg_passing_regs, stack_arg_offsets);
         Self::from_convention(&cc)
     }
 
@@ -84,7 +84,7 @@ impl FunctionArgDetect {
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self {
-            stack_ptr_vn: cc.stack_ptr_vn,
+            stack_vn: cc.stack_vn,
             layout: strider_target::PositionalArgLayout::from_convention(cc),
             alias_mode: crate::opt::AliasMode::Strict,
         }
@@ -117,7 +117,7 @@ impl Optimizer for FunctionArgDetect {
         detect_register_args(&mut ctx, &arg_passing_regs)?;
         detect_stack_args(
             &mut ctx,
-            self.stack_ptr_vn,
+            self.stack_vn,
             &stack_arg_offsets,
             self.layout.first_stack_index() as usize,
             self.alias_mode,
@@ -254,7 +254,7 @@ fn detect_register_args(
 /// registered into the side-table for that index.
 fn detect_stack_args(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
     alias_mode: crate::opt::AliasMode,
@@ -282,7 +282,7 @@ fn detect_stack_args(
         };
         let load_size = load_ty.byte_size() as i64;
         let Some(SpExpr::Terminal { base: _, offset }) =
-            decompose_sp(ctx.function_ref(), addr, sp_vn, &mut memo)
+            decompose_sp(ctx.function_ref(), addr, stack_vn, &mut memo)
         else {
             continue;
         };
@@ -299,7 +299,7 @@ fn detect_stack_args(
             memory,
             offset,
             load_size,
-            sp_vn,
+            stack_vn,
             &mut memo,
             &mut seen,
             &mut shadow_memo,
@@ -400,7 +400,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 struct DirtyStep<'a> {
     offset: i64,
     load_size: i64,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     sp_memo: &'a mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
 }
@@ -410,16 +410,16 @@ impl<'a> MemChainStep for DirtyStep<'a> {
 
     fn classify(
         &mut self,
-        graph: &strider_ir::Function,
+        function: &strider_ir::Function,
         _mem: NodeOutputId,
         node: NodeId,
     ) -> Result<StepResult<bool>> {
-        match *graph.node_kind(node) {
+        match *function.node_kind(node) {
             NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
             NodeKind::Store(_) => Ok(match step_through_store(
-                graph,
+                function,
                 node,
-                self.sp_vn,
+                self.stack_vn,
                 self.sp_memo,
                 self.offset,
                 self.load_size,
@@ -430,7 +430,7 @@ impl<'a> MemChainStep for DirtyStep<'a> {
             }),
             NodeKind::MemPhi => {
                 // Inputs: [PHI, MEM, MEM, ...].
-                let inputs = graph.node_inputs(node);
+                let inputs = function.node_inputs(node);
                 if inputs.len() < 2 {
                     return Err(anyhow::anyhow!(
                         "mem_chain_is_dirty: malformed MemPhi with zero predecessor inputs",
@@ -445,14 +445,14 @@ impl<'a> MemChainStep for DirtyStep<'a> {
                 })
             }
             NodeKind::Call | NodeKind::CallOther { .. } => {
-                let inputs = graph.node_inputs(node);
+                let inputs = function.node_inputs(node);
                 if inputs.len() < 2 {
                     return Err(anyhow::anyhow!(
                         "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
-                        graph.node_kind(node),
+                        function.node_kind(node),
                     ));
                 }
-                let args_start = if matches!(graph.node_kind(node), NodeKind::Call) {
+                let args_start = if matches!(function.node_kind(node), NodeKind::Call) {
                     3
                 } else {
                     2
@@ -460,7 +460,7 @@ impl<'a> MemChainStep for DirtyStep<'a> {
                 let load_offset = self.offset;
                 let load_size = self.load_size;
                 for arg in inputs.iter().skip(args_start) {
-                    let Some(expr) = decompose_sp(graph, arg, self.sp_vn, self.sp_memo) else {
+                    let Some(expr) = decompose_sp(function, arg, self.stack_vn, self.sp_memo) else {
                         continue;
                     };
                     let offsets: &[i64] = match &expr {
@@ -503,7 +503,7 @@ fn mem_chain_is_dirty(
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     memo: &mut ShadowMemo,
@@ -514,7 +514,7 @@ fn mem_chain_is_dirty(
         return Ok(cached);
     }
 
-    let mut step = DirtyStep { offset, load_size, sp_vn, sp_memo, alias_mode };
+    let mut step = DirtyStep { offset, load_size, stack_vn, sp_memo, alias_mode };
     let result = walk_mem_chain(
         ctx.function_ref(),
         mem,

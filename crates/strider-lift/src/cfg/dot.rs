@@ -26,7 +26,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     fn create_initial_state(&self) -> Self::State {}
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        self.0.graph.node_indices()
+        self.0.region_graph.node_indices()
     }
 
     fn dump_as_dot(
@@ -40,7 +40,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         let dot_id = node_id.index().to_string();
         let node = self
             .0
-            .graph
+            .region_graph
             .node_weight(node_id)
             .ok_or_else(|| anyhow!("invalid region index {node_id:?}"))?;
         let first_insn_index = node.start_addr.insn_index;
@@ -68,7 +68,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         out.node(&dot_id, &label, "box", &[]);
 
         // Incoming edges
-        for edge in self.0.graph.edges_directed(node_id, petgraph::Incoming) {
+        for edge in self.0.region_graph.edges_directed(node_id, petgraph::Incoming) {
             let src_id = edge.source().index().to_string();
             let edge_label = format!("{:?}", edge.weight());
             let edge_style = match edge.weight() {

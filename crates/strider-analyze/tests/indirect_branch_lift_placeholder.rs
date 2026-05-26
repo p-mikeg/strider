@@ -72,7 +72,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let graph = strider
         .analyze_cfg(&cfg)
         .expect("strider must lift unresolved branches as IndirectBranch placeholder")
-        .graph;
+        .function;
 
     // Exactly one IndirectBranch node — strider emitted the
     // placeholder, did not double-emit, and did not lift the

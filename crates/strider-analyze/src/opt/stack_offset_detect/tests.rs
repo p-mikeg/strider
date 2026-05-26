@@ -9,7 +9,7 @@
 
 use strider_ir::Function;
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, sp_vn_x86};
+use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::opt::StackOffsetDetect;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -37,7 +37,7 @@ fn stack_store_load_return(sp: rsleigh::Vn) -> Function {
 
 #[test]
 fn sp_relative_store_and_load_get_offset_stamped() {
-    let sp = sp_vn_x86();
+    let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
 
     assert_eq!(run(&mut f, sp), OptimizationResult::Changed);
@@ -59,7 +59,7 @@ fn sp_relative_store_and_load_get_offset_stamped() {
 
 #[test]
 fn non_sp_relative_store_leaves_side_table_untouched() {
-    let sp = sp_vn_x86();
+    let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, _sp_v| {
         let addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
         let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
@@ -78,7 +78,7 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
 
 #[test]
 fn rerun_after_first_pass_reports_no_change() {
-    let sp = sp_vn_x86();
+    let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
 
     assert_eq!(run(&mut f, sp), OptimizationResult::Changed);
@@ -87,7 +87,7 @@ fn rerun_after_first_pass_reports_no_change() {
 
 #[test]
 fn post_pass_function_validates() {
-    let sp = sp_vn_x86();
+    let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
     run(&mut f, sp);
     let entry = f.entry().unwrap();

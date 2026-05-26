@@ -15,7 +15,7 @@ use super::Matcher;
 /// multiple consumers. We refuse to pick arbitrarily when a control output
 /// forks, so callers see a clean no-match rather than an unpredictable one.
 pub(crate) fn next_control_node(matcher: &Matcher, out: NodeOutputId) -> Option<NodeId> {
-    let mut uses = matcher.graph.output_uses(out);
+    let mut uses = matcher.function.output_uses(out);
     let first = uses.next()?;
     if uses.next().is_some() {
         return None;

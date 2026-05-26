@@ -51,7 +51,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let (outcome, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
     let unresolved = outcome.unresolved_branches.clone();
-    let mut graph = outcome.graph;
+    let mut graph = outcome.function;
 
     if unresolved.is_empty() {
         // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
@@ -77,7 +77,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn;
-    let sp_vn = Some(ana.calling_convention().stack_ptr_vn);
+    let stack_vn = Some(ana.calling_convention().stack_vn);
     let rom_for_classify = rom_for_opt;
     for (anchor_addr, anchor_output) in &unresolved {
         // After the optimizer runs, the placeholder IndirectBranch's
@@ -119,7 +119,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
                 *live,
                 lr_vn,
                 Some(rom_for_classify.as_ref()),
-                sp_vn,
+                stack_vn,
                 &known,
             );
             if resolved.is_some() {

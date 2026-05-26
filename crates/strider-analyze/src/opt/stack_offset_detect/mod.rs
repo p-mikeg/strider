@@ -19,14 +19,14 @@ use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 pub struct StackOffsetDetect {
     /// Stack-pointer varnode used by `decompose_sp` to recognise
     /// SP-relative addresses.
-    sp_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
 }
 
 impl StackOffsetDetect {
     /// Convenience constructor for tests.
     #[must_use]
-    pub const fn new(sp_vn: rsleigh::Vn) -> Self {
-        Self { sp_vn }
+    pub const fn new(stack_vn: rsleigh::Vn) -> Self {
+        Self { stack_vn }
     }
 
     /// Production constructor — takes the stack-pointer varnode from
@@ -34,7 +34,7 @@ impl StackOffsetDetect {
     #[must_use]
     pub const fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self {
-            sp_vn: cc.stack_ptr_vn,
+            stack_vn: cc.stack_vn,
         }
     }
 }
@@ -60,7 +60,7 @@ impl Optimizer for StackOffsetDetect {
                 _ => continue,
             };
             if let Some(SpExpr::Terminal { offset, .. }) =
-                decompose_sp(function, addr, self.sp_vn, &mut memo)
+                decompose_sp(function, addr, self.stack_vn, &mut memo)
             {
                 to_stamp.push((node, offset));
             }

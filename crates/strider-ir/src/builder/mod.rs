@@ -132,12 +132,12 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
 /// registers are excluded.
 fn build_call_clobbered_list(
     callee_saved_vars: &[rsleigh::Vn],
-    stack_ptr_vn: Option<rsleigh::Vn>,
+    stack_vn: Option<rsleigh::Vn>,
     ret_vars: &[rsleigh::Vn],
     all_variables: &[rsleigh::Vn],
 ) -> Vec<rsleigh::Vn> {
     let is_clobbered =
-        |v: &rsleigh::Vn| !callee_saved_vars.contains(v) && Some(*v) != stack_ptr_vn;
+        |v: &rsleigh::Vn| !callee_saved_vars.contains(v) && Some(*v) != stack_vn;
     let ret_prefix = ret_vars
         .iter()
         .copied()
@@ -157,7 +157,7 @@ fn build_call_clobbered_list(
 /// state.
 ///
 /// All calling-convention data lives directly on
-/// `graph.cc_metadata` ([`crate::graph::CcMetadata`]); the builder
+/// `function.cc_metadata` ([`crate::graph::CcMetadata`]); the builder
 /// holds only genuine build-time scratch (region map, current region,
 /// the `InitialMemory` output, the lazy largest-container cache, and
 /// the per-insn `lift_addr` attribution).
@@ -165,8 +165,8 @@ pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
     /// Calling-convention state (variables, variable_to_id,
     /// call_clobbered, ret_val_regs, no_memory_clobber, arg_passing_vars,
-    /// stack_ptr_vn, ret_stack_pop) lives on `graph.cc_metadata`.
-    pub(crate) graph: Function,
+    /// stack_vn, ret_stack_pop) lives on `function.cc_metadata`.
+    pub(crate) function: Function,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: NodeOutputId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
@@ -204,7 +204,7 @@ pub struct FunctionBuilder {
 macro_rules! require_kind {
     (@kind $name:ident, $pred:ident, $label:literal) => {
         pub(super) fn $name(&self, output: NodeOutputId) -> Result<()> {
-            if !self.graph().output_kind(output).$pred() {
+            if !self.function().output_kind(output).$pred() {
                 return Err(anyhow!(concat!("output {:?} is not ", $label), output));
             }
             Ok(())
@@ -212,7 +212,7 @@ macro_rules! require_kind {
     };
     (@kind_with_got $name:ident, $pred:ident, $label:literal) => {
         pub(super) fn $name(&self, output: NodeOutputId) -> Result<()> {
-            let kind = self.graph().output_kind(output);
+            let kind = self.function().output_kind(output);
             if !kind.$pred() {
                 return Err(anyhow!(
                     concat!("output {:?} is not ", $label, " (got {:?})"),
@@ -243,10 +243,10 @@ macro_rules! require_kind {
 
 impl FunctionBuilder {
     /// Returns a reference to the underlying [`Function`] (graph + overlay).
-    /// Pairs with [`Self::graph_mut`] and [`Self::entry`].
+    /// Pairs with [`Self::function_mut`] and [`Self::entry`].
     #[must_use]
-    pub fn graph(&self) -> &Function {
-        &self.graph
+    pub fn function(&self) -> &Function {
+        &self.function
     }
 
     /// Returns a mutable reference to the underlying [`Function`] (graph + overlay).
@@ -257,22 +257,22 @@ impl FunctionBuilder {
     /// `(function, entry)` together because `entry` anchors the
     /// reachable-node walk the validator's local-typing check is scoped
     /// to.
-    pub fn graph_mut(&mut self) -> &mut Function {
-        &mut self.graph
+    pub fn function_mut(&mut self) -> &mut Function {
+        &mut self.function
     }
 
     /// Returns the recorded entry [`NodeId`] of the function being
     /// built — the same id that [`Self::build`] would record on the
     /// produced [`crate::Function`]'s entry.
     ///
-    /// CORRECTNESS — pairs with [`Self::graph_mut`]: opt passes that
-    /// take `(graph, entry)` get a stable handle here.  The entry node
+    /// CORRECTNESS — pairs with [`Self::function_mut`]: opt passes that
+    /// take `(function, entry)` get a stable handle here.  The entry node
     /// id never changes once the builder's first region is registered,
     /// so callers may cache it across iterations.
     #[must_use]
     #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
     pub fn entry(&self) -> NodeId {
-        self.graph
+        self.function
             .entry()
             .expect("entry is always set by build_entry(), which new_raw() calls unconditionally")
     }
@@ -341,15 +341,15 @@ impl FunctionBuilder {
             &cc.arg_passing_regs,
             &cc.callee_saved_regs,
             &combined_ret_vars,
-            Some(cc.stack_ptr_vn),
+            Some(cc.stack_vn),
             cc.ret_stack_pop,
         )?;
         // Embed the full CC so accessors (`no_memory_clobber`,
-        // `stack_ptr_vn`, `ret_stack_pop`, `link_register_vn`, ...)
+        // `stack_vn`, `ret_stack_pop`, `link_register_vn`, ...)
         // can delegate without duplicating these scalars on
         // `CcMetadata`.  Must happen before any read of cc_metadata's
         // ABI facts.
-        builder.graph.cc_metadata_mut().cc = Some(cc.clone());
+        builder.function.cc_metadata_mut().cc = Some(cc.clone());
         Ok(builder)
     }
 
@@ -376,20 +376,20 @@ impl FunctionBuilder {
     /// has a byte size with no matching `NodeOutputType` (the entry-block
     /// builder allocates an `InitialVar` per tracked variable), or
     /// propagates a `BuiltCallingConvention::try_new` validation error
-    /// from the synthesised CC when `stack_ptr_vn` is `Some` (currently
+    /// from the synthesised CC when `stack_vn` is `Some` (currently
     /// only fires for a negative `ret_stack_pop`).
     pub fn new_raw(
         all_used_variables: Vec<rsleigh::Vn>,
         arg_passing_vars: &[rsleigh::Vn],
         callee_saved_vars: &[rsleigh::Vn],
         ret_vars: &[rsleigh::Vn],
-        stack_ptr_vn: Option<rsleigh::Vn>,
+        stack_vn: Option<rsleigh::Vn>,
         ret_stack_pop: i64,
     ) -> Result<Self> {
         let all_variables = dedup_overlapping_largest(&all_used_variables);
         let call_clobbered = build_call_clobbered_list(
             callee_saved_vars,
-            stack_ptr_vn,
+            stack_vn,
             ret_vars,
             &all_variables,
         );
@@ -427,17 +427,17 @@ impl FunctionBuilder {
             .filter_map(|vn| upgrade_to_tracked_for(&variable_to_id, *vn))
             .collect();
 
-        // Pure-ABI facts (stack_ptr_vn / ret_stack_pop / no_memory_clobber /
+        // Pure-ABI facts (stack_vn / ret_stack_pop / no_memory_clobber /
         // link_register_vn) are surfaced through `CcMetadata::cc`.  When
-        // `new_raw` is handed a `stack_ptr_vn = Some(sp)`, synthesise a
+        // `new_raw` is handed a `stack_vn = Some(sp)`, synthesise a
         // minimal `BuiltCallingConvention` carrying just that SP and the
-        // ret_stack_pop — enough for `Function::stack_ptr_vn` /
+        // ret_stack_pop — enough for `Function::stack_vn` /
         // `ret_stack_pop` accessors to report the same scalars the test
         // fixture supplied.  When SP is `None`, leave `cc = None` and the
         // accessors default to `None` / `0`.  Production callers go
         // through [`Self::new`], which overwrites this synthetic CC with
         // the real one immediately after `new_raw` returns.
-        let synthesised_cc = stack_ptr_vn
+        let synthesised_cc = stack_vn
             .map(|sp| {
                 strider_target::BuiltCallingConvention::try_new(
                     Vec::new(),
@@ -464,7 +464,7 @@ impl FunctionBuilder {
             cc.cc = synthesised_cc;
         }
         let mut fb = FunctionBuilder {
-            graph: function,
+            function,
             entry_memory: NodeOutputId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
@@ -504,9 +504,9 @@ impl FunctionBuilder {
         output_kinds: impl IntoIterator<Item = NodeOutputKind>,
     ) -> NodeId {
         let addr = self.lift_addr;
-        let node_id = self.graph_mut().create_node(kind, inputs, output_kinds);
+        let node_id = self.function_mut().create_node(kind, inputs, output_kinds);
         if let Some(addr) = addr {
-            self.graph_mut().extend_asm_fingerprint(node_id, &[addr]);
+            self.function_mut().extend_asm_fingerprint(node_id, &[addr]);
         }
         node_id
     }
@@ -520,12 +520,12 @@ impl FunctionBuilder {
         output_type: NodeOutputType,
     ) -> NodeOutputId {
         let node = self.create_node(kind, inputs, [NodeOutputKind::OutputType(output_type)]);
-        self.graph().node_outputs(node)[0]
+        self.function().node_outputs(node)[0]
     }
 
     /// Returns an iterator over all tracked varnodes.
     pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
-        self.graph.cc_metadata.variable_to_id.keys()
+        self.function.cc_metadata.variable_to_id.keys()
     }
 
     /// Returns the largest tracked variable in the same fixed-offset
@@ -564,7 +564,7 @@ impl FunctionBuilder {
             // overflow `u64`.  Saturation is safe: a saturated
             // endpoint can only fail the containment test (it's the
             // weakest possible upper bound), never spuriously succeed.
-            let vars: Vec<rsleigh::Vn> = self.graph.cc_metadata.variable_to_id.keys().copied().collect();
+            let vars: Vec<rsleigh::Vn> = self.function.cc_metadata.variable_to_id.keys().copied().collect();
             let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
                 FxHashMap::with_capacity_and_hasher(vars.len(), Default::default());
 
@@ -638,14 +638,14 @@ impl FunctionBuilder {
     /// stores.
     #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
-        self.graph.cc_metadata.variables.get(var_id).copied()
+        self.function.cc_metadata.variables.get(var_id).copied()
     }
 
     /// Returns the calling convention's return-value registers, in ABI order.
     /// Empty for synthetic test builds that didn't supply a convention.
     #[must_use]
     pub fn ret_val_vars(&self) -> &[rsleigh::Vn] {
-        &self.graph.cc_metadata.ret_val_regs
+        &self.function.cc_metadata.ret_val_regs
     }
 
     /// Finalises and returns the completed [`crate::Function`],
@@ -664,23 +664,23 @@ impl FunctionBuilder {
         // order used by `build_call_other_modeled` / `build_call_other_terminal`
         // so the i-th clobber output of a CallOther node corresponds to
         // `call_other_clobbered[i]`.
-        let stack_ptr_vn = self.graph.stack_ptr_vn();
+        let stack_vn = self.function.stack_vn();
         let call_other_clobbered: Vec<rsleigh::Vn> = self
-            .graph
+            .function
             .cc_metadata
             .variables
             .values()
             .copied()
-            .filter(|v| Some(*v) != stack_ptr_vn)
+            .filter(|v| Some(*v) != stack_vn)
             .collect();
-        self.graph.cc_metadata_mut().call_other_clobbered = call_other_clobbered;
+        self.function.cc_metadata_mut().call_other_clobbered = call_other_clobbered;
 
         #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
         let entry = self
-            .graph
+            .function
             .entry()
             .expect("entry is always set by build_entry(), which new_raw() calls unconditionally");
-        crate::validate::validate(&self.graph, entry)?;
-        Ok(self.graph)
+        crate::validate::validate(&self.function, entry)?;
+        Ok(self.function)
     }
 }

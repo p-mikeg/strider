@@ -60,7 +60,7 @@ use crate::pattern::{Capture, and as and_pat, any_int_const, or as or_pat, var};
 /// doesn't match and an SP varnode is supplied.
 ///
 /// `anchor_output` is the placeholder Return's value-input slot.
-/// `stack_ptr_vn` is the calling convention's stack-pointer varnode
+/// `stack_vn` is the calling convention's stack-pointer varnode
 /// — without it we can't decompose load addresses, so the arm is
 /// skipped if the orchestrator passes `None`.
 ///
@@ -78,10 +78,10 @@ use crate::pattern::{Capture, and as and_pat, any_int_const, or as or_pat, var};
 pub fn classify_stack_array(
     ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
-    stack_ptr_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = ctx.function_ref();
+    let function = ctx.function_ref();
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM, `& 0xFFFFFFFFFFFFFFFE` for 64-bit
@@ -92,7 +92,7 @@ pub fn classify_stack_array(
     // returning.  Non-And anchors take the path with `mask = !0`.
     let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_output);
 
-    let shape = match_stack_array_shape(ctx, load_anchor, stack_ptr_vn)?;
+    let shape = match_stack_array_shape(ctx, load_anchor, stack_vn)?;
     let bound = bound_via_known_bits(ctx, shape.idx_output, known)
         .or_else(|| bound_via_predecessor_if(ctx, anchor_output, shape.idx_output, known))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
@@ -107,11 +107,11 @@ pub fn classify_stack_array(
         let scaled = i_signed.checked_mul(stride_signed)?;
         let off = shape.base_offset.checked_add(scaled)?;
         let value = find_stack_stored_value_at_offset(
-            graph,
+            function,
             shape.mem_input,
             off,
             shape.value_type,
-            stack_ptr_vn,
+            stack_vn,
             &mut memo,
             &mut walk_memo,
         )?;
@@ -125,7 +125,7 @@ pub fn classify_stack_array(
         // functions of the inner constant, exactly mirroring the
         // `Truncate(IntConst)` / `Extend(IntConst)` arms in
         // `classify_anchor`.
-        let c = peel_to_u64_const(graph, value)?;
+        let c = peel_to_u64_const(function, value)?;
         targets.push(c & target_mask);
     }
     targets.sort_unstable();
@@ -328,18 +328,18 @@ struct StackArrayShape {
 fn match_stack_array_shape(
     ctx: crate::pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
-    stack_ptr_vn: rsleigh::Vn,
+    stack_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
-    let graph = ctx.function_ref();
-    let load_node = graph.get_node_from_output(anchor_output);
-    let NodeKind::Load(_) = *graph.node_kind(load_node) else {
+    let function = ctx.function_ref();
+    let load_node = function.get_node_from_output(anchor_output);
+    let NodeKind::Load(_) = *function.node_kind(load_node) else {
         return None;
     };
-    let value_type = graph.output_kind(anchor_output).as_value()?;
+    let value_type = function.output_kind(anchor_output).as_value()?;
     if !value_type.is_integer() {
         return None;
     }
-    let [mem_input, addr_output] = graph.node_inputs_exact::<2>(load_node).ok()?;
+    let [mem_input, addr_output] = function.node_inputs_exact::<2>(load_node).ok()?;
 
     // Flatten the address into a sum of terms.  ARM lifters sometimes
     // emit `Add(Add(sp, idx*stride), const)` (a nested Add tree)
@@ -347,7 +347,7 @@ fn match_stack_array_shape(
     // produce.  Walk every `Add` / `Sub` node transitively to collect
     // the additive operands.
     let mut terms: Vec<NodeOutputId> = Vec::new();
-    flatten_add_tree(graph, addr_output, &mut terms, &mut 0);
+    flatten_add_tree(function, addr_output, &mut terms, &mut 0);
 
     // Among the terms, exactly one must be a `Mul`/`ShiftLeft` shape
     // we can crack into (idx, stride).  The rest must sum (with
@@ -375,7 +375,7 @@ fn match_stack_array_shape(
         if i == idx_pos {
             continue;
         }
-        match decompose_sp(graph, *t, stack_ptr_vn, &mut sp_memo) {
+        match decompose_sp(function, *t, stack_vn, &mut sp_memo) {
             Some(SpExpr::Terminal { base: _, offset }) => {
                 if found_sp {
                     // Two SP-rooted terms summed together (`sp+sp+...`)
@@ -392,7 +392,7 @@ fn match_stack_array_shape(
             }
             None => {
                 // Maybe a pure constant (not SP-rooted).
-                if let Some(c) = crate::opt::sp_expr::int_const_signed(graph, *t) {
+                if let Some(c) = crate::opt::sp_expr::int_const_signed(function, *t) {
                     base_offset_acc = base_offset_acc.checked_add(c)?;
                 } else {
                     return None;
@@ -546,7 +546,7 @@ mod tests {
     use super::*;
     use strider_ir::node::NodeOutputType;
     use strider_ir::ExtendOp;
-    use strider_ir_test_utils::{sp_vn_aarch64 as sp64, RegisterSet};
+    use strider_ir_test_utils::{stack_vn_aarch64 as sp64, RegisterSet};
     use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
 
     fn build_two_target_array(
@@ -577,24 +577,24 @@ mod tests {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let arg_u32 = b.graph_mut().create_node(
+        let arg_u32 = b.function_mut().create_node(
             NodeKind::Truncate,
             [arg_val],
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
-        b.graph_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        b.function_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let one = b.build_int_const(1u64, NodeOutputType::U32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, NodeOutputType::U32)
             .unwrap();
-        let idx_u64 = b.graph_mut().create_node(
+        let idx_u64 = b.function_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        b.graph_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        b.function_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
         let idx_scaled = b
             .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
@@ -1037,24 +1037,24 @@ mod tests {
         let arg_val = b.read_variable(&arg_vn).unwrap();
         // Build the dispatch site: load through sp+base+idx*stride with
         // idx masked to a single value (& 0 → idx is always 0).
-        let arg_u32 = b.graph_mut().create_node(
+        let arg_u32 = b.function_mut().create_node(
             NodeKind::Truncate,
             [arg_val],
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
-        b.graph_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        b.function_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let mask0 = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, NodeOutputType::U32)
             .unwrap();
-        let idx_u64 = b.graph_mut().create_node(
+        let idx_u64 = b.function_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
             [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        b.graph_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        b.function_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
         let idx_scaled = b
             .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
