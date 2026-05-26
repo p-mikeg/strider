@@ -327,26 +327,23 @@ impl PyStackLoadForward {
     }
 }
 
-/// `AliasSplit(sleigh, cc, arch)` — splits the unified memory chain
-/// into independent SSA chains per alias class (Stack / Unknown) via
-/// `MemProject` / `MemUnion` boundary nodes.  Annotates SP-relative
-/// `Store` offsets in `Function::stack_offsets`.
-#[pyclass(name = "AliasSplit", module = "strider.opt")]
-pub struct PyAliasSplit {
-    pub(crate) inner: strider_analyze::opt::AliasSplit,
+/// `StackOffsetDetect(sleigh, cc)` — stamps every SP-relative
+/// Store/Load's concrete offset in `Function::stack_offsets`.
+#[pyclass(name = "StackOffsetDetect", module = "strider.opt")]
+pub struct PyStackOffsetDetect {
+    pub(crate) inner: strider_analyze::opt::StackOffsetDetect,
 }
 #[pymethods]
-impl PyAliasSplit {
+impl PyStackOffsetDetect {
     #[new]
     fn new(
         py: Python<'_>,
         sleigh: Py<crate::sleigh::PySleigh>,
         cc: crate::cc::PyCallingConvention,
-        arch: crate::arch::PySleighArch,
     ) -> PyResult<Self> {
         let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
-            inner: strider_analyze::opt::AliasSplit::from_convention(&built_cc, &arch.inner),
+            inner: strider_analyze::opt::StackOffsetDetect::from_convention(&built_cc),
         })
     }
 }
@@ -400,7 +397,7 @@ pub enum PyOptPass<'py> {
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
     CallStackArgCollect(Bound<'py, PyCallStackArgCollect>),
     LoadReadOnly(Bound<'py, PyLoadReadOnly>),
-    AliasSplit(Bound<'py, PyAliasSplit>),
+    StackOffsetDetect(Bound<'py, PyStackOffsetDetect>),
 }
 
 impl PyOptPass<'_> {
@@ -418,7 +415,7 @@ impl PyOptPass<'_> {
             PyOptPass::LoadReadOnly(b) => {
                 Box::new(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::clone(&b.borrow().rom)))
             }
-            PyOptPass::AliasSplit(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::StackOffsetDetect(b) => Box::new(b.borrow().inner.clone()),
         }
     }
 }
@@ -433,7 +430,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFlagCmpCanonicalize>()?;
     m.add_class::<PyIfCondInversion>()?;
     m.add_class::<PyStackLoadForward>()?;
-    m.add_class::<PyAliasSplit>()?;
+    m.add_class::<PyStackOffsetDetect>()?;
     m.add_class::<PyFunctionArgDetect>()?;
     m.add_class::<PyCallStackArgCollect>()?;
     m.add_class::<PyLoadReadOnly>()?;

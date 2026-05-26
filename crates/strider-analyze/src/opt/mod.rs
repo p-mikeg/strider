@@ -43,7 +43,6 @@ pub(crate) mod sp_expr;
 pub(crate) mod sp_pass_cc;
 mod worklist;
 pub use error::Result;
-mod alias_split;
 pub(crate) mod constant_fold;
 mod dead_branch;
 mod flag_cmp_canonicalize;
@@ -54,11 +53,11 @@ mod known_bits;
 mod load_readonly;
 mod redundant_phis;
 pub(crate) mod stack_load_forward;
+mod stack_offset_detect;
 mod call_stack_args;
 #[cfg(test)]
 mod test_support;
 
-pub use alias_split::AliasSplit;
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
@@ -79,6 +78,7 @@ pub use strider_ir::ReadOnlyMemory;
 pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
+pub use stack_offset_detect::StackOffsetDetect;
 pub use call_stack_args::CallStackArgCollect;
 /// Stable subset of the default pipeline — passes whose rewrites survive
 /// the addition of new phi inputs in a later strider fixed-point

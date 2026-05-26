@@ -127,35 +127,32 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
 /// `LoadReadOnly` must fold a constant-address Load even when `AliasSplit`
 /// has already run on the same graph and partitioned the memory chain.
 ///
-/// The graph has a Stack-relative store before a `Call` barrier (so AliasSplit
-/// partitions that pre-barrier segment) and a ROM Load at 0x1000 after the
-/// barrier (in the post-barrier segment whose Load is Unknown-class, so
-/// AliasSplit conservatively leaves that segment unified).  After AliasSplit
-/// the ROM Load's memory input is the `Call`'s unified-Memory output —
-/// `Memory(None)`.  `LoadReadOnly` only inspects the Load's *address* operand,
-/// never the memory input, so it folds the Load to `IntConst(42)` regardless.
+/// The graph has a Stack-relative store before a `Call` barrier (so
+/// `StackOffsetDetect` stamps an offset for that store) and a ROM Load
+/// at 0x1000 after the barrier (no SP-relative address — side-table
+/// untouched).  `LoadReadOnly` only inspects the Load's *address*
+/// operand, never the memory input, so it folds the Load to
+/// `IntConst(42)` regardless.
 #[test]
-fn load_readonly_fires_after_alias_split() -> Result<()> {
-    use crate::opt::{AliasSplit, Optimizer as _};
+fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
+    use crate::opt::{StackOffsetDetect, Optimizer as _};
     use strider_ir_test_utils::{make_sp_fn, sp_vn_x86, SENTINEL_LIFT_ADDR};
 
     let sp = sp_vn_x86();
 
     // Build: stack-store (SP-4) → call 0xCAFE → load 0x1000 → return loaded.
     let mut fg = make_sp_fn(sp, |b, sp_v| {
-        // Stack store — SP-relative, pure-Stack segment before the Call.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let stack_addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
         let data = b.build_int_const(0x55u64, NodeOutputType::U32)?;
         b.build_store(stack_addr, data, rsleigh::VnSpace::RAM)?;
 
-        // Call barrier — AliasSplit splices MemUnion before this.
         let call_tgt = b.build_int_const(0xCAFEu64, NodeOutputType::U32)?;
         b.build_call(call_tgt)?;
 
-        // ROM load at constant address — Unknown-class, so the post-Call
-        // segment is left unified by AliasSplit.  LoadReadOnly sees this
-        // Load with a constant address and folds it.
+        // ROM load at constant address — non-SP-rooted, no side-table
+        // entry stamped.  LoadReadOnly sees the constant address and
+        // folds the load.
         let rom_addr = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
         let loaded = b.build_load(rom_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
@@ -164,14 +161,15 @@ fn load_readonly_fires_after_alias_split() -> Result<()> {
     })?;
     let entry = fg.entry().unwrap();
 
-    // AliasSplit fires on the pre-Call Stack segment: Changed.
-    let split_result = AliasSplit::new(sp, strider_target::ArchPreset::X86).optimize(&mut fg, entry)?;
-    assert!(split_result.changed(), "AliasSplit must partition the stack segment");
+    let split_result = StackOffsetDetect::new(sp).optimize(&mut fg, entry)?;
+    assert!(
+        split_result.changed(),
+        "StackOffsetDetect must stamp the stack-store offset"
+    );
 
-    // The ROM Load must still be present before LoadReadOnly runs.
     assert!(
         fg.count_kind(|k| matches!(k, NodeKind::Load(_))) >= 1,
-        "ROM Load must survive AliasSplit"
+        "ROM Load must survive StackOffsetDetect"
     );
 
     // LoadReadOnly folds the constant-address Load to IntConst(42).

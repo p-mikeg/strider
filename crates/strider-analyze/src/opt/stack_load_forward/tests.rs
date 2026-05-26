@@ -1,11 +1,11 @@
 use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
-use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
-use strider_ir::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::opt::{StackOffsetDetect, ConstantFold, OptimizerPipeline, RedundantPhis};
+use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::{sp_vn_aarch64 as sp64_vn, sp_vn_x86 as sp32_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::IntBinaryOp;
-use strider_target::{AliasClass, Endianness};
+use strider_target::Endianness;
 
 /// Counts reachable anonymous (Vn-untagged) `Phi` nodes — the shape
 /// `StackLoadForward` synthesises when forwarding a load across a
@@ -1144,244 +1144,6 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     assert_eq!(targets, vec![0x401190u64, 0x401180u64]);
     Ok(())
 }
-
-// ── MemProject / MemUnion boundary traversal ─────────────────────────────
-
-/// StackLoadForward walks through a `MemProject` boundary node.
-///
-/// After `AliasSplit` runs, the memory chain from the `Load`'s
-/// perspective is:
-///
-///   `Load[sp+4]` ← `Store(sp+4)` ← `MemProject(Stack)` ← `InitialMemory`
-///
-/// With a disjoint `Store(sp+8)` after `MemProject`, the backward
-/// walk passes through `Store(sp+8)` (disjoint, skip), then hits
-/// `MemProject` — previously the `_` arm returned `Verdict(None)`,
-/// causing the load to stay.  Now the walk passes through `MemProject`
-/// to `InitialMemory` without finding a matching store, confirming the
-/// boundary is traversed rather than treated as an opaque barrier.
-///
-/// We also confirm the simple case — load at the same offset as the
-/// store — where the walk matches `Store(sp+4)` immediately (before
-/// even reaching `MemProject`), giving full forwarding.
-#[test]
-fn stack_load_forward_walks_through_mempartition() -> Result<()> {
-    let sp = sp32_vn();
-
-    // Build: store sp+4 = 0x42; load sp+4; return
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    // Pipeline: ConstantFold → RedundantPhis → AliasSplit → StackLoadForward.
-    // AliasSplit inserts `MemProject(Stack)` right after InitialMemory
-    // and `MemUnion` before the Return.  After this, the Load's backward
-    // chain passes through a Store(sp+4) then a MemProject node.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
-    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
-    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-
-    let entry = fg.entry().unwrap();
-    pipeline.run(&mut fg, entry)?;
-
-    // AliasSplit must have inserted a MemProject node with a Stack output slot.
-    let has_stack_mp = fg.all_node_ids().any(|n| {
-        if !matches!(fg.node_kind(n), NodeKind::MemProject) {
-            return false;
-        }
-        fg.node_outputs(n).iter().any(|&out| {
-            matches!(
-                fg.output_kind(out),
-                strider_ir::node::NodeOutputKind::Memory(Some(strider_target::AliasClass::Stack))
-            )
-        })
-    });
-    assert!(
-        has_stack_mp,
-        "AliasSplit must insert a MemProject with a Stack output slot",
-    );
-
-    // The Load should be forwarded: no reachable Load nodes remain.
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "Load[sp+4] must be forwarded through the MemProject boundary"
-    );
-
-    // The return value must be IntConst(0x42) — the stored value.
-    let ret_kind = crate::opt::test_support::return_kind(fg.graph())?;
-    assert!(
-        matches!(ret_kind, NodeKind::IntConst(0x42)),
-        "forwarded value must be IntConst(0x42), got {ret_kind:?}"
-    );
-    Ok(())
-}
-
-/// StackLoadForward walks through a `MemUnion` boundary to the
-/// Stack-partition input.
-///
-/// `MemUnion` has N inputs (one per partition-typed memory edge).
-/// When the backward walk arrives at a `MemUnion`, only the
-/// Stack-partition input is relevant.  The pass must identify that
-/// input by checking each input's `NodeOutputKind` for
-/// `Memory(Some(AliasClass::Stack))`, and
-/// continue through it.
-///
-/// Graph constructed manually to exercise the `MemUnion` arm directly:
-///
-///   `InitialMemory → MemProject(Stack) → Store(sp+4) → MemUnion → Load{sp+4}`
-///
-/// The `MemUnion` has a single Stack-partition input (from `Store`).
-/// The `Load`'s memory input is the `MemUnion` output (`Memory(None)`).
-/// Without the new arm, the walk bails on `MemUnion` and the load stays.
-/// With the fix, the walk routes through the Stack-partition input to
-/// `Store(sp+4)`, finds the matching store, and forwards the value.
-#[test]
-fn stack_load_forward_walks_through_memunion_to_stack_input() -> Result<()> {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
-    let sp = sp32_vn();
-
-    // 1. build a simple function with store + load.
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let data = b.build_int_const(0xBEEFu64, NodeOutputType::U32)?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    // 2. run ConstantFold + RedundantPhis to normalize the graph.
-    {
-        let mut prep = OptimizerPipeline::new();
-        prep.add(ConstantFold);
-        prep.add(RedundantPhis);
-        let entry = fg.entry().unwrap();
-        prep.run(&mut fg, entry)?;
-    }
-
-    // 3. manually wire MemProject + MemUnion around the Store
-    //         so the Load's memory input goes through MemUnion rather than
-    //         directly to Store.
-    //
-    //         Before manual wiring (after ConstantFold + RedundantPhis):
-    //           InitialMemory → Store(sp+4) → Load[mem]
-    //         After manual wiring:
-    //           InitialMemory → MemProject(Stack) → Store(sp+4) → MemUnion → Load[mem]
-    {
-        // Locate nodes before any mutation.
-        let im_node = fg
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
-            .expect("InitialMemory must exist");
-        let ss_node = fg
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("Store must exist");
-        let load_node = fg
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("Load must exist");
-
-        let [im_out] = fg.node_outputs_exact::<1>(im_node).unwrap();
-
-        // Create MemProject consuming InitialMemory output.
-        // Output slot 0 = Stack, slot 1 = Unknown.
-        let part_node = fg.create_node_attributed(
-            NodeKind::MemProject,
-            [im_out],
-            [
-                NodeOutputKind::Memory(Some(AliasClass::Stack)),
-                NodeOutputKind::Memory(Some(AliasClass::Unknown)),
-            ],
-            &[im_node],
-        );
-        // Use the Stack output (slot 0).
-        let part_out = fg.node_outputs(part_node).to_vec()[0];
-
-        // Rewire Store's memory input (slot 0) to consume MemProject
-        // output instead of InitialMemory output.
-        let ss_mem_input_id = fg.graph().node_input_id_at(ss_node, 0).unwrap();
-        fg.graph_mut().update_input(ss_mem_input_id, part_out);
-
-        // Retype Store's memory output to Memory(Some(AliasClass::Stack)).
-        let ss_mem_out: NodeOutputId = fg.graph().memory_output_of(ss_node).unwrap();
-        fg.graph_mut()
-            .set_memory_partition(ss_mem_out, Some(AliasClass::Stack))
-            .unwrap();
-
-        // Create MemUnion consuming the Store's partition-typed output.
-        // Output: Memory(None) (unified).
-        let union_node = fg.create_node_attributed(
-            NodeKind::MemUnion,
-            [ss_mem_out],
-            [NodeOutputKind::Memory(None)],
-            &[ss_node],
-        );
-        let [union_out] = fg.node_outputs_exact::<1>(union_node).unwrap();
-
-        // Rewire the Load's memory input to consume MemUnion output.
-        let load_mem_input_id = fg.graph().node_input_id_at(load_node, 0).unwrap();
-        fg.graph_mut().update_input(load_mem_input_id, union_out);
-    }
-
-    // 4. confirm the graph validates before we forward.
-    let entry = fg.entry().unwrap();
-    strider_ir::validate::validate(&fg, entry)
-        .expect("manually-wired graph must pass IR validation before forward pass");
-
-    // 5. run StackLoadForward.  Without the MemUnion arm the load
-    //         would stay; with it the backward walk routes through the
-    //         MemUnion to Store(sp+4) and forwards 0xBEEF.
-    let fwd = StackLoadForward::new(sp, Endianness::Little);
-    fwd.optimize(&mut fg, entry)?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "Load[sp+4] must be forwarded through the MemUnion boundary"
-    );
-
-    let ret_kind = crate::opt::test_support::return_kind(fg.graph())?;
-    assert!(
-        matches!(ret_kind, NodeKind::IntConst(0xBEEF)),
-        "forwarded value must be IntConst(0xBEEF), got {ret_kind:?}"
-    );
-    Ok(())
-}
-
-/// Regression: StackLoadForward must NOT forward a Stack-class Load across a
-/// LOCK barrier.
-///
-/// Before the soundness fix, LOCK was `PureMem` (MEM_CLOBBER_HEAP_UNKNOWN),
-/// which placed it only on the Unknown chain.  AliasSplit would build:
-///
-///   Stack chain:  MemProject[Stack] → Store(sp-4) ──────────────→ Load(sp-4)
-///   Unknown chain: MemProject[Unknown] → LOCK(mem-clobber) → MemProject[Unknown]
-///
-/// and StackLoadForward would forward Load(sp-4) directly from Store(sp-4),
-/// bypassing LOCK — unsound when another CPU could have modified the stack
-/// slot via the locked operation.
-///
-/// After the fix, LOCK is `FullClobber` (MEM_CLOBBER_FULL), so AliasSplit
-/// inserts a MemProject[Stack] RE-PROJECTION after LOCK on the Stack chain:
-///
-///   Stack chain:  MP[Stack] → Store(sp-4) → MemUnion → LOCK → MP[Stack] → Load(sp-4)
-///
-/// StackLoadForward's backward walk stops at LOCK's re-projection boundary
-/// and the Load remains (cannot forward across a full-clobber barrier).
 #[test]
 fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
@@ -1410,7 +1172,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.add(AliasSplit::new(sp, strider_target::ArchPreset::X86));
+    pipeline.add(StackOffsetDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
 
     let entry = fg.entry().unwrap();

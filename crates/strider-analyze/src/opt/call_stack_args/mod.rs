@@ -5,141 +5,14 @@
 //! into each `Call` node, collects positional `StackStore` data outputs, and
 //! appends them as additional Call inputs.
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
-use strider_target::AliasClass;
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{SpExprMemo, decompose_sp};
-use crate::opt::alias_split::was_partitioned;
-use crate::opt::stack_load_forward::is_stack_partition_input;
 
 #[cfg(test)]
 mod tests;
-
-/// Fast-path stack-arg collection for functions partitioned by `AliasSplit`.
-///
-/// Walks backward along the `Memory(Some(Stack))` chain starting from `mem`.
-/// Unlike the unified-form walker, this path:
-///
-/// * Relies on `Function::stack_offsets` for O(1) offset lookup — no
-///   `decompose_sp` call per Store.
-/// * Terminates at `MemProject(Stack)` (the entry boundary inserted by
-///   `AliasSplit`).
-/// * Falls back to `None` for any unexpected node kind (MemPhi within the
-///   Stack chain, a Store without a side-table entry, etc.), letting the
-///   caller use the unified-form walker instead.
-///
-/// Applies the same anchor + prefix-monotonicity rules as the unified-form
-/// walker so collection semantics are identical.
-///
-/// Returns `Some(args)` when the fast path succeeds, or `None` when it
-/// encounters a shape it cannot handle (caller falls back to unified form).
-fn collect_stack_args_partitioned(
-    ctx: crate::pattern::RewriteCtxView<'_>,
-    mem: NodeOutputId,
-    stack_arg_offsets: &[i64],
-) -> Option<Vec<NodeOutputId>> {
-    if stack_arg_offsets.is_empty() {
-        return Some(Vec::new());
-    }
-
-    // Resolve the starting point on the Stack partition chain.
-    // The Call's mem input may be:
-    //   (a) directly `Memory(Some(Stack))` — walk from there.
-    //   (b) `Memory(None)` from a MemUnion — route through the MemUnion
-    //       to find the Stack-partition input.
-    //   (c) Something else — fall back.
-    let start = {
-        use strider_ir::node::NodeOutputKind;
-        match ctx.function_ref().output_kind(mem) {
-            NodeOutputKind::Memory(Some(AliasClass::Stack)) => mem,
-            NodeOutputKind::Memory(None) => {
-                let union_node = ctx.function_ref().get_node_from_output(mem);
-                if !matches!(ctx.function_ref().node_kind(union_node), NodeKind::MemUnion) {
-                    return None;
-                }
-                ctx.function_ref()
-                    .node_inputs(union_node)
-                    .iter()
-                    .find(|&inp| is_stack_partition_input(ctx.function_ref(), inp))?
-            }
-            _ => return None,
-        }
-    };
-
-    let mut cur = start;
-    let mut anchor_space: Option<rsleigh::VnSpace> = None;
-    let mut chain_anchor_offset: Option<i64> = None;
-    let mut slots: Vec<Option<NodeOutputId>> = vec![None; stack_arg_offsets.len()];
-    let mut prefix_top: i32 = -1;
-
-    loop {
-        let node = ctx.function_ref().get_node_from_output(cur);
-        match *ctx.function_ref().node_kind(node) {
-            NodeKind::MemProject => {
-                // Reached a partition split boundary.  The output slot we
-                // arrived on tells us which class this edge carries.
-                if matches!(
-                    ctx.function_ref().output_kind(cur),
-                    NodeOutputKind::Memory(Some(AliasClass::Stack))
-                ) {
-                    // Reached the function-entry Stack boundary — chain exhausted cleanly.
-                    return Some(dense_prefix(slots));
-                }
-                // Non-Stack partition — fall back.
-                return None;
-            }
-            NodeKind::MemPhi => {
-                // Control-flow join inside the Stack chain — fall back.
-                return None;
-            }
-            NodeKind::Store(space) => {
-                // Use the side-table offset — AliasSplit records it for every
-                // SP-relative store when it partitions the function.
-                let offset = ctx.function_ref().stack_offset(node)?;
-                let inputs = ctx.function_ref().node_inputs(node);
-                if inputs.len() != 3 {
-                    return Some(dense_prefix(slots));
-                }
-                let data = inputs[2];
-
-                // Space consistency check (same as unified-form walker).
-                match anchor_space {
-                    None => anchor_space = Some(space),
-                    Some(s) if s == space => {}
-                    _ => return Some(dense_prefix(slots)),
-                }
-
-                let is_first_store = chain_anchor_offset.is_none();
-                let anchor = *chain_anchor_offset.get_or_insert(offset);
-                let rel = offset - anchor;
-
-                match stack_arg_offsets.iter().position(|&o| o == rel) {
-                    Some(slot) if slots[slot].is_none() => {
-                        let slot_i32 = i32::try_from(slot).unwrap_or(i32::MAX);
-                        if prefix_top >= 0 && slot_i32 > prefix_top + 1 {
-                            return Some(dense_prefix(slots));
-                        }
-                        if fill_slot_and_advance(&mut slots, slot, data, &mut prefix_top) {
-                            return Some(dense_prefix(slots));
-                        }
-                    }
-                    Some(_) => { /* slot already filled — stale write, skip */ }
-                    None if is_first_store => { /* anchor outside slot table — continue */ }
-                    None => return Some(dense_prefix(slots)),
-                }
-
-                cur = inputs[0]; // Store mem-predecessor is slot 0.
-            }
-            _ => {
-                // InitialMemory, Call re-projection, or anything else —
-                // terminate collection cleanly.
-                return Some(dense_prefix(slots));
-            }
-        }
-    }
-}
 
 /// Walks memory backward from `mem`, collecting `StackStore` data outputs as
 /// positional call arguments by matching each store's offset against the
@@ -210,45 +83,29 @@ fn collect_stack_args_partitioned(
 /// would be unsound.  The first base seen pins the chain; a store using a
 /// different base terminates collection.
 ///
-/// Plain `Store` nodes (those not classified as stack stores by
-/// `AliasSplit`) require alias analysis: if the store's address is
-/// proven *not* to alias the stack-arg space (e.g. a global write to a
-/// constant `.data` address), the walker continues through it.  This makes
-/// stack-arg collection robust against compiler-emitted volatile global
-/// writes (`volatile int g = …;` barriers commonly inserted by gcc/clang at
-/// `-O2`) interleaved between the actual stack-arg pushes.  Any SP-rooted
-/// `Store` (whether in-arg-range or not) and any `StackStorePhi` is treated
-/// conservatively as chain-terminating.
+/// Plain `Store` nodes require alias analysis: if the store's address
+/// is proven *not* to alias the stack-arg space (e.g. a global write
+/// to a constant `.data` address), the walker continues through it.
+/// This makes stack-arg collection robust against compiler-emitted
+/// volatile global writes (`volatile int g = …;` barriers commonly
+/// inserted by gcc/clang at `-O2`) interleaved between the actual
+/// stack-arg pushes.  Any SP-rooted `Store` (whether in-arg-range or
+/// not) and any `StackStorePhi` is treated conservatively as
+/// chain-terminating.
 ///
 /// Returns the *dense prefix* of filled slots: indices `0..k` where every
 /// slot in that range got a value, stopping at the first hole.  Patterns
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
-///
-/// When `partitioned` is `true` (the function was processed by `AliasSplit`),
-/// this function first attempts the fast path via
-/// [`collect_stack_args_partitioned`] which walks the Stack-only chain using
-/// O(1) side-table offset lookups.  If the fast path bails (returns `None` for
-/// an edge-case shape), the unified-form walker runs as fallback.
 fn collect_stack_args_in_chain_order(
     ctx: crate::pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
-    partitioned: bool,
 ) -> Vec<NodeOutputId> {
     if stack_arg_offsets.is_empty() {
         return Vec::new();
-    }
-    // When the function has been partitioned by AliasSplit, attempt the
-    // simplified Stack-chain-only walk first.  If it returns `None` (an
-    // edge case it cannot handle), fall through to the unified-form walker.
-    if let Some(fast_args) = partitioned
-        .then(|| collect_stack_args_partitioned(ctx, mem, stack_arg_offsets))
-        .flatten()
-    {
-        return fast_args;
     }
     let mut cur = mem;
     // `anchor_base` tracks the SP root node used by decompose_sp-path stores.
@@ -266,14 +123,13 @@ fn collect_stack_args_in_chain_order(
         let (offset, space, data, prev_mem) = match *ctx.node_kind(node) {
             // Raw `Store` — determine whether it is SP-relative.
             //
-            // Fast path: consult `Function::stack_offsets`, populated by
-            // `AliasSplit` for every Store whose address decomposes to a
-            // single concrete `sp + K`.  O(1) side-table read, no
-            // `decompose_sp` call.
+            // Fast path: consult `Function::stack_offsets`, populated
+            // by `StackOffsetDetect` for every Store whose address
+            // decomposes to a single concrete `sp + K`.  O(1)
+            // side-table read.
             //
-            // Slow path (side-table miss): call `decompose_sp` directly —
-            // covers functions where `AliasSplit` has not run yet, and
-            // stores with Phi-SP or non-SP addresses.
+            // Slow path (side-table miss): call `decompose_sp` —
+            // covers stores with Phi-SP or non-SP addresses.
             NodeKind::Store(space) => {
                 let inputs = ctx.node_inputs(node);
                 // Store inputs: [memory, addr, data].  Skip if shape is
@@ -284,10 +140,10 @@ fn collect_stack_args_in_chain_order(
                 let addr = inputs[1];
                 let prev = inputs[0];
                 if let Some(offset) = ctx.function_ref().stack_offset(node) {
-                    // Fast path: side-table hit.  All side-table stores in a
-                    // function share the same SP root (by AliasSplit's
-                    // construction), so no per-store anchor_base check is
-                    // needed.
+                    // Fast path: side-table hit.  All side-table
+                    // stores in a function share the same SP root by
+                    // construction, so no per-store anchor_base check
+                    // is needed.
                     (offset, space, inputs[2], prev)
                 } else {
                     // Slow path: no side-table entry.
@@ -315,16 +171,9 @@ fn collect_stack_args_in_chain_order(
                     }
                 }
             }
-            // `MemProject` / `MemUnion` — partition boundaries; pass through
-            // to the relevant predecessor.  `StackStorePhi`, `MemPhi`, and
-            // anything else terminates the chain.
-            _ => match step_through_transparent(ctx, node) {
-                Some(next) => {
-                    cur = next;
-                    continue;
-                }
-                None => return dense_prefix(slots),
-            },
+            // `MemPhi` (control-flow join), `StackStorePhi`, and any
+            // other non-Store memory producer terminate the chain.
+            _ => return dense_prefix(slots),
         };
         match anchor_space {
             None => anchor_space = Some(space),
@@ -377,32 +226,6 @@ fn collect_stack_args_in_chain_order(
     }
 }
 
-/// Attempts to pass through a transparent memory node (`MemProject` or
-/// `MemUnion`) and return the next `cur` value to walk.  Returns `Some(next)`
-/// when the node is transparent and walking should continue from `next`, or
-/// `None` when the node is not transparent (caller handles it as a non-Store).
-///
-/// `MemProject`: pass through to input 0 (the unified-memory side).
-/// `MemUnion`: follow the Stack-partition input; `None` if none found.
-fn step_through_transparent(
-    ctx: crate::pattern::RewriteCtxView<'_>,
-    node: NodeId,
-) -> Option<NodeOutputId> {
-    match *ctx.node_kind(node) {
-        NodeKind::MemProject => {
-            let inputs = ctx.node_inputs(node);
-            inputs.iter().next()
-        }
-        NodeKind::MemUnion => {
-            let inputs = ctx.node_inputs(node);
-            inputs
-                .iter()
-                .find(|&inp| is_stack_partition_input(ctx.function_ref(), inp))
-        }
-        _ => None,
-    }
-}
-
 /// Fills `slots[slot]` with `data`, advances `prefix_top` to cover the new
 /// contiguous prefix, and returns whether the prefix is now complete.
 ///
@@ -452,7 +275,6 @@ fn try_collect_stack_args(
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
-    partitioned: bool,
 ) -> Result<OptimizationResult> {
     if !matches!(ctx.node_kind(call_id), NodeKind::Call) {
         return Ok(OptimizationResult::NoChange);
@@ -472,7 +294,6 @@ fn try_collect_stack_args(
         stack_arg_offsets,
         stack_ptr_vn,
         sp_memo,
-        partitioned,
     );
     if args.is_empty() {
         return Ok(OptimizationResult::NoChange);
@@ -492,11 +313,12 @@ fn try_collect_stack_args(
 /// The walker tolerates non-stack-aliasing `Store` nodes interleaved on the
 /// chain (e.g. compiler-emitted volatile global writes that gcc/clang at
 /// `-O2` are free to schedule between stack-arg pushes).  When
-/// `Function::stack_offsets` is populated by `AliasSplit`, SP-relative
-/// stores are identified via an O(1) side-table read; without it the walker
-/// falls back to `crate::opt::sp_expr::decompose_sp`.  Non-SP-rooted stores
-/// (side-table miss + decompose returns `None`) are passed through; SP-rooted
-/// stores remain chain-terminating.
+/// `Function::stack_offsets` is populated by `StackOffsetDetect`,
+/// SP-relative stores are identified via an O(1) side-table read;
+/// without it the walker falls back to
+/// `crate::opt::sp_expr::decompose_sp`.  Non-SP-rooted stores
+/// (side-table miss + decompose returns `None`) are passed through;
+/// SP-rooted stores remain chain-terminating.
 #[derive(Clone)]
 pub struct CallStackArgCollect {
     /// Calling convention this pass was built from.  Shared `Arc` so all
@@ -539,12 +361,6 @@ impl Optimizer for CallStackArgCollect {
         function: &mut strider_ir::Function,
         entry: NodeId,
     ) -> Result<OptimizationResult> {
-        // Pre-compute once: did AliasSplit partition this function?
-        // When true, each Call's memory chain is routed through a MemUnion
-        // (or arrives directly on the Stack-partition chain), and every
-        // stack Store has a concrete offset in `Function::stack_offsets`.
-        // The fast path in `collect_stack_args_partitioned` exploits this.
-        let partitioned = was_partitioned(function);
         let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         let calls: Vec<NodeId> = ctx
             .preorder()
@@ -577,7 +393,6 @@ impl Optimizer for CallStackArgCollect {
                 stack_arg_offsets,
                 stack_ptr_vn,
                 &mut sp_memo,
-                partitioned,
             )?;
         }
         Ok(result)

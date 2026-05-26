@@ -1,6 +1,5 @@
 ---
 source: crates/strider-analyze/tests/cross_arch_shape.rs
-assertion_line: 304
 expression: map
 ---
 aarch64:
@@ -30,14 +29,14 @@ aarch64:
     VarPhi: 2
 aarch64be:
   status: OK
-  reachable_nodes: 40
+  reachable_nodes: 38
   regions: 1
   edges_control: 4
-  edges_memory: 17
-  edges_value: 41
+  edges_memory: 9
+  edges_value: 46
   var_phis: 0
   mem_phis: 1
-  value_phis: 0
+  value_phis: 5
   kind_histogram:
     Entry: 1
     Extend(ZeroExtend): 1
@@ -47,14 +46,13 @@ aarch64be:
     IntBinaryOp(Add): 8
     IntCmpOp(Sless): 1
     IntConst: 5
-    Load: 6
+    Load: 1
     MemPhi: 1
-    MemProject: 1
-    MemUnion: 1
     Region: 1
     Return: 1
     Store: 5
     Truncate: 1
+    ValuePhi: 5
 arm:
   status: OK
   reachable_nodes: 24
@@ -81,14 +79,14 @@ arm:
     VarPhi: 2
 arm_be:
   status: OK
-  reachable_nodes: 36
+  reachable_nodes: 34
   regions: 1
   edges_control: 4
-  edges_memory: 17
-  edges_value: 37
+  edges_memory: 9
+  edges_value: 42
   var_phis: 0
   mem_phis: 1
-  value_phis: 0
+  value_phis: 5
   kind_histogram:
     Entry: 1
     If: 1
@@ -97,13 +95,12 @@ arm_be:
     IntBinaryOp(Add): 7
     IntCmpOp(Sless): 1
     IntConst: 5
-    Load: 6
+    Load: 1
     MemPhi: 1
-    MemProject: 1
-    MemUnion: 1
     Region: 1
     Return: 1
     Store: 5
+    ValuePhi: 5
 arm_thumb:
   status: OK
   reachable_nodes: 24
@@ -222,14 +219,14 @@ mips64le:
     VarPhi: 2
 ppc32be:
   status: OK
-  reachable_nodes: 64
+  reachable_nodes: 62
   regions: 1
   edges_control: 4
-  edges_memory: 19
-  edges_value: 73
+  edges_memory: 11
+  edges_value: 78
   var_phis: 0
   mem_phis: 1
-  value_phis: 0
+  value_phis: 5
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
@@ -245,23 +242,22 @@ ppc32be:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
     IntConst: 10
-    Load: 6
+    Load: 1
     MemPhi: 1
-    MemProject: 1
-    MemUnion: 1
     Region: 1
     Return: 1
     Store: 7
+    ValuePhi: 5
 ppc32le:
   status: OK
-  reachable_nodes: 63
+  reachable_nodes: 61
   regions: 1
   edges_control: 4
-  edges_memory: 19
-  edges_value: 73
+  edges_memory: 11
+  edges_value: 78
   var_phis: 0
   mem_phis: 1
-  value_phis: 0
+  value_phis: 5
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
@@ -277,23 +273,22 @@ ppc32le:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
     IntConst: 10
-    Load: 6
+    Load: 1
     MemPhi: 1
-    MemProject: 1
-    MemUnion: 1
     Region: 1
     Return: 1
     Store: 7
+    ValuePhi: 5
 ppc64be:
   status: OK
-  reachable_nodes: 68
+  reachable_nodes: 64
   regions: 1
   edges_control: 4
-  edges_memory: 17
-  edges_value: 79
+  edges_memory: 9
+  edges_value: 80
   var_phis: 0
   mem_phis: 1
-  value_phis: 0
+  value_phis: 5
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
@@ -303,7 +298,7 @@ ppc64be:
     If: 1
     InitialMemory: 1
     InitialVar: 5
-    IntBinaryOp(Add): 10
+    IntBinaryOp(Add): 8
     IntBinaryOp(And): 2
     IntBinaryOp(Or): 3
     IntBinaryOp(ShiftLeft): 3
@@ -311,24 +306,23 @@ ppc64be:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
     IntConst: 8
-    Load: 6
+    Load: 1
     MemPhi: 1
-    MemProject: 1
-    MemUnion: 1
     Region: 1
     Return: 1
     Store: 5
     Truncate: 3
+    ValuePhi: 5
 ppc64le:
   status: OK
-  reachable_nodes: 73
+  reachable_nodes: 71
   regions: 1
   edges_control: 4
-  edges_memory: 19
-  edges_value: 82
+  edges_memory: 11
+  edges_value: 87
   var_phis: 0
   mem_phis: 1
-  value_phis: 0
+  value_phis: 5
   kind_histogram:
     CastToBool: 1
     CastToInt: 3
@@ -346,14 +340,13 @@ ppc64le:
     IntCmpOp(Equal): 1
     IntCmpOp(Sless): 2
     IntConst: 10
-    Load: 6
+    Load: 1
     MemPhi: 1
-    MemProject: 1
-    MemUnion: 1
     Region: 1
     Return: 1
     Store: 7
     Truncate: 3
+    ValuePhi: 5
 x64:
   status: OK
   reachable_nodes: 28
