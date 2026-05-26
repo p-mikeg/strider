@@ -1038,10 +1038,8 @@ fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
         call_clobbered: Vec::new(),
         ret_val_regs: vec![mk_vn(0x10), mk_vn(0x18)],
         call_other_clobbered: Vec::new(),
-        no_memory_clobber: false,
-        stack_ptr_vn: None,
-        ret_stack_pop: 0,
         arg_passing_vars: Vec::new(),
+        cc: None,
     };
     (f, entry)
 }

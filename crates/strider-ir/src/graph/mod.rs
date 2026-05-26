@@ -42,6 +42,16 @@ mod tests;
 /// clobbered output slot (slot `i + 2`); `ret_val_regs[i]` is the i-th
 /// ABI return register; `call_other_clobbered[i]` is the i-th
 /// CallOther clobber slot.
+///
+/// Pure ABI declarations (the stack pointer varnode, `ret_stack_pop`,
+/// `no_memory_clobber`, link register, etc.) live on the embedded
+/// [`Self::cc`] copy rather than being mirrored here — they are read
+/// through `cc.as_ref().map(...)` and surfaced by the
+/// [`crate::Function`] accessors ([`crate::Function::stack_ptr_vn`] /
+/// [`crate::Function::ret_stack_pop`] /
+/// [`crate::Function::no_memory_clobber`]).  The fields below are the
+/// per-function-effective lists, which differ from the raw ABI lists
+/// after dedup / `upgrade_to_tracked_for`.
 #[derive(Clone, Debug, Default)]
 pub struct CcMetadata {
     /// Map from [`crate::builder::VarId`] to the corresponding [`rsleigh::Vn`]
@@ -57,28 +67,27 @@ pub struct CcMetadata {
     /// `call_clobbered[i]`.
     pub(crate) call_clobbered: Vec<rsleigh::Vn>,
     /// The calling convention's return-value registers, in ABI order.
+    /// Post-`upgrade_to_tracked_for`, so may differ from the raw
+    /// `cc.ret_val_regs` (e.g. when a function uses a sub-register view
+    /// of an ABI ret slot).
     pub(crate) ret_val_regs: Vec<rsleigh::Vn>,
     /// Function-default clobber list for every `CallOther` node:
     /// every tracked variable except the stack pointer.
     pub(crate) call_other_clobbered: Vec<rsleigh::Vn>,
-    /// Function-default `no_memory_clobber` flag — whether calls under
-    /// this convention preserve the memory chain.  `true` for
-    /// zero-side-effect hooks (`__fentry__` / `mcount` /
-    /// `x86_64_all_preserving`).
-    pub(crate) no_memory_clobber: bool,
-    /// Stack-pointer varnode — `None` for synthetic test functions that
-    /// don't model stack-aware calling conventions.  When `Some`, the
-    /// SP is excluded from `call_clobbered` and rebound at every `Call`
-    /// to `Add(pre_call_sp, IntConst(ret_stack_pop))`.
-    pub(crate) stack_ptr_vn: Option<rsleigh::Vn>,
-    /// Net byte change the callee's `ret` inflicts on the caller's
-    /// stack pointer.  `0` on link-register ISAs, pointer-size on
-    /// stack-push ISAs.  Ignored when `stack_ptr_vn` is `None`.
-    pub(crate) ret_stack_pop: i64,
     /// Calling convention's arg-passing registers, filtered through the
     /// function's tracked-variable set (and through
-    /// `upgrade_to_tracked_for` for register aliasing).
+    /// `upgrade_to_tracked_for` for register aliasing).  May differ
+    /// from the raw `cc.arg_passing_regs`.
     pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
+    /// Embedded copy of the calling convention this function was built
+    /// under, when one was provided.  `None` for synthetic test
+    /// functions constructed via [`crate::FunctionBuilder::new_raw`]
+    /// without a real CC.
+    ///
+    /// Reads of pure ABI facts (`stack_ptr_vn`, `ret_stack_pop`,
+    /// `no_memory_clobber`, `link_register_vn`) delegate here rather
+    /// than duplicating those scalars on this struct.
+    pub(crate) cc: Option<strider_target::BuiltCallingConvention>,
 }
 
 

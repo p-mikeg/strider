@@ -344,9 +344,12 @@ impl FunctionBuilder {
             Some(cc.stack_ptr_vn),
             cc.ret_stack_pop,
         )?;
-        // Carry the function-default no_memory_clobber from the CC; per-call
-        // override_cc can still override on individual Call sites.
-        builder.graph.cc_metadata_mut().no_memory_clobber = cc.no_memory_clobber;
+        // Embed the full CC so accessors (`no_memory_clobber`,
+        // `stack_ptr_vn`, `ret_stack_pop`, `link_register_vn`, ...)
+        // can delegate without duplicating these scalars on
+        // `CcMetadata`.  Must happen before any read of cc_metadata's
+        // ABI facts.
+        builder.graph.cc_metadata_mut().cc = Some(cc.clone());
         Ok(builder)
     }
 
@@ -371,7 +374,10 @@ impl FunctionBuilder {
     ///
     /// Returns `UnsupportedOutputSize` when any tracked variable
     /// has a byte size with no matching `NodeOutputType` (the entry-block
-    /// builder allocates an `InitialVar` per tracked variable).
+    /// builder allocates an `InitialVar` per tracked variable), or
+    /// propagates a `BuiltCallingConvention::try_new` validation error
+    /// from the synthesised CC when `stack_ptr_vn` is `Some` (currently
+    /// only fires for a negative `ret_stack_pop`).
     pub fn new_raw(
         all_used_variables: Vec<rsleigh::Vn>,
         arg_passing_vars: &[rsleigh::Vn],
@@ -421,6 +427,32 @@ impl FunctionBuilder {
             .filter_map(|vn| upgrade_to_tracked_for(&variable_to_id, *vn))
             .collect();
 
+        // Pure-ABI facts (stack_ptr_vn / ret_stack_pop / no_memory_clobber /
+        // link_register_vn) are surfaced through `CcMetadata::cc`.  When
+        // `new_raw` is handed a `stack_ptr_vn = Some(sp)`, synthesise a
+        // minimal `BuiltCallingConvention` carrying just that SP and the
+        // ret_stack_pop — enough for `Function::stack_ptr_vn` /
+        // `ret_stack_pop` accessors to report the same scalars the test
+        // fixture supplied.  When SP is `None`, leave `cc = None` and the
+        // accessors default to `None` / `0`.  Production callers go
+        // through [`Self::new`], which overwrites this synthetic CC with
+        // the real one immediately after `new_raw` returns.
+        let synthesised_cc = stack_ptr_vn
+            .map(|sp| {
+                strider_target::BuiltCallingConvention::try_new(
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    sp,
+                    Vec::new(),
+                    ret_stack_pop,
+                    None,
+                    false,
+                )
+            })
+            .transpose()?;
+
         let mut function = Function::new();
         {
             let cc = function.cc_metadata_mut();
@@ -429,12 +461,7 @@ impl FunctionBuilder {
             cc.call_clobbered = call_clobbered;
             cc.ret_val_regs = ret_val_regs;
             cc.arg_passing_vars = arg_passing_vars;
-            cc.stack_ptr_vn = stack_ptr_vn;
-            cc.ret_stack_pop = ret_stack_pop;
-            // Default: synthetic builders don't preserve memory.  The
-            // production code path goes through `new()` which sets this
-            // field from the user-supplied CC after `new_raw` returns.
-            cc.no_memory_clobber = false;
+            cc.cc = synthesised_cc;
         }
         let mut fb = FunctionBuilder {
             graph: function,
@@ -637,7 +664,7 @@ impl FunctionBuilder {
         // order used by `build_call_other_modeled` / `build_call_other_terminal`
         // so the i-th clobber output of a CallOther node corresponds to
         // `call_other_clobbered[i]`.
-        let stack_ptr_vn = self.graph.cc_metadata.stack_ptr_vn;
+        let stack_ptr_vn = self.graph.stack_ptr_vn();
         let call_other_clobbered: Vec<rsleigh::Vn> = self
             .graph
             .cc_metadata

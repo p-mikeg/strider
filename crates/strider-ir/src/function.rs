@@ -177,11 +177,13 @@ impl Function {
         &self.cc_metadata.ret_val_regs
     }
 
-    /// Function-default `no_memory_clobber` flag.
+    /// Function-default `no_memory_clobber` flag.  Delegates to the
+    /// embedded calling convention; defaults to `false` for synthetic
+    /// functions built without one.
     #[inline]
     #[must_use]
     pub fn no_memory_clobber(&self) -> bool {
-        self.cc_metadata.no_memory_clobber
+        self.cc_metadata.cc.as_ref().is_some_and(|c| c.no_memory_clobber)
     }
 
     /// Read the function-default CallOther clobber list.
@@ -210,19 +212,40 @@ impl Function {
     }
 
     /// Calling convention's stack-pointer varnode, or `None` for
-    /// synthetic test functions that don't model an SP.
+    /// synthetic test functions that don't model an SP.  Delegates to
+    /// the embedded calling convention.
     #[inline]
     #[must_use]
     pub fn stack_ptr_vn(&self) -> Option<rsleigh::Vn> {
-        self.cc_metadata.stack_ptr_vn
+        self.cc_metadata.cc.as_ref().map(|c| c.stack_ptr_vn)
     }
 
     /// Net byte change the callee's `ret` inflicts on the caller's
-    /// stack pointer.  `0` on link-register ISAs.
+    /// stack pointer.  `0` on link-register ISAs and on synthetic
+    /// functions built without a CC.  Delegates to the embedded
+    /// calling convention.
     #[inline]
     #[must_use]
     pub fn ret_stack_pop(&self) -> i64 {
-        self.cc_metadata.ret_stack_pop
+        self.cc_metadata.cc.as_ref().map_or(0, |c| c.ret_stack_pop)
+    }
+
+    /// Embedded calling convention this function was built under, or
+    /// `None` for synthetic functions constructed without one.
+    #[inline]
+    #[must_use]
+    pub fn cc(&self) -> Option<&strider_target::BuiltCallingConvention> {
+        self.cc_metadata.cc.as_ref()
+    }
+
+    /// Link-register varnode on link-register ISAs (ARM, AArch64, MIPS,
+    /// PowerPC); `None` on stack-push ISAs (x86, x86_64) and on
+    /// synthetic functions built without a CC.  Delegates to the
+    /// embedded calling convention.
+    #[inline]
+    #[must_use]
+    pub fn link_register_vn(&self) -> Option<rsleigh::Vn> {
+        self.cc_metadata.cc.as_ref().and_then(|c| c.link_register_vn)
     }
 
     /// Calling convention's arg-passing registers, filtered through
@@ -656,10 +679,8 @@ mod compact_tests {
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
-            no_memory_clobber: false,
-            stack_ptr_vn: None,
-            ret_stack_pop: 0,
             arg_passing_vars: Vec::new(),
+            cc: None,
         };
         let pre_count = f.all_node_ids().count();
 
@@ -690,10 +711,8 @@ mod compact_tests {
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
-            no_memory_clobber: false,
-            stack_ptr_vn: None,
-            ret_stack_pop: 0,
             arg_passing_vars: Vec::new(),
+            cc: None,
         };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -742,10 +761,8 @@ mod compact_tests {
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
-            no_memory_clobber: false,
-            stack_ptr_vn: None,
-            ret_stack_pop: 0,
             arg_passing_vars: Vec::new(),
+            cc: None,
         };
         // Entry + InitialMemory + a Return (minimal reachable graph).
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
@@ -791,10 +808,8 @@ mod compact_tests {
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
-            no_memory_clobber: false,
-            stack_ptr_vn: None,
-            ret_stack_pop: 0,
             arg_passing_vars: Vec::new(),
+            cc: None,
         };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);

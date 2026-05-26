@@ -122,13 +122,16 @@ impl FunctionBuilder {
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> CallAbiSelection {
         let cc_meta = &self.graph.cc_metadata;
+        let function_default_no_memory_clobber = self.graph.no_memory_clobber();
+        let function_default_ret_stack_pop = self.graph.ret_stack_pop();
+        let function_stack_ptr_vn = self.graph.stack_ptr_vn();
         let no_memory_clobber =
-            override_cc.map_or(cc_meta.no_memory_clobber, |cc| cc.no_memory_clobber);
+            override_cc.map_or(function_default_no_memory_clobber, |cc| cc.no_memory_clobber);
         match override_cc {
             None => CallAbiSelection {
                 arg_vars: cc_meta.arg_passing_vars.iter().copied().collect(),
                 clobber_vars: cc_meta.call_clobbered.iter().copied().collect(),
-                ret_stack_pop: cc_meta.ret_stack_pop,
+                ret_stack_pop: function_default_ret_stack_pop,
                 no_memory_clobber,
             },
             Some(cc) => {
@@ -146,7 +149,7 @@ impl FunctionBuilder {
                 // so the comparison degenerates to "not callee-saved",
                 // which the helper short-circuits via a sentinel
                 // unreachable Vn.
-                let function_sp = cc_meta.stack_ptr_vn.unwrap_or(rsleigh::Vn {
+                let function_sp = function_stack_ptr_vn.unwrap_or(rsleigh::Vn {
                     addr_off: u64::MAX,
                     addr_space: rsleigh::VnSpace::CONST,
                     size: 0,
@@ -216,7 +219,7 @@ impl FunctionBuilder {
         &mut self,
         ret_stack_pop: i64,
     ) -> Result<Option<(rsleigh::Vn, NodeOutputId)>> {
-        match self.graph.cc_metadata.stack_ptr_vn {
+        match self.graph.stack_ptr_vn() {
             Some(sp) if ret_stack_pop != 0 => {
                 Ok(self.read_variable_optional(&sp)?.map(|out| (sp, out)))
             }
