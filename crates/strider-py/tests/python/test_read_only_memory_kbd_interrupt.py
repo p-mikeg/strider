@@ -3,21 +3,24 @@
 adapter rather than being swallowed and surfaced as a generic
 `StriderError`.
 
-Pre-fix: the adapter caught any `PyErr` and converted it to a
-`StriderError`, which would mask Ctrl-C during a long pattern walk.
-Post-fix: the adapter explicitly re-raises both exit-style
-exceptions before falling back to the error conversion.
+The exercise path: build a custom pipeline that includes
+`strider.opt.LoadReadOnly(rom)` (the orchestrator does NOT auto-add
+this pass — `strider.run(rom=...)` only wires the ROM into the
+cfg-time indirect-resolver and the jump-table classifier).  Bytes
+encoding a load from a constant absolute address
+(`mov eax, ds:[0x2000]`) then force the optimizer to consult the ROM
+for the bytes at `0x2000`, which is where the Rust
+`PyReadOnlyMemoryAdapter::read` adapter calls through to the Python
+subclass.
 
-The exercise path: `strider.run(rom=...)` wires the Python ROM into
-the optimizer's `LoadReadOnly` pass.  Bytes encoding a load from a
-constant absolute address (`mov eax, ds:[0x2000]`) force the
-optimizer to consult the ROM for the bytes at `0x2000`, which is
-where the Rust `PyReadOnlyMemoryAdapter::read` adapter calls
-through to the Python subclass.  Round-13 F1 noted that the prior
-form of this test invoked `rom.read(...)` directly on the Python
-subclass, which dispatched through Python MRO straight to the
-subclass override — never crossing into the Rust adapter — so the
-re-raise guard was not actually verified.
+The Rust side stashes control-flow exceptions in the thread-local
+PENDING_CONTROL_FLOW cell (see `pattern.rs`) rather than
+`PyErr::restore`-ing them on the spot — restoring would leave the
+error indicator set between callbacks, and the next callback would
+trip CPython's "returned a result with an exception set" guard,
+destroying the original `KeyboardInterrupt`/`SystemExit` signal.
+The outer `strider.run` boundary then drains the cell and surfaces
+the saved PyErr as `Err(...)` to Python.
 """
 
 import pytest
@@ -45,18 +48,31 @@ def _build_mem() -> strider.MemoryMap:
     return mem
 
 
+def _build_pipeline_with_load_readonly(arch, cc, mem, rom):
+    """Build the orchestrator's default pipeline + LoadReadOnly(rom).
+    The orchestrator doesn't auto-add LoadReadOnly; consumers that
+    want constant-address load folding wire it on top of the default
+    pipeline themselves."""
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    pipeline = s.build_optimizer_pipeline()
+    pipeline.add(strider.opt.LoadReadOnly(rom))
+    return pipeline
+
+
 def test_keyboard_interrupt_in_rom_read_propagates():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     mem = _build_mem()
     rom = _KbdRom()
+    pipeline = _build_pipeline_with_load_readonly(arch, cc, mem, rom)
     with pytest.raises(KeyboardInterrupt):
         strider.run(
             arch=arch,
             cc=cc,
             mem=mem,
             entry=0x1000,
-            rom=rom,
+            pipeline=pipeline,
             allow_code_before_start_addr=True,
         )
 
@@ -66,12 +82,13 @@ def test_system_exit_in_rom_read_propagates():
     cc = strider.CallingConvention.x86_64_systemv()
     mem = _build_mem()
     rom = _SysExitRom()
+    pipeline = _build_pipeline_with_load_readonly(arch, cc, mem, rom)
     with pytest.raises(SystemExit):
         strider.run(
             arch=arch,
             cc=cc,
             mem=mem,
             entry=0x1000,
-            rom=rom,
+            pipeline=pipeline,
             allow_code_before_start_addr=True,
         )

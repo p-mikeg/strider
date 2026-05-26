@@ -20,8 +20,25 @@ int NOINLINE if_returns_const(int a) {
 }
 
 int NOINLINE loop_with_invariant_load(const int *p, int n) {
+    /* The load `*p` reads the same address every iteration, but the
+     * `volatile` cast tells GCC it MAY change between reads — so the
+     * load is NOT loop-invariant from the optimizer's perspective.
+     *
+     * This is load-bearing for the test: without `volatile`, GCC at
+     * -O2 (especially `-mregparm=3` profile for the kernel build)
+     * recognises that `*p + i` summed over `0..n` is a closed-form
+     * arithmetic-progression formula and lowers the entire function
+     * to straight-line `imul/mul/shld/add` with no back-edge.  Strider's
+     * `count_loops` would then see zero loop headers and the test
+     * would fail on the kernel arch even though the source describes
+     * a real loop.
+     *
+     * The `volatile` qualifier on the load address forces GCC to keep
+     * the per-iteration load AND the per-iteration arithmetic in the
+     * binary, so the strider lift sees a real loop on every arch. */
     int s = 0;
-    for (int i = 0; i < n; ++i) s += *p + i;
+    const volatile int *vp = (const volatile int *)p;
+    for (int i = 0; i < n; ++i) s += *vp + i;
     return s;
 }
 

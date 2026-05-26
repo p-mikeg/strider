@@ -411,12 +411,15 @@ impl PyGraph {
         let generation = graph_guard.generation();
         drop(graph_guard);
         drop(g_borrow);
-        // if a `.when()` predicate restored a control-flow
-        // exception (KeyboardInterrupt / SystemExit) via PyErr::restore,
-        // the exception state is set on this thread.  Surface it as
-        // Err so PyO3 raises rather than panicking with
-        // "returned a result with an exception set".
-        if let Some(err) = PyErr::take(py) {
+        // If a `.when()` predicate stashed a control-flow exception
+        // (KeyboardInterrupt / SystemExit) or a bad return-type PyErr
+        // in the thread-local pending-control-flow cell, surface it
+        // here.  See `crate::pattern::PENDING_CONTROL_FLOW` for why
+        // we use a cell instead of `PyErr::restore`/`PyErr::take`:
+        // restore would leave the error set between predicate calls
+        // and the next `call_bound` would replace the original error
+        // with `SystemError`.
+        if let Some(err) = crate::pattern::take_pending_control_flow() {
             return Err(err);
         }
         let mut out = Vec::with_capacity(raw.len());
@@ -493,9 +496,10 @@ impl PyGraph {
         let generation = graph_guard.generation();
         drop(graph_guard);
         drop(g_borrow);
-        // same propagation as `find_all` — restored
-        // exceptions from `.when()` predicates surface here.
-        if let Some(err) = PyErr::take(py) {
+        // Same propagation as `find_all` — pending control-flow
+        // exceptions from `.when()` predicates surface here via the
+        // thread-local cell.
+        if let Some(err) = crate::pattern::take_pending_control_flow() {
             return Err(err);
         }
         let mut out: Vec<Vec<crate::matcher::PyMatch>> = Vec::with_capacity(raw.len());

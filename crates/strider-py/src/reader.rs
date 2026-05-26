@@ -522,24 +522,35 @@ pub struct PyReadOnlyMemoryAdapter {
 impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
     fn read(&self, addr: u64, size: usize) -> Option<u64> {
         Python::with_gil(|py| -> Option<u64> {
+            // Short-circuit: a prior `read` already raised a control-
+            // flow exception that we stashed in the
+            // PENDING_CONTROL_FLOW cell.  Stop calling into Python so
+            // we don't trip CPython's "returned a result with an
+            // exception set" guard on the next invocation.  The outer
+            // `strider.run` boundary will drain the cell + surface the
+            // saved PyErr.
+            if crate::pattern::take_pending_control_flow_peek() {
+                return None;
+            }
             // Surface Python exceptions on stderr instead of silently
             // converting them to None — otherwise a buggy user override
             // (raises ValueError, returns wrong type, …) shows up as
             // "no fold" in LoadReadOnly with no diagnostic.  The
             // contract is still `Option<u64>` (we can't propagate
-            // through this trait) but the user gets a visible warning.
-            //
-            // Control-flow exceptions (`KeyboardInterrupt`, `SystemExit`)
-            // are re-raised so Ctrl-C in an interactive Python session
-            // can interrupt a long `LoadReadOnly` pass instead of being
-            // silently absorbed.
+            // through this trait); stash control-flow exceptions so
+            // the outer boundary surfaces them.
             let result = match self.py_obj.call_method1(py, "read", (addr, size)) {
                 Ok(r) => r,
                 Err(e) => {
                     if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
                         || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
                     {
-                        e.restore(py);
+                        // Stash in the pending cell (NOT via
+                        // `PyErr::restore`) so the next invocation
+                        // doesn't see a set error indicator and trip
+                        // the CPython "returned a result with an
+                        // exception set" wrapper.
+                        crate::pattern::stash_pending_control_flow(e);
                         return None;
                     }
                     eprintln!(

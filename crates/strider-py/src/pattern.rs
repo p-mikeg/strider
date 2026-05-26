@@ -326,6 +326,60 @@ impl PatLike<'_> {
     }
 }
 
+// ── Pending control-flow exception (KeyboardInterrupt / SystemExit) ─────
+//
+// When a `.when()` predicate raises a control-flow exception, we can't
+// just `PyErr::restore` it on the thread: the matcher will keep
+// iterating across candidates and invoke the predicate again, and on
+// the next `call_bound` invocation CPython sees the still-set error
+// indicator and replaces the original `KeyboardInterrupt`/`SystemExit`
+// with `SystemError: "returned a result with an exception set"`.  By
+// the time `find_all` finishes the original control-flow signal is
+// lost.
+//
+// Instead: stash the first control-flow PyErr in a thread-local cell.
+// `wrap_when` short-circuits subsequent predicate invocations once the
+// cell is non-empty (no more `call_bound`), and the outer `find_all`
+// boundary in `graph.rs` drains the cell via [`take_pending_control_flow`]
+// and surfaces the stored `PyErr` as `Err(...)`.
+//
+// Thread-local because the matcher's predicate callback chain is
+// single-threaded under the GIL.
+
+thread_local! {
+    static PENDING_CONTROL_FLOW: std::cell::Cell<Option<PyErr>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Drain the thread-local pending-control-flow slot, if any.  Called
+/// from the outer `find_all` / `find_all_requirements` / `run`
+/// boundaries to surface a saved `KeyboardInterrupt` / `SystemExit`
+/// after the matcher walk completes.
+pub(crate) fn take_pending_control_flow() -> Option<PyErr> {
+    PENDING_CONTROL_FLOW.with(|cell| cell.take())
+}
+
+/// Peek at the pending-control-flow cell without draining it.
+/// Returns true iff a PyErr is stashed.  Used by the
+/// `PyReadOnlyMemoryAdapter::read` short-circuit so subsequent
+/// `read` calls bail out cleanly without invoking Python.
+pub(crate) fn take_pending_control_flow_peek() -> bool {
+    PENDING_CONTROL_FLOW.with(|cell| {
+        let t = cell.take();
+        let pending = t.is_some();
+        cell.set(t);
+        pending
+    })
+}
+
+/// Stash a control-flow PyErr in the pending cell.  Overwrites any
+/// existing stash (the first error wins is preserved via the
+/// short-circuit on subsequent calls, so this only fires once per
+/// walk).
+pub(crate) fn stash_pending_control_flow(e: PyErr) {
+    PENDING_CONTROL_FLOW.with(|cell| cell.set(Some(e)));
+}
+
 // ── PyPartialMatch — proxy passed to .when predicates ────────────────────
 //
 // Holds a clone of the matcher's current Bindings + a raw pointer to the
@@ -499,15 +553,32 @@ impl PyPartialMatch {
 pub(crate) fn wrap_when(inner: strider_analyze::pattern::Pat, py_func: PyObject) -> strider_analyze::pattern::Pat {
     inner.when_match(move |graph, _ty, bindings| {
         Python::with_gil(|py| {
+            // Short-circuit: a prior predicate already raised a
+            // control-flow exception that we stashed in the
+            // thread-local PENDING_CONTROL_FLOW cell.  Stop calling
+            // user code so we don't trip CPython's "returned a result
+            // with an exception set" guard on the next invocation
+            // (Python's error indicator must be clear when re-entering
+            // a C function).  The outer find_all boundary will drain
+            // the cell + surface the saved PyErr.
+            if PENDING_CONTROL_FLOW.with(|cell| {
+                let t = cell.take();
+                let pending = t.is_some();
+                cell.set(t);
+                pending
+            }) {
+                return false;
+            }
             let proxy = PyPartialMatch::new(bindings.clone(), graph);
             let py_proxy = match Py::new(py, proxy) {
                 Ok(e_err) => e_err,
                 Err(e) => {
-                    // Proxy alloc failure — propagate the PyErr via
-                    // PyErr::restore so the matcher's PyErr::take pickup
-                    // surfaces it as an exception in find_all rather
-                    // than silently swallowing it to stderr.
-                    e.restore(py);
+                    // Proxy alloc failure — stash for the outer
+                    // boundary to pick up.  Treat as control-flow-
+                    // equivalent: a failing predicate setup aborts the
+                    // walk because we have no useful no-match
+                    // semantics for it.
+                    PENDING_CONTROL_FLOW.with(|c| c.set(Some(e)));
                     return false;
                 }
             };
@@ -532,26 +603,52 @@ pub(crate) fn wrap_when(inner: strider_analyze::pattern::Pat, py_func: PyObject)
                 Ok(obj) => match obj.extract::<bool>(py) {
                     Ok(b) => b,
                     Err(e) => {
-                        // Propagate type errors through PyErr::restore so
-                        // find_all's PyErr::take pickup surfaces the
-                        // problem to the Python caller (was previously
-                        // silently logged to stderr and treated as
-                        // no-match, which hid predicate bugs).
-                        e.restore(py);
+                        // Bad return type (e.g. non-bool) — stash for
+                        // the outer boundary to surface, then short-
+                        // circuit subsequent calls via the pending
+                        // cell.  This was previously logged to stderr
+                        // and silently treated as no-match, which hid
+                        // predicate-type-mismatch bugs.
+                        PENDING_CONTROL_FLOW.with(|c| c.set(Some(e)));
                         false
                     }
                 },
                 Err(e) => {
-                    // Every PyErr from the user predicate — control-flow
-                    // exceptions (KeyboardInterrupt, SystemExit) and
-                    // ordinary predicate bugs alike — gets restored.
-                    // The matcher's `PyErr::take(py)` pickup at the
-                    // `find_all` / `find_all_requirements` boundary
-                    // converts the restored exception into a propagated
-                    // `Err(PyErr)` for Python.  Silently stderr-printing
-                    // an ordinary predicate bug used to hide
-                    // `AttributeError` / `TypeError` regressions.
-                    e.restore(py);
+                    // Contract: only control-flow exceptions
+                    // (`KeyboardInterrupt`, `SystemExit`) propagate
+                    // out of `find_all`.  Ordinary predicate bugs
+                    // (`ValueError`, `AttributeError`, `TypeError`,
+                    // …) are SWALLOWED + treated as no-match —
+                    // aborting the whole walk on one buggy predicate
+                    // hit would be worse than continuing.
+                    let is_control_flow = {
+                        let t = e.get_type_bound(py);
+                        t.is_subclass_of::<pyo3::exceptions::PyKeyboardInterrupt>()
+                            .unwrap_or(false)
+                            || t.is_subclass_of::<pyo3::exceptions::PySystemExit>()
+                                .unwrap_or(false)
+                    };
+                    if is_control_flow {
+                        // Stash without restoring on the thread error
+                        // indicator: `PyErr::restore(py)` would leave
+                        // the error set between predicate calls, and
+                        // CPython would wrap the next `call_bound`'s
+                        // outcome in `SystemError("returned a result
+                        // with an exception set")`, destroying the
+                        // original control-flow signal.  The pending
+                        // cell + short-circuit above on subsequent
+                        // invocations keeps the error indicator clean
+                        // and preserves the original PyErr for the
+                        // outer find_all boundary to drain.
+                        PENDING_CONTROL_FLOW.with(|c| c.set(Some(e)));
+                    } else {
+                        // Surface ordinary predicate bugs to stderr
+                        // so they're visible in CI logs without
+                        // aborting the user's walk.
+                        eprintln!(
+                            "strider .when() predicate raised — treating as no-match: {e}"
+                        );
+                    }
                     false
                 }
             }

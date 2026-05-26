@@ -48,11 +48,15 @@ def test_symbols_returns_dict(x86_memory_elf):
 
 
 def test_entry_point(x86_memory_elf):
+    """Pin the API shape (returns an int, doesn't raise).  We don't
+    assert `> 0` here because `fixtures/out/x86/memory.elf` is a
+    freestanding function-export ELF whose `e_entry` is 0 by
+    construction — there is no `_start`."""
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(x86_memory_elf))
     ep = mem.entry_point()
     assert isinstance(ep, int)
-    assert ep > 0
+    assert ep >= 0
 
 
 def test_entry_point_without_elf_raises():

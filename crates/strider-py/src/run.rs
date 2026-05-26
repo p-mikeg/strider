@@ -204,6 +204,15 @@ fn run_via_orchestrator(
     })
     .map_err(into_strider_err)?;
 
+    // If a Python callback inside the orchestrator (e.g. a custom
+    // `ReadOnlyMemory.read` that raised `KeyboardInterrupt` /
+    // `SystemExit`) stashed the PyErr in the thread-local
+    // PENDING_CONTROL_FLOW cell, surface it here so PyO3 propagates
+    // it as `Err(PyErr)` to the Python caller.
+    if let Some(err) = crate::pattern::take_pending_control_flow() {
+        return Err(err);
+    }
+
     let py_graph = Py::new(py, PyGraph::new(graph, cfg_obj.clone_ref(py)))?;
 
     Ok(PyRunResult {
@@ -313,6 +322,14 @@ fn run_with_custom_pipeline(
         if compact {
             graph.compact().map_err(into_strider_err)?;
         }
+    }
+
+    // Same propagation as the orchestrator path: drain the pending
+    // control-flow cell so a `KeyboardInterrupt`/`SystemExit` raised
+    // inside e.g. a Python ReadOnlyMemory callback during LoadReadOnly
+    // surfaces as `Err(PyErr)` rather than vanishing silently.
+    if let Some(err) = crate::pattern::take_pending_control_flow() {
+        return Err(err);
     }
 
     Ok(PyRunResult {
