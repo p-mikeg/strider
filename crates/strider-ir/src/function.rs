@@ -34,9 +34,10 @@ use crate::node::NodeId;
 pub struct Function {
     pub(crate) graph: Graph,
     entry: Option<NodeId>,
-    /// Calling-convention metadata.  `None` before `FunctionBuilder::build`
-    /// completes; `Some(_)` on every fully-built function returned to callers.
-    cc_metadata: Option<CcMetadata>,
+    /// Calling-convention metadata.  Populated incrementally during
+    /// `FunctionBuilder` construction; always present (possibly with
+    /// every field empty / default) on any `Function` value.
+    pub(crate) cc_metadata: CcMetadata,
 
     // ── NodeId-keyed overlay tables ────────────────────────────────────────
     //
@@ -146,73 +147,90 @@ impl Function {
         self.entry = Some(entry);
     }
 
-    /// Read-only access to the calling-convention metadata, or `None` if
-    /// the function has not yet been finalised by [`crate::FunctionBuilder::build`].
+    /// Read-only access to the calling-convention metadata.  Always
+    /// present (possibly empty / default).
     #[inline]
     #[must_use]
-    pub fn cc_metadata(&self) -> Option<&CcMetadata> {
-        self.cc_metadata.as_ref()
+    pub fn cc_metadata(&self) -> &CcMetadata {
+        &self.cc_metadata
     }
 
-    /// Sets the calling-convention metadata.  Called by
-    /// [`crate::FunctionBuilder::build`] to populate the field.
+    /// Mutable access to the calling-convention metadata.  Used by
+    /// [`crate::FunctionBuilder`] to write through during lift.
     #[inline]
-    pub fn set_cc_metadata(&mut self, cc: CcMetadata) {
-        self.cc_metadata = Some(cc);
+    pub fn cc_metadata_mut(&mut self) -> &mut CcMetadata {
+        &mut self.cc_metadata
     }
 
     /// Read the calling convention's call-clobbered varnode list.
-    /// Convenience for `function.cc_metadata().call_clobbered`.  Returns
-    /// an empty slice when `cc_metadata` is `None`.
     #[inline]
     #[must_use]
     pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        self.cc_metadata
-            .as_ref()
-            .map_or(&[], |cc| &cc.call_clobbered)
+        &self.cc_metadata.call_clobbered
     }
 
     /// Read the calling convention's combined return-value register
-    /// list (integer + float, in ABI order).  Convenience accessor
-    /// over `cc_metadata().ret_val_regs`; returns an empty slice when
-    /// `cc_metadata` is `None`.
+    /// list (integer + float, in ABI order).
     #[inline]
     #[must_use]
     pub fn ret_val_regs(&self) -> &[rsleigh::Vn] {
-        self.cc_metadata
-            .as_ref()
-            .map_or(&[], |cc| &cc.ret_val_regs)
+        &self.cc_metadata.ret_val_regs
     }
 
-    /// Function-default `no_memory_clobber` flag.  Returns `false` when
-    /// `cc_metadata` is `None`.
+    /// Function-default `no_memory_clobber` flag.
     #[inline]
     #[must_use]
     pub fn no_memory_clobber(&self) -> bool {
-        self.cc_metadata
-            .as_ref()
-            .is_some_and(|cc| cc.no_memory_clobber)
+        self.cc_metadata.no_memory_clobber
     }
 
     /// Read the function-default CallOther clobber list.
-    /// Convenience for `function.cc_metadata().call_other_clobbered`.
-    /// Returns an empty slice when `cc_metadata` is `None`.
     #[inline]
     #[must_use]
     pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        self.cc_metadata
-            .as_ref()
-            .map_or(&[], |cc| &cc.call_other_clobbered)
+        &self.cc_metadata.call_other_clobbered
     }
 
     /// Read the `VarId → Vn` map for tracked variables.
-    /// Returns `None` when `cc_metadata` is `None`.
     #[inline]
     #[must_use]
     pub fn variables_map(
         &self,
-    ) -> Option<&cranelift_entity::PrimaryMap<crate::builder::VarId, rsleigh::Vn>> {
-        self.cc_metadata.as_ref().map(|cc| &cc.variables)
+    ) -> &cranelift_entity::PrimaryMap<crate::builder::VarId, rsleigh::Vn> {
+        &self.cc_metadata.variables
+    }
+
+    /// Read the reverse `Vn → VarId` map for tracked variables.
+    #[inline]
+    #[must_use]
+    pub fn variable_to_id(
+        &self,
+    ) -> &FxHashMap<rsleigh::Vn, crate::builder::VarId> {
+        &self.cc_metadata.variable_to_id
+    }
+
+    /// Calling convention's stack-pointer varnode, or `None` for
+    /// synthetic test functions that don't model an SP.
+    #[inline]
+    #[must_use]
+    pub fn stack_ptr_vn(&self) -> Option<rsleigh::Vn> {
+        self.cc_metadata.stack_ptr_vn
+    }
+
+    /// Net byte change the callee's `ret` inflicts on the caller's
+    /// stack pointer.  `0` on link-register ISAs.
+    #[inline]
+    #[must_use]
+    pub fn ret_stack_pop(&self) -> i64 {
+        self.cc_metadata.ret_stack_pop
+    }
+
+    /// Calling convention's arg-passing registers, filtered through
+    /// the function's tracked-variable set.
+    #[inline]
+    #[must_use]
+    pub fn arg_passing_vars(&self) -> &[rsleigh::Vn] {
+        &self.cc_metadata.arg_passing_vars
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
@@ -533,9 +551,7 @@ impl Function {
         let entry = self.entry.ok_or_else(|| {
             anyhow::anyhow!("Function::dot_dumper: entry node is not set")
         })?;
-        let cc = self.cc_metadata().ok_or_else(|| {
-            anyhow::anyhow!("Function::dot_dumper: cc_metadata is not set")
-        })?;
+        let cc = &self.cc_metadata;
         let node_to_arg_indices = crate::graph_dot::build_arg_reverse_map(self);
         Ok(crate::graph_dot::GraphDotDumper {
             entry,
@@ -620,6 +636,7 @@ mod compact_tests {
     use crate::graph::CcMetadata;
     use crate::node::{NodeKind, NodeOutputKind};
     use cranelift_entity::PrimaryMap;
+    use rustc_hash::FxHashMap;
 
     #[test]
     fn compact_remaps_entry_and_drops_zombies() {
@@ -633,13 +650,17 @@ mod compact_tests {
             [NodeOutputKind::OutputType(crate::node::NodeOutputType::U64)],
         );
         f.set_entry(entry);
-        f.set_cc_metadata(CcMetadata {
+        f.cc_metadata = CcMetadata {
             variables: PrimaryMap::new(),
-            call_clobbered: Box::new([]),
-            ret_val_regs: Box::new([]),
-            call_other_clobbered: Box::new([]),
+            variable_to_id: FxHashMap::default(),
+            call_clobbered: Vec::new(),
+            ret_val_regs: Vec::new(),
+            call_other_clobbered: Vec::new(),
             no_memory_clobber: false,
-        });
+            stack_ptr_vn: None,
+            ret_stack_pop: 0,
+            arg_passing_vars: Vec::new(),
+        };
         let pre_count = f.all_node_ids().count();
 
         let _remap = f.compact().expect("compact succeeds on a valid function");
@@ -663,13 +684,17 @@ mod compact_tests {
         use crate::node::NodeOutputType;
 
         let mut f = Function::new();
-        f.set_cc_metadata(CcMetadata {
+        f.cc_metadata = CcMetadata {
             variables: PrimaryMap::new(),
-            call_clobbered: Box::new([]),
-            ret_val_regs: Box::new([]),
-            call_other_clobbered: Box::new([]),
+            variable_to_id: FxHashMap::default(),
+            call_clobbered: Vec::new(),
+            ret_val_regs: Vec::new(),
+            call_other_clobbered: Vec::new(),
             no_memory_clobber: false,
-        });
+            stack_ptr_vn: None,
+            ret_stack_pop: 0,
+            arg_passing_vars: Vec::new(),
+        };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -711,13 +736,17 @@ mod compact_tests {
         use crate::graph::NodeIdRemap;
 
         let mut f = Function::new();
-        f.set_cc_metadata(CcMetadata {
+        f.cc_metadata = CcMetadata {
             variables: PrimaryMap::new(),
-            call_clobbered: Box::new([]),
-            ret_val_regs: Box::new([]),
-            call_other_clobbered: Box::new([]),
+            variable_to_id: FxHashMap::default(),
+            call_clobbered: Vec::new(),
+            ret_val_regs: Vec::new(),
+            call_other_clobbered: Vec::new(),
             no_memory_clobber: false,
-        });
+            stack_ptr_vn: None,
+            ret_stack_pop: 0,
+            arg_passing_vars: Vec::new(),
+        };
         // Entry + InitialMemory + a Return (minimal reachable graph).
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
@@ -756,13 +785,17 @@ mod compact_tests {
         use crate::node::NodeOutputType;
 
         let mut f = Function::new();
-        f.set_cc_metadata(CcMetadata {
+        f.cc_metadata = CcMetadata {
             variables: PrimaryMap::new(),
-            call_clobbered: Box::new([]),
-            ret_val_regs: Box::new([]),
-            call_other_clobbered: Box::new([]),
+            variable_to_id: FxHashMap::default(),
+            call_clobbered: Vec::new(),
+            ret_val_regs: Vec::new(),
+            call_other_clobbered: Vec::new(),
             no_memory_clobber: false,
-        });
+            stack_ptr_vn: None,
+            ret_stack_pop: 0,
+            arg_passing_vars: Vec::new(),
+        };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();

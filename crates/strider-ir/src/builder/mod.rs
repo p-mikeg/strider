@@ -155,42 +155,22 @@ fn build_call_clobbered_list(
 /// exactly one current `NodeOutputId` inside the active region.  Reads and
 /// writes go through this mapping so that the graph is always in a consistent
 /// state.
+///
+/// All calling-convention data lives directly on
+/// `graph.cc_metadata` ([`crate::graph::CcMetadata`]); the builder
+/// holds only genuine build-time scratch (region map, current region,
+/// the `InitialMemory` output, the lazy largest-container cache, and
+/// the per-insn `lift_addr` attribution).
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
+    /// Calling-convention state (variables, variable_to_id,
+    /// call_clobbered, ret_val_regs, no_memory_clobber, arg_passing_vars,
+    /// stack_ptr_vn, ret_stack_pop) lives on `graph.cc_metadata`.
     pub(crate) graph: Function,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: NodeOutputId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
     pub(crate) cur_region: Option<crate::region::RegionId>,
-    pub(crate) variables: PrimaryMap<VarId, rsleigh::Vn>,
-    pub(crate) variable_to_id: FxHashMap<rsleigh::Vn, VarId>,
-    /// Variables clobbered by any call instruction (everything not
-    /// callee-saved, and excluding the stack pointer which is rebound
-    /// separately with the `ret_stack_pop` adjust).
-    pub(crate) call_clobbered_variables: Vec<rsleigh::Vn>,
-    /// Variables used to pass arguments according to the calling convention.
-    pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
-    /// Varnodes used to return values according to the calling convention,
-    /// in ABI order (e.g. `[rax, rdx]` on x86_64).  The first `ret_val_vars.len()`
-    /// value-typed outputs of every `Call` (output indices 2..) correspond to
-    /// these varnodes in order; `Return` input slots 2.. correspond to these
-    /// varnodes in order.
-    pub(crate) ret_val_vars: Vec<rsleigh::Vn>,
-    /// Stack pointer varnode — when present, it is excluded from the
-    /// `call_clobbered_variables` set and rebound at every `Call` to
-    /// `Add(pre_call_sp, IntConst(ret_stack_pop))`.  `None` in synthetic
-    /// tests that don't model stack-aware calling conventions.
-    pub(crate) stack_ptr_vn: Option<rsleigh::Vn>,
-    /// Net byte change the callee's `ret` inflicts on the caller's stack
-    /// pointer.  0 on link-register ISAs, pointer size on stack-push ISAs.
-    /// Ignored when `stack_ptr_vn` is `None`.
-    pub(crate) ret_stack_pop: i64,
-    /// Function-default value of `CallingConvention::no_memory_clobber`
-    /// (carried over via [`strider_target::BuiltCallingConvention::no_memory_clobber`]).
-    /// When `true`, [`Self::build_call_with_cc`] suppresses the `Memory`
-    /// output on the resulting `Call` node and does not advance the region's
-    /// memory chain.  Per-call `override_cc` may override this.
-    pub(crate) no_memory_clobber: bool,
     /// Lazy `tracked_vn → its largest containing tracked-vn` map.
     /// Populated on first call to [`Self::largest_container_for`];
     /// the variable set is fixed at construction so caching is safe.
@@ -366,7 +346,7 @@ impl FunctionBuilder {
         )?;
         // Carry the function-default no_memory_clobber from the CC; per-call
         // override_cc can still override on individual Call sites.
-        builder.no_memory_clobber = cc.no_memory_clobber;
+        builder.graph.cc_metadata_mut().no_memory_clobber = cc.no_memory_clobber;
         Ok(builder)
     }
 
@@ -401,7 +381,7 @@ impl FunctionBuilder {
         ret_stack_pop: i64,
     ) -> Result<Self> {
         let all_variables = dedup_overlapping_largest(&all_used_variables);
-        let call_clobbered_variables = build_call_clobbered_list(
+        let call_clobbered = build_call_clobbered_list(
             callee_saved_vars,
             stack_ptr_vn,
             ret_vars,
@@ -436,27 +416,31 @@ impl FunctionBuilder {
             .iter()
             .filter_map(|vn| upgrade_to_tracked_for(&variable_to_id, *vn))
             .collect();
-        let ret_val_vars: Vec<_> = ret_vars
+        let ret_val_regs: Vec<_> = ret_vars
             .iter()
             .filter_map(|vn| upgrade_to_tracked_for(&variable_to_id, *vn))
             .collect();
 
+        let mut function = Function::new();
+        {
+            let cc = function.cc_metadata_mut();
+            cc.variables = variables;
+            cc.variable_to_id = variable_to_id;
+            cc.call_clobbered = call_clobbered;
+            cc.ret_val_regs = ret_val_regs;
+            cc.arg_passing_vars = arg_passing_vars;
+            cc.stack_ptr_vn = stack_ptr_vn;
+            cc.ret_stack_pop = ret_stack_pop;
+            // Default: synthetic builders don't preserve memory.  The
+            // production code path goes through `new()` which sets this
+            // field from the user-supplied CC after `new_raw` returns.
+            cc.no_memory_clobber = false;
+        }
         let mut fb = FunctionBuilder {
-            graph: Function::new(),
+            graph: function,
             entry_memory: NodeOutputId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
-            variables,
-            variable_to_id,
-            arg_passing_vars,
-            ret_val_vars,
-            call_clobbered_variables,
-            stack_ptr_vn,
-            ret_stack_pop,
-            // Default: synthetic builders don't preserve memory.  Production
-            // code path goes through `new()` which copies the field from the
-            // user-supplied CC after `new_raw` returns.
-            no_memory_clobber: false,
             largest_container: std::cell::OnceCell::new(),
             lift_addr: None,
         };
@@ -514,7 +498,7 @@ impl FunctionBuilder {
 
     /// Returns an iterator over all tracked varnodes.
     pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
-        self.variable_to_id.keys()
+        self.graph.cc_metadata.variable_to_id.keys()
     }
 
     /// Returns the largest tracked variable in the same fixed-offset
@@ -553,7 +537,7 @@ impl FunctionBuilder {
             // overflow `u64`.  Saturation is safe: a saturated
             // endpoint can only fail the containment test (it's the
             // weakest possible upper bound), never spuriously succeed.
-            let vars: Vec<rsleigh::Vn> = self.variable_to_id.keys().copied().collect();
+            let vars: Vec<rsleigh::Vn> = self.graph.cc_metadata.variable_to_id.keys().copied().collect();
             let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
                 FxHashMap::with_capacity_and_hasher(vars.len(), Default::default());
 
@@ -627,14 +611,14 @@ impl FunctionBuilder {
     /// stores.
     #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
-        self.variables.get(var_id).copied()
+        self.graph.cc_metadata.variables.get(var_id).copied()
     }
 
     /// Returns the calling convention's return-value registers, in ABI order.
     /// Empty for synthetic test builds that didn't supply a convention.
-    #[must_use] 
+    #[must_use]
     pub fn ret_val_vars(&self) -> &[rsleigh::Vn] {
-        &self.ret_val_vars
+        &self.graph.cc_metadata.ret_val_regs
     }
 
     /// Finalises and returns the completed [`crate::Function`],
@@ -647,33 +631,29 @@ impl FunctionBuilder {
     /// any of validate's three layers (local typing, use-list consistency,
     /// graph-level invariants).  Recover the bundle via
     /// `err.downcast_ref::<crate::validate::ValidationErrors>()`.
-    pub fn build(self) -> crate::Result<crate::Function> {
+    pub fn build(mut self) -> crate::Result<crate::Function> {
         // Conservative CallOther clobber default: every tracked variable
         // except the stack pointer.  The order here matches the iteration
         // order used by `build_call_other_modeled` / `build_call_other_terminal`
         // so the i-th clobber output of a CallOther node corresponds to
         // `call_other_clobbered[i]`.
-        let stack_ptr_vn = self.stack_ptr_vn;
-        let call_other_clobbered: Box<[rsleigh::Vn]> = self
+        let stack_ptr_vn = self.graph.cc_metadata.stack_ptr_vn;
+        let call_other_clobbered: Vec<rsleigh::Vn> = self
+            .graph
+            .cc_metadata
             .variables
             .values()
             .copied()
             .filter(|v| Some(*v) != stack_ptr_vn)
             .collect();
-        let cc_metadata = crate::graph::CcMetadata {
-            variables: self.variables,
-            call_clobbered: self.call_clobbered_variables.into_boxed_slice(),
-            ret_val_regs: self.ret_val_vars.into_boxed_slice(),
-            call_other_clobbered,
-            no_memory_clobber: self.no_memory_clobber,
-        };
-        let mut function = self.graph;
+        self.graph.cc_metadata_mut().call_other_clobbered = call_other_clobbered;
+
         #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
-        let entry = function
+        let entry = self
+            .graph
             .entry()
             .expect("entry is always set by build_entry(), which new_raw() calls unconditionally");
-        function.set_cc_metadata(cc_metadata);
-        crate::validate::validate(&function, entry)?;
-        Ok(function)
+        crate::validate::validate(&self.graph, entry)?;
+        Ok(self.graph)
     }
 }

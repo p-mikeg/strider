@@ -1032,13 +1032,17 @@ fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
     let mut variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn> = PrimaryMap::new();
     variables.push(mk_vn(0x10));
     variables.push(mk_vn(0x18));
-    f.set_cc_metadata(crate::graph::CcMetadata {
+    f.cc_metadata = crate::graph::CcMetadata {
         variables,
-        call_clobbered: Box::new([]),
-        ret_val_regs: Box::new([mk_vn(0x10), mk_vn(0x18)]),
-        call_other_clobbered: Box::new([]),
+        variable_to_id: rustc_hash::FxHashMap::default(),
+        call_clobbered: Vec::new(),
+        ret_val_regs: vec![mk_vn(0x10), mk_vn(0x18)],
+        call_other_clobbered: Vec::new(),
         no_memory_clobber: false,
-    });
+        stack_ptr_vn: None,
+        ret_stack_pop: 0,
+        arg_passing_vars: Vec::new(),
+    };
     (f, entry)
 }
 

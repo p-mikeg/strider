@@ -189,11 +189,14 @@ pub(super) fn check_graph_invariants_cc_arity(
     errs: &mut Vec<ValidationError>,
 ) {
     let graph: &Graph = function;
-    if function.cc_metadata().is_none() {
-        return;
-    }
     let ret_val_count = function.ret_val_regs().len();
     let default_clobber_count = function.call_clobbered_regs().len();
+    // Synthetic / partially-built fixtures legitimately have empty CC
+    // metadata recorded; skip arity checks since there's nothing to
+    // arity-check against.
+    if ret_val_count == 0 && default_clobber_count == 0 {
+        return;
+    }
     for (node, kind) in graph.reachable_kind_iter(reachable) {
         match kind {
             NodeKind::Call => {

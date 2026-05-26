@@ -31,37 +31,54 @@ mod tests;
 
 /// Calling-convention metadata captured at build time.
 ///
-/// `None` on a `Graph` while it is being constructed by
-/// [`crate::FunctionBuilder`]; populated to `Some(_)` by
-/// [`crate::FunctionBuilder::build`] before the graph is returned to
-/// consumers.  After build, [`Graph::cc_metadata`] unwraps the option;
-/// pre-build code paths must use the field directly.
+/// Always present on every [`crate::Function`] (possibly with every
+/// field empty / default while the [`crate::FunctionBuilder`] is still
+/// populating it).  [`crate::Function::cc_metadata`] is the read entry
+/// point; [`crate::Function::cc_metadata_mut`] the write entry point.
 ///
-/// The four `Box<[rsleigh::Vn]>` lists' element-ordering invariants
-/// correspond to slot positions on `Call` / `CallOther` / `Return`
-/// nodes — `call_clobbered[i]` is the varnode for the `i`-th clobbered
-/// output slot (slot `i + 2`); `ret_val_regs[i]` is the i-th ABI
-/// return register; `call_other_clobbered[i]` is the i-th CallOther
-/// clobber slot.
-#[derive(Clone, Debug)]
+/// The three ordered `Vec<rsleigh::Vn>` lists' element-ordering
+/// invariants correspond to slot positions on `Call` / `CallOther` /
+/// `Return` nodes — `call_clobbered[i]` is the varnode for the `i`-th
+/// clobbered output slot (slot `i + 2`); `ret_val_regs[i]` is the i-th
+/// ABI return register; `call_other_clobbered[i]` is the i-th
+/// CallOther clobber slot.
+#[derive(Clone, Debug, Default)]
 pub struct CcMetadata {
     /// Map from [`crate::builder::VarId`] to the corresponding [`rsleigh::Vn`]
     /// varnode.  Indexed by the same `VarId` keys the builder used.
     pub(crate) variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn>,
+    /// Reverse index of [`Self::variables`]: `Vn → VarId`.  Maintained
+    /// alongside `variables` (every insert into `variables` must also
+    /// insert here) so SSA reads / writes can resolve a tracked varnode
+    /// to its dense [`crate::builder::VarId`] in O(1).
+    pub(crate) variable_to_id: rustc_hash::FxHashMap<rsleigh::Vn, crate::builder::VarId>,
     /// Ordered list of varnodes clobbered by every `Call` node.  The
     /// `i`-th clobbered output (slot `i + 2`) corresponds to
     /// `call_clobbered[i]`.
-    pub(crate) call_clobbered: Box<[rsleigh::Vn]>,
+    pub(crate) call_clobbered: Vec<rsleigh::Vn>,
     /// The calling convention's return-value registers, in ABI order.
-    pub(crate) ret_val_regs: Box<[rsleigh::Vn]>,
+    pub(crate) ret_val_regs: Vec<rsleigh::Vn>,
     /// Function-default clobber list for every `CallOther` node:
     /// every tracked variable except the stack pointer.
-    pub(crate) call_other_clobbered: Box<[rsleigh::Vn]>,
+    pub(crate) call_other_clobbered: Vec<rsleigh::Vn>,
     /// Function-default `no_memory_clobber` flag — whether calls under
     /// this convention preserve the memory chain.  `true` for
     /// zero-side-effect hooks (`__fentry__` / `mcount` /
     /// `x86_64_all_preserving`).
     pub(crate) no_memory_clobber: bool,
+    /// Stack-pointer varnode — `None` for synthetic test functions that
+    /// don't model stack-aware calling conventions.  When `Some`, the
+    /// SP is excluded from `call_clobbered` and rebound at every `Call`
+    /// to `Add(pre_call_sp, IntConst(ret_stack_pop))`.
+    pub(crate) stack_ptr_vn: Option<rsleigh::Vn>,
+    /// Net byte change the callee's `ret` inflicts on the caller's
+    /// stack pointer.  `0` on link-register ISAs, pointer-size on
+    /// stack-push ISAs.  Ignored when `stack_ptr_vn` is `None`.
+    pub(crate) ret_stack_pop: i64,
+    /// Calling convention's arg-passing registers, filtered through the
+    /// function's tracked-variable set (and through
+    /// `upgrade_to_tracked_for` for register aliasing).
+    pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
 }
 
 

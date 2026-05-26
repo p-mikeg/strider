@@ -121,13 +121,14 @@ impl FunctionBuilder {
         &self,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> CallAbiSelection {
+        let cc_meta = &self.graph.cc_metadata;
         let no_memory_clobber =
-            override_cc.map_or(self.no_memory_clobber, |cc| cc.no_memory_clobber);
+            override_cc.map_or(cc_meta.no_memory_clobber, |cc| cc.no_memory_clobber);
         match override_cc {
             None => CallAbiSelection {
-                arg_vars: self.arg_passing_vars.iter().copied().collect(),
-                clobber_vars: self.call_clobbered_variables.iter().copied().collect(),
-                ret_stack_pop: self.ret_stack_pop,
+                arg_vars: cc_meta.arg_passing_vars.iter().copied().collect(),
+                clobber_vars: cc_meta.call_clobbered.iter().copied().collect(),
+                ret_stack_pop: cc_meta.ret_stack_pop,
                 no_memory_clobber,
             },
             Some(cc) => {
@@ -135,7 +136,7 @@ impl FunctionBuilder {
                     .arg_passing_regs
                     .iter()
                     .copied()
-                    .filter(|v| self.variable_to_id.contains_key(v))
+                    .filter(|v| cc_meta.variable_to_id.contains_key(v))
                     .collect();
                 // SP is a function-stable register; an override only
                 // sees it via the function-default's `stack_ptr_vn`.
@@ -145,12 +146,12 @@ impl FunctionBuilder {
                 // so the comparison degenerates to "not callee-saved",
                 // which the helper short-circuits via a sentinel
                 // unreachable Vn.
-                let function_sp = self.stack_ptr_vn.unwrap_or(rsleigh::Vn {
+                let function_sp = cc_meta.stack_ptr_vn.unwrap_or(rsleigh::Vn {
                     addr_off: u64::MAX,
                     addr_space: rsleigh::VnSpace::CONST,
                     size: 0,
                 });
-                let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
+                let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = cc_meta
                     .variables
                     .values()
                     .copied()
@@ -215,7 +216,7 @@ impl FunctionBuilder {
         &mut self,
         ret_stack_pop: i64,
     ) -> Result<Option<(rsleigh::Vn, NodeOutputId)>> {
-        match self.stack_ptr_vn {
+        match self.graph.cc_metadata.stack_ptr_vn {
             Some(sp) if ret_stack_pop != 0 => {
                 Ok(self.read_variable_optional(&sp)?.map(|out| (sp, out)))
             }

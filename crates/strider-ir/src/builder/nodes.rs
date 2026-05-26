@@ -449,10 +449,14 @@ impl FunctionBuilder {
     /// or `InitialMemory` nodes do not have their expected single output
     /// (this would indicate a graph-construction bug, not user error).
     pub fn build_entry(&mut self) -> Result<()> {
-        // Reset the function to a fresh empty state.  Synthetic test builders
-        // call `build_entry` via `new_raw`; resetting in-place keeps the
-        // entry/InitialMemory pair as nodes 0/1.
+        // Reset the function to a fresh empty state while preserving
+        // the calling-convention metadata `new_raw` already populated.
+        // Synthetic test builders call `build_entry` via `new_raw`;
+        // resetting in-place keeps the entry/InitialMemory pair as
+        // nodes 0/1.
+        let cc_metadata = std::mem::take(&mut self.graph.cc_metadata);
         self.graph = crate::function::Function::new();
+        self.graph.cc_metadata = cc_metadata;
 
         let entry_node = self.create_node(NodeKind::Entry, [], vec![NodeOutputKind::Control]);
         self.graph.set_entry(entry_node);

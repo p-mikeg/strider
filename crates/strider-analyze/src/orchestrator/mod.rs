@@ -921,8 +921,8 @@ fn override_clobber_vars<'a>(
     let stack_ptr_vn = strider.calling_convention().stack_ptr_vn;
     graph
         .variables_map()
-        .into_iter()
-        .flat_map(|m| m.values().copied())
+        .values()
+        .copied()
         .filter(move |v| cc.clobbers_override_var(v, stack_ptr_vn))
 }
 
