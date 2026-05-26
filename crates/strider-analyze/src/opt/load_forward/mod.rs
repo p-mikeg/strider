@@ -241,6 +241,26 @@ enum AliasVerdict {
     MayAlias,
 }
 
+/// Diagonal verdict for two in-class offsets: equal → `Match`,
+/// range-disjoint → `Disjoint`, otherwise `MayAlias`.  Shared by the
+/// `SpRooted`/`SpRooted` and `Constant`/`Constant` arms of
+/// [`alias_verdict`] (the `Anchor`/`Anchor` arm uses `NodeOutputId`
+/// equality and has no offset/range shape).
+fn cmp_same_class_offsets(
+    load_off: i64,
+    load_size: i64,
+    store_off: i64,
+    store_size: i64,
+) -> AliasVerdict {
+    if load_off == store_off {
+        AliasVerdict::Match
+    } else if ranges_disjoint(load_off, load_size, store_off, store_size) {
+        AliasVerdict::Disjoint
+    } else {
+        AliasVerdict::MayAlias
+    }
+}
+
 fn alias_verdict(
     load_class: AddrClass,
     load_size: i64,
@@ -251,23 +271,9 @@ fn alias_verdict(
     use AddrClass::*;
     match (load_class, store_class) {
         // Diagonal: in-class equality + range-disjoint.
-        (SpRooted { offset: lo }, SpRooted { offset: so }) => {
-            if lo == so {
-                AliasVerdict::Match
-            } else if ranges_disjoint(lo, load_size, so, store_size) {
-                AliasVerdict::Disjoint
-            } else {
-                AliasVerdict::MayAlias
-            }
-        }
-        (Constant { addr: la }, Constant { addr: sa }) => {
-            if la == sa {
-                AliasVerdict::Match
-            } else if ranges_disjoint(la, load_size, sa, store_size) {
-                AliasVerdict::Disjoint
-            } else {
-                AliasVerdict::MayAlias
-            }
+        (SpRooted { offset: lo }, SpRooted { offset: so })
+        | (Constant { addr: lo }, Constant { addr: so }) => {
+            cmp_same_class_offsets(lo, load_size, so, store_size)
         }
         (Anchor { out: lout }, Anchor { out: sout }) => {
             if lout == sout {

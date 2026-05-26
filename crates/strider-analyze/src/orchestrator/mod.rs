@@ -55,6 +55,7 @@ use crate::opt::indirect_branch_resolve::{
 };
 use crate::pattern::GraphRewriteCtxExt;
 use crate::strider::{RegionLiftHandles, Strider};
+use crate::AnalyzeOutcome;
 
 /// Configuration for [`run`].  Held outside the function so callers
 /// can construct one and reuse the strider / sleigh / options across
@@ -435,16 +436,18 @@ where
 
         let all_vns = scan_new_vns(&cfg, &mut self.vn_cache, &mut self.vn_cache_region_count);
 
-        let outcome = self.strider.analyze_cfg_with(
+        let AnalyzeOutcome {
+            mut function,
+            unresolved_branches: unresolved,
+            region_handles,
+        } = self.strider.analyze_cfg_with(
             &cfg,
             crate::AnalyzeOptions {
                 all_vns: Some(all_vns),
                 per_address_ccs: Some(&self.per_address_built_ccs),
             },
         )?;
-        let region_index = RegionIndex::from_handles(outcome.region_handles);
-        let mut function = outcome.function;
-        let unresolved = outcome.unresolved_branches;
+        let region_index = RegionIndex::from_handles(region_handles);
 
         let pipeline = self.strider.build_stable_optimizer_pipeline();
         let entry = function.entry().ok_or_else(|| {

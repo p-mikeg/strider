@@ -188,7 +188,6 @@ pub(super) fn check_graph_invariants_cc_arity(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    let graph: &Graph = function;
     let ret_val_count = function.ret_val_regs().len();
     let default_clobber_count = function.call_clobbered_regs().len();
     // Synthetic / partially-built fixtures legitimately have empty CC
@@ -197,7 +196,7 @@ pub(super) fn check_graph_invariants_cc_arity(
     if ret_val_count == 0 && default_clobber_count == 0 {
         return;
     }
-    for (node, kind) in graph.reachable_kind_iter(reachable) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
         match kind {
             NodeKind::Call => {
                 // Per-Call override length wins over the function
@@ -213,7 +212,7 @@ pub(super) fn check_graph_invariants_cc_arity(
                     continue;
                 }
                 let expected = 2 + clobber_count;
-                let actual = graph.node_outputs(node).len();
+                let actual = function.node_outputs(node).len();
                 if actual != expected {
                     errs.push(ValidationError::NodeOutputCountMismatch {
                         node,
@@ -227,7 +226,7 @@ pub(super) fn check_graph_invariants_cc_arity(
                     continue;
                 }
                 let expected = 2 + ret_val_count;
-                let actual = graph.node_inputs(node).len();
+                let actual = function.node_inputs(node).len();
                 if actual != expected {
                     errs.push(ValidationError::NodeInputCountMismatch {
                         node,
@@ -249,8 +248,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    let graph: &Graph = function;
-    for (node, kind) in graph.reachable_kind_iter(reachable) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
         if kind.asm_fingerprint_exempt() {
             continue;
         }

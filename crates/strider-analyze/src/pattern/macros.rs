@@ -188,62 +188,62 @@ macro_rules! __const_with_extract {
     ($ctx:ident, $cap:ident, uint) => {
         $ctx.bindings
             .get_uint($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("uint"))
+            .ok_or_else(|| $crate::pattern::missing_binding("uint"))
     };
     ($ctx:ident, $cap:ident, int) => {
         $ctx.bindings
             .get_int($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("int"))
+            .ok_or_else(|| $crate::pattern::missing_binding("int"))
     };
     ($ctx:ident, $cap:ident, bool) => {
         $ctx.bindings
             .get_bool($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("bool"))
+            .ok_or_else(|| $crate::pattern::missing_binding("bool"))
     };
     ($ctx:ident, $cap:ident, float_bits) => {
         $ctx.bindings
             .get_float_bits($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("float_bits"))
+            .ok_or_else(|| $crate::pattern::missing_binding("float_bits"))
     };
     ($ctx:ident, $cap:ident, int_binary_op) => {
         $ctx.bindings
             .get_int_binary_op($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("int_binary_op"))
+            .ok_or_else(|| $crate::pattern::missing_binding("int_binary_op"))
     };
     ($ctx:ident, $cap:ident, int_unary_op) => {
         $ctx.bindings
             .get_int_unary_op($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("int_unary_op"))
+            .ok_or_else(|| $crate::pattern::missing_binding("int_unary_op"))
     };
     ($ctx:ident, $cap:ident, int_cmp_op) => {
         $ctx.bindings
             .get_int_cmp_op($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("int_cmp_op"))
+            .ok_or_else(|| $crate::pattern::missing_binding("int_cmp_op"))
     };
     ($ctx:ident, $cap:ident, bool_binary_op) => {
         $ctx.bindings
             .get_bool_binary_op($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("bool_binary_op"))
+            .ok_or_else(|| $crate::pattern::missing_binding("bool_binary_op"))
     };
     ($ctx:ident, $cap:ident, bool_unary_op) => {
         $ctx.bindings
             .get_bool_unary_op($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("bool_unary_op"))
+            .ok_or_else(|| $crate::pattern::missing_binding("bool_unary_op"))
     };
     ($ctx:ident, $cap:ident, float_binary_op) => {
         $ctx.bindings
             .get_float_binary_op($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("float_binary_op"))
+            .ok_or_else(|| $crate::pattern::missing_binding("float_binary_op"))
     };
     ($ctx:ident, $cap:ident, float_unary_op) => {
         $ctx.bindings
             .get_float_unary_op($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("float_unary_op"))
+            .ok_or_else(|| $crate::pattern::missing_binding("float_unary_op"))
     };
     ($ctx:ident, $cap:ident, float_cmp_op) => {
         $ctx.bindings
             .get_float_cmp_op($cap, &*$ctx.function)
-            .ok_or_else(|| $crate::pattern::__missing_binding("float_cmp_op"))
+            .ok_or_else(|| $crate::pattern::missing_binding("float_cmp_op"))
     };
 }
 

@@ -57,19 +57,11 @@ pub(crate) fn is_skip(err: &anyhow::Error) -> bool {
 /// Returns an [`anyhow::Error`] wrapping a
 /// [`PatternBuildError::MissingBinding`] for the given capture-kind
 /// name.  Used uniformly by every builder that materializes captured
-/// bindings.
+/// bindings, including the `*_const_with!` macro expansions which reach
+/// it via the `$crate::pattern::missing_binding` re-export.
 #[must_use]
 pub(crate) fn missing_binding(kind: &'static str) -> anyhow::Error {
     anyhow::Error::new(PatternBuildError::MissingBinding(kind))
-}
-
-/// Public alias of [`missing_binding`] for use by the `*_const_with!`
-/// macro expansions, which need to construct the error from outside the
-/// crate's source tree.  The macro emits `$crate::pattern::__missing_binding(...)`.
-#[doc(hidden)]
-#[must_use]
-pub(crate) fn __missing_binding(kind: &'static str) -> anyhow::Error {
-    missing_binding(kind)
 }
 
 /// Returns an [`anyhow::Error`] wrapping a

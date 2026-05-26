@@ -90,21 +90,13 @@ impl NodeOutputKind {
     #[inline]
     #[must_use]
     pub fn is_bool(self) -> bool {
-        if let Some(output_type) = self.as_value() {
-            output_type.is_bool()
-        } else {
-            false
-        }
+        self.as_value().is_some_and(NodeOutputType::is_bool)
     }
 
     /// Returns `true` if this is a value output carrying an integer type.
     #[inline]
     #[must_use]
     pub fn is_integer(self) -> bool {
-        if let Some(output_type) = self.as_value() {
-            output_type.is_integer()
-        } else {
-            false
-        }
+        self.as_value().is_some_and(NodeOutputType::is_integer)
     }
 }

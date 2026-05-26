@@ -149,12 +149,7 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_int(&self, output_id: NodeOutputId) -> Result<Option<(u64, i64)>> {
-        let unsigned_val = self.get_as_unsigned_int(output_id)?;
-        let signed_val = self.get_as_signed_int(output_id)?;
-        match (unsigned_val, signed_val) {
-            (Some(u), Some(s)) => Ok(Some((u, s))),
-            _ => Ok(None),
-        }
+        Ok(self.get_as_unsigned_int(output_id)?.zip(self.get_as_signed_int(output_id)?))
     }
 
     /// If `output_id` is a `FloatConst` node, returns its raw bit pattern.
