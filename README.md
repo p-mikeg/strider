@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/strider.png" alt="Strider" width="320">
+</p>
+
 # Strider
 
 > *"He's one of them Rangers. Dangerous folk they are — wandering the Wilds."*
