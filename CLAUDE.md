@@ -236,8 +236,7 @@ so the resolver-bearing dependency stays one-way.
     beyond Sleigh's pcode-explicit args.
   - `PositionalArgLayout` — canonical positional-arg-layout DTO derived
     from a `BuiltCallingConvention` via
-    `BuiltCallingConvention::positional_arg_layout()` (or
-    `PositionalArgLayout::from_convention(&cc)`).  Single source of
+    `PositionalArgLayout::from_convention(&cc)`.  Single source of
     truth for positional argument slot order (register slots first,
     then stack slots at the convention's `stack_arg_offsets`); consumed
     by `FunctionArgDetect`, `CallStackArgCollect`, and `LoadForward`
