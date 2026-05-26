@@ -3,10 +3,6 @@
 //! (and the predecessor spec `2026-05-05-callother-classification-design.md`
 //! for the original cfg/ir consumer split).
 
-use crate::alias_class::{
-    AliasClass, MEM_CLOBBER_FULL, MEM_CLOBBER_HEAP_UNKNOWN, MEM_CLOBBER_NONE,
-};
-
 /// Per-user-op ABI describing register and memory effects beyond
 /// what Sleigh's pcode insn already encodes.  Sleigh emits
 /// `CALLOTHER(user_op_id, args…)` with a possible `output` field;
@@ -26,31 +22,30 @@ pub struct CallOtherAbi {
     /// rebinds the matching tracked variable to that slot.
     pub implicit_writes: &'static [&'static str],
 
-    /// Set of memory partitions whose memory token this op clobbers.
-    /// Replaces the old coarse `memory_edge: bool` — `[]` means "no
-    /// memory effect" (pure compute, identical to `memory_edge: false`)
-    /// and any non-empty set advances the IR's memory edge and tells
-    /// `AliasSplit` which per-partition chains to break across this
-    /// op.
+    /// Does this op clobber memory (i.e. advance the IR's memory
+    /// edge)?  Set to `false` for pure compute (cpuid, rdtsc) and
+    /// `true` for everything that touches memory — atomics, barriers,
+    /// port-I/O, syscalls, kernel entries, etc.
     ///
-    /// Common choices:
-    /// * `MEM_CLOBBER_NONE` (`&[]`) — pure compute (cpuid, rdtsc).
-    /// * `MEM_CLOBBER_HEAP_UNKNOWN` — atomic / barrier / port-I/O
-    ///   ops that disturb heap and unmapped memory but provably leave
-    ///   the user-mode stack frame intact.
-    /// * `MEM_CLOBBER_FULL` — SYSCALL and any kernel-entry path that
-    ///   may also mutate the user-mode stack frame.
-    pub mem_clobbers: &'static [AliasClass],
+    /// Previous revisions of this field carried a per-alias-class
+    /// clobber set (`[]` / `[Unknown]` / `[Stack, Unknown]`); we no
+    /// longer model that distinction because mainstream compilers
+    /// don't (they use address-range / memory-dependence analysis at
+    /// the optimisation layer instead).  Any op that touches memory
+    /// is treated uniformly as "clobbers memory" in the IR; a future
+    /// load-store-forwarding pass can use range disjointness to
+    /// recover precision per query.
+    pub clobbers_memory: bool,
 }
 
 impl CallOtherAbi {
-    /// Convenience: does this op advance the IR's memory edge at all?
-    /// Equivalent to the old `memory_edge: bool` accessor — true when
-    /// at least one partition is clobbered.
+    /// Convenience accessor matching the old `has_memory_edge()` name —
+    /// kept so existing call sites compile unchanged.  Equivalent to
+    /// reading `self.clobbers_memory` directly.
     #[must_use]
     #[inline]
-    pub fn has_memory_edge(&self) -> bool {
-        !self.mem_clobbers.is_empty()
+    pub const fn has_memory_edge(&self) -> bool {
+        self.clobbers_memory
     }
 }
 
@@ -148,7 +143,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             // Linux SVC/SWI is a kernel entry: the kernel can read/write
             // any user-mode memory including the user stack.  Use the
             // full-clobber set so AliasSplit breaks the Stack chain too.
-            mem_clobbers:    MEM_CLOBBER_FULL,
+            clobbers_memory: true,
         }),
     },
     // x86 INT instruction also lifts to "swi" in some Sleigh contexts.
@@ -177,7 +172,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
-            mem_clobbers: MEM_CLOBBER_FULL,
+            clobbers_memory: true,
         }),
     },
 
@@ -194,7 +189,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_writes: &["RAX", "RCX", "R11"],
             // Kernel entry: can read/write the user stack frame in
             // addition to heap / unknown memory.  Full clobber.
-            mem_clobbers:    MEM_CLOBBER_FULL,
+            clobbers_memory: true,
         }),
     },
 
@@ -212,7 +207,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             // register-passing channel; the SMCCC spec does not permit
             // them to mutate the caller's stack frame.  Heap+Unknown is
             // the right clobber set.
-            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
+            clobbers_memory: true,
         }),
     },
 
@@ -225,7 +220,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["ECX"],
             implicit_writes: &["EAX", "EDX"],
-            mem_clobbers:    MEM_CLOBBER_NONE,
+            clobbers_memory: false,
         }),
     },
 
@@ -241,7 +236,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_NONE,
+            clobbers_memory: false,
         }),
     },
 
@@ -255,7 +250,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &["EAX", "EDX", "ECX"],
-            mem_clobbers:    MEM_CLOBBER_NONE,
+            clobbers_memory: false,
         }),
     },
 
@@ -270,7 +265,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_NONE,
+            clobbers_memory: false,
         }),
     },
 
@@ -287,7 +282,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
+            clobbers_memory: true,
         }),
     },
 
@@ -301,7 +296,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_NONE,
+            clobbers_memory: false,
         }),
     },
 
@@ -316,7 +311,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
+            clobbers_memory: true,
         }),
     },
 
@@ -335,7 +330,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX", "ECX", "EDX"],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
+            clobbers_memory: true,
         }),
     },
     // x86 32-bit MONITOR / MONITORX — EAX-relative address.
@@ -345,7 +340,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX", "EDX"],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
+            clobbers_memory: true,
         }),
     },
 
@@ -361,7 +356,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["EAX", "ECX"],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
+            clobbers_memory: true,
         }),
     },
 
@@ -395,7 +390,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
-            mem_clobbers:    MEM_CLOBBER_HEAP_UNKNOWN,
+            clobbers_memory: true,
         }),
     },
 
@@ -430,32 +425,30 @@ const AARCH64_BOTH: &[crate::ArchPreset] =
 /// `classify_arch_specific` instead.  Memory-edge alone is allowed
 /// here (it's purely an IR concept, not arch-specific).  Enforced by
 /// the `arch_independent_call_entries_have_empty_register_channels`
-/// test — using the `Pure` / `PureMem` table marker exclusively here
+/// test — using the `Pure` / `MemClobber` table marker exclusively here
 /// makes the invariant trivially true at the syntactic level.
 ///
 /// The table is grouped by classification (NoOp / NoReturn / Pure /
-/// PureMem) and ASCII-sorted within each group for diffability — one
+/// MemClobber) and ASCII-sorted within each group for diffability — one
 /// entry per line, identical shape, easy to compare across patches.
 /// Lookup is a linear scan; the table is small (~46 entries) and
 /// classification fires once per CallOther at lift time, so a hash
 /// map's setup cost isn't justified.
 #[must_use]
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
-    use TableClass::{FullClobber, NoOp, NoReturn, Pure, PureMem};
-    /// Per-table marker for one of the five pre-canned classifications
+    use TableClass::{MemClobber, NoOp, NoReturn, Pure};
+    /// Per-table marker for one of the four pre-canned classifications
     /// — `NoOp` (decoder-context only), `NoReturn` (trap), `Pure`
-    /// (visible marker / pure compute, no memory clobber), `PureMem`
-    /// (memory-chain marker / external-state effect, clobbers
-    /// Heap+Unknown), `FullClobber` (kernel-entry-style ops that can
-    /// also mutate the user stack frame).  Resolved to a
+    /// (visible marker / pure compute, no memory clobber), `MemClobber`
+    /// (memory-chain marker / external-state effect — barriers,
+    /// LOCK/UNLOCK, port I/O, SYSCALL, etc.).  Resolved to a
     /// `CallOtherClass` by `TableClass::resolve`.
     #[derive(Clone, Copy)]
     enum TableClass {
         NoOp,
         NoReturn,
         Pure,
-        PureMem,
-        FullClobber,
+        MemClobber,
     }
     impl TableClass {
         fn resolve(self) -> CallOtherClass {
@@ -465,26 +458,12 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
                 Self::Pure => CallOtherClass::Call(CallOtherAbi {
                     implicit_reads: &[],
                     implicit_writes: &[],
-                    mem_clobbers: MEM_CLOBBER_NONE,
+                    clobbers_memory: false,
                 }),
-                Self::PureMem => CallOtherClass::Call(CallOtherAbi {
+                Self::MemClobber => CallOtherClass::Call(CallOtherAbi {
                     implicit_reads: &[],
                     implicit_writes: &[],
-                    // Default "memory-edge" classification: barriers,
-                    // LOCK/UNLOCK, port I/O, etc. all clobber heap and
-                    // unknown memory but leave the SP-relative stack
-                    // frame intact.  Ops whose semantics also disturb
-                    // the user stack (SYSCALL / SWI) get FullClobber.
-                    mem_clobbers: MEM_CLOBBER_HEAP_UNKNOWN,
-                }),
-                Self::FullClobber => CallOtherClass::Call(CallOtherAbi {
-                    implicit_reads: &[],
-                    implicit_writes: &[],
-                    // Kernel-entry path: kernel can mutate any user
-                    // memory including the stack frame.  Used for the
-                    // generic `software_interrupt` user-op that ARM's
-                    // SVC family lifts to.
-                    mem_clobbers: MEM_CLOBBER_FULL,
+                    clobbers_memory: true,
                 }),
             }
         }
@@ -551,21 +530,21 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("UnkSytemRegRead", Pure),
 
         // x86 `swapgs` lives in classify_arch_specific so a non-x86
-        // user-op of the same name cannot silently inherit PureMem.
+        // user-op of the same name cannot silently inherit MemClobber.
 
         // ARM permanently-undefined instruction — Sleigh emits
         // CALLOTHER + a branch to the trap handler; the user-op
         // itself doesn't touch state.
         ("software_udf", Pure),
 
-        // ─── PureMem: memory-chain markers + side-effecting ───────
+        // ─── MemClobber: memory-chain markers + side-effecting ───────
 
         // x86 port I/O — port + value pcode-explicit; the user-op
         // itself affects external (port) state.
-        ("in",  PureMem),
-        ("out", PureMem),
+        ("in",  MemClobber),
+        ("out", MemClobber),
 
-        // ─── FullClobber: memory / ordering barriers ──────────────
+        // ─── MemClobber: memory / ordering barriers ──────────────
         //
         // All of these act as serialization or visibility barriers
         // across ALL reachable memory — including the SP-relative stack
@@ -586,22 +565,22 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // latest value from ALL CPUs).  Stack + Unknown are both
         // observable by other CPUs in the presence of shared-stack
         // scenarios, so clobber both.
-        ("LOCK",   FullClobber),
-        ("UNLOCK", FullClobber),
+        ("LOCK",   MemClobber),
+        ("UNLOCK", MemClobber),
 
         // ARM standalone memory / cache barriers.  DSB / DMB are data
         // memory barriers; ISB flushes the instruction pipeline and,
         // conservatively, both instruction and data stream.  On a
         // multicore AArch64/ARM system the stack frame is accessible to
         // other cores if the address escaped (via a pointer argument or
-        // a shared data structure), so all three get FullClobber.
+        // a shared data structure), so all three get MemClobber.
         // DC_CVAC (Data Cache operation to Point of Coherency) interacts
         // with the cache subsystem, not with register-side data; it is
-        // kept at PureMem (heap+unknown only).
-        ("DC_CVAC",                           PureMem),
-        ("DataMemoryBarrier",                 FullClobber),
-        ("DataSynchronizationBarrier",        FullClobber),
-        ("InstructionSynchronizationBarrier", FullClobber),
+        // kept at MemClobber (heap+unknown only).
+        ("DC_CVAC",                           MemClobber),
+        ("DataMemoryBarrier",                 MemClobber),
+        ("DataSynchronizationBarrier",        MemClobber),
+        ("InstructionSynchronizationBarrier", MemClobber),
 
         // x86/x86_64 standalone memory fences.  Emitted by Sleigh's x86
         // spec as lowercase mnemonics.  All three are ordering barriers:
@@ -609,9 +588,9 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // SFENCE serialises prior stores; LFENCE serialises prior loads.
         // Like LOCK, these can make a remote core's prior writes visible,
         // so Stack + Unknown are both reachable.
-        ("lfence", FullClobber),
-        ("mfence", FullClobber),
-        ("sfence", FullClobber),
+        ("lfence", MemClobber),
+        ("mfence", MemClobber),
+        ("sfence", MemClobber),
 
         // PowerPC memory barriers.
         // `sync` (SYNC / lwsync / hwsync — the `L` field selects the
@@ -619,12 +598,12 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // `enforceInOrderExecutionIO` (EIEIO — I/O barrier, also acts
         // as a full data-memory barrier on Power ISA).
         // `instructionSynchronize` (ISYNC — instruction-pipeline flush;
-        // treated conservatively as FullClobber for data).
+        // treated conservatively as MemClobber for data).
         // Without these entries any PowerPC binary containing a fence
         // would fail with UnknownCallOtherError at the IR layer.
-        ("enforceInOrderExecutionIO", FullClobber),
-        ("instructionSynchronize",    FullClobber),
-        ("sync",                      FullClobber),
+        ("enforceInOrderExecutionIO", MemClobber),
+        ("instructionSynchronize",    MemClobber),
+        ("sync",                      MemClobber),
 
         // MIPS memory barriers.
         // `SYNC` — GHIDRA's MIPS32 spec emits this for the SYNC
@@ -633,13 +612,13 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         //   the same SYNC mnemonic in the common include.
         // Without these entries any MIPS binary containing SYNC would
         // fail with UnknownCallOtherError at the IR layer.
-        ("SYNC",  FullClobber),
-        ("synch", FullClobber),
+        ("SYNC",  MemClobber),
+        ("synch", MemClobber),
 
         // ARM SVC / SWI raised by an immediate — possible syscall
         // path, kernel can do anything to memory including the user
         // stack frame.  Use the full-clobber marker.
-        ("software_interrupt", FullClobber),
+        ("software_interrupt", MemClobber),
     ];
     TABLE
         .iter()
@@ -655,7 +634,7 @@ mod tests {
         CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
-            mem_clobbers: MEM_CLOBBER_NONE,
+            clobbers_memory: false,
         }
     }
 
@@ -704,8 +683,7 @@ mod tests {
     /// which is unsound in the presence of shared-stack / aliased-frame
     /// patterns.
     #[test]
-    fn full_memory_barriers_clobber_stack_and_unknown() {
-        use crate::alias_class::{AliasClass, MEM_CLOBBER_FULL};
+    fn full_memory_barriers_clobber_memory() {
         for n in [
             "LOCK", "UNLOCK",
             "DataMemoryBarrier", "DataSynchronizationBarrier",
@@ -716,14 +694,9 @@ mod tests {
         ] {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
-            assert_eq!(
-                abi.mem_clobbers, MEM_CLOBBER_FULL,
-                "{n}: must clobber [Stack, Unknown]; got {:?}",
-                abi.mem_clobbers,
-            );
             assert!(
-                abi.mem_clobbers.contains(&AliasClass::Stack),
-                "{n}: must clobber Stack partition",
+                abi.clobbers_memory,
+                "{n}: barrier ops must clobber memory",
             );
         }
     }
@@ -1162,7 +1135,7 @@ mod tests {
         let stub = CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
-            mem_clobbers: MEM_CLOBBER_FULL,
+            clobbers_memory: true,
         });
         assert_eq!(classify(crate::ArchPreset::X86, "swi"), Some(stub));
         assert_eq!(classify(crate::ArchPreset::X86_64, "swi"), Some(stub));
@@ -1239,7 +1212,6 @@ mod tests {
     /// UnknownCallOtherError at the IR layer.
     #[test]
     fn x86_memory_fences_classify_with_full_clobber() {
-        use crate::alias_class::MEM_CLOBBER_FULL;
         for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
             for name in ["mfence", "sfence", "lfence"] {
                 let cls = classify(preset, name)
@@ -1260,10 +1232,6 @@ mod tests {
                     abi.has_memory_edge(),
                     "({preset:?}, {name}) must advance memory edge — fences are ordering primitives"
                 );
-                assert_eq!(
-                    abi.mem_clobbers, MEM_CLOBBER_FULL,
-                    "({preset:?}, {name}) must clobber [Stack, Unknown]"
-                );
             }
         }
     }
@@ -1275,7 +1243,6 @@ mod tests {
     /// would fail with UnknownCallOtherError at the IR layer.
     #[test]
     fn powerpc_barriers_classify_with_full_clobber() {
-        use crate::alias_class::MEM_CLOBBER_FULL;
         for preset in [
             crate::ArchPreset::Ppc32Be,
             crate::ArchPreset::Ppc32Le,
@@ -1292,10 +1259,6 @@ mod tests {
                 assert!(abi.implicit_reads.is_empty(), "({preset:?}, {name}) implicit_reads");
                 assert!(abi.implicit_writes.is_empty(), "({preset:?}, {name}) implicit_writes");
                 assert!(abi.has_memory_edge(), "({preset:?}, {name}) must advance mem edge");
-                assert_eq!(
-                    abi.mem_clobbers, MEM_CLOBBER_FULL,
-                    "({preset:?}, {name}) must clobber [Stack, Unknown]"
-                );
             }
         }
     }
@@ -1306,7 +1269,6 @@ mod tests {
     /// UnknownCallOtherError.
     #[test]
     fn mips_barriers_classify_with_full_clobber() {
-        use crate::alias_class::MEM_CLOBBER_FULL;
         for preset in [
             crate::ArchPreset::MipsBe32,
             crate::ArchPreset::MipsLe32,
@@ -1323,10 +1285,6 @@ mod tests {
                 assert!(abi.implicit_reads.is_empty(), "({preset:?}, {name}) implicit_reads");
                 assert!(abi.implicit_writes.is_empty(), "({preset:?}, {name}) implicit_writes");
                 assert!(abi.has_memory_edge(), "({preset:?}, {name}) must advance mem edge");
-                assert_eq!(
-                    abi.mem_clobbers, MEM_CLOBBER_FULL,
-                    "({preset:?}, {name}) must clobber [Stack, Unknown]"
-                );
             }
         }
     }

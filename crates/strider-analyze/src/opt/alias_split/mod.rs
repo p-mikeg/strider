@@ -356,8 +356,9 @@ fn callother_clobbers(
 ) -> &'static [AliasClass] {
     if let Some(name) = function.call_other_name(node) {
         match classify(preset, name) {
-            Some(CallOtherClass::Call(abi)) => abi.mem_clobbers,
-            // NoOp / NoReturn / unknown name — leave the memory edge alone.
+            Some(CallOtherClass::Call(abi)) if abi.clobbers_memory => TERMINAL_CLOBBERS,
+            // NoOp / NoReturn / pure (clobbers_memory=false) / unknown
+            // name — leave the memory edge alone.
             _ => &[],
         }
     } else {
