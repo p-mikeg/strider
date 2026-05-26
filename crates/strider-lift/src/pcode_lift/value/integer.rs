@@ -13,7 +13,7 @@ use crate::pcode_lift::ValueLifter;
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a p-code `Copy` instruction.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let input = self.read_vn(&insn.inputs[0])?;
+        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         self.write_vn(out_vn, input)
     }
@@ -27,14 +27,15 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// path — surface the inversion as a lift-time error.
     pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        if out_vn.size < insn.inputs[0].size {
+        let in0_size = crate::pcode_lift::nth_input_or_err(insn, 0)?.size;
+        if out_vn.size < in0_size {
             return Err(anyhow::anyhow!(
                 "p-code extend width mismatch: input={} output={} (output must be >= input)",
-                insn.inputs[0].size,
+                in0_size,
                 out_vn.size,
             ));
         }
-        let input = self.read_vn(&insn.inputs[0])?;
+        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out = self
             .builder
             .extend_if_needed(input, out_vn.size.try_into()?, op)?;

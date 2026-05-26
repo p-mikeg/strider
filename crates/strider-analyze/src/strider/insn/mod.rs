@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use strider_ir::node::NodeOutputType;
+use strider_lift::pcode_lift::nth_input_or_err;
 use rsleigh::Opcode;
 
 use super::PerRegionDriver;
@@ -98,8 +99,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
     fn handle_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let space = strider_lift::pcode_lift::decode_space_id(insn)?;
-        let addr = self.read_vn(&insn.inputs[1])?;
-        let data = self.read_vn(&insn.inputs[2])?;
+        let addr = self.read_vn(nth_input_or_err(insn, 1)?)?;
+        let data = self.read_vn(nth_input_or_err(insn, 2)?)?;
         self.builder.build_store(addr, data, space)?;
         Ok(())
     }
@@ -196,7 +197,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// Called by [`Self::handle_call_other_modeled`].
     fn read_call_other_args(&mut self, insn: &rsleigh::Insn) -> Result<Vec<strider_ir::Value>> {
         if insn.inputs.len() > 1 {
-            insn.inputs[1..]
+            insn.inputs
+                .get(1..)
+                .unwrap_or(&[])
                 .iter()
                 .map(|vn| self.read_vn(vn))
                 .collect()

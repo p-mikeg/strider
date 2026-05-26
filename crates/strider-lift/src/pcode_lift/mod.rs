@@ -114,6 +114,21 @@ pub fn first_input_or_err(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
     })
 }
 
+/// Returns `&insn.inputs[n]` or a typed "too few inputs" error.
+///
+/// # Errors
+/// Returns an error when `insn.inputs` has `<= n` elements.
+pub fn nth_input_or_err(insn: &rsleigh::Insn, n: usize) -> Result<&rsleigh::Vn> {
+    insn.inputs.get(n).ok_or_else(|| {
+        anyhow::anyhow!(
+            "opcode {:?} has too few inputs: expected at least {}, got {}",
+            insn.opcode,
+            n + 1,
+            insn.inputs.len()
+        )
+    })
+}
+
 /// Decodes the target address space of a p-code `LOAD` / `STORE`.
 ///
 /// P-code encodes the target space as a CONST-space varnode at `inputs[0]`

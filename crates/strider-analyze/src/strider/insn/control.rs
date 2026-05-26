@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail, Result};
+use strider_lift::pcode_lift::nth_input_or_err;
 
 use super::super::PerRegionDriver;
 
@@ -191,7 +192,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         insn: &rsleigh::Insn,
         region_lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
-        let cond_raw = self.read_vn(&insn.inputs[1])?;
+        let cond_raw = self.read_vn(nth_input_or_err(insn, 1)?)?;
         // Most archs feed `If` a Bool-typed flag-register or compare result,
         // but a few lift conditional branches off an integer varnode (e.g.
         // ARM's status flags are written as integers when the analyzer's
@@ -228,7 +229,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     pub(super) fn handle_call(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Direct call: the target varnode is in the code space and its offset
         // *is* the target address — it's not a pointer to dereference.
-        let target_vn = &insn.inputs[0];
+        let target_vn = nth_input_or_err(insn, 0)?;
         let space = target_vn.addr_space;
         let space_info = self
             .cfg
@@ -292,7 +293,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
     pub(super) fn handle_call_indirect(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Indirect call: target is a register/memory value holding the address.
-        let call_address = self.read_vn(&insn.inputs[0])?;
+        let call_address = self.read_vn(nth_input_or_err(insn, 0)?)?;
         self.builder.build_call(call_address)?;
         Ok(())
     }

@@ -20,13 +20,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         if insn.inputs.len() < 3 {
             bail!("opcode {:?} has too few inputs: expected at least 3, got {}", insn.opcode, insn.inputs.len());
         }
-        let id_vn = &insn.inputs[0];
+        let id_vn = crate::pcode_lift::nth_input_or_err(insn, 0)?;
         if id_vn.addr_space != rsleigh::VnSpace::CONST {
             bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
         }
         let op_id = id_vn.addr_off;
-        let segment = self.read_vn(&insn.inputs[1])?;
-        let offset = self.read_vn(&insn.inputs[2])?;
+        let segment = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
+        let offset = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 2)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self.builder.build_segment_op(
             op_id,

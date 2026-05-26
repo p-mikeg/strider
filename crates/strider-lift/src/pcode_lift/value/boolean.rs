@@ -14,8 +14,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: BoolBinaryOp,
     ) -> Result<()> {
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
+        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self.builder.build_boolean_operation(lhs, rhs, op)?;
         self.write_vn(out_vn, out)
@@ -28,7 +28,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: BoolUnaryOp,
     ) -> Result<()> {
-        let input = self.read_vn(&insn.inputs[0])?;
+        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self.builder.build_boolean_unary_operation(input, op)?;
         self.write_vn(out_vn, out)

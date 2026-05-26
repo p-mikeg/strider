@@ -664,6 +664,28 @@ fn lift_missing_output_errors_for_op_that_needs_one() {
 }
 
 #[test]
+fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
+    // A binary opcode (IntAdd) given only ONE input must surface a
+    // typed "too few inputs" error rather than panicking on the
+    // out-of-bounds `insn.inputs[1]` access.  Regression guard for the
+    // panic-safety conversion of raw slice indexing to checked accessors.
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let insn = Insn {
+        opcode: Opcode::IntAdd,
+        output: Some(reg(0)),
+        // Only one input — the binary handler reads inputs[1].
+        inputs: vec![const_vn(7, 4)].into(),
+    };
+    let res = lifter.lift(&insn);
+    assert!(
+        res.is_err(),
+        "binary op with too few inputs should error, not panic"
+    );
+}
+
+#[test]
 fn lift_call_other_returns_false_via_value_lifter() {
     // CallOther stays in strider; the lifter never claims it.
     let sleigh = make_sleigh();

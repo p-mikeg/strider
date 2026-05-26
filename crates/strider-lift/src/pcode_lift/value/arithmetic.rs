@@ -72,8 +72,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         op: IntUnaryOp,
     ) -> Result<()> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        require_equal_input_output_width(&insn.inputs[0], out_vn)?;
-        let input = self.read_vn(&insn.inputs[0])?;
+        require_equal_input_output_width(crate::pcode_lift::nth_input_or_err(insn, 0)?, out_vn)?;
+        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out = self
             .builder
             .build_int_unary_operation(input, op, out_vn.size.try_into()?)?;
@@ -98,8 +98,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: IntBinaryOp,
     ) -> Result<()> {
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
+        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self
             .builder
@@ -118,12 +118,11 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: IntCmpOp,
     ) -> Result<()> {
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
+        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out =
-            self.builder
-                .build_int_cmp_operation(lhs, rhs, op, insn.inputs[0].size.try_into()?)?;
+        let cmp_width = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let out = self.builder.build_int_cmp_operation(lhs, rhs, op, cmp_width)?;
         self.write_vn(out_vn, out)
     }
 
@@ -135,16 +134,17 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// width, NOT the output width: the output is a 1-byte bool, the
     /// inputs may be any integer width.
     pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        require_equal_input_widths(&insn.inputs[0], &insn.inputs[1])?;
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let eq = self.builder.build_int_cmp_operation(
-            lhs,
-            rhs,
-            IntCmpOp::Equal,
-            insn.inputs[0].size.try_into()?,
+        require_equal_input_widths(
+            crate::pcode_lift::nth_input_or_err(insn, 0)?,
+            crate::pcode_lift::nth_input_or_err(insn, 1)?,
         )?;
+        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let cmp_width = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let eq = self
+            .builder
+            .build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, cmp_width)?;
         let neq = self
             .builder
             .build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
@@ -158,16 +158,17 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// see one canonical shape (`Less` plus an optional `BoolNeg`) instead
     /// of two.
     pub(super) fn handle_int_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        require_equal_input_widths(&insn.inputs[0], &insn.inputs[1])?;
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let lt = self.builder.build_int_cmp_operation(
-            rhs,
-            lhs,
-            IntCmpOp::Less,
-            insn.inputs[0].size.try_into()?,
+        require_equal_input_widths(
+            crate::pcode_lift::nth_input_or_err(insn, 0)?,
+            crate::pcode_lift::nth_input_or_err(insn, 1)?,
         )?;
+        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let cmp_width = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let lt = self
+            .builder
+            .build_int_cmp_operation(rhs, lhs, IntCmpOp::Less, cmp_width)?;
         let le = self
             .builder
             .build_boolean_unary_operation(lt, BoolUnaryOp::Neg)?;
@@ -180,16 +181,17 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// swap, same `BoolNeg` wrap, but with `IntCmpOp::Sless` for signed
     /// comparison.
     pub(super) fn handle_int_sless_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        require_equal_input_widths(&insn.inputs[0], &insn.inputs[1])?;
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let lt = self.builder.build_int_cmp_operation(
-            rhs,
-            lhs,
-            IntCmpOp::Sless,
-            insn.inputs[0].size.try_into()?,
+        require_equal_input_widths(
+            crate::pcode_lift::nth_input_or_err(insn, 0)?,
+            crate::pcode_lift::nth_input_or_err(insn, 1)?,
         )?;
+        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let cmp_width = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let lt = self
+            .builder
+            .build_int_cmp_operation(rhs, lhs, IntCmpOp::Sless, cmp_width)?;
         let le = self
             .builder
             .build_boolean_unary_operation(lt, BoolUnaryOp::Neg)?;
@@ -217,15 +219,19 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // [`require_equal_input_widths`]; `IntSub` adds the extra
         // output-width check (the comparison lowerings produce a Bool
         // output so the output-width check doesn't apply there).
-        require_equal_input_widths(&insn.inputs[0], &insn.inputs[1])?;
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
+        require_equal_input_widths(
+            crate::pcode_lift::nth_input_or_err(insn, 0)?,
+            crate::pcode_lift::nth_input_or_err(insn, 1)?,
+        )?;
+        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty = out_vn.size.try_into()?;
-        if insn.inputs[0].size != out_vn.size {
+        let in0_size = crate::pcode_lift::nth_input_or_err(insn, 0)?.size;
+        if in0_size != out_vn.size {
             return Err(anyhow::anyhow!(
                 "IntSub width mismatch: inputs={} out={} (Sleigh requires equal widths)",
-                insn.inputs[0].size,
+                in0_size,
                 out_vn.size,
             ));
         }
