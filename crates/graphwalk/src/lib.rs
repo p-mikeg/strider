@@ -233,9 +233,6 @@ where
     PreOrder::new(graph, roots)
 }
 
-/// Pre-order DFS over a tree (no cycle tracking; each node visited once).
-pub type TreePreOrder<G> = PreOrder<G, NopTracker>;
-
 /// Internal stack-based state for a post-order DFS traversal.
 #[derive(Debug)]
 pub struct PostOrderContext<N> {
@@ -372,5 +369,3 @@ where
     PostOrder::new(graph, roots)
 }
 
-/// Post-order DFS over a tree (no cycle tracking; each node visited once).
-pub type TreePostOrder<G> = PostOrder<G, NopTracker>;

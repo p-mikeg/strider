@@ -322,33 +322,6 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
 /// viewer's UI; this only changes the initial selection.
 pub const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
 
-/// Layout-engine selection policy applied by [`GraphDot::as_html_from_dot`].
-///
-/// Defaults to [`HtmlEngineChoice::Auto`], which picks `sfdp` when the
-/// DOT source contains more than [`DEFAULT_SFDP_NODE_THRESHOLD`] node
-/// statements and `dot` otherwise.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum HtmlEngineChoice {
-    /// Pick `sfdp` when `dot_node_count(src) > DEFAULT_SFDP_NODE_THRESHOLD`,
-    /// otherwise `dot`.
-    #[default]
-    Auto,
-}
-
-impl HtmlEngineChoice {
-    /// Resolves this policy against `node_count` to a concrete engine
-    /// name accepted by the viewer's `<select id="engSel">` element.
-    #[must_use]
-    pub fn resolve(&self, node_count: usize) -> &'static str {
-        let Self::Auto = self;
-        if node_count > DEFAULT_SFDP_NODE_THRESHOLD {
-            "sfdp"
-        } else {
-            "dot"
-        }
-    }
-}
-
 /// Counts node statements in a DOT source string.
 ///
 /// Mirrors the heuristic the HTML viewer uses for its "big graph"
@@ -367,7 +340,6 @@ pub struct GraphDot<G: GraphDotDumper> {
     dumper: G,
     style: DotStyle,
     name: String,
-    engine_choice: HtmlEngineChoice,
 }
 
 impl<G: GraphDotDumper> GraphDot<G> {
@@ -377,7 +349,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
             dumper,
             style,
             name: "G".to_string(),
-            engine_choice: HtmlEngineChoice::default(),
         }
     }
 
@@ -417,7 +388,11 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Same as [`Self::as_dot`].
     pub fn as_html_from_dot(&self) -> anyhow::Result<String> {
         let dot_src = self.as_dot()?;
-        let engine = self.engine_choice.resolve(dot_node_count(&dot_src));
+        let engine = if dot_node_count(&dot_src) > DEFAULT_SFDP_NODE_THRESHOLD {
+            "sfdp"
+        } else {
+            "dot"
+        };
         Ok(HTML_DOT_TEMPLATE
             .replace("__VIZ_STANDALONE_JS__", VIZ_STANDALONE_JS)
             .replace("__SVG_PAN_ZOOM_JS__", SVG_PAN_ZOOM_JS)
@@ -570,19 +545,12 @@ mod label_tests {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
+#[allow(clippy::panic, clippy::unwrap_used)]
 mod engine_choice_tests {
-    use super::{dot_node_count, HtmlEngineChoice, DEFAULT_SFDP_NODE_THRESHOLD};
+    use super::dot_node_count;
 
     #[test]
     fn dot_node_count_matches_label_statements() {
-        // The counter is a strict substring match on `[label=` — same
-        // heuristic the viewer's JS uses for its loading message.
         let dot =
             "digraph G {\n  a [label=\"x\"];\n  b [label=\"y\"];\n  a -> b;\n}";
         assert_eq!(dot_node_count(dot), 2);
@@ -593,20 +561,4 @@ mod engine_choice_tests {
         assert_eq!(dot_node_count(""), 0);
         assert_eq!(dot_node_count("digraph G { }"), 0);
     }
-
-    #[test]
-    fn auto_picks_dot_below_threshold() {
-        let choice = HtmlEngineChoice::Auto;
-        assert_eq!(choice.resolve(0), "dot");
-        assert_eq!(choice.resolve(1), "dot");
-        assert_eq!(choice.resolve(DEFAULT_SFDP_NODE_THRESHOLD), "dot");
-    }
-
-    #[test]
-    fn auto_picks_sfdp_above_threshold() {
-        let choice = HtmlEngineChoice::Auto;
-        assert_eq!(choice.resolve(DEFAULT_SFDP_NODE_THRESHOLD + 1), "sfdp");
-        assert_eq!(choice.resolve(10_000), "sfdp");
-    }
-
 }

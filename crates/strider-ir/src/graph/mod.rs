@@ -239,21 +239,4 @@ impl Graph {
         self.nodes.keys()
     }
 
-    /// Identity self-reference — kept so call sites written against the
-    /// old `Graph`-as-wrapper shape continue to compile while callers
-    /// migrate to `Function`.
-    #[doc(hidden)]
-    #[inline]
-    #[must_use]
-    pub fn graph(&self) -> &Graph {
-        self
-    }
-
-    /// Identity self-reference (mut).  See [`Self::graph`].
-    #[doc(hidden)]
-    #[inline]
-    #[must_use]
-    pub fn graph_mut(&mut self) -> &mut Graph {
-        self
-    }
 }

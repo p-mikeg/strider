@@ -12,7 +12,6 @@
 //! resolution, and the orchestrator.  Consolidates the optimizer, pattern
 //! matcher, per-region driver, and `Strider` entry point into one crate.
 
-mod errors;
 pub mod orchestrator;
 pub mod rewrite;
 mod strider;

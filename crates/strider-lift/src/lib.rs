@@ -14,4 +14,3 @@
 
 pub mod pcode_lift;
 pub mod cfg;
-pub mod errors;

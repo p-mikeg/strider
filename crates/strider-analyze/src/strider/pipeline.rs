@@ -208,12 +208,6 @@ impl Strider {
         self
     }
 
-    /// Returns the alias mode this `Strider` is configured with.
-    #[must_use]
-    pub const fn alias_mode(&self) -> crate::opt::AliasMode {
-        self.alias_mode
-    }
-
     /// Builds an optimizer pipeline containing the default passes plus the
     /// convention-aware stack-argument passes:
     ///
