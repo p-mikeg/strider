@@ -50,11 +50,10 @@ use crate::opt::worklist::seeded_kind;
 /// after the fixed-point loop has converged.
 #[derive(Clone)]
 pub struct FunctionArgDetect {
-    /// Calling convention this pass was built from.  Shared `Arc` so all
-    /// CC-aware passes hold the same allocation.
-    /// Consults `cc.arg_passing_regs`, `cc.stack_ptr_vn`, and
-    /// `cc.stack_arg_offsets` indirectly through [`Self::layout`].
-    cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
+    /// Stack-pointer varnode used by [`decompose_sp`] when classifying
+    /// stack-arg `Load` addresses.  Extracted from the calling
+    /// convention at construction time.
+    stack_ptr_vn: rsleigh::Vn,
     /// Cached positional-arg layout derived from `cc` at construction
     /// time.  The pass reads `layout.first_stack_index()` to compute
     /// the register-vs-stack boundary instead of the
@@ -84,11 +83,10 @@ impl FunctionArgDetect {
     /// calling convention.
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        let layout = strider_target::PositionalArgLayout::from_convention(cc);
         Self {
-            cc: std::sync::Arc::new(cc.clone()),
-            layout,
-            alias_mode: crate::opt::AliasMode::default(),
+            stack_ptr_vn: cc.stack_ptr_vn,
+            layout: strider_target::PositionalArgLayout::from_convention(cc),
+            alias_mode: crate::opt::AliasMode::Strict,
         }
     }
 
@@ -119,7 +117,7 @@ impl Optimizer for FunctionArgDetect {
         detect_register_args(&mut ctx, &arg_passing_regs)?;
         detect_stack_args(
             &mut ctx,
-            self.cc.stack_ptr_vn,
+            self.stack_ptr_vn,
             &stack_arg_offsets,
             self.layout.first_stack_index() as usize,
             self.alias_mode,

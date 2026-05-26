@@ -432,7 +432,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             return Ok(ProcessInsnRes::DidntFinishProcessing);
         };
         let name = self.builder.sleigh.user_op_name(id_u32);
-        let preset = self.builder.preset;
+        let preset = self.builder.arch.preset();
         let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
         if matches!(class, Some(strider_target::call_other_abi::CallOtherClass::NoReturn)) {
             // CallOther is already in self.insns from the
@@ -483,7 +483,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 &self.builder.sleigh,
                 self.builder.options.link_register_vn,
                 self.builder.options.read_only_memory.as_deref(),
-                self.builder.endianness,
+                self.builder.arch.endianness(),
             )?
         } else {
             // No resolver installed → treat every unresolved

@@ -25,10 +25,10 @@ use crate::opt::worklist::seeded_kind;
 /// simplified by `ConstantFold` / `KnownBits`.
 #[derive(Clone)]
 pub struct LoadForward {
-    /// Calling convention this pass was built from.  See the comment
-    /// Shared `Arc` so all CC-aware passes can hold the same allocation.
-    /// This pass consults only `cc.stack_ptr_vn`.
-    cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
+    /// Stack-pointer varnode used by [`decompose_sp`] to recognise
+    /// SP-relative addresses.  Extracted from the calling convention at
+    /// construction time — the pass consults nothing else from the CC.
+    stack_ptr_vn: rsleigh::Vn,
     /// Target endianness — controls how a narrow load from a wider store is
     /// synthesised (LE: low bytes via `Truncate`; BE: high bytes via
     /// `Truncate(ShiftRight(data, (store_size - load_size) * 8))`).
@@ -48,11 +48,11 @@ impl LoadForward {
     /// [`Self::from_convention`] so the same CC is shared with the
     /// other SP-aware passes.
     #[must_use]
-    pub fn new(stack_ptr_vn: rsleigh::Vn, endianness: Endianness) -> Self {
+    pub const fn new(stack_ptr_vn: rsleigh::Vn, endianness: Endianness) -> Self {
         Self {
-            cc: std::sync::Arc::new(crate::opt::sp_pass_cc::minimal_cc_for_sp(stack_ptr_vn)),
+            stack_ptr_vn,
             endianness,
-            alias_mode: crate::opt::AliasMode::default(),
+            alias_mode: crate::opt::AliasMode::Strict,
         }
     }
 
@@ -63,11 +63,7 @@ impl LoadForward {
         cc: &strider_target::BuiltCallingConvention,
         arch: &strider_target::SleighArch,
     ) -> Self {
-        Self {
-            cc: std::sync::Arc::new(cc.clone()),
-            endianness: arch.endianness(),
-            alias_mode: crate::opt::AliasMode::default(),
-        }
+        Self::new(cc.stack_ptr_vn, arch.endianness())
     }
 
     /// Overrides the alias-analysis precision used by the chain walk.
@@ -89,7 +85,7 @@ impl Optimizer for LoadForward {
         let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        let sp_vn = self.cc.stack_ptr_vn;
+        let sp_vn = self.stack_ptr_vn;
         while let Some(load) = work.dequeue() {
             result |= try_forward_load(&mut ctx, load, sp_vn, self.endianness, &mut memo, self.alias_mode)?;
         }

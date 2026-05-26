@@ -53,18 +53,19 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: Options,
-    /// Byte order of the target architecture.  Threaded into the
-    /// installed [`IndirectResolverFn`] (canonical implementation:
-    /// `strider_analyze::indirect_resolver::resolve_indirect_target`)
-    /// which builds a mini IR via `crate::pcode_lift::ValueLifter::new`.
-    /// Set atomically with `preset` via [`Self::for_arch`].
-    pub(super) endianness: strider_target::Endianness,
-    /// Coarse architecture family.  Consulted by
+    /// Target architecture.  Carries both endianness (threaded into the
+    /// installed [`IndirectResolverFn`] — canonical implementation:
+    /// `strider_analyze::indirect_resolver::resolve_indirect_target` —
+    /// which builds a mini IR via `crate::pcode_lift::ValueLifter::new`)
+    /// and the [`strider_target::ArchPreset`] discriminator consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
-    /// arm to pass the right `arch` to
-    /// [`strider_target::call_other_abi::classify`].  Set atomically with
-    /// `endianness` via [`Self::for_arch`].
-    pub(super) preset: strider_target::ArchPreset,
+    /// arm to pass the right preset to
+    /// [`strider_target::call_other_abi::classify`].  `SleighArch` is
+    /// `Copy + Eq`, so carrying the whole arch avoids the silent
+    /// misclassification a split endianness/preset ctor would invite
+    /// (e.g. a big-endian binary decoded as LE, or AArch64 `brk`
+    /// classified as the x86 stub) without losing ergonomics.
+    pub(super) arch: strider_target::SleighArch,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
     /// Maps each region's `start_addr` to its [`NodeIndex`].
@@ -92,11 +93,12 @@ pub struct Builder<R: rsleigh::MemReader> {
 
 impl<R: rsleigh::MemReader> Builder<R> {
     /// Creates a new `Builder` whose endianness AND `ArchPreset` are
-    /// derived atomically from `arch`.  The canonical constructor for
-    /// CFG building — setting both fields from one `SleighArch` source
-    /// prevents the silent misclassification that a split
-    /// endianness/preset ctor would invite (e.g. a big-endian binary
-    /// decoded as LE, or AArch64 `brk` classified as the x86 stub).
+    /// derived atomically from `arch` (which is stored in full).  The
+    /// canonical constructor for CFG building — carrying the whole
+    /// `SleighArch` (which is `Copy + Eq`) prevents the silent
+    /// misclassification that a split endianness/preset ctor would
+    /// invite (e.g. a big-endian binary decoded as LE, or AArch64 `brk`
+    /// classified as the x86 stub).
     #[must_use]
     pub fn for_arch(
         arch: &strider_target::SleighArch,
@@ -108,8 +110,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
             sleigh,
             start_addr: start_addr.into(),
             options,
-            endianness: arch.endianness(),
-            preset: arch.preset(),
+            arch: *arch,
             graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),

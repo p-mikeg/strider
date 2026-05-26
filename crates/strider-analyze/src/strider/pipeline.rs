@@ -44,15 +44,6 @@ pub struct AnalyzeOutcome {
     /// exit produced it (so it can read the region's exit
     /// `vn_to_value` for the in-place edit's ABI threading).
     pub(crate) region_handles: Vec<RegionLiftHandles>,
-    /// Snapshot of [`strider_ir::Graph::generation`] taken at lift
-    /// time, before any subsequent compaction.  The `region_handles`
-    /// above (and the `region_exit_controls` they project) carry raw
-    /// `NodeOutputId`s that point into the post-lift arena; any
-    /// subsequent `Graph::compact` / `Graph::retain_reachable` bumps
-    /// the graph's generation and invalidates them.  Dump APIs
-    /// compare against this snapshot to surface a typed error rather
-    /// than silently rendering the wrong region.
-    pub(crate) lift_generation: u64,
 }
 
 impl AnalyzeOutcome {
@@ -75,14 +66,16 @@ impl AnalyzeOutcome {
         self.region_handles.iter().map(|h| h.exit_control)
     }
 
-    /// Returns the [`strider_ir::Graph::generation`] snapshot captured
-    /// at lift time.  Compare against the live graph's
-    /// `Graph::generation()` before consuming any
-    /// `region_exit_controls` ids — a mismatch means the graph was
-    /// compacted after lift and the ids are stale.
+    /// Returns the [`strider_ir::Graph::generation`] of the owned
+    /// graph.  Equivalent to `self.graph.generation()` — exposed as a
+    /// named accessor because callers historically used it as a
+    /// snapshot to compare against post-compaction generations.
+    /// Since `AnalyzeOutcome` owns the graph and no consumer can
+    /// mutate it between construction and access, this is identical
+    /// to reading the live graph's generation.
     #[must_use]
     pub fn lift_generation(&self) -> u64 {
-        self.lift_generation
+        self.graph.generation()
     }
 }
 
@@ -606,12 +599,10 @@ where
 
     let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
     let graph = driver.builder.build()?;
-    let lift_generation = graph.generation();
     Ok(AnalyzeOutcome {
         graph,
         unresolved_branches,
         region_handles,
-        lift_generation,
     })
 }
 

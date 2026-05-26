@@ -1,31 +1,16 @@
 //! Helpers shared by the SP-aware opt passes
-//! ([`LoadForward`][crate::opt::LoadForward],
-//! [`CallStackArgCollect`][crate::opt::CallStackArgCollect],
+//! ([`CallStackArgCollect`][crate::opt::CallStackArgCollect],
 //! [`FunctionArgDetect`][crate::opt::FunctionArgDetect]) when they
 //! synthesise a minimal calling convention from raw constructor
 //! arguments.
 //!
 //! Tests in this crate frequently construct one of the passes with just
-//! a stack-pointer varnode (and sometimes a stack-arg offset list /
-//! register-arg list).  Those convenience `::new(...)` constructors
-//! funnel through here so the passes share a single synthetic-CC
-//! construction site and a single drift surface.
+//! a stack-pointer varnode and a stack-arg offset list / register-arg
+//! list.  Those convenience `::new(...)` constructors funnel through
+//! here so the passes share a single synthetic-CC construction site
+//! and a single drift surface.
 
 use strider_target::BuiltCallingConvention;
-
-/// Synthesises a minimal [`BuiltCallingConvention`] for the given
-/// stack-pointer varnode.  No register-passed args, no stack-passed
-/// args, no callee-saved regs, no link register.  Suitable for unit
-/// tests that drive an SP-aware pass with only a stack-pointer
-/// varnode.
-///
-/// Routes through [`BuiltCallingConvention::try_new`] so the
-/// SP-not-in-any-reg-list invariant is checked at construction; that
-/// check trivially passes here because every reg-list is empty.
-#[must_use]
-pub(crate) fn minimal_cc_for_sp(stack_ptr_vn: rsleigh::Vn) -> BuiltCallingConvention {
-    minimal_cc(stack_ptr_vn, Vec::new(), Vec::new())
-}
 
 /// Synthesises a minimal [`BuiltCallingConvention`] for the given
 /// stack-pointer varnode, register-passed argument list, and

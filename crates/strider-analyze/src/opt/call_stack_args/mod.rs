@@ -337,10 +337,10 @@ fn try_collect_stack_args(
 /// stack-arg slots and terminate the walk.
 #[derive(Clone)]
 pub struct CallStackArgCollect {
-    /// Calling convention this pass was built from.  Shared `Arc` so all
-    /// CC-aware passes hold the same allocation.
-    /// Consults `cc.stack_arg_offsets` and `cc.stack_ptr_vn`.
-    cc: std::sync::Arc<strider_target::BuiltCallingConvention>,
+    /// Stack-pointer varnode used by [`decompose_sp`] when classifying
+    /// chain stores as SP-relative.  Extracted from the calling
+    /// convention at construction time.
+    stack_ptr_vn: rsleigh::Vn,
     /// Cached positional-arg layout derived from `cc` at construction
     /// time.  Single source of truth for "what is positional arg `i`?";
     /// keeps the pass's stack-arg-offsets read aligned with the
@@ -365,11 +365,10 @@ impl CallStackArgCollect {
     /// stack-pointer varnode are taken from the supplied calling convention.
     #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        let layout = strider_target::PositionalArgLayout::from_convention(cc);
         Self {
-            cc: std::sync::Arc::new(cc.clone()),
-            layout,
-            alias_mode: crate::opt::AliasMode::default(),
+            stack_ptr_vn: cc.stack_ptr_vn,
+            layout: strider_target::PositionalArgLayout::from_convention(cc),
+            alias_mode: crate::opt::AliasMode::Strict,
         }
     }
 
@@ -396,7 +395,7 @@ impl Optimizer for CallStackArgCollect {
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         let default_offsets = self.layout.stack_arg_offsets();
-        let stack_ptr_vn = self.cc.stack_ptr_vn;
+        let stack_ptr_vn = self.stack_ptr_vn;
         for call_id in calls {
             let override_offsets: Option<Vec<i64>> = ctx
                 .function_ref()
