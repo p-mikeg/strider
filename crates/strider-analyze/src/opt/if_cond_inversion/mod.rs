@@ -89,7 +89,7 @@ fn is_inverted_cond(graph: &strider_ir::Graph, if_node: NodeId) -> bool {
     let Ok([_ctrl, cond_out]) = graph.node_inputs_exact::<2>(if_node) else {
         return false;
     };
-    let cond_node = graph.get_node_from_output(cond_out);
+    let cond_node = graph.node_for_output(cond_out);
     matches!(
         graph.node_kind(cond_node),
         NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)
@@ -108,7 +108,7 @@ fn invert(function: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     // it, which is fine.
     let cond_input_id = function.node_input_id_at(if_node, 1)?;
     let cond_out = function.input_output_id(cond_input_id);
-    let bool_neg_node = function.get_node_from_output(cond_out);
+    let bool_neg_node = function.node_for_output(cond_out);
     let [inner] = function.node_inputs_exact::<1>(bool_neg_node)?;
     // Count BoolNeg's consumers BEFORE redirecting: if we are the only
     // user, BoolNeg becomes dead after the redirect and its
@@ -123,7 +123,7 @@ fn invert(function: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     let bool_neg_uses_before = function.output_uses(cond_out).count();
     function.update_input(cond_input_id, inner);
     if bool_neg_uses_before == 1 {
-        let inner_node = function.get_node_from_output(inner);
+        let inner_node = function.node_for_output(inner);
         function.extend_asm_fingerprint_from(inner_node, bool_neg_node);
     }
 

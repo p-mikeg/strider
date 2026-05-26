@@ -35,7 +35,7 @@ fn make_config<'a>(
         fn_max_size: None,
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: rustc_hash::FxHashMap::default(),
+        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
     }
 }
 

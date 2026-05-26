@@ -44,7 +44,7 @@ impl From<RetPat> for Pat {
         // Return inputs: [ctrl(0), mem(1), retval0(2), retval1(3), ...].
         // `preceded_by` matches against the ctrl input (index 0); the default
         // `Pattern::try_match` on the sub-pattern then does
-        // `get_node_from_output`, giving a direct-step backward match.
+        // `node_for_output`, giving a direct-step backward match.
         let mut indexed_inputs: Vec<(usize, Pat)> = Vec::new();
         if let Some(prev) = preceded_by {
             indexed_inputs.push((0, prev));

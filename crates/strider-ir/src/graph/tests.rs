@@ -69,7 +69,7 @@ fn create_single_node() {
     check_node_output_definitions(&graph, node_id, vec![(node_id, 0)]);
 }
 
-/// `kind_of_output` agrees with the two-step `node_kind(get_node_from_output(out))`
+/// `kind_of_output` agrees with the two-step `node_kind(node_for_output(out))`
 /// lookup it replaces — pinned because ~100 callsites depend on the equivalence.
 #[test]
 fn kind_of_output_matches_two_step_lookup() {
@@ -80,7 +80,7 @@ fn kind_of_output_matches_two_step_lookup() {
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
     let [out] = graph.node_outputs_exact::<1>(node_id).unwrap();
-    let two_step = graph.node_kind(graph.get_node_from_output(out));
+    let two_step = graph.node_kind(graph.node_for_output(out));
     let one_step = graph.kind_of_output(out);
     assert_eq!(one_step, two_step);
     assert_eq!(one_step, &NodeKind::IntConst(7));
@@ -517,9 +517,9 @@ fn output_has_one_usage_tracks_consumer_count() {
     );
 }
 
-/// `get_node_from_output` must return the node that created the output.
+/// `node_for_output` must return the node that created the output.
 #[test]
-fn get_node_from_output_returns_source_node() {
+fn node_for_output_returns_source_node() {
     let mut graph = Function::new();
     let node = graph.create_node(
         NodeKind::IntConst(7),
@@ -527,7 +527,7 @@ fn get_node_from_output_returns_source_node() {
         [NodeOutputKind::OutputType(NodeOutputType::U8)],
     );
     let [out] = graph.node_outputs_exact::<1>(node).unwrap();
-    assert_eq!(graph.get_node_from_output(out), node);
+    assert_eq!(graph.node_for_output(out), node);
 }
 
 /// A node with two outputs must expose both with correct kinds and

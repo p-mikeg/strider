@@ -30,7 +30,7 @@ impl Pattern for VarPat {
         if ctx.require_value_output(target).is_none() {
             return false;
         }
-        let node = ctx.function.get_node_from_output(target);
+        let node = ctx.function.node_for_output(target);
         b.bind_capture(self.capture, Binding(node, Some(target)))
     }
 
@@ -71,7 +71,7 @@ impl Pattern for CapturePat {
             b.restore(mark);
             return false;
         }
-        let node = ctx.function.get_node_from_output(target);
+        let node = ctx.function.node_for_output(target);
         let output = ctx.require_value_output(target).map(|_| target);
         if b.bind_capture(self.capture, Binding(node, output)) {
             true

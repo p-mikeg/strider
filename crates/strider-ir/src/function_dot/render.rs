@@ -217,7 +217,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             return Ok(());
         }
 
-        let parent_id = self.function.get_node_from_output(parent_output);
+        let parent_id = self.function.node_for_output(parent_output);
         // Skip edges whose producer was filtered out by the active
         // node filter.  Constants are always re-emitted alongside
         // their consumers (the `is_const` branch below), so they

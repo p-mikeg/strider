@@ -269,7 +269,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     let sp_v = b.read_variable(&sp).expect("read sp");
     let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let store_addr = b
-        .build_int_sub(sp_v, four, NodeOutputType::U32)
+        .build_sub_as_add_neg(sp_v, four, NodeOutputType::U32)
         .expect("sp - 4");
     // Store the function-entry lr value there.
     let lr_v = b.read_variable(&lr).expect("read lr");
@@ -282,7 +282,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
     let four2 = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let load_addr = b
-        .build_int_sub(sp_v2, four2, NodeOutputType::U32)
+        .build_sub_as_add_neg(sp_v2, four2, NodeOutputType::U32)
         .expect("sp - 4 (load)");
     let loaded = b
         .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
@@ -366,7 +366,7 @@ pub fn build_push_target_pop_pc_scenario(
     let sp_v = b.read_variable(&sp).expect("read sp");
     let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let store_addr = b
-        .build_int_sub(sp_v, four, NodeOutputType::U32)
+        .build_sub_as_add_neg(sp_v, four, NodeOutputType::U32)
         .expect("sp - 4");
     let stored_const = b.build_int_const(k, NodeOutputType::U32).unwrap();
     b.build_store(store_addr, stored_const, rsleigh::VnSpace::RAM)
@@ -375,7 +375,7 @@ pub fn build_push_target_pop_pc_scenario(
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
     let four2 = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let load_addr = b
-        .build_int_sub(sp_v2, four2, NodeOutputType::U32)
+        .build_sub_as_add_neg(sp_v2, four2, NodeOutputType::U32)
         .expect("sp - 4 (load)");
     let loaded = b
         .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)

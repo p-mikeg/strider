@@ -143,7 +143,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     // Build: stack-store (SP-4) → call 0xCAFE → load 0x1000 → return loaded.
     let mut fg = make_sp_fn(sp, |b, sp_v| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let stack_addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
+        let stack_addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::U32)?;
         let data = b.build_int_const(0x55u64, NodeOutputType::U32)?;
         b.build_store(stack_addr, data, rsleigh::VnSpace::RAM)?;
 

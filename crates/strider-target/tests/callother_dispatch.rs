@@ -28,7 +28,7 @@ fn arm_swi_reads_r7_and_r0_through_r6() {
         &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"]
     );
     assert_eq!(abi.implicit_writes, &["r0"]);
-    assert!(abi.has_memory_edge());
+    assert!(abi.clobbers_memory);
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn x86_64_swi_differs_from_arm_swi() {
     assert_ne!(arm.implicit_reads, x86.implicit_reads);
     assert!(x86.implicit_reads.is_empty());
     assert!(x86.implicit_writes.is_empty());
-    assert!(x86.has_memory_edge());
+    assert!(x86.clobbers_memory);
 }
 
 #[test]

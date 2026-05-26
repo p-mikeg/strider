@@ -4,7 +4,7 @@
 //! whether "data-level" (arithmetic, loads, phis) or "control-level"
 //! (`Call`, `Return`, `If`, `CallOther`), matches against an output.
 //! Control patterns internally recover the producing node via
-//! `ctx.function.get_node_from_output(target)` and then do node-level
+//! `ctx.function.node_for_output(target)` and then do node-level
 //! work; any output of the target node is an acceptable match target.
 //!
 //! The trait has a second mode — [`Pattern::try_build`] — for the RHS of

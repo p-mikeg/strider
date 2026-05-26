@@ -2,7 +2,7 @@
 //!
 //! Returning typed slices and iterators over the per-node `inputs` /
 //! `outputs` lists kept inside `Graph::nodes`, plus a few cheap lookups
-//! (`output_definition`, `get_node_from_output`). The exact-arity helpers
+//! (`output_definition`, `node_for_output`). The exact-arity helpers
 //! return `Result<[…; N]>` rather than panicking so callers in production
 //! code don't have to defend against shape errors with `unwrap`.
 
@@ -97,7 +97,7 @@ impl Graph {
     /// Returns the [`NodeId`] that produces `output_id`.
     #[inline]
     #[must_use]
-    pub fn get_node_from_output(&self, output_id: NodeOutputId) -> NodeId {
+    pub fn node_for_output(&self, output_id: NodeOutputId) -> NodeId {
         self.outputs[output_id].source_id
     }
 
@@ -150,7 +150,7 @@ impl Graph {
 
     /// Returns the [`NodeKind`] of the node that produces `output_id`.
     ///
-    /// Shorthand for `node_kind(get_node_from_output(output_id))` — the
+    /// Shorthand for `node_kind(node_for_output(output_id))` — the
     /// most common two-step lookup in pattern-matching and validation
     /// code paths.
     #[inline]

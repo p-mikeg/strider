@@ -132,7 +132,7 @@ fn assert_some_call_arg_threads_through(
             let Some(arg_out) = hit.output(arg_cap) else { return false; };
             // Walk backward through the cast chain from the captured call arg.
             // If we reach a carrier, it threads through.
-            let mut cur = g.get_node_from_output(arg_out);
+            let mut cur = g.node_for_output(arg_out);
             for _ in 0..8 {
                 if carriers.contains(&cur) {
                     return true;
@@ -149,7 +149,7 @@ fn assert_some_call_arg_threads_through(
                 ) {
                     let inputs = g.node_inputs(cur);
                     if let Some(&first) = inputs.get(0) {
-                        cur = g.get_node_from_output(first);
+                        cur = g.node_for_output(first);
                         continue;
                     }
                 }
@@ -393,7 +393,7 @@ fn uses_return_assertions(g: &strider_ir::Function) {
     let chained = calls.iter().any(|&outer| {
         let outer_inputs: Vec<_> = g.node_inputs(outer).into_iter().collect();
         outer_inputs.iter().any(|&inp| {
-            let mut producer = g.get_node_from_output(inp);
+            let mut producer = g.node_for_output(inp);
             for _ in 0..16 {
                 match g.node_kind(producer) {
                     NodeKind::Call if producer != outer => return true,
@@ -405,7 +405,7 @@ fn uses_return_assertions(g: &strider_ir::Function) {
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.get_node_from_output(first);
+                        producer = g.node_for_output(first);
                     }
                     NodeKind::Phi if g.phi_var_tag(producer).is_none() => {
                         // Anonymous phi (ValuePhi from LoadForward) —
@@ -413,14 +413,14 @@ fn uses_return_assertions(g: &strider_ir::Function) {
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.get_node_from_output(first);
+                        producer = g.node_for_output(first);
                     }
                     NodeKind::Store(_) => {
                         // Store[memory, addr, data] — walk the data input.
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&data) = inps.get(2) else { break; };
-                        producer = g.get_node_from_output(data);
+                        producer = g.node_for_output(data);
                     }
                     _ => break,
                 }

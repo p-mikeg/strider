@@ -49,7 +49,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         fn_max_size: None,
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: overrides,
+        per_address_ccs_unbuilt: overrides,
     };
     let bfg = strider_analyze::run(config).unwrap();
 
@@ -102,7 +102,7 @@ fn call_without_override_uses_function_default_clobber_set() {
         fn_max_size: None,
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: FxHashMap::default(),
+        per_address_ccs_unbuilt: FxHashMap::default(),
     };
     let bfg = strider_analyze::run(config).unwrap();
 

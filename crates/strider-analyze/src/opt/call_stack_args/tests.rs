@@ -27,13 +27,13 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
 
         // push ebx → [sp - 4] = init_ebx.
         let sp_after_push_ebx =
-            b.build_int_sub(sp0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_after_push_ebx)?;
         let init_ebx = b.build_int_const(0xEBu64, NodeOutputType::U32)?;
         b.build_store(sp_after_push_ebx, init_ebx, rsleigh::VnSpace::RAM)?;
 
         // sub esp, 16 → reserve buf.
-        let sp_after_sub = b.build_int_sub(sp_after_push_ebx, sixteen, NodeOutputType::U32,
+        let sp_after_sub = b.build_sub_as_add_neg(sp_after_push_ebx, sixteen, NodeOutputType::U32,
         )?;
         b.write_variable(&sp, sp_after_sub)?;
 
@@ -51,21 +51,21 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         }
 
         // push arg1 = 1 → [sp - 24].
-        let sp_push_arg1 = b.build_int_sub(sp_after_sub, four, NodeOutputType::U32,
+        let sp_push_arg1 = b.build_sub_as_add_neg(sp_after_sub, four, NodeOutputType::U32,
         )?;
         b.write_variable(&sp, sp_push_arg1)?;
         let arg1 = b.build_int_const(1u64, NodeOutputType::U32)?;
         b.build_store(sp_push_arg1, arg1, rsleigh::VnSpace::RAM)?;
 
         // push arg0 = 42 → [sp - 28].
-        let sp_push_arg0 = b.build_int_sub(sp_push_arg1, four, NodeOutputType::U32,
+        let sp_push_arg0 = b.build_sub_as_add_neg(sp_push_arg1, four, NodeOutputType::U32,
         )?;
         b.write_variable(&sp, sp_push_arg0)?;
         let arg0 = b.build_int_const(42u64, NodeOutputType::U32)?;
         b.build_store(sp_push_arg0, arg0, rsleigh::VnSpace::RAM)?;
 
         // implicit call ret-addr push at [sp - 32] — mimics x86 `call`.
-        let sp_call = b.build_int_sub(sp_push_arg0, four, NodeOutputType::U32,
+        let sp_call = b.build_sub_as_add_neg(sp_push_arg0, four, NodeOutputType::U32,
         )?;
         b.write_variable(&sp, sp_call)?;
         let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
@@ -127,14 +127,14 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
         // push arg1 (= 22) at sp - 4
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v1)?;
         let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
         // push arg0 (= 11) at sp - 8
         let sp_v2 =
-            b.build_int_sub(sp_v1, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v2)?;
         let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
@@ -185,7 +185,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v1)?;
         let only_arg = b.build_int_const(99u64, NodeOutputType::U32)?;
         b.build_store(sp_v1, only_arg, rsleigh::VnSpace::RAM)?;
@@ -231,7 +231,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
         // Implicit `call` ret-addr push at sp-4 — chain anchor.
         // rel = 0 is NOT in the slot table [4, 8], so the
         // `is_first_store` exception lets the walk continue.
-        let sp_minus_4 = b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+        let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_minus_4)?;
         let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
         b.build_store(sp_minus_4, retaddr, rsleigh::VnSpace::RAM)?;
@@ -300,7 +300,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
         // push arg1 (= 22) at sp - 4.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v1)?;
         let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
@@ -313,7 +313,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 
         // push arg0 (= 11) at sp - 8.
         let sp_v2 =
-            b.build_int_sub(sp_v1, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v2)?;
         let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
@@ -369,7 +369,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
         // push arg1 = 22 at sp - 4.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v1)?;
         let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
@@ -381,7 +381,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
 
         // push arg0 = 11 at sp - 8.
         let sp_v2 =
-            b.build_int_sub(sp_v1, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v2)?;
         let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
@@ -438,7 +438,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
         {
             let arg_idx = 3 - i;
             sp_cur =
-                b.build_int_sub(sp_cur, four, NodeOutputType::U32)?;
+                b.build_sub_as_add_neg(sp_cur, four, NodeOutputType::U32)?;
             b.write_variable(&sp, sp_cur)?;
             let arg = b.build_int_const(arg_vals[arg_idx], NodeOutputType::U32)?;
             b.build_store(sp_cur, arg, rsleigh::VnSpace::RAM)?;
@@ -507,7 +507,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
 
         // Implicit `call` ret-addr push at sp - 4.
         let sp_after_call_push =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_after_call_push)?;
         let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
@@ -578,7 +578,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
 
         // Implicit `call` ret-addr push at sp - 4.
         let sp_after_call_push =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_after_call_push)?;
         let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
@@ -641,7 +641,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
 
         // Implicit `call` ret-addr push.
         let sp_after_call_push =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_after_call_push)?;
         let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
@@ -693,27 +693,27 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         // Local at sp - 16 (above the outgoing-args region — offset -16 is
         // NOT in the convention's stack-arg slot set).
         let sp_minus_16 =
-            b.build_int_sub(sp_v0, sixteen, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, sixteen, NodeOutputType::U32)?;
         let local = b.build_int_const(0xDEADu64, NodeOutputType::U32)?;
         b.build_store(sp_minus_16, local, rsleigh::VnSpace::RAM)?;
 
         // arg1 = 22 at sp - 4.
         let sp_minus_4 =
-            b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
         b.build_store(sp_minus_4, arg1, rsleigh::VnSpace::RAM)?;
 
         // arg0 = 11 at sp - 8.
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
         let sp_minus_8 =
-            b.build_int_sub(sp_v0, eight, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, eight, NodeOutputType::U32)?;
         let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
         b.build_store(sp_minus_8, arg0, rsleigh::VnSpace::RAM)?;
 
         // Implicit `call` ret-addr push at sp - 12.
         let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
         let sp_minus_12 =
-            b.build_int_sub(sp_v0, twelve, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_v0, twelve, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_minus_12)?;
         let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
         b.build_store(sp_minus_12, retaddr, rsleigh::VnSpace::RAM)?;
@@ -943,7 +943,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
             }
             let inputs = fg.node_inputs(n);
             inputs.len() == 3
-                && matches!(fg.node_kind(fg.get_node_from_output(inputs[2])), NodeKind::IntConst(77))
+                && matches!(fg.node_kind(fg.node_for_output(inputs[2])), NodeKind::IntConst(77))
         })
         .expect("arg0 Store(IntConst(77)) must exist");
 
@@ -961,7 +961,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // Stamp the opaque node with the sentinel fingerprint so IR validation
     // doesn't reject the manually-wired graph.
     fg.set_asm_fingerprint(
-        fg.get_node_from_output(opaque_addr),
+        fg.node_for_output(opaque_addr),
         vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR],
     );
 

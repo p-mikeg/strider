@@ -541,7 +541,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
     let chained = calls.iter().any(|&outer| {
         let outer_inputs: Vec<_> = g.node_inputs(outer).into_iter().collect();
         outer_inputs.iter().any(|&inp| {
-            let mut producer = g.get_node_from_output(inp);
+            let mut producer = g.node_for_output(inp);
             // Bound walk to avoid pathological cycles; 16 hops is far
             // more than any reasonable spill round-trip.
             for _ in 0..16 {
@@ -558,7 +558,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.get_node_from_output(first);
+                        producer = g.node_for_output(first);
                     }
                     NodeKind::Store(_) => {
                         // Store inputs: [mem, addr, data] — `data` is
@@ -566,13 +566,13 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&data) = inps.get(2) else { break; };
-                        producer = g.get_node_from_output(data);
+                        producer = g.node_for_output(data);
                     }
                     NodeKind::Region => {
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.get_node_from_output(first);
+                        producer = g.node_for_output(first);
                     }
                     NodeKind::Phi if g.phi_var_tag(producer).is_none() => {
                         // Anonymous phi (ValuePhi).  Take the first input;
@@ -581,7 +581,7 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
                         let inps: Vec<_> =
                             g.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.get_node_from_output(first);
+                        producer = g.node_for_output(first);
                     }
                     _ => break,
                 }

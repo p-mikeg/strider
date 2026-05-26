@@ -131,7 +131,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     let &value_input = inputs.get(2).ok_or_else(|| {
         anyhow::anyhow!("indirect_resolve mini-graph Return has no value input slot")
     })?;
-    let producer = fg.get_node_from_output(value_input);
+    let producer = fg.node_for_output(value_input);
     let kind = *fg.node_kind(producer);
 
     match kind {
@@ -378,8 +378,8 @@ fn resolve_const_loads(
         // fingerprint on the freshly-introduced constant even after
         // the cache-hit dedup path.  `make_int_const` is the
         // low-level `Graph` method and does NOT stamp on its own.
-        let new_node = fg.get_node_from_output(new_out);
-        let load_node = fg.get_node_from_output(data_out);
+        let new_node = fg.node_for_output(new_out);
+        let load_node = fg.node_for_output(data_out);
         fg.extend_asm_fingerprint_from(new_node, load_node);
         if fg.replace_all_uses(data_out, new_out)? {
             any_folded = true;

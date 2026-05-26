@@ -65,7 +65,7 @@ fn bounded_lift_handles_tail_call_terminator() {
         fn_max_size: Some(10),
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: rustc_hash::FxHashMap::default(),
+        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
     };
     let graph = run(config).expect("orchestrator must lift TailCall as Call+Return");
 
@@ -80,7 +80,7 @@ fn bounded_lift_handles_tail_call_terminator() {
                 let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
                 if let Some(&target_out) = inputs.get(2)
                     && let NodeKind::IntConst(v) =
-                        *graph.node_kind(graph.get_node_from_output(target_out))
+                        *graph.node_kind(graph.node_for_output(target_out))
                     && (v as u64) == TAIL_TARGET
                 {
                     had_call_with_target = true;
@@ -114,7 +114,7 @@ fn graph_has_tail_call_to(graph: &strider_ir::Function, target: u64) -> bool {
                 let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
                 if let Some(&target_out) = inputs.get(2)
                     && let NodeKind::IntConst(v) =
-                        *graph.node_kind(graph.get_node_from_output(target_out))
+                        *graph.node_kind(graph.node_for_output(target_out))
                     && (v as u64) == target
                 {
                     had_call = true;
@@ -166,7 +166,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
         fn_max_size: Some(10),
         allow_code_before_start_addr: true,
         compact: true,
-        per_address_ccs: rustc_hash::FxHashMap::default(),
+        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
     })
     .expect("backward jmp + fn_max_size must classify as tail call regardless of reach-back flag");
 
@@ -220,7 +220,7 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
         fn_max_size: Some(2),
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: rustc_hash::FxHashMap::default(),
+        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
     })
     .expect("fall-through past fn_max_size must truncate cleanly, not crash on OOB lift");
 
@@ -263,7 +263,7 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
         fn_max_size: Some(2),
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: rustc_hash::FxHashMap::default(),
+        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
     })
     .expect("cond-branch with both OOB targets must collapse to TailCall, not crash");
 

@@ -593,7 +593,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // 0xFFFFFFFFFFFFFFFC_U64 == -4 when interpreted as signed i64.
         let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, NodeOutputType::U64)?;
-        let addr = b.build_int_sub(sp_val, neg_four, NodeOutputType::U64,
+        let addr = b.build_sub_as_add_neg(sp_val, neg_four, NodeOutputType::U64,
         )?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
         b.build_return(Some(loaded), &[])?;
@@ -783,7 +783,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     let sp_t = b.read_variable(&sp)?;
     let four_t = b.build_int_const(4u64, NodeOutputType::U32)?;
     let sp_t_new =
-        b.build_int_sub(sp_t, four_t, NodeOutputType::U32)?;
+        b.build_sub_as_add_neg(sp_t, four_t, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_t_new)?;
     b.build_branch(join)?;
 
@@ -792,7 +792,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     let sp_e = b.read_variable(&sp)?;
     let eight_e = b.build_int_const(8u64, NodeOutputType::U32)?;
     let sp_e_new =
-        b.build_int_sub(sp_e, eight_e, NodeOutputType::U32)?;
+        b.build_sub_as_add_neg(sp_e, eight_e, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_e_new)?;
     b.build_branch(join)?;
 

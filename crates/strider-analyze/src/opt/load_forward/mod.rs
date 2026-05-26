@@ -146,7 +146,7 @@ fn try_forward_load(
     // attribution via `create_node_attributed(..., &[load])` inside
     // `realize`; the call below covers the outermost-only LE narrow
     // and Existing cases.
-    let forwarded_node = ctx.get_node_from_output(forwarded);
+    let forwarded_node = ctx.node_for_output(forwarded);
     ctx.extend_asm_fingerprint_from(forwarded_node, load);
     let changed = ctx.replace_all_uses(load_out, forwarded)?;
     if changed {
@@ -218,7 +218,7 @@ fn classify_addr(
         Some(SpExpr::Terminal { offset, .. }) => AddrClass::SpRooted { offset },
         Some(SpExpr::Phi { .. }) => AddrClass::Anchor { out: addr },
         None => {
-            let node = function.get_node_from_output(addr);
+            let node = function.node_for_output(addr);
             match function.node_kind(node) {
                 NodeKind::IntConst(c) => AddrClass::Constant { addr: *c as i64 },
                 _ => AddrClass::Anchor { out: addr },
@@ -674,7 +674,7 @@ pub(crate) fn find_stack_stored_value_at_offset(
             break cached;
         }
         visited.push(key);
-        let node = function.get_node_from_output(cur_mem);
+        let node = function.node_for_output(cur_mem);
         match *function.node_kind(node) {
             NodeKind::Store(_) => {
                 let inputs = function.node_inputs(node);

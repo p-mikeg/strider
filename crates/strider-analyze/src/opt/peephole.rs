@@ -264,7 +264,7 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .expect("Return must exist");
         let value_input = fg.node_inputs(ret)[2];
-        let producer = fg.get_node_from_output(value_input);
+        let producer = fg.node_for_output(value_input);
         assert!(
             matches!(fg.node_kind(producer), NodeKind::IntConst(_)),
             "Return's value input must be IntConst post-rewrite",

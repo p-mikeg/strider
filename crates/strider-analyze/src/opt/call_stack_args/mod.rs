@@ -120,7 +120,7 @@ fn collect_stack_args_in_chain_order(
     // Largest k such that slots[0..=k] are all `Some`; -1 if slot 0 is empty.
     let mut prefix_top: i32 = -1;
     loop {
-        let node = ctx.get_node_from_output(cur);
+        let node = ctx.node_for_output(cur);
         let (offset, space, data, prev_mem) = match *ctx.node_kind(node) {
             // Raw `Store` — determine whether it is SP-relative.
             //
@@ -159,7 +159,7 @@ fn collect_stack_args_in_chain_order(
                             // non-SP-rooted (Anchor) address still
                             // bails.
                             crate::opt::AliasMode::AssumeStackConstDisjoint => {
-                                let addr_node = ctx.get_node_from_output(addr);
+                                let addr_node = ctx.node_for_output(addr);
                                 if matches!(ctx.node_kind(addr_node), NodeKind::IntConst(_)) {
                                     cur = prev;
                                     continue;
@@ -394,7 +394,7 @@ impl Optimizer for CallStackArgCollect {
             .collect();
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        let default_offsets = self.layout.stack_arg_offsets();
+        let default_offsets: Vec<i64> = self.layout.stack_arg_offsets().collect();
         let stack_vn = self.stack_vn;
         for call_id in calls {
             let override_offsets: Option<Vec<i64>> = ctx

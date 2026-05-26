@@ -308,11 +308,11 @@ macro_rules! cc_aware_pass_class {
 
 /// `LoadForward(sleigh, cc, arch)`
 #[pyclass(name = "LoadForward", module = "strider.opt")]
-pub struct PyStackLoadForward {
+pub struct PyLoadForward {
     pub(crate) inner: strider_analyze::opt::LoadForward,
 }
 #[pymethods]
-impl PyStackLoadForward {
+impl PyLoadForward {
     #[new]
     fn new(
         py: Python<'_>,
@@ -393,7 +393,7 @@ pub enum PyOptPass<'py> {
     DeadBranchElim(PyDeadBranchElim),
     FlagCmpCanonicalize(PyFlagCmpCanonicalize),
     IfCondInversion(PyIfCondInversion),
-    LoadForward(Bound<'py, PyStackLoadForward>),
+    LoadForward(Bound<'py, PyLoadForward>),
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
     CallStackArgCollect(Bound<'py, PyCallStackArgCollect>),
     LoadReadOnly(Bound<'py, PyLoadReadOnly>),
@@ -429,7 +429,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDeadBranchElim>()?;
     m.add_class::<PyFlagCmpCanonicalize>()?;
     m.add_class::<PyIfCondInversion>()?;
-    m.add_class::<PyStackLoadForward>()?;
+    m.add_class::<PyLoadForward>()?;
     m.add_class::<PyStackOffsetDetect>()?;
     m.add_class::<PyFunctionArgDetect>()?;
     m.add_class::<PyCallStackArgCollect>()?;

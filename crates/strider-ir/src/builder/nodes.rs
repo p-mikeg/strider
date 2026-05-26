@@ -79,7 +79,7 @@ impl FunctionBuilder {
         let addr = self.lift_addr;
         let out = self.function_mut().make_int_const(val, output_type)?;
         if let Some(addr) = addr {
-            let node = self.function().get_node_from_output(out);
+            let node = self.function().node_for_output(out);
             self.function_mut().extend_asm_fingerprint(node, &[addr]);
         }
         Ok(out)
@@ -180,7 +180,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Returns `ExpectedValue` if either operand is not a value edge.
-    pub fn build_int_sub(
+    pub fn build_sub_as_add_neg(
         &mut self,
         lhs_id: NodeOutputId,
         rhs_id: NodeOutputId,

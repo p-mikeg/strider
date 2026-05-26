@@ -86,7 +86,7 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::Function {
         .build_int_binary_operation(bc, z0, IntBinaryOp::Add, NodeOutputType::U64)
         .unwrap();
     let diff = bd
-        .build_int_sub(lhs, rhs, NodeOutputType::U64)
+        .build_sub_as_add_neg(lhs, rhs, NodeOutputType::U64)
         .unwrap();
     bd.build_return(Some(diff), &[]).unwrap();
     bd.set_lift_addr(None);
@@ -107,7 +107,7 @@ fn count_adds(g: &strider_ir::Function) -> usize {
 }
 
 /// Counts reachable lowered-Sub shapes: `Add(_, IntUnaryOp::Neg(_))`.
-/// `IntBinaryOp::Sub` is not a primitive in this IR — `build_int_sub`
+/// `IntBinaryOp::Sub` is not a primitive in this IR — `build_sub_as_add_neg`
 /// produces this two-node shape, and `crate::pattern::sub(_, _)` matches it.
 fn count_subs(g: &strider_ir::Function) -> usize {
     g.walk()
@@ -127,8 +127,8 @@ fn count_subs(g: &strider_ir::Function) -> usize {
             // here since the lowering always emits Neg as the second
             // input, but check both for robustness against later
             // commutativity-driven canonicalisation.)
-            let lhs_node = g.get_node_from_output(inputs[0]);
-            let rhs_node = g.get_node_from_output(inputs[1]);
+            let lhs_node = g.node_for_output(inputs[0]);
+            let rhs_node = g.node_for_output(inputs[1]);
             let is_neg = |id: strider_ir::node::NodeId| {
                 matches!(
                     g.node_kind(id),
@@ -191,7 +191,7 @@ fn apply_rules_round_robin_reaches_fixed_point() -> anyhow::Result<()> {
     // first rule at both Add candidates.  Subsequent calls return
     // 0 (nothing further to do — the Adds are now unreachable
     // from `Return`'s now-direct input).
-    // Fixture builds `Sub(Add(11, 0), Add(13, 0))` via `build_int_sub`,
+    // Fixture builds `Sub(Add(11, 0), Add(13, 0))` via `build_sub_as_add_neg`,
     // which lowers to `Add(Add(11, 0), Neg(Add(13, 0)))` — three Adds
     // (two inner identity-Adds plus the outer-Sub-lowering Add) and one
     // Neg.  `count_subs` recognises the outer Add+Neg pair as one Sub.

@@ -272,7 +272,7 @@ pub(crate) enum ConsumersSpec {
 
 impl Pattern for NodePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        let node = ctx.function.get_node_from_output(target);
+        let node = ctx.function.node_for_output(target);
         self.try_match_common(ctx, node, b)
     }
 

@@ -47,7 +47,7 @@ fn try_remove_region_phi(
             let [output, _phi_token] = ctx.node_outputs_exact::<2>(node_id)?;
             // Region is exempt-empty by default; absorb its fingerprint into
             // the surviving control producer (same rationale as phi-collapse).
-            let input_node = ctx.get_node_from_output(input);
+            let input_node = ctx.node_for_output(input);
             ctx.extend_asm_fingerprint_from(input_node, node_id);
             ctx.replace_all_uses(output, input)?
         }
@@ -160,7 +160,7 @@ fn remove_phis(
                     // value producer.  Phis are exempt-empty by default, but
                     // an earlier opt pass (e.g. StackOffsetDetect) may have
                     // unioned addresses into them; preserve those here.
-                    let value_node = ctx.get_node_from_output(value);
+                    let value_node = ctx.node_for_output(value);
                     ctx.extend_asm_fingerprint_from(value_node, node_id);
                     ctx.replace_all_uses(output, value)?
                 }
@@ -171,7 +171,7 @@ fn remove_phis(
                     // predecessors, so we don't touch it here.)
                     (Some(value), None) => {
                         let [output] = ctx.node_outputs_exact::<1>(node_id)?;
-                        let value_node = ctx.get_node_from_output(value);
+                        let value_node = ctx.node_for_output(value);
                         ctx.extend_asm_fingerprint_from(value_node, node_id);
                         ctx.replace_all_uses(output, value)?
                     }

@@ -4,7 +4,7 @@
 //! consumer of a given `NodeOutputId` (or `None` if the output has zero or
 //! multiple consumers). Direct-step backward walks are unnecessary — the
 //! default [`Pattern::try_match`](crate::pattern::pat::traits::Pattern::try_match)
-//! already does `graph.get_node_from_output(input_out)` when a sub-pattern
+//! already does `graph.node_for_output(input_out)` when a sub-pattern
 //! is matched against an input.
 
 use strider_ir::node::{NodeId, NodeOutputId};

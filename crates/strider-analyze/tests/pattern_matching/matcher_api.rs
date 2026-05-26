@@ -102,8 +102,8 @@ fn function_arg_apis_on_graph_without_args() {
     let matcher = Matcher::try_new(&g).unwrap();
 
     assert!(matcher.function_arg(0).is_none());
+    assert_eq!(matcher.function_arg_index_upper_bound(), 0);
     assert_eq!(matcher.function_arg_count(), 0);
-    assert_eq!(matcher.function_arg_len(), 0);
     assert_eq!(matcher.function_args().count(), 0);
 }
 

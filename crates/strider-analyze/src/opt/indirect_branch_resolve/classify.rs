@@ -75,7 +75,7 @@ pub fn classify_anchor(
 ) -> Option<ResolvedTargets> {
     let graph = ctx.graph_ref();
     let function = ctx.function_ref();
-    let producer_id = graph.get_node_from_output(anchor_output);
+    let producer_id = graph.node_for_output(anchor_output);
     let kind = *graph.node_kind(producer_id);
     match kind {
         // SOUND: a literal constant in the IR comes from one of:
@@ -296,7 +296,7 @@ mod tests {
         // RedundantPhis would have done that in production.
         let mut producer_output = anchor;
         loop {
-            let pid = graph.get_node_from_output(producer_output);
+            let pid = graph.node_for_output(producer_output);
             let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
                 && graph.phi_var_tag(pid).is_some();
             if !is_var_phi {
@@ -339,7 +339,7 @@ mod tests {
 
         let mut producer_output = anchor;
         loop {
-            let pid = graph.get_node_from_output(producer_output);
+            let pid = graph.node_for_output(producer_output);
             let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
                 && graph.phi_var_tag(pid).is_some();
             if !is_var_phi {
@@ -377,7 +377,7 @@ mod tests {
 
         let mut producer_output = anchor;
         loop {
-            let pid = graph.get_node_from_output(producer_output);
+            let pid = graph.node_for_output(producer_output);
             let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
                 && graph.phi_var_tag(pid).is_some();
             if !is_var_phi {

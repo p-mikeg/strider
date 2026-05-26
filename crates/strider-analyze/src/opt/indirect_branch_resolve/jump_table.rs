@@ -179,7 +179,7 @@ fn match_jump_table_shape(
     // testable in isolation.  We pull `space` and `entry_size` off the
     // matched node up-front; the pattern-DSL match below then handles
     // the structural shape only.
-    let load_node = graph.get_node_from_output(anchor_output);
+    let load_node = graph.node_for_output(anchor_output);
     let NodeKind::Load(_space) = *graph.node_kind(load_node) else {
         return None;
     };
@@ -479,7 +479,7 @@ fn walk_control_for_if_bound_iter(
     'outer: loop {
         // Linear (single-path) walk: only allocates on a multi-pred CS.
         loop {
-            let producer = graph.get_node_from_output(control_out);
+            let producer = graph.node_for_output(control_out);
             if visited.contains(producer) {
                 // Cycle (loop back-edge): fail closed.
                 last_result = None;
@@ -649,7 +649,7 @@ fn bound_from_if_condition(
     }
     use crate::pattern::{Capture, any_int_const, bool_not, int_cmp_any, var};
     let graph = ctx.graph_ref();
-    let cmp_node = graph.get_node_from_output(cond_out);
+    let cmp_node = graph.node_for_output(cond_out);
 
     // Shape 1 (lowered <=): BoolNeg(IntLess(IntConst(N), idx))  or its
     // Sless analogue.  The original `IntLessEqual a, b` opcode lifts
@@ -782,7 +782,7 @@ fn same_value(graph: &Graph, a: NodeOutputId, b: NodeOutputId) -> bool {
                 break;
             }
             visited.insert(out);
-            let node = graph.get_node_from_output(out);
+            let node = graph.node_for_output(out);
             match graph.node_kind(node) {
                 NodeKind::Phi => {
                     // Slot 0 is the phi-token; slots 1.. are values.

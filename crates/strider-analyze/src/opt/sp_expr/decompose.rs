@@ -82,7 +82,7 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     // sign-extends to `-2^31`.  The pre-fold and post-fold view of the
     // same SP-relative subtraction would then return different offsets
     // and `StackOffsetDetect` could classify the same store inconsistently.
-    let node = g.get_node_from_output(out);
+    let node = g.node_for_output(out);
     if matches!(g.node_kind(node), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)) {
         let inputs = g.node_inputs(node);
         if inputs.len() == 1 {
@@ -214,7 +214,7 @@ fn decompose_sp_inner(
         if let Some(cached) = memo.get(&current).cloned() {
             break cached.map(|e| e.shifted(accumulated));
         }
-        let node = function.get_node_from_output(current);
+        let node = function.node_for_output(current);
         if !visiting.insert(node) {
             // Cycle: do NOT cache (a different call path may resolve it).
             // Roll the spine back before bailing.
@@ -437,7 +437,7 @@ mod tests {
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -472,7 +472,7 @@ mod tests {
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -519,10 +519,10 @@ mod tests {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
         let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
-        let s1 = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
-        let s2 = b.build_int_sub(s1, eight, NodeOutputType::U32)?;
+        let s1 = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
+        let s2 = b.build_sub_as_add_neg(s1, eight, NodeOutputType::U32)?;
         let s3 =
-            b.build_int_sub(s2, twelve, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(s2, twelve, NodeOutputType::U32)?;
         b.build_return(Some(s3), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -594,7 +594,7 @@ mod tests {
         let sp_a = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_minus_4 =
-            b.build_int_sub(sp_a, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_a, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_minus_4)?;
         b.build_branch(c)?;
 
@@ -654,7 +654,7 @@ mod tests {
         };
         assert_eq!(offset, 0, "And-aligned base offset must be 0");
         // Base must NOT be the InitialVar(sp) output — it's the And output.
-        let base_node = fg.get_node_from_output(base);
+        let base_node = fg.node_for_output(base);
         assert!(
             matches!(*fg.node_kind(base_node), NodeKind::IntBinaryOp(IntBinaryOp::And)),
             "And-aligned base must point to the And node, got {:?}",
@@ -679,7 +679,7 @@ mod tests {
         let aligned = b.build_int_binary_operation(
             sp_val, mask, IntBinaryOp::And, NodeOutputType::U32)?;
         let frame = b.build_int_const(0x1D0u64, NodeOutputType::U32)?;
-        let post_sub = b.build_int_sub(aligned, frame, NodeOutputType::U32)?;
+        let post_sub = b.build_sub_as_add_neg(aligned, frame, NodeOutputType::U32)?;
         b.build_return(Some(post_sub), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;

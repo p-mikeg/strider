@@ -426,7 +426,7 @@ pub fn count_return_paths(g: &strider_ir::Function) -> usize {
             total += 1;
             continue;
         };
-        let pred = g.get_node_from_output(ctrl_out);
+        let pred = g.node_for_output(ctrl_out);
         match g.node_kind(pred) {
             // Region's control inputs form the leading run of its input
             // list (see node_signature: `inputs: []; in_tail: CTRL`), so the
@@ -462,7 +462,7 @@ pub fn count_loops(g: &strider_ir::Function) -> usize {
         // predecessor closes a loop.
         let preds: Vec<_> = g.node_inputs(n).into_iter().collect();
         let has_back_edge = preds.iter().any(|&pred_out| {
-            let pred = g.get_node_from_output(pred_out);
+            let pred = g.node_for_output(pred_out);
             let mut seen: DenseEntitySet<strider_ir::node::NodeId> = DenseEntitySet::new();
             let mut stack = vec![pred];
             while let Some(cur) = stack.pop() {

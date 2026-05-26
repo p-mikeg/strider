@@ -109,7 +109,7 @@ pub fn skip_casts(graph: &Graph, out: NodeOutputId, mask: CastMask) -> NodeOutpu
     }
     let mut out = out;
     loop {
-        let producer: NodeId = graph.get_node_from_output(out);
+        let producer: NodeId = graph.node_for_output(out);
         let bit = cast_mask_of(graph.node_kind(producer));
         if bit.is_empty() || !mask.contains(bit) {
             return out;

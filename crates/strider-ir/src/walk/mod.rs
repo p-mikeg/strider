@@ -127,7 +127,7 @@ pub fn region_predecessors(
     out: NodeOutputId,
 ) -> impl Iterator<Item = NodeOutputId> + '_ {
     use crate::node::NodeKind;
-    let producer = graph.get_node_from_output(out);
+    let producer = graph.node_for_output(out);
     let is_cs = matches!(graph.node_kind(producer), NodeKind::Region);
     let inputs = graph.node_inputs(producer);
     // `Inputs` is Copy, so we move it into the iterator chain and let
@@ -197,7 +197,7 @@ pub fn region_membership_from_exit(
     exit_control: NodeOutputId,
 ) -> DenseEntitySet<NodeId> {
     use crate::node::NodeKind;
-    let seed = graph.get_node_from_output(exit_control);
+    let seed = graph.node_for_output(exit_control);
 
     // (1) collect the region's control spine via a backward
     // control walk, with `Region` as a barrier (include it, don't

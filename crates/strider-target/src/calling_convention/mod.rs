@@ -374,12 +374,12 @@ impl PositionalArgLayout {
             .unwrap_or(self.entries.len() as u32)
     }
 
-    /// Bare list of stack-arg offsets, in ABI order.  Convenience for
-    /// passes that still consume the offset list as a `&[i64]` slice
-    /// (e.g. `CallStackArgCollect`'s walker).
-    #[must_use]
-    pub fn stack_arg_offsets(&self) -> Vec<i64> {
-        self.stack_args().map(|(_, o)| o).collect()
+    /// Iterates stack-arg offsets in ABI order.  Callers that need a
+    /// `Vec<i64>` can `.collect()`; this returns a borrow-bound iterator
+    /// so the common slice-consumer (`CallStackArgCollect`) can avoid
+    /// the per-call allocation `Vec`-returning shape forced.
+    pub fn stack_arg_offsets(&self) -> impl Iterator<Item = i64> + '_ {
+        self.stack_args().map(|(_, o)| o)
     }
 
 }

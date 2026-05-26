@@ -394,8 +394,8 @@ mod tests {
         let a = a_out.unwrap();
         let b = b_out.unwrap();
 
-        let na = g.get_node_from_output(a);
-        let nb = g.get_node_from_output(b);
+        let na = g.node_for_output(a);
+        let nb = g.node_for_output(b);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
@@ -461,7 +461,7 @@ mod tests {
         })
         .expect("build graph");
         let c = c_out.unwrap();
-        let n = g.get_node_from_output(c);
+        let n = g.node_for_output(c);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
@@ -488,7 +488,7 @@ mod tests {
         })
         .expect("build graph");
         let s = s_out.unwrap();
-        let add_node = g.get_node_from_output(s);
+        let add_node = g.node_for_output(s);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
@@ -515,7 +515,7 @@ mod tests {
         })
         .expect("build graph");
         let s = s_out.unwrap();
-        let add_node = g.get_node_from_output(s);
+        let add_node = g.node_for_output(s);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();

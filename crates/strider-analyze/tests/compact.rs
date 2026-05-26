@@ -40,7 +40,7 @@ fn run_with(compact: bool) -> strider_ir::Function {
         fn_max_size: None,
         allow_code_before_start_addr: false,
         compact,
-        per_address_ccs: rustc_hash::FxHashMap::default(),
+        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
     };
     strider_analyze::run(config).unwrap()
 }

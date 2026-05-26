@@ -179,7 +179,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         //    StackOffsetDetect (the post-pass) reads `abi.mem_clobbers` to
         //    decide which per-partition chains to break across this
         //    CallOther.
-        if abi.has_memory_edge() {
+        if abi.clobbers_memory {
             let mem_out = self.builder.function().memory_output_of(node)?;
             self.builder.advance_cur_region_memory(mem_out)?;
         }

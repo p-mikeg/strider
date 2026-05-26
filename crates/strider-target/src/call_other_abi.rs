@@ -38,17 +38,6 @@ pub struct CallOtherAbi {
     pub clobbers_memory: bool,
 }
 
-impl CallOtherAbi {
-    /// Convenience accessor matching the old `has_memory_edge()` name —
-    /// kept so existing call sites compile unchanged.  Equivalent to
-    /// reading `self.clobbers_memory` directly.
-    #[must_use]
-    #[inline]
-    pub const fn has_memory_edge(&self) -> bool {
-        self.clobbers_memory
-    }
-}
-
 /// What `strider::handle_call_other` does for a given user-op name.
 /// Single source of truth for all CallOther dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -670,7 +659,7 @@ mod tests {
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert!(abi.implicit_reads.is_empty(), "{n}: implicit_reads must be empty");
             assert!(abi.implicit_writes.is_empty(), "{n}: implicit_writes must be empty");
-            assert!(abi.has_memory_edge(), "{n}: must advance mem edge for chain visibility");
+            assert!(abi.clobbers_memory, "{n}: must advance mem edge for chain visibility");
         }
     }
 
@@ -716,7 +705,7 @@ mod tests {
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
-            assert!(!abi.has_memory_edge(), "{n}: must NOT advance mem edge (opt passes need to forward)");
+            assert!(!abi.clobbers_memory, "{n}: must NOT advance mem edge (opt passes need to forward)");
         }
     }
 
@@ -766,7 +755,7 @@ mod tests {
         };
         assert_eq!(abi.implicit_reads, &["RAX", "ECX", "EDX"]);
         assert!(abi.implicit_writes.is_empty());
-        assert!(abi.has_memory_edge());
+        assert!(abi.clobbers_memory);
 
         let m32 = classify(crate::ArchPreset::X86, "monitor").expect("monitor x86");
         let CallOtherClass::Call(abi) = m32 else { panic!() };
@@ -776,7 +765,7 @@ mod tests {
         let CallOtherClass::Call(abi) = mwait else { panic!() };
         assert_eq!(abi.implicit_reads, &["EAX", "ECX"]);
         assert!(abi.implicit_writes.is_empty());
-        assert!(abi.has_memory_edge());
+        assert!(abi.clobbers_memory);
 
         // AMD variants share the same shape.
         assert!(matches!(
@@ -807,7 +796,7 @@ mod tests {
         let CallOtherClass::Call(abi) = cls else { panic!("expected Call(abi)") };
         assert!(abi.implicit_reads.is_empty());
         assert!(abi.implicit_writes.is_empty());
-        assert!(abi.has_memory_edge(), "swapgs must advance memory edge (kernel GS base swap)");
+        assert!(abi.clobbers_memory, "swapgs must advance memory edge (kernel GS base swap)");
     }
 
     #[test]
@@ -834,7 +823,7 @@ mod tests {
             &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"]
         );
         assert_eq!(abi.implicit_writes, &["RAX", "RCX", "R11"]);
-        assert!(abi.has_memory_edge());
+        assert!(abi.clobbers_memory);
     }
 
     #[test]
@@ -870,7 +859,7 @@ mod tests {
             };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
-            assert!(!abi.has_memory_edge(), "{n}: cpuid doesn't touch RAM");
+            assert!(!abi.clobbers_memory, "{n}: cpuid doesn't touch RAM");
         }
     }
 
@@ -886,7 +875,7 @@ mod tests {
         };
         assert_eq!(abi.implicit_reads, &[] as &[&str]);
         assert_eq!(abi.implicit_writes, &[] as &[&str]);
-        assert!(!abi.has_memory_edge());
+        assert!(!abi.clobbers_memory);
     }
 
     #[test]
@@ -900,7 +889,7 @@ mod tests {
         };
         assert_eq!(abi.implicit_reads, &[] as &[&str]);
         assert_eq!(abi.implicit_writes, &["EAX", "EDX", "ECX"]);
-        assert!(!abi.has_memory_edge());
+        assert!(!abi.clobbers_memory);
     }
 
     #[test]
@@ -941,7 +930,7 @@ mod tests {
                     "{preset:?}/{n}",
                 );
                 assert_eq!(abi.implicit_writes, &["x0", "x1", "x2", "x3"], "{preset:?}/{n}");
-                assert!(abi.has_memory_edge(), "{preset:?}/{n}");
+                assert!(abi.clobbers_memory, "{preset:?}/{n}");
             }
             // Non-aarch64 presets must NOT resolve these names.
             assert_eq!(classify(crate::ArchPreset::X86_64, "CallHyperVisor"), None);
@@ -958,7 +947,7 @@ mod tests {
             let CallOtherClass::Call(abi) = class else { panic!("expected Call") };
             assert_eq!(abi.implicit_reads, &["ECX"]);
             assert_eq!(abi.implicit_writes, &["EAX", "EDX"]);
-            assert!(!abi.has_memory_edge());
+            assert!(!abi.clobbers_memory);
         }
         // Non-x86 presets must NOT resolve.
         assert_eq!(classify(crate::ArchPreset::Aarch64, "rdpkru_u32"), None);
@@ -982,7 +971,7 @@ mod tests {
                     panic!("{preset:?}/{n}: expected Call")
                 };
                 assert_eq!(abi, empty_abi(), "{preset:?}/{n}");
-                assert!(!abi.has_memory_edge(), "{preset:?}/{n}");
+                assert!(!abi.clobbers_memory, "{preset:?}/{n}");
             }
             for n in edge_ops {
                 let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
@@ -991,7 +980,7 @@ mod tests {
                 };
                 assert_eq!(abi.implicit_reads, &[] as &[&str], "{preset:?}/{n}");
                 assert_eq!(abi.implicit_writes, &[] as &[&str], "{preset:?}/{n}");
-                assert!(abi.has_memory_edge(), "{preset:?}/{n}");
+                assert!(abi.clobbers_memory, "{preset:?}/{n}");
             }
         }
         // Non-x86 presets must NOT resolve these names — the encoded
@@ -1094,7 +1083,7 @@ mod tests {
             };
             assert_eq!(abi.implicit_reads, &[] as &[&str], "{n}");
             assert_eq!(abi.implicit_writes, &[] as &[&str], "{n}");
-            assert!(abi.has_memory_edge(), "{n}");
+            assert!(abi.clobbers_memory, "{n}");
         }
     }
 
@@ -1121,7 +1110,7 @@ mod tests {
                 "{preset:?}",
             );
             assert_eq!(abi.implicit_writes, &["r0"], "{preset:?}");
-            assert!(abi.has_memory_edge(), "{preset:?}");
+            assert!(abi.clobbers_memory, "{preset:?}");
         }
     }
 
@@ -1162,7 +1151,7 @@ mod tests {
             let CallOtherClass::Call(abi) = dmb else {
                 panic!("arch={arch:?}: DMB expected Call, got {dmb:?}")
             };
-            assert!(abi.has_memory_edge(), "arch={arch:?}: DMB must advance mem edge");
+            assert!(abi.clobbers_memory, "arch={arch:?}: DMB must advance mem edge");
             // Trap is NoReturn on every arch.
             assert_eq!(
                 classify(arch, "invalidInstructionException"),
@@ -1229,7 +1218,7 @@ mod tests {
                     "({preset:?}, {name}) must have empty implicit_writes"
                 );
                 assert!(
-                    abi.has_memory_edge(),
+                    abi.clobbers_memory,
                     "({preset:?}, {name}) must advance memory edge — fences are ordering primitives"
                 );
             }
@@ -1258,7 +1247,7 @@ mod tests {
                 };
                 assert!(abi.implicit_reads.is_empty(), "({preset:?}, {name}) implicit_reads");
                 assert!(abi.implicit_writes.is_empty(), "({preset:?}, {name}) implicit_writes");
-                assert!(abi.has_memory_edge(), "({preset:?}, {name}) must advance mem edge");
+                assert!(abi.clobbers_memory, "({preset:?}, {name}) must advance mem edge");
             }
         }
     }
@@ -1284,7 +1273,7 @@ mod tests {
                 };
                 assert!(abi.implicit_reads.is_empty(), "({preset:?}, {name}) implicit_reads");
                 assert!(abi.implicit_writes.is_empty(), "({preset:?}, {name}) implicit_writes");
-                assert!(abi.has_memory_edge(), "({preset:?}, {name}) must advance mem edge");
+                assert!(abi.clobbers_memory, "({preset:?}, {name}) must advance mem edge");
             }
         }
     }

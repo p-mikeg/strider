@@ -160,7 +160,7 @@ impl FunctionBuilder {
     ) -> Result<()> {
         for var_id in variables.keys() {
             let region_variable_output_id = self.regions[region].initial_variables[var_id];
-            let region_variable_id = self.function().get_node_from_output(region_variable_output_id);
+            let region_variable_id = self.function().node_for_output(region_variable_output_id);
             let current_variable = variables[var_id];
             self.function_mut()
                 .add_node_input(region_variable_id, current_variable)?;

@@ -106,7 +106,7 @@ where
     /// [`strider_target::CallingConvention::x86_64_all_preserving`] (and the
     /// per-arch siblings).  The user supplies raw addresses; symbol
     /// resolution is the caller's responsibility.
-    pub per_address_ccs: FxHashMap<u64, strider_target::CallingConvention>,
+    pub per_address_ccs_unbuilt: FxHashMap<u64, strider_target::CallingConvention>,
 }
 
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
@@ -246,7 +246,7 @@ where
     /// Compaction flag for the finalize step; copied from [`Config::compact`].
     compact: bool,
     /// Pre-resolved per-target-address CC overrides.  See the
-    /// [`Config::per_address_ccs`] doc.  Resolved once at
+    /// [`Config::per_address_ccs_unbuilt`] doc.  Resolved once at
     /// `LoopState::new` so any unresolved register name surfaces
     /// before iteration starts.
     per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention>,
@@ -324,7 +324,7 @@ where
         // Pre-resolve per-address CC overrides against the same Sleigh
         // register table the function-default CC was built against.
         let per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
-            if config.per_address_ccs.is_empty() {
+            if config.per_address_ccs_unbuilt.is_empty() {
                 FxHashMap::default()
             } else {
                 let sleigh_regs = config
@@ -332,7 +332,7 @@ where
                     .regs()
                     .map_err(|e| anyhow!("orchestrator: Sleigh::regs() failed: {e:?}"))?;
                 config
-                    .per_address_ccs
+                    .per_address_ccs_unbuilt
                     .iter()
                     .map(|(addr, cc)| {
                         (*cc)
@@ -1169,7 +1169,7 @@ where
         // iterations (each `with_node_filter` consumes the value).
         let dumper = function.dot_dumper(sleigh)?.with_node_filter(membership);
 
-        let producer = function.get_node_from_output(exit_control);
+        let producer = function.node_for_output(exit_control);
         // Include `idx` unconditionally: two regions whose producers
         // share a first asm-fingerprint would otherwise collide via
         // `std::fs::write` (silent overwrite).

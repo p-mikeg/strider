@@ -706,7 +706,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let store_addr =
-            b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
         let data = b.build_int_const(0x4242u64, NodeOutputType::U32)?;
         b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
 
@@ -759,7 +759,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
         let addr =
-            b.build_int_sub(sp_val, eight, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, eight, NodeOutputType::U32)?;
         // Store the full 4-byte value, then load only the low byte.
         let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
         b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
@@ -805,7 +805,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
         let addr =
-            b.build_int_sub(sp_val, twelve, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, twelve, NodeOutputType::U32)?;
         let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
         b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U16)?;
@@ -850,7 +850,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
         let addr =
-            b.build_int_sub(sp_val, eight, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, eight, NodeOutputType::U32)?;
         // Store the full 4-byte value, then load only the high byte (BE).
         let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
         b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
@@ -881,7 +881,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     assert_eq!(val_ty, Some(NodeOutputType::U8));
 
     // Outer node: Truncate.
-    let outer = fg.get_node_from_output(val_out);
+    let outer = fg.node_for_output(val_out);
     assert!(
         matches!(fg.node_kind(outer), NodeKind::Truncate),
         "BE narrow forward must wrap data in a Truncate — got {:?}",
@@ -891,7 +891,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     // Inner node: ShiftRight.
     let outer_inputs = fg.node_inputs(outer);
     assert_eq!(outer_inputs.len(), 1, "Truncate has a single input");
-    let inner = fg.get_node_from_output(outer_inputs[0]);
+    let inner = fg.node_for_output(outer_inputs[0]);
     assert!(
         matches!(
             fg.node_kind(inner),
@@ -1021,7 +1021,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let twentyfour = b.build_int_const(24u64, NodeOutputType::U64)?;
-        let addr = b.build_int_sub(sp_val, twentyfour, NodeOutputType::U64,
+        let addr = b.build_sub_as_add_neg(sp_val, twentyfour, NodeOutputType::U64,
         )?;
         let stored = b.build_int_const(0xCAFEu64, NodeOutputType::U64)?;
         b.build_store(addr, stored, rsleigh::VnSpace::RAM)?;
@@ -1075,9 +1075,9 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;
         let addr_24 =
-            b.build_int_sub(sp_val, off24, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
         let addr_16 =
-            b.build_int_sub(sp_val, off16, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off16, NodeOutputType::U64)?;
         let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
         let v_16 = b.build_int_const(0xBBBBu64, NodeOutputType::U64)?;
         b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
@@ -1137,7 +1137,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let addr_24 =
-            b.build_int_sub(sp_val, off24, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
         let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
         b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
@@ -1181,7 +1181,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let addr_24 =
-            b.build_int_sub(sp_val, off24, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
         let first = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
         let second = b.build_int_const(0xBBBBu64, NodeOutputType::U64)?;
         // Two stores at the SAME offset; the second alias-overwrites the first.
@@ -1230,7 +1230,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let addr_24 =
-            b.build_int_sub(sp_val, off24, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
         // Store U32, then load U64 — overlapping byte ranges intersect.
         let stored = b.build_int_const(0xAAAAu64, NodeOutputType::U32)?;
         b.build_store(addr_24, stored, rsleigh::VnSpace::RAM)?;
@@ -1279,9 +1279,9 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
         let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
         let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;
         let addr_24 =
-            b.build_int_sub(sp_val, off24, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
         let addr_16 =
-            b.build_int_sub(sp_val, off16, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off16, NodeOutputType::U64)?;
         let target0 = b.build_int_const(0x401190u64, NodeOutputType::U64)?;
         let target1 = b.build_int_const(0x401180u64, NodeOutputType::U64)?;
         b.build_store(addr_24, target0, rsleigh::VnSpace::RAM)?;
@@ -1337,7 +1337,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
         let data = b.build_int_const(0x99u64, NodeOutputType::U32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));

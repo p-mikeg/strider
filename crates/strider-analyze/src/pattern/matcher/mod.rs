@@ -53,7 +53,7 @@ pub(crate) struct MatcherOptions {
 /// `KindSpec` is concrete).
 ///
 /// The `FunctionArg` query API (`function_arg`, `function_args`,
-/// `function_arg_count`, `function_arg_len`) reads the
+/// `function_arg_index_upper_bound`, `function_arg_count`) reads the
 /// `Function::arg_index_to_nodes` side-table directly — O(1) per call,
 /// no scan.
 pub struct Matcher<'g> {
@@ -487,8 +487,8 @@ impl<'g> Matcher<'g> {
     /// that reads only `rdx` (the third x86_64 arg) will have index `2`
     /// registered with nothing at 0 or 1.  In that case this returns `3`
     /// while `function_arg(0)` and `function_arg(1)` return `None`.  Use
-    /// [`Self::function_arg_len`] for the actual population count.
-    pub fn function_arg_count(&self) -> usize {
+    /// [`Self::function_arg_count`] for the actual population count.
+    pub fn function_arg_index_upper_bound(&self) -> usize {
         self.function
             .arg_indices()
             .max()
@@ -496,9 +496,8 @@ impl<'g> Matcher<'g> {
     }
 
     /// Returns the number of distinct argument indices registered in the
-    /// side-table.  Unlike [`Self::function_arg_count`] this is insensitive
-    /// to gaps in the index space.
-    pub fn function_arg_len(&self) -> usize {
+    /// side-table.
+    pub fn function_arg_count(&self) -> usize {
         self.function.arg_indices().count()
     }
 
@@ -611,7 +610,7 @@ impl<'g> Matcher<'g> {
             // cast, unwrap and loop.  Inlines what
             // `try_walk_through_cast` did via recursion.
             if !self.options.ignore_cast_mask.is_empty() {
-                let producer = self.function.get_node_from_output(out);
+                let producer = self.function.node_for_output(out);
                 let bit = cast_mask::cast_mask_of(
                     self.function.node_kind(producer),
                 );

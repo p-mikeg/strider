@@ -132,7 +132,7 @@ fn known_bits_fold_preserves_fingerprints() {
     let ret_inputs: Vec<_> = fg.node_inputs(ret).into_iter().collect();
     // input[2] is the value (input[0]=ctrl, input[1]=mem).
     assert!(ret_inputs.len() >= 3, "Return must have a value");
-    let val_node = fg.get_node_from_output(ret_inputs[2]);
+    let val_node = fg.node_for_output(ret_inputs[2]);
     let fp = fg.asm_fingerprint(val_node);
     assert!(
         !fp.is_empty(),
@@ -179,7 +179,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return");
     let ret_inputs: Vec<_> = fg.node_inputs(ret).into_iter().collect();
-    let val_node = fg.get_node_from_output(ret_inputs[2]);
+    let val_node = fg.node_for_output(ret_inputs[2]);
     let fp = fg.asm_fingerprint(val_node);
     assert!(
         fp.contains(&0x510),

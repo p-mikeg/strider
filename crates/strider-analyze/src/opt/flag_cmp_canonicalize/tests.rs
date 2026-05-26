@@ -79,7 +79,7 @@ fn if_cond_output(graph: &Graph, if_node: NodeId) -> NodeOutputId {
 
 fn if_cond_node_kind(graph: &Graph, if_node: NodeId) -> NodeKind {
     let cond_out = if_cond_output(graph, if_node);
-    *graph.node_kind(graph.get_node_from_output(cond_out))
+    *graph.node_kind(graph.node_for_output(cond_out))
 }
 
 /// Asserts that the captured If's cond is `IntCmpOp(op)` with inputs
@@ -92,7 +92,7 @@ fn assert_if_cond_is_intcmp(
     expect_rhs: NodeOutputId,
 ) {
     let cond_out = if_cond_output(graph, if_node);
-    let cond_node = graph.get_node_from_output(cond_out);
+    let cond_node = graph.node_for_output(cond_out);
     assert_eq!(
         *graph.node_kind(cond_node),
         NodeKind::IntCmpOp(op),
@@ -119,7 +119,7 @@ fn assert_if_cond_is_neg_intcmp(
     expect_rhs: NodeOutputId,
 ) {
     let cond_out = if_cond_output(graph, if_node);
-    let neg_node = graph.get_node_from_output(cond_out);
+    let neg_node = graph.node_for_output(cond_out);
     assert_eq!(
         *graph.node_kind(neg_node),
         NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg),
@@ -128,7 +128,7 @@ fn assert_if_cond_is_neg_intcmp(
     let [inner] = graph
         .node_inputs_exact::<1>(neg_node)
         .expect("BoolNeg has 1 input");
-    let inner_node = graph.get_node_from_output(inner);
+    let inner_node = graph.node_for_output(inner);
     assert_eq!(
         *graph.node_kind(inner_node),
         NodeKind::IntCmpOp(op),

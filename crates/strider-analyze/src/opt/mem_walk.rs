@@ -201,7 +201,7 @@ pub(crate) fn walk_mem_chain<S: MemChainStep>(
                 results.push(step.combine_phi(phi_node, phi_token, preds));
             }
             Frame::Visit(cur_mem) => {
-                let node = function.get_node_from_output(cur_mem);
+                let node = function.node_for_output(cur_mem);
                 let guard_here = match cycle_policy {
                     CyclePolicy::GuardEveryNode => true,
                     CyclePolicy::GuardPhiOnly => is_mem_phi(node),

@@ -54,7 +54,7 @@ fn fold_int_xor_self() -> Result<()> {
 fn fold_int_sub_self() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xABu64, NodeOutputType::U64).unwrap();
-        b.build_int_sub(x, x, NodeOutputType::U64)
+        b.build_sub_as_add_neg(x, x, NodeOutputType::U64)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
@@ -129,7 +129,7 @@ fn assert_add_with_const(
     ty: NodeOutputType,
 ) -> Result<()> {
     let val = return_value(fg)?;
-    let node = fg.get_node_from_output(val);
+    let node = fg.node_for_output(val);
     assert!(
         matches!(
             fg.node_kind(node),
@@ -177,7 +177,7 @@ fn assert_sub_with_const(
     ty: NodeOutputType,
 ) -> Result<()> {
     let val = return_value(fg)?;
-    let node = fg.get_node_from_output(val);
+    let node = fg.node_for_output(val);
     assert!(
         matches!(
             fg.node_kind(node),
@@ -243,7 +243,7 @@ fn reassoc_add_sub_consts() -> Result<()> {
         let c3 = b.build_int_const(3u64, NodeOutputType::U64).unwrap();
         let c4 = b.build_int_const(4u64, NodeOutputType::U64).unwrap();
         let inner =
-            b.build_int_sub(x, c3, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(x, c3, NodeOutputType::U64)?;
         b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     let mut changed = true;
@@ -264,7 +264,7 @@ fn reassoc_sub_add_consts_wrapping() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64).unwrap();
         let inner =
             b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
-        b.build_int_sub(inner, c4, NodeOutputType::U64)
+        b.build_sub_as_add_neg(inner, c4, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -283,8 +283,8 @@ fn reassoc_sub_sub_consts() -> Result<()> {
         let c3 = b.build_int_const(3u64, NodeOutputType::U64).unwrap();
         let c4 = b.build_int_const(4u64, NodeOutputType::U64).unwrap();
         let inner =
-            b.build_int_sub(x, c3, NodeOutputType::U64)?;
-        b.build_int_sub(inner, c4, NodeOutputType::U64)
+            b.build_sub_as_add_neg(x, c3, NodeOutputType::U64)?;
+        b.build_sub_as_add_neg(inner, c4, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -342,9 +342,9 @@ fn reassoc_chain_three_subs() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64).unwrap();
-        let a = b.build_int_sub(x, c4, NodeOutputType::U64)?;
-        let b_ = b.build_int_sub(a, c4, NodeOutputType::U64)?;
-        b.build_int_sub(b_, c4, NodeOutputType::U64)
+        let a = b.build_sub_as_add_neg(x, c4, NodeOutputType::U64)?;
+        let b_ = b.build_sub_as_add_neg(a, c4, NodeOutputType::U64)?;
+        b.build_sub_as_add_neg(b_, c4, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -361,9 +361,9 @@ fn reassoc_chain_three_subs_u32() -> Result<()> {
     let vn = reg_vn(0x1000, 4);
     let (mut fg, x) = make_fn_with_var(vn, |b, x| {
         let c4 = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
-        let a = b.build_int_sub(x, c4, NodeOutputType::U32)?;
-        let b_ = b.build_int_sub(a, c4, NodeOutputType::U32)?;
-        b.build_int_sub(b_, c4, NodeOutputType::U32)
+        let a = b.build_sub_as_add_neg(x, c4, NodeOutputType::U32)?;
+        let b_ = b.build_sub_as_add_neg(a, c4, NodeOutputType::U32)?;
+        b.build_sub_as_add_neg(b_, c4, NodeOutputType::U32)
     })?;
     let mut changed = true;
     while changed {
@@ -1649,7 +1649,7 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
         let mut acc = x;
         for _ in 0..10 {
             let one = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
-            acc = b.build_int_sub(acc, one, NodeOutputType::U64)?;
+            acc = b.build_sub_as_add_neg(acc, one, NodeOutputType::U64)?;
         }
         Ok(acc)
     })?;

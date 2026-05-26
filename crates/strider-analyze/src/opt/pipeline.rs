@@ -49,8 +49,8 @@ impl OptimizationResult {
         old: strider_ir::node::NodeOutputId,
         new: strider_ir::node::NodeOutputId,
     ) -> crate::opt::Result<Self> {
-        let old_node = function.get_node_from_output(old);
-        let new_node = function.get_node_from_output(new);
+        let old_node = function.node_for_output(old);
+        let new_node = function.node_for_output(new);
         function.extend_asm_fingerprint_from(new_node, old_node);
         let changed = function.replace_all_uses(old, new)?;
         Ok(self | OptimizationResult::from_changed(changed))
@@ -176,7 +176,7 @@ impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
 /// Internally the pipeline stores passes as `Box<dyn Optimizer>` so it
 /// can dispatch on `(&mut Function, NodeId)` directly.
 pub struct OptimizerPipeline {
-    optimizers: Vec<Box<dyn Optimizer>>,
+    passes: Vec<Box<dyn Optimizer>>,
     post_passes: Vec<Box<dyn Optimizer>>,
 }
 
@@ -191,14 +191,14 @@ impl OptimizerPipeline {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            optimizers: Vec::new(),
+            passes: Vec::new(),
             post_passes: Vec::new(),
         }
     }
 
     /// Appends `opt` to the end of the pass list.
     pub fn add<O: Optimizer + 'static>(&mut self, opt: O) {
-        self.optimizers.push(Box::new(opt));
+        self.passes.push(Box::new(opt));
     }
 
     /// Appends `opt` to the post-pass list.  Post-passes run once, in
@@ -216,7 +216,7 @@ impl OptimizerPipeline {
     /// independent copy of each pass.
     #[must_use]
     pub fn passes(&self) -> &[Box<dyn Optimizer>] {
-        &self.optimizers
+        &self.passes
     }
 
     /// Borrow the post-passes as a slice in registration order.  See
@@ -248,7 +248,7 @@ impl OptimizerPipeline {
         let mut iters: u32 = 0;
         loop {
             let mut changed = false;
-            for opt in &self.optimizers {
+            for opt in &self.passes {
                 if opt.optimize(function, entry)?.changed() {
                     changed = true;
                 }
@@ -432,7 +432,7 @@ mod tests {
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
+        let addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::U32)?;
         let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
@@ -486,11 +486,11 @@ mod tests {
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v0 = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let sp_v1 = b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
+        let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v1)?;
         let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-        let sp_v2 = b.build_int_sub(sp_v1, four, NodeOutputType::U32)?;
+        let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v2)?;
         let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;

@@ -185,7 +185,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     // inner-cond node (the new If cond input's producer).
     let if_node = find_unique_if(&fg);
     let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)?;
-    let inner_node = fg.get_node_from_output(cond_out);
+    let inner_node = fg.node_for_output(cond_out);
     let inner_fp = fg.asm_fingerprint(inner_node);
     let bool_neg_fp = fg.asm_fingerprint(bool_neg_node);
     for addr in bool_neg_fp {
@@ -233,7 +233,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
         .expect("BoolNeg pre-pass");
     let if_node_pre = find_unique_if(&fg);
     let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
-    let inner_producer_pre = fg.get_node_from_output(bool_neg_input);
+    let inner_producer_pre = fg.node_for_output(bool_neg_input);
 
     // 0x804 (the BoolNeg's address) must be present on BoolNeg pre-pass,
     // absent on inner_producer_pre, and absent on if_node_pre.  Sanity-check
@@ -295,7 +295,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
             b.set_lift_addr(Some(0x908));
             let second_neg = b
                 .build_boolean_unary_operation(neg_cond, strider_ir::BoolUnaryOp::Neg)?;
-            let second_neg_node = b.function().get_node_from_output(second_neg);
+            let second_neg_node = b.function().node_for_output(second_neg);
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, second_neg_node))
         })?;
@@ -310,7 +310,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
         })
         .expect("first BoolNeg present pre-pass");
     let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
-    let inner_producer_pre = fg.get_node_from_output(bool_neg_input);
+    let inner_producer_pre = fg.node_for_output(bool_neg_input);
 
     // Sanity-check the fixture: BoolNeg has 2 uses (the If and the
     // chained second BoolNeg), and inner_producer_pre does NOT carry

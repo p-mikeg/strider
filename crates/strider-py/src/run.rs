@@ -198,7 +198,7 @@ fn run_via_orchestrator(
             fn_max_size: function_max_size,
             allow_code_before_start_addr,
             compact,
-            per_address_ccs,
+            per_address_ccs_unbuilt: per_address_ccs,
         };
         strider_analyze::run(config)
     })

@@ -103,7 +103,7 @@ pub fn rewrite_rule(
                 // Fresh nodes (id ≥ snapshot) all inherit the
                 // contributor's history via the union semantics of
                 // `extend_asm_fingerprint_from`.
-                let new_node = ctx.function.get_node_from_output(new_out);
+                let new_node = ctx.function.node_for_output(new_out);
                 // Always attribute the rewrite root: even when the dedup
                 // cache returns a pre-existing node, it now ALSO carries
                 // the rewritten root's history (union semantics).
@@ -118,7 +118,7 @@ pub fn rewrite_rule(
                     .function
                     .node_inputs(new_node)
                     .into_iter()
-                    .map(|inp| ctx.function.get_node_from_output(inp))
+                    .map(|inp| ctx.function.node_for_output(inp))
                     .collect();
                 while let Some(cur) = stack.pop() {
                     if !visited.insert(cur) {
@@ -131,7 +131,7 @@ pub fn rewrite_rule(
                     ctx.function.extend_asm_fingerprint_from(cur, node);
                     let inputs: Vec<_> = ctx.function.node_inputs(cur).into_iter().collect();
                     for inp in inputs {
-                        stack.push(ctx.function.get_node_from_output(inp));
+                        stack.push(ctx.function.node_for_output(inp));
                     }
                 }
 
@@ -539,7 +539,7 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .unwrap();
         let value_input = fg.node_inputs(ret)[2];
-        let producer = fg.get_node_from_output(value_input);
+        let producer = fg.node_for_output(value_input);
         match fg.node_kind(producer) {
             NodeKind::IntConst(k) => assert_eq!(*k, 11u128, "rewired to the 11 constant"),
             other => panic!("expected IntConst(11), got {other:?}"),
@@ -572,7 +572,7 @@ mod tests {
                 if inputs.len() != 2 {
                     return false;
                 }
-                let rhs = fg.get_node_from_output(inputs[1]);
+                let rhs = fg.node_for_output(inputs[1]);
                 matches!(fg.node_kind(rhs), NodeKind::IntConst(0))
             })
             .expect("inner Add must exist");
@@ -591,8 +591,8 @@ mod tests {
                     && {
                         let inputs = fg.node_inputs(n);
                         inputs.len() == 2 && {
-                            let l = fg.get_node_from_output(inputs[0]);
-                            let r = fg.get_node_from_output(inputs[1]);
+                            let l = fg.node_for_output(inputs[0]);
+                            let r = fg.node_for_output(inputs[1]);
                             matches!(fg.node_kind(l), NodeKind::IntConst(13))
                                 && matches!(fg.node_kind(r), NodeKind::IntConst(13))
                         }
@@ -673,7 +673,7 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .unwrap();
         let value_input = fg.node_inputs(ret)[2];
-        let producer = fg.get_node_from_output(value_input);
+        let producer = fg.node_for_output(value_input);
         let fp = fg.asm_fingerprint(producer);
         assert!(
             fp.contains(&SOURCE_ADDR),
@@ -700,7 +700,7 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .unwrap();
         let v = fg.node_inputs(ret)[2];
-        let producer = fg.get_node_from_output(v);
+        let producer = fg.node_for_output(v);
         let fp = fg.asm_fingerprint(producer);
         assert!(
             fp.contains(&SENTINEL_LIFT_ADDR) || !fp.is_empty(),
@@ -811,7 +811,7 @@ mod tests {
             .find(|&n| matches!(g.node_kind(n), NodeKind::Return))
             .unwrap();
         let value_input = g.node_inputs(ret)[2];
-        let producer = g.get_node_from_output(value_input);
+        let producer = g.node_for_output(value_input);
         match g.node_kind(producer) {
             NodeKind::IntConst(k) => assert_eq!(*k, 8u128, "5 + 3 folds to 8"),
             other => panic!("expected IntConst(8), got {other:?}"),
@@ -853,7 +853,7 @@ mod tests {
             .find(|&n| matches!(g.node_kind(n), NodeKind::Return))
             .unwrap();
         let value_input = g.node_inputs(ret)[2];
-        let producer = g.get_node_from_output(value_input);
+        let producer = g.node_for_output(value_input);
         assert!(matches!(g.node_kind(producer), NodeKind::Truncate));
     }
 

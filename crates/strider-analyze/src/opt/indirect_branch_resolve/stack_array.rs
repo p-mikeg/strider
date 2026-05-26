@@ -162,7 +162,7 @@ fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
     if let Some(c) = graph.int_const_val(out) {
         return Some(c);
     }
-    let producer = graph.get_node_from_output(out);
+    let producer = graph.node_for_output(out);
     let kind = *graph.node_kind(producer);
     // Both Truncate and Extend take their single input as slot 0; peel
     // to that input and require it to be an IntConst.  The arm-specific
@@ -273,7 +273,7 @@ fn strip_target_mask(
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
-        let producer = graph.get_node_from_output(current);
+        let producer = graph.node_for_output(current);
 
         // And-with-constant: mask narrows.
         let c_var = Capture::new();
@@ -331,7 +331,7 @@ fn match_stack_array_shape(
     stack_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
     let function = ctx.function_ref();
-    let load_node = function.get_node_from_output(anchor_output);
+    let load_node = function.node_for_output(anchor_output);
     let NodeKind::Load(_) = *function.node_kind(load_node) else {
         return None;
     };
@@ -436,7 +436,7 @@ fn flatten_add_tree(
         return;
     }
     *budget += 1;
-    let node = graph.get_node_from_output(out);
+    let node = graph.node_for_output(out);
     // `addr -= K` from arm/arm-thumb stack-array dispatch lowering arrives
     // as `Add(addr, Neg(IntConst(K)))` (or the post-fold
     // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
@@ -501,7 +501,7 @@ fn extract_idx_and_stride(
     // shift shape, mirroring the prior match's arm order.
     use crate::pattern::{Capture, any_int_const, mul, shl, var};
 
-    let candidate_node = ctx.get_node_from_output(candidate);
+    let candidate_node = ctx.node_for_output(candidate);
     let matcher = ctx.matcher();
 
     // Mul(idx, IntConst(stride)) — either ordering.
@@ -648,7 +648,7 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         let off = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr = b
-            .build_int_sub(sp_val, off, NodeOutputType::U64)
+            .build_sub_as_add_neg(sp_val, off, NodeOutputType::U64)
             .unwrap();
         let v = b.build_int_const(0xCAFEu64, NodeOutputType::U64).unwrap();
         b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
@@ -688,7 +688,7 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         let off24 = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr_24 = b
-            .build_int_sub(sp_val, off24, NodeOutputType::U64)
+            .build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)
             .unwrap();
         let v = b.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
         b.build_store(addr_24, v, rsleigh::VnSpace::RAM).unwrap();

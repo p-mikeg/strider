@@ -87,7 +87,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
         fn_max_size: Some(9),
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: overrides,
+        per_address_ccs_unbuilt: overrides,
     };
     let bfg = strider_analyze::run(config).unwrap();
 
@@ -134,7 +134,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
         fn_max_size: Some(10),
         allow_code_before_start_addr: false,
         compact: true,
-        per_address_ccs: overrides,
+        per_address_ccs_unbuilt: overrides,
     };
     let bfg = strider_analyze::run(config).unwrap();
 

@@ -24,7 +24,7 @@ fn run(function: &mut Function, sp: rsleigh::Vn) -> OptimizationResult {
 fn stack_store_load_return(sp: rsleigh::Vn) -> Function {
     make_sp_fn(sp, |b, sp_v| {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
+        let addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::U32)?;
         let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;

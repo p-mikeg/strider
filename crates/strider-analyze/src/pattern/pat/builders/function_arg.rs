@@ -102,7 +102,7 @@ impl Pattern for FunctionArgPattern {
     }
 
     fn try_match(&self, ctx: &MatchCtx<'_, '_>, target: NodeOutputId, b: &mut Bindings) -> bool {
-        let node_id = ctx.function.get_node_from_output(target);
+        let node_id = ctx.function.node_for_output(target);
         if !self.is_match(ctx, node_id) {
             return false;
         }
