@@ -86,7 +86,8 @@
 use entity_utils::DenseEntitySet;
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
-use strider_ir::{AliasClass, Function};
+use strider_ir::Function;
+use strider_target::AliasClass;
 use strider_target::call_other_abi::{CallOtherClass, classify};
 
 use crate::opt::error::Result;

@@ -526,7 +526,7 @@ fn mempartition_label_is_memproject() {
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
     // One MemProject node with two output slots (Stack=0, Unknown=1).
-    use crate::mem_project::AliasClass;
+    use strider_target::AliasClass;
     let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
     let [mem_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
     let mp = f.create_node(
@@ -565,7 +565,7 @@ fn mempartition_label_is_memproject() {
 /// class labels on each incoming edge.
 #[test]
 fn mem_project_edges_carry_alias_class_label() {
-    use crate::mem_project::AliasClass;
+    use strider_target::AliasClass;
 
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);

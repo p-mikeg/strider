@@ -236,6 +236,7 @@ pub use pat::{
 // `ir` crate directly.
 
 pub use strider_ir::{
-    AliasClass, BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
     IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
+pub use strider_target::AliasClass;

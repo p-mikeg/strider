@@ -3,10 +3,9 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::{AliasSplit, ConstantFold, OptimizerPipeline, RedundantPhis};
 use strider_ir::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use strider_ir::{AliasClass};
 use strider_ir_test_utils::{sp_vn_aarch64 as sp64_vn, sp_vn_x86 as sp32_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::IntBinaryOp;
-use strider_target::Endianness;
+use strider_target::{AliasClass, Endianness};
 
 /// Counts reachable anonymous (Vn-untagged) `Phi` nodes — the shape
 /// `StackLoadForward` synthesises when forwarding a load across a
@@ -1202,7 +1201,7 @@ fn stack_load_forward_walks_through_mempartition() -> Result<()> {
         fg.node_outputs(n).iter().any(|&out| {
             matches!(
                 fg.output_kind(out),
-                strider_ir::node::NodeOutputKind::Memory(Some(strider_ir::AliasClass::Stack))
+                strider_ir::node::NodeOutputKind::Memory(Some(strider_target::AliasClass::Stack))
             )
         })
     });

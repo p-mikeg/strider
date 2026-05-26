@@ -5,7 +5,8 @@ use crate::opt::pipeline::Optimizer;
 use crate::opt::AliasSplit;
 use crate::opt::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use strider_ir::{AliasClass, Graph, IntBinaryOp};
+use strider_ir::{Graph, IntBinaryOp};
+use strider_target::AliasClass;
 use strider_ir_test_utils::{sp_vn_x86 as sp_vn};
 
 /// A prologue local-variable zero-init writes to offsets that happen to

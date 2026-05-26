@@ -6,7 +6,7 @@
 //! appends them as additional Call inputs.
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
-use strider_ir::AliasClass;
+use strider_target::AliasClass;
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};

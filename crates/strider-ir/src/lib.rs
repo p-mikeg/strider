@@ -51,8 +51,6 @@ mod function;
 pub use function::Function;
 pub mod graph;
 pub use graph::Graph;
-pub mod mem_project;
-pub use mem_project::AliasClass;
 /// IR-specific Graphviz/dot rendering (implements the [`dot::GraphDotDumper`]
 /// trait for the IR [`Graph`]).  Internal: external callers should use
 /// [`Graph::dot_dumper`] instead of naming this module directly.

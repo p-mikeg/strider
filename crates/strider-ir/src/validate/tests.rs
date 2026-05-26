@@ -1019,7 +1019,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
 ///        partition-boundary nodes must pass validate without errors.
 #[test]
 fn validate_accepts_mem_project_and_union_chain() {
-    use crate::AliasClass;
+    use strider_target::AliasClass;
 
     let mut graph = Function::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);

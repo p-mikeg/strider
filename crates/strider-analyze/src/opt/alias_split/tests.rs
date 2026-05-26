@@ -11,9 +11,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-use strider_ir::{AliasClass, Function};
+use strider_ir::Function;
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, sp_vn_x86};
-use strider_target::ArchPreset;
+use strider_target::{AliasClass, ArchPreset};
 
 use crate::opt::AliasSplit;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};

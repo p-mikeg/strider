@@ -9,7 +9,7 @@
 //! varnode and the target's endianness (see [`StackLoadForward::new`]).
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use strider_ir::AliasClass;
+use strider_target::AliasClass;
 use strider_target::Endianness;
 
 use crate::opt::error::Result;

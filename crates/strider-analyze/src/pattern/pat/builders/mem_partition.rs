@@ -15,8 +15,8 @@
 
 use std::sync::Arc;
 
-use strider_ir::AliasClass;
 use strider_ir::node::{NodeKind, NodeOutputKind};
+use strider_target::AliasClass;
 
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat};

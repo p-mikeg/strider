@@ -20,7 +20,7 @@ pub enum NodeOutputKind {
     ///
     /// `None` = unified memory (the default until `AliasSplit` promotes it to a
     /// partition).  `Some(c)` = memory restricted to alias class `c`.
-    Memory(Option<crate::mem_project::AliasClass>),
+    Memory(Option<strider_target::AliasClass>),
 }
 
 impl NodeOutputKind {
@@ -93,7 +93,7 @@ impl NodeOutputKind {
     /// Returns `None` for unified `Memory` (or non-memory).
     #[inline]
     #[must_use]
-    pub fn memory_partition(self) -> Option<crate::mem_project::AliasClass> {
+    pub fn memory_partition(self) -> Option<strider_target::AliasClass> {
         if let NodeOutputKind::Memory(Some(c)) = self {
             Some(c)
         } else {
@@ -127,7 +127,7 @@ impl NodeOutputKind {
 #[cfg(test)]
 mod tests {
     use super::NodeOutputKind;
-    use crate::mem_project::AliasClass;
+    use strider_target::AliasClass;
 
     #[test]
     fn memory_variant_carries_optional_alias_class() {

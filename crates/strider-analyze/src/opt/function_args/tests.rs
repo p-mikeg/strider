@@ -1009,7 +1009,7 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
         fg.node_outputs(n).iter().any(|&out| {
             matches!(
                 fg.output_kind(out),
-                strider_ir::node::NodeOutputKind::Memory(Some(strider_ir::AliasClass::Stack))
+                strider_ir::node::NodeOutputKind::Memory(Some(strider_target::AliasClass::Stack))
             )
         })
     });
@@ -1049,8 +1049,8 @@ fn function_arg_detect_walks_through_mempartition() -> Result<()> {
 #[test]
 fn function_arg_detect_walks_through_memunion_to_stack_input() -> Result<()> {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use strider_ir::{AliasClass};
     use strider_ir::node::NodeOutputKind;
+    use strider_target::AliasClass;
 
     let sp = sp32_vn();
 

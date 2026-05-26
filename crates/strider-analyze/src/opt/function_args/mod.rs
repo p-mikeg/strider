@@ -33,7 +33,7 @@
 //! for that arg index — the `Vec<NodeId>` per entry accommodates this.
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
-use strider_ir::AliasClass;
+use strider_target::AliasClass;
 
 use crate::opt::alias_split::was_partitioned;
 use crate::opt::error::Result;
