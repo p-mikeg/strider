@@ -182,8 +182,25 @@ impl Function {
     /// functions built without one.
     #[inline]
     #[must_use]
-    pub fn no_memory_clobber(&self) -> bool {
+    pub(crate) fn no_memory_clobber(&self) -> bool {
         self.cc_metadata.cc.as_ref().is_some_and(|c| c.no_memory_clobber)
+    }
+
+    /// Calling convention's stack-pointer varnode, or `None` for
+    /// synthetic test functions that don't model an SP.
+    #[inline]
+    #[must_use]
+    pub(crate) fn stack_ptr_vn(&self) -> Option<rsleigh::Vn> {
+        self.cc_metadata.cc.as_ref().map(|c| c.stack_ptr_vn)
+    }
+
+    /// Net byte change the callee's `ret` inflicts on the caller's
+    /// stack pointer.  `0` on link-register ISAs and on synthetic
+    /// functions built without a CC.
+    #[inline]
+    #[must_use]
+    pub(crate) fn ret_stack_pop(&self) -> i64 {
+        self.cc_metadata.cc.as_ref().map_or(0, |c| c.ret_stack_pop)
     }
 
     /// Read the function-default CallOther clobber list.
@@ -209,25 +226,6 @@ impl Function {
         &self,
     ) -> &FxHashMap<rsleigh::Vn, crate::builder::VarId> {
         &self.cc_metadata.variable_to_id
-    }
-
-    /// Calling convention's stack-pointer varnode, or `None` for
-    /// synthetic test functions that don't model an SP.  Delegates to
-    /// the embedded calling convention.
-    #[inline]
-    #[must_use]
-    pub fn stack_ptr_vn(&self) -> Option<rsleigh::Vn> {
-        self.cc_metadata.cc.as_ref().map(|c| c.stack_ptr_vn)
-    }
-
-    /// Net byte change the callee's `ret` inflicts on the caller's
-    /// stack pointer.  `0` on link-register ISAs and on synthetic
-    /// functions built without a CC.  Delegates to the embedded
-    /// calling convention.
-    #[inline]
-    #[must_use]
-    pub fn ret_stack_pop(&self) -> i64 {
-        self.cc_metadata.cc.as_ref().map_or(0, |c| c.ret_stack_pop)
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────

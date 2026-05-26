@@ -46,7 +46,7 @@ pub enum WideConstStorage {
 impl WideConstStorage {
     /// Returns the byte width of this storage (32 for U256, 64 for U512).
     #[must_use]
-    pub fn byte_size(&self) -> usize {
+    pub(crate) fn byte_size(&self) -> usize {
         self.limbs().len() * 8
     }
 

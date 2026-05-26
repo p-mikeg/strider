@@ -305,10 +305,10 @@ pub struct PositionalArgLayout {
     /// Positional argument slots in ABI order.  Indices `0..` are
     /// register slots (matching `arg_passing_regs`), followed by stack
     /// slots (matching `stack_arg_offsets`).
-    pub entries: Vec<PositionalArg>,
+    pub(crate) entries: Vec<PositionalArg>,
     /// Stack-pointer varnode used by the SP-relative recognisers.
     /// Mirrors `BuiltCallingConvention::stack_ptr_vn`.
-    pub stack_ptr_vn: rsleigh::Vn,
+    pub(crate) stack_ptr_vn: rsleigh::Vn,
 }
 
 impl PositionalArgLayout {

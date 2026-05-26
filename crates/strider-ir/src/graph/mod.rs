@@ -201,7 +201,7 @@ impl Graph {
     /// dedup invariant the [`Self::create_node`] cache relies on so
     /// two `IntConstWide(id)` nodes referencing the same logical value
     /// share a single `NodeId`.
-    pub fn intern_wide_const(
+    pub(crate) fn intern_wide_const(
         &mut self,
         value: crate::wide_const::WideConstStorage,
     ) -> crate::wide_const::WideConstId {
