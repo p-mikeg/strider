@@ -145,6 +145,10 @@ pub struct Strider {
     /// names to `rsleigh::Vn`s without paying the per-call cost of
     /// `Sleigh::regs()` (an "expensive operation" per its docstring).
     pub(super) sleigh_regs: rsleigh::SleighRegs,
+    /// Alias-analysis precision propagated to every SP-aware pass the
+    /// pipeline builders construct.  Default is
+    /// [`crate::opt::AliasMode::Strict`].
+    pub(super) alias_mode: crate::opt::AliasMode,
 }
 
 impl Strider {
@@ -169,6 +173,7 @@ impl Strider {
             arch,
             calling_convention: built_calling_convention,
             sleigh_regs,
+            alias_mode: crate::opt::AliasMode::default(),
         })
     }
 
@@ -192,6 +197,7 @@ impl Strider {
             arch,
             calling_convention,
             sleigh_regs,
+            alias_mode: crate::opt::AliasMode::default(),
         }
     }
 
@@ -199,6 +205,20 @@ impl Strider {
     #[must_use]
     pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
         &self.calling_convention
+    }
+
+    /// Overrides the [`crate::opt::AliasMode`] propagated to the
+    /// SP-aware passes constructed by the pipeline builders.
+    #[must_use]
+    pub const fn with_alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
+        self.alias_mode = mode;
+        self
+    }
+
+    /// Returns the alias mode this `Strider` is configured with.
+    #[must_use]
+    pub const fn alias_mode(&self) -> crate::opt::AliasMode {
+        self.alias_mode
     }
 
     /// Builds an optimizer pipeline containing the default passes plus the
@@ -221,16 +241,18 @@ impl Strider {
         p.add(crate::opt::StackOffsetDetect::from_convention(
             &self.calling_convention,
         ));
-        p.add(crate::opt::StackLoadForward::from_convention(
-            &self.calling_convention,
-            &self.arch,
-        ));
-        p.add_post_pass(crate::opt::CallStackArgCollect::from_convention(
-            &self.calling_convention,
-        ));
-        p.add_post_pass(crate::opt::FunctionArgDetect::from_convention(
-            &self.calling_convention,
-        ));
+        p.add(
+            crate::opt::StackLoadForward::from_convention(&self.calling_convention, &self.arch)
+                .alias_mode(self.alias_mode),
+        );
+        p.add_post_pass(
+            crate::opt::CallStackArgCollect::from_convention(&self.calling_convention)
+                .alias_mode(self.alias_mode),
+        );
+        p.add_post_pass(
+            crate::opt::FunctionArgDetect::from_convention(&self.calling_convention)
+                .alias_mode(self.alias_mode),
+        );
         p
     }
 
@@ -252,13 +274,14 @@ impl Strider {
         p.add(crate::opt::StackOffsetDetect::from_convention(
             &self.calling_convention,
         ));
-        p.add(crate::opt::StackLoadForward::from_convention(
-            &self.calling_convention,
-            &self.arch,
-        ));
-        p.add_post_pass(crate::opt::FunctionArgDetect::from_convention(
-            &self.calling_convention,
-        ));
+        p.add(
+            crate::opt::StackLoadForward::from_convention(&self.calling_convention, &self.arch)
+                .alias_mode(self.alias_mode),
+        );
+        p.add_post_pass(
+            crate::opt::FunctionArgDetect::from_convention(&self.calling_convention)
+                .alias_mode(self.alias_mode),
+        );
         p
     }
 
@@ -273,9 +296,10 @@ impl Strider {
     #[must_use]
     pub fn build_destructive_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::destructive_default_pipeline();
-        p.add_post_pass(crate::opt::CallStackArgCollect::from_convention(
-            &self.calling_convention,
-        ));
+        p.add_post_pass(
+            crate::opt::CallStackArgCollect::from_convention(&self.calling_convention)
+                .alias_mode(self.alias_mode),
+        );
         p
     }
 

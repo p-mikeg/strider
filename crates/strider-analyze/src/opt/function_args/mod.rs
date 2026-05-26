@@ -61,6 +61,9 @@ pub struct FunctionArgDetect {
     /// `arg_passing_regs.len()` derivation that used to live inline
     /// here — single source of truth for "what is positional arg `i`?".
     layout: strider_target::PositionalArgLayout,
+    /// Alias-analysis precision for the `mem_chain_is_dirty` shadow
+    /// walk.  Default is [`crate::opt::AliasMode::Strict`].
+    alias_mode: crate::opt::AliasMode,
 }
 
 impl FunctionArgDetect {
@@ -85,9 +88,17 @@ impl FunctionArgDetect {
         Self {
             cc: std::sync::Arc::new(cc.clone()),
             layout,
+            alias_mode: crate::opt::AliasMode::default(),
         }
     }
 
+    /// Overrides the alias-analysis precision used by the shadow walk.
+    /// See [`crate::opt::AliasMode`] for the soundness/coverage trade-off.
+    #[must_use]
+    pub const fn alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
+        self.alias_mode = mode;
+        self
+    }
 }
 
 impl Optimizer for FunctionArgDetect {
@@ -111,6 +122,7 @@ impl Optimizer for FunctionArgDetect {
             self.cc.stack_ptr_vn,
             &stack_arg_offsets,
             self.layout.first_stack_index() as usize,
+            self.alias_mode,
         )?;
         // The pass only populates the arg_index_to_nodes side-table — it
         // does not rewrite the graph — so the optimizer's fixed-point loop
@@ -247,6 +259,7 @@ fn detect_stack_args(
     sp_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
+    alias_mode: crate::opt::AliasMode,
 ) -> Result<()> {
     if stack_arg_offsets.is_empty() {
         return Ok(());
@@ -292,6 +305,7 @@ fn detect_stack_args(
             &mut memo,
             &mut seen,
             &mut shadow_memo,
+            alias_mode,
         )?;
         if dirty {
             disqualified.insert(j);
@@ -390,6 +404,7 @@ struct DirtyStep<'a> {
     load_size: i64,
     sp_vn: rsleigh::Vn,
     sp_memo: &'a mut SpExprMemo,
+    alias_mode: crate::opt::AliasMode,
 }
 
 impl<'a> MemChainStep for DirtyStep<'a> {
@@ -410,6 +425,7 @@ impl<'a> MemChainStep for DirtyStep<'a> {
                 self.sp_memo,
                 self.offset,
                 self.load_size,
+                self.alias_mode,
             ) {
                 AliasStep::MayAlias => StepResult::Verdict(true),
                 AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
@@ -479,10 +495,10 @@ impl<'a> MemChainStep for DirtyStep<'a> {
     }
 }
 
-// Eight arguments are the minimum needed to thread cycle-guards, the
-// SP-decomposition memo and the shadow-walk memo through the
-// memory-chain DFS; bundling them into a context struct would just
-// add indirection without clarifying call sites.
+// Nine arguments are the minimum needed to thread cycle-guards, the
+// SP-decomposition memo, the shadow-walk memo, and the alias-mode
+// knob through the memory-chain DFS; bundling them into a context
+// struct would just add indirection without clarifying call sites.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     ctx: crate::pattern::RewriteCtxView<'_>,
@@ -493,13 +509,14 @@ fn mem_chain_is_dirty(
     sp_memo: &mut SpExprMemo,
     seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     memo: &mut ShadowMemo,
+    alias_mode: crate::opt::AliasMode,
 ) -> Result<bool> {
     let entry_key = (mem, offset, load_size);
     if let Some(&cached) = memo.get(&entry_key) {
         return Ok(cached);
     }
 
-    let mut step = DirtyStep { offset, load_size, sp_vn, sp_memo };
+    let mut step = DirtyStep { offset, load_size, sp_vn, sp_memo, alias_mode };
     let result = walk_mem_chain(
         ctx.function_ref(),
         mem,

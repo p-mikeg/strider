@@ -2,8 +2,10 @@
 //! decide whether a single memory-side-effecting node aliases a query
 //! byte range.
 
-use strider_ir::node::{NodeId, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use strider_ir::Function;
+
+use crate::opt::AliasMode;
 
 use super::decompose::{decompose_sp, SpExpr, SpExprMemo};
 use super::ranges::{ranges_disjoint, store_value_byte_size};
@@ -21,11 +23,9 @@ pub(crate) enum AliasStep {
     MayAlias,
 }
 
-/// Decides whether walking past `node` (a raw `NodeKind::Store`) is safe.
-/// Decomposes the store address: a non-SP-rooted address is provably
-/// non-aliasing with the SP-relative query range; an SP-rooted Terminal
-/// address uses the same disjointness check; an SP-rooted Phi address
-/// conservatively terminates.
+/// Decides whether walking past `node` (a raw `NodeKind::Store`) is
+/// safe for an SP-rooted query range.  See [`AliasMode`] for the
+/// soundness/coverage trade-off the `mode` parameter controls.
 pub(crate) fn step_through_store(
     graph: &Function,
     node: NodeId,
@@ -33,6 +33,7 @@ pub(crate) fn step_through_store(
     sp_memo: &mut SpExprMemo,
     query_off: i64,
     query_size: i64,
+    mode: AliasMode,
 ) -> AliasStep {
     // Store inputs: [MEM, ADDR, DATA].
     let inputs = graph.node_inputs(node);
@@ -40,9 +41,24 @@ pub(crate) fn step_through_store(
         return AliasStep::MayAlias;
     }
     match decompose_sp(graph, inputs[1], sp_vn, sp_memo) {
-        // Non-SP-rooted address provably cannot alias the stack-arg byte
-        // range — walk through.
-        None => AliasStep::PassThrough { prev_mem: inputs[0] },
+        None => match mode {
+            // Strict: cannot prove disjoint from an SP-rooted query
+            // without a memory-layout assumption.  Bail.
+            AliasMode::Strict => AliasStep::MayAlias,
+            // Permissive: stack region and constant-address region are
+            // assumed disjoint.  A Store whose address is a literal
+            // `IntConst` therefore cannot alias the SP-rooted query;
+            // step through.  Anchor addresses (anything else) still
+            // bail — closing that gap requires escape analysis.
+            AliasMode::AssumeStackConstDisjoint => {
+                let store_addr_node = graph.get_node_from_output(inputs[1]);
+                if matches!(graph.node_kind(store_addr_node), NodeKind::IntConst(_)) {
+                    AliasStep::PassThrough { prev_mem: inputs[0] }
+                } else {
+                    AliasStep::MayAlias
+                }
+            }
+        },
         Some(SpExpr::Terminal { base: _, offset: store_off }) => {
             let store_size = store_value_byte_size(graph, inputs[2]);
             if ranges_disjoint(store_off, store_size, query_off, query_size) {

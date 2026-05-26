@@ -354,16 +354,16 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     Ok(())
 }
 
-/// NEW behaviour: a `Store` to a constant address (e.g. a `.data` global) on
-/// the memory chain between stack-arg pushes and a `Call` must NOT terminate
-/// the walker.  Such stores cannot alias the stack-arg space, so the walker
-/// should pass through them and continue collecting the upstream stack-args.
+/// Soundness floor under `AliasMode::Strict`: a non-SP-rooted Store on
+/// the memory chain between stack-arg pushes and a Call terminates the
+/// walk.  The most-recent push (closest to the Call) is collected before
+/// the walker reaches the global write; everything upstream is dropped.
 ///
-/// Models the `volatile int g_sink_int = …;` barrier-pattern that gcc/clang
-/// at -O2 freely interleave with stack-arg pushes — the cause #2
-/// reproducer.
+/// Models the `volatile int g = …;` barrier-pattern interleaved with
+/// stack-arg pushes that `gcc -O2` emits.  Permissive recovery of the
+/// upstream args lands with `AliasMode::AssumeStackConstDisjoint`.
 #[test]
-fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
+fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     let sp = sp_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 = 22 at sp - 4.
@@ -374,9 +374,7 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
         let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
-        // Volatile global write: store to a fixed `.data` address (constant).
-        // `decompose_sp` returns None for a non-SP-rooted address; the new
-        // walker branch must continue past it.
+        // Volatile global write — cross-class against the stack-arg slots.
         let global_addr = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
         let global_data = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
         b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
@@ -396,36 +394,33 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
     })?;
 
     let mut pipeline = cf_rp_pipeline();
-    // cdecl-style offsets: ret-addr at 0, args at +4, +8, +12.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + memory + target + 2 stack args = 5.
+    // Strict: only the push closest to the Call gets collected; the
+    // global write terminates the walk.  ctrl + memory + target + arg0 = 4.
     assert_eq!(
         inputs.len(),
-        5,
-        "walker must pass through the non-aliasing global store and collect both stack args; got inputs={inputs:?}"
+        4,
+        "strict walker collects only the most-recent push before the global \
+         terminator; got inputs={inputs:?}"
     );
     let arg0_kind = *fg.kind_of_output(inputs[3]);
-    let arg1_kind = *fg.kind_of_output(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
     );
-    assert!(
-        matches!(arg1_kind, NodeKind::IntConst(22)),
-        "arg1 should be 22, got {arg1_kind:?}"
-    );
     Ok(())
 }
 
-/// NEW behaviour, multi-store stress: many stack-arg pushes interleaved with
-/// multiple non-aliasing global stores between every push.  Walker must
-/// collect all 4 stack args, mirroring the `forward_16` fixture.
+/// Soundness floor under `AliasMode::Strict` (multi-store stress): the
+/// first (most-recent-to-Call) non-SP store terminates the walk; no
+/// stack args reach the Call.  Permissive mode recovery of all four
+/// args lands with `AliasMode::AssumeStackConstDisjoint`.
 #[test]
-fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
+fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Result<()> {
     let sp = sp_vn();
     let arg_vals: [u64; 4] = [11, 22, 33, 44];
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_initial| {
@@ -433,28 +428,25 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
 
         let mut sp_cur = sp_initial;
         let global_data = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
-        // Push args in reverse order (arg3 first → highest negative offset),
-        // and emit a volatile global store after each push.  Final memory
-        // chain (latest first) is:
-        //   global → push arg0 → global → push arg1 → global → push arg2 →
-        //   global → push arg3 → entry_mem.
+        // Push args in reverse order (arg3 first), with a global write
+        // right after each push.  Memory chain backward from Call begins
+        // with the *final* global write — the walker terminates there
+        // before collecting any arg.
         for (i, base_global_addr) in [0xCAFE0000u64, 0xCAFE0010, 0xCAFE0020, 0xCAFE0030]
             .into_iter()
             .enumerate()
         {
-            let arg_idx = 3 - i; // push arg3 first, arg0 last.
+            let arg_idx = 3 - i;
             sp_cur =
                 b.build_int_sub(sp_cur, four, NodeOutputType::U32)?;
             b.write_variable(&sp, sp_cur)?;
             let arg = b.build_int_const(arg_vals[arg_idx], NodeOutputType::U32)?;
             b.build_store(sp_cur, arg, rsleigh::VnSpace::RAM)?;
 
-            // Non-aliasing global write right after each push.
             let g_addr = b.build_int_const(base_global_addr, NodeOutputType::U32)?;
             b.build_store(g_addr, global_data, rsleigh::VnSpace::RAM)?;
         }
 
-        // call 0x1000.
         let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
@@ -462,28 +454,19 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
     })?;
 
     let mut pipeline = cf_rp_pipeline();
-    // 4 cdecl-like stack-arg offsets.  arg0 ends up at sp - 4 (anchor),
-    // arg1 at sp - 8 (= anchor + 4), arg2 at sp - 12 (= anchor + 8),
-    // arg3 at sp - 16 (= anchor + 12).  AArch64-style table starting at 0.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run_built(&mut fg)?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + 4 args = 7 inputs.
+    // Strict: the most-recent chain node is the trailing global write,
+    // walker terminates immediately.  ctrl + memory + target = 3.
     assert_eq!(
         inputs.len(),
-        7,
-        "walker must collect all 4 stack args across 4 interleaved global writes; got inputs={inputs:?}"
+        3,
+        "strict walker terminates at the leading global write; no stack args \
+         collected; got inputs={inputs:?}"
     );
-    for (slot_idx, expected) in arg_vals.iter().enumerate() {
-        let kind = *fg.kind_of_output(inputs[3 + slot_idx]);
-        let expected_u128: u128 = (*expected).into();
-        assert!(
-            matches!(kind, NodeKind::IntConst(v) if v == expected_u128),
-            "arg{slot_idx} should be {expected}, got {kind:?}"
-        );
-    }
     Ok(())
 }
 

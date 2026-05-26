@@ -62,6 +62,23 @@ pub(crate) fn standard_test(sp: rsleigh::Vn, endianness: Endianness) -> Optimize
     pipeline
 }
 
+/// Variant of [`standard_test`] whose `StackLoadForward` runs under
+/// [`crate::opt::AliasMode::AssumeStackConstDisjoint`].  Used by white-box
+/// tests that pin permissive-mode behaviour.
+pub(crate) fn standard_test_permissive(
+    sp: rsleigh::Vn,
+    endianness: Endianness,
+) -> OptimizerPipeline {
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(
+        StackLoadForward::new(sp, endianness)
+            .alias_mode(crate::opt::AliasMode::AssumeStackConstDisjoint),
+    );
+    pipeline
+}
+
 /// The output id that the (unique) Return node receives as its value
 /// argument (input[2]: input[0]=ctrl, input[1]=mem).
 pub(crate) fn return_value(graph: &Graph) -> crate::opt::Result<Value> {

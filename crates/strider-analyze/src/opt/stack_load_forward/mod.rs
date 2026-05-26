@@ -37,6 +37,9 @@ pub struct StackLoadForward {
     /// per-arch property (lives on [`strider_target::SleighArch`])
     /// rather than a per-CC property.
     endianness: Endianness,
+    /// Alias-analysis precision for the backward chain walk.  Default
+    /// is [`crate::opt::AliasMode::Strict`].
+    alias_mode: crate::opt::AliasMode,
 }
 
 impl StackLoadForward {
@@ -49,6 +52,7 @@ impl StackLoadForward {
         Self {
             cc: std::sync::Arc::new(crate::opt::sp_pass_cc::minimal_cc_for_sp(stack_ptr_vn)),
             endianness,
+            alias_mode: crate::opt::AliasMode::default(),
         }
     }
 
@@ -62,9 +66,17 @@ impl StackLoadForward {
         Self {
             cc: std::sync::Arc::new(cc.clone()),
             endianness: arch.endianness(),
+            alias_mode: crate::opt::AliasMode::default(),
         }
     }
 
+    /// Overrides the alias-analysis precision used by the chain walk.
+    /// See [`crate::opt::AliasMode`] for the soundness/coverage trade-off.
+    #[must_use]
+    pub const fn alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
+        self.alias_mode = mode;
+        self
+    }
 }
 
 impl Optimizer for StackLoadForward {
@@ -79,7 +91,7 @@ impl Optimizer for StackLoadForward {
         let mut result = OptimizationResult::NoChange;
         let sp_vn = self.cc.stack_ptr_vn;
         while let Some(load) = work.dequeue() {
-            result |= try_forward_load(&mut ctx, load, sp_vn, self.endianness, &mut memo)?;
+            result |= try_forward_load(&mut ctx, load, sp_vn, self.endianness, &mut memo, self.alias_mode)?;
         }
         Ok(result)
     }
@@ -94,6 +106,7 @@ fn try_forward_load(
     sp_vn: rsleigh::Vn,
     endianness: Endianness,
     memo: &mut SpExprMemo,
+    alias_mode: crate::opt::AliasMode,
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
     let [mem, addr] = ctx.node_inputs_exact::<2>(load)?;
@@ -124,6 +137,7 @@ fn try_forward_load(
         sp_vn,
         memo,
         &mut visited,
+        alias_mode,
     )?
     else {
         return Ok(OptimizationResult::NoChange);
@@ -182,6 +196,7 @@ struct ProbeStep<'a> {
     load_ty: strider_ir::node::NodeOutputType,
     sp_vn: rsleigh::Vn,
     memo: &'a mut SpExprMemo,
+    alias_mode: crate::opt::AliasMode,
 }
 
 impl<'a> MemChainStep for ProbeStep<'a> {
@@ -235,29 +250,23 @@ impl<'a> MemChainStep for ProbeStep<'a> {
                         // SP-rooted Phi address: conservatively may alias.
                         Ok(StepResult::Verdict(None))
                     }
-                    None => {
-                        // Non-SP-rooted address: classified as Unknown,
-                        // passed through without breaking the Stack chain.
-                        //
-                        // SOUNDNESS NOTE: this is sound only when no
-                        // SP-derived pointer has escaped into user code
-                        // in a way that could make a non-SP-rooted Store
-                        // alias a Stack-class slot.  Concretely:
-                        //   p = *(sp+8);   // p is Unknown-class
-                        //   *p = v;        // Store with Unknown addr
-                        //   // if p == &local (a stack slot), StackLoadForward
-                        //   // will forward from the BEFORE-store value — WRONG.
-                        //
-                        // The default `CALL_DEFAULT_CLOBBERS = [Stack, Unknown]`
-                        // mitigates the most common form of this (a callee that
-                        // holds a pointer to a local variable will clobber the
-                        // Stack chain at the Call barrier), but in-function
-                        // pointer manipulation that doesn't cross a Call is not
-                        // covered.  Closing this gap requires escape analysis
-                        // (tracking whether any non-SP-rooted value was derived
-                        // from an SP-rooted source) — not yet implemented.
-                        Ok(StepResult::Continue(inputs[0]))
-                    }
+                    None => match self.alias_mode {
+                        // Strict: cross-class store may alias the
+                        // SP-rooted load.  Bail.
+                        crate::opt::AliasMode::Strict => Ok(StepResult::Verdict(None)),
+                        // Permissive: an `IntConst` store address is
+                        // assumed to live outside the stack region.
+                        // Step through it; any other non-SP-rooted
+                        // (Anchor) address still bails.
+                        crate::opt::AliasMode::AssumeStackConstDisjoint => {
+                            let addr_node = graph.get_node_from_output(addr);
+                            if matches!(graph.node_kind(addr_node), NodeKind::IntConst(_)) {
+                                Ok(StepResult::Continue(inputs[0]))
+                            } else {
+                                Ok(StepResult::Verdict(None))
+                            }
+                        }
+                    },
                 }
             }
             NodeKind::MemPhi => {
@@ -323,6 +332,7 @@ fn probe(
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visited: &mut entity_utils::DenseEntitySet<NodeOutputId>,
+    alias_mode: crate::opt::AliasMode,
 ) -> Result<Option<ResolveShape>> {
     let mut step = ProbeStep {
         offset,
@@ -330,6 +340,7 @@ fn probe(
         load_ty,
         sp_vn,
         memo,
+        alias_mode,
     };
     walk_mem_chain(
         ctx.function_ref(),

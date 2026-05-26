@@ -205,17 +205,13 @@ fn bail_on_type_mismatch() -> Result<()> {
     Ok(())
 }
 
-/// An intervening `Store(_)` whose address is *not* SP-relative is provably
-/// non-aliasing with any stack slot (different address spaces, or at least
-/// different decomposition: one is `sp + K`, the other isn't).  The walker
-/// passes through it and forwards the load.
-///
-/// Was previously `bail_on_opaque_store_between` — pinned the
-/// over-conservative pre--fix behaviour.  Renamed to reflect the new
-/// (correct) behaviour and the original docstring's actual semantic
-/// observation.
+/// Soundness floor: a non-SP-rooted intervening Store cannot be proven
+/// disjoint from an SP-rooted Load (the constant address could
+/// coincidentally equal `sp + K`, or the address could be an escaped
+/// SP-derived pointer the lifter loses track of).  Under `AliasMode::Strict`
+/// (the default) the walker must bail rather than silently pass through.
 #[test]
-fn forwards_across_non_sp_store_between() -> Result<()> {
+fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -224,9 +220,9 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
         let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
         b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
-        // Opaque store to a non-SP address (a compile-time constant address —
-        // can't be SP-relative because SP is an InitialVar reading the entry
-        // SP, while the address here is a literal IntConst).
+        // Opaque store to a non-SP address (a compile-time constant address).
+        // Cross-class against the SP-rooted load — cannot be proven disjoint
+        // without `AliasMode::AssumeStackConstDisjoint`.
         let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
         let other = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
         b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
@@ -240,9 +236,85 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
+        reachable_loads, 1,
+        "Strict mode: the cross-class intervening Store must block forwarding; \
+         the Load[sp+4] must remain in the graph"
+    );
+    Ok(())
+}
+
+/// Under `AliasMode::AssumeStackConstDisjoint`, the cross-class
+/// intervening Store(IntConst, _) is assumed to live outside the stack
+/// region and the walker steps through it.  The SP-rooted Load
+/// forwards from the matching SP-rooted Store.
+#[test]
+fn permissive_forwards_across_const_intervening_store() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
+        let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        let other = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::opt::test_support::standard_test_permissive(sp, Endianness::Little);
+    pipeline.run_built(&mut fg)?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
         reachable_loads, 0,
-        "non-SP-relative intervening Store must not block forwarding \
-         (the addresses are provably non-aliasing)"
+        "Permissive mode: the IntConst-addressed Store cannot alias \
+         sp+4, so the Load[sp+4] must forward to 0xAA"
+    );
+    let ret_kind = crate::opt::test_support::return_kind(fg.graph())?;
+    assert!(
+        matches!(ret_kind, NodeKind::IntConst(0xAA)),
+        "forwarded value must be IntConst(0xAA), got {ret_kind:?}"
+    );
+    Ok(())
+}
+
+/// Even under `AssumeStackConstDisjoint`, an intervening Store whose
+/// address is neither SP-rooted nor an `IntConst` (an Anchor address)
+/// still bails — closing that gap would require escape analysis we
+/// have not implemented.
+#[test]
+fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
+        // Anchor address: a load of a constant global, whose loaded
+        // value is then used as a store address.  Neither SP-rooted
+        // nor an IntConst.
+        let global_addr = b.build_int_const(0x2000u64, NodeOutputType::U32)?;
+        let p = b.build_load(global_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let other = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        b.build_store(p, other, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::opt::test_support::standard_test_permissive(sp, Endianness::Little);
+    pipeline.run_built(&mut fg)?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert!(
+        reachable_loads >= 1,
+        "Permissive mode: an Anchor (non-IntConst non-SP) intervening \
+         Store must still block forwarding; expected ≥1 Load remaining, \
+         got {reachable_loads}"
     );
     Ok(())
 }

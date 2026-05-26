@@ -672,12 +672,14 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     Ok(())
 }
 
-/// NEW: a plain `Store(addr=IntConst(global_addr), U32)` between the
-/// function-entry memory and a `Load[sp+K]` candidate must NOT mark the
-/// chain dirty.  Such a Store is provably non-stack-aliasing (its address
-/// does not decompose to `sp + K`), so the walker should pass through it.
+/// Soundness floor: a cross-class intervening Store (here: address is a
+/// const-encoded global) cannot be proven disjoint from the SP-rooted
+/// candidate Load.  Under `AliasMode::Strict` (the default) such a Store
+/// must mark the chain dirty so the Load is NOT registered as an
+/// incoming arg — a stale value from before the function entry would
+/// otherwise be substituted, masking the global's write.
 #[test]
-fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
+fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
@@ -688,7 +690,7 @@ fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
         b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
 
         // return *(sp + 4) as U32 — the load's memory predecessor IS the
-        // global Store above, so without the fix this is rejected as dirty.
+        // global Store above; cross-class against the SP load.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let addr =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
@@ -704,8 +706,9 @@ fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
-        !arg0_nodes.is_empty(),
-        "non-SP-rooted Store must not mark chain dirty: Load[sp+4] should be registered as arg 0"
+        arg0_nodes.is_empty(),
+        "Strict mode: the cross-class intervening Store must mark the chain \
+         dirty so the Load is NOT promoted to an incoming arg"
     );
     Ok(())
 }

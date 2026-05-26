@@ -334,17 +334,23 @@ pub fn lift_for_pipeline(
 /// ([`Strider::build_optimizer_pipeline`] + `LoadReadOnly`) over the
 /// lifted IR, and returns the resulting graph.
 ///
+/// Test fixtures are well-behaved compiler-emitted binaries (gcc/clang
+/// at -O0/-O2 from `fixtures/cases/*.c`), so this helper opts into
+/// [`crate::opt::AliasMode::AssumeStackConstDisjoint`] — globals never
+/// alias the stack frame in such binaries, and the relaxed walker
+/// recovers the spill/reload forwarding the assertions depend on.
+/// Tests of the strict default belong in unit tests with a directly-
+/// constructed pipeline.
+///
 /// Panics on any failure — system tests are pass/fail end-to-end checks.  If
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
 pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let (outcome, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, case, fn_name);
+    let ana = ana.with_alias_mode(strider_analyze::opt::AliasMode::AssumeStackConstDisjoint);
     let mut graph = outcome.graph;
     let mut p = ana.build_optimizer_pipeline();
-    // `LoadReadOnly` stores its rom as `Arc<dyn ReadOnlyMemory>`; the
-    // `rom_for_opt` carry type already matches, so this is a no-op
-    // clone.
     p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
     p.run_built(&mut graph)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));

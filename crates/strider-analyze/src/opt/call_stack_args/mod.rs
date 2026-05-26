@@ -103,6 +103,7 @@ fn collect_stack_args_in_chain_order(
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
+    alias_mode: crate::opt::AliasMode,
 ) -> Vec<NodeOutputId> {
     if stack_arg_offsets.is_empty() {
         return Vec::new();
@@ -148,11 +149,24 @@ fn collect_stack_args_in_chain_order(
                 } else {
                     // Slow path: no side-table entry.
                     match decompose_sp(ctx.function_ref(), addr, stack_ptr_vn, sp_memo) {
-                        None => {
-                            // Non-aliasing — pass through.
-                            cur = prev;
-                            continue;
-                        }
+                        None => match alias_mode {
+                            // Strict: cross-class store may alias an
+                            // outgoing stack-arg slot.  Bail.
+                            crate::opt::AliasMode::Strict => return dense_prefix(slots),
+                            // Permissive: an `IntConst` store address
+                            // is assumed to live outside the stack
+                            // region.  Step through; any other
+                            // non-SP-rooted (Anchor) address still
+                            // bails.
+                            crate::opt::AliasMode::AssumeStackConstDisjoint => {
+                                let addr_node = ctx.get_node_from_output(addr);
+                                if matches!(ctx.node_kind(addr_node), NodeKind::IntConst(_)) {
+                                    cur = prev;
+                                    continue;
+                                }
+                                return dense_prefix(slots);
+                            }
+                        },
                         Some(crate::opt::sp_expr::SpExpr::Terminal { base, offset }) => {
                             // SP-relative Store — treat like a stack-arg store.
                             match anchor_base {
@@ -275,6 +289,7 @@ fn try_collect_stack_args(
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
+    alias_mode: crate::opt::AliasMode,
 ) -> Result<OptimizationResult> {
     if !matches!(ctx.node_kind(call_id), NodeKind::Call) {
         return Ok(OptimizationResult::NoChange);
@@ -294,6 +309,7 @@ fn try_collect_stack_args(
         stack_arg_offsets,
         stack_ptr_vn,
         sp_memo,
+        alias_mode,
     );
     if args.is_empty() {
         return Ok(OptimizationResult::NoChange);
@@ -310,15 +326,15 @@ fn try_collect_stack_args(
 /// [`OptimizerPipeline::add_post_pass`][crate::opt::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
 ///
-/// The walker tolerates non-stack-aliasing `Store` nodes interleaved on the
-/// chain (e.g. compiler-emitted volatile global writes that gcc/clang at
-/// `-O2` are free to schedule between stack-arg pushes).  When
+/// The walker tolerates disjoint SP-relative stores interleaved on the
+/// chain (different offsets, ranges proven non-overlapping).  When
 /// `Function::stack_offsets` is populated by `StackOffsetDetect`,
 /// SP-relative stores are identified via an O(1) side-table read;
 /// without it the walker falls back to
-/// `crate::opt::sp_expr::decompose_sp`.  Non-SP-rooted stores
-/// (side-table miss + decompose returns `None`) are passed through;
-/// SP-rooted stores remain chain-terminating.
+/// `crate::opt::sp_expr::decompose_sp`.  Under the default
+/// `AliasMode::Strict`, non-SP-rooted stores (constant addresses,
+/// opaque pointers) cannot be proven disjoint from the outgoing
+/// stack-arg slots and terminate the walk.
 #[derive(Clone)]
 pub struct CallStackArgCollect {
     /// Calling convention this pass was built from.  Shared `Arc` so all
@@ -330,6 +346,9 @@ pub struct CallStackArgCollect {
     /// keeps the pass's stack-arg-offsets read aligned with the
     /// canonical layout shared by [`crate::opt::FunctionArgDetect`].
     layout: strider_target::PositionalArgLayout,
+    /// Alias-analysis precision for the backward chain walk.  Default
+    /// is [`crate::opt::AliasMode::Strict`].
+    alias_mode: crate::opt::AliasMode,
 }
 
 impl CallStackArgCollect {
@@ -350,9 +369,17 @@ impl CallStackArgCollect {
         Self {
             cc: std::sync::Arc::new(cc.clone()),
             layout,
+            alias_mode: crate::opt::AliasMode::default(),
         }
     }
 
+    /// Overrides the alias-analysis precision used by the chain walk.
+    /// See [`crate::opt::AliasMode`] for the soundness/coverage trade-off.
+    #[must_use]
+    pub const fn alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
+        self.alias_mode = mode;
+        self
+    }
 }
 
 impl Optimizer for CallStackArgCollect {
@@ -366,20 +393,11 @@ impl Optimizer for CallStackArgCollect {
             .preorder()
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
             .collect();
-        // Share the SP-decomposition memo across all Call sites in the
-        // function.  When `StackOffsetDetect` has populated `Function::stack_offsets`,
-        // the walker uses the side-table (O(1)) and the memo is only consulted
-        // for stores not in the side-table.  Without `StackOffsetDetect`, many stack
-        // pushes near each other share intermediate `sp − K` outputs that hit
-        // the memo on the second access.
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         let default_offsets = self.layout.stack_arg_offsets();
         let stack_ptr_vn = self.cc.stack_ptr_vn;
         for call_id in calls {
-            // Consult the per-Call stack-arg-offsets override recorded at
-            // lift time when a per-address CC was in effect.  Falls back to
-            // the function-default layout when no override is present.
             let override_offsets: Option<Vec<i64>> = ctx
                 .function_ref()
                 .call_stack_arg_offsets_override(call_id)
@@ -393,6 +411,7 @@ impl Optimizer for CallStackArgCollect {
                 stack_arg_offsets,
                 stack_ptr_vn,
                 &mut sp_memo,
+                self.alias_mode,
             )?;
         }
         Ok(result)
