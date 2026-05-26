@@ -392,18 +392,18 @@ mod tests {
     }
 
     /// Count `If` nodes via the post-build preorder walk.
-    fn count_if_nodes(g: &strider_ir::Function) -> usize {
-        g.count_kind(|k| matches!(k, NodeKind::If))
+    fn count_if_nodes(function: &strider_ir::Function) -> usize {
+        function.count_kind(|k| matches!(k, NodeKind::If))
     }
 
     /// Count `IntCmpOp(Equal)` nodes via the post-build preorder walk.
-    fn count_eq_cmps(g: &strider_ir::Function) -> usize {
-        g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
+    fn count_eq_cmps(function: &strider_ir::Function) -> usize {
+        function.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
     }
 
     /// Count `IntConst` nodes whose value equals `want`.
-    fn count_int_consts_eq(g: &strider_ir::Function, want: u64) -> usize {
-        g.count_kind(|k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(want)))
+    fn count_int_consts_eq(function: &strider_ir::Function, want: u64) -> usize {
+        function.count_kind(|k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(want)))
     }
 
     #[test]
@@ -415,11 +415,11 @@ mod tests {
         let (mut b, idx, regions) = make_builder_with_targets(1);
         build_switch_if_ladder(&mut b, idx, &[(0xdeadu64, regions[0])], dummy_caller_region())
             .expect("build_switch_if_ladder(1)");
-        let g = b.build().expect("build");
-        assert_eq!(count_if_nodes(&g), 0, "no If nodes for 1-target switch");
-        assert_eq!(count_eq_cmps(&g), 0, "no equality cmps for 1-target");
+        let function = b.build().expect("build");
+        assert_eq!(count_if_nodes(&function), 0, "no If nodes for 1-target switch");
+        assert_eq!(count_eq_cmps(&function), 0, "no equality cmps for 1-target");
         assert_eq!(
-            count_int_consts_eq(&g, 0xdead),
+            count_int_consts_eq(&function, 0xdead),
             0,
             "no comparison constant emitted for 1-target",
         );
@@ -439,10 +439,10 @@ mod tests {
             dummy_caller_region(),
         )
         .expect("build_switch_if_ladder(2)");
-        let g = b.build().expect("build");
-        assert_eq!(count_if_nodes(&g), 1, "exactly one If for 2-target switch");
+        let function = b.build().expect("build");
+        assert_eq!(count_if_nodes(&function), 1, "exactly one If for 2-target switch");
         assert_eq!(
-            count_eq_cmps(&g),
+            count_eq_cmps(&function),
             1,
             "exactly one equality cmp for 2-target switch",
         );
@@ -450,7 +450,7 @@ mod tests {
         // because the last If's false-branch flows unconditionally
         // to its region.
         assert!(
-            count_int_consts_eq(&g, 0x100) >= 1,
+            count_int_consts_eq(&function, 0x100) >= 1,
             "K_0 (0x100) must be present as IntConst",
         );
     }
@@ -473,19 +473,19 @@ mod tests {
             dummy_caller_region(),
         )
         .expect("build_switch_if_ladder(3)");
-        let g = b.build().expect("build");
-        assert_eq!(count_if_nodes(&g), 2, "N-1=2 If nodes for 3-target switch");
-        assert_eq!(count_eq_cmps(&g), 2, "N-1=2 equality cmps for 3-target switch");
+        let function = b.build().expect("build");
+        assert_eq!(count_if_nodes(&function), 2, "N-1=2 If nodes for 3-target switch");
+        assert_eq!(count_eq_cmps(&function), 2, "N-1=2 equality cmps for 3-target switch");
         assert!(
-            count_int_consts_eq(&g, 0x1000) >= 1,
+            count_int_consts_eq(&function, 0x1000) >= 1,
             "K_0 (0x1000) IntConst present",
         );
         assert!(
-            count_int_consts_eq(&g, 0x2000) >= 1,
+            count_int_consts_eq(&function, 0x2000) >= 1,
             "K_1 (0x2000) IntConst present",
         );
         assert_eq!(
-            count_int_consts_eq(&g, 0x3000),
+            count_int_consts_eq(&function, 0x3000),
             0,
             "K_{{N-1}} (0x3000) NOT compared — flows via last If's false-branch",
         );
@@ -512,11 +512,11 @@ mod tests {
             dummy_caller_region(),
         )
         .expect("build_switch_if_ladder(4)");
-        let g = b.build().expect("build");
-        assert_eq!(count_if_nodes(&g), 3, "N-1=3 If nodes for 4-target switch");
+        let function = b.build().expect("build");
+        assert_eq!(count_if_nodes(&function), 3, "N-1=3 If nodes for 4-target switch");
         // Validation already happened inside build(); reaching this
         // line means the per-region control-chain is consistent.
-        let _ = g;
+        let _ = function;
     }
 
     #[test]

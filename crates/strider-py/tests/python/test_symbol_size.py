@@ -62,7 +62,7 @@ def test_function_max_size_threads_into_strider_run():
         function_max_size=size,
         allow_code_before_start_addr=True,
     )
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0
 
 
 def test_symbol_size_returns_none_for_zero_st_size():

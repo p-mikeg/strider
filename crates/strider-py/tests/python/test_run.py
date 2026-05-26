@@ -18,9 +18,9 @@ def test_run_returns_run_result(x86_memory_elf):
         allow_code_before_start_addr=True,
     )
     assert isinstance(result.cfg, strider.Cfg)
-    assert isinstance(result.graph, strider.Function)
+    assert isinstance(result.function, strider.Function)
     assert isinstance(result.sleigh, strider.Sleigh)
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0
 
 
 def test_run_with_custom_pipeline(x86_memory_elf):
@@ -39,4 +39,4 @@ def test_run_with_custom_pipeline(x86_memory_elf):
         pipeline=pipe,
         allow_code_before_start_addr=True,
     )
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0

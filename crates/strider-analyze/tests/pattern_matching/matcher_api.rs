@@ -12,16 +12,16 @@ use super::support::{Tb, assertions as a, shapes};
 #[test]
 fn new_on_empty_graph_does_not_panic() {
     // Empty function: just entry → return-nothing.
-    let g = Tb::empty().ret_nothing();
-    let _ = Matcher::try_new(&g).unwrap();
+    let function = Tb::empty().ret_nothing();
+    let _ = Matcher::try_new(&function).unwrap();
 }
 
 #[test]
 fn find_all_on_empty_graph_returns_empty_for_specific_kind() {
-    let g = Tb::empty().ret_nothing();
-    a::none(&g, load());
-    a::none(&g, call());
-    a::none(&g, add(any(), any()));
+    let function = Tb::empty().ret_nothing();
+    a::none(&function, load());
+    a::none(&function, call());
+    a::none(&function, add(any(), any()));
 }
 
 // ── Kind-prefilter correctness ───────────────────────────────────────────────
@@ -31,26 +31,26 @@ fn kind_prefilter_skips_incompatible_nodes() {
     // add(5, 3) has only IntConst + IntBinaryOp + Return + Entry.  load()
     // pattern is kind-filtered to Load, so it must return 0 matches without
     // attempting any structural work.
-    let g = shapes::add_consts(5, 3);
-    a::none(&g, load());
-    a::none(&g, store());
-    a::none(&g, call());
-    a::none(&g, if_node());
-    a::none(&g, phi());
+    let function = shapes::add_consts(5, 3);
+    a::none(&function, load());
+    a::none(&function, store());
+    a::none(&function, call());
+    a::none(&function, if_node());
+    a::none(&function, phi());
 }
 
 // ── match_at ─────────────────────────────────────────────────────────────────
 
 #[test]
 fn match_at_hits_correct_node() {
-    let g = shapes::add_consts(5, 3);
-    let add_node = g
+    let function = shapes::add_consts(5, 3);
+    let add_node = function
         .walk()
-        .find(|&n| matches!(g.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
         .expect("add node exists");
 
     let pat: Pat = add(int_const(5), int_const(3)).into();
-    let m = Matcher::try_new(&g).unwrap()
+    let m = Matcher::try_new(&function).unwrap()
         .match_at(add_node, &pat)
         .expect("match_at should succeed on the Add node");
     assert_eq!(m.root(), add_node);
@@ -58,25 +58,25 @@ fn match_at_hits_correct_node() {
 
 #[test]
 fn match_at_on_wrong_kind_returns_none() {
-    let g = shapes::add_consts(5, 3);
-    let add_node = g
+    let function = shapes::add_consts(5, 3);
+    let add_node = function
         .walk()
-        .find(|&n| matches!(g.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
         .unwrap();
     let pat: Pat = load().into();
-    let result = Matcher::try_new(&g).unwrap().match_at(add_node, &pat);
+    let result = Matcher::try_new(&function).unwrap().match_at(add_node, &pat);
     assert!(result.is_none());
 }
 
 #[test]
 fn match_at_is_scoped_to_that_node_only() {
-    let g = shapes::add_consts(5, 3);
-    let add_node = g
+    let function = shapes::add_consts(5, 3);
+    let add_node = function
         .walk()
-        .find(|&n| matches!(g.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
         .unwrap();
     let pat: Pat = int_const(5);
-    let result = Matcher::try_new(&g).unwrap().match_at(add_node, &pat);
+    let result = Matcher::try_new(&function).unwrap().match_at(add_node, &pat);
     assert!(result.is_none());
 }
 
@@ -84,8 +84,8 @@ fn match_at_is_scoped_to_that_node_only() {
 
 #[test]
 fn find_all_is_deterministic() {
-    let g = shapes::add_nested_3(1, 2, 3);
-    let matcher = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_nested_3(1, 2, 3);
+    let matcher = Matcher::try_new(&function).unwrap();
     let pat: Pat = any_int_const(Capture::new());
 
     let a1: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root()).collect();
@@ -98,8 +98,8 @@ fn find_all_is_deterministic() {
 
 #[test]
 fn function_arg_apis_on_graph_without_args() {
-    let g = shapes::add_consts(5, 3);
-    let matcher = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_consts(5, 3);
+    let matcher = Matcher::try_new(&function).unwrap();
 
     assert!(matcher.function_arg(0).is_none());
     assert_eq!(matcher.function_arg_index_upper_bound(), 0);
@@ -128,11 +128,11 @@ fn graph_three_adds() -> strider_ir::Function {
 
 #[test]
 fn find_all_returns_distinct_matches_with_distinct_roots() {
-    let g = graph_three_adds();
+    let function = graph_three_adds();
     let lhs = Capture::new();
     let rhs = Capture::new();
     let pat: Pat = add(any_int_const(lhs), any_int_const(rhs)).into();
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 3);
 
     let roots: std::collections::HashSet<NodeId> = hits.iter().map(|m| m.root()).collect();
@@ -141,16 +141,16 @@ fn find_all_returns_distinct_matches_with_distinct_roots() {
 
 #[test]
 fn each_match_has_its_own_bindings() {
-    let g = graph_three_adds();
+    let function = graph_three_adds();
     let lhs = Capture::new();
     let rhs = Capture::new();
     let pat: Pat = add(any_int_const(lhs), any_int_const(rhs)).into();
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 3);
 
     let mut got: Vec<(u128, u128)> = hits
         .iter()
-        .map(|m| (m.get_uint(lhs, &g).unwrap(), m.get_uint(rhs, &g).unwrap()))
+        .map(|m| (m.get_uint(lhs, &function).unwrap(), m.get_uint(rhs, &function).unwrap()))
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) })
         .collect();
     got.sort();
@@ -161,14 +161,14 @@ fn each_match_has_its_own_bindings() {
 
 #[test]
 fn bindings_clone_outlives_match() {
-    let g = shapes::add_consts(5, 3);
+    let function = shapes::add_consts(5, 3);
     let v = Capture::new();
 
     let bindings = {
-        let matcher = Matcher::try_new(&g).unwrap();
-        let node = g
+        let matcher = Matcher::try_new(&function).unwrap();
+        let node = function
             .walk()
-            .find(|&n| matches!(g.node_kind(n), NodeKind::IntConst(5)))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(5)))
             .unwrap();
         let m = matcher
             .match_at(node, &any_int_const(v))
@@ -176,7 +176,7 @@ fn bindings_clone_outlives_match() {
         m.bindings_clone()
     };
 
-    assert_eq!(bindings.get_uint(v, &g), Some(5));
+    assert_eq!(bindings.get_uint(v, &function), Some(5));
 }
 
 // ── Match::get_vn ────────────────────────────────────────────────────────────
@@ -191,10 +191,10 @@ fn get_vn_on_initial_var_returns_varnode() {
 
 #[test]
 fn get_vn_on_non_mapped_producer_returns_none() {
-    let g = shapes::add_consts(5, 3);
+    let function = shapes::add_consts(5, 3);
     let v = Capture::new();
-    let m = a::unique(&g, add(int_const(5), int_const(3)).capture(v));
-    assert_eq!(m.get_vn(v, &g), None);
+    let m = a::unique(&function, add(int_const(5), int_const(3)).capture(v));
+    assert_eq!(m.get_vn(v, &function), None);
 }
 
 #[test]
@@ -202,19 +202,19 @@ fn get_vn_on_call_ret_output_returns_ret_reg() {
     let ret = super::support::reg_vn(0, 8);
     let mut t = Tb::raw(vec![ret], &[], &[], &[ret], None, 0);
     t.call_at(0xCAFE);
-    let g = t.ret_regs(&[ret]);
+    let function = t.ret_regs(&[ret]);
 
     let v = Capture::new();
-    let m = a::unique(&g, call().at(0xCAFE).ret_output(0, var(v)));
-    assert_eq!(m.get_vn(v, &g), Some(ret));
+    let m = a::unique(&function, call().at(0xCAFE).ret_output(0, var(v)));
+    assert_eq!(m.get_vn(v, &function), Some(ret));
 }
 
 #[test]
 fn get_vn_on_unbound_var_returns_none() {
-    let g = shapes::add_consts(5, 3);
-    let m = a::first(&g, int_const(5));
+    let function = shapes::add_consts(5, 3);
+    let m = a::first(&function, int_const(5));
     let never_bound = Capture::new();
-    assert_eq!(m.get_vn(never_bound, &g), None);
+    assert_eq!(m.get_vn(never_bound, &function), None);
 }
 
 // ── Default behaviour ───────────────────────────────────────────────────────
@@ -223,9 +223,9 @@ fn get_vn_on_unbound_var_returns_none() {
 /// same matches as before.
 #[test]
 fn existing_pattern_unchanged_with_default_options() {
-    let g = shapes::add_consts(5, 3);
+    let function = shapes::add_consts(5, 3);
     let pat: Pat = add(int_const(5), int_const(3)).into();
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 1);
 }
 
@@ -246,23 +246,23 @@ fn graph_add_zext_mul() -> strider_ir::Function {
 
 #[test]
 fn add_mul_pattern_does_not_match_through_extend_by_default() {
-    let g = graph_add_zext_mul();
+    let function = graph_add_zext_mul();
     let pat: Pat = add(mul(any(), any()), any()).into();
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert!(hits.is_empty());
 }
 
 #[test]
 fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
-    let g = graph_add_zext_mul();
+    let function = graph_add_zext_mul();
     let pat: Pat = add(mul(any(), any()), any()).into();
-    let hits = Matcher::try_new(&g).unwrap().ignore_casts().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().ignore_casts().find_all(&pat);
     assert_eq!(hits.len(), 1);
 }
 
 #[test]
 fn add_mul_pattern_matches_through_chained_casts() {
-    let g = {
+    let function = {
         let mut t = Tb::empty();
         let two = t.u64(2);
         let three = t.u64(3);
@@ -274,13 +274,13 @@ fn add_mul_pattern_matches_through_chained_casts() {
         t.ret_val(total)
     };
     let pat: Pat = add(mul(any(), any()), any()).into();
-    let hits = Matcher::try_new(&g).unwrap().ignore_casts().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().ignore_casts().find_all(&pat);
     assert_eq!(hits.len(), 1);
 }
 
 #[test]
 fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
-    let g = {
+    let function = {
         let mut t = Tb::empty();
         let a = t.u64(0xDEAD_BEEF);
         let b = t.u64(0x1234_5678);
@@ -288,15 +288,15 @@ fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
         let truncated = t.trunc_to(or, NodeOutputType::U32);
         t.ret_val(truncated)
     };
-    let m = Matcher::try_new(&g).unwrap().ignore_casts();
+    let m = Matcher::try_new(&function).unwrap().ignore_casts();
     let hits = m.find_all(&truncate(any()));
     assert_eq!(hits.len(), 1);
-    assert!(matches!(g.node_kind(hits[0].root()), NodeKind::Truncate));
+    assert!(matches!(function.node_kind(hits[0].root()), NodeKind::Truncate));
 }
 
 #[test]
 fn commutative_add_finds_mul_in_either_operand_through_extend() {
-    let g = {
+    let function = {
         let mut t = Tb::empty();
         let two = t.u32(2);
         let three = t.u32(3);
@@ -307,7 +307,7 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
         t.ret_val(total)
     };
     let pat: Pat = add(mul(any(), any()), any()).into();
-    let hits = Matcher::try_new(&g).unwrap().ignore_casts().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().ignore_casts().find_all(&pat);
     assert_eq!(hits.len(), 1);
 }
 
@@ -337,25 +337,25 @@ fn graph_ret_via_region_after_call() -> strider_ir::Function {
 
 #[test]
 fn ret_call_does_not_match_through_region_by_default() {
-    let g = graph_ret_via_region_after_call();
+    let function = graph_ret_via_region_after_call();
     let pat: Pat = ret().preceded_by(call()).into();
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert!(hits.is_empty());
 }
 
 #[test]
 fn ret_call_matches_through_controlstate_with_ignore_regions() {
-    let g = graph_ret_via_region_after_call();
+    let function = graph_ret_via_region_after_call();
     let pat: Pat = ret().preceded_by(call()).into();
-    let hits = Matcher::try_new(&g).unwrap().ignore_regions().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().ignore_regions().find_all(&pat);
     assert_eq!(hits.len(), 1);
 }
 
 #[test]
 fn both_flags_together_do_not_interfere_with_value_walk_through() {
-    let g = graph_add_zext_mul();
+    let function = graph_add_zext_mul();
     let pat: Pat = add(mul(any(), any()), any()).into();
-    let hits = Matcher::try_new(&g).unwrap()
+    let hits = Matcher::try_new(&function).unwrap()
         .ignore_casts()
         .ignore_regions()
         .find_all(&pat);
@@ -366,8 +366,8 @@ fn both_flags_together_do_not_interfere_with_value_walk_through() {
 
 #[test]
 fn find_all_multi_matches_sequential_find_all() {
-    let g = shapes::add_nested_3(5, 7, 11);
-    let m = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_nested_3(5, 7, 11);
+    let m = Matcher::try_new(&function).unwrap();
 
     let p_add: Pat = add(any(), any()).into();
     let p_const: Pat = any_int_const(Capture::new());
@@ -387,16 +387,16 @@ fn find_all_multi_matches_sequential_find_all() {
 
 #[test]
 fn find_all_multi_empty_input() {
-    let g = shapes::add_consts(2, 3);
-    let m = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_consts(2, 3);
+    let m = Matcher::try_new(&function).unwrap();
     let results = m.find_all_multi(&[]);
     assert!(results.is_empty());
 }
 
 #[test]
 fn find_all_multi_all_wildcards() {
-    let g = shapes::add_consts(1, 2);
-    let m = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_consts(1, 2);
+    let m = Matcher::try_new(&function).unwrap();
     let p1: Pat = any();
     let p2: Pat = any();
     let multi = m.find_all_multi(&[&p1, &p2]);
@@ -406,8 +406,8 @@ fn find_all_multi_all_wildcards() {
 
 #[test]
 fn find_all_multi_mixed_concrete_and_wildcard() {
-    let g = shapes::add_nested_3(2, 3, 5);
-    let m = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_nested_3(2, 3, 5);
+    let m = Matcher::try_new(&function).unwrap();
     let p_add: Pat = add(any(), any()).into();
     let p_wild: Pat = any();
     let multi = m.find_all_multi(&[&p_add, &p_wild]);
@@ -420,16 +420,16 @@ fn find_all_multi_mixed_concrete_and_wildcard() {
 
 #[test]
 fn find_all_requirements_empty_input() {
-    let g = shapes::add_consts(2, 3);
-    let m = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_consts(2, 3);
+    let m = Matcher::try_new(&function).unwrap();
     let results = m.find_all_requirements(&[]);
     assert!(results.is_empty());
 }
 
 #[test]
 fn find_all_requirements_single_pattern_equivalent_to_find_all() {
-    let g = shapes::add_consts(2, 3);
-    let m = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_consts(2, 3);
+    let m = Matcher::try_new(&function).unwrap();
     let p: Pat = add(any(), any()).into();
     let req = m.find_all_requirements(&[&p]);
     let direct = m.find_all(&p);
@@ -442,8 +442,8 @@ fn find_all_requirements_single_pattern_equivalent_to_find_all() {
 
 #[test]
 fn find_all_requirements_no_matches_for_a_pattern_yields_empty() {
-    let g = shapes::add_consts(2, 3);
-    let m = Matcher::try_new(&g).unwrap();
+    let function = shapes::add_consts(2, 3);
+    let m = Matcher::try_new(&function).unwrap();
     let p_add: Pat = add(any(), any()).into();
     let p_call: Pat = call().into();
     let req = m.find_all_requirements(&[&p_add, &p_call]);
@@ -466,9 +466,9 @@ fn find_all_requirements_intersects_on_shared_capture_node_id() {
     t.store_ram(addr_a8, zero);
     t.store_ram(addr_b16, zero);
     t.store_ram(addr_a24, v99);
-    let g = t.ret_nothing();
+    let function = t.ret_nothing();
 
-    let mr = Matcher::try_new(&g).unwrap();
+    let mr = Matcher::try_new(&function).unwrap();
     let shared = Capture::new();
     let k = Capture::new();
     let p_zero: Pat = store()
@@ -489,7 +489,7 @@ fn find_all_requirements_intersects_on_shared_capture_node_id() {
     let s2 = inner[1].node(shared).expect("shared bound in pat[1]");
     assert_eq!(s1, s2);
 
-    let k_val = inner[0].get_uint(k, &g).expect("K bound");
+    let k_val = inner[0].get_uint(k, &function).expect("K bound");
     assert_eq!(k_val, 8);
 }
 
@@ -505,9 +505,9 @@ fn find_all_requirements_disagreement_on_shared_capture_yields_empty() {
     let addr_b16 = t.add(b, off16);
     t.store_ram(addr_a8, zero);
     t.store_ram(addr_b16, zero);
-    let g = t.ret_nothing();
+    let function = t.ret_nothing();
 
-    let mr = Matcher::try_new(&g).unwrap();
+    let mr = Matcher::try_new(&function).unwrap();
     let shared = Capture::new();
     let p_8: Pat = store()
         .addr(add(var(shared), int_const(8u64)).ordered())

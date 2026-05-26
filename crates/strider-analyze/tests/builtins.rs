@@ -35,24 +35,24 @@ per_arch_test!("builtins", "expect_branch", expect_compiles_normally);
 /// The test asserts only that the function lowers to a non-trivial graph —
 /// the analyzer doesn't crash, and the result depends on the input.
 /// Pinning "popcount" to a specific node kind is too brittle.
-fn popcount_lowers(g: &strider_ir::Function) {
-    let nodes = g.walk().count();
+fn popcount_lowers(function: &strider_ir::Function) {
+    let nodes = function.walk().count();
     assert!(nodes > 5,
             "popcount must produce a non-trivial graph; got {nodes} reachable nodes");
 }
-fn lzcount_lowers(g: &strider_ir::Function) {
+fn lzcount_lowers(function: &strider_ir::Function) {
     // Same loose check as popcount: clz / __builtin_clz lowering is even
     // more variable — graph just needs to be non-trivial.
-    let nodes = g.walk().count();
+    let nodes = function.walk().count();
     assert!(nodes > 5,
             "clz must produce a non-trivial graph; got {nodes} reachable nodes");
 }
-fn ctz_lowers(g: &strider_ir::Function) {
-    let nodes = g.walk().count();
+fn ctz_lowers(function: &strider_ir::Function) {
+    let nodes = function.walk().count();
     assert!(nodes > 5,
             "ctz must produce a non-trivial graph; got {nodes} reachable nodes");
 }
-fn expect_compiles_normally(g: &strider_ir::Function) {
+fn expect_compiles_normally(function: &strider_ir::Function) {
     // __builtin_expect is a hint, not a real op — should reduce to plain control flow.
-    assert!(count_ifs(g) >= 1, "expect_branch has an if");
+    assert!(count_ifs(function) >= 1, "expect_branch has an if");
 }

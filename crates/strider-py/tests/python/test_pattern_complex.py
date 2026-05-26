@@ -42,7 +42,7 @@ def _build_graph(elf_path, symbol):
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
-    g = s.analyze_cfg(cfg).graph
+    g = s.analyze_cfg(cfg).function
     pipe = s.build_optimizer_pipeline()
     g.optimize(pipe)
     return g

@@ -46,19 +46,19 @@ result = strider.run(
     allow_code_before_start_addr=True,
 )
 
-print(f"lifted {result.graph}, {result.cfg}")
+print(f"lifted {result.function}, {result.cfg}")
 
 # 4. Query the optimized graph.
 #    The pattern says "any load" — the simplest possible query, returns
 #    every memory-load site in the function. Restrict it by composing
 #    inside `addr=...` (e.g. `load(addr=add(var(base), var(off)))`) once
 #    you know the shape you're hunting for.
-hits = result.graph.find_all(load(), ignore_casts=True)
+hits = result.function.find_all(load(), ignore_casts=True)
 print(f"found {len(hits)} memory-load sites in array_sum")
 
 # A more specific pattern: loads whose address is a symbolic base plus
 # a captured offset value. String captures are auto-interned per pattern.
-narrow = result.graph.find_all(
+narrow = result.function.find_all(
     load(addr=add("base", "off")),
     ignore_casts=True,
 )
@@ -70,5 +70,5 @@ for hit in narrow:
 # 5. Visualize. Open the HTMLs in any browser to see the rendered
 #    graphviz output. `dark` and `dark_cfg` are the built-in styles.
 result.cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
-result.graph.to_html("/tmp/quickstart-graph.html", style="dark")
+result.function.to_html("/tmp/quickstart-graph.html", style="dark")
 print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")

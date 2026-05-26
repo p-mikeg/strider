@@ -35,20 +35,20 @@ per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern
 // fixtures/Makefile to keep the tail call from being elided.
 per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call);
 
-fn mac_pattern_finds_match(g: &strider_ir::Function) {
+fn mac_pattern_finds_match(function: &strider_ir::Function) {
     // Pattern: add(mul(?, ?), ?).  We use `.ignore_casts()` because some
     // arches (notably x64) lower this as `Add(Extend_zext(Mul@W), arg)`
     // — the Mul is one hop deeper than the matcher's exact-walk would
     // see otherwise.  Other arches don't have intervening casts, so the
     // flag is a no-op there (direct match still tried first).
-    let m = Matcher::try_new(g).unwrap().ignore_casts();
+    let m = Matcher::try_new(function).unwrap().ignore_casts();
     let pat: Pat = add(mul(any(), any()), any()).into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected ≥1 match of add(mul(_,_), _); got {} matches", hits.len());
 }
 
-fn xor_chain_pattern_finds_match(g: &strider_ir::Function) {
+fn xor_chain_pattern_finds_match(function: &strider_ir::Function) {
     // ConstantFold collapses (x ^ k1) & m1 ^ k2  →  (x & m1) ^ (k1^k2)
     // before pattern matching — the inner xor disappears, so the original
     // three-deep xor(and(xor)) query never matches.  The post-fold shape
@@ -57,15 +57,15 @@ fn xor_chain_pattern_finds_match(g: &strider_ir::Function) {
     // constants the optimiser can't fold (e.g. volatile-loaded); that's a
     // separate, larger fixture redesign.
     use strider_ir::IntBinaryOp;
-    assert!(common::count_int_binop(g, IntBinaryOp::Xor) >= 1,
+    assert!(common::count_int_binop(function, IntBinaryOp::Xor) >= 1,
             "post-fold graph must contain ≥1 Xor; got {}",
-            common::count_int_binop(g, IntBinaryOp::Xor));
-    assert!(common::count_int_binop(g, IntBinaryOp::And) >= 1,
+            common::count_int_binop(function, IntBinaryOp::Xor));
+    assert!(common::count_int_binop(function, IntBinaryOp::And) >= 1,
             "post-fold graph must contain ≥1 And; got {}",
-            common::count_int_binop(g, IntBinaryOp::And));
+            common::count_int_binop(function, IntBinaryOp::And));
 }
 
-fn if_const_pattern_finds_two_consts(g: &strider_ir::Function) {
+fn if_const_pattern_finds_two_consts(function: &strider_ir::Function) {
     // After RedundantPhis, both arms of the If feed a Phi resolving to either
     // IntConst(100) or IntConst(-50).  Pin both constants.
     //
@@ -76,32 +76,32 @@ fn if_const_pattern_finds_two_consts(g: &strider_ir::Function) {
     // has_constant check covers all archs correctly:
     //   has_constant(g, 0xffff_ffce) matches the node regardless of its output type
     //   because the stored u128 value equals u128::from(0xffff_ffce as u64).
-    assert!(has_constant(g, 100),
+    assert!(has_constant(function, 100),
             "expected IntConst(100) — true-branch return value");
     let neg50_u32 = (-50i32) as u32 as u64;
     let neg50_u64 = (-50i64) as u64;
-    assert!(has_constant(g, neg50_u32) || has_constant(g, neg50_u64),
+    assert!(has_constant(function, neg50_u32) || has_constant(function, neg50_u64),
             "expected IntConst(-50) — false-branch return value (any of {neg50_u32}, {neg50_u64})");
 }
 
-fn invariant_load_pattern_finds_load(g: &strider_ir::Function) {
+fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
     // Pattern: any Load.  Primary check is that the Load pattern matches.
     // We don't assert the loop survives — the compiler is free to close-form
     // the triangle-sum (e.g. x86_kernel collapses the loop entirely into
     // arithmetic on n and the invariant *p), which is a valid optimization
     // that strider faithfully represents as "no back-edge".
-    let m = Matcher::try_new(g).unwrap();
+    let m = Matcher::try_new(function).unwrap();
     let pat: Pat = strider_analyze::pattern::load().into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(), "expected ≥1 Load match in loop_with_invariant_load");
 }
 
-fn recursive_pattern_finds_self_call(g: &strider_ir::Function) {
+fn recursive_pattern_finds_self_call(function: &strider_ir::Function) {
     // Pattern: any Call.
-    let m = Matcher::try_new(g).unwrap();
+    let m = Matcher::try_new(function).unwrap();
     let pat: Pat = call().into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected ≥1 Call match in recursive_with_accumulator; got {} matches", hits.len());
-    assert!(count_ifs(g) >= 1);
+    assert!(count_ifs(function) >= 1);
 }

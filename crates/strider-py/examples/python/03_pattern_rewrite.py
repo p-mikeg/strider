@@ -39,7 +39,7 @@ result = strider.run(
 )
 
 # Snapshot the load count before rewriting.
-before = len(result.graph.find_all(load()))
+before = len(result.function.find_all(load()))
 print(f"before rewrite: {before} loads")
 
 # A no-op rewrite that demonstrates the API: replace `x + 0` with `x`
@@ -53,17 +53,17 @@ print(f"before rewrite: {before} loads")
 x = Capture()
 rule_find = add(var(x), int_const(0))
 rule_repl = var(x)
-n = result.graph.rewrite(find=rule_find, replace=rule_repl)
+n = result.function.rewrite(find=rule_find, replace=rule_repl)
 print(f"`x + 0 → x` substitution: {n} site(s) rewritten")
 
 # After any structural change you should reoptimize. The default is the
 # stable pipeline (ConstantFold + KnownBits — safe to re-run any time).
 # Pass destructive=True at the end of analysis to also collapse phi/dead-
 # branch noise the rewrite may have exposed.
-result.graph.reoptimize()
-result.graph.reoptimize(destructive=True)
+result.function.reoptimize()
+result.function.reoptimize(destructive=True)
 
-after = len(result.graph.find_all(load()))
+after = len(result.function.find_all(load()))
 print(f"after rewrite + reoptimize: {after} loads")
 
 # A staged-rules example: apply two rules in order, first-match-wins per
@@ -71,7 +71,7 @@ print(f"after rewrite + reoptimize: {after} loads")
 # matters.
 y = Capture()
 z = Capture()
-result.graph.rewrite_all([
+result.function.rewrite_all([
     (add(var(y), int_const(0)), var(y)),
     (add(int_const(0), var(z)), var(z)),   # commutative-twin
 ])

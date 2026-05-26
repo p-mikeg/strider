@@ -27,7 +27,7 @@ def _switch_graph():
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         allow_code_before_start_addr=True,
-    ).graph
+    ).function
 
 
 def test_find_all_requirements_empty_pats_yields_empty():

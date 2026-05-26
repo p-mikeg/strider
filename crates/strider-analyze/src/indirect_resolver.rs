@@ -331,13 +331,13 @@ fn make_resolver_pipeline() -> OptimizerPipeline {
 /// lifetime so it can't be wrapped in `LoadReadOnly` and registered
 /// directly.  Must stay in lockstep with [`crate::opt::LoadReadOnly`]'s impl.
 fn resolve_const_loads(
-    fg: &mut strider_ir::Function,
+    function: &mut strider_ir::Function,
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
-    let nodes: Vec<_> = fg.walk().collect();
+    let nodes: Vec<_> = function.walk().collect();
     let mut any_folded = false;
     for node_id in nodes {
-        let kind = *fg.node_kind(node_id);
+        let kind = *function.node_kind(node_id);
         let strider_ir::node::NodeKind::Load(space) = kind else {
             continue;
         };
@@ -347,16 +347,16 @@ fn resolve_const_loads(
         if space != rsleigh::VnSpace::RAM {
             continue;
         }
-        let inputs = fg.node_inputs(node_id);
+        let inputs = function.node_inputs(node_id);
         if inputs.len() < 2 {
             continue;
         }
         let addr_input = inputs[1];
-        let Some(addr) = fg.int_const_val(addr_input) else {
+        let Some(addr) = function.int_const_val(addr_input) else {
             continue;
         };
-        let [data_out] = fg.node_outputs_exact::<1>(node_id)?;
-        let Some(ty) = fg.output_kind(data_out).as_value() else {
+        let [data_out] = function.node_outputs_exact::<1>(node_id)?;
+        let Some(ty) = function.output_kind(data_out).as_value() else {
             continue;
         };
         let size = ty.byte_size();
@@ -372,16 +372,16 @@ fn resolve_const_loads(
         let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
             continue;
         };
-        let new_out = fg.make_int_const(masked, ty)?;
+        let new_out = function.make_int_const(masked, ty)?;
         // Absorb the rewritten Load's asm-fingerprint into the new
         // IntConst so the Layer-C always-on check sees a non-empty
         // fingerprint on the freshly-introduced constant even after
         // the cache-hit dedup path.  `make_int_const` is the
         // low-level `Graph` method and does NOT stamp on its own.
-        let new_node = fg.node_for_output(new_out);
-        let load_node = fg.node_for_output(data_out);
-        fg.extend_asm_fingerprint_from(new_node, load_node);
-        if fg.replace_all_uses(data_out, new_out)? {
+        let new_node = function.node_for_output(new_out);
+        let load_node = function.node_for_output(data_out);
+        function.extend_asm_fingerprint_from(new_node, load_node);
+        if function.replace_all_uses(data_out, new_out)? {
             any_folded = true;
         }
     }
@@ -396,8 +396,8 @@ fn resolve_const_loads(
 /// is well-defined post-fold.
 /// Zero or more than one Return signals a graph-construction bug in
 /// this module and propagates as an error.
-fn find_unique_return(fg: &strider_ir::Function) -> Result<strider_ir::node::NodeId> {
-    let mut iter = fg.walk_kind(|k| matches!(k, strider_ir::node::NodeKind::Return));
+fn find_unique_return(function: &strider_ir::Function) -> Result<strider_ir::node::NodeId> {
+    let mut iter = function.walk_kind(|k| matches!(k, strider_ir::node::NodeKind::Return));
     let first = iter
         .next()
         .ok_or_else(|| anyhow::anyhow!("indirect_resolve mini-graph contains no Return node"))?;

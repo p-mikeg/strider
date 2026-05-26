@@ -152,7 +152,7 @@ def build_cfg(
 ) -> Cfg: ...
 
 class AnalyzeOutcome:
-    graph: Function
+    function: Function
     unresolved_branch_count: int
     region_count: int
 
@@ -207,7 +207,7 @@ class OptimizerPipeline:
 
 class RunResult:
     cfg: Cfg
-    graph: Function
+    function: Function
     sleigh: Sleigh
 
 def run(

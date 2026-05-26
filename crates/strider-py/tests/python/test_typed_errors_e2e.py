@@ -112,7 +112,7 @@ def test_rewrite_error_via_multi_output_lhs_root():
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, 0x1000, function_max_size=0x100)
-    g = s.analyze_cfg(cfg).graph
+    g = s.analyze_cfg(cfg).function
 
     from strider.pattern import call, int_const
 

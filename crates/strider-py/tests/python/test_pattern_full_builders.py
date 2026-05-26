@@ -37,7 +37,7 @@ def _patterns_graph():
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         allow_code_before_start_addr=True,
-    ).graph
+    ).function
 
 
 def _switch_graph():
@@ -50,7 +50,7 @@ def _switch_graph():
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         allow_code_before_start_addr=True,
-    ).graph
+    ).function
 
 
 def _control_graph(fn: str):
@@ -63,7 +63,7 @@ def _control_graph(fn: str):
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         allow_code_before_start_addr=True,
-    ).graph
+    ).function
 
 
 # ── RetPat ───────────────────────────────────────────────────────────
@@ -255,7 +255,7 @@ def _patterns_graph_for(arch_id, fn_name="if_returns_const"):
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=mem.symbol(fn_name),
         allow_code_before_start_addr=True,
-    ).graph
+    ).function
 
 
 def test_signed_int_const_matches_neg50_on_x86_u32():

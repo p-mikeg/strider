@@ -25,11 +25,11 @@ fn build_cpuid_graph() -> Function {
 
 #[test]
 fn arg_zero_matches_control_input() {
-    let g = build_cpuid_graph();
+    let function = build_cpuid_graph();
     // Capture inputs[0] (ctrl) — should bind to *some* control producer.
     let c = Capture::new();
     let pat = call_other().name("cpuid").arg(0, any().capture(c));
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
     assert!(
         hits[0].node(c).is_some(),
@@ -39,10 +39,10 @@ fn arg_zero_matches_control_input() {
 
 #[test]
 fn arg_one_matches_memory_input() {
-    let g = build_cpuid_graph();
+    let function = build_cpuid_graph();
     let c = Capture::new();
     let pat = call_other().name("cpuid").arg(1, any().capture(c));
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
     assert!(hits[0].node(c).is_some(), "mem input capture must bind");
 }
@@ -53,10 +53,10 @@ fn ret_zero_matches_control_output_consumer_when_present() {
     // ret(0, _) matches the control output side of the CallOther.  We
     // capture and verify the bound output corresponds to the CallOther
     // node (not its predecessor).
-    let g = build_cpuid_graph();
+    let function = build_cpuid_graph();
     let c = Capture::new();
     let pat = call_other().name("cpuid").ret(0, any().capture(c));
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
     let captured_node = hits[0].node(c).expect("ret(0) capture binds");
     assert_eq!(
@@ -68,13 +68,13 @@ fn ret_zero_matches_control_output_consumer_when_present() {
 
 #[test]
 fn ctrl_alias_equals_arg_zero() {
-    let g = build_cpuid_graph();
+    let function = build_cpuid_graph();
     let c1 = Capture::new();
     let c2 = Capture::new();
     let pat_arg = call_other().name("cpuid").arg(0, any().capture(c1));
     let pat_alias = call_other().name("cpuid").ctrl(any().capture(c2));
-    let arg_hits = Matcher::try_new(&g).unwrap().find_all(&pat_arg.into());
-    let alias_hits = Matcher::try_new(&g).unwrap().find_all(&pat_alias.into());
+    let arg_hits = Matcher::try_new(&function).unwrap().find_all(&pat_arg.into());
+    let alias_hits = Matcher::try_new(&function).unwrap().find_all(&pat_alias.into());
     assert_eq!(arg_hits.len(), 1);
     assert_eq!(alias_hits.len(), 1);
     assert_eq!(arg_hits[0].node(c1), alias_hits[0].node(c2));
@@ -82,27 +82,27 @@ fn ctrl_alias_equals_arg_zero() {
 
 #[test]
 fn mem_alias_equals_arg_one() {
-    let g = build_cpuid_graph();
+    let function = build_cpuid_graph();
     let c1 = Capture::new();
     let c2 = Capture::new();
     let pat_arg = call_other().name("cpuid").arg(1, any().capture(c1));
     let pat_alias = call_other().name("cpuid").mem(any().capture(c2));
-    let arg_hits = Matcher::try_new(&g).unwrap().find_all(&pat_arg.into());
-    let alias_hits = Matcher::try_new(&g).unwrap().find_all(&pat_alias.into());
+    let arg_hits = Matcher::try_new(&function).unwrap().find_all(&pat_arg.into());
+    let alias_hits = Matcher::try_new(&function).unwrap().find_all(&pat_alias.into());
     assert_eq!(arg_hits[0].node(c1), alias_hits[0].node(c2));
 }
 
 #[test]
 fn arg_and_ret_compose_in_one_pattern() {
     // Constrain control predecessor AND control output simultaneously.
-    let g = build_cpuid_graph();
+    let function = build_cpuid_graph();
     let c_in = Capture::new();
     let c_out = Capture::new();
     let pat = call_other()
         .name("cpuid")
         .arg(0, any().capture(c_in))
         .ret(0, any().capture(c_out));
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
     assert!(hits[0].node(c_in).is_some());
     assert!(hits[0].node(c_out).is_some());

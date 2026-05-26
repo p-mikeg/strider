@@ -114,13 +114,13 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let four = t.u64(4);
     let addr = t.add(sp_v, four);
     let v = t.load_ram(addr, NodeOutputType::U64);
-    let mut g = t.ret_val(v);
+    let mut function = t.ret_val(v);
 
-    let entry = g.entry().expect("entry");
+    let entry = function.entry().expect("entry");
     FunctionArgDetect::new(vec![], sp, vec![4])
-        .optimize(&mut g, entry)
+        .optimize(&mut function, entry)
         .expect("FunctionArgDetect");
-    g
+    function
 }
 
 /// Register arg 0 is registered in the side-table as an `InitialVar`.
@@ -155,11 +155,11 @@ fn function_arg_reg_wrong_vn_rejects() {
 /// Stack arg 0 is registered in the side-table as a `Load` node.
 #[test]
 fn function_arg_stack_registered_in_side_table() {
-    let g = graph_fn_arg_stack();
-    let carriers = g.arg_index_to_nodes(0);
+    let function = graph_fn_arg_stack();
+    let carriers = function.arg_index_to_nodes(0);
     assert!(!carriers.is_empty(), "arg 0 (stack) must be registered in the side-table");
     assert!(
-        carriers.iter().all(|&n| matches!(g.node_kind(n), NodeKind::Load(_))),
+        carriers.iter().all(|&n| matches!(function.node_kind(n), NodeKind::Load(_))),
         "all carriers for stack arg 0 must be Load nodes"
     );
 }
@@ -167,9 +167,9 @@ fn function_arg_stack_registered_in_side_table() {
 /// Stack arg at wrong offset is not registered.
 #[test]
 fn function_arg_stack_wrong_offset_absent() {
-    let g = graph_fn_arg_stack();
+    let function = graph_fn_arg_stack();
     // Index 1 corresponds to offset 8 in the convention — not present.
-    let carriers_1 = g.arg_index_to_nodes(1);
+    let carriers_1 = function.arg_index_to_nodes(1);
     assert!(carriers_1.is_empty(), "arg 1 (offset 8) must not be registered when only offset 4 is present");
 }
 

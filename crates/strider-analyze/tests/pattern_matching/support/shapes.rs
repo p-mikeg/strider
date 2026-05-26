@@ -205,11 +205,11 @@ pub fn function_arg_reg() -> (Function, rsleigh::Vn) {
     let sp = stack_vn();
     let mut t = Tb::raw(vec![reg, sp], &[], &[reg], &[reg], None, 0);
     let v = t.read_var(&reg);
-    let mut g = t.ret_val(v);
-    let entry = g.entry().expect("entry");
+    let mut function = t.ret_val(v);
+    let entry = function.entry().expect("entry");
     FunctionArgDetect::new(vec![reg], sp, vec![])
-        .optimize(&mut g, entry)
+        .optimize(&mut function, entry)
         .expect("FunctionArgDetect");
-    (g, reg)
+    (function, reg)
 }
 

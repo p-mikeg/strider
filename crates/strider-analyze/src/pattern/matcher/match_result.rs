@@ -173,18 +173,18 @@ impl Match {
     /// Returns `None` for unbound captures or producers without a
     /// well-defined varnode mapping.
     #[must_use]
-    pub fn get_vn(&self, c: Capture, graph: &strider_ir::Function) -> Option<rsleigh::Vn> {
+    pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
         if let Some(out) = binding.1 {
-            let (node, slot) = graph.output_definition(out);
-            let kind = graph.node_kind(node);
+            let (node, slot) = function.output_definition(out);
+            let kind = function.node_kind(node);
             // Call: clobber slots start at index 2.
             if matches!(kind, NodeKind::Call) && slot >= 2 {
                 let idx = (slot - 2) as usize;
-                if let Some(override_list) = graph.call_clobbered_override(node) {
+                if let Some(override_list) = function.call_clobbered_override(node) {
                     return override_list.get(idx).copied();
                 }
-                return graph.call_clobbered_regs().get(idx).copied();
+                return function.call_clobbered_regs().get(idx).copied();
             }
             // CallOther: clobber slots start at index 2 (no value
             // output) or 3 (with value output).  Detect by total
@@ -202,10 +202,10 @@ impl Match {
             // a "shape we don't recognise" miss for every per-CallOther
             // override whose length differs from the default.
             if matches!(kind, NodeKind::CallOther { .. }) {
-                let total_outputs = graph.node_outputs(node).len();
-                let clobber_len = graph
+                let total_outputs = function.node_outputs(node).len();
+                let clobber_len = function
                     .call_clobbered_override(node)
-                    .map_or(graph.call_other_clobbered_regs().len(), |ov| ov.len());
+                    .map_or(function.call_other_clobbered_regs().len(), |ov| ov.len());
                 let clobber_start: u32 = if total_outputs == 2 + clobber_len {
                     2
                 } else if total_outputs == 3 + clobber_len {
@@ -221,13 +221,13 @@ impl Match {
                     return None;
                 }
                 let idx = (slot - clobber_start) as usize;
-                if let Some(override_list) = graph.call_clobbered_override(node) {
+                if let Some(override_list) = function.call_clobbered_override(node) {
                     return override_list.get(idx).copied();
                 }
-                return graph.call_other_clobbered_regs().get(idx).copied();
+                return function.call_other_clobbered_regs().get(idx).copied();
             }
         }
-        match graph.node_kind(binding.0) {
+        match function.node_kind(binding.0) {
             NodeKind::InitialVar(vn) => Some(*vn),
             _ => None,
         }

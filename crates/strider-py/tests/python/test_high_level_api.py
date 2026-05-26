@@ -75,7 +75,7 @@ def test_analyze_by_name_returns_analysis():
     s = strider.load(str(elf))
     a = s.analyze("add")
     assert isinstance(a, strider.Analysis)
-    assert a.graph.node_count() > 0
+    assert a.function.node_count() > 0
     assert a.entry == s.symbol("add")
     assert a.name == "add"
 

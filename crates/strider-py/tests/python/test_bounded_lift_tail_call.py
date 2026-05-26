@@ -64,4 +64,4 @@ def test_bounded_lift_vmspace_exitfree_amd64_13():
         function_max_size=size,
         allow_code_before_start_addr=True,
     )
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0

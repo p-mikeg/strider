@@ -21,10 +21,10 @@ use strider_analyze::pattern::GraphRewriteCtxExt;
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.
-fn locate_placeholder_return(graph: &strider_ir::Function) -> NodeId {
+fn locate_placeholder_return(function: &strider_ir::Function) -> NodeId {
     let mut found: Option<NodeId> = None;
-    for nid in graph.walk() {
-        if !matches!(graph.node_kind(nid), NodeKind::IndirectBranch) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         assert!(
@@ -39,10 +39,10 @@ fn locate_placeholder_return(graph: &strider_ir::Function) -> NodeId {
 /// Locate the (unique) freshly-created Return — the one that's NOT the
 /// placeholder.  The placeholder has been detached so finding the
 /// reachable Return is sufficient.
-fn locate_fresh_return(graph: &strider_ir::Function) -> NodeId {
+fn locate_fresh_return(function: &strider_ir::Function) -> NodeId {
     let mut found: Option<NodeId> = None;
-    for nid in graph.walk() {
-        if !matches!(graph.node_kind(nid), NodeKind::Return) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::Return) {
             continue;
         }
         assert!(
@@ -61,12 +61,12 @@ fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
     // apply_link_register replaces it with a fresh Return whose
     // `target_value` slot is dropped, so with zero ret_vals the
     // resulting Return is `[ctrl, mem]`.
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
-    let inputs_before: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
-    graph.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[])).expect("apply");
-    let new_return = locate_fresh_return(&graph);
-    let inputs_after: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
+    let inputs_before: Vec<_> = function.node_inputs(return_id).into_iter().collect();
+    function.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[])).expect("apply");
+    let new_return = locate_fresh_return(&function);
+    let inputs_after: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     assert_eq!(inputs_after.len(), 2, "target_value dropped, no ret_vals appended");
     assert_eq!(inputs_after[0], inputs_before[0], "ctrl preserved");
     assert_eq!(inputs_after[1], inputs_before[1], "mem preserved");
@@ -87,12 +87,12 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
     // After apply_link_register the placeholder `target_value` is
     // dropped and `anchor` takes its place, so the input count is
     // unchanged but slot 2 is now the ret_val.
-    let (mut graph, anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
-    let inputs_before: Vec<_> = graph.node_inputs(return_id).into_iter().collect();
-    graph.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[anchor])).expect("apply");
-    let new_return = locate_fresh_return(&graph);
-    let inputs_after: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
+    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
+    let inputs_before: Vec<_> = function.node_inputs(return_id).into_iter().collect();
+    function.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[anchor])).expect("apply");
+    let new_return = locate_fresh_return(&function);
+    let inputs_after: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     assert_eq!(inputs_after.len(), inputs_before.len(), "[ctrl, mem, ret_val_0]");
     assert_eq!(*inputs_after.last().expect("non-empty"), anchor);
     // Full validate skipped — see note in the sibling test above.
@@ -105,10 +105,10 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     // target as its address, feeding a fresh Return.  The original
     // placeholder Return is detached (unreachable from entry) but
     // the rest of the body is untouched.
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
     let target = 0x1234_5678_u64;
-    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
     assert_ne!(
         new_return, return_id,
         "tail-call edit must produce a fresh Return id",
@@ -117,7 +117,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     // must not be.
     let mut new_seen = false;
     let mut old_seen = false;
-    for nid in graph.walk() {
+    for nid in function.walk() {
         if nid == new_return {
             new_seen = true;
         }
@@ -139,11 +139,11 @@ fn apply_tail_call_returns_node_id_of_new_return() {
     // the placeholder's, and it points at a Return node.  This is
     // the handle the orchestrator uses to patch the cache's
     // `exit_control` after the in-place edit.
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
-    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, &[], &[], &[], false)).expect("apply_tail_call");
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, &[], &[], &[], false)).expect("apply_tail_call");
     assert_ne!(new_return, return_id);
-    assert!(matches!(graph.node_kind(new_return), NodeKind::Return));
+    assert!(matches!(function.node_kind(new_return), NodeKind::Return));
 }
 
 #[test]
@@ -152,16 +152,16 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     // control output (the Call is at slot 0's producer).  This is
     // the value the orchestrator threads back into the cache's
     // `exit_control`, so test it directly.
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
-    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, &[], &[], &[], false)).expect("apply_tail_call");
-    let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, &[], &[], &[], false)).expect("apply_tail_call");
+    let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     let new_ctrl_in = inputs[0];
-    let (producer, _idx) = graph.output_definition(new_ctrl_in);
+    let (producer, _idx) = function.output_definition(new_ctrl_in);
     assert!(
-        matches!(graph.node_kind(producer), NodeKind::Call),
+        matches!(function.node_kind(producer), NodeKind::Call),
         "new Return's ctrl input must come from a Call node, got {:?}",
-        graph.node_kind(producer),
+        function.node_kind(producer),
     );
 }
 
@@ -171,19 +171,19 @@ fn apply_link_register_emits_fresh_return_and_detaches_placeholder() {
     // with a freshly-built Return whose control + memory inputs are
     // re-wired from the placeholder.  The placeholder is detached
     // (zero inputs, no longer reachable via the exit-control walk).
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
-    graph.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[])).expect("apply");
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
+    function.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[])).expect("apply");
     // Placeholder is detached: zero inputs.  Kind remains
     // IndirectBranch (the orchestrator filters by kind via
     // find_placeholder_return_for_anchor, but the anchor's use-list
     // no longer points at it, so it's effectively retired).
-    assert_eq!(graph.node_inputs(return_id).len(), 0,
+    assert_eq!(function.node_inputs(return_id).len(), 0,
         "detached placeholder must have zero inputs");
     // A fresh, reachable Return materialises with ctrl + memory inputs.
-    let new_return = locate_fresh_return(&graph);
+    let new_return = locate_fresh_return(&function);
     assert_ne!(new_return, return_id);
-    let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
+    let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     assert!(
         inputs.len() >= 2,
         "fresh Return must have control + memory inputs",
@@ -237,18 +237,18 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     // tail call dispatches to the resolved target, not some folded
     // approximation.
     use strider_ir::node::NodeKind;
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
     let target = 0xdead_beef_u64;
-    let new_return = graph.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
-    let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
+    let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
-    let (call_node, _idx) = graph.output_definition(call_ctrl);
+    let (call_node, _idx) = function.output_definition(call_ctrl);
     let call_inputs: Vec<_> =
-        graph.node_inputs(call_node).into_iter().collect();
+        function.node_inputs(call_node).into_iter().collect();
     let call_addr = call_inputs[2];
-    let (addr_node, _) = graph.output_definition(call_addr);
-    match graph.node_kind(addr_node) {
+    let (addr_node, _) = function.output_definition(call_addr);
+    match function.node_kind(addr_node) {
         NodeKind::IntConst(v) => assert_eq!(*v, u128::from(target)),
         other => panic!("expected IntConst, got {other:?}"),
     }
@@ -279,8 +279,8 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // Strider-lifted x86_64 fixture: `jmp rax`.  After the optimiser
     // runs, the placeholder Return has 3 inputs `[ctrl, mem,
     // InitialVar(rax)]`.
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
 
     // Synthesise three value-typed outputs to stand in for x86_64
     // SysV's first three arg-passing regs (RDI, RSI, RDX).  In
@@ -300,10 +300,10 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         g.set_asm_fingerprint(nid, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         g.node_outputs_exact::<1>(nid).expect("out")[0]
     };
-    let arg0 = mk_const(&mut graph, 0xa00);
-    let arg1 = mk_const(&mut graph, 0xa01);
-    let arg2 = mk_const(&mut graph, 0xa02);
-    let ret_val = mk_const(&mut graph, 0xb00);
+    let arg0 = mk_const(&mut function, 0xa00);
+    let arg1 = mk_const(&mut function, 0xa01);
+    let arg2 = mk_const(&mut function, 0xa02);
+    let ret_val = mk_const(&mut function, 0xb00);
 
     // Stand-in clobbered kinds (one per RBX/RBP/R12 → 3 slots).
     let clob_kinds = [
@@ -312,7 +312,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         NodeOutputKind::OutputType(NodeOutputType::U64),
     ];
 
-    let _new_return = graph
+    let _new_return = function
         .with_rewrite_ctx(|ctx| {
             apply_tail_call(
                 ctx,
@@ -336,7 +336,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // have returned zero matches because the Call had no arg slot 0.
     let v0 = Capture::new();
     let pat: strider_analyze::pattern::Pat = call().arg(0, any().capture(v0)).into();
-    let matcher = Matcher::try_new(&graph).unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
     let matches = matcher.find_all(&pat);
     assert!(
         !matches.is_empty(),
@@ -357,11 +357,11 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     let call_node = {
         // The Call is the producer of the new Return's ctrl input.
         let ret_inputs: Vec<_> =
-            graph.node_inputs(_new_return).into_iter().collect();
-        let (call_node, _) = graph.output_definition(ret_inputs[0]);
+            function.node_inputs(_new_return).into_iter().collect();
+        let (call_node, _) = function.output_definition(ret_inputs[0]);
         call_node
     };
-    let call_outputs: Vec<_> = graph.node_outputs(call_node).to_vec();
+    let call_outputs: Vec<_> = function.node_outputs(call_node).to_vec();
     assert_eq!(
         call_outputs.len(),
         2 + clob_kinds.len(),
@@ -370,7 +370,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
 
     // And: the new Return's ret-val slot 2 is `ret_val`.
     let ret_inputs: Vec<_> =
-        graph.node_inputs(_new_return).into_iter().collect();
+        function.node_inputs(_new_return).into_iter().collect();
     assert_eq!(
         ret_inputs[2], ret_val,
         "Return's ret-val slot 0 (input #2) must be the threaded ret_val",
@@ -388,13 +388,13 @@ fn apply_tail_call_with_no_memory_clobber_wires_pre_call_memory_into_return() {
     // intact across the spliced tail call.  Required for
     // `x86_64_all_preserving`-style tracing pre-ambles where the tail
     // call provably doesn't touch memory.
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
     // Record the placeholder's mem input BEFORE the edit — that's the
     // pre-Call mem edge the new Return should consume.
-    let placeholder_mem_in = graph.nth_input(return_id, 1)
+    let placeholder_mem_in = function.nth_input(return_id, 1)
         .expect("placeholder must have a memory input");
-    let new_return = graph
+    let new_return = function
         .with_rewrite_ctx(|ctx| {
             apply_tail_call(
                 ctx,
@@ -409,18 +409,18 @@ fn apply_tail_call_with_no_memory_clobber_wires_pre_call_memory_into_return() {
         .expect("apply_tail_call(no_memory_clobber=true)");
     // The Return's memory input must be the pre-Call memory edge, NOT
     // the Call's Memory output.  This is the load-bearing behavior.
-    let new_mem_in = graph.nth_input(new_return, 1).expect("Return mem input");
+    let new_mem_in = function.nth_input(new_return, 1).expect("Return mem input");
     assert_eq!(
         new_mem_in, placeholder_mem_in,
         "Return must wire pre-Call mem directly (skipping the Call's Memory output)"
     );
     // The Call's Memory output should have zero uses (dangling — that's
     // what makes the chain preserved).
-    let ret_ctrl_in = graph.nth_input(new_return, 0).expect("Return ctrl input");
-    let (call_node, _) = graph.output_definition(ret_ctrl_in);
-    let call_outputs: Vec<_> = graph.node_outputs(call_node).to_vec();
+    let ret_ctrl_in = function.nth_input(new_return, 0).expect("Return ctrl input");
+    let (call_node, _) = function.output_definition(ret_ctrl_in);
+    let call_outputs: Vec<_> = function.node_outputs(call_node).to_vec();
     assert_eq!(call_outputs.len(), 2, "Call has [Control, Memory(None)]");
-    let mem_use_count = graph.output_uses(call_outputs[1]).count();
+    let mem_use_count = function.output_uses(call_outputs[1]).count();
     assert_eq!(
         mem_use_count, 0,
         "no_memory_clobber: Call's Memory output must be dangling (0 uses)"
@@ -433,22 +433,22 @@ fn apply_tail_call_without_no_memory_clobber_threads_call_memory_into_return() {
     // Inverse pin: when no_memory_clobber=false, the Return must wire
     // the *Call's* Memory output (not the pre-Call mem), so downstream
     // memory dependencies see the Call as a memory barrier.
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let return_id = locate_placeholder_return(&graph);
-    let placeholder_mem_in = graph.nth_input(return_id, 1).expect("mem in");
-    let new_return = graph
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&function);
+    let placeholder_mem_in = function.nth_input(return_id, 1).expect("mem in");
+    let new_return = function
         .with_rewrite_ctx(|ctx| {
             apply_tail_call(ctx, return_id, 0xbabe, &[], &[], &[], false)
         })
         .expect("apply_tail_call(no_memory_clobber=false)");
-    let new_mem_in = graph.nth_input(new_return, 1).expect("ret mem");
+    let new_mem_in = function.nth_input(new_return, 1).expect("ret mem");
     assert_ne!(
         new_mem_in, placeholder_mem_in,
         "default mode: Return mem must come from the Call, not the pre-Call edge"
     );
-    let ret_ctrl_in = graph.nth_input(new_return, 0).expect("ret ctrl");
-    let (call_node, _) = graph.output_definition(ret_ctrl_in);
-    let call_outs: Vec<_> = graph.node_outputs(call_node).to_vec();
+    let ret_ctrl_in = function.nth_input(new_return, 0).expect("ret ctrl");
+    let (call_node, _) = function.output_definition(ret_ctrl_in);
+    let call_outs: Vec<_> = function.node_outputs(call_node).to_vec();
     assert_eq!(new_mem_in, call_outs[1], "Return mem must equal Call's Memory output");
     // Full validate skipped — editor-isolation test, see note above.
 }

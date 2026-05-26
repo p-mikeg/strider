@@ -22,27 +22,27 @@ per_arch_test!("abi", "make_pair",       make_pair_has_return);
 // pass without an ignore.
 per_arch_test!("abi", "tail_caller", tail_caller_has_call);
 
-fn eight_args_has_seven_adds(g: &strider_ir::Function) {
+fn eight_args_has_seven_adds(function: &strider_ir::Function) {
     // a + b + c + d + e + f + g + h = 7 add nodes (left-fold).
-    assert!(count_int_binop(g, strider_ir::IntBinaryOp::Add) >= 7,
-            "eight_int_args has 7 Adds; got {}", count_int_binop(g, strider_ir::IntBinaryOp::Add));
+    assert!(count_int_binop(function, strider_ir::IntBinaryOp::Add) >= 7,
+            "eight_int_args has 7 Adds; got {}", count_int_binop(function, strider_ir::IntBinaryOp::Add));
 }
-fn mixed_has_loads_and_adds(g: &strider_ir::Function) {
+fn mixed_has_loads_and_adds(function: &strider_ir::Function) {
     // Two pointer args dereferenced once each — ≥2 Loads.
-    assert!(count_loads(g) >= 2, "mixed_args dereferences 2 pointers; got {}", count_loads(g));
-    assert!(count_int_binop(g, strider_ir::IntBinaryOp::Add) >= 5,
-            "mixed_args has 5 Adds; got {}", count_int_binop(g, strider_ir::IntBinaryOp::Add));
+    assert!(count_loads(function) >= 2, "mixed_args dereferences 2 pointers; got {}", count_loads(function));
+    assert!(count_int_binop(function, strider_ir::IntBinaryOp::Add) >= 5,
+            "mixed_args has 5 Adds; got {}", count_int_binop(function, strider_ir::IntBinaryOp::Add));
 }
-fn point_sum_has_add(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, strider_ir::IntBinaryOp::Add) >= 1, "point_sum is x+y");
+fn point_sum_has_add(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, strider_ir::IntBinaryOp::Add) >= 1, "point_sum is x+y");
 }
-fn make_pair_has_return(g: &strider_ir::Function) {
-    assert!(count_returns(g) >= 1, "make_pair returns a pair");
+fn make_pair_has_return(function: &strider_ir::Function) {
+    assert!(count_returns(function) >= 1, "make_pair returns a pair");
 }
-fn tail_caller_has_call(g: &strider_ir::Function) {
+fn tail_caller_has_call(function: &strider_ir::Function) {
     // Note: compilers may tail-call-optimize this; if so the Call disappears.
     // Test guards against complete IR breakage but not against tail-call elision.
-    assert!(count_calls(g) >= 1 || count_returns(g) >= 1,
+    assert!(count_calls(function) >= 1 || count_returns(function) >= 1,
             "tail_caller must have a Call or Return; got {} call, {} ret",
-            count_calls(g), count_returns(g));
+            count_calls(function), count_returns(function));
 }

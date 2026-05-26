@@ -48,7 +48,7 @@ def test_orchestrator_resolves_jump_table_x86(x86_switch_elf):
     # not converge after 6 iterations").  Post-fix the orchestrator
     # converges and produces a non-empty graph.
     result = _run(x86_switch_elf)
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0
 
 
 def test_case_bodies_match_add_const_pattern(x86_switch_elf):
@@ -59,7 +59,7 @@ def test_case_bodies_match_add_const_pattern(x86_switch_elf):
     # assert ≥4 of the surviving K values (1, 2, 3, 4, 5, 7, 8) — same
     # tolerance as before.
     result = _run(x86_switch_elf)
-    g = result.graph
+    g = result.function
     seen_constants = set()
     for k in range(1, 9):
         hits = g.find_all(add("x", int_const(k)), ignore_casts=True)
@@ -77,7 +77,7 @@ def test_case5_calls_helper_with_struct_field(x86_switch_elf):
     # struct-field read).  This proves the full lift+resolve+optimise
     # pipeline kept the case-5 arm intact.
     result = _run(x86_switch_elf)
-    g = result.graph
+    g = result.function
     call_hits = g.find_all(call())
     assert len(call_hits) >= 1, "case 5 must produce a Call to f()"
     load_hits = g.find_all(load())
@@ -90,7 +90,7 @@ def test_rewrite_collapses_add_zero_then_reoptimize(x86_switch_elf):
     # fires zero times — exercise the API surface end-to-end and confirm
     # `reoptimize()` is callable on the post-rewrite graph.
     result = _run(x86_switch_elf)
-    g = result.graph
+    g = result.function
     x = Capture()
     n = g.rewrite(find=add(var(x), int_const(0)), replace=var(x))
     assert isinstance(n, int) and n >= 0
@@ -104,7 +104,7 @@ def test_rewrite_collapses_add_one_to_marker(x86_switch_elf):
     # This is intentionally lossy — we only care that the rewrite fires
     # and the destructive re-optimization succeeds afterwards.
     result = _run(x86_switch_elf)
-    g = result.graph
+    g = result.function
     n_before_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
     x = Capture()
     fired = g.rewrite(find=add(var(x), int_const(1)), replace=var(x))

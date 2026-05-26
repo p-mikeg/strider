@@ -37,12 +37,12 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let regs = arch.probe_regs().expect("probe regs");
     let strider = Strider::new(arch, regs, cc).expect("Strider::new");
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
-    let mut graph = outcome.function;
+    let mut function = outcome.function;
 
     let p = strider.build_optimizer_pipeline();
-    let entry = graph.entry().unwrap();
-    p.run(&mut graph, entry).expect("optimizer pipeline");
-    graph
+    let entry = function.entry().unwrap();
+    p.run(&mut function, entry).expect("optimizer pipeline");
+    function
 }
 
 /// Build the AArch64 byte sequence:
@@ -66,22 +66,22 @@ fn aarch64_cmp_eq_branch_bytes() -> Vec<u8> {
 }
 
 /// Returns the producer-`NodeKind` of `if_node`'s cond input.
-fn if_cond_kind(fg: &Function, if_node: NodeId) -> NodeKind {
-    let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)
+fn if_cond_kind(function: &Function, if_node: NodeId) -> NodeKind {
+    let [_ctrl, cond_out] = function.node_inputs_exact::<2>(if_node)
         .expect("If has 2 inputs");
-    *fg.node_kind(fg.node_for_output(cond_out))
+    *function.node_kind(function.node_for_output(cond_out))
 }
 
 #[test]
 fn aarch64_b_eq_after_pipeline_has_direct_int_cmp_cond() {
-    let graph = lift(
+    let function = lift(
         SleighArch::aarch64(),
         CallingConvention::aarch64_aapcs64().unwrap(),
         aarch64_cmp_eq_branch_bytes(),
     );
-    let if_node = common::find_unique_if(&graph);
+    let if_node = common::find_unique_if(&function);
     assert_eq!(
-        if_cond_kind(&graph, if_node),
+        if_cond_kind(&function, if_node),
         NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
         "AArch64 b.eq should canonicalise to IntCmpOp::Equal",
     );
@@ -101,14 +101,14 @@ fn x86_64_cmp_je_branch_bytes() -> Vec<u8> {
 
 #[test]
 fn x86_64_je_after_pipeline_has_direct_int_cmp_cond() {
-    let graph = lift(
+    let function = lift(
         SleighArch::x86_64(),
         CallingConvention::x86_64_systemv().unwrap(),
         x86_64_cmp_je_branch_bytes(),
     );
-    let if_node = common::find_unique_if(&graph);
+    let if_node = common::find_unique_if(&function);
     assert_eq!(
-        if_cond_kind(&graph, if_node),
+        if_cond_kind(&function, if_node),
         NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
         "x86_64 JE should canonicalise to IntCmpOp::Equal",
     );
@@ -128,14 +128,14 @@ fn thumb_cmp_beq_branch_bytes() -> Vec<u8> {
 
 #[test]
 fn arm_thumb_beq_after_pipeline_has_direct_int_cmp_cond() {
-    let graph = lift(
+    let function = lift(
         SleighArch::arm_thumb(),
         CallingConvention::arm_aapcs().unwrap(),
         thumb_cmp_beq_branch_bytes(),
     );
-    let if_node = common::find_unique_if(&graph);
+    let if_node = common::find_unique_if(&function);
     assert_eq!(
-        if_cond_kind(&graph, if_node),
+        if_cond_kind(&function, if_node),
         NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal),
         "Thumb BEQ should canonicalise to IntCmpOp::Equal (Thumb's IntNotEqual(ZR, 0) leaf must reduce too)",
     );

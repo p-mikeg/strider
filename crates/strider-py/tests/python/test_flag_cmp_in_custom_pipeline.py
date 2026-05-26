@@ -118,7 +118,7 @@ def test_thread_group_empty_pattern_matches_under_custom_pipeline_with_fcc():
         load(addr=add(function_arg(0), any_int_const(o))),
         add(function_arg(0), any_int_const(o)),
     )
-    hits = list(res.graph.find_all(pat, ignore_casts=True))
+    hits = list(res.function.find_all(pat, ignore_casts=True))
     offsets = sorted({h.uint(o) for h in hits if h.uint(o) is not None})
     # Linux 4.19 x86_64 puts `task_struct.thread_group` at offset 1408.
     assert 1408 in offsets, (

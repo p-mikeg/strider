@@ -118,7 +118,7 @@ def analyze(
         pipeline=pipeline,
         allow_code_before_start_addr=True,
     )
-    return result.graph
+    return result.function
 
 
 # ── Assertion vocabulary (mirror of common/mod.rs counters) ──────────────

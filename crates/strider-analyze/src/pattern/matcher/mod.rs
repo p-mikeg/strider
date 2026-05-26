@@ -684,8 +684,8 @@ mod tests {
 
     #[test]
     fn matcher_default_options_are_both_off() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g).expect("matcher");
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function).expect("matcher");
         assert!(
             m.options.ignore_cast_mask.is_empty(),
             "ignore_cast_mask must default to empty"
@@ -698,8 +698,8 @@ mod tests {
 
     #[test]
     fn matcher_default_ignore_cast_mask_is_empty() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g).expect("matcher");
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function).expect("matcher");
         assert!(
             m.options.ignore_cast_mask.is_empty(),
             "default ignore_cast_mask must be empty"
@@ -708,8 +708,8 @@ mod tests {
 
     #[test]
     fn ignore_casts_sets_mask_to_all() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g).expect("matcher").ignore_casts();
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function).expect("matcher").ignore_casts();
         assert_eq!(
             m.options.ignore_cast_mask,
             CastMask::all(),
@@ -719,8 +719,8 @@ mod tests {
 
     #[test]
     fn ignore_casts_mask_sets_just_truncate() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g)
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function)
             .expect("matcher")
             .ignore_casts_mask(CastMask::TRUNCATE);
         assert_eq!(
@@ -732,8 +732,8 @@ mod tests {
 
     #[test]
     fn ignore_casts_mask_unions_repeated_calls() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g)
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function)
             .expect("matcher")
             .ignore_casts_mask(CastMask::TRUNCATE)
             .ignore_casts_mask(CastMask::EXTEND);
@@ -746,8 +746,8 @@ mod tests {
 
     #[test]
     fn ignore_casts_after_mask_widens_to_all() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g)
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function)
             .expect("matcher")
             .ignore_casts_mask(CastMask::TRUNCATE)
             .ignore_casts();
@@ -760,8 +760,8 @@ mod tests {
 
     #[test]
     fn ignore_casts_chains_and_flips_flag() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g).expect("matcher").ignore_casts();
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function).expect("matcher").ignore_casts();
         assert_eq!(
             m.options.ignore_cast_mask,
             CastMask::all(),
@@ -775,8 +775,8 @@ mod tests {
 
     #[test]
     fn ignore_regions_chains_and_flips_flag() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g)
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function)
             .expect("matcher")
             .ignore_regions();
         assert!(
@@ -791,8 +791,8 @@ mod tests {
 
     #[test]
     fn both_flags_chain_independently() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g)
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function)
             .expect("matcher")
             .ignore_casts()
             .ignore_regions();
@@ -802,8 +802,8 @@ mod tests {
 
     #[test]
     fn ignore_flags_chain_independently() {
-        let g = trivial_graph();
-        let m = Matcher::try_new(&g)
+        let function = trivial_graph();
+        let m = Matcher::try_new(&function)
             .expect("matcher")
             .ignore_casts()
             .ignore_regions();

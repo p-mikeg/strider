@@ -45,19 +45,19 @@ use strider_ir::node::NodeKind;
 /// For hardware-FPU targets the `FloatBinaryOp` assertion is the right check,
 /// but those arches are currently ignored because ConstantFold collapses
 /// the register-merge chain; they are not part of this regression guard.
-fn f32_arith_graph_is_valid(g: &strider_ir::Function) {
+fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
     // The function returns a float; there must be a Return node.
-    assert!(count_returns(g) >= 1, "f32_arith must have a Return");
+    assert!(count_returns(function) >= 1, "f32_arith must have a Return");
 
     // On soft-float ABIs (ARM / MIPS), four float ops become four library
     // calls; accept either FloatBinaryOp nodes OR Call nodes as evidence
     // that the operations were lowered without a type error.
     // `FloatBinaryOp::Sub` is no longer a primitive (lowered to
     // `Add(_, Neg(_))`), so the Add count subsumes subtraction.
-    let float_ops = count_float_binop(g, strider_ir::FloatBinaryOp::Add)
-        + count_float_binop(g, strider_ir::FloatBinaryOp::Mul)
-        + count_float_binop(g, strider_ir::FloatBinaryOp::Div);
-    let calls = count_calls(g);
+    let float_ops = count_float_binop(function, strider_ir::FloatBinaryOp::Add)
+        + count_float_binop(function, strider_ir::FloatBinaryOp::Mul)
+        + count_float_binop(function, strider_ir::FloatBinaryOp::Div);
+    let calls = count_calls(function);
     assert!(
         float_ops >= 1 || calls >= 1,
         "f32_arith must contain FloatBinaryOp nodes (hardware FPU) or library \
@@ -67,11 +67,11 @@ fn f32_arith_graph_is_valid(g: &strider_ir::Function) {
     // Critical: no Extend node must have a Bool-typed input, and no
     // IntBitsToFloat node must have a U64 input (the latter would indicate
     // that read_reg_vn failed to truncate s0/f12 to U32 before the fix).
-    for nid in g.all_node_ids() {
-        if matches!(g.node_kind(nid), NodeKind::IntBitsToFloat) {
-            let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
+    for nid in function.all_node_ids() {
+        if matches!(function.node_kind(nid), NodeKind::IntBitsToFloat) {
+            let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
             if let Some(input) = inputs.first() {
-                let kind = g.output_kind(*input);
+                let kind = function.output_kind(*input);
                 assert_ne!(
                     kind,
                     strider_ir::node::NodeOutputKind::OutputType(strider_ir::node::NodeOutputType::U64),

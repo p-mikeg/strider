@@ -41,7 +41,7 @@ def lift(pipeline: strider.OptimizerPipeline | None) -> strider.Function:
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, entry=addr, allow_code_before_start_addr=True)
-    g = s.analyze_cfg(cfg).graph
+    g = s.analyze_cfg(cfg).function
     if pipeline is not None:
         g.optimize(pipeline)
     return g

@@ -11,25 +11,25 @@ use strider_target::Endianness;
 /// `LoadForward` synthesises when forwarding a load across a
 /// `MemPhi`.  Vn-tagged phis (created at lift time for register-aliased
 /// reads) are excluded.
-fn reachable_anonymous_phi_count(fg: &strider_ir::Function) -> usize {
+fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.walk().collect();
-    fg.all_node_ids()
+        function.walk().collect();
+    function.all_node_ids()
         .filter(|n| reachable.contains(*n)
-            && matches!(fg.node_kind(*n), NodeKind::Phi)
-            && fg.phi_var_tag(*n).is_none())
+            && matches!(function.node_kind(*n), NodeKind::Phi)
+            && function.phi_var_tag(*n).is_none())
         .count()
 }
 
 /// Finds the unique reachable anonymous (Vn-untagged) `Phi` node.
 fn find_reachable_anonymous_phi(
-    fg: &strider_ir::Function,
+    function: &strider_ir::Function,
 ) -> Option<strider_ir::node::NodeId> {
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.walk().collect();
-    fg.all_node_ids().find(|n| reachable.contains(*n)
-        && matches!(fg.node_kind(*n), NodeKind::Phi)
-        && fg.phi_var_tag(*n).is_none())
+        function.walk().collect();
+    function.all_node_ids().find(|n| reachable.contains(*n)
+        && matches!(function.node_kind(*n), NodeKind::Phi)
+        && function.phi_var_tag(*n).is_none())
 }
 
 /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes

@@ -348,22 +348,22 @@ mod tests {
         type Verdict = bool;
         fn classify(
             &mut self,
-            g: &Function,
+            function: &Function,
             _mem: NodeOutputId,
             node: NodeId,
         ) -> crate::opt::error::Result<StepResult<bool>> {
             use cranelift_entity::EntityRef;
             self.visited.borrow_mut().push(node.index() as u32);
-            match *g.node_kind(node) {
+            match *function.node_kind(node) {
                 NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
                 NodeKind::Store(_) => {
                     // Store inputs layout: [memory, addr, data].  Slot 0
                     // is the prior memory edge.
-                    let inputs = g.node_inputs(node);
+                    let inputs = function.node_inputs(node);
                     Ok(StepResult::Continue(inputs[0]))
                 }
                 NodeKind::MemPhi => {
-                    let inputs = g.node_inputs(node);
+                    let inputs = function.node_inputs(node);
                     let phi_token = inputs[0];
                     let preds = inputs.iter().skip(1).collect();
                     Ok(StepResult::JoinPhi { phi_node: node, phi_token, preds })
@@ -394,14 +394,14 @@ mod tests {
         type Verdict = bool;
         fn classify(
             &mut self,
-            g: &Function,
+            function: &Function,
             _mem: NodeOutputId,
             node: NodeId,
         ) -> crate::opt::error::Result<StepResult<bool>> {
-            match *g.node_kind(node) {
+            match *function.node_kind(node) {
                 NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
                 NodeKind::MemPhi => {
-                    let inputs = g.node_inputs(node);
+                    let inputs = function.node_inputs(node);
                     let phi_token = inputs[0];
                     let preds = inputs.iter().skip(1).collect();
                     Ok(StepResult::JoinPhi { phi_node: node, phi_token, preds })
@@ -533,22 +533,22 @@ mod tests {
     /// arms route through `InitialMemory`, so structurally they're
     /// identical and combine_phi must OR-combine the same verdict.
     fn mem_phi_all_initial(
-        fg: &mut strider_ir::Function,
+        function: &mut strider_ir::Function,
         n_arms: usize,
     ) -> NodeOutputId {
         // Find InitialMemory and Region; use them to build a MemPhi.
-        let im_node = fg
+        let im_node = function
             .walk()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::InitialMemory))
             .expect("InitialMemory must exist");
-        let region_node = fg
+        let region_node = function
             .walk()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Region))
             .expect("Region must exist");
-        let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
+        let im_out = function.node_outputs_exact::<1>(im_node).unwrap()[0];
         let phi_token = {
             // Region's outputs are [Control, PhiToken].
-            let outs = fg.node_outputs(region_node);
+            let outs = function.node_outputs(region_node);
             outs[1]
         };
         // Synthesise inputs: [phi_token, im_out, im_out, …] (n_arms times).
@@ -556,13 +556,13 @@ mod tests {
         for _ in 0..n_arms {
             inputs.push(im_out);
         }
-        let phi = fg.create_node(
+        let phi = function.create_node(
             NodeKind::MemPhi,
             inputs.iter().copied(),
             [strider_ir::node::NodeOutputKind::Memory],
         );
-        fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
-        fg.node_outputs_exact::<1>(phi).unwrap()[0]
+        function.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
+        function.node_outputs_exact::<1>(phi).unwrap()[0]
     }
 
     #[test]
@@ -667,16 +667,16 @@ mod tests {
             type Verdict = bool;
             fn classify(
                 &mut self,
-                g: &Function,
+                function: &Function,
                 _mem: NodeOutputId,
                 node: NodeId,
             ) -> crate::opt::error::Result<StepResult<bool>> {
-                if matches!(*g.node_kind(node), NodeKind::InitialMemory) {
+                if matches!(*function.node_kind(node), NodeKind::InitialMemory) {
                     self.im_visits += 1;
                     return Ok(StepResult::Verdict(false));
                 }
-                if matches!(*g.node_kind(node), NodeKind::MemPhi) {
-                    let inputs = g.node_inputs(node);
+                if matches!(*function.node_kind(node), NodeKind::MemPhi) {
+                    let inputs = function.node_inputs(node);
                     let phi_token = inputs[0];
                     let preds = inputs.iter().skip(1).collect();
                     return Ok(StepResult::JoinPhi {

@@ -46,10 +46,10 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
     let strider = common::strider_x86_64();
     let bytes = vec![0xc3u8]; // ret
     let config = make_config(&strider, bytes, 0x1000);
-    let graph = run(config).expect("orchestrator");
+    let function = run(config).expect("orchestrator");
     let mut had_return = false;
-    for nid in graph.walk() {
-        if matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Return) {
+    for nid in function.walk() {
+        if matches!(function.node_kind(nid), strider_ir::node::NodeKind::Return) {
             had_return = true;
         }
     }
@@ -116,10 +116,10 @@ fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
     let strider = common::strider_x86_64();
     let bytes = vec![0xc3u8]; // ret
     let config = make_config(&strider, bytes, 0x1000);
-    let graph = run(config).expect("orchestrator must succeed in fast path");
+    let function = run(config).expect("orchestrator must succeed in fast path");
     let mut had_return = false;
-    for nid in graph.walk() {
-        if matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Return) {
+    for nid in function.walk() {
+        if matches!(function.node_kind(nid), strider_ir::node::NodeKind::Return) {
             had_return = true;
         }
     }

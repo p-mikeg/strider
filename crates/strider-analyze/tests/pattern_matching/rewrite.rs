@@ -51,31 +51,31 @@ fn graph_add_const_const(a: u64, b: u64) -> strider_ir::Function {
 // ── Assertion helpers local to this module ──────────────────────────────────
 
 #[track_caller]
-fn find_add(g: &strider_ir::Function) -> NodeId {
-    a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+fn find_add(function: &strider_ir::Function) -> NodeId {
+    a::find_node(function, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 #[track_caller]
-fn find_sub(g: &strider_ir::Function) -> NodeId {
-    a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+fn find_sub(function: &strider_ir::Function) -> NodeId {
+    a::find_node(function, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 /// Returns the `NodeKind` of the node producing the Return's data input.
-fn return_data_input_kind(g: &strider_ir::Function) -> NodeKind {
-    let ret = a::find_node(g, |k| matches!(k, NodeKind::Return));
-    let inputs: Vec<NodeOutputId> = g.node_inputs(ret).into_iter().collect();
+fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
+    let ret = a::find_node(function, |k| matches!(k, NodeKind::Return));
+    let inputs: Vec<NodeOutputId> = function.node_inputs(ret).into_iter().collect();
     // Return inputs: [ctrl(0), mem(1), retval0(2), ...].
     let data_in = inputs[2];
-    *g.kind_of_output(data_in)
+    *function.kind_of_output(data_in)
 }
 
 /// Helper: run rule on every node, OR-ing results.
-fn fire_anywhere<F>(g: &mut strider_ir::Function, rule: F) -> bool
+fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
     F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<bool>,
 {
-    let nodes: Vec<NodeId> = g.walk().collect();
-    g.with_rewrite_ctx(|ctx| {
+    let nodes: Vec<NodeId> = function.walk().collect();
+    function.with_rewrite_ctx(|ctx| {
         let mut any = false;
         for n in nodes {
             if rule(ctx, n)? {
@@ -91,48 +91,48 @@ where
 
 #[test]
 fn identity_rule_redirects_consumers_and_returns_true() {
-    let mut g = graph_add_x_zero();
+    let mut function = graph_add_x_zero();
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u64)), var(x));
 
-    let fired = fire_anywhere(&mut g, rule);
+    let fired = fire_anywhere(&mut function, rule);
     assert!(fired, "rule should have fired on the outer Add");
 
     // After the rewrite the Return consumes the inner `add(7, 1)` directly.
-    let kind = return_data_input_kind(&g);
+    let kind = return_data_input_kind(&function);
     assert!(matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Add)));
 }
 
 #[test]
 fn rule_returns_false_when_lhs_does_not_match() {
-    let mut g = graph_add_const_const(5, 3);
+    let mut function = graph_add_const_const(5, 3);
     let x = Capture::new();
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u64));
-    let add_node = find_add(&g);
-    let fired = g
+    let add_node = find_add(&function);
+    let fired = function
         .with_rewrite_ctx(|ctx| rule(ctx, add_node))
         .expect("test fixture is built");
     assert!(!fired);
 
     assert!(matches!(
-        return_data_input_kind(&g),
+        return_data_input_kind(&function),
         NodeKind::IntBinaryOp(IntBinaryOp::Add)
     ));
 }
 
 #[test]
 fn sub_x_x_to_zero_rule() {
-    let mut g = graph_sub_x_x();
+    let mut function = graph_sub_x_x();
     let x = Capture::new();
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u64));
 
-    let sub_node = find_sub(&g);
-    let fired = g
+    let sub_node = find_sub(&function);
+    let fired = function
         .with_rewrite_ctx(|ctx| rule(ctx, sub_node))
         .expect("test fixture is built");
     assert!(fired);
 
-    let kind = return_data_input_kind(&g);
+    let kind = return_data_input_kind(&function);
     assert!(matches!(kind, NodeKind::IntConst(0)));
 }
 
@@ -144,10 +144,10 @@ fn is_not_buildable_err(err: &anyhow::Error) -> bool {
 
 #[test]
 fn rhs_wildcard_is_not_buildable() {
-    let mut g = graph_add_const_const(5, 3);
+    let mut function = graph_add_const_const(5, 3);
     let rule = rewrite_rule(add(any(), any()), any());
-    let add_node = find_add(&g);
-    let err = g
+    let add_node = find_add(&function);
+    let err = function
         .with_rewrite_ctx(|ctx| match rule(ctx, add_node) {
             Ok(_) => panic!("any() on RHS must error"),
             Err(e) => Ok(e),
@@ -158,10 +158,10 @@ fn rhs_wildcard_is_not_buildable() {
 
 #[test]
 fn rhs_predicate_is_not_buildable() {
-    let mut g = graph_add_const_const(5, 3);
+    let mut function = graph_add_const_const(5, 3);
     let rule = rewrite_rule(add(any(), any()), predicate(|_g, _ty, _o| true));
-    let add_node = find_add(&g);
-    let err = g
+    let add_node = find_add(&function);
+    let err = function
         .with_rewrite_ctx(|ctx| match rule(ctx, add_node) {
             Ok(_) => panic!("predicate RHS must error"),
             Err(e) => Ok(e),
@@ -172,10 +172,10 @@ fn rhs_predicate_is_not_buildable() {
 
 #[test]
 fn rhs_control_pattern_is_not_buildable() {
-    let mut g = graph_add_const_const(5, 3);
+    let mut function = graph_add_const_const(5, 3);
     let rule = rewrite_rule(add(any(), any()), ret());
-    let add_node = find_add(&g);
-    let err = g
+    let add_node = find_add(&function);
+    let err = function
         .with_rewrite_ctx(|ctx| match rule(ctx, add_node) {
             Ok(_) => panic!("ret() RHS must error"),
             Err(e) => Ok(e),
@@ -204,14 +204,14 @@ fn rewrite_rule_on_call_root_returns_err() {
     fb.build_call(tgt).unwrap();
     fb.build_return(None, &[]).unwrap();
     fb.set_lift_addr(None);
-    let mut g = fb.build().unwrap();
+    let mut function = fb.build().unwrap();
 
     let rule = rewrite_rule(call(), int_const(0u64));
-    let call_node = g
+    let call_node = function
         .walk()
-        .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
         .expect("Call node");
-    let err = g
+    let err = function
         .with_rewrite_ctx(|ctx| match rule(ctx, call_node) {
             Ok(_) => panic!("multi-output root must error"),
             Err(e) => Ok(e),
@@ -245,11 +245,11 @@ fn rewrite_returns_false_when_no_consumer() {
     let _dead_a = t.u64(5);
     let _dead_b = t.u64(3);
     let other = t.u64(7);
-    let mut g = t.ret_val(other);
+    let mut function = t.ret_val(other);
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u64)), var(x));
-    let fired = fire_anywhere(&mut g, rule);
+    let fired = fire_anywhere(&mut function, rule);
     assert!(!fired);
 }
 
@@ -257,13 +257,13 @@ fn rewrite_returns_false_when_no_consumer() {
 
 #[test]
 fn pattern_match_before_and_after_rewrite() {
-    let mut g = graph_add_x_zero();
-    a::matches(&g, add(any(), int_const(0u64)), 1);
+    let mut function = graph_add_x_zero();
+    a::matches(&function, add(any(), int_const(0u64)), 1);
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u64)), var(x));
-    fire_anywhere(&mut g, rule);
+    fire_anywhere(&mut function, rule);
 
-    let ret_kind = return_data_input_kind(&g);
+    let ret_kind = return_data_input_kind(&function);
     assert!(matches!(ret_kind, NodeKind::IntBinaryOp(IntBinaryOp::Add)));
 }

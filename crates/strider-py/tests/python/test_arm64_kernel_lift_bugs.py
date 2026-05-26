@@ -87,7 +87,7 @@ def test_vmspace_exitfree_bounded_lift_succeeds(version: str):
     """
     kernel = _kernel_path(version)
     result = _bounded_lift(kernel, "vmspace_exitfree")
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0
 
 
 # ── Bug 2: cfg-bound enforcement on backward jumps ────────────────────────────
@@ -107,4 +107,4 @@ def test_vmspace_exit_bounded_lift_does_not_walk_into_neighbour(version: str):
     of the reach-back flag, the lift completes."""
     kernel = _kernel_path(version)
     result = _bounded_lift(kernel, "vmspace_exit")
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0

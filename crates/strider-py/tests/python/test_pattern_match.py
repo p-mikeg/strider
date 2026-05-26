@@ -20,7 +20,7 @@ def _build_graph(elf_path, symbol="array_sum"):
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
-    return s.analyze_cfg(cfg).graph, sleigh
+    return s.analyze_cfg(cfg).function, sleigh
 
 
 def test_find_all_load_in_array_sum(x86_memory_elf):

@@ -27,7 +27,7 @@ def test_compact_default_true_does_not_grow_graph():
     """compact=True (default) must not produce more node ids than compact=False."""
     compact_result = _run_with(True)
     noncompact_result = _run_with(False)
-    assert compact_result.graph.node_count() <= noncompact_result.graph.node_count()
+    assert compact_result.function.node_count() <= noncompact_result.function.node_count()
 
 
 def test_compact_default_is_true():
@@ -37,4 +37,4 @@ def test_compact_default_is_true():
     mem.add_region(0x1000, _trivial_function_bytes())
     default_result = strider.run(arch, cc, mem, entry=0x1000)
     explicit_result = _run_with(True)
-    assert default_result.graph.node_count() == explicit_result.graph.node_count()
+    assert default_result.function.node_count() == explicit_result.function.node_count()

@@ -51,8 +51,8 @@ fn build_with_anchor(
     let anchor = anchor_inputs(&mut builder);
     builder.build_indirect_branch(anchor).expect("build_indirect_branch");
     builder.set_lift_addr(None);
-    let graph = builder.build().expect("build");
-    (graph, anchor)
+    let function = builder.build().expect("build");
+    (function, anchor)
 }
 
 /// Builds `Load[ IntAdd( IntConst(base), IntMul(idx, IntConst(stride)) ) ]`
@@ -316,21 +316,21 @@ fn bound_via_known_bits_handles_zero_extend() {
     let placeholder = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     builder.build_indirect_branch(placeholder).expect("build_indirect_branch");
     builder.set_lift_addr(None);
-    let mut g = builder.build().expect("build");
-    let extend_node = g.create_node(
+    let mut function = builder.build().expect("build");
+    let extend_node = function.create_node(
         NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
         [narrow],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    g.set_asm_fingerprint(extend_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-    let [idx] = g
+    function.set_asm_fingerprint(extend_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+    let [idx] = function
         .node_outputs_exact::<1>(extend_node)
         .expect("extend output");
     // Replace the placeholder with the Extend so the Return
     // depends on it; `walk_graph` then sweeps it into preorder.
-    g.replace_all_uses(placeholder, idx).expect("rewire");
-    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
-    let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), idx, &known).expect("bound from zero-extend");
+    function.replace_all_uses(placeholder, idx).expect("rewire");
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).expect("kb analyze");
+    let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), idx, &known).expect("bound from zero-extend");
     // U8 narrows to 0..255, so bound = 256.
     assert_eq!(bound, 256);
 }
@@ -356,42 +356,42 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     let placeholder = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
     builder.build_indirect_branch(placeholder).unwrap();
     builder.set_lift_addr(None);
-    let mut g = builder.build().unwrap();
+    let mut function = builder.build().unwrap();
 
     // Build a detached AND that's narrower than U64 — definitely a
     // narrowing kb result IF the analyzer reached it.  Wire its
     // input to a fresh IntConst that is also detached so the AND is
     // truly unreachable from entry.
-    let detached_const = g.create_node(
+    let detached_const = function.create_node(
         NodeKind::IntConst(0xffff_ffffu128),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let detached_const_out = g
+    let detached_const_out = function
         .node_outputs_exact::<1>(detached_const)
         .expect("output")[0];
-    let mask_const = g.create_node(
+    let mask_const = function.create_node(
         NodeKind::IntConst(0x7u128),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let mask_const_out = g
+    let mask_const_out = function
         .node_outputs_exact::<1>(mask_const)
         .expect("output")[0];
-    let detached_and = g.create_node(
+    let detached_and = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::And),
         [detached_const_out, mask_const_out],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let detached_idx = g
+    let detached_idx = function
         .node_outputs_exact::<1>(detached_and)
         .expect("output")[0];
 
     // The detached AND's output isn't in the entry preorder, so
     // `analyze_known_bits` never visits it.  Its kb defaults to
     // all-unknown and `bound_via_known_bits` returns None.
-    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
-    let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), detached_idx, &known);
+    let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).expect("kb analyze");
+    let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), detached_idx, &known);
     assert_eq!(
         bound, None,
         "unreachable output must yield None (default KnownBitsFacts, no narrowing)",
@@ -543,8 +543,8 @@ fn bound_from_if_condition_idx_less_than_n_true() {
     // Anchor with a placeholder return so build() succeeds.
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
-    let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
+    let function = builder.build().unwrap();
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), cmp, idx, /* on_true */ true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap());
     assert_eq!(bound, Some(4));
 }
 
@@ -563,8 +563,8 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
-    let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
+    let function = builder.build().unwrap();
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), cmp, idx, /* on_true */ false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap());
     assert_eq!(bound, None);
 }
 
@@ -599,13 +599,13 @@ fn bound_from_if_condition_signed_less_unknown_sign_bit_returns_none() {
         .unwrap();
     b.build_indirect_branch(idx).unwrap();
     b.set_lift_addr(None);
-    let g = b.build().unwrap();
+    let function = b.build().unwrap();
     let bound = bound_from_if_condition(
-        crate::pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::pattern::RewriteCtxView::from_built(&function).unwrap(),
         cmp,
         idx,
         /* on_true */ true,
-        &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap(),
+        &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap(),
     );
     assert_eq!(bound, None, "Sless without idx>=0 proof must fall through");
 }
@@ -642,13 +642,13 @@ fn bound_from_if_condition_signed_less_with_known_nonneg_idx_accepts() {
         .unwrap();
     b.build_indirect_branch(idx).unwrap();
     b.set_lift_addr(None);
-    let g = b.build().unwrap();
+    let function = b.build().unwrap();
     let bound = bound_from_if_condition(
-        crate::pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::pattern::RewriteCtxView::from_built(&function).unwrap(),
         cmp,
         idx,
         /* on_true */ true,
-        &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap(),
+        &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap(),
     );
     assert_eq!(bound, Some(8), "Sless with proven idx>=0 yields bound = N");
 }
@@ -677,8 +677,8 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
-    let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
+    let function = builder.build().unwrap();
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap());
     assert_eq!(bound, Some(5));
 }
 
@@ -724,19 +724,19 @@ fn build_pred_if_graph(
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
 
-    let g = b.build().unwrap();
+    let function = b.build().unwrap();
     // The placeholder Return is the 3-input one in dispatch.
     let mut anchor = None;
-    for nid in g.walk() {
-        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
     }
-    (g, anchor.expect("placeholder return"), idx_in_dispatch)
+    (function, anchor.expect("placeholder return"), idx_in_dispatch)
 }
 
 /// Stress test for the iterative `walk_control_for_if_bound`: a deep
@@ -803,13 +803,13 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
 
-    let g = b.build().unwrap();
+    let function = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.walk() {
-        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
@@ -818,7 +818,7 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     // The walk hits the innermost If first (closest to dispatch),
     // whose bound is `LOOSE_BOUND` — and `bound_from_if_condition`
     // returns immediately, so it never crawls all the way back.
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap());
     assert_eq!(bound, Some(LOOSE_BOUND));
 }
 
@@ -848,19 +848,19 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
     let idx = b.read_variable(&idx_var).unwrap();
     b.build_indirect_branch(idx).unwrap();
     b.set_lift_addr(None);
-    let g = b.build().unwrap();
+    let function = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.walk() {
-        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, idx, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap());
     assert_eq!(bound, None);
 }
 
@@ -905,19 +905,19 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
 
-    let g = b.build().unwrap();
+    let function = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.walk() {
-        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap());
     assert_eq!(bound, None, "If on unrelated var must not bound idx");
 }
 
@@ -941,14 +941,14 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
-    let g = builder.build().unwrap();
+    let function = builder.build().unwrap();
     assert_eq!(
-        bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, /* on_true */ true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap()),
+        bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), cmp, idx, /* on_true */ true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap()),
         None,
         "Equal must NOT yield a 0..N bound — see H2 fix",
     );
     // Same on the false branch (the negation idx != N — also no bound).
-    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap()), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), cmp, idx, false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap()), None);
 }
 
 #[test]
@@ -974,15 +974,15 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
-    let g = builder.build().unwrap();
+    let function = builder.build().unwrap();
     // True branch of `N < idx` ↔ `idx > N` — no upper bound (and
     // the pattern wouldn't bind to the desired `idx_var` anyway).
-    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap()), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap()), None);
     // False branch of `N < idx` ↔ `idx <= N` — *would* be
     // soundly bounded by N+1 if the helper looked through the
     // swapped operands, but the current implementation returns
     // None.  Documented limitation.
-    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap()), None);
+    assert_eq!(bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), cmp, idx, false, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap()), None);
 }
 
 #[test]
@@ -1001,8 +1001,8 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
-    let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
+    let function = builder.build().unwrap();
+    let bound = bound_from_if_condition(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), cmp, idx, true, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap());
     assert_eq!(bound, None);
 }
 
@@ -1094,18 +1094,18 @@ fn build_diamond_two_bounds(
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
 
-    let g = b.build().unwrap();
+    let function = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.walk() {
-        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
     }
-    (g, anchor.expect("placeholder return"), idx_in_dispatch)
+    (function, anchor.expect("placeholder return"), idx_in_dispatch)
 }
 
 #[test]
@@ -1183,19 +1183,19 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
 
-    let g = b.build().unwrap();
+    let function = b.build().unwrap();
     let mut anchor = None;
-    for nid in g.walk() {
-        if !matches!(g.node_kind(nid), NodeKind::IndirectBranch) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = g.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
         if inputs.len() == 3 {
             anchor = Some(inputs[2]);
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap());
+    let bound = bound_via_predecessor_if(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, idx_in_dispatch, &analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).unwrap());
     assert_eq!(
         bound, None,
         "any unbounded predecessor must collapse the join's bound to None",

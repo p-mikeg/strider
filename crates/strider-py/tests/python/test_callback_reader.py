@@ -65,7 +65,7 @@ def test_callback_reader_lifts_array_sum(x86_memory_elf):
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     outcome = s.analyze_cfg(cfg)
-    g = outcome.graph
+    g = outcome.function
 
     # The lifted graph should include at least one Return.
     from strider.pattern import ret
@@ -93,7 +93,7 @@ def test_run_via_callback_reader(x86_memory_elf):
         entry=addr,
         allow_code_before_start_addr=True,
     )
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0
     assert reader.calls > 0
 
 
@@ -157,4 +157,4 @@ def test_run_with_callback_rom_doesnt_crash(x86_memory_elf):
         rom=rom,
         allow_code_before_start_addr=True,
     )
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0

@@ -50,8 +50,8 @@ use strider_ir::node::{NodeId, NodeKind};
 ///   through these, structural patterns like
 ///   `if_node().cond(int_cmp(...))` never match across arches.
 /// * `Region` region-join nodes.
-fn matcher(g: &strider_ir::Function) -> Matcher<'_> {
-    Matcher::try_new(g).unwrap()
+fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
+    Matcher::try_new(function).unwrap()
         .ignore_casts_mask(
             CastMask::EXTEND
                 | CastMask::TRUNCATE
@@ -107,13 +107,13 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> Pat {
 /// checks that the matched node's primary output is one of the carriers'
 /// outputs, making it usable as a drop-in for the old `function_arg(N)`
 /// pattern in expressions like `call().arg(i, arg_carrier_pat(g, N))`.
-fn arg_carrier_pat(g: &strider_ir::Function, arg_index: u32) -> Pat {
+fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> Pat {
     use strider_ir::node::NodeOutputId;
     // Collect the primary output of every registered carrier.
-    let carrier_outputs: std::sync::Arc<[NodeOutputId]> = g
+    let carrier_outputs: std::sync::Arc<[NodeOutputId]> = function
         .arg_index_to_nodes(arg_index)
         .iter()
-        .filter_map(|&n| g.node_outputs(n).first().copied())
+        .filter_map(|&n| function.node_outputs(n).first().copied())
         .collect::<Vec<_>>()
         .into();
     predicate(move |_, _, out| carrier_outputs.contains(&out))
@@ -125,14 +125,14 @@ fn arg_carrier_pat(g: &strider_ir::Function, arg_index: u32) -> Pat {
 
 per_arch_test!("complex", "read_struct_fields", read_struct_fields_assertions);
 
-fn read_struct_fields_assertions(g: &strider_ir::Function) {
+fn read_struct_fields_assertions(function: &strider_ir::Function) {
     // (a) The graph must contain ≥3 Loads (s->a, s->b, s->c).
-    assert!(count_loads(g) >= 3,
-            "read_struct_fields must have ≥3 Loads; got {}", count_loads(g));
+    assert!(count_loads(function) >= 3,
+            "read_struct_fields must have ≥3 Loads; got {}", count_loads(function));
 
     // (b) Some compilers emit `load(base)` for offset 0; others emit
     // `load(base + 0)`.  Either way ≥1 Load is required.
-    let m = matcher(g);
+    let m = matcher(function);
     let pat: Pat = load().into();
     assert!(!m.find_all(&pat).is_empty(),
             "expected ≥1 Load match in read_struct_fields");
@@ -143,7 +143,7 @@ fn read_struct_fields_assertions(g: &strider_ir::Function) {
     let off = Capture::new();
     let off_pat: Pat = field_load_at_offset(base, off);
     let hits = m.find_all(&off_pat);
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, g)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
             "expected at least one Load(base + {{4,8}}); got offsets {offsets:?}");
 }
@@ -154,16 +154,16 @@ fn read_struct_fields_assertions(g: &strider_ir::Function) {
 
 per_arch_test!("complex", "write_struct_fields", write_struct_fields_assertions);
 
-fn write_struct_fields_assertions(g: &strider_ir::Function) {
-    assert!(count_stores(g) >= 3,
-            "write_struct_fields must have ≥3 Stores; got {}", count_stores(g));
+fn write_struct_fields_assertions(function: &strider_ir::Function) {
+    assert!(count_stores(function) >= 3,
+            "write_struct_fields must have ≥3 Stores; got {}", count_stores(function));
 
-    let m = matcher(g);
+    let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
     let pat: Pat = field_store(add(var(base), any_int_const(off)), any());
     let hits = m.find_all(&pat);
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, g)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
             "expected ≥1 Store(base + {{4,8}}); got offsets {offsets:?}");
 
@@ -181,12 +181,12 @@ fn write_struct_fields_assertions(g: &strider_ir::Function) {
 
 per_arch_test!("complex", "nested_struct_field", nested_struct_field_assertions);
 
-fn nested_struct_field_assertions(g: &strider_ir::Function) {
+fn nested_struct_field_assertions(function: &strider_ir::Function) {
     // o->inner.x = *(base + padding + offsetof(Inner, x)).
-    assert!(count_loads(g) >= 1,
-            "nested_struct_field must Load; got {}", count_loads(g));
+    assert!(count_loads(function) >= 1,
+            "nested_struct_field must Load; got {}", count_loads(function));
 
-    let m = matcher(g);
+    let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
     let pat: Pat = field_load_at_offset(base, off);
@@ -196,7 +196,7 @@ fn nested_struct_field_assertions(g: &strider_ir::Function) {
     // for this fixture.  But if any `add(_, IntConst)` form matched, at
     // least one offset must be non-zero (the inner.x position is at
     // `padding + offsetof(Inner, x)` ≥ 4).
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, g)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
     if !offsets.is_empty() {
         assert!(offsets.iter().any(|&n| n != 0),
                 "all captured Load offsets are 0 in nested_struct_field; got {offsets:?}");
@@ -212,19 +212,19 @@ fn nested_struct_field_assertions(g: &strider_ir::Function) {
 // target back to `InitialVar(lr)`.
 per_arch_test!("complex", "bit_test_zero", bit_test_zero_assertions);
 
-fn bit_test_zero_assertions(g: &strider_ir::Function) {
+fn bit_test_zero_assertions(function: &strider_ir::Function) {
     // (mask & 0x4) == 0 → graph contains both `And` and `Equal`.
-    assert!(count_int_binop(g, strider_ir::IntBinaryOp::And) >= 1,
+    assert!(count_int_binop(function, strider_ir::IntBinaryOp::And) >= 1,
             "bit_test_zero must contain ≥1 IntBinaryOp::And; got {}",
-            count_int_binop(g, strider_ir::IntBinaryOp::And));
-    assert!(count_int_cmp(g, strider_ir::IntCmpOp::Equal) >= 1,
+            count_int_binop(function, strider_ir::IntBinaryOp::And));
+    assert!(count_int_cmp(function, strider_ir::IntCmpOp::Equal) >= 1,
             "bit_test_zero must contain ≥1 IntCmpOp::Equal; got {}",
-            count_int_cmp(g, strider_ir::IntCmpOp::Equal));
+            count_int_cmp(function, strider_ir::IntCmpOp::Equal));
 
     // Match `IntCmp(Equal, And(_, single-bit-IntConst), 0)` and assert
     // the captured mask is a single-bit value (the pattern enforces the
     // predicate; we additionally verify the captures).
-    let m = matcher(g);
+    let m = matcher(function);
     let mask = Capture::new();
     let value = Capture::new();
     let pat: Pat = bit_test_against_zero(value, mask);
@@ -232,7 +232,7 @@ fn bit_test_zero_assertions(g: &strider_ir::Function) {
     assert!(!hits.is_empty(),
             "expected ≥1 IntCmp(Equal, And(_, single-bit-const), 0) match in bit_test_zero");
     for h in &hits {
-        if let Some(n) = h.get_uint(mask, g) {
+        if let Some(n) = h.get_uint(mask, function) {
             assert!(n.count_ones() == 1 && n != 0,
                     "captured mask {n:#x} is not a single-bit value");
         }
@@ -245,11 +245,11 @@ fn bit_test_zero_assertions(g: &strider_ir::Function) {
 
 per_arch_test!("complex", "if_bit_clear_call", if_bit_clear_call_assertions);
 
-fn if_bit_clear_call_assertions(g: &strider_ir::Function) {
-    assert!(count_ifs(g) >= 1,
-            "if_bit_clear_call must contain ≥1 If; got {}", count_ifs(g));
-    assert!(count_calls(g) >= 1,
-            "if_bit_clear_call must contain ≥1 Call; got {}", count_calls(g));
+fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
+    assert!(count_ifs(function) >= 1,
+            "if_bit_clear_call must contain ≥1 If; got {}", count_ifs(function));
+    assert!(count_calls(function) >= 1,
+            "if_bit_clear_call must contain ≥1 Call; got {}", count_calls(function));
 
     // Decoupled background fact: some Call has arg(0) = function_arg(1)
     // — the `p` parameter (`mask` is arg 0).  Cross-arch, this exercises
@@ -265,13 +265,13 @@ fn if_bit_clear_call_assertions(g: &strider_ir::Function) {
     // IR builder skips the node entirely, and the strict composition
     // `If(true_branch=Call(...))` matches on Thumb just like every
     // other arch.
-    let m = matcher(g);
+    let m = matcher(function);
     assert!(!m.find_all(&if_node().into()).is_empty(),
             "no If matched in if_bit_clear_call");
     // Carrier for arg 1 (the `p` parameter).
-    assert!(!g.arg_index_to_nodes(1).is_empty(),
+    assert!(!function.arg_index_to_nodes(1).is_empty(),
             "arg 1 must be registered in the side-table");
-    let pat: Pat = call().arg(0, arg_carrier_pat(g, 1)).into();
+    let pat: Pat = call().arg(0, arg_carrier_pat(function, 1)).into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected Call(arg(0) = carrier(arg 1)) in if_bit_clear_call \
@@ -288,10 +288,10 @@ fn if_bit_clear_call_assertions(g: &strider_ir::Function) {
     // every arch, including arm_thumb (proves the construction-time
     // NoOp classification of setISAMode keeps the walk unblocked).
     let true_pat: Pat = if_node()
-        .true_branch(call().arg(0, arg_carrier_pat(g, 1)))
+        .true_branch(call().arg(0, arg_carrier_pat(function, 1)))
         .into();
     let false_pat: Pat = if_node()
-        .false_branch(call().arg(0, arg_carrier_pat(g, 1)))
+        .false_branch(call().arg(0, arg_carrier_pat(function, 1)))
         .into();
     let true_hits = m.find_all(&true_pat);
     let false_hits = m.find_all(&false_pat);
@@ -309,17 +309,17 @@ fn if_bit_clear_call_assertions(g: &strider_ir::Function) {
 
 per_arch_test!("complex", "call_with_field_arg", call_with_field_arg_assertions);
 
-fn call_with_field_arg_assertions(g: &strider_ir::Function) {
-    assert!(count_loads(g) >= 1,
+fn call_with_field_arg_assertions(function: &strider_ir::Function) {
+    assert!(count_loads(function) >= 1,
             "call_with_field_arg must Load s->handler");
-    assert!(count_calls(g) >= 1,
+    assert!(count_calls(function) >= 1,
             "call_with_field_arg must Call invoke()");
 
     // Tight match: Call whose arg(0) is `Load(base + offset)` where
     // offset is captured (and asserted to be in a sane range).  This is
     // the canonical "find a call's arg that's a struct field load"
     // pattern — the value of `offset` is captured rather than hardcoded.
-    let m = matcher(g);
+    let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
     let pat: Pat = call().arg(0, field_load_at_offset(base, off)).into();
@@ -331,7 +331,7 @@ fn call_with_field_arg_assertions(g: &strider_ir::Function) {
     // `struct S { int a, b, c, flags; int *handler; }` (16 on 32-bit
     // pointer arches) or 32 (on 64-bit pointer arches with extra
     // padding) — both well under 256.
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, g)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
     assert!(offsets.iter().any(|&n| n < 256),
             "no captured field-load offset is in 0..256; got {offsets:?}");
 }
@@ -342,10 +342,10 @@ fn call_with_field_arg_assertions(g: &strider_ir::Function) {
 
 per_arch_test!("complex", "dispatch_on_flag", dispatch_on_flag_assertions);
 
-fn dispatch_on_flag_assertions(g: &strider_ir::Function) {
-    assert!(count_ifs(g) >= 1, "dispatch_on_flag must contain ≥1 If");
-    assert!(count_calls(g) >= 1, "dispatch_on_flag must contain ≥1 Call");
-    assert!(count_loads(g) >= 1, "dispatch_on_flag must contain ≥1 Load");
+fn dispatch_on_flag_assertions(function: &strider_ir::Function) {
+    assert!(count_ifs(function) >= 1, "dispatch_on_flag must contain ≥1 If");
+    assert!(count_calls(function) >= 1, "dispatch_on_flag must contain ≥1 Call");
+    assert!(count_loads(function) >= 1, "dispatch_on_flag must contain ≥1 Load");
 
     // Three strict facts, decoupled (so single-branch / IT-block /
     // CallOther / BoolUnaryOp normalisation noise on specific arches
@@ -359,7 +359,7 @@ fn dispatch_on_flag_assertions(g: &strider_ir::Function) {
     //       which inserts a Neg between the IntCmp and the If).
     //   (c) A Call exists whose arg(0) is a struct-field Load (any
     //       offset captured into `off`).
-    let m = matcher(g);
+    let m = matcher(function);
     let mask = Capture::new();
 
     // Bit-test pattern: assert `IntCmp(Equal, And(_, single-bit-const), 0)`
@@ -417,9 +417,9 @@ fn dispatch_on_flag_assertions(g: &strider_ir::Function) {
 
 per_arch_test!("complex", "multi_arg_call_in_branch", multi_arg_call_in_branch_assertions);
 
-fn multi_arg_call_in_branch_assertions(g: &strider_ir::Function) {
-    assert!(count_calls(g) >= 2,
-            "multi_arg_call_in_branch must have ≥2 Calls; got {}", count_calls(g));
+fn multi_arg_call_in_branch_assertions(function: &strider_ir::Function) {
+    assert!(count_calls(function) >= 2,
+            "multi_arg_call_in_branch must have ≥2 Calls; got {}", count_calls(function));
 
     // The C source has TWO ext_three call sites with distinct arg
     // orderings: `ext_three(a, b, c)` on the True branch and
@@ -428,18 +428,18 @@ fn multi_arg_call_in_branch_assertions(g: &strider_ir::Function) {
     // via strict carrier-pat on every positional arg — a buggy
     // optimizer that fails to connect Call.arg(N) back to the carrier(N)
     // through the spill round-trip would lose one of the two matches.
-    let m = matcher(g);
+    let m = matcher(function);
     let nv_abc = Capture::new();
     let pat_abc: Pat = call()
-        .arg(0, arg_carrier_pat(g, 1))   // a
-        .arg(1, arg_carrier_pat(g, 2))   // b
-        .arg(2, arg_carrier_pat(g, 3))   // c
+        .arg(0, arg_carrier_pat(function, 1))   // a
+        .arg(1, arg_carrier_pat(function, 2))   // b
+        .arg(2, arg_carrier_pat(function, 3))   // c
         .capture(nv_abc);
     let nv_cba = Capture::new();
     let pat_cba: Pat = call()
-        .arg(0, arg_carrier_pat(g, 3))   // c
-        .arg(1, arg_carrier_pat(g, 2))   // b
-        .arg(2, arg_carrier_pat(g, 1))   // a
+        .arg(0, arg_carrier_pat(function, 3))   // c
+        .arg(1, arg_carrier_pat(function, 2))   // b
+        .arg(2, arg_carrier_pat(function, 1))   // a
         .capture(nv_cba);
     let hits_abc = m.find_all(&pat_abc);
     let hits_cba = m.find_all(&pat_cba);
@@ -466,8 +466,8 @@ fn multi_arg_call_in_branch_assertions(g: &strider_ir::Function) {
 
 per_arch_test!("complex", "complex_dispatch", complex_dispatch_assertions);
 
-fn complex_dispatch_assertions(g: &strider_ir::Function) {
-    let n = g.walk().count();
+fn complex_dispatch_assertions(function: &strider_ir::Function) {
+    let n = function.walk().count();
     // Larger function (many locals, several stack-allocated structs,
     // 3 loops, ≥10 branches, mixed-width compute) → expect a much
     // larger IR than the original 30-node smoke.  100 is comfortably
@@ -480,19 +480,19 @@ fn complex_dispatch_assertions(g: &strider_ir::Function) {
     // ladders + the inner loop branch + the acc<0 / acc>100 / padding
     // checks).  IR may merge or fold a few — assert ≥6 to stay above
     // the noise floor on optimising arches.
-    assert!(count_ifs(g) >= 6,
-            "complex_dispatch must have ≥6 Ifs; got {}", count_ifs(g));
+    assert!(count_ifs(function) >= 6,
+            "complex_dispatch must have ≥6 Ifs; got {}", count_ifs(function));
     // 7 source-level call sites: cb_zero (×2), cb_set (×2), invoke
     // (×3), ext_three (×2).  Cross-arch ≥4 is the conservative floor.
-    assert!(count_calls(g) >= 4,
-            "complex_dispatch must have ≥4 Calls; got {}", count_calls(g));
+    assert!(count_calls(function) >= 4,
+            "complex_dispatch must have ≥4 Calls; got {}", count_calls(function));
     // Stack-allocated `big`, `local_outer`, `locals[8]` produce many
     // stores at distinct stack offsets.
-    assert!(count_stores(g) >= 5,
-            "complex_dispatch must have ≥5 stores; got {}", count_stores(g));
+    assert!(count_stores(function) >= 5,
+            "complex_dispatch must have ≥5 stores; got {}", count_stores(function));
 
     // Multiple struct field accesses => at least one Load at base+const.
-    let m = matcher(g);
+    let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
     let pat: Pat = field_load_at_offset(base, off);
@@ -502,7 +502,7 @@ fn complex_dispatch_assertions(g: &strider_ir::Function) {
     // Distinct field offsets — proves multiple fields are accessed,
     // not the same one repeatedly.
     let offsets: std::collections::HashSet<u128> = m
-        .find_all(&pat).iter().filter_map(|h| h.get_uint(off, g)).collect();
+        .find_all(&pat).iter().filter_map(|h| h.get_uint(off, function)).collect();
     assert!(offsets.len() >= 2,
             "expected ≥2 distinct Load offsets in complex_dispatch; got {offsets:?}");
 }
@@ -513,7 +513,7 @@ fn complex_dispatch_assertions(g: &strider_ir::Function) {
 
 per_arch_test!("complex", "call_uses_call_return", call_uses_call_return_assertions);
 
-fn call_uses_call_return_assertions(g: &strider_ir::Function) {
+fn call_uses_call_return_assertions(function: &strider_ir::Function) {
     // Source: `consume(produce(x))` — outer Call's arg(0) is the
     // return value of the inner Call.  IR shape (-O0):
     //   call_inner = Call(produce, x)
@@ -528,24 +528,24 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
     // to another Call.  We walk the IR by hand from each Call's inputs
     // through whatever intermediate plumbing the optimizer left in place.
 
-    assert!(count_calls(g) >= 2,
-            "call_uses_call_return must have ≥2 Calls; got {}", count_calls(g));
+    assert!(count_calls(function) >= 2,
+            "call_uses_call_return must have ≥2 Calls; got {}", count_calls(function));
 
     // For each Call, walk every input slot back through any chain of
     // {Store, Load, Region, ValuePhi}.
     // If we hit another Call, the test passes — that's proof of
     // Call→Call dataflow.
-    let calls: Vec<NodeId> = g.walk()
-        .filter(|&n| matches!(g.node_kind(n), NodeKind::Call))
+    let calls: Vec<NodeId> = function.walk()
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call))
         .collect();
     let chained = calls.iter().any(|&outer| {
-        let outer_inputs: Vec<_> = g.node_inputs(outer).into_iter().collect();
+        let outer_inputs: Vec<_> = function.node_inputs(outer).into_iter().collect();
         outer_inputs.iter().any(|&inp| {
-            let mut producer = g.node_for_output(inp);
+            let mut producer = function.node_for_output(inp);
             // Bound walk to avoid pathological cycles; 16 hops is far
             // more than any reasonable spill round-trip.
             for _ in 0..16 {
-                match g.node_kind(producer) {
+                match function.node_kind(producer) {
                     NodeKind::Call if producer != outer => return true,
                     // Walk through plumbing that doesn't change the
                     // value identity.  For each kind, follow the
@@ -556,32 +556,32 @@ fn call_uses_call_return_assertions(g: &strider_ir::Function) {
                         // memory edge surfaces the producing store /
                         // call.
                         let inps: Vec<_> =
-                            g.node_inputs(producer).into_iter().collect();
+                            function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.node_for_output(first);
+                        producer = function.node_for_output(first);
                     }
                     NodeKind::Store(_) => {
                         // Store inputs: [mem, addr, data] — `data` is
                         // the value being persisted.
                         let inps: Vec<_> =
-                            g.node_inputs(producer).into_iter().collect();
+                            function.node_inputs(producer).into_iter().collect();
                         let Some(&data) = inps.get(2) else { break; };
-                        producer = g.node_for_output(data);
+                        producer = function.node_for_output(data);
                     }
                     NodeKind::Region => {
                         let inps: Vec<_> =
-                            g.node_inputs(producer).into_iter().collect();
+                            function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.node_for_output(first);
+                        producer = function.node_for_output(first);
                     }
-                    NodeKind::Phi if g.phi_var_tag(producer).is_none() => {
+                    NodeKind::Phi if function.phi_var_tag(producer).is_none() => {
                         // Anonymous phi (ValuePhi).  Take the first input;
                         // if it doesn't lead back to a Call we'll bail at
                         // the next step anyway.
                         let inps: Vec<_> =
-                            g.node_inputs(producer).into_iter().collect();
+                            function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = g.node_for_output(first);
+                        producer = function.node_for_output(first);
                     }
                     _ => break,
                 }

@@ -469,10 +469,10 @@ impl FunctionBuilder {
 
         // Stamp the user-op name + per-CallOther clobber override.
         let writes_vec: Vec<rsleigh::Vn> = implicit_writes_vns.to_vec();
-        let graph = self.function_mut();
-        graph.set_call_other_name(node, name.to_string());
+        let function = self.function_mut();
+        function.set_call_other_name(node, name.to_string());
         if !writes_vec.is_empty() {
-            graph.set_call_clobbered_override(node, writes_vec);
+            function.set_call_clobbered_override(node, writes_vec);
         }
 
         Ok((node, value_output, clobber_outputs))

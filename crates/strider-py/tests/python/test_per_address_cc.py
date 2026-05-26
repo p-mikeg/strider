@@ -34,7 +34,7 @@ def test_call_to_overridden_address_lifts_without_error():
     # Call in the resulting graph.  The Rust integration test
     # `crates/strider/tests/per_address_cc.rs` pins the exact clobber-
     # count shrink; the Python side here pins the kwarg plumbing.
-    assert len(overridden.graph.find_all(call())) == 1
+    assert len(overridden.function.find_all(call())) == 1
 
 
 def test_per_address_ccs_default_empty_does_not_break_normal_calls():
@@ -44,7 +44,7 @@ def test_per_address_ccs_default_empty_does_not_break_normal_calls():
     mem = MemoryMap()
     mem.add_region(0x1000, _x86_64_call_then_ret_bytes())
     result = strider.run(arch, cc, mem, entry=0x1000)
-    matches = result.graph.find_all(call())
+    matches = result.function.find_all(call())
     assert len(matches) == 1
 
 
@@ -130,7 +130,7 @@ def test_per_address_ccs_honoured_in_both_pipeline_paths(
         pipeline=pipeline,
     )
     pat = call().at(0x3000).arg(0, function_arg(0))
-    hits = res.graph.find_all(pat)
+    hits = res.function.find_all(pat)
     assert len(hits) == expected_hits, (
         f"use_custom_pipeline={use_custom_pipeline} "
         f"with_override={with_override}: got {len(hits)} hits, expected {expected_hits}"

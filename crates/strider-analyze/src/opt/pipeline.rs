@@ -319,12 +319,12 @@ mod tests {
     /// succeed (no validation error) and the graph must be unchanged.
     #[test]
     fn pipeline_run_validates_final_graph_on_clean_input() -> crate::opt::Result<()> {
-        let mut g = one_const_fn(3);
+        let mut function = one_const_fn(3);
         let pipeline = crate::opt::default_pipeline();
-        let entry = g.entry().unwrap();
-        let before = g.walk().count();
-        pipeline.run(&mut g, entry)?;
-        let after = g.walk().count();
+        let entry = function.entry().unwrap();
+        let before = function.walk().count();
+        pipeline.run(&mut function, entry)?;
+        let after = function.walk().count();
         // The default pipeline on an already-folded constant cannot fold
         // further; the reachable-count is stable.  This pins that
         // `run(graph, entry)` doesn't accidentally mutate the graph
@@ -352,12 +352,12 @@ mod tests {
             }
         }
 
-        let mut g = one_const_fn(0);
-        let entry = g.entry().unwrap();
+        let mut function = one_const_fn(0);
+        let entry = function.entry().unwrap();
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(&mut g, entry)
+            .run(&mut function, entry)
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -370,9 +370,9 @@ mod tests {
     /// is wired and accepts a clean graph (smoke).
     #[test]
     fn run_validates_after_default_pipeline() -> crate::opt::Result<()> {
-        let mut g = one_const_fn(0);
-        let entry = g.entry().unwrap();
-        crate::opt::default_pipeline().run(&mut g, entry)?;
+        let mut function = one_const_fn(0);
+        let entry = function.entry().unwrap();
+        crate::opt::default_pipeline().run(&mut function, entry)?;
         Ok(())
     }
 
@@ -396,13 +396,13 @@ mod tests {
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
-        let mut g = b.build()?;
-        let entry = g.entry().unwrap();
+        let mut function = b.build()?;
+        let entry = function.entry().unwrap();
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
-        p.run(&mut g, entry)?;
+        p.run(&mut function, entry)?;
         Ok(())
     }
 
@@ -438,8 +438,8 @@ mod tests {
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
-        let mut g = b.build()?;
-        let entry = g.entry().unwrap();
+        let mut function = b.build()?;
+        let entry = function.entry().unwrap();
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
@@ -447,14 +447,14 @@ mod tests {
         p.add(RedundantPhis);
         p.add(DeadBranchElimination);
         p.add(LoadForward::new(sp, Endianness::Little));
-        p.run(&mut g, entry)?;
+        p.run(&mut function, entry)?;
 
-        let ret = g
+        let ret = function
             .all_node_ids()
-            .find(|&n| matches!(g.node_kind(n), NodeKind::Return))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("Return present");
-        let val = g.node_inputs(ret)[2];
-        let kind = *g.kind_of_output(val);
+        let val = function.node_inputs(ret)[2];
+        let kind = *function.kind_of_output(val);
         assert!(
             matches!(kind, NodeKind::IntConst(0x42)),
             "load must forward to stored value, got {kind:?}"
@@ -498,8 +498,8 @@ mod tests {
         b.build_call(target)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
-        let mut g = b.build()?;
-        let entry = g.entry().unwrap();
+        let mut function = b.build()?;
+        let entry = function.entry().unwrap();
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
@@ -508,13 +508,13 @@ mod tests {
         p.add(DeadBranchElimination);
         p.add(LoadForward::new(sp, Endianness::Little));
         p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
-        p.run(&mut g, entry)?;
+        p.run(&mut function, entry)?;
 
-        let call = g
+        let call = function
             .all_node_ids()
-            .find(|&n| matches!(g.node_kind(n), NodeKind::Call))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
             .expect("Call present");
-        let inputs = g.node_inputs(call);
+        let inputs = function.node_inputs(call);
         assert_eq!(
             inputs.len(),
             5,
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn long_reassoc_chain_converges() -> crate::opt::Result<()> {
         use strider_ir::IntBinaryOp;
-        let mut g = strider_ir_test_utils::make_empty_fn(|b| {
+        let mut function = strider_ir_test_utils::make_empty_fn(|b| {
             let mut acc = b.build_int_const(0u64, NodeOutputType::U64)?;
             for _ in 0..50 {
                 let one = b.build_int_const(1u64, NodeOutputType::U64)?;
@@ -542,14 +542,14 @@ mod tests {
             }
             Ok(acc)
         })?;
-        let entry = g.entry().unwrap();
-        crate::opt::default_pipeline().run(&mut g, entry)?;
+        let entry = function.entry().unwrap();
+        crate::opt::default_pipeline().run(&mut function, entry)?;
         // After fixed point, the 50-deep chain has folded to a single
         // `IntConst(50)`; the reachable set is small.
         assert!(
-            g.walk().count() < 20,
+            function.walk().count() < 20,
             "50-deep chain should fold; reachable={}",
-            g.walk().count()
+            function.walk().count()
         );
         Ok(())
     }

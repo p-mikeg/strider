@@ -772,28 +772,28 @@ mod tests {
     /// `swap=true` produces `op(IntConst(c), inner)`.  `ty` is the output
     /// type of both operands and the result.
     fn build_binop_wrapped(
-        graph: &mut strider_ir::Function,
+        function: &mut strider_ir::Function,
         inner: NodeOutputId,
         op: IntBinaryOp,
         c: u64,
         ty: NodeOutputType,
         swap: bool,
     ) -> NodeOutputId {
-        let const_node = graph.create_node(
+        let const_node = function.create_node(
             NodeKind::IntConst(u128::from(c)),
             [],
             [strider_ir::node::NodeOutputKind::OutputType(ty)],
         );
-        graph.set_asm_fingerprint(const_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let const_out = graph.node_outputs_exact::<1>(const_node).unwrap()[0];
+        function.set_asm_fingerprint(const_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let const_out = function.node_outputs_exact::<1>(const_node).unwrap()[0];
         let (lhs, rhs) = if swap { (const_out, inner) } else { (inner, const_out) };
-        let n = graph.create_node(
+        let n = function.create_node(
             NodeKind::IntBinaryOp(op),
             [lhs, rhs],
             [strider_ir::node::NodeOutputKind::OutputType(ty)],
         );
-        graph.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        graph.node_outputs_exact::<1>(n).unwrap()[0]
+        function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        function.node_outputs_exact::<1>(n).unwrap()[0]
     }
 
     #[test]
@@ -887,38 +887,38 @@ mod tests {
     /// Build a right-spine Add tree of the given depth over fresh
     /// IntConst(i) leaves.  Returns the root NodeOutputId.
     fn build_right_spine_add_tree(
-        graph: &mut strider_ir::Function,
+        function: &mut strider_ir::Function,
         depth: usize,
     ) -> NodeOutputId {
         assert!(depth >= 1, "need at least one node");
         // Innermost: IntConst(0).  Wrap depth-1 additional Add layers,
         // each adding a fresh IntConst on the LHS.
         let mut cur = {
-            let n = graph.create_node(
+            let n = function.create_node(
                 NodeKind::IntConst(0u128),
                 [],
                 [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
             );
-            graph.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-            graph.node_outputs_exact::<1>(n).unwrap()[0]
+            function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+            function.node_outputs_exact::<1>(n).unwrap()[0]
         };
         for i in 1..depth {
             let leaf = {
-                let n = graph.create_node(
+                let n = function.create_node(
                     NodeKind::IntConst(u128::from(i as u64)),
                     [],
                     [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
                 );
-                graph.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-                graph.node_outputs_exact::<1>(n).unwrap()[0]
+                function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+                function.node_outputs_exact::<1>(n).unwrap()[0]
             };
-            let add = graph.create_node(
+            let add = function.create_node(
                 NodeKind::IntBinaryOp(IntBinaryOp::Add),
                 [leaf, cur],
                 [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
             );
-            graph.set_asm_fingerprint(add, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-            cur = graph.node_outputs_exact::<1>(add).unwrap()[0];
+            function.set_asm_fingerprint(add, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+            cur = function.node_outputs_exact::<1>(add).unwrap()[0];
         }
         cur
     }

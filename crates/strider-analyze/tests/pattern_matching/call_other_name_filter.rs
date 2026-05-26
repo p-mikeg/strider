@@ -20,9 +20,9 @@ fn name_matches_only_target() {
         .build_call_other_modeled(2, "rdtsc", &[], None, &[], &[], &[])
         .expect("rdtsc");
     b.build_return(None, &[]).expect("return");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
-    let matches = Matcher::try_new(&g)
+    let matches = Matcher::try_new(&function)
         .unwrap()
         .find_all(&call_other().name("cpuid").into());
     assert_eq!(matches.len(), 1, "should match exactly the cpuid CallOther");

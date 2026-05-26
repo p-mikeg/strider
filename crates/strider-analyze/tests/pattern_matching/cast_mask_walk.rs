@@ -20,9 +20,9 @@ use strider_ir_test_utils::RegisterSet;
 /// variable.  Without this pass, `read_variable(vn)` returns the
 /// `Phi(Some(vn))` output (with `InitialVar(vn)` as its sole input),
 /// which sits between the matcher's input descent and the InitialVar.
-fn collapse_phis(g: &mut Function) {
-    let entry = g.entry().expect("entry");
-    RedundantPhis.optimize(g, entry).expect("RedundantPhis");
+fn collapse_phis(function: &mut Function) {
+    let entry = function.entry().expect("entry");
+    RedundantPhis.optimize(function, entry).expect("RedundantPhis");
 }
 
 // ── Fixture builder ─────────────────────────────────────────────────────────
@@ -59,9 +59,9 @@ where
         .build_int_binary_operation(wrapped, c, IntBinaryOp::Add, ty)
         .unwrap();
     fb.build_return(Some(total), &[]).unwrap();
-    let mut g = fb.build().unwrap();
-    collapse_phis(&mut g);
-    g
+    let mut function = fb.build().unwrap();
+    collapse_phis(&mut function);
+    function
 }
 
 /// Pattern: `add(initial_var(x_vn), int_const(_))`.
@@ -70,8 +70,8 @@ fn pat() -> Pat {
 }
 
 /// Run the pattern under `mask` and return the match count.
-fn count(g: &Function, mask: CastMask) -> usize {
-    Matcher::try_new(g).unwrap().ignore_casts_mask(mask).find_all(&pat()).len()
+fn count(function: &Function, mask: CastMask) -> usize {
+    Matcher::try_new(function).unwrap().ignore_casts_mask(mask).find_all(&pat()).len()
 }
 
 // ── Add(Truncate(InitialVar), IntConst) ─────────────────────────────────────
@@ -85,26 +85,26 @@ fn fixture_truncate_then_add() -> Function {
 
 #[test]
 fn truncate_initial_var_empty_mask_zero_matches() {
-    let g = fixture_truncate_then_add();
-    assert_eq!(count(&g, CastMask::empty()), 0);
+    let function = fixture_truncate_then_add();
+    assert_eq!(count(&function, CastMask::empty()), 0);
 }
 
 #[test]
 fn truncate_initial_var_truncate_mask_one_match() {
-    let g = fixture_truncate_then_add();
-    assert_eq!(count(&g, CastMask::TRUNCATE), 1);
+    let function = fixture_truncate_then_add();
+    assert_eq!(count(&function, CastMask::TRUNCATE), 1);
 }
 
 #[test]
 fn truncate_initial_var_extend_mask_zero_matches() {
-    let g = fixture_truncate_then_add();
-    assert_eq!(count(&g, CastMask::EXTEND), 0);
+    let function = fixture_truncate_then_add();
+    assert_eq!(count(&function, CastMask::EXTEND), 0);
 }
 
 #[test]
 fn truncate_initial_var_all_mask_one_match() {
-    let g = fixture_truncate_then_add();
-    assert_eq!(count(&g, CastMask::all()), 1);
+    let function = fixture_truncate_then_add();
+    assert_eq!(count(&function, CastMask::all()), 1);
 }
 
 // ── Add(ZeroExtend(InitialVar), IntConst) ───────────────────────────────────
@@ -131,8 +131,8 @@ fn pat_u32_initial_var() -> Pat {
     add(initial_var_for(x_u32_vn()), any_int_const(Capture::new())).into()
 }
 
-fn count_u32(g: &Function, mask: CastMask) -> usize {
-    Matcher::try_new(g).unwrap()
+fn count_u32(function: &Function, mask: CastMask) -> usize {
+    Matcher::try_new(function).unwrap()
         .ignore_casts_mask(mask)
         .find_all(&pat_u32_initial_var())
         .len()
@@ -140,20 +140,20 @@ fn count_u32(g: &Function, mask: CastMask) -> usize {
 
 #[test]
 fn zext_initial_var_zero_extend_mask_one_match() {
-    let g = fixture_zext_then_add();
-    assert_eq!(count_u32(&g, CastMask::ZERO_EXTEND), 1);
+    let function = fixture_zext_then_add();
+    assert_eq!(count_u32(&function, CastMask::ZERO_EXTEND), 1);
 }
 
 #[test]
 fn zext_initial_var_sign_extend_mask_zero_matches() {
-    let g = fixture_zext_then_add();
-    assert_eq!(count_u32(&g, CastMask::SIGN_EXTEND), 0);
+    let function = fixture_zext_then_add();
+    assert_eq!(count_u32(&function, CastMask::SIGN_EXTEND), 0);
 }
 
 #[test]
 fn zext_initial_var_extend_mask_one_match() {
-    let g = fixture_zext_then_add();
-    assert_eq!(count_u32(&g, CastMask::EXTEND), 1);
+    let function = fixture_zext_then_add();
+    assert_eq!(count_u32(&function, CastMask::EXTEND), 1);
 }
 
 // ── Add(SignExtend(InitialVar), IntConst) ───────────────────────────────────
@@ -168,20 +168,20 @@ fn fixture_sext_then_add() -> Function {
 
 #[test]
 fn sext_initial_var_sign_extend_mask_one_match() {
-    let g = fixture_sext_then_add();
-    assert_eq!(count_u32(&g, CastMask::SIGN_EXTEND), 1);
+    let function = fixture_sext_then_add();
+    assert_eq!(count_u32(&function, CastMask::SIGN_EXTEND), 1);
 }
 
 #[test]
 fn sext_initial_var_zero_extend_mask_zero_matches() {
-    let g = fixture_sext_then_add();
-    assert_eq!(count_u32(&g, CastMask::ZERO_EXTEND), 0);
+    let function = fixture_sext_then_add();
+    assert_eq!(count_u32(&function, CastMask::ZERO_EXTEND), 0);
 }
 
 #[test]
 fn sext_initial_var_extend_mask_one_match() {
-    let g = fixture_sext_then_add();
-    assert_eq!(count_u32(&g, CastMask::EXTEND), 1);
+    let function = fixture_sext_then_add();
+    assert_eq!(count_u32(&function, CastMask::EXTEND), 1);
 }
 
 // ── Add(Truncate(ZeroExtend(InitialVar)), IntConst) — chained casts ─────────
@@ -208,8 +208,8 @@ fn pat_u16_initial_var() -> Pat {
     add(initial_var_for(x_u16_vn()), any_int_const(Capture::new())).into()
 }
 
-fn count_u16(g: &Function, mask: CastMask) -> usize {
-    Matcher::try_new(g).unwrap()
+fn count_u16(function: &Function, mask: CastMask) -> usize {
+    Matcher::try_new(function).unwrap()
         .ignore_casts_mask(mask)
         .find_all(&pat_u16_initial_var())
         .len()
@@ -217,21 +217,21 @@ fn count_u16(g: &Function, mask: CastMask) -> usize {
 
 #[test]
 fn truncate_of_zext_truncate_only_mask_zero_matches() {
-    let g = fixture_truncate_of_zext_then_add();
-    assert_eq!(count_u16(&g, CastMask::TRUNCATE), 0);
+    let function = fixture_truncate_of_zext_then_add();
+    assert_eq!(count_u16(&function, CastMask::TRUNCATE), 0);
 }
 
 #[test]
 fn truncate_of_zext_zero_extend_only_mask_zero_matches() {
-    let g = fixture_truncate_of_zext_then_add();
-    assert_eq!(count_u16(&g, CastMask::ZERO_EXTEND), 0);
+    let function = fixture_truncate_of_zext_then_add();
+    assert_eq!(count_u16(&function, CastMask::ZERO_EXTEND), 0);
 }
 
 #[test]
 fn truncate_of_zext_truncate_or_zero_extend_mask_one_match() {
-    let g = fixture_truncate_of_zext_then_add();
+    let function = fixture_truncate_of_zext_then_add();
     assert_eq!(
-        count_u16(&g, CastMask::TRUNCATE | CastMask::ZERO_EXTEND),
+        count_u16(&function, CastMask::TRUNCATE | CastMask::ZERO_EXTEND),
         1
     );
 }
@@ -255,8 +255,8 @@ fn fixture_deep_cast_chain(levels: usize) -> Function {
 
 #[test]
 fn deep_cast_chain_walks_through_all_levels() {
-    let g = fixture_deep_cast_chain(500);
-    let count = Matcher::try_new(&g).unwrap()
+    let function = fixture_deep_cast_chain(500);
+    let count = Matcher::try_new(&function).unwrap()
         .ignore_casts_mask(CastMask::TRUNCATE | CastMask::ZERO_EXTEND)
         .find_all(&pat())
         .len();
@@ -265,8 +265,8 @@ fn deep_cast_chain_walks_through_all_levels() {
 
 #[test]
 fn deep_cast_chain_with_partial_mask_does_not_match() {
-    let g = fixture_deep_cast_chain(500);
-    let count = Matcher::try_new(&g).unwrap()
+    let function = fixture_deep_cast_chain(500);
+    let count = Matcher::try_new(&function).unwrap()
         .ignore_casts_mask(CastMask::TRUNCATE)
         .find_all(&pat())
         .len();

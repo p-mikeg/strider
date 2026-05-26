@@ -18,11 +18,11 @@ use super::support::{assertions as a, shapes};
 
 #[test]
 fn cond_with_true_branch_matches_direct() {
-    let g = shapes::if_cmp_then_return(4);
+    let function = shapes::if_cmp_then_return(4);
     let pat = if_node()
         .cond(int_eq(int_const(4u64), int_const(1u64)))
         .true_branch(any());
-    a::matches(&g, pat, 1);
+    a::matches(&function, pat, 1);
 }
 
 #[test]
@@ -30,12 +30,12 @@ fn inverted_cond_no_match_until_canonicalised() {
     // Inverted graph: cond is `Not(IntEq(...))`, branches swapped.
     // Direct-layout `IfPat` must NOT match — the cond doesn't match the
     // pattern shape (the pattern asks for `IntEq`, not `BoolNeg(IntEq)`).
-    let g = shapes::if_cmp_then_return_inverted(4);
+    let function = shapes::if_cmp_then_return_inverted(4);
     let pat: Pat = if_node()
         .cond(int_eq(int_const(4u64), int_const(1u64)))
         .true_branch(any())
         .into();
-    a::none(&g, pat);
+    a::none(&function, pat);
 }
 
 #[test]
@@ -43,9 +43,9 @@ fn inverted_cond_matches_after_if_cond_inversion() {
     // Run the `IfCondInversion` pass to canonicalise the inverted graph,
     // then verify the same direct-layout pattern matches.  This pins the
     // contract that motivated moving the symmetry into a pass.
-    let mut g = shapes::if_cmp_then_return_inverted(4);
-    let entry = g.entry().expect("entry");
-    let r = IfCondInversion.optimize(&mut g, entry).expect("opt");
+    let mut function = shapes::if_cmp_then_return_inverted(4);
+    let entry = function.entry().expect("entry");
+    let r = IfCondInversion.optimize(&mut function, entry).expect("opt");
     assert!(
         r.changed(),
         "IfCondInversion must rewrite the inverted-cond If"
@@ -54,18 +54,18 @@ fn inverted_cond_matches_after_if_cond_inversion() {
     let pat = if_node()
         .cond(int_eq(int_const(4u64), int_const(1u64)))
         .true_branch(any());
-    a::matches(&g, pat, 1);
+    a::matches(&function, pat, 1);
 }
 
 // ── Cond mismatch still doesn't match ────────────────────────────────────────
 
 #[test]
 fn cond_mismatch_no_match_in_direct() {
-    let g = shapes::if_cmp_then_return(4);
+    let function = shapes::if_cmp_then_return(4);
     let pat = if_node()
         .cond(int_eq(int_const(99u64), int_const(1u64))) // wrong constant
         .true_branch(any());
-    a::none(&g, pat);
+    a::none(&function, pat);
 }
 
 // ── No cond: matches both fixtures (direct and inverted) ─────────────────────

@@ -23,13 +23,13 @@ use strider_target::{CallingConvention, SleighArch};
 ///
 /// The placeholder `IndirectBranch` has exactly 3 inputs:
 /// `[control, memory, target_value]`.
-pub fn anchor_value_input(graph: &Function) -> Option<strider_ir::Value> {
+pub fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
     let mut found: Option<strider_ir::Value> = None;
-    for nid in graph.walk() {
-        if !matches!(graph.node_kind(nid), NodeKind::IndirectBranch) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
-        let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
+        let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
         assert!(
             inputs.len() == 3,
             "IndirectBranch placeholder must have exactly 3 inputs; got {}",
@@ -74,7 +74,7 @@ pub fn run_pipeline_x86_64(
     let outcome = strider
         .analyze_cfg(&cfg)
         .expect("analyze_cfg");
-    let mut graph = outcome.function;
+    let mut function = outcome.function;
 
     // Run the full optimiser pipeline so the placeholder's anchor
     // value reaches the producer-shape the classifier looks at.
@@ -82,7 +82,7 @@ pub fn run_pipeline_x86_64(
     // RedundantPhis simplifies the trivial Return shape we don't
     // need to walk past.
     let p = strider.build_optimizer_pipeline();
-    p.run_built(&mut graph).expect("optimizer pipeline");
+    p.run_built(&mut function).expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),
@@ -94,7 +94,7 @@ pub fn run_pipeline_x86_64(
     // `replace_all_uses`-rewrote the placeholder's input slot
     // (e.g. ConstantFold rewriting a folded IntBinaryOp into an
     // IntConst).  See module-level docs for the full contract.
-    let anchor = anchor_value_input(&graph)
+    let anchor = anchor_value_input(&function)
         .expect("fixture must have one IndirectBranch placeholder after optimisation");
-    (graph, anchor, lr_vn)
+    (function, anchor, lr_vn)
 }

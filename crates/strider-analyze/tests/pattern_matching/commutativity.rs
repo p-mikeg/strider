@@ -19,15 +19,15 @@ use super::support::{Tb, assertions as a, shapes};
 
 #[test]
 fn add_commutes() {
-    let g = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    a::matches(&g, add(int_const(3), int_const(5)), 1); // swapped
-    a::matches(&g, add(int_const(5), int_const(3)), 1); // canonical
+    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
+    a::matches(&function, add(int_const(3), int_const(5)), 1); // swapped
+    a::matches(&function, add(int_const(5), int_const(3)), 1); // canonical
 }
 
 #[test]
 fn mul_commutes() {
-    let g = shapes::int_bin(7, 9, IntBinaryOp::Mul);
-    a::matches(&g, mul(int_const(9), int_const(7)), 1);
+    let function = shapes::int_bin(7, 9, IntBinaryOp::Mul);
+    a::matches(&function, mul(int_const(9), int_const(7)), 1);
 }
 
 #[test]
@@ -44,17 +44,17 @@ fn and_or_xor_commute() {
 
 #[test]
 fn ordered_rejects_swap() {
-    let g = shapes::int_bin(5, 3, IntBinaryOp::Add);
+    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
     // Swapped order with `.ordered()` must fail.
-    a::none(&g, add(int_const(3), int_const(5)).ordered());
+    a::none(&function, add(int_const(3), int_const(5)).ordered());
     // But canonical order still matches.
-    a::matches(&g, add(int_const(5), int_const(3)).ordered(), 1);
+    a::matches(&function, add(int_const(5), int_const(3)).ordered(), 1);
 }
 
 #[test]
 fn ordered_mul_rejects_swap() {
-    let g = shapes::int_bin(7, 9, IntBinaryOp::Mul);
-    a::none(&g, mul(int_const(9), int_const(7)).ordered());
+    let function = shapes::int_bin(7, 9, IntBinaryOp::Mul);
+    a::none(&function, mul(int_const(9), int_const(7)).ordered());
 }
 
 // ── No duplicate match from the swap retry ───────────────────────────────────
@@ -63,16 +63,16 @@ fn ordered_mul_rejects_swap() {
 fn commutative_match_emits_single_match_per_root() {
     // add(5, 3): pattern add(any(), any()) would in principle match twice if
     // the swap retry over-counted.  Exactly one match per root.
-    let g = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    a::matches(&g, add(any(), any()), 1);
+    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
+    a::matches(&function, add(any(), any()), 1);
 }
 
 #[test]
 fn commutative_match_with_identical_operands_emits_one() {
     // add(5, 5) — constant dedup means both operands share a NodeOutputId.
     // add(int_const(5), int_const(5)) must match exactly once.
-    let g = shapes::int_bin(5, 5, IntBinaryOp::Add);
-    a::matches(&g, add(int_const(5), int_const(5)), 1);
+    let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
+    a::matches(&function, add(int_const(5), int_const(5)), 1);
 }
 
 // ── Non-commutative ops REJECT swap ──────────────────────────────────────────
@@ -86,9 +86,9 @@ fn sub_does_not_commute() {
     let l = t.u64(5);
     let r = t.u64(3);
     let lowered = t.sub(l, r);
-    let g = t.ret_val(lowered);
-    a::none(&g, sub(int_const(3), int_const(5)));
-    a::matches(&g, sub(int_const(5), int_const(3)), 1);
+    let function = t.ret_val(lowered);
+    a::none(&function, sub(int_const(3), int_const(5)));
+    a::matches(&function, sub(int_const(5), int_const(3)), 1);
 }
 
 #[test]
@@ -170,24 +170,24 @@ fn commutative_outer_non_commutative_inner() {
     let c = t.u64(5);
     let d = t.sub(a, b);
     let s = t.add(d, c);
-    let g = t.ret_val(s);
+    let function = t.ret_val(s);
 
     // Canonical shape.
     a::matches(
-        &g,
+        &function,
         add(sub(int_const(10), int_const(3)), int_const(5)),
         1,
     );
     // Outer-add swapped: still matches (commutative).
     a::matches(
-        &g,
+        &function,
         add(int_const(5), sub(int_const(10), int_const(3))),
         1,
     );
     // Inner-sub swapped: must NOT match.
-    a::none(&g, add(sub(int_const(3), int_const(10)), int_const(5)));
+    a::none(&function, add(sub(int_const(3), int_const(10)), int_const(5)));
     // Inner swap combined with outer swap: still must NOT match.
-    a::none(&g, add(int_const(5), sub(int_const(3), int_const(10))));
+    a::none(&function, add(int_const(5), sub(int_const(3), int_const(10))));
 }
 
 // ── Capture consistency across commutative swap ──────────────────────────────
@@ -201,19 +201,19 @@ fn commutative_swap_does_not_leak_bindings() {
     // add(5, 3): operands are distinct.  Pattern `add(var(x), var(x))` should
     // NOT match (the two operands are different `NodeOutputId`s and `x`
     // enforces identity).
-    let g = shapes::int_bin(5, 3, IntBinaryOp::Add);
+    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
     let x = Capture::new();
-    a::none(&g, add(var(x), var(x)));
+    a::none(&function, add(var(x), var(x)));
 }
 
 #[test]
 fn commutative_swap_matches_identical_operand_with_identity_capture() {
     // add(5, 5): constant dedup makes both operands the same output.  Now
     // `add(var(x), var(x))` MUST match.
-    let g = shapes::int_bin(5, 5, IntBinaryOp::Add);
+    let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
     let x = Capture::new();
-    let m = a::unique(&g, add(var(x), var(x)));
-    assert_eq!(m.get_uint(x, &g), Some(5));
+    let m = a::unique(&function, add(var(x), var(x)));
+    assert_eq!(m.get_uint(x, &function), Some(5));
 }
 
 // ── float_cmp commutativity ──────────────────────────────────────────────────
@@ -231,16 +231,16 @@ fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Function {
 
 #[test]
 fn float_eq_commutes() {
-    let g = graph_float_cmp(1.0, 2.0, FloatCmpOp::Equal);
-    a::matches(&g, float_cmp(FloatCmpOp::Equal, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);
-    a::matches(&g, float_cmp(FloatCmpOp::Equal, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
+    let function = graph_float_cmp(1.0, 2.0, FloatCmpOp::Equal);
+    a::matches(&function, float_cmp(FloatCmpOp::Equal, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);
+    a::matches(&function, float_cmp(FloatCmpOp::Equal, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
 }
 
 #[test]
 fn float_ne_commutes() {
     // `FloatCmpOp::NotEqual` is no longer a primitive — `pattern::float_ne`
     // is an ergonomic alias that constructs `BoolNeg(FloatEqual(_, _))`.
-    let g = {
+    let function = {
         let mut t = Tb::empty();
         let a = t.f64(1.0);
         let b = t.f64(2.0);
@@ -249,15 +249,15 @@ fn float_ne_commutes() {
         let as_int = t.as_int(ne, strider_ir::node::NodeOutputType::U64);
         t.ret_val(as_int)
     };
-    a::matches(&g, float_ne(float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);
-    a::matches(&g, float_ne(float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
+    a::matches(&function, float_ne(float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);
+    a::matches(&function, float_ne(float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
 }
 
 #[test]
 fn float_lt_does_not_commute() {
-    let g = graph_float_cmp(1.0, 2.0, FloatCmpOp::Less);
+    let function = graph_float_cmp(1.0, 2.0, FloatCmpOp::Less);
     // Canonical order matches.
-    a::matches(&g, float_cmp(FloatCmpOp::Less, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
+    a::matches(&function, float_cmp(FloatCmpOp::Less, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
     // Swapped order must NOT match — Less is directional.
-    a::none(&g, float_cmp(FloatCmpOp::Less, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())));
+    a::none(&function, float_cmp(FloatCmpOp::Less, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())));
 }

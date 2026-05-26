@@ -27,7 +27,7 @@ pub(crate) enum AliasStep {
 /// safe for an SP-rooted query range.  See [`AliasMode`] for the
 /// soundness/coverage trade-off the `mode` parameter controls.
 pub(crate) fn step_through_store(
-    graph: &Function,
+    function: &Function,
     node: NodeId,
     stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
@@ -36,11 +36,11 @@ pub(crate) fn step_through_store(
     mode: AliasMode,
 ) -> AliasStep {
     // Store inputs: [MEM, ADDR, DATA].
-    let inputs = graph.node_inputs(node);
+    let inputs = function.node_inputs(node);
     if inputs.len() < 3 {
         return AliasStep::MayAlias;
     }
-    match decompose_sp(graph, inputs[1], stack_vn, sp_memo) {
+    match decompose_sp(function, inputs[1], stack_vn, sp_memo) {
         None => match mode {
             // Strict: cannot prove disjoint from an SP-rooted query
             // without a memory-layout assumption.  Bail.
@@ -51,8 +51,8 @@ pub(crate) fn step_through_store(
             // step through.  Anchor addresses (anything else) still
             // bail — closing that gap requires escape analysis.
             AliasMode::AssumeStackConstDisjoint => {
-                let store_addr_node = graph.node_for_output(inputs[1]);
-                if matches!(graph.node_kind(store_addr_node), NodeKind::IntConst(_)) {
+                let store_addr_node = function.node_for_output(inputs[1]);
+                if matches!(function.node_kind(store_addr_node), NodeKind::IntConst(_)) {
                     AliasStep::PassThrough { prev_mem: inputs[0] }
                 } else {
                     AliasStep::MayAlias
@@ -60,7 +60,7 @@ pub(crate) fn step_through_store(
             }
         },
         Some(SpExpr::Terminal { base: _, offset: store_off }) => {
-            let store_size = store_value_byte_size(graph, inputs[2]);
+            let store_size = store_value_byte_size(function, inputs[2]);
             if ranges_disjoint(store_off, store_size, query_off, query_size) {
                 AliasStep::PassThrough { prev_mem: inputs[0] }
             } else {

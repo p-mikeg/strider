@@ -42,30 +42,30 @@ per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
     ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatUnaryOp::Neg",
 });
 
-fn has_four_float_binops(g: &strider_ir::Function) {
+fn has_four_float_binops(function: &strider_ir::Function) {
     // `FloatBinaryOp::Sub` is no longer a primitive — `FloatSub` lifts to
     // `FloatAdd(_, FloatUnaryOp::Neg(_))`.  A real subtraction in the
     // source contributes one `FloatAdd` AND one `FloatUnaryOp::Neg`, so
     // counting Adds alone double-counts subtractions; instead we count
     // each binop kind plus the lowered-Sub `Neg` markers.
-    let total = count_float_binop(g, FloatBinaryOp::Add)
-        + count_float_binop(g, FloatBinaryOp::Mul)
-        + count_float_binop(g, FloatBinaryOp::Div);
+    let total = count_float_binop(function, FloatBinaryOp::Add)
+        + count_float_binop(function, FloatBinaryOp::Mul)
+        + count_float_binop(function, FloatBinaryOp::Div);
     assert!(total >= 4, "expected ≥4 FloatBinaryOp (including lowered subs counted as Add), got {total}");
 }
-fn has_float_to_float(g: &strider_ir::Function) {
-    assert!(has_kind(g, |k| matches!(k, NodeKind::FloatToFloat)),
+fn has_float_to_float(function: &strider_ir::Function) {
+    assert!(has_kind(function, |k| matches!(k, NodeKind::FloatToFloat)),
             "expected ≥1 FloatToFloat node");
 }
-fn has_int_to_float(g: &strider_ir::Function) {
-    assert!(has_kind(g, |k| matches!(k, NodeKind::IntToFloat)),
+fn has_int_to_float(function: &strider_ir::Function) {
+    assert!(has_kind(function, |k| matches!(k, NodeKind::IntToFloat)),
             "expected ≥1 IntToFloat node");
 }
-fn has_float_to_int(g: &strider_ir::Function) {
-    assert!(has_kind(g, |k| matches!(k, NodeKind::FloatToInt)),
+fn has_float_to_int(function: &strider_ir::Function) {
+    assert!(has_kind(function, |k| matches!(k, NodeKind::FloatToInt)),
             "expected ≥1 FloatToInt node");
 }
-fn has_two_float_cmps(g: &strider_ir::Function) {
+fn has_two_float_cmps(function: &strider_ir::Function) {
     // The C source has two `if (a OP b) ...` branches.  x64 / aarch64 may
     // lower one or both via cmov / csel (conditional-move) instead of a
     // real branch — those don't appear as `If` nodes in the IR.  The
@@ -75,10 +75,10 @@ fn has_two_float_cmps(g: &strider_ir::Function) {
     // `LessEqual` and `NotEqual` are no longer primitives — they lower to
     // compositions of `Equal` and `Less` (see `strider_lift::pcode_lift::value::float`).
     // Either source-level `<=` becomes one `Equal` + one `Less` here.
-    let total = count_float_cmp(g, FloatCmpOp::Less) + count_float_cmp(g, FloatCmpOp::Equal);
+    let total = count_float_cmp(function, FloatCmpOp::Less) + count_float_cmp(function, FloatCmpOp::Equal);
     assert!(total >= 2, "expected ≥2 FloatCmpOp, got {total}");
 }
-fn has_float_neg(g: &strider_ir::Function) {
+fn has_float_neg(function: &strider_ir::Function) {
     // Float negation `-f` has two equally-valid lowerings, with several
     // arch-specific variants:
     //   1. FloatUnaryOp::Neg (semantic; some lifters emit this directly).
@@ -90,11 +90,11 @@ fn has_float_neg(g: &strider_ir::Function) {
     // Accept any of: Neg node OR any Xor (the lowering of float-neg always
     // involves at least one Xor on archs without a dedicated FloatNeg).
     use strider_ir::FloatUnaryOp;
-    let has_neg = count_float_unop(g, FloatUnaryOp::Neg) >= 1;
-    let has_xor = count_int_binop(g, strider_ir::IntBinaryOp::Xor) >= 1;
+    let has_neg = count_float_unop(function, FloatUnaryOp::Neg) >= 1;
+    let has_xor = count_int_binop(function, strider_ir::IntBinaryOp::Xor) >= 1;
     assert!(has_neg || has_xor,
             "expected FloatUnaryOp::Neg or any Xor (sign-bit toggle); \
              neg_count={}, xor_count={}",
-            count_float_unop(g, FloatUnaryOp::Neg),
-            count_int_binop(g, strider_ir::IntBinaryOp::Xor));
+            count_float_unop(function, FloatUnaryOp::Neg),
+            count_int_binop(function, strider_ir::IntBinaryOp::Xor));
 }

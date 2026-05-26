@@ -23,12 +23,12 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let v_stack = t.load_ram(addr_stack, NodeOutputType::U64);
     let v_heap = t.load_ram(addr_heap, NodeOutputType::U64);
     let sum = t.add(v_stack, v_heap);
-    let mut g = t.ret_val(sum);
+    let mut function = t.ret_val(sum);
 
     // Find the load nodes; mark the 0x1000 load as stack-relative.
-    let loads: Vec<NodeId> = g
+    let loads: Vec<NodeId> = function
         .walk()
-        .filter(|&n| matches!(g.node_kind(n), NodeKind::Load(_)))
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Load(_)))
         .collect();
     assert_eq!(loads.len(), 2, "expected exactly 2 Load nodes");
 
@@ -37,9 +37,9 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let mut stack_node = None;
     let mut heap_node = None;
     for &load_node in &loads {
-        let inputs = g.node_inputs(load_node);
+        let inputs = function.node_inputs(load_node);
         let addr_out = inputs[1];
-        if let NodeKind::IntConst(v) = g.kind_of_output(addr_out) {
+        if let NodeKind::IntConst(v) = function.kind_of_output(addr_out) {
             if *v == 0x1000 {
                 stack_node = Some(load_node);
             } else {
@@ -49,8 +49,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     }
     let stack_node = stack_node.expect("stack load node");
     let heap_node = heap_node.expect("heap load node");
-    g.set_stack_offset(stack_node, 0x10);
-    (g, stack_node, heap_node)
+    function.set_stack_offset(stack_node, 0x10);
+    (function, stack_node, heap_node)
 }
 
 /// A graph containing two RAM Stores: one with a stack-offset entry (offset
@@ -65,21 +65,21 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     t.store_ram(addr_stack, data);
     t.store_ram(addr_heap, data);
     let v = t.load_ram(addr_stack, NodeOutputType::U64);
-    let mut g = t.ret_val(v);
+    let mut function = t.ret_val(v);
 
     // Identify the two stores.
-    let stores: Vec<NodeId> = g
+    let stores: Vec<NodeId> = function
         .walk()
-        .filter(|&n| matches!(g.node_kind(n), NodeKind::Store(_)))
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Store(_)))
         .collect();
     assert_eq!(stores.len(), 2, "expected exactly 2 Store nodes");
 
     let mut stack_store = None;
     let mut heap_store = None;
     for &store_node in &stores {
-        let inputs = g.node_inputs(store_node);
+        let inputs = function.node_inputs(store_node);
         let addr_out = inputs[1];
-        if let NodeKind::IntConst(v) = g.kind_of_output(addr_out) {
+        if let NodeKind::IntConst(v) = function.kind_of_output(addr_out) {
             if *v == 0x1000 {
                 stack_store = Some(store_node);
             } else {
@@ -89,8 +89,8 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     }
     let stack_store = stack_store.expect("stack store node");
     let heap_store = heap_store.expect("heap store node");
-    g.set_stack_offset(stack_store, 0x10);
-    (g, stack_store, heap_store)
+    function.set_stack_offset(stack_store, 0x10);
+    (function, stack_store, heap_store)
 }
 
 // ── load().stack_only() ───────────────────────────────────────────────────────

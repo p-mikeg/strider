@@ -62,7 +62,7 @@ result = strider.run(
 )
 
 # Confirm the IR has at least one return.
-hits = result.graph.find_all(ret())
+hits = result.function.find_all(ret())
 print(f"lifted graph contains {len(hits)} Return node(s)")
 assert len(hits) >= 1, "expected at least one Return"
 

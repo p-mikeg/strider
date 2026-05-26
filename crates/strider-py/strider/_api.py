@@ -327,10 +327,10 @@ class Analysis:
     # ── Properties ──────────────────────────────────────────────────
 
     @property
-    def graph(self) -> Function:
+    def function(self) -> Function:
         """The underlying `Function` for direct access to the IR
         (preorder walks, `node_count`, `validate`, etc.)."""
-        return self._result.graph
+        return self._result.function
 
     @property
     def cfg(self):
@@ -361,7 +361,7 @@ class Analysis:
             head = f"name={self._name!r}, entry={self._entry:#x}"
         else:
             head = f"entry={self._entry:#x}"
-        return f"Analysis({head}, nodes={self._result.graph.node_count()})"
+        return f"Analysis({head}, nodes={self._result.function.node_count()})"
 
     # ── Pattern queries ──────────────────────────────────────────────
 
@@ -370,13 +370,13 @@ class Analysis:
         list of `Match` objects.  Forwards every kwarg to
         `Function.find_all` (`ignore_casts`, `ignore_casts_mask`,
         `ignore_regions`)."""
-        return self._result.graph.find_all(pattern, **matcher_options)
+        return self._result.function.find_all(pattern, **matcher_options)
 
     def find_all_requirements(self, patterns, **matcher_options) -> list:
         """Run multiple patterns and intersect their matches on
         shared `Capture` objects.  See
         `Function.find_all_requirements` for the full contract."""
-        return self._result.graph.find_all_requirements(
+        return self._result.function.find_all_requirements(
             patterns, **matcher_options
         )
 
@@ -406,15 +406,15 @@ class Analysis:
                 f"fingerprint(node): expected int or Match, got "
                 f"{type(node).__name__}"
             )
-        return self._result.graph.asm_fingerprint(node_id)
+        return self._result.function.asm_fingerprint(node_id)
 
     # ── Visualisation ────────────────────────────────────────────────
 
     def dump_html(self, path: str, style: Optional[str] = None) -> None:
         """Dump the IR graph as an interactive HTML file at `path`.
         `style` may be `"dark"` (default) or `"light"`."""
-        self._result.graph.to_html(path, style)
+        self._result.function.to_html(path, style)
 
     def dump_dot(self, path: str) -> None:
         """Dump the IR graph as a raw .dot file at `path`."""
-        self._result.graph.to_dot(path)
+        self._result.function.to_dot(path)

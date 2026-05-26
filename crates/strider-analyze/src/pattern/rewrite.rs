@@ -492,9 +492,9 @@ mod tests {
     }
 
     /// Returns the unique Add node in `fg`, or panics.
-    fn unique_add(fg: &strider_ir::Function) -> strider_ir::node::NodeId {
-        fg.walk()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+    fn unique_add(function: &strider_ir::Function) -> strider_ir::node::NodeId {
+        function.walk()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
             .expect("unique Add must exist")
     }
 
@@ -725,15 +725,15 @@ mod tests {
     #[test]
     fn apply_rules_returns_false_when_neither_fires() {
         use crate::pattern::{mul, sub};
-        let mut g = add_const_const(5, 3);
+        let mut function = add_const_const(5, 3);
         let x = Capture::new();
         let rules: Vec<BoxedRule> = vec![
             boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0u64))),
             boxed_rule(rewrite_rule(mul(var(x), int_const(1u64)), var(x))),
         ];
         let apply = apply_rules_in_order(&rules);
-        let add_node = unique_add(&g);
-        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
+        let add_node = unique_add(&function);
+        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
         assert!(!apply(&mut ctx, add_node).unwrap());
     }
 
@@ -742,7 +742,7 @@ mod tests {
     #[test]
     fn apply_rules_or_composes_results() {
         use crate::pattern::{any, sub};
-        let mut g = add_const_const(5, 3);
+        let mut function = add_const_const(5, 3);
         let x = Capture::new();
         let y = Capture::new();
         let rules: Vec<BoxedRule> = vec![
@@ -753,8 +753,8 @@ mod tests {
             boxed_rule(rewrite_rule(add(var(y), any()), var(y))),
         ];
         let apply = apply_rules_in_order(&rules);
-        let add_node = unique_add(&g);
-        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
+        let add_node = unique_add(&function);
+        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
         let fired = apply(&mut ctx, add_node).unwrap();
         assert!(fired, "second rule should have fired");
     }
@@ -766,7 +766,7 @@ mod tests {
     #[test]
     fn apply_rules_observes_post_fire_state() {
         use crate::pattern::any;
-        let mut g = add_x_zero();
+        let mut function = add_x_zero();
         let x = Capture::new();
         let y = Capture::new();
         let rules: Vec<BoxedRule> = vec![
@@ -775,8 +775,8 @@ mod tests {
             boxed_rule(rewrite_rule(add(var(y), any()), var(y))),
         ];
         let apply = apply_rules_in_order(&rules);
-        let nodes: Vec<_> = g.walk().collect();
-        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
+        let nodes: Vec<_> = function.walk().collect();
+        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
         let mut any_fired = false;
         for n in nodes {
             if apply(&mut ctx, n).unwrap() {
@@ -794,25 +794,25 @@ mod tests {
     fn int_const_with_folds_two_captured_ints() {
         use crate::pattern::any_int_const;
         use crate::pattern::macros::int_const_with;
-        let mut g = add_const_const(5, 3);
+        let mut function = add_const_const(5, 3);
         let a_v = Capture::new();
         let b_v = Capture::new();
         let rule = rewrite_rule(
             add(any_int_const(a_v), any_int_const(b_v)),
             int_const_with!([a_v: uint, b_v: uint] => a_v.wrapping_add(b_v)),
         );
-        let add_node = unique_add(&g);
-        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
+        let add_node = unique_add(&function);
+        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
         assert!(rule(&mut ctx, add_node).unwrap());
 
         // After the rewrite the Return consumes IntConst(8).
-        let ret = g
+        let ret = function
             .all_node_ids()
-            .find(|&n| matches!(g.node_kind(n), NodeKind::Return))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .unwrap();
-        let value_input = g.node_inputs(ret)[2];
-        let producer = g.node_for_output(value_input);
-        match g.node_kind(producer) {
+        let value_input = function.node_inputs(ret)[2];
+        let producer = function.node_for_output(value_input);
+        match function.node_kind(producer) {
             NodeKind::IntConst(k) => assert_eq!(*k, 8u128, "5 + 3 folds to 8"),
             other => panic!("expected IntConst(8), got {other:?}"),
         }
@@ -827,7 +827,7 @@ mod tests {
     fn int_const_with_exposes_ty_and_in_ty() {
         use crate::pattern::{any_int_const, truncate};
         use crate::pattern::macros::int_const_with;
-        let mut g = make_empty_fn(|b_| {
+        let mut function = make_empty_fn(|b_| {
             let a_ = b_.build_int_const(1u64, NodeOutputType::U64)?;
             let b_v = b_.build_int_const(2u64, NodeOutputType::U64)?;
             let s = b_.build_int_binary_operation(a_, b_v, IntBinaryOp::Add, NodeOutputType::U64)?;
@@ -840,21 +840,21 @@ mod tests {
             truncate(any_int_const(v)),
             int_const_with!([v: uint, ty] => { let _ = ty; v }),
         );
-        let nodes: Vec<_> = g.walk().collect();
-        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
+        let nodes: Vec<_> = function.walk().collect();
+        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
         for n in nodes {
             // Rule should not fire (input is an Add, not an IntConst),
             // but the build-side compiles.  Pin no-error.
             let _ = rule(&mut ctx, n);
         }
         // Graph unchanged: Return still consumes a Truncate.
-        let ret = g
+        let ret = function
             .all_node_ids()
-            .find(|&n| matches!(g.node_kind(n), NodeKind::Return))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .unwrap();
-        let value_input = g.node_inputs(ret)[2];
-        let producer = g.node_for_output(value_input);
-        assert!(matches!(g.node_kind(producer), NodeKind::Truncate));
+        let value_input = function.node_inputs(ret)[2];
+        let producer = function.node_for_output(value_input);
+        assert!(matches!(function.node_kind(producer), NodeKind::Truncate));
     }
 
     // ── MissingBinding error path ──────────────────────────────────────
@@ -866,7 +866,7 @@ mod tests {
         use crate::pattern::error::PatternBuildError;
         use crate::pattern::{any, any_int_const};
         use crate::pattern::macros::int_const_with;
-        let mut g = add_const_const(5, 3);
+        let mut function = add_const_const(5, 3);
         // LHS binds only `bound`; RHS references `unbound` (a fresh
         // Capture never mentioned in LHS).
         let bound = Capture::new();
@@ -875,8 +875,8 @@ mod tests {
             add(any_int_const(bound), any()),
             int_const_with!([unbound: uint] => unbound),
         );
-        let add_node = unique_add(&g);
-        let mut ctx = RewriteCtx::try_for_built(&mut g).unwrap();
+        let add_node = unique_add(&function);
+        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
         let err = rule(&mut ctx, add_node)
             .expect_err("missing binding expected");
         let mb = err.downcast_ref::<PatternBuildError>();

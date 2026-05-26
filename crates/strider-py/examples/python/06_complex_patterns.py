@@ -45,7 +45,7 @@ result = strider.run(
     entry=addr,
     allow_code_before_start_addr=True,
 )
-graph = result.graph
+function = result.function
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ print("=== 1. multi-level capture chain ===")
 # this pattern. `var(c)` only accepts Capture objects; bare strings go
 # directly into the slot (and `var(name)` is implicit on a string).
 pat1 = load(addr=add("base", mul("idx", "stride")))
-hits = graph.find_all(pat1, ignore_casts=True)
+hits = function.find_all(pat1, ignore_casts=True)
 print(f"found {len(hits)} indexed-array-load shapes")
 for h in hits[:3]:
     print(
@@ -78,8 +78,8 @@ for h in hits[:3]:
 # and is a strict subset of the general two-operand xor count.
 # ---------------------------------------------------------------------------
 print("\n=== 2. back-reference (xor x, x) ===")
-all_xors = graph.find_all(xor("a", "b"))
-self_xors = graph.find_all(xor("v", "v"))
+all_xors = function.find_all(xor("a", "b"))
+self_xors = function.find_all(xor("v", "v"))
 print(
     f"all xors: {len(all_xors)}, "
     f"self-xors (back-ref): {len(self_xors)} ({'subset' if len(self_xors) <= len(all_xors) else 'WRONG'})"
@@ -94,8 +94,8 @@ print(
 # return False to drop the match.
 # ---------------------------------------------------------------------------
 print("\n=== 3. .when predicate guard ===")
-unfiltered = graph.find_all(load(), ignore_casts=True)
-small_addr = graph.find_all(
+unfiltered = function.find_all(load(), ignore_casts=True)
+small_addr = function.find_all(
     load(addr=add("b", "o")).when(
         lambda m: (m.uint("o") or 0) < 16
     ),
@@ -116,9 +116,9 @@ print(
 # to opt out (rarely needed).
 # ---------------------------------------------------------------------------
 print("\n=== 4. commutative matching ===")
-const_then_arg = graph.find_all(add(int_const(8), function_arg(0)))
-arg_then_const = graph.find_all(add(function_arg(0), int_const(8)))
-ordered_only = graph.find_all(int_binary("Add", int_const(8), function_arg(0)).ordered())
+const_then_arg = function.find_all(add(int_const(8), function_arg(0)))
+arg_then_const = function.find_all(add(function_arg(0), int_const(8)))
+ordered_only = function.find_all(int_binary("Add", int_const(8), function_arg(0)).ordered())
 print(
     f"add(const, arg): {len(const_then_arg)}, "
     f"add(arg, const): {len(arg_then_const)} "
@@ -141,5 +141,5 @@ from strider.pattern import Capture, int_bin_any
 # interned the same way value captures are.
 op = Capture()
 pat = int_bin_any(op, "l", "r")
-matches = graph.find_all(pat)
+matches = function.find_all(pat)
 print(f"matched {len(matches)} int-binary-op nodes (any variant)")

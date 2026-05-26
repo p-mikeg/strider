@@ -69,7 +69,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
     let _ = arch; // arch is the SleighArch the cfg was built with; unused here
     let strider = common::strider_x86_64();
-    let graph = strider
+    let function = strider
         .analyze_cfg(&cfg)
         .expect("strider must lift unresolved branches as IndirectBranch placeholder")
         .function;
@@ -77,9 +77,9 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     // Exactly one IndirectBranch node — strider emitted the
     // placeholder, did not double-emit, and did not lift the
     // BranchIndirect via the pre-fix ABI handle_return path.
-    let placeholder_count = graph
+    let placeholder_count = function
         .walk()
-        .filter(|nid| matches!(graph.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
+        .filter(|nid| matches!(function.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
         .count();
     assert_eq!(
         placeholder_count, 1,
@@ -88,11 +88,11 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 
     // The placeholder must have a value-input slot wired — its layout
     // is [control, memory, target_value].  That's exactly 3 inputs.
-    let placeholder = graph
+    let placeholder = function
         .walk()
-        .find(|nid| matches!(graph.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
+        .find(|nid| matches!(function.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
         .expect("must have an IndirectBranch node");
-    let inputs = graph.node_inputs(placeholder);
+    let inputs = function.node_inputs(placeholder);
     assert_eq!(
         inputs.len(),
         3,

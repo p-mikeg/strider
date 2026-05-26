@@ -26,33 +26,33 @@ per_arch_test!("control", "nested_loops", nested_loops_has_two_loops);
 // separate Return nodes on x86/MIPS/ARM.
 per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns);
 
-fn abs_has_one_if(g: &strider_ir::Function) {
-    assert!(count_ifs(g) >= 1, "abs_val must have ≥1 If");
+fn abs_has_one_if(function: &strider_ir::Function) {
+    assert!(count_ifs(function) >= 1, "abs_val must have ≥1 If");
 }
-fn max_has_one_if(g: &strider_ir::Function) {
-    assert!(count_ifs(g) >= 1, "max_val must have ≥1 If");
+fn max_has_one_if(function: &strider_ir::Function) {
+    assert!(count_ifs(function) >= 1, "max_val must have ≥1 If");
 }
-fn clamp_has_two_ifs(g: &strider_ir::Function) {
-    assert!(count_ifs(g) >= 2, "clamp has 2 conditionals; got {}", count_ifs(g));
+fn clamp_has_two_ifs(function: &strider_ir::Function) {
+    assert!(count_ifs(function) >= 2, "clamp has 2 conditionals; got {}", count_ifs(function));
 }
-fn select_three_has_two_ifs(g: &strider_ir::Function) {
-    assert!(count_ifs(g) >= 2, "select_three has 2 conditionals; got {}", count_ifs(g));
+fn select_three_has_two_ifs(function: &strider_ir::Function) {
+    assert!(count_ifs(function) >= 2, "select_three has 2 conditionals; got {}", count_ifs(function));
 }
-fn sum_to_n_has_loop(g: &strider_ir::Function) {
-    assert!(count_loops(g) >= 1, "sum_to_n loop header missing VarPhi");
+fn sum_to_n_has_loop(function: &strider_ir::Function) {
+    assert!(count_loops(function) >= 1, "sum_to_n loop header missing VarPhi");
 }
-fn factorial_has_loop(g: &strider_ir::Function) {
-    assert!(count_loops(g) >= 1, "factorial loop header missing VarPhi");
+fn factorial_has_loop(function: &strider_ir::Function) {
+    assert!(count_loops(function) >= 1, "factorial loop header missing VarPhi");
 }
-fn count_bits_has_loop_and_shr(g: &strider_ir::Function) {
-    assert!(count_loops(g) >= 1);
-    assert!(count_int_binop(g, strider_ir::IntBinaryOp::ShiftRight) >= 1, "count_bits has x>>=1");
+fn count_bits_has_loop_and_shr(function: &strider_ir::Function) {
+    assert!(count_loops(function) >= 1);
+    assert!(count_int_binop(function, strider_ir::IntBinaryOp::ShiftRight) >= 1, "count_bits has x>>=1");
 }
-fn nested_loops_has_two_loops(g: &strider_ir::Function) {
-    assert!(count_loops(g) >= 2, "nested_loops expected ≥2 VarPhi; got {}", count_loops(g));
+fn nested_loops_has_two_loops(function: &strider_ir::Function) {
+    assert!(count_loops(function) >= 2, "nested_loops expected ≥2 VarPhi; got {}", count_loops(function));
 }
-fn early_return_has_loop_and_two_returns(g: &strider_ir::Function) {
-    assert!(count_loops(g) >= 1);
-    assert!(count_return_paths(g) >= 2,
-            "early_return has 2 source-level return paths; got {}", count_return_paths(g));
+fn early_return_has_loop_and_two_returns(function: &strider_ir::Function) {
+    assert!(count_loops(function) >= 1);
+    assert!(count_return_paths(function) >= 2,
+            "early_return has 2 source-level return paths; got {}", count_return_paths(function));
 }

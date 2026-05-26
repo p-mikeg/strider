@@ -34,13 +34,13 @@ fn stable_subset_is_idempotent_on_optimised_graph() {
     // loop already iterates until convergence, so a second
     // OptimizerPipeline::run cannot change anything if the first
     // already converged.
-    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
-    let entry = graph.entry().unwrap();
-    stable_default_pipeline().run(&mut graph, entry).expect("run 1");
-    let snapshot_node_count = graph.all_node_ids().count();
-    let entry = graph.entry().unwrap();
-    stable_default_pipeline().run(&mut graph, entry).expect("run 2");
-    let after_node_count = graph.all_node_ids().count();
+    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let entry = function.entry().unwrap();
+    stable_default_pipeline().run(&mut function, entry).expect("run 1");
+    let snapshot_node_count = function.all_node_ids().count();
+    let entry = function.entry().unwrap();
+    stable_default_pipeline().run(&mut function, entry).expect("run 2");
+    let after_node_count = function.all_node_ids().count();
     assert_eq!(
         snapshot_node_count, after_node_count,
         "stable subset must be idempotent on a converged graph",
@@ -73,15 +73,15 @@ fn destructive_subset_reduces_or_preserves_node_count() {
     // Running the destructive subset on a graph the stable subset
     // already optimised must NOT INCREASE the node count — every
     // pass in the destructive subset is a node-removal pass.
-    let (mut graph, _) = build_initial_var_target_scenario_x86_64();
-    let entry = graph.entry().unwrap();
-    stable_default_pipeline().run(&mut graph, entry).expect("stable");
-    let before = graph.all_node_ids().count();
-    let entry = graph.entry().unwrap();
+    let (mut function, _) = build_initial_var_target_scenario_x86_64();
+    let entry = function.entry().unwrap();
+    stable_default_pipeline().run(&mut function, entry).expect("stable");
+    let before = function.all_node_ids().count();
+    let entry = function.entry().unwrap();
     destructive_default_pipeline()
-        .run(&mut graph, entry)
+        .run(&mut function, entry)
         .expect("destructive");
-    let after = graph.all_node_ids().count();
+    let after = function.all_node_ids().count();
     assert!(
         after <= before,
         "destructive subset must not add nodes; before={before}, after={after}"
@@ -98,23 +98,23 @@ fn stable_subset_does_not_remove_phi_nodes() {
     // resolutions) and the destructive subset only at fixed-point
     // exit; this test pins the contract that callers using the
     // stable subset get phi preservation.
-    let (mut graph, _) = build_initial_var_target_scenario_x86_64();
-    let phi_count_before = graph
+    let (mut function, _) = build_initial_var_target_scenario_x86_64();
+    let phi_count_before = function
         .walk()
         .filter(|&nid| {
-            (matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Phi)
-                && graph.phi_var_tag(nid).is_some())
-                || matches!(graph.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
+            (matches!(function.node_kind(nid), strider_ir::node::NodeKind::Phi)
+                && function.phi_var_tag(nid).is_some())
+                || matches!(function.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
         })
         .count();
-    let entry = graph.entry().unwrap();
-    stable_default_pipeline().run(&mut graph, entry).expect("stable");
-    let phi_count_after = graph
+    let entry = function.entry().unwrap();
+    stable_default_pipeline().run(&mut function, entry).expect("stable");
+    let phi_count_after = function
         .walk()
         .filter(|&nid| {
-            (matches!(graph.node_kind(nid), strider_ir::node::NodeKind::Phi)
-                && graph.phi_var_tag(nid).is_some())
-                || matches!(graph.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
+            (matches!(function.node_kind(nid), strider_ir::node::NodeKind::Phi)
+                && function.phi_var_tag(nid).is_some())
+                || matches!(function.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
         })
         .count();
     assert_eq!(
@@ -133,15 +133,15 @@ fn ir_level_classification_robust_to_destructive_subset() {
     use strider_analyze::opt::classify_anchor;
     use strider_analyze::opt::analyze_known_bits;
 
-    let (graph_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
-    let (graph_full, anchor_full) = build_initial_var_target_scenario_x86_64();
+    let (function_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
+    let (function_full, anchor_full) = build_initial_var_target_scenario_x86_64();
 
     // x86_64: link_register_vn is None.  Classifier returns None
     // for `InitialVar(rax)` (no LR match, no IntConst, no ValuePhi).
-    let view_stable: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&graph_stable).unwrap();
+    let view_stable: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&function_stable).unwrap();
     let known_stable = analyze_known_bits(view_stable).expect("analyze_known_bits");
     let cls_stable = classify_anchor(view_stable, anchor_stable, None, None, None, &known_stable);
-    let view_full: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&graph_full).unwrap();
+    let view_full: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&function_full).unwrap();
     let known_full = analyze_known_bits(view_full).expect("analyze_known_bits");
     let cls_full = classify_anchor(view_full, anchor_full, None, None, None, &known_full);
     assert_eq!(

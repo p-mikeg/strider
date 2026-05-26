@@ -38,4 +38,4 @@ def test_run_resolves_indirect_branch_x86():
         entry=addr,
         allow_code_before_start_addr=True,
     )
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0

@@ -29,12 +29,12 @@ use strider_target::SleighArch;
 
 mod common;
 
-fn count_eq_cmps(g: &Function) -> usize {
-    g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
+fn count_eq_cmps(function: &Function) -> usize {
+    function.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
 }
 
-fn count_int_consts_eq(g: &Function, want: u64) -> usize {
-    g.count_kind(|k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(want)))
+fn count_int_consts_eq(function: &Function, want: u64) -> usize {
+    function.count_kind(|k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(want)))
 }
 
 #[test]
@@ -145,26 +145,26 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 
     let strider = common::strider_x86_64();
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
-    let mut graph = outcome.function;
+    let mut function = outcome.function;
 
     // Sanity: pre-optimization, the `build_switch_if_ladder` if-ladder produced N-1 = 2
     // If nodes.  After the default pipeline collapses the
     // constant-index dispatch, all of them should be gone
     // (DeadBranchElimination removes If nodes whose conditions are
     // BoolConst).
-    let if_count_pre = common::count_ifs(&graph);
+    let if_count_pre = common::count_ifs(&function);
     assert!(
         if_count_pre >= 2,
         "expected at least 2 If nodes pre-optimization, got {if_count_pre}",
     );
 
     let pipeline = strider.build_optimizer_pipeline();
-    let entry = graph.entry().unwrap();
+    let entry = function.entry().unwrap();
     pipeline
-        .run(&mut graph, entry)
+        .run(&mut function, entry)
         .expect("optimizer pipeline");
 
-    let if_count_post = common::count_ifs(&graph);
+    let if_count_post = common::count_ifs(&function);
     assert_eq!(
         if_count_post, 0,
         "constant-index Switch must collapse to zero If nodes after \

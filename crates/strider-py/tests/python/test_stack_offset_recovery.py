@@ -43,7 +43,7 @@ def _stack_graph():
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         allow_code_before_start_addr=True,
-    ).graph, mem
+    ).function, mem
 
 
 # ── StorePat.offset_capture / Match.captured_offset accessors ─────────────

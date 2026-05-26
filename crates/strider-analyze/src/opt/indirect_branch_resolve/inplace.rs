@@ -386,11 +386,11 @@ mod tests {
     /// placeholder site" in unit tests that don't care which register
     /// it came from.
     fn synth_value_output(
-        graph: &mut strider_ir::Function,
+        function: &mut strider_ir::Function,
         value: u128,
         ty: NodeOutputType,
     ) -> NodeOutputId {
-        let nid = graph.create_node(
+        let nid = function.create_node(
             NodeKind::IntConst(value),
             [],
             [NodeOutputKind::OutputType(ty)],
@@ -398,8 +398,8 @@ mod tests {
         // Stamp sentinel asm-fingerprint so the Layer-C check passes
         // for this synthesised node (it bypasses FunctionBuilder's
         // lift_addr plumbing).
-        graph.set_asm_fingerprint(nid, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        graph
+        function.set_asm_fingerprint(nid, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        function
             .node_outputs_exact::<1>(nid)
             .expect("IntConst has one output")[0]
     }

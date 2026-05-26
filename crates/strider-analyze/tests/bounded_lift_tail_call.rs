@@ -67,20 +67,20 @@ fn bounded_lift_handles_tail_call_terminator() {
         compact: true,
         per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
     };
-    let graph = run(config).expect("orchestrator must lift TailCall as Call+Return");
+    let function = run(config).expect("orchestrator must lift TailCall as Call+Return");
 
     // Post-condition: the graph contains a `Call` whose target operand
     // is an `IntConst(0x9000)`, and a `Return` node downstream.
     let mut had_call_with_target = false;
     let mut had_return = false;
-    for nid in graph.walk() {
-        match graph.node_kind(nid) {
+    for nid in function.walk() {
+        match function.node_kind(nid) {
             NodeKind::Call => {
                 // Call inputs: [ctrl, mem, target, args...].  Slot 2 is the target.
-                let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
+                let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_out) = inputs.get(2)
                     && let NodeKind::IntConst(v) =
-                        *graph.node_kind(graph.node_for_output(target_out))
+                        *function.node_kind(function.node_for_output(target_out))
                     && (v as u64) == TAIL_TARGET
                 {
                     had_call_with_target = true;
@@ -105,16 +105,16 @@ fn bounded_lift_handles_tail_call_terminator() {
 /// `Call(IntConst(target)) + Return` pair.  Mirrors the verifier in
 /// `bounded_lift_handles_tail_call_terminator` so the new tests can
 /// share the same shape assertion.
-fn graph_has_tail_call_to(graph: &strider_ir::Function, target: u64) -> bool {
+fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool {
     let mut had_call = false;
     let mut had_return = false;
-    for nid in graph.walk() {
-        match graph.node_kind(nid) {
+    for nid in function.walk() {
+        match function.node_kind(nid) {
             NodeKind::Call => {
-                let inputs: Vec<_> = graph.node_inputs(nid).into_iter().collect();
+                let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_out) = inputs.get(2)
                     && let NodeKind::IntConst(v) =
-                        *graph.node_kind(graph.node_for_output(target_out))
+                        *function.node_kind(function.node_for_output(target_out))
                     && (v as u64) == target
                 {
                     had_call = true;
@@ -158,7 +158,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
-    let graph = run(Config {
+    let function = run(Config {
         strider: &strider,
         start_addr: FN_START.into(),
         sleigh,
@@ -171,13 +171,13 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     .expect("backward jmp + fn_max_size must classify as tail call regardless of reach-back flag");
 
     assert!(
-        graph_has_tail_call_to(&graph, TAIL_TARGET),
+        graph_has_tail_call_to(&function, TAIL_TARGET),
         "expected Call(IntConst({:#x})) + Return from the backward-jmp tail call",
         TAIL_TARGET
     );
     // Sanity: a 10-byte function tail-calling out should produce a
     // small graph — not the tens-of-thousands-of-nodes pre-fix shape.
-    let node_count = graph.walk().count();
+    let node_count = function.walk().count();
     assert!(
         node_count < 200,
         "lifted graph should be tight (~tens of nodes); got {node_count}",
@@ -212,7 +212,7 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
-    let graph = run(Config {
+    let function = run(Config {
         strider: &strider,
         start_addr: BASE.into(),
         sleigh,
@@ -225,7 +225,7 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
     .expect("fall-through past fn_max_size must truncate cleanly, not crash on OOB lift");
 
     assert!(
-        graph_has_tail_call_to(&graph, TAIL_TARGET),
+        graph_has_tail_call_to(&function, TAIL_TARGET),
         "expected Call(IntConst({:#x})) + Return from the fall-through truncation",
         TAIL_TARGET
     );
@@ -255,7 +255,7 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
-    let graph = run(Config {
+    let function = run(Config {
         strider: &strider,
         start_addr: BASE.into(),
         sleigh,
@@ -268,7 +268,7 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
     .expect("cond-branch with both OOB targets must collapse to TailCall, not crash");
 
     assert!(
-        graph_has_tail_call_to(&graph, TAKEN_TARGET),
+        graph_has_tail_call_to(&function, TAKEN_TARGET),
         "expected Call(IntConst({:#x})) + Return from the collapsed cond-branch tail call",
         TAKEN_TARGET
     );

@@ -76,11 +76,11 @@ pipe.add(strider.opt.LoadReadOnly(rom))   # callback path for our blob
 
 s = strider.Strider(arch, sleigh, cc)
 cfg = strider.build_cfg(sleigh, entry=addr, allow_code_before_start_addr=True)
-graph = s.analyze_cfg(cfg).graph
+function = s.analyze_cfg(cfg).function
 
-before = len(graph.find_all(load()))
-graph.optimize(pipe)
-after = len(graph.find_all(load()))
+before = len(function.find_all(load()))
+function.optimize(pipe)
+after = len(function.find_all(load()))
 
 print(f"loads before optimize: {before}")
 print(f"loads after  optimize: {after}")

@@ -16,11 +16,11 @@ fn asm_fingerprint_returns_attributed_address() {
     // Keep a non-None lift_addr active so the trailing Return node
     // (emitted by ret_val) carries a fingerprint and satisfies the
     // post-rewrite always-on asm-fingerprint check.
-    let g = t.ret_val(c);
+    let function = t.ret_val(c);
 
     let v = Capture::new();
-    let m = a::first(&g, int_const(42u64).capture(v));
-    assert_eq!(m.asm_fingerprint(v, &g), &[0x100]);
+    let m = a::first(&function, int_const(42u64).capture(v));
+    assert_eq!(m.asm_fingerprint(v, &function), &[0x100]);
 }
 
 #[test]
@@ -28,13 +28,13 @@ fn asm_fingerprint_unbound_capture_is_empty() {
     let mut t = Tb::empty();
     t.fb_mut().set_lift_addr(Some(0x200));
     let c = t.u64(7);
-    let g = t.ret_val(c);
+    let function = t.ret_val(c);
     let bound = Capture::new();
     let unbound = Capture::new();
-    let m = a::first(&g, int_const(7u64).capture(bound));
+    let m = a::first(&function, int_const(7u64).capture(bound));
     // The match was for `int_const(7).capture(bound)`; `unbound` was
     // never declared in the pattern so the matcher has no binding for it.
-    assert_eq!(m.asm_fingerprint(unbound, &g), &[] as &[u64]);
+    assert_eq!(m.asm_fingerprint(unbound, &function), &[] as &[u64]);
 }
 
 #[test]
@@ -50,11 +50,11 @@ fn asm_fingerprint_captures_dedup_unioned_addresses() {
     let l2 = t.u64(1);
     let r2 = t.u64(2);
     let add2 = t.add(l2, r2);
-    let g = t.ret_val(add2);
+    let function = t.ret_val(add2);
 
     let v = Capture::new();
-    let m = a::first(&g, add(int_const(1u64), int_const(2u64)).capture(v));
-    let fp = m.asm_fingerprint(v, &g);
+    let m = a::first(&function, add(int_const(1u64), int_const(2u64)).capture(v));
+    let fp = m.asm_fingerprint(v, &function);
     assert!(
         fp.contains(&0x100) && fp.contains(&0x200),
         "expected union fingerprint [0x100, 0x200], got {fp:?}"

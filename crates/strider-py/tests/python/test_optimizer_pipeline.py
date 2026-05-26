@@ -162,7 +162,7 @@ def test_graph_reoptimize(x86_memory_elf):
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
-    g = s.analyze_cfg(cfg).graph
+    g = s.analyze_cfg(cfg).function
     g.reoptimize()
     g.reoptimize(destructive=True)
     assert g.node_count() > 0
@@ -177,7 +177,7 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
-    g = s.analyze_cfg(cfg).graph
+    g = s.analyze_cfg(cfg).function
     pre = g.node_count()
 
     pipe = strider.OptimizerPipeline.empty()
@@ -207,7 +207,7 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
-    g = s.analyze_cfg(cfg).graph
+    g = s.analyze_cfg(cfg).function
 
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())

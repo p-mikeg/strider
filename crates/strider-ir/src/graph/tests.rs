@@ -52,36 +52,36 @@ fn check_node_output_definitions(
 /// metadata is stored correctly.
 #[test]
 fn create_single_node() {
-    let mut graph = Function::new();
-    let node_id = graph.create_node(
+    let mut function = Function::new();
+    let node_id = function.create_node(
         NodeKind::IntConst(5),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    assert_eq!(graph.node_kind(node_id), &NodeKind::IntConst(5));
-    assert_eq!(graph.nodes.len(), 1);
-    check_node_inputs(&graph, node_id, []);
+    assert_eq!(function.node_kind(node_id), &NodeKind::IntConst(5));
+    assert_eq!(function.nodes.len(), 1);
+    check_node_inputs(&function, node_id, []);
     check_node_output_kinds(
-        &graph,
+        &function,
         node_id,
         vec![NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    check_node_output_definitions(&graph, node_id, vec![(node_id, 0)]);
+    check_node_output_definitions(&function, node_id, vec![(node_id, 0)]);
 }
 
 /// `kind_of_output` agrees with the two-step `node_kind(node_for_output(out))`
 /// lookup it replaces — pinned because ~100 callsites depend on the equivalence.
 #[test]
 fn kind_of_output_matches_two_step_lookup() {
-    let mut graph = Function::new();
-    let node_id = graph.create_node(
+    let mut function = Function::new();
+    let node_id = function.create_node(
         NodeKind::IntConst(7),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [out] = graph.node_outputs_exact::<1>(node_id).unwrap();
-    let two_step = graph.node_kind(graph.node_for_output(out));
-    let one_step = graph.kind_of_output(out);
+    let [out] = function.node_outputs_exact::<1>(node_id).unwrap();
+    let two_step = function.node_kind(function.node_for_output(out));
+    let one_step = function.kind_of_output(out);
     assert_eq!(one_step, two_step);
     assert_eq!(one_step, &NodeKind::IntConst(7));
 }
@@ -91,13 +91,13 @@ fn kind_of_output_matches_two_step_lookup() {
 /// not grow the node table.
 #[test]
 fn cacheable_node_is_deduplicated() {
-    let mut graph = Function::new();
-    let id_a = graph.create_node(
+    let mut function = Function::new();
+    let id_a = function.create_node(
         NodeKind::IntConst(42),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let id_b = graph.create_node(
+    let id_b = function.create_node(
         NodeKind::IntConst(42),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
@@ -107,7 +107,7 @@ fn cacheable_node_is_deduplicated() {
         "identical cacheable nodes must alias to the same id"
     );
     assert_eq!(
-        graph.nodes.len(),
+        function.nodes.len(),
         1,
         "deduplication must not create a second node"
     );
@@ -123,15 +123,15 @@ fn cacheable_node_is_deduplicated() {
 /// and the owned `(Node, Vec<…>, Vec<…>)` insert shape.
 #[test]
 fn cacheable_node_dedup_is_stable_across_many_calls() {
-    let mut graph = Function::new();
-    let first = graph.create_node(
+    let mut function = Function::new();
+    let first = function.create_node(
         NodeKind::IntConst(0xdead_beefu128),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let arena_after_first = graph.nodes.len();
+    let arena_after_first = function.nodes.len();
     for _ in 0..1000 {
-        let id = graph.create_node(
+        let id = function.create_node(
             NodeKind::IntConst(0xdead_beefu128),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
@@ -139,7 +139,7 @@ fn cacheable_node_dedup_is_stable_across_many_calls() {
         assert_eq!(id, first, "cache hit must return the original id");
     }
     assert_eq!(
-        graph.nodes.len(),
+        function.nodes.len(),
         arena_after_first,
         "no new nodes should be allocated on repeated cache hits",
     );
@@ -153,13 +153,13 @@ fn cacheable_node_dedup_is_stable_across_many_calls() {
 /// consumers.
 #[test]
 fn cacheable_int_const_with_different_type_does_not_dedup() {
-    let mut graph = Function::new();
-    let a = graph.create_node(
+    let mut function = Function::new();
+    let a = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let b = graph.create_node(
+    let b = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
@@ -175,9 +175,9 @@ fn cacheable_int_const_with_different_type_does_not_dedup() {
 /// when all arguments are identical.
 #[test]
 fn non_cacheable_node_is_never_deduplicated() {
-    let mut graph = Function::new();
-    let id_a = graph.create_node(NodeKind::Return, [], []);
-    let id_b = graph.create_node(NodeKind::Return, [], []);
+    let mut function = Function::new();
+    let id_a = function.create_node(NodeKind::Return, [], []);
+    let id_b = function.create_node(NodeKind::Return, [], []);
     assert_ne!(
         id_a, id_b,
         "non-cacheable nodes must always produce distinct ids"
@@ -188,9 +188,9 @@ fn non_cacheable_node_is_never_deduplicated() {
 /// signature must return the same `NodeId` (only one Entry per function).
 #[test]
 fn entry_node_kind_dedupes_on_repeated_create() {
-    let mut graph = Function::new();
-    let e1 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let e2 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let mut function = Function::new();
+    let e1 = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let e2 = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     assert_eq!(e1, e2, "Entry must dedupe — only one per function");
 }
 
@@ -198,9 +198,9 @@ fn entry_node_kind_dedupes_on_repeated_create() {
 /// return the same `NodeId`.
 #[test]
 fn initial_memory_dedupes_on_repeated_create() {
-    let mut graph = Function::new();
-    let m1 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let m2 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mut function = Function::new();
+    let m1 = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let m2 = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     assert_eq!(m1, m2, "InitialMemory must dedupe — only one per function");
 }
 
@@ -209,7 +209,7 @@ fn initial_memory_dedupes_on_repeated_create() {
 /// `Vn`s produce distinct nodes.
 #[test]
 fn initial_var_dedupes_per_vn() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
     let vn_a = rsleigh::Vn {
         addr_off: 0,
         addr_space: rsleigh::VnSpace::REGISTER,
@@ -221,11 +221,11 @@ fn initial_var_dedupes_per_vn() {
         size: 8,
     };
     let output_kind = NodeOutputKind::OutputType(NodeOutputType::U64);
-    let v1 = graph.create_node(NodeKind::InitialVar(vn_a), [], [output_kind]);
-    let v2 = graph.create_node(NodeKind::InitialVar(vn_a), [], [output_kind]);
+    let v1 = function.create_node(NodeKind::InitialVar(vn_a), [], [output_kind]);
+    let v2 = function.create_node(NodeKind::InitialVar(vn_a), [], [output_kind]);
     assert_eq!(v1, v2, "InitialVar with the same Vn must dedupe");
 
-    let v3 = graph.create_node(NodeKind::InitialVar(vn_b), [], [output_kind]);
+    let v3 = function.create_node(NodeKind::InitialVar(vn_b), [], [output_kind]);
     assert_ne!(v1, v3, "InitialVar with a different Vn must NOT dedupe");
 }
 
@@ -234,20 +234,20 @@ fn initial_var_dedupes_per_vn() {
 /// mutates its inputs after construction.
 #[test]
 fn adjacent_calls_with_same_args_are_distinct() {
-    let mut graph = Function::new();
-    let ctrl_a = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem_a = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let [ctrl_out] = graph.node_outputs_exact::<1>(ctrl_a).unwrap();
-    let [mem_out] = graph.node_outputs_exact::<1>(mem_a).unwrap();
-    let target = graph.create_node(
+    let mut function = Function::new();
+    let ctrl_a = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let mem_a = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let [ctrl_out] = function.node_outputs_exact::<1>(ctrl_a).unwrap();
+    let [mem_out] = function.node_outputs_exact::<1>(mem_a).unwrap();
+    let target = function.create_node(
         NodeKind::IntConst(0x1000),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [target_out] = graph.node_outputs_exact::<1>(target).unwrap();
+    let [target_out] = function.node_outputs_exact::<1>(target).unwrap();
     let outs = [NodeOutputKind::Control, NodeOutputKind::Memory];
-    let call_a = graph.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
-    let call_b = graph.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
+    let call_a = function.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
+    let call_b = function.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
     assert_ne!(
         call_a, call_b,
         "Call is non-cacheable so identical-argument calls must be distinct"
@@ -258,59 +258,59 @@ fn adjacent_calls_with_same_args_are_distinct() {
 /// works, and unset nodes return `None`.
 #[test]
 fn call_other_name_round_trip() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
     // Two CallOther nodes with the same user_op_id.  CallOther is
     // non-cacheable (see `is_cacheable`), so they get distinct ids.
     let outs = [NodeOutputKind::Control, NodeOutputKind::Memory];
     // We need a control + memory input to construct a CallOther; build a
     // throwaway Entry and InitialMemory.
-    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
-    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let [init_mem_out] = graph.node_outputs_exact::<1>(init_mem).unwrap();
-    let id_a = graph.create_node(
+    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let [entry_ctrl] = function.node_outputs_exact::<1>(entry).unwrap();
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let [init_mem_out] = function.node_outputs_exact::<1>(init_mem).unwrap();
+    let id_a = function.create_node(
         NodeKind::CallOther { user_op_id: 62 },
         [entry_ctrl, init_mem_out],
         outs,
     );
-    let id_b = graph.create_node(
+    let id_b = function.create_node(
         NodeKind::CallOther { user_op_id: 62 },
         [entry_ctrl, init_mem_out],
         outs,
     );
     assert_ne!(id_a, id_b, "CallOther is non-cacheable");
-    assert_eq!(graph.call_other_name(id_a), None);
-    graph.set_call_other_name(id_a, "setISAMode".to_string());
-    assert_eq!(graph.call_other_name(id_a), Some("setISAMode"));
-    assert_eq!(graph.call_other_name(id_b), None);
+    assert_eq!(function.call_other_name(id_a), None);
+    function.set_call_other_name(id_a, "setISAMode".to_string());
+    assert_eq!(function.call_other_name(id_a), Some("setISAMode"));
+    assert_eq!(function.call_other_name(id_b), None);
     // Replacement
-    graph.set_call_other_name(id_a, "OtherName".to_string());
-    assert_eq!(graph.call_other_name(id_a), Some("OtherName"));
+    function.set_call_other_name(id_a, "OtherName".to_string());
+    assert_eq!(function.call_other_name(id_a), Some("OtherName"));
 }
 
 /// After adding an input to a non-cacheable node the output's use-list
 /// must contain exactly that input, and `node_inputs` must reflect it.
 #[test]
 fn add_node_input_registers_use() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
     // Produce a value
-    let const_node = graph.create_node(
+    let const_node = function.create_node(
         NodeKind::IntConst(1),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
+    let [const_out] = function.node_outputs_exact::<1>(const_node).unwrap();
 
     // Create a non-cacheable sink
-    let ret_node = graph.create_node(NodeKind::Return, [], []);
+    let ret_node = function.create_node(NodeKind::Return, [], []);
 
-    graph.add_node_input(ret_node, const_out).unwrap();
+    function.add_node_input(ret_node, const_out).unwrap();
 
     // The input must appear in node_inputs
-    check_node_inputs(&graph, ret_node, [const_out]);
+    check_node_inputs(&function, ret_node, [const_out]);
 
     // The output's use-list must contain this input
-    let use_count = graph.output_uses(const_out).count();
+    let use_count = function.output_uses(const_out).count();
     assert_eq!(use_count, 1);
 }
 
@@ -318,114 +318,114 @@ fn add_node_input_registers_use() {
 /// input indices, and unregister the use from the output's use-list.
 #[test]
 fn remove_node_input_cleans_up_use_list() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let c0 = graph.create_node(
+    let c0 = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [out0] = graph.node_outputs_exact::<1>(c0).unwrap();
+    let [out0] = function.node_outputs_exact::<1>(c0).unwrap();
 
-    let c1 = graph.create_node(
+    let c1 = function.create_node(
         NodeKind::IntConst(1),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [out1] = graph.node_outputs_exact::<1>(c1).unwrap();
+    let [out1] = function.node_outputs_exact::<1>(c1).unwrap();
 
-    let ret = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret, out0).unwrap();
-    graph.add_node_input(ret, out1).unwrap();
+    let ret = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret, out0).unwrap();
+    function.add_node_input(ret, out1).unwrap();
 
     // Remove the first input (index 0 = out0)
-    graph.remove_node_input(ret, 0).unwrap();
+    function.remove_node_input(ret, 0).unwrap();
 
     // Only out1 should remain
-    check_node_inputs(&graph, ret, [out1]);
+    check_node_inputs(&function, ret, [out1]);
 
     // out0 must no longer be used
     assert_eq!(
-        graph.output_uses(out0).count(),
+        function.output_uses(out0).count(),
         0,
         "out0 should have no uses after removal"
     );
     // out1 must still be used
     assert_eq!(
-        graph.output_uses(out1).count(),
+        function.output_uses(out1).count(),
         1,
         "out1 should still have one use"
     );
 
     // The surviving input must have its index adjusted to 0
-    let inputs_slice = graph.nodes[ret].inputs.as_slice(&graph.input_pool);
-    assert_eq!(graph.inputs[inputs_slice[0]].input_index, 0);
+    let inputs_slice = function.nodes[ret].inputs.as_slice(&function.input_pool);
+    assert_eq!(function.inputs[inputs_slice[0]].input_index, 0);
 }
 
 /// `update_input` must move the use from the old output to the new one
 /// so that use-lists stay consistent.
 #[test]
 fn update_input_moves_use_to_new_output() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let old = graph.create_node(
+    let old = function.create_node(
         NodeKind::IntConst(10),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [old_out] = graph.node_outputs_exact::<1>(old).unwrap();
+    let [old_out] = function.node_outputs_exact::<1>(old).unwrap();
 
-    let new = graph.create_node(
+    let new = function.create_node(
         NodeKind::IntConst(20),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [new_out] = graph.node_outputs_exact::<1>(new).unwrap();
+    let [new_out] = function.node_outputs_exact::<1>(new).unwrap();
 
-    let ret = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret, old_out).unwrap();
+    let ret = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret, old_out).unwrap();
 
     // Find the single input id
-    let input_id = graph.nodes[ret].inputs.as_slice(&graph.input_pool)[0];
+    let input_id = function.nodes[ret].inputs.as_slice(&function.input_pool)[0];
 
-    graph.update_input(input_id, new_out);
+    function.update_input(input_id, new_out);
 
     // old_out must have no uses; new_out must have one
-    assert_eq!(graph.output_uses(old_out).count(), 0);
-    assert_eq!(graph.output_uses(new_out).count(), 1);
+    assert_eq!(function.output_uses(old_out).count(), 0);
+    assert_eq!(function.output_uses(new_out).count(), 1);
 
     // The node input must now reference new_out
-    check_node_inputs(&graph, ret, [new_out]);
+    check_node_inputs(&function, ret, [new_out]);
 }
 
 /// `detach_node_inputs` must clear all inputs from the node and remove
 /// them from every output's use-list.
 #[test]
 fn detach_node_inputs_removes_all_uses() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let c = graph.create_node(
+    let c = function.create_node(
         NodeKind::IntConst(5),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [out] = graph.node_outputs_exact::<1>(c).unwrap();
+    let [out] = function.node_outputs_exact::<1>(c).unwrap();
 
-    let ret = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret, out).unwrap();
-    graph.add_node_input(ret, out).unwrap(); // same output used twice
+    let ret = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret, out).unwrap();
+    function.add_node_input(ret, out).unwrap(); // same output used twice
 
-    assert_eq!(graph.output_uses(out).count(), 2);
+    assert_eq!(function.output_uses(out).count(), 2);
 
-    graph.detach_node_inputs(ret);
+    function.detach_node_inputs(ret);
 
     assert_eq!(
-        graph.output_uses(out).count(),
+        function.output_uses(out).count(),
         0,
         "all uses must be removed after detach"
     );
     assert_eq!(
-        graph.node_inputs(ret).len(),
+        function.node_inputs(ret).len(),
         0,
         "node must have no inputs after detach"
     );
@@ -444,31 +444,31 @@ fn detach_node_inputs_removes_all_uses() {
 #[test]
 fn detach_evicts_cacheable_node_from_dedup_cache() {
     use crate::ops::IntBinaryOp;
-    let mut graph = Function::new();
-    let lhs = graph.create_node(
+    let mut function = Function::new();
+    let lhs = function.create_node(
         NodeKind::IntConst(7),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let rhs = graph.create_node(
+    let rhs = function.create_node(
         NodeKind::IntConst(9),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let [lhs_out] = graph.node_outputs_exact::<1>(lhs).unwrap();
-    let [rhs_out] = graph.node_outputs_exact::<1>(rhs).unwrap();
+    let [lhs_out] = function.node_outputs_exact::<1>(lhs).unwrap();
+    let [rhs_out] = function.node_outputs_exact::<1>(rhs).unwrap();
 
     let ty = NodeOutputKind::OutputType(NodeOutputType::U32);
-    let add_a = graph.create_node(
+    let add_a = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [lhs_out, rhs_out],
         [ty],
     );
 
-    graph.detach_node_inputs(add_a);
-    assert_eq!(graph.node_inputs(add_a).len(), 0);
+    function.detach_node_inputs(add_a);
+    assert_eq!(function.node_inputs(add_a).len(), 0);
 
-    let add_b = graph.create_node(
+    let add_b = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [lhs_out, rhs_out],
         [ty],
@@ -480,7 +480,7 @@ fn detach_evicts_cacheable_node_from_dedup_cache() {
          identical node is fresh"
     );
     assert_eq!(
-        graph.node_inputs(add_b).len(),
+        function.node_inputs(add_b).len(),
         2,
         "the re-created node must be fully connected"
     );
@@ -491,28 +491,28 @@ fn detach_evicts_cacheable_node_from_dedup_cache() {
 /// flip it to `false`.
 #[test]
 fn output_has_one_usage_tracks_consumer_count() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let c = graph.create_node(
+    let c = function.create_node(
         NodeKind::IntConst(99),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let [out] = graph.node_outputs_exact::<1>(c).unwrap();
+    let [out] = function.node_outputs_exact::<1>(c).unwrap();
 
-    assert!(!graph.output_has_one_usage(out), "zero uses is not one");
+    assert!(!function.output_has_one_usage(out), "zero uses is not one");
 
-    let ret1 = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret1, out).unwrap();
+    let ret1 = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret1, out).unwrap();
     assert!(
-        graph.output_has_one_usage(out),
+        function.output_has_one_usage(out),
         "one use should return true"
     );
 
-    let ret2 = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret2, out).unwrap();
+    let ret2 = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret2, out).unwrap();
     assert!(
-        !graph.output_has_one_usage(out),
+        !function.output_has_one_usage(out),
         "two uses should return false"
     );
 }
@@ -520,31 +520,31 @@ fn output_has_one_usage_tracks_consumer_count() {
 /// `node_for_output` must return the node that created the output.
 #[test]
 fn node_for_output_returns_source_node() {
-    let mut graph = Function::new();
-    let node = graph.create_node(
+    let mut function = Function::new();
+    let node = function.create_node(
         NodeKind::IntConst(7),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U8)],
     );
-    let [out] = graph.node_outputs_exact::<1>(node).unwrap();
-    assert_eq!(graph.node_for_output(out), node);
+    let [out] = function.node_outputs_exact::<1>(node).unwrap();
+    assert_eq!(function.node_for_output(out), node);
 }
 
 /// A node with two outputs must expose both with correct kinds and
 /// definitions.
 #[test]
 fn node_with_multiple_outputs() {
-    let mut graph = Function::new();
-    let node = graph.create_node(
+    let mut function = Function::new();
+    let node = function.create_node(
         NodeKind::If,
         [],
         [NodeOutputKind::Control, NodeOutputKind::Control],
     );
-    let [true_ctrl, false_ctrl] = graph.node_outputs_exact::<2>(node).unwrap();
-    assert_eq!(graph.output_kind(true_ctrl), NodeOutputKind::Control);
-    assert_eq!(graph.output_kind(false_ctrl), NodeOutputKind::Control);
-    assert_eq!(graph.output_definition(true_ctrl), (node, 0));
-    assert_eq!(graph.output_definition(false_ctrl), (node, 1));
+    let [true_ctrl, false_ctrl] = function.node_outputs_exact::<2>(node).unwrap();
+    assert_eq!(function.output_kind(true_ctrl), NodeOutputKind::Control);
+    assert_eq!(function.output_kind(false_ctrl), NodeOutputKind::Control);
+    assert_eq!(function.output_definition(true_ctrl), (node, 0));
+    assert_eq!(function.output_definition(false_ctrl), (node, 1));
 }
 
 /// `output_uses` must yield one `(node_id, input_index)` tuple per
@@ -553,22 +553,22 @@ fn node_with_multiple_outputs() {
 /// all appear exactly once.
 #[test]
 fn output_uses_reports_all_consumers_with_correct_indices() {
-    let mut graph = Function::new();
-    let src = graph.create_node(
+    let mut function = Function::new();
+    let src = function.create_node(
         NodeKind::IntConst(7),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let [out] = graph.node_outputs_exact::<1>(src).unwrap();
+    let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
-    let ret0 = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret0, out).unwrap();
-    let ret1 = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret1, out).unwrap();
-    let ret2 = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret2, out).unwrap();
+    let ret0 = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret0, out).unwrap();
+    let ret1 = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret1, out).unwrap();
+    let ret2 = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret2, out).unwrap();
 
-    let uses: Vec<(NodeId, u32)> = graph.output_uses(out).collect();
+    let uses: Vec<(NodeId, u32)> = function.output_uses(out).collect();
     assert_eq!(uses.len(), 3, "all three consumers must appear");
 
     for expected_node in [ret0, ret1, ret2] {
@@ -587,20 +587,20 @@ fn output_uses_reports_all_consumers_with_correct_indices() {
 /// must report all of them with their correct positional indices.
 #[test]
 fn output_uses_same_output_multiple_times_reports_each_position() {
-    let mut graph = Function::new();
-    let src = graph.create_node(
+    let mut function = Function::new();
+    let src = function.create_node(
         NodeKind::IntConst(3),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [out] = graph.node_outputs_exact::<1>(src).unwrap();
+    let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
     // Same output at positions 0 and 1 of the same sink node.
-    let sink = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(sink, out).unwrap(); // input_index 0
-    graph.add_node_input(sink, out).unwrap(); // input_index 1
+    let sink = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(sink, out).unwrap(); // input_index 0
+    function.add_node_input(sink, out).unwrap(); // input_index 1
 
-    let uses: Vec<(NodeId, u32)> = graph.output_uses(out).collect();
+    let uses: Vec<(NodeId, u32)> = function.output_uses(out).collect();
     assert_eq!(uses.len(), 2);
 
     let mut indices: Vec<u32> = uses.iter().map(|(_, i)| *i).collect();
@@ -613,45 +613,45 @@ fn output_uses_same_output_multiple_times_reports_each_position() {
 /// and advance past it so the remaining use is untouched.
 #[test]
 fn output_use_cursor_replace_redirects_first_use() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let old_src = graph.create_node(
+    let old_src = function.create_node(
         NodeKind::IntConst(1),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [old_out] = graph.node_outputs_exact::<1>(old_src).unwrap();
+    let [old_out] = function.node_outputs_exact::<1>(old_src).unwrap();
 
-    let new_src = graph.create_node(
+    let new_src = function.create_node(
         NodeKind::IntConst(2),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [new_out] = graph.node_outputs_exact::<1>(new_src).unwrap();
+    let [new_out] = function.node_outputs_exact::<1>(new_src).unwrap();
 
     // Two consumers of old_out.
-    let ret0 = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret0, old_out).unwrap();
-    let ret1 = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(ret1, old_out).unwrap();
+    let ret0 = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret0, old_out).unwrap();
+    let ret1 = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret1, old_out).unwrap();
 
-    assert_eq!(graph.output_uses(old_out).count(), 2);
-    assert_eq!(graph.output_uses(new_out).count(), 0);
+    assert_eq!(function.output_uses(old_out).count(), 2);
+    assert_eq!(function.output_uses(new_out).count(), 0);
 
     // Redirect the first consumer to new_out.
     {
-        let mut cursor = graph.output_use_cursor(old_out);
+        let mut cursor = function.output_use_cursor(old_out);
         cursor.replace_current_with(new_out).unwrap();
     }
 
     // After one replacement: old_out has one use, new_out has one use.
     assert_eq!(
-        graph.output_uses(old_out).count(),
+        function.output_uses(old_out).count(),
         1,
         "one use must remain on old_out"
     );
     assert_eq!(
-        graph.output_uses(new_out).count(),
+        function.output_uses(new_out).count(),
         1,
         "one use must move to new_out"
     );
@@ -662,42 +662,42 @@ fn output_use_cursor_replace_redirects_first_use() {
 /// uses to the replacement.
 #[test]
 fn output_use_cursor_replace_all_drains_source() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let old_src = graph.create_node(
+    let old_src = function.create_node(
         NodeKind::IntConst(10),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let [old_out] = graph.node_outputs_exact::<1>(old_src).unwrap();
+    let [old_out] = function.node_outputs_exact::<1>(old_src).unwrap();
 
-    let new_src = graph.create_node(
+    let new_src = function.create_node(
         NodeKind::IntConst(20),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let [new_out] = graph.node_outputs_exact::<1>(new_src).unwrap();
+    let [new_out] = function.node_outputs_exact::<1>(new_src).unwrap();
 
     // Three consumers.
     for _ in 0..3 {
-        let r = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(r, old_out).unwrap();
+        let r = function.create_node(NodeKind::Return, [], []);
+        function.add_node_input(r, old_out).unwrap();
     }
-    assert_eq!(graph.output_uses(old_out).count(), 3);
+    assert_eq!(function.output_uses(old_out).count(), 3);
 
     // Replace all uses in a single cursor pass.
-    let mut cursor = graph.output_use_cursor(old_out);
+    let mut cursor = function.output_use_cursor(old_out);
     while cursor.current().is_some() {
         cursor.replace_current_with(new_out).unwrap();
     }
 
     assert_eq!(
-        graph.output_uses(old_out).count(),
+        function.output_uses(old_out).count(),
         0,
         "all uses must be drained from old_out"
     );
     assert_eq!(
-        graph.output_uses(new_out).count(),
+        function.output_uses(new_out).count(),
         3,
         "all uses must land on new_out"
     );
@@ -708,52 +708,52 @@ fn output_use_cursor_replace_all_drains_source() {
 /// and remove the deleted input from its output's use-list.
 #[test]
 fn remove_node_input_from_middle_reindexes_remaining() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
     let out0 = {
-        let n = graph.create_node(
+        let n = function.create_node(
             NodeKind::IntConst(10),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        graph.node_outputs_exact::<1>(n).unwrap()[0]
+        function.node_outputs_exact::<1>(n).unwrap()[0]
     };
     let out1 = {
-        let n = graph.create_node(
+        let n = function.create_node(
             NodeKind::IntConst(20),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        graph.node_outputs_exact::<1>(n).unwrap()[0]
+        function.node_outputs_exact::<1>(n).unwrap()[0]
     };
     let out2 = {
-        let n = graph.create_node(
+        let n = function.create_node(
             NodeKind::IntConst(30),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        graph.node_outputs_exact::<1>(n).unwrap()[0]
+        function.node_outputs_exact::<1>(n).unwrap()[0]
     };
 
-    let sink = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(sink, out0).unwrap(); // index 0
-    graph.add_node_input(sink, out1).unwrap(); // index 1
-    graph.add_node_input(sink, out2).unwrap(); // index 2
+    let sink = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(sink, out0).unwrap(); // index 0
+    function.add_node_input(sink, out1).unwrap(); // index 1
+    function.add_node_input(sink, out2).unwrap(); // index 2
 
-    graph.remove_node_input(sink, 1).unwrap(); // remove middle
+    function.remove_node_input(sink, 1).unwrap(); // remove middle
 
-    check_node_inputs(&graph, sink, [out0, out2]);
-    assert_eq!(graph.output_uses(out1).count(), 0, "out1 must be removed");
-    assert_eq!(graph.output_uses(out0).count(), 1);
-    assert_eq!(graph.output_uses(out2).count(), 1);
+    check_node_inputs(&function, sink, [out0, out2]);
+    assert_eq!(function.output_uses(out1).count(), 0, "out1 must be removed");
+    assert_eq!(function.output_uses(out0).count(), 1);
+    assert_eq!(function.output_uses(out2).count(), 1);
 
-    let inputs_slice = graph.nodes[sink].inputs.as_slice(&graph.input_pool);
+    let inputs_slice = function.nodes[sink].inputs.as_slice(&function.input_pool);
     assert_eq!(
-        graph.inputs[inputs_slice[0]].input_index, 0,
+        function.inputs[inputs_slice[0]].input_index, 0,
         "surviving input 0 must have index 0"
     );
     assert_eq!(
-        graph.inputs[inputs_slice[1]].input_index, 1,
+        function.inputs[inputs_slice[1]].input_index, 1,
         "surviving input 1 must have index 1"
     );
 }
@@ -761,37 +761,37 @@ fn remove_node_input_from_middle_reindexes_remaining() {
 /// Removing the last input must not disturb the preceding inputs.
 #[test]
 fn remove_node_input_from_end_leaves_others_intact() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
     let out0 = {
-        let n = graph.create_node(
+        let n = function.create_node(
             NodeKind::IntConst(1),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        graph.node_outputs_exact::<1>(n).unwrap()[0]
+        function.node_outputs_exact::<1>(n).unwrap()[0]
     };
     let out1 = {
-        let n = graph.create_node(
+        let n = function.create_node(
             NodeKind::IntConst(2),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        graph.node_outputs_exact::<1>(n).unwrap()[0]
+        function.node_outputs_exact::<1>(n).unwrap()[0]
     };
 
-    let sink = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(sink, out0).unwrap();
-    graph.add_node_input(sink, out1).unwrap();
+    let sink = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(sink, out0).unwrap();
+    function.add_node_input(sink, out1).unwrap();
 
-    graph.remove_node_input(sink, 1).unwrap(); // remove last
+    function.remove_node_input(sink, 1).unwrap(); // remove last
 
-    check_node_inputs(&graph, sink, [out0]);
-    assert_eq!(graph.output_uses(out1).count(), 0);
-    assert_eq!(graph.output_uses(out0).count(), 1);
+    check_node_inputs(&function, sink, [out0]);
+    assert_eq!(function.output_uses(out1).count(), 0);
+    assert_eq!(function.output_uses(out0).count(), 1);
 
-    let inputs_slice = graph.nodes[sink].inputs.as_slice(&graph.input_pool);
-    assert_eq!(graph.inputs[inputs_slice[0]].input_index, 0);
+    let inputs_slice = function.nodes[sink].inputs.as_slice(&function.input_pool);
+    assert_eq!(function.inputs[inputs_slice[0]].input_index, 0);
 }
 
 /// `update_input` on an input belonging to a cacheable node must evict the
@@ -802,30 +802,30 @@ fn remove_node_input_from_end_leaves_others_intact() {
 #[test]
 fn update_input_on_cacheable_evicts_stale_cache_entry() {
     use crate::ops::IntBinaryOp;
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let a = graph.create_node(
+    let a = function.create_node(
         NodeKind::IntConst(1),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let b = graph.create_node(
+    let b = function.create_node(
         NodeKind::IntConst(2),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let c = graph.create_node(
+    let c = function.create_node(
         NodeKind::IntConst(3),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let [a_out] = graph.node_outputs_exact::<1>(a).unwrap();
-    let [b_out] = graph.node_outputs_exact::<1>(b).unwrap();
-    let [c_out] = graph.node_outputs_exact::<1>(c).unwrap();
+    let [a_out] = function.node_outputs_exact::<1>(a).unwrap();
+    let [b_out] = function.node_outputs_exact::<1>(b).unwrap();
+    let [c_out] = function.node_outputs_exact::<1>(c).unwrap();
     let ty = NodeOutputKind::OutputType(NodeOutputType::U32);
 
     // Cache key inserted: (Add, [a, b], [ty]) → add_ab.
-    let add_ab = graph.create_node(
+    let add_ab = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
         [ty],
@@ -833,12 +833,12 @@ fn update_input_on_cacheable_evicts_stale_cache_entry() {
 
     // Redirect input[0] from a → c. Node now actually has inputs [c, b],
     // but the cache (if not maintained) still maps [a, b] → add_ab.
-    let in0 = graph.node_input_id_at(add_ab, 0).unwrap();
-    graph.update_input(in0, c_out);
+    let in0 = function.node_input_id_at(add_ab, 0).unwrap();
+    function.update_input(in0, c_out);
 
     // Re-create with the ORIGINAL key. Must NOT return add_ab — its
     // current inputs are [c, b], not [a, b].
-    let fresh = graph.create_node(
+    let fresh = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
         [ty],
@@ -856,64 +856,64 @@ fn update_input_on_cacheable_evicts_stale_cache_entry() {
 /// output.
 #[test]
 fn update_input_to_same_output_is_idempotent() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let src = graph.create_node(
+    let src = function.create_node(
         NodeKind::IntConst(99),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U32)],
     );
-    let [out] = graph.node_outputs_exact::<1>(src).unwrap();
+    let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
-    let sink = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(sink, out).unwrap();
+    let sink = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(sink, out).unwrap();
 
-    let input_id = graph.nodes[sink].inputs.as_slice(&graph.input_pool)[0];
-    graph.update_input(input_id, out);
+    let input_id = function.nodes[sink].inputs.as_slice(&function.input_pool)[0];
+    function.update_input(input_id, out);
 
     assert_eq!(
-        graph.output_uses(out).count(),
+        function.output_uses(out).count(),
         1,
         "self-update must not change use count"
     );
-    check_node_inputs(&graph, sink, [out]);
+    check_node_inputs(&function, sink, [out]);
 }
 
 /// After `detach_node_inputs`, re-adding the same inputs must restore
 /// the use-list count to its original value.
 #[test]
 fn detach_then_readd_restores_use_count() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let src = graph.create_node(
+    let src = function.create_node(
         NodeKind::IntConst(42),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [out] = graph.node_outputs_exact::<1>(src).unwrap();
+    let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
-    let sink = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(sink, out).unwrap();
-    graph.add_node_input(sink, out).unwrap();
-    assert_eq!(graph.output_uses(out).count(), 2);
+    let sink = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(sink, out).unwrap();
+    function.add_node_input(sink, out).unwrap();
+    assert_eq!(function.output_uses(out).count(), 2);
 
-    graph.detach_node_inputs(sink);
+    function.detach_node_inputs(sink);
     assert_eq!(
-        graph.output_uses(out).count(),
+        function.output_uses(out).count(),
         0,
         "uses cleared after detach"
     );
-    assert_eq!(graph.node_inputs(sink).len(), 0);
+    assert_eq!(function.node_inputs(sink).len(), 0);
 
     // Re-add; use count must be restored.
-    graph.add_node_input(sink, out).unwrap();
-    graph.add_node_input(sink, out).unwrap();
+    function.add_node_input(sink, out).unwrap();
+    function.add_node_input(sink, out).unwrap();
     assert_eq!(
-        graph.output_uses(out).count(),
+        function.output_uses(out).count(),
         2,
         "re-adding inputs must restore use count"
     );
-    assert_eq!(graph.node_inputs(sink).len(), 2);
+    assert_eq!(function.node_inputs(sink).len(), 2);
 }
 
 /// Two independent sinks each consuming the same output must all appear
@@ -921,21 +921,21 @@ fn detach_then_readd_restores_use_count() {
 /// multiple distinct nodes reference the same output.
 #[test]
 fn two_independent_consumers_both_in_use_list() {
-    let mut graph = Function::new();
+    let mut function = Function::new();
 
-    let src = graph.create_node(
+    let src = function.create_node(
         NodeKind::IntConst(1),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [out] = graph.node_outputs_exact::<1>(src).unwrap();
+    let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
-    let b = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(b, out).unwrap();
-    let c = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(c, out).unwrap();
+    let b = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(b, out).unwrap();
+    let c = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(c, out).unwrap();
 
-    let uses: Vec<_> = graph.output_uses(out).collect();
+    let uses: Vec<_> = function.output_uses(out).collect();
     assert_eq!(uses.len(), 2);
     let nodes: Vec<_> = uses.iter().map(|(n, _)| *n).collect();
     assert!(nodes.contains(&b), "b must appear in use-list");
@@ -946,13 +946,13 @@ fn two_independent_consumers_both_in_use_list() {
 /// for a count that does not match the actual number of outputs.
 #[test]
 fn node_outputs_exact_errors_on_wrong_count() {
-    let mut graph = Function::new();
-    let node = graph.create_node(
+    let mut function = Function::new();
+    let node = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U8)],
     );
-    let err = graph.node_outputs_exact::<2>(node).unwrap_err();
+    let err = function.node_outputs_exact::<2>(node).unwrap_err();
     assert!(
         err.to_string().contains("does not have exactly 2 outputs"),
         "got: {err}"
@@ -963,18 +963,18 @@ fn node_outputs_exact_errors_on_wrong_count() {
 /// a count that does not match the actual number of inputs.
 #[test]
 fn node_inputs_exact_errors_on_wrong_count() {
-    let mut graph = Function::new();
-    let src = graph.create_node(
+    let mut function = Function::new();
+    let src = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let [out] = graph.node_outputs_exact::<1>(src).unwrap();
+    let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
-    let sink = graph.create_node(NodeKind::Return, [], []);
-    graph.add_node_input(sink, out).unwrap(); // exactly 1 input
+    let sink = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(sink, out).unwrap(); // exactly 1 input
 
-    let err = graph.node_inputs_exact::<2>(sink).unwrap_err();
+    let err = function.node_inputs_exact::<2>(sink).unwrap_err();
     assert!(
         err.to_string().contains("does not have exactly 2 inputs"),
         "got: {err}"
@@ -984,46 +984,46 @@ fn node_inputs_exact_errors_on_wrong_count() {
 #[test]
 fn update_input_self_redirect_preserves_use_list_order() {
     use crate::ops::IntUnaryOp;
-    let mut graph = Function::new();
-    let c = graph.create_node(
+    let mut function = Function::new();
+    let c = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let cval = graph.node_outputs(c).iter().copied().next().unwrap();
+    let cval = function.node_outputs(c).iter().copied().next().unwrap();
     // Two consumers of cval to give the use-list real ordering.
-    let _a = graph.create_node(
+    let _a = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [cval],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let b = graph.create_node(
+    let b = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [cval],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
 
-    let head_before = graph.output_first_use_id(cval);
+    let head_before = function.output_first_use_id(cval);
 
-    let b_in0 = graph.node_input_id_at(b, 0).unwrap();
-    graph.update_input(b_in0, cval); // self-redirect — should be a no-op
+    let b_in0 = function.node_input_id_at(b, 0).unwrap();
+    function.update_input(b_in0, cval); // self-redirect — should be a no-op
 
     assert_eq!(
         head_before,
-        graph.output_first_use_id(cval),
+        function.output_first_use_id(cval),
         "self-redirect must not re-order the use-list"
     );
 }
 
 #[test]
 fn remove_node_input_returns_error_on_out_of_bounds() {
-    let mut graph = Function::new();
-    let cs = graph.create_node(
+    let mut function = Function::new();
+    let cs = function.create_node(
         NodeKind::Region,
         [],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
-    let err = graph.remove_node_input(cs, 7).expect_err("oob expected");
+    let err = function.remove_node_input(cs, 7).expect_err("oob expected");
     let msg = err.to_string();
     assert!(
         msg.contains("input index 7 out of bounds")
@@ -1035,13 +1035,13 @@ fn remove_node_input_returns_error_on_out_of_bounds() {
 
 #[test]
 fn remove_node_input_on_cacheable_uses_dedicated_error() {
-    let mut graph = Function::new();
-    let c = graph.create_node(
+    let mut function = Function::new();
+    let c = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let err = graph
+    let err = function
         .remove_node_input(c, 0)
         .expect_err("cacheable expected");
     let msg = err.to_string();
@@ -1054,9 +1054,9 @@ fn remove_node_input_on_cacheable_uses_dedicated_error() {
 
 #[test]
 fn node_input_id_at_returns_error_on_out_of_bounds() {
-    let mut graph = Function::new();
-    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let err = graph
+    let mut function = Function::new();
+    let n = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let err = function
         .node_input_id_at(n, 0)
         .expect_err("Entry has no inputs");
     let msg = err.to_string();
@@ -1072,87 +1072,87 @@ fn node_input_id_at_returns_error_on_out_of_bounds() {
 
 #[test]
 fn asm_fingerprint_unset_returns_empty_slice() {
-    let mut graph = Function::new();
-    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    assert_eq!(graph.asm_fingerprint(n), &[] as &[u64]);
+    let mut function = Function::new();
+    let n = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    assert_eq!(function.asm_fingerprint(n), &[] as &[u64]);
 }
 
 #[test]
 fn asm_fingerprint_set_then_get() {
-    let mut graph = Function::new();
-    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    graph.set_asm_fingerprint(n, vec![0x1000, 0x1004, 0x1008]);
-    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+    let mut function = Function::new();
+    let n = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    function.set_asm_fingerprint(n, vec![0x1000, 0x1004, 0x1008]);
+    assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
 }
 
 #[test]
 fn asm_fingerprint_extend_sorts_and_dedupes() {
-    let mut graph = Function::new();
-    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    graph.extend_asm_fingerprint(n, &[0x1004, 0x1000, 0x1004]);
-    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004]);
+    let mut function = Function::new();
+    let n = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    function.extend_asm_fingerprint(n, &[0x1004, 0x1000, 0x1004]);
+    assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004]);
     // Extending with one new + two duplicates yields a sorted, deduplicated set.
-    graph.extend_asm_fingerprint(n, &[0x1008, 0x1000, 0x1004]);
-    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+    function.extend_asm_fingerprint(n, &[0x1008, 0x1000, 0x1004]);
+    assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
 }
 
 #[test]
 fn asm_fingerprint_extend_from_unions_two_nodes() {
-    let mut graph = Function::new();
-    let a = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let b = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    graph.set_asm_fingerprint(a, vec![0x1000, 0x1004]);
-    graph.set_asm_fingerprint(b, vec![0x1004, 0x100C]);
-    graph.extend_asm_fingerprint_from(a, b);
-    assert_eq!(graph.asm_fingerprint(a), &[0x1000, 0x1004, 0x100C]);
+    let mut function = Function::new();
+    let a = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let b = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    function.set_asm_fingerprint(a, vec![0x1000, 0x1004]);
+    function.set_asm_fingerprint(b, vec![0x1004, 0x100C]);
+    function.extend_asm_fingerprint_from(a, b);
+    assert_eq!(function.asm_fingerprint(a), &[0x1000, 0x1004, 0x100C]);
     // Source unaffected.
-    assert_eq!(graph.asm_fingerprint(b), &[0x1004, 0x100C]);
+    assert_eq!(function.asm_fingerprint(b), &[0x1004, 0x100C]);
 }
 
 #[test]
 fn asm_fingerprint_extend_never_shrinks() {
-    let mut graph = Function::new();
-    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    graph.set_asm_fingerprint(n, vec![0x1000, 0x1004, 0x1008]);
+    let mut function = Function::new();
+    let n = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    function.set_asm_fingerprint(n, vec![0x1000, 0x1004, 0x1008]);
     // Extending with a strict subset must NOT remove any existing entries.
-    graph.extend_asm_fingerprint(n, &[0x1004]);
-    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+    function.extend_asm_fingerprint(n, &[0x1004]);
+    assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
     // Extending with the empty slice is a no-op.
-    graph.extend_asm_fingerprint(n, &[]);
-    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+    function.extend_asm_fingerprint(n, &[]);
+    assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
 }
 
 #[test]
 fn asm_fingerprint_extend_from_self_is_noop() {
-    let mut graph = Function::new();
-    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    graph.set_asm_fingerprint(n, vec![0x1000, 0x1004]);
-    graph.extend_asm_fingerprint_from(n, n);
-    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004]);
+    let mut function = Function::new();
+    let n = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    function.set_asm_fingerprint(n, vec![0x1000, 0x1004]);
+    function.extend_asm_fingerprint_from(n, n);
+    assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004]);
 }
 
 #[test]
 fn call_clobbered_override_default_is_none() {
-    let mut graph = Function::new();
-    let nid = graph.create_node(
+    let mut function = Function::new();
+    let nid = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    assert!(graph.call_clobbered_override(nid).is_none());
+    assert!(function.call_clobbered_override(nid).is_none());
 }
 
 #[test]
 fn call_clobbered_override_set_then_get_round_trips() {
-    let mut graph = Function::new();
-    let nid = graph.create_node(
+    let mut function = Function::new();
+    let nid = function.create_node(
         NodeKind::IntConst(0),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
     let vns: Vec<rsleigh::Vn> = vec![];
-    graph.set_call_clobbered_override(nid, vns.clone());
-    assert_eq!(graph.call_clobbered_override(nid), Some(vns.as_slice()));
+    function.set_call_clobbered_override(nid, vns.clone());
+    assert_eq!(function.call_clobbered_override(nid), Some(vns.as_slice()));
 }
 
 #[test]
@@ -1161,20 +1161,20 @@ fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
     // return the same NodeId.  Production code calls
     // `extend_asm_fingerprint(id, &[addr])` at every create_node site, so
     // both contributors end up unioned into the single side-table entry.
-    let mut graph = Function::new();
-    let a = graph.create_node(
+    let mut function = Function::new();
+    let a = function.create_node(
         NodeKind::IntConst(7),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    graph.extend_asm_fingerprint(a, &[0x2000]);
-    let b = graph.create_node(
+    function.extend_asm_fingerprint(a, &[0x2000]);
+    let b = function.create_node(
         NodeKind::IntConst(7),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
     assert_eq!(a, b, "cacheable nodes should dedup");
-    graph.extend_asm_fingerprint(b, &[0x3000]);
-    assert_eq!(graph.asm_fingerprint(a), &[0x2000, 0x3000]);
+    function.extend_asm_fingerprint(b, &[0x3000]);
+    assert_eq!(function.asm_fingerprint(a), &[0x2000, 0x3000]);
 }
 

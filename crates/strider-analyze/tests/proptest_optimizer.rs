@@ -308,9 +308,9 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /// Collects every node-id → asm-fingerprint mapping, indexed by `NodeId`.
-fn collect_fingerprints(g: &strider_ir::Function) -> HashMap<NodeId, Vec<u64>> {
-    g.all_node_ids()
-        .map(|id| (id, g.asm_fingerprint(id).to_vec()))
+fn collect_fingerprints(function: &strider_ir::Function) -> HashMap<NodeId, Vec<u64>> {
+    function.all_node_ids()
+        .map(|id| (id, function.asm_fingerprint(id).to_vec()))
         .collect()
 }
 

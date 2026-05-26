@@ -21,7 +21,7 @@ def test_find_all_mem_phi_pat_does_not_raise():
     mem = strider.MemoryMap()
     mem.add_region(0x1000, bytes_)
     res = strider.run(arch=arch, cc=cc, mem=mem, entry=0x1000)
-    g = res.graph
+    g = res.function
     # Should not raise — empty list is fine, the test verifies the
     # Python boundary accepts MemPhiPat as a Pat-like input.
     matches = g.find_all(pat.mem_phi())
@@ -35,6 +35,6 @@ def test_find_all_value_phi_pat_does_not_raise():
     mem = strider.MemoryMap()
     mem.add_region(0x1000, bytes_)
     res = strider.run(arch=arch, cc=cc, mem=mem, entry=0x1000)
-    g = res.graph
+    g = res.function
     matches = g.find_all(pat.value_phi())
     assert isinstance(matches, list)

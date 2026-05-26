@@ -32,8 +32,8 @@ use strider_analyze::GraphRewriter;
 
 mod common;
 
-fn count_eq_cmps(g: &Function) -> usize {
-    g.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
+fn count_eq_cmps(function: &Function) -> usize {
+    function.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
 }
 
 /// Build a tiny non-Sleigh function: `fn() -> u64 { return Add(K, 0); }`.
@@ -55,8 +55,8 @@ fn add_k_plus_zero(k: u64) -> Function {
     b.build().unwrap()
 }
 
-fn count_adds(g: &Function) -> usize {
-    g.count_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+fn count_adds(function: &Function) -> usize {
+    function.count_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 // ── Test 1 — replace switch selector with const, collapse to one branch ─────
@@ -176,16 +176,16 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
         .unwrap();
     b.build_return(Some(add2), &[]).unwrap();
     b.set_lift_addr(None);
-    let mut graph = b.build().unwrap();
+    let mut function = b.build().unwrap();
 
-    assert_eq!(count_adds(&graph), 2, "fixture has two Adds");
+    assert_eq!(count_adds(&function), 2, "fixture has two Adds");
 
     let x = Capture::new();
     let rule_x_plus_zero = rewrite_rule(add(var(x), int_const(0)), var(x));
     let pipeline = strider_analyze::opt::default_pipeline();
 
     // Edit 1: collapse the `Add(7, 0)`.  Returns 1 application.
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut graph)?;
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut function)?;
     let n1 = rewriter.apply_rule(&rule_x_plus_zero)?;
     assert_eq!(n1, 1, "first rewrite collapses Add(7,0)");
     // re-optimise — propagates the constant through the second Add.
@@ -208,16 +208,16 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
 fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     // Already-optimised graph.  Calling re_optimize must not change
     // the reachable-node count.
-    let mut g = add_k_plus_zero(7);
+    let mut function = add_k_plus_zero(7);
     let pipeline = strider_analyze::opt::default_pipeline();
 
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut function)?;
     { let __entry = rewriter.entry(); pipeline.run(rewriter.function_mut(), __entry) }?; // first run: collapses Add(7,0)
-    let count_after_first = g.walk().count();
+    let count_after_first = function.walk().count();
 
-    let mut rewriter2 = GraphRewriter::try_wrap_built(&mut g)?;
+    let mut rewriter2 = GraphRewriter::try_wrap_built(&mut function)?;
     { let __entry = rewriter2.entry(); pipeline.run(rewriter2.function_mut(), __entry) }?; // second run: no-op
-    let count_after_second = g.walk().count();
+    let count_after_second = function.walk().count();
 
     assert_eq!(
         count_after_first, count_after_second,
@@ -233,14 +233,14 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     // After every rewrite, `strider_ir::validate::validate` must pass.
     // Local typing + use-list consistency + graph invariants — a broken
     // use-list would only surface here, hence pin it explicitly.
-    let mut g = add_k_plus_zero(42);
+    let mut function = add_k_plus_zero(42);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut function)?;
     rewriter.apply_rule(rule)?;
 
-    strider_ir::validate::validate(&g, g.entry().unwrap())
+    strider_ir::validate::validate(&function, function.entry().unwrap())
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
     Ok(())
 }
@@ -260,16 +260,16 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
     //   1. `apply_rule` returns the correct fire count (1 here).
     //   2. After the rewrite, the Return now consumes `x` directly
     //      (the Add became unreachable).
-    let mut g = add_k_plus_zero(99);
-    assert_eq!(count_adds(&g), 1, "fixture has one Add");
+    let mut function = add_k_plus_zero(99);
+    assert_eq!(count_adds(&function), 1, "fixture has one Add");
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
+    let mut rewriter = GraphRewriter::try_wrap_built(&mut function)?;
     let fired = rewriter.apply_rule(rule)?;
     assert_eq!(fired, 1, "Capture-capture rule fires exactly once");
     assert_eq!(
-        count_adds(&g),
+        count_adds(&function),
         0,
         "post-rewrite Add is unreachable — Return now feeds off `x` directly",
     );

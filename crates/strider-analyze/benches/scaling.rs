@@ -95,13 +95,13 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .expect("Cfg build");
-    let mut graph = ana.analyze_cfg(&cfg).expect("analyze_cfg").function;
+    let mut function = ana.analyze_cfg(&cfg).expect("analyze_cfg").function;
     let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));
-    let entry = graph.entry().unwrap();
-    p.run(&mut graph, entry).expect("optimizer pipeline");
-    graph
+    let entry = function.entry().unwrap();
+    p.run(&mut function, entry).expect("optimizer pipeline");
+    function
 }
 
 fn bench_pipeline(c: &mut Criterion) {
@@ -111,8 +111,8 @@ fn bench_pipeline(c: &mut Criterion) {
         let id = format!("{}/{}::{}", case.arch_name, case.case, case.fn_name);
         group.bench_function(&id, |b| {
             b.iter(|| {
-                let g = analyze_case(*case);
-                black_box(g);
+                let function = analyze_case(*case);
+                black_box(function);
             });
         });
     }
@@ -384,8 +384,8 @@ fn bench_diamond_cfg(c: &mut Criterion) {
     for n in [100usize, 500, 1_000] {
         group.bench_function(format!("n_{n}_regions"), |b| {
             b.iter(|| {
-                let g = synthetic::run_diamond_cfg(black_box(n));
-                black_box(g);
+                let function = synthetic::run_diamond_cfg(black_box(n));
+                black_box(function);
             });
         });
     }
@@ -397,8 +397,8 @@ fn bench_wide_jump_table(c: &mut Criterion) {
     for n in [16usize, 64, 256] {
         group.bench_function(format!("n_{n}_targets"), |b| {
             b.iter(|| {
-                let g = synthetic::run_jump_table_scenario(black_box(n));
-                black_box(g);
+                let function = synthetic::run_jump_table_scenario(black_box(n));
+                black_box(function);
             });
         });
     }

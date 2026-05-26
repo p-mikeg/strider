@@ -1791,8 +1791,8 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
         .create_node(NodeKind::Return, [entry_ctrl, mem_out, out], []);
     b.function_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
     let entry_id = b.entry();
-    let g = b.function();
-    validate(g, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
+    let function = b.function();
+    validate(function, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
     Ok(())
 }
 
@@ -1881,17 +1881,17 @@ mod build_call_with_cc {
         b.build_call_with_cc(addr, None).unwrap();
         // The Call output kinds match `build_call(addr)` exactly: Control,
         // Memory, then one slot per `call_clobbered_variables` entry.
-        let g = b.function();
-        let call_node = g
+        let function = b.function();
+        let call_node = function
             .all_node_ids()
-            .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
+            .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
             .unwrap();
         assert!(
-            g.node_outputs(call_node).len() >= 2,
+            function.node_outputs(call_node).len() >= 2,
             "Control + Memory at minimum"
         );
         assert!(
-            g.call_clobbered_override(call_node).is_none(),
+            function.call_clobbered_override(call_node).is_none(),
             "no override means side-table stays None"
         );
     }
@@ -1933,23 +1933,23 @@ mod build_call_with_cc {
             .build_int_const(0xdead_beef_u64, NodeOutputType::U64)
             .unwrap();
         b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
-        let g = b.function();
-        let call_node = g
+        let function = b.function();
+        let call_node = function
             .all_node_ids()
-            .find(|n| matches!(g.node_kind(*n), NodeKind::Call))
+            .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
             .unwrap();
-        let outs = g.node_outputs(call_node);
+        let outs = function.node_outputs(call_node);
         // Outputs: Control + Memory + 0 clobbered slots.
         assert_eq!(
             outs.len(),
             2,
             "fentry-style Call has 0 clobbered output slots"
         );
-        let inputs: Vec<_> = g.node_inputs(call_node).into_iter().collect();
+        let inputs: Vec<_> = function.node_inputs(call_node).into_iter().collect();
         // Inputs: control + memory + target.  No arg slots.
         assert_eq!(inputs.len(), 3, "fentry-style Call takes no args");
         assert_eq!(
-            g.call_clobbered_override(call_node),
+            function.call_clobbered_override(call_node),
             Some(&[][..]),
             "side-table records the empty per-Call override list"
         );
@@ -2023,9 +2023,9 @@ mod build_call_with_cc {
             );
         }
 
-        let g = b.build().unwrap();
-        let entry = g.entry().unwrap();
-        crate::validate::validate(&g, entry)
+        let function = b.build().unwrap();
+        let entry = function.entry().unwrap();
+        crate::validate::validate(&function, entry)
             .expect("build() after extended use must yield a valid graph");
     }
 }

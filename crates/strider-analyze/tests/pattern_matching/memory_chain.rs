@@ -35,12 +35,12 @@ fn load_mem_in_matches_preceding_store() {
         .build_load(addr2, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
     b.build_return(Some(load_val), &[]).expect("ret");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
     let pat = load()
         .addr(int_const(0x200u64))
         .mem_in(store().addr(int_const(0x100u64)));
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(
         hits.len(),
         1,
@@ -75,12 +75,12 @@ fn store_next_mem_matches_following_store() {
     b.build_store(addr2, v2, rsleigh::VnSpace::RAM)
         .expect("store_b");
     b.build_return(None, &[]).expect("ret");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
     let pat = store()
         .addr(int_const(0x100u64))
         .next_mem(store().addr(int_const(0x200u64)));
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
 }
 
@@ -116,9 +116,9 @@ fn next_mem_returns_no_match_when_multi_consumer() {
     b.build_store(addr2, v2, rsleigh::VnSpace::RAM)
         .expect("store_b");
     b.build_return(Some(load_val), &[]).expect("ret");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
-    let m = Matcher::try_new(&g).unwrap();
+    let m = Matcher::try_new(&function).unwrap();
 
     // Sanity: store_a matches without `.next_mem` (baseline).
     let h_baseline = m.find_all(&store().addr(int_const(0x100u64)).into());
@@ -162,9 +162,9 @@ fn next_mem_returns_match_when_single_consumer() {
     b.build_store(addr2, v2, rsleigh::VnSpace::RAM)
         .expect("store_b");
     b.build_return(None, &[]).expect("ret");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
-    let h = Matcher::try_new(&g).unwrap().find_all(
+    let h = Matcher::try_new(&function).unwrap().find_all(
         &store()
             .addr(int_const(0x100u64))
             .next_mem(any())
@@ -201,12 +201,12 @@ fn callother_next_mem_matches_following_store() {
     b.build_store(addr, val, rsleigh::VnSpace::RAM)
         .expect("store");
     b.build_return(None, &[]).expect("ret");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
     let pat = call_other()
         .name("LOCK")
         .next_mem(store().addr(int_const(0x100u64)));
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(
         hits.len(),
         1,
@@ -252,13 +252,13 @@ fn matches_store_bracketed_by_lock_and_unlock() {
         .expect("advance to UNLOCK mem_out");
 
     b.build_return(None, &[]).expect("ret");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
     let pat = store()
         .addr(int_const(0x100u64))
         .mem_in(call_other().name("LOCK"))
         .next_mem(call_other().name("UNLOCK"));
-    let hits = Matcher::try_new(&g).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(
         hits.len(),
         1,

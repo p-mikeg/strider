@@ -50,8 +50,8 @@ mod tests {
         b.build()
     }
 
-    fn entry_ctrl_out(g: &strider_ir::Function) -> NodeOutputId {
-        g.node_outputs(g.entry().expect("test fixture must be built"))
+    fn entry_ctrl_out(function: &strider_ir::Function) -> NodeOutputId {
+        function.node_outputs(function.entry().expect("test fixture must be built"))
             .iter()
             .copied()
             .next()
@@ -60,36 +60,36 @@ mod tests {
 
     #[test]
     fn next_control_node_returns_single_consumer() -> strider_ir::Result<()> {
-        let g = graph_call_return()?;
-        let m = Matcher::try_new(&g).unwrap();
+        let function = graph_call_return()?;
+        let m = Matcher::try_new(&function).unwrap();
         // Entry.ctrl feeds the region's `Region` header directly —
         // it is the single consumer. The walk helper does not skip it;
         // the caller's pattern decides whether to match a Region.
-        let got = next_control_node(&m, entry_ctrl_out(&g)).expect("one consumer");
-        assert!(matches!(g.node_kind(got), NodeKind::Region));
+        let got = next_control_node(&m, entry_ctrl_out(&function)).expect("one consumer");
+        assert!(matches!(function.node_kind(got), NodeKind::Region));
         Ok(())
     }
 
     #[test]
     fn next_control_node_returns_none_when_no_consumer() -> strider_ir::Result<()> {
-        let mut g = graph_call_return()?;
+        let mut function = graph_call_return()?;
         // Region is non-cacheable, so this always creates a fresh node.  The
         // resulting Control output has no consumer, which is the condition
         // being exercised.  (Entry can no longer be used for this purpose
         // because it is now cacheable — a second `create_node(Entry, …)` call
         // returns the existing Entry whose output *does* have a consumer.)
-        let detached = g.create_node(
+        let detached = function.create_node(
             NodeKind::Region,
             [],
             [strider_ir::node::NodeOutputKind::Control],
         );
-        let out = g
+        let out = function
             .node_outputs(detached)
             .iter()
             .copied()
             .next()
             .expect("Region has a Control output");
-        let m = Matcher::try_new(&g).unwrap();
+        let m = Matcher::try_new(&function).unwrap();
         assert_eq!(next_control_node(&m, out), None);
         Ok(())
     }

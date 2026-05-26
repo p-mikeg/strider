@@ -10,9 +10,9 @@ use strider_ir::node::{NodeId, NodeKind};
 /// Runs `pat` against `g` and returns the matches, panicking with a
 /// descriptive message if the count differs from `expected`.
 #[track_caller]
-pub fn matches(g: &Function, pat: impl Into<Pat>, expected: usize) -> Vec<Match> {
+pub fn matches(function: &Function, pat: impl Into<Pat>, expected: usize) -> Vec<Match> {
     let pat = pat.into();
-    let hits = Matcher::try_new(g).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(function).unwrap().find_all(&pat);
     assert_eq!(
         hits.len(),
         expected,
@@ -24,15 +24,15 @@ pub fn matches(g: &Function, pat: impl Into<Pat>, expected: usize) -> Vec<Match>
 
 /// Asserts `pat` matches exactly once and returns that [`Match`].
 #[track_caller]
-pub fn unique(g: &Function, pat: impl Into<Pat>) -> Match {
-    let mut hits = matches(g, pat, 1);
+pub fn unique(function: &Function, pat: impl Into<Pat>) -> Match {
+    let mut hits = matches(function, pat, 1);
     hits.pop().expect("unique requires exactly one match")
 }
 
 /// Asserts `pat` produces no matches.
 #[track_caller]
-pub fn none(g: &Function, pat: impl Into<Pat>) {
-    matches(g, pat, 0);
+pub fn none(function: &Function, pat: impl Into<Pat>) {
+    matches(function, pat, 0);
 }
 
 /// Asserts `pat` matches at least once and returns the first [`Match`].
@@ -41,9 +41,9 @@ pub fn none(g: &Function, pat: impl Into<Pat>) {
 /// places (e.g. a constant used twice) but the test only cares about *any*
 /// success, not exactly one.
 #[track_caller]
-pub fn first(g: &Function, pat: impl Into<Pat>) -> Match {
+pub fn first(function: &Function, pat: impl Into<Pat>) -> Match {
     let pat = pat.into();
-    let mut hits = Matcher::try_new(g).unwrap().find_all(&pat);
+    let mut hits = Matcher::try_new(function).unwrap().find_all(&pat);
     assert!(!hits.is_empty(), "expected at least one match, got 0");
     hits.swap_remove(0)
 }
@@ -51,8 +51,8 @@ pub fn first(g: &Function, pat: impl Into<Pat>) -> Match {
 /// Returns the first node in `g` whose kind satisfies `pred`, panicking if
 /// none exists.
 #[track_caller]
-pub fn find_node<F: Fn(&NodeKind) -> bool>(g: &Function, pred: F) -> NodeId {
-    g.walk()
-        .find(|&n| pred(g.node_kind(n)))
+pub fn find_node<F: Fn(&NodeKind) -> bool>(function: &Function, pred: F) -> NodeId {
+    function.walk()
+        .find(|&n| pred(function.node_kind(n)))
         .expect("expected node kind not found in graph")
 }

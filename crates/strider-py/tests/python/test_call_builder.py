@@ -36,7 +36,7 @@ def _switch_graph():
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         allow_code_before_start_addr=True,
-    ).graph
+    ).function
 
 
 # ── builder-shape sanity ─────────────────────────────────────────────────

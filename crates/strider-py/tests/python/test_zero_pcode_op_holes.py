@@ -95,7 +95,7 @@ def test_aarch64_4_19_wait_consider_task_lifts_cleanly():
     """
     kernel = _kernel_path("aarch64", "4.19.0-arm64")
     result = _lift(kernel, "wait_consider_task", arch_name="aarch64")
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0
 
 
 # ── Bug 3: split-into-zero-pcode-op-hole ──────────────────────────────────────
@@ -112,4 +112,4 @@ def test_aarch64_task_active_pid_ns_lifts_cleanly(version: str):
     """
     kernel = _kernel_path("aarch64", version)
     result = _lift(kernel, "task_active_pid_ns", arch_name="aarch64")
-    assert result.graph.node_count() > 0
+    assert result.function.node_count() > 0

@@ -113,8 +113,8 @@ impl PyFunction {
         &self,
         f: impl FnOnce(&strider_ir::Function) -> PyResult<R>,
     ) -> PyResult<R> {
-        let g = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        f(&g)
+        let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        f(&function)
     }
 
     /// Like [`Self::with_read`] but for accessors whose closure just
@@ -124,8 +124,8 @@ impl PyFunction {
         &self,
         f: impl FnOnce(&strider_ir::Function) -> R,
     ) -> PyResult<R> {
-        let g = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        Ok(f(&g))
+        let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        Ok(f(&function))
     }
 
     /// Enum tagging the three dot-rendering operations the public

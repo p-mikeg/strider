@@ -236,8 +236,8 @@ pub fn analyze_with_known_targets(
         .expect("cfg build with Multiple known targets");
 
     let strider = strider_x86_64();
-    let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").function;
-    (graph, strider)
+    let function = strider.analyze_cfg(&cfg).expect("analyze_cfg").function;
+    (function, strider)
 }
 
 // ── Binary path resolution ───────────────────────────────────────────────────
@@ -349,12 +349,12 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let (outcome, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, case, fn_name);
     let ana = ana.with_alias_mode(strider_analyze::opt::AliasMode::AssumeStackConstDisjoint);
-    let mut graph = outcome.function;
+    let mut function = outcome.function;
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
-    p.run_built(&mut graph)
+    p.run_built(&mut function)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
-    graph
+    function
 }
 
 // ── Assertion vocabulary ─────────────────────────────────────────────────────
@@ -366,32 +366,32 @@ use strider_ir::node::NodeKind;
 
 // Re-export the canonical `Function::count_kind` / `Function::has_kind` under
 // their bare names so existing test call-sites need no qualification.
-pub fn count_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::Function, pred: F) -> usize {
-    g.count_kind(pred)
+pub fn count_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> usize {
+    function.count_kind(pred)
 }
 
-pub fn count_int_binop(g: &strider_ir::Function, op: strider_ir::IntBinaryOp) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op))
+pub fn count_int_binop(function: &strider_ir::Function, op: strider_ir::IntBinaryOp) -> usize {
+    count_kind(function, |k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op))
 }
-pub fn count_int_unop(g: &strider_ir::Function, op: strider_ir::IntUnaryOp) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::IntUnaryOp(o) if *o == op))
+pub fn count_int_unop(function: &strider_ir::Function, op: strider_ir::IntUnaryOp) -> usize {
+    count_kind(function, |k| matches!(k, NodeKind::IntUnaryOp(o) if *o == op))
 }
-pub fn count_int_cmp(g: &strider_ir::Function, op: strider_ir::IntCmpOp) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
+pub fn count_int_cmp(function: &strider_ir::Function, op: strider_ir::IntCmpOp) -> usize {
+    count_kind(function, |k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
 }
-pub fn count_float_binop(g: &strider_ir::Function, op: strider_ir::FloatBinaryOp) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op))
+pub fn count_float_binop(function: &strider_ir::Function, op: strider_ir::FloatBinaryOp) -> usize {
+    count_kind(function, |k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op))
 }
-pub fn count_float_unop(g: &strider_ir::Function, op: strider_ir::FloatUnaryOp) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op))
+pub fn count_float_unop(function: &strider_ir::Function, op: strider_ir::FloatUnaryOp) -> usize {
+    count_kind(function, |k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op))
 }
-pub fn count_float_cmp(g: &strider_ir::Function, op: strider_ir::FloatCmpOp) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op))
+pub fn count_float_cmp(function: &strider_ir::Function, op: strider_ir::FloatCmpOp) -> usize {
+    count_kind(function, |k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op))
 }
 
-pub fn count_calls (g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::Call)) }
-pub fn count_ifs   (g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::If)) }
-pub fn count_returns(g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::Return)) }
+pub fn count_calls (function: &strider_ir::Function) -> usize { count_kind(function, |k| matches!(k, NodeKind::Call)) }
+pub fn count_ifs   (function: &strider_ir::Function) -> usize { count_kind(function, |k| matches!(k, NodeKind::If)) }
+pub fn count_returns(function: &strider_ir::Function) -> usize { count_kind(function, |k| matches!(k, NodeKind::Return)) }
 
 /// Counts the distinct control-flow paths converging at any `Return` node.
 ///
@@ -411,27 +411,27 @@ pub fn count_returns(g: &strider_ir::Function) -> usize { count_kind(g, |k| matc
 /// are not transitively expanded — the result is therefore a lower bound on
 /// the number of source-level return paths, sufficient for the
 /// "≥ 2 return paths" assertions in this suite.
-pub fn count_return_paths(g: &strider_ir::Function) -> usize {
+pub fn count_return_paths(function: &strider_ir::Function) -> usize {
     let mut total = 0usize;
-    for nid in g.walk() {
-        if !matches!(g.node_kind(nid), NodeKind::Return) {
+    for nid in function.walk() {
+        if !matches!(function.node_kind(nid), NodeKind::Return) {
             continue;
         }
         // Return inputs: [Control, Memory, ...return values].  Slot 0 is the
         // Control predecessor.
-        let inputs = g.node_inputs(nid);
+        let inputs = function.node_inputs(nid);
         let Some(ctrl_out) = inputs.get(0).copied() else {
             // A Return with no inputs is malformed; the validator would catch
             // it.  Treat as a single path so we don't silently drop it.
             total += 1;
             continue;
         };
-        let pred = g.node_for_output(ctrl_out);
-        match g.node_kind(pred) {
+        let pred = function.node_for_output(ctrl_out);
+        match function.node_kind(pred) {
             // Region's control inputs form the leading run of its input
             // list (see node_signature: `inputs: []; in_tail: CTRL`), so the
             // total input count IS the predecessor count.
-            NodeKind::Region => total += g.node_inputs(pred).len(),
+            NodeKind::Region => total += function.node_inputs(pred).len(),
             _ => total += 1,
         }
     }
@@ -446,34 +446,34 @@ pub fn count_return_paths(g: &strider_ir::Function) -> usize {
 /// variable is loop-invariant (e.g. a register that's read in the loop
 /// header but never modified by the body — `RedundantPhis`'s self-ref
 /// rule then collapses the phi to the entry value).
-pub fn count_loops(g: &strider_ir::Function) -> usize {
+pub fn count_loops(function: &strider_ir::Function) -> usize {
     use entity_utils::DenseEntitySet;
     let mut count = 0;
-    let reachable: DenseEntitySet<strider_ir::node::NodeId> = g.walk().collect();
-    for n in g.all_node_ids() {
+    let reachable: DenseEntitySet<strider_ir::node::NodeId> = function.walk().collect();
+    for n in function.all_node_ids() {
         if !reachable.contains(n) {
             continue;
         }
-        if !matches!(g.node_kind(n), NodeKind::Region) {
+        if !matches!(function.node_kind(n), NodeKind::Region) {
             continue;
         }
         // Back-edge detection: from each predecessor, walk forward
         // through Control outputs.  If we land back on `n`, that
         // predecessor closes a loop.
-        let preds: Vec<_> = g.node_inputs(n).into_iter().collect();
+        let preds: Vec<_> = function.node_inputs(n).into_iter().collect();
         let has_back_edge = preds.iter().any(|&pred_out| {
-            let pred = g.node_for_output(pred_out);
+            let pred = function.node_for_output(pred_out);
             let mut seen: DenseEntitySet<strider_ir::node::NodeId> = DenseEntitySet::new();
             let mut stack = vec![pred];
             while let Some(cur) = stack.pop() {
                 if !seen.insert(cur) {
                     continue;
                 }
-                for &out in g.node_outputs(cur) {
-                    if !g.output_kind(out).is_control() {
+                for &out in function.node_outputs(cur) {
+                    if !function.output_kind(out).is_control() {
                         continue;
                     }
-                    for (consumer, _) in g.output_uses(out) {
+                    for (consumer, _) in function.output_uses(out) {
                         if consumer == n {
                             return true;
                         }
@@ -489,33 +489,33 @@ pub fn count_loops(g: &strider_ir::Function) -> usize {
     }
     count
 }
-pub fn count_loads (g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::Load(_))) }
-pub fn count_stores(g: &strider_ir::Function) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::Store(_)))
+pub fn count_loads (function: &strider_ir::Function) -> usize { count_kind(function, |k| matches!(k, NodeKind::Load(_))) }
+pub fn count_stores(function: &strider_ir::Function) -> usize {
+    count_kind(function, |k| matches!(k, NodeKind::Store(_)))
 }
-pub fn count_popcount(g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::Popcount)) }
-pub fn count_lzcount (g: &strider_ir::Function) -> usize { count_kind(g, |k| matches!(k, NodeKind::Lzcount)) }
-pub fn count_int_consts(g: &strider_ir::Function) -> usize {
-    count_kind(g, |k| matches!(k, NodeKind::IntConst(_)))
-}
-
-pub fn has_kind<F: Fn(&NodeKind) -> bool>(g: &strider_ir::Function, pred: F) -> bool {
-    g.has_kind(pred)
+pub fn count_popcount(function: &strider_ir::Function) -> usize { count_kind(function, |k| matches!(k, NodeKind::Popcount)) }
+pub fn count_lzcount (function: &strider_ir::Function) -> usize { count_kind(function, |k| matches!(k, NodeKind::Lzcount)) }
+pub fn count_int_consts(function: &strider_ir::Function) -> usize {
+    count_kind(function, |k| matches!(k, NodeKind::IntConst(_)))
 }
 
-pub fn has_constant(g: &strider_ir::Function, value: u64) -> bool {
+pub fn has_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> bool {
+    function.has_kind(pred)
+}
+
+pub fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
     // IntConst stores u128; compare against the u64 value widened to u128.
-    has_kind(g, |k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(value)))
+    has_kind(function, |k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(value)))
 }
 
 /// Locates the unique `If` node in `g`.  Panics if zero or more than one
 /// is present — either case indicates a fixture-construction bug.  Use this
 /// helper when the test asserts on the condition of a known-unique `If` node
 /// rather than counting `If` nodes via [`count_ifs`].
-pub fn find_unique_if(g: &strider_ir::Function) -> strider_ir::node::NodeId {
-    let mut iter = g
+pub fn find_unique_if(function: &strider_ir::Function) -> strider_ir::node::NodeId {
+    let mut iter = function
         .all_node_ids()
-        .filter(|&n| matches!(g.node_kind(n), NodeKind::If));
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::If));
     let first = iter.next().expect("fixture must contain exactly one If node");
     assert!(
         iter.next().is_none(),
@@ -647,8 +647,8 @@ macro_rules! __define_scan_ignore {
                  { $arch_camel: $d reason:literal $d(, $d($d _rest:tt)*)? }) => {
                     #[test] #[ignore = $d reason]
                     fn $d fn() {
-                        let g = $d crate::common::analyze($d crate::common::Arch::$arch_camel, $d case, $d fn_name);
-                        $d assert(&g);
+                        let function = $d crate::common::analyze($d crate::common::Arch::$arch_camel, $d case, $d fn_name);
+                        $d assert(&function);
                     }
                 };
                 ($d fn:ident : ident, $d case:literal, $d fn_name:literal, $d assert:ident,
@@ -658,8 +658,8 @@ macro_rules! __define_scan_ignore {
                 ($d fn:ident : ident, $d case:literal, $d fn_name:literal, $d assert:ident, { $d(,)? }) => {
                     #[test]
                     fn $d fn() {
-                        let g = $d crate::common::analyze($d crate::common::Arch::$arch_camel, $d case, $d fn_name);
-                        $d assert(&g);
+                        let function = $d crate::common::analyze($d crate::common::Arch::$arch_camel, $d case, $d fn_name);
+                        $d assert(&function);
                     }
                 };
             }

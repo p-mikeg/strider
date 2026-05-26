@@ -13,71 +13,71 @@ use super::support::{Tb, assertions as a, reg_vn, shapes};
 
 #[test]
 fn call_unconstrained_matches() {
-    let g = shapes::call_at(0x1234);
-    a::matches(&g, call(), 1);
+    let function = shapes::call_at(0x1234);
+    a::matches(&function, call(), 1);
 }
 
 #[test]
 fn call_at_addr_matches() {
-    let g = shapes::call_at(0x1234);
-    a::matches(&g, call().at(0x1234), 1);
-    a::none(&g, call().at(0x9999));
+    let function = shapes::call_at(0x1234);
+    a::matches(&function, call().at(0x1234), 1);
+    a::none(&function, call().at(0x9999));
 }
 
 #[test]
 fn call_target_with_pattern() {
-    let g = shapes::call_at(0x1234);
-    a::matches(&g, call().target(int_const(0x1234u64)), 1);
+    let function = shapes::call_at(0x1234);
+    a::matches(&function, call().target(int_const(0x1234u64)), 1);
 }
 
 #[test]
 fn call_at_any_matches_when_target_is_in_set() {
-    let g = shapes::call_at(0x1234);
+    let function = shapes::call_at(0x1234);
     // Set contains the call's target → match.
-    a::matches(&g, call().at_any([0x1000u64, 0x1234, 0x9999]), 1);
+    a::matches(&function, call().at_any([0x1000u64, 0x1234, 0x9999]), 1);
 }
 
 #[test]
 fn call_at_any_skips_when_target_is_not_in_set() {
-    let g = shapes::call_at(0x1234);
+    let function = shapes::call_at(0x1234);
     // Set does not contain the call's target → no match.
-    a::none(&g, call().at_any([0x1000u64, 0x9999]));
+    a::none(&function, call().at_any([0x1000u64, 0x9999]));
 }
 
 #[test]
 fn call_at_any_empty_set_never_matches() {
-    let g = shapes::call_at(0x1234);
+    let function = shapes::call_at(0x1234);
     // An empty target set is vacuously false — every IntConst lookup
     // fails the membership test.  Pinning this contract so empty-set
     // callers do not accidentally fall through to "match anything".
-    a::none(&g, call().at_any(std::iter::empty::<u64>()));
+    a::none(&function, call().at_any(std::iter::empty::<u64>()));
 }
 
 #[test]
 fn int_const_any_of_matches_set_membership() {
     // Direct test of the underlying primitive — independent of CallPat.
-    let g = shapes::call_at(0x1234);
+    let function = shapes::call_at(0x1234);
     // The call site stores the target as IntConst(0x1234); query via
     // the standalone any-of ctor.
     a::matches(
-        &g,
+        &function,
         call().target(int_const_any_of([0x1234u64, 0xDEADBEEF])),
         1,
     );
     a::none(
-        &g,
+        &function,
         call().target(int_const_any_of([0x1000u64, 0xDEADBEEF])),
     );
 }
 
 #[test]
 fn call_captures_node() {
-    let g = shapes::call_at(0x1234);
+    let function = shapes::call_at(0x1234);
     let n = Capture::new();
-    let m = a::unique(&g, call().at(0x1234).capture(n));
+    let m = a::unique(&function, call().at(0x1234).capture(n));
     let node = m.node(n).expect("node capture");
     assert!(matches!(
-        g.node_kind(node),
+        function.node_kind(node),
         strider_ir::node::NodeKind::Call
     ));
 }
@@ -94,11 +94,11 @@ fn graph_call_with_single_arg() -> strider_ir::Function {
 
 #[test]
 fn call_arg_by_index() {
-    let g = graph_call_with_single_arg();
-    a::matches(&g, call().arg(0, int_const(42u64)), 1);
-    a::none(&g, call().arg(0, int_const(99u64)));
+    let function = graph_call_with_single_arg();
+    a::matches(&function, call().arg(0, int_const(42u64)), 1);
+    a::none(&function, call().arg(0, int_const(99u64)));
     // Out-of-range arg index → the indexed input doesn't exist → reject.
-    a::none(&g, call().arg(99, any()));
+    a::none(&function, call().arg(99, any()));
 }
 
 /// Two argument registers, pre-loaded with 11 and 22 respectively.
@@ -116,15 +116,15 @@ fn graph_call_with_two_args() -> strider_ir::Function {
 
 #[test]
 fn call_multiple_args() {
-    let g = graph_call_with_two_args();
+    let function = graph_call_with_two_args();
     a::matches(
-        &g,
+        &function,
         call().arg(0, int_const(11u64)).arg(1, int_const(22u64)),
         1,
     );
     // Right arg 0, wrong arg 1.
     a::none(
-        &g,
+        &function,
         call().arg(0, int_const(11u64)).arg(1, int_const(0u64)),
     );
 }
@@ -135,8 +135,8 @@ fn graph_call_then_return_ret_reg() -> (strider_ir::Function, rsleigh::Vn) {
     let ret = reg_vn(0, 8);
     let mut t = Tb::raw(vec![ret], &[], &[], &[ret], None, 0);
     t.call_at(0xCAFE);
-    let g = t.ret_regs(&[ret]);
-    (g, ret)
+    let function = t.ret_regs(&[ret]);
+    (function, ret)
 }
 
 #[test]
@@ -156,50 +156,50 @@ fn call_ret_output_capture() {
 
 #[test]
 fn ret_unconstrained_matches() {
-    let g = shapes::add_consts(5, 3);
-    a::matches(&g, ret(), 1);
+    let function = shapes::add_consts(5, 3);
+    a::matches(&function, ret(), 1);
 }
 
 #[test]
 fn ret_val_matches_returned_value() {
-    let g = shapes::add_consts(5, 3);
+    let function = shapes::add_consts(5, 3);
     a::matches(
-        &g,
+        &function,
         ret().ret_val(0, add(int_const(5u64), int_const(3u64))),
         1,
     );
     // Ret val constrained to something not in the graph → reject.
-    a::none(&g, ret().ret_val(0, int_const(0u64)));
+    a::none(&function, ret().ret_val(0, int_const(0u64)));
 }
 
 #[test]
 fn ret_without_value_rejects_ret_val_constraint() {
-    let g = shapes::call_at(0x1234); // Return with no value.
+    let function = shapes::call_at(0x1234); // Return with no value.
     // Plain ret() matches.
-    a::matches(&g, ret(), 1);
+    a::matches(&function, ret(), 1);
     // But constraining ret_val(0, …) cannot succeed — there is no value.
-    a::none(&g, ret().ret_val(0, any()));
+    a::none(&function, ret().ret_val(0, any()));
 }
 
 #[test]
 fn ret_preceded_by_call() {
-    let g = shapes::call_at(0x1234);
+    let function = shapes::call_at(0x1234);
     // The Return's ctrl predecessor is a Region at the call region;
     // a call() pattern matches the Call node whose ctrl output this state
     // consumes.  `preceded_by(call())` follows the Ret ctrl → Region,
     // so it will not match directly.  Instead: use `any()` as a smoke test
     // that `.preceded_by` doesn't error.
-    a::matches(&g, ret().preceded_by(any()), 1);
+    a::matches(&function, ret().preceded_by(any()), 1);
 }
 
 #[test]
 fn ret_captures_node() {
-    let g = shapes::add_consts(5, 3);
+    let function = shapes::add_consts(5, 3);
     let n = Capture::new();
-    let m = a::unique(&g, ret().capture(n));
+    let m = a::unique(&function, ret().capture(n));
     let node = m.node(n).expect("ret node capture");
     assert!(matches!(
-        g.node_kind(node),
+        function.node_kind(node),
         strider_ir::node::NodeKind::Return
     ));
 }
@@ -208,41 +208,41 @@ fn ret_captures_node() {
 
 #[test]
 fn if_node_unconstrained_matches() {
-    let g = shapes::if_cmp_then_return(4);
-    a::matches(&g, if_node(), 1);
+    let function = shapes::if_cmp_then_return(4);
+    a::matches(&function, if_node(), 1);
 }
 
 #[test]
 fn if_node_cond_matches() {
-    let g = shapes::if_cmp_then_return(4);
+    let function = shapes::if_cmp_then_return(4);
     a::matches(
-        &g,
+        &function,
         if_node().cond(int_eq(int_const(4u64), int_const(1u64))),
         1,
     );
     // Wrong cond subpattern.
     a::none(
-        &g,
+        &function,
         if_node().cond(int_eq(int_const(99u64), int_const(1u64))),
     );
 }
 
 #[test]
 fn if_node_true_and_false_branches() {
-    let g = shapes::if_cmp_then_return(4);
+    let function = shapes::if_cmp_then_return(4);
     // Single consumer of the true-branch output is the `Region` at
     // the true region — `any()` always matches a real node.
-    a::matches(&g, if_node().true_branch(any()).false_branch(any()), 1);
+    a::matches(&function, if_node().true_branch(any()).false_branch(any()), 1);
 }
 
 #[test]
 fn if_node_captures() {
-    let g = shapes::if_cmp_then_return(4);
+    let function = shapes::if_cmp_then_return(4);
     let n = Capture::new();
-    let m = a::unique(&g, if_node().capture(n));
+    let m = a::unique(&function, if_node().capture(n));
     let node = m.node(n).expect("if node capture");
     assert!(matches!(
-        g.node_kind(node),
+        function.node_kind(node),
         strider_ir::node::NodeKind::If
     ));
 }
@@ -273,11 +273,11 @@ fn graph_if_with_call_in_false_branch() -> strider_ir::Function {
 
 #[test]
 fn call_only_matches_present_branch_via_find_all() {
-    let g = graph_if_with_call_in_false_branch();
+    let function = graph_if_with_call_in_false_branch();
     // There's exactly one Call in the graph; pattern matches it.
-    a::matches(&g, call().at(0x9999), 1);
+    a::matches(&function, call().at(0x9999), 1);
     // A call at the non-existent address should not match.
-    a::none(&g, call().at(0xDEAD));
+    a::none(&function, call().at(0xDEAD));
 }
 
 /// `if_node().false_branch(p)` traverses the `Region` join when
@@ -287,18 +287,18 @@ fn call_only_matches_present_branch_via_find_all() {
 /// Call directly.
 #[test]
 fn if_node_branch_walks_through_region_when_flag_set() {
-    let g = graph_if_with_call_in_false_branch();
+    let function = graph_if_with_call_in_false_branch();
     let pat: Pat = if_node().false_branch(call().at(0x9999)).into();
     // Strict semantics: the False-branch consumer is a Region,
     // not the Call — direct match should fail.
-    let strict = Matcher::try_new(&g).unwrap();
+    let strict = Matcher::try_new(&function).unwrap();
     assert!(
         strict.find_all(&pat).is_empty(),
         "without ignore_regions the strict if_node().false_branch(call) match must fail"
     );
     // With ignore_regions, the matcher walks through the
     // Region region-join and finds the Call.
-    let lenient = Matcher::try_new(&g).unwrap().ignore_regions();
+    let lenient = Matcher::try_new(&function).unwrap().ignore_regions();
     assert_eq!(
         lenient.find_all(&pat).len(),
         1,
@@ -326,25 +326,25 @@ fn graph_call_other(user_op_id: u64) -> strider_ir::Function {
 
 #[test]
 fn call_other_matches_any_user_op() {
-    let g = graph_call_other(42);
-    a::matches(&g, call_other(), 1);
+    let function = graph_call_other(42);
+    a::matches(&function, call_other(), 1);
 }
 
 #[test]
 fn call_other_user_op_id_filter() {
-    let g = graph_call_other(42);
-    a::matches(&g, call_other().user_op_id(42), 1);
-    a::none(&g, call_other().user_op_id(99));
+    let function = graph_call_other(42);
+    a::matches(&function, call_other().user_op_id(42), 1);
+    a::none(&function, call_other().user_op_id(99));
 }
 
 #[test]
 fn call_other_captures_node() {
-    let g = graph_call_other(5);
+    let function = graph_call_other(5);
     let n = Capture::new();
-    let m = a::unique(&g, call_other().capture(n));
+    let m = a::unique(&function, call_other().capture(n));
     let node = m.node(n).expect("node capture");
     assert!(matches!(
-        g.node_kind(node),
+        function.node_kind(node),
         strider_ir::node::NodeKind::CallOther { .. }
     ));
 }

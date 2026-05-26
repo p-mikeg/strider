@@ -27,12 +27,12 @@ type Result<T> = strider_analyze::opt::Result<T>;
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /// Count reachable nodes matching `pred`.
-fn count_reachable<F>(fg: &strider_ir::Function, pred: F) -> usize
+fn count_reachable<F>(function: &strider_ir::Function, pred: F) -> usize
 where
     F: Fn(&NodeKind) -> bool,
 {
-    fg.walk()
-        .filter(|&n| pred(fg.node_kind(n)))
+    function.walk()
+        .filter(|&n| pred(function.node_kind(n)))
         .count()
 }
 

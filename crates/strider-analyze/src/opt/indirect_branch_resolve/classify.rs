@@ -234,24 +234,24 @@ mod tests {
             .build_return(Some(anchor), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
-        let graph = builder.build().expect("build");
+        let function = builder.build().expect("build");
         // Re-locate the anchor in the built graph: the build step
         // is a move, but `NodeOutputId` is a stable cranelift-entity
         // index so the same id continues to point at the same
         // output in the resulting graph.
-        (graph, anchor)
+        (function, anchor)
     }
 
     #[test]
     fn classify_int_const_returns_single() {
-        let (graph, anchor) = empty_graph_returning(|fb| {
+        let (function, anchor) = empty_graph_returning(|fb| {
             // Single IntConst node.  Output type is U64 — chosen
             // because BranchIndirect targets are pointer-sized on
             // every supported 64-bit arch; smaller widths would
             // also fold via the `as u64` cast in the classifier.
             fb.build_int_const(0x1234u64, NodeOutputType::U64).unwrap()
         });
-        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
     }
 
@@ -260,11 +260,11 @@ mod tests {
         // Pinned: the IntConst arm does not consult
         // `link_register_vn`.  A None lr (x86 / x86_64) must not
         // suppress IntConst classification.
-        let (graph, anchor) = empty_graph_returning(|fb| {
+        let (function, anchor) = empty_graph_returning(|fb| {
             fb.build_int_const(0xfeed_face_u64, NodeOutputType::U64).unwrap()
         });
         assert_eq!(
-            classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify"),
+            classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify"),
             Some(ResolvedTargets::Single(0xfeed_face)),
         );
     }
@@ -286,7 +286,7 @@ mod tests {
             .build_return(Some(anchor), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
-        let graph = builder.build().expect("build");
+        let function = builder.build().expect("build");
 
         // RedundantPhis hasn't run, so the producer might be a
         // VarPhi rather than InitialVar directly.  Inspect.
@@ -296,24 +296,24 @@ mod tests {
         // RedundantPhis would have done that in production.
         let mut producer_output = anchor;
         loop {
-            let pid = graph.node_for_output(producer_output);
-            let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
-                && graph.phi_var_tag(pid).is_some();
+            let pid = function.node_for_output(producer_output);
+            let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
+                && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
                 break;
             }
             // VarPhi inputs: [phi_token, ...per-pred values].
             // With one predecessor, slot 1 is the value.
-            if graph.node_inputs(pid).len() != 2 {
+            if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = graph.nth_input(pid, 1) else {
+            let Some(slot1) = function.nth_input(pid, 1) else {
                 break;
             };
             producer_output = slot1;
         }
 
-        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), producer_output, Some(lr_vn)).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), producer_output, Some(lr_vn)).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::LinkRegister));
     }
 
@@ -335,26 +335,26 @@ mod tests {
             .build_return(Some(anchor), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
-        let graph = builder.build().expect("build");
+        let function = builder.build().expect("build");
 
         let mut producer_output = anchor;
         loop {
-            let pid = graph.node_for_output(producer_output);
-            let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
-                && graph.phi_var_tag(pid).is_some();
+            let pid = function.node_for_output(producer_output);
+            let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
+                && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
                 break;
             }
-            if graph.node_inputs(pid).len() != 2 {
+            if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = graph.nth_input(pid, 1) else {
+            let Some(slot1) = function.nth_input(pid, 1) else {
                 break;
             };
             producer_output = slot1;
         }
 
-        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), producer_output, Some(lr_vn)).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), producer_output, Some(lr_vn)).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -373,26 +373,26 @@ mod tests {
             .build_return(Some(anchor), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
-        let graph = builder.build().expect("build");
+        let function = builder.build().expect("build");
 
         let mut producer_output = anchor;
         loop {
-            let pid = graph.node_for_output(producer_output);
-            let is_var_phi = matches!(graph.node_kind(pid), NodeKind::Phi)
-                && graph.phi_var_tag(pid).is_some();
+            let pid = function.node_for_output(producer_output);
+            let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
+                && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
                 break;
             }
-            if graph.node_inputs(pid).len() != 2 {
+            if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = graph.nth_input(pid, 1) else {
+            let Some(slot1) = function.nth_input(pid, 1) else {
                 break;
             };
             producer_output = slot1;
         }
 
-        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), producer_output, None).expect("classify");
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), producer_output, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -436,7 +436,7 @@ mod tests {
         let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
-        let mut graph = builder.build().expect("build");
+        let mut function = builder.build().expect("build");
 
         // Synthesise a fake phi-token node.  VarPhi nodes
         // produce PhiToken outputs, but the dedup cache keys
@@ -444,39 +444,39 @@ mod tests {
         // construct one with no inputs.  We need the phi-token
         // output kind for the ValuePhi's first input slot to
         // typecheck against `expected_signature`'s `PHI` slot.
-        let fake_token_node = graph.create_node(
+        let fake_token_node = function.create_node(
             NodeKind::Phi,
             [],
             [NodeOutputKind::PhiToken],
         );
-        graph.set_phi_var_tag(fake_token_node, rsleigh::Vn {
+        function.set_phi_var_tag(fake_token_node, rsleigh::Vn {
             addr_off: 0xdead,
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         });
-        let [token_out] = graph
+        let [token_out] = function
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
 
         // Build the ValuePhi: inputs = [phi_token, ...vals]; output
         // is a single value (U64 for definiteness).
-        let vp_node = graph.create_node(
+        let vp_node = function.create_node(
             NodeKind::Phi,
             std::iter::once(token_out).chain(const_outputs.iter().copied()),
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        let [vp_out] = graph
+        let [vp_out] = function
             .node_outputs_exact::<1>(vp_node)
             .expect("value-phi output");
-        (graph, vp_out)
+        (function, vp_out)
     }
 
     #[test]
     fn classify_value_phi_of_consts_returns_multiple_dedup_sorted() {
         // Phi(IntConst(7), IntConst(3), IntConst(7)) →
         //   Multiple(sorted, deduped) = Multiple([3, 7]).
-        let (graph, anchor) = build_value_phi_graph(&[7, 3, 7]);
-        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify");
+        let (function, anchor) = build_value_phi_graph(&[7, 3, 7]);
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify");
         match result {
             Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![3, 7]),
             other => panic!("expected Multiple([3, 7]); got {other:?}"),
@@ -489,8 +489,8 @@ mod tests {
         // must still produce a Multiple([K]) — we don't second-
         // guess by collapsing to Single, since the orchestrator
         // treats Multiple-of-len-1 identically).
-        let (graph, anchor) = build_value_phi_graph(&[42]);
-        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify");
+        let (function, anchor) = build_value_phi_graph(&[42]);
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Multiple(vec![42])));
     }
 
@@ -510,32 +510,32 @@ mod tests {
         let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
-        let mut graph = builder.build().expect("build");
-        let fake_token_node = graph.create_node(
+        let mut function = builder.build().expect("build");
+        let fake_token_node = function.create_node(
             NodeKind::Phi,
             [],
             [NodeOutputKind::PhiToken],
         );
-        graph.set_phi_var_tag(fake_token_node, rsleigh::Vn {
+        function.set_phi_var_tag(fake_token_node, rsleigh::Vn {
             addr_off: 0xdead,
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         });
-        let [token_out] = graph
+        let [token_out] = function
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
-        let vp_node = graph.create_node(
+        let vp_node = function.create_node(
             NodeKind::Phi,
             [token_out, const_out, var_out],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        let [vp_out] = graph
+        let [vp_out] = function
             .node_outputs_exact::<1>(vp_node)
             .expect("value-phi output");
 
         // No lr supplied: the InitialVar arm doesn't accidentally
         // classify as LinkRegister either.
-        assert_eq!(classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), vp_out, None).expect("classify"), None);
+        assert_eq!(classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), vp_out, None).expect("classify"), None);
     }
 
     #[test]
@@ -551,8 +551,8 @@ mod tests {
         // A degenerate zero-value-input ValuePhi cannot arise from
         // the normal lift path, but DeadBranchElim's input-detach
         // can leave a zero-input phi observable transiently.
-        let (graph, anchor) = build_value_phi_graph(&[]);
-        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify");
+        let (function, anchor) = build_value_phi_graph(&[]);
+        let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -560,7 +560,7 @@ mod tests {
     fn classify_unrelated_node_kind_returns_none() {
         // An IntAdd node — not IntConst, not InitialVar, not
         // ValuePhi — must classify as None.
-        let (graph, anchor) = empty_graph_returning(|fb| {
+        let (function, anchor) = empty_graph_returning(|fb| {
             let lhs = fb.build_int_const(1u64, NodeOutputType::U64).unwrap();
             let rhs = fb.build_int_const(2u64, NodeOutputType::U64).unwrap();
             fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, NodeOutputType::U64)
@@ -570,11 +570,11 @@ mod tests {
         // we don't run the optimiser here — the unit tests use the
         // raw builder output.  The returned anchor's producer is
         // an IntBinaryOp node, which the `_ => None` arm catches.
-        let producer_kind = *graph.kind_of_output(anchor);
+        let producer_kind = *function.kind_of_output(anchor);
         assert!(
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"
         );
-        assert_eq!(classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&graph).unwrap(), anchor, None).expect("classify"), None);
+        assert_eq!(classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify"), None);
     }
 }

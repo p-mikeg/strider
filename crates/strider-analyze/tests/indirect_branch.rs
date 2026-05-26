@@ -51,7 +51,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let (outcome, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
     let unresolved = outcome.unresolved_branches.clone();
-    let mut graph = outcome.function;
+    let mut function = outcome.function;
 
     if unresolved.is_empty() {
         // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
@@ -61,8 +61,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // pipeline regression on the placeholder code-path is caught.
         let mut p = ana.build_optimizer_pipeline();
         p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
-        let entry = graph.entry().unwrap();
-        p.run(&mut graph, entry)
+        let entry = function.entry().unwrap();
+        p.run(&mut function, entry)
             .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
         return;
     }
@@ -72,8 +72,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     // pre-classify pass.
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt.clone()));
-    let entry = graph.entry().unwrap();
-    p.run(&mut graph, entry)
+    let entry = function.entry().unwrap();
+    p.run(&mut function, entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn;
@@ -90,10 +90,10 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // for each per-iteration classify — but here we just consume
         // the surviving placeholder on the post-optimizer graph.
         let mut live_anchors: Vec<strider_ir::node::NodeOutputId> = Vec::new();
-        for n in graph.walk() {
-            if matches!(graph.node_kind(n), strider_ir::node::NodeKind::IndirectBranch) {
+        for n in function.walk() {
+            if matches!(function.node_kind(n), strider_ir::node::NodeKind::IndirectBranch) {
                 let inputs: Vec<strider_ir::node::NodeOutputId> =
-                    graph.node_inputs(n).into_iter().collect();
+                    function.node_inputs(n).into_iter().collect();
                 if inputs.len() == 3 {
                     live_anchors.push(inputs[2]);
                 }
@@ -110,7 +110,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             live_anchors.push(*anchor_output);
         }
         let mut any_resolved = false;
-        let view: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&graph).unwrap();
+        let view: strider_analyze::pattern::RewriteCtxView<'_> = strider_analyze::pattern::RewriteCtxView::from_built(&function).unwrap();
         let known = strider_analyze::opt::analyze_known_bits(view)
             .expect("analyze_known_bits");
         for live in &live_anchors {

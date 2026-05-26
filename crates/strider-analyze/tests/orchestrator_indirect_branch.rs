@@ -61,19 +61,19 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
 
 #[test]
 fn orchestrator_resolves_indirect_branch_x86() {
-    let g = run_orchestrator_on(common::Arch::X86, "indirect_branch", "indirect_branch_resolved")
+    let function = run_orchestrator_on(common::Arch::X86, "indirect_branch", "indirect_branch_resolved")
         .expect("orchestrator must converge");
-    assert!(g.all_node_ids().count() > 0);
+    assert!(function.all_node_ids().count() > 0);
 }
 
 #[test]
 fn orchestrator_resolves_switch_jump_table_x86() {
-    let g = run_orchestrator_on(common::Arch::X86, "switch", "dispatch_value")
+    let function = run_orchestrator_on(common::Arch::X86, "switch", "dispatch_value")
         .expect("orchestrator must converge on switch fixture");
     // The IR must have NO IndirectBranch placeholder remaining.
-    let placeholders = g
+    let placeholders = function
         .walk()
-        .filter(|nid| matches!(g.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
+        .filter(|nid| matches!(function.node_kind(*nid), strider_ir::node::NodeKind::IndirectBranch))
         .count();
     assert_eq!(placeholders, 0, "switch jump table must lower to switch edges");
 }

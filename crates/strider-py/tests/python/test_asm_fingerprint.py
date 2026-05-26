@@ -28,7 +28,7 @@ def _arithmetic_add_graph():
         rom=mem,
         entry=addr,
         allow_code_before_start_addr=True,
-    ).graph
+    ).function
 
 
 def test_asm_fingerprint_returns_non_empty_for_value_capture():

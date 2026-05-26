@@ -74,8 +74,8 @@ pub fn build_int_const_target_scenario_via_stack(
     // BranchIndirect is the region terminator, so these bytes are
     // never reachable from the analysed function.
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
-    let (graph, anchor, _lr) = run_pipeline_x86_64(bytes);
-    (graph, anchor)
+    let (function, anchor, _lr) = run_pipeline_x86_64(bytes);
+    (function, anchor)
 }
 
 /// Build a function whose only indirect branch is `jmp *rax` with no
@@ -89,8 +89,8 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
     // Just `jmp rax`.  RAX is a function-entry value with no constant
     // write; the placeholder's input is `InitialVar(rax)`.
     let bytes: Vec<u8> = vec![0xff, 0xe0];
-    let (graph, anchor, _lr) = run_pipeline_x86_64(bytes);
-    (graph, anchor)
+    let (function, anchor, _lr) = run_pipeline_x86_64(bytes);
+    (function, anchor)
 }
 
 /// Build a `Graph` whose placeholder Return's
@@ -855,17 +855,17 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     let outcome = strider
         .analyze_cfg(&cfg)
         .expect("analyze_cfg");
-    let mut graph = outcome.function;
+    let mut function = outcome.function;
     let p = strider.build_optimizer_pipeline();
-    let entry = graph.entry().unwrap();
-    p.run(&mut graph, entry).expect("optimizer pipeline");
+    let entry = function.entry().unwrap();
+    p.run(&mut function, entry).expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),
         1,
         "bx lr fixture must have exactly one IR-level placeholder",
     );
-    let anchor = anchor_value_input(&graph)
+    let anchor = anchor_value_input(&function)
         .expect("bx lr fixture must have one IndirectBranch placeholder after optimisation");
-    (graph, anchor, lr_vn)
+    (function, anchor, lr_vn)
 }

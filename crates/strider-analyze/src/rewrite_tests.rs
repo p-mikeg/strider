@@ -95,11 +95,11 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::Function {
 
 /// Counts reachable Add nodes — the easy way to assert "the rule
 /// fired" without poking at internal graph slot ids.
-fn count_adds(g: &strider_ir::Function) -> usize {
-    g.walk()
+fn count_adds(function: &strider_ir::Function) -> usize {
+    function.walk()
         .filter(|nid| {
             matches!(
-                g.node_kind(*nid),
+                function.node_kind(*nid),
                 strider_ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add),
             )
         })
@@ -109,17 +109,17 @@ fn count_adds(g: &strider_ir::Function) -> usize {
 /// Counts reachable lowered-Sub shapes: `Add(_, IntUnaryOp::Neg(_))`.
 /// `IntBinaryOp::Sub` is not a primitive in this IR — `build_sub_as_add_neg`
 /// produces this two-node shape, and `crate::pattern::sub(_, _)` matches it.
-fn count_subs(g: &strider_ir::Function) -> usize {
-    g.walk()
+fn count_subs(function: &strider_ir::Function) -> usize {
+    function.walk()
         .filter(|&nid| {
             // Outer node must be Add with exactly two value inputs.
             if !matches!(
-                g.node_kind(nid),
+                function.node_kind(nid),
                 strider_ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add)
             ) {
                 return false;
             }
-            let inputs = g.node_inputs(nid);
+            let inputs = function.node_inputs(nid);
             if inputs.len() != 2 {
                 return false;
             }
@@ -127,11 +127,11 @@ fn count_subs(g: &strider_ir::Function) -> usize {
             // here since the lowering always emits Neg as the second
             // input, but check both for robustness against later
             // commutativity-driven canonicalisation.)
-            let lhs_node = g.node_for_output(inputs[0]);
-            let rhs_node = g.node_for_output(inputs[1]);
+            let lhs_node = function.node_for_output(inputs[0]);
+            let rhs_node = function.node_for_output(inputs[1]);
             let is_neg = |id: strider_ir::node::NodeId| {
                 matches!(
-                    g.node_kind(id),
+                    function.node_kind(id),
                     strider_ir::node::NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg),
                 )
             };

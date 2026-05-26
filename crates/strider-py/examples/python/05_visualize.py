@@ -46,17 +46,17 @@ print(f"wrote {cfg_html} ({cfg_html.stat().st_size} bytes)")
 
 # Write the lifted IR graph. Use `dark` for the IR.
 graph_html = OUT_DIR / "array_sum-graph.html"
-result.graph.to_html(str(graph_html), style="dark")
+result.function.to_html(str(graph_html), style="dark")
 print(f"wrote {graph_html} ({graph_html.stat().st_size} bytes)")
 
 # Raw .dot for piping into a different renderer or for diffing across
 # code changes.
 graph_dot = OUT_DIR / "array_sum-graph.dot"
-result.graph.to_dot(str(graph_dot))
+result.function.to_dot(str(graph_dot))
 print(f"wrote {graph_dot} ({graph_dot.stat().st_size} bytes)")
 
 # `html_str` returns the HTML as a Python string — useful when you
 # want to embed the visualization in a Jupyter notebook or stream it
 # over a socket without writing to disk.
-html_blob = result.graph.html_str(style="dark")
+html_blob = result.function.html_str(style="dark")
 print(f"html_str returned a {len(html_blob)}-byte string")

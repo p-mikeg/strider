@@ -12,7 +12,7 @@ def _build_graph(elf_path):
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
-    return s.analyze_cfg(cfg).graph
+    return s.analyze_cfg(cfg).function
 
 
 def test_graph_to_html_writes_file(x86_memory_elf, tmp_path):

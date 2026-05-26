@@ -47,10 +47,10 @@ fn run_with(compact: bool) -> strider_ir::Function {
 
 #[test]
 fn compact_yields_no_more_node_ids_than_non_compact() {
-    let compact_graph = run_with(true);
-    let noncompact_graph = run_with(false);
-    let compact_count = compact_graph.all_node_ids().count();
-    let noncompact_count = noncompact_graph.all_node_ids().count();
+    let compact_function = run_with(true);
+    let noncompact_function = run_with(false);
+    let compact_count = compact_function.all_node_ids().count();
+    let noncompact_count = noncompact_function.all_node_ids().count();
     assert!(
         compact_count <= noncompact_count,
         "compact={compact_count} must not exceed non-compact={noncompact_count}"
@@ -61,12 +61,12 @@ fn compact_yields_no_more_node_ids_than_non_compact() {
 fn compact_preserves_reachable_pattern_matches() {
     use strider_analyze::pattern::{Matcher, Pat, ret};
 
-    let compact_graph = run_with(true);
-    let noncompact_graph = run_with(false);
+    let compact_function = run_with(true);
+    let noncompact_function = run_with(false);
 
     let pat: Pat = ret().into();
-    let compact_matches = Matcher::try_new(&compact_graph).unwrap().find_all(&pat).len();
-    let noncompact_matches = Matcher::try_new(&noncompact_graph).unwrap().find_all(&pat).len();
+    let compact_matches = Matcher::try_new(&compact_function).unwrap().find_all(&pat).len();
+    let noncompact_matches = Matcher::try_new(&noncompact_function).unwrap().find_all(&pat).len();
     assert_eq!(
         compact_matches, noncompact_matches,
         "ret() match count must be invariant under compaction"

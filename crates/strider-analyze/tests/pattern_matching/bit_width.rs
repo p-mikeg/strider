@@ -30,9 +30,9 @@ fn bit_width_filters_load_by_value_width() {
     b.build_store(other_addr, l64, rsleigh::VnSpace::RAM)
         .expect("store l64");
     b.build_return(Some(l32), &[]).expect("ret");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
-    let m = Matcher::try_new(&g).unwrap();
+    let m = Matcher::try_new(&function).unwrap();
     let h32 = m.find_all(&load().addr(int_const(0x100u64)).bit_width(32).into());
     let h64 = m.find_all(&load().addr(int_const(0x100u64)).bit_width(64).into());
     assert_eq!(h32.len(), 1, "bit_width(32) matches only the U32 load");
@@ -63,9 +63,9 @@ fn bit_width_filters_store_by_data_width() {
     b.build_store(addr2, v64, rsleigh::VnSpace::RAM)
         .expect("u64 store");
     b.build_return(None, &[]).expect("ret");
-    let g = b.build().expect("build");
+    let function = b.build().expect("build");
 
-    let m = Matcher::try_new(&g).unwrap();
+    let m = Matcher::try_new(&function).unwrap();
     let h32 = m.find_all(&store().addr(int_const(0x100u64)).bit_width(32).into());
     let h64 = m.find_all(&store().addr(int_const(0x108u64)).bit_width(64).into());
     assert_eq!(h32.len(), 1);

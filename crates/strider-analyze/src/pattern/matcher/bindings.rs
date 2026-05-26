@@ -378,7 +378,7 @@ mod tests {
         // distinct `NodeOutputId`s from the graph.
         let mut a_out = None;
         let mut b_out = None;
-        let g = make_empty_fn(|b| {
+        let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
             let bv = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
             a_out = Some(av);
@@ -394,8 +394,8 @@ mod tests {
         let a = a_out.unwrap();
         let b = b_out.unwrap();
 
-        let na = g.node_for_output(a);
-        let nb = g.node_for_output(b);
+        let na = function.node_for_output(a);
+        let nb = function.node_for_output(b);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
@@ -418,7 +418,7 @@ mod tests {
     fn capture_bind_and_get_with_real_node_ids() {
         // Thread distinct values through an Add so both constants
         // stay reachable.
-        let g = make_empty_fn(|b| {
+        let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
             let bv = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
             b.build_int_binary_operation(
@@ -430,9 +430,9 @@ mod tests {
         })
         .expect("build graph");
 
-        let mut ids = g
+        let mut ids = function
             .walk()
-            .filter(|&n| matches!(g.node_kind(n), NodeKind::IntConst(_)));
+            .filter(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)));
         let n1 = ids.next().expect("first const node");
         let n2 = ids.next().expect("second const node");
         assert_ne!(n1, n2);
@@ -454,25 +454,25 @@ mod tests {
     #[test]
     fn get_uint_reads_int_const_through_bound_capture() {
         let mut c_out = None;
-        let g = make_empty_fn(|b| {
+        let function = make_empty_fn(|b| {
             let c = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
             c_out = Some(c);
             Ok(c)
         })
         .expect("build graph");
         let c = c_out.unwrap();
-        let n = g.node_for_output(c);
+        let n = function.node_for_output(c);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding(n, Some(c))));
-        assert_eq!(bindings.get_uint(v, &g), Some(7));
+        assert_eq!(bindings.get_uint(v, &function), Some(7));
     }
 
     #[test]
     fn get_uint_returns_none_when_not_an_int_const() {
         let mut s_out = None;
-        let g = make_empty_fn(|b| {
+        let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
             let bv = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
             let s = b
@@ -488,18 +488,18 @@ mod tests {
         })
         .expect("build graph");
         let s = s_out.unwrap();
-        let add_node = g.node_for_output(s);
+        let add_node = function.node_for_output(s);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding(add_node, Some(s))));
-        assert_eq!(bindings.get_uint(v, &g), None);
+        assert_eq!(bindings.get_uint(v, &function), None);
     }
 
     #[test]
     fn get_int_binary_op_reads_op_variant_through_bound_capture() {
         let mut s_out = None;
-        let g = make_empty_fn(|b| {
+        let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
             let bv = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
             let s = b
@@ -515,20 +515,20 @@ mod tests {
         })
         .expect("build graph");
         let s = s_out.unwrap();
-        let add_node = g.node_for_output(s);
+        let add_node = function.node_for_output(s);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding(add_node, None)));
         assert_eq!(
-            bindings.get_int_binary_op(v, &g),
+            bindings.get_int_binary_op(v, &function),
             Some(IntBinaryOp::Add)
         );
     }
 
     #[test]
     fn unbound_capture_yields_none_for_every_typed_extractor() {
-        let g = make_empty_fn(|b| {
+        let function = make_empty_fn(|b| {
             b.build_int_const(0u64, NodeOutputType::U64)
         })
         .expect("build graph");
@@ -536,18 +536,18 @@ mod tests {
         let v = Capture::new();
         assert_eq!(bindings.get(v), None);
         assert_eq!(bindings.get_node(v), None);
-        assert_eq!(bindings.get_uint(v, &g), None);
-        assert_eq!(bindings.get_int(v, &g), None);
-        assert_eq!(bindings.get_bool(v, &g), None);
-        assert_eq!(bindings.get_float_bits(v, &g), None);
-        assert_eq!(bindings.get_int_binary_op(v, &g), None);
-        assert_eq!(bindings.get_int_unary_op(v, &g), None);
-        assert_eq!(bindings.get_int_cmp_op(v, &g), None);
-        assert_eq!(bindings.get_bool_binary_op(v, &g), None);
-        assert_eq!(bindings.get_bool_unary_op(v, &g), None);
-        assert_eq!(bindings.get_float_binary_op(v, &g), None);
-        assert_eq!(bindings.get_float_unary_op(v, &g), None);
-        assert_eq!(bindings.get_float_cmp_op(v, &g), None);
+        assert_eq!(bindings.get_uint(v, &function), None);
+        assert_eq!(bindings.get_int(v, &function), None);
+        assert_eq!(bindings.get_bool(v, &function), None);
+        assert_eq!(bindings.get_float_bits(v, &function), None);
+        assert_eq!(bindings.get_int_binary_op(v, &function), None);
+        assert_eq!(bindings.get_int_unary_op(v, &function), None);
+        assert_eq!(bindings.get_int_cmp_op(v, &function), None);
+        assert_eq!(bindings.get_bool_binary_op(v, &function), None);
+        assert_eq!(bindings.get_bool_unary_op(v, &function), None);
+        assert_eq!(bindings.get_float_binary_op(v, &function), None);
+        assert_eq!(bindings.get_float_unary_op(v, &function), None);
+        assert_eq!(bindings.get_float_cmp_op(v, &function), None);
     }
 
     // ── mark / restore rollback ──────────────────────────────────────────
@@ -559,11 +559,11 @@ mod tests {
     /// brand-new (not bounce off a stale overlay entry).
     #[test]
     fn restore_evicts_overlay_entries_for_dropped_journal_tail() {
-        let g = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
+        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
             .expect("build graph");
-        let n = g
+        let n = function
             .walk()
-            .find(|&n| matches!(g.node_kind(n), NodeKind::IntConst(_)))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
             .expect("int const node");
 
         let mut bindings = Bindings::default();
@@ -599,11 +599,11 @@ mod tests {
     /// no-op — covers the early-return guard in `restore`.
     #[test]
     fn restore_to_current_mark_is_noop() {
-        let g = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
+        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
             .expect("build graph");
-        let n = g
+        let n = function
             .walk()
-            .find(|&n| matches!(g.node_kind(n), NodeKind::IntConst(_)))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
             .expect("int const node");
 
         let mut bindings = Bindings::default();

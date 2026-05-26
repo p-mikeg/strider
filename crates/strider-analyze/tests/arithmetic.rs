@@ -43,85 +43,85 @@ per_arch_test!("arithmetic", "lshr",    has_lshr);
 per_arch_test!("arithmetic", "ashr",    has_ashr);
 per_arch_test!("arithmetic", "negate",  has_neg);
 
-fn has_add(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, IntBinaryOp::Add) >= 1, "expected ≥1 Add");
+fn has_add(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, IntBinaryOp::Add) >= 1, "expected ≥1 Add");
 }
 // `IntBinaryOp::Sub` is no longer a primitive: pcode-lift lowers `IntSub`
 // to `Add(_, Neg(_))` at lift time.  An honest "has subtraction" check
 // looks for the `IntUnaryOp::Neg` produced by the lowering — every real
 // subtraction in the binary contributes at least one Neg.
-fn has_sub(g: &strider_ir::Function) {
+fn has_sub(function: &strider_ir::Function) {
     assert!(
-        count_int_unop(g, IntUnaryOp::Neg) >= 1,
+        count_int_unop(function, IntUnaryOp::Neg) >= 1,
         "expected ≥1 IntUnaryOp::Neg (the lowered Sub form)"
     );
 }
-fn has_mul(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, IntBinaryOp::Mul) >= 1, "expected ≥1 Mul");
+fn has_mul(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, IntBinaryOp::Mul) >= 1, "expected ≥1 Mul");
 }
 
 // Unsigned divide.  Most arches emit a native Div node.  ARM soft-float
 // targets emit a library call instead, so we accept Call as evidence.
-fn has_div(g: &strider_ir::Function) {
+fn has_div(function: &strider_ir::Function) {
     assert!(
-        count_int_binop(g, IntBinaryOp::Div) >= 1 || count_calls(g) >= 1,
+        count_int_binop(function, IntBinaryOp::Div) >= 1 || count_calls(function) >= 1,
         "expected ≥1 Div or a library Call for udiv"
     );
 }
 
 // Unsigned remainder.  x86/x64 produce Rem; AArch64 synthesises it as
 // a - (a/b)*b so only Div is present; ARM uses a library call.
-fn has_rem(g: &strider_ir::Function) {
+fn has_rem(function: &strider_ir::Function) {
     assert!(
-        count_int_binop(g, IntBinaryOp::Rem) >= 1
-            || count_int_binop(g, IntBinaryOp::Div) >= 1
-            || count_calls(g) >= 1,
+        count_int_binop(function, IntBinaryOp::Rem) >= 1
+            || count_int_binop(function, IntBinaryOp::Div) >= 1
+            || count_calls(function) >= 1,
         "expected ≥1 Rem, Div (synthesised mod), or a library Call for umod"
     );
 }
 
 // Signed divide.  Most arches emit Sdiv; ARM uses a library call.
-fn has_sdiv(g: &strider_ir::Function) {
+fn has_sdiv(function: &strider_ir::Function) {
     assert!(
-        count_int_binop(g, IntBinaryOp::Sdiv) >= 1 || count_calls(g) >= 1,
+        count_int_binop(function, IntBinaryOp::Sdiv) >= 1 || count_calls(function) >= 1,
         "expected ≥1 Sdiv or a library Call for sdiv"
     );
 }
 
 // Signed remainder.  x86/x64 produce Srem; AArch64 synthesises it as
 // a - (a/b)*b so only Sdiv is present; ARM uses a library call.
-fn has_srem(g: &strider_ir::Function) {
+fn has_srem(function: &strider_ir::Function) {
     assert!(
-        count_int_binop(g, IntBinaryOp::Srem) >= 1
-            || count_int_binop(g, IntBinaryOp::Sdiv) >= 1
-            || count_calls(g) >= 1,
+        count_int_binop(function, IntBinaryOp::Srem) >= 1
+            || count_int_binop(function, IntBinaryOp::Sdiv) >= 1
+            || count_calls(function) >= 1,
         "expected ≥1 Srem, Sdiv (synthesised smod), or a library Call for smod"
     );
 }
 
-fn has_and(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, IntBinaryOp::And) >= 1, "expected ≥1 And");
+fn has_and(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, IntBinaryOp::And) >= 1, "expected ≥1 And");
 }
-fn has_or(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, IntBinaryOp::Or) >= 1, "expected ≥1 Or");
+fn has_or(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, IntBinaryOp::Or) >= 1, "expected ≥1 Or");
 }
-fn has_xor(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, IntBinaryOp::Xor) >= 1, "expected ≥1 Xor");
+fn has_xor(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, IntBinaryOp::Xor) >= 1, "expected ≥1 Xor");
 }
 
 // Bitwise complement (~a).  Sleigh's `IntNeg` opcode lifts to `IntUnaryOp::BitNot`.
-fn has_not(g: &strider_ir::Function) {
-    assert!(count_int_unop(g, IntUnaryOp::BitNot) >= 1, "expected ≥1 BitNot (bitwise complement)");
+fn has_not(function: &strider_ir::Function) {
+    assert!(count_int_unop(function, IntUnaryOp::BitNot) >= 1, "expected ≥1 BitNot (bitwise complement)");
 }
 
-fn has_shl(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, IntBinaryOp::ShiftLeft) >= 1, "expected ≥1 ShiftLeft");
+fn has_shl(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, IntBinaryOp::ShiftLeft) >= 1, "expected ≥1 ShiftLeft");
 }
-fn has_lshr(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, IntBinaryOp::ShiftRight) >= 1, "expected ≥1 ShiftRight");
+fn has_lshr(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, IntBinaryOp::ShiftRight) >= 1, "expected ≥1 ShiftRight");
 }
-fn has_ashr(g: &strider_ir::Function) {
-    assert!(count_int_binop(g, IntBinaryOp::SShiftRight) >= 1, "expected ≥1 SShiftRight");
+fn has_ashr(function: &strider_ir::Function) {
+    assert!(count_int_binop(function, IntBinaryOp::SShiftRight) >= 1, "expected ≥1 SShiftRight");
 }
 
 // Arithmetic negation (-a).  Sleigh's `Int2Comp` opcode lifts to `IntUnaryOp::Neg`.
@@ -129,9 +129,9 @@ fn has_ashr(g: &strider_ir::Function) {
 // to `Add(0, Neg(a))` and collapses to `Neg(a)` via the `x + 0 → x` identity
 // rule.  Either path produces an `IntUnaryOp::Neg`, so a single check
 // covers both arches.
-fn has_neg(g: &strider_ir::Function) {
+fn has_neg(function: &strider_ir::Function) {
     assert!(
-        count_int_unop(g, IntUnaryOp::Neg) >= 1,
+        count_int_unop(function, IntUnaryOp::Neg) >= 1,
         "expected ≥1 Neg (two's-complement; ARM/MIPS 0-a synthesis collapses to the same shape)"
     );
 }

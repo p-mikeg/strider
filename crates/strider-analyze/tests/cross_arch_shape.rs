@@ -191,10 +191,10 @@ impl Fingerprint {
 /// overrides only for `Phi`, which splits into `VarPhi` / `ValuePhi`
 /// based on the per-node side-table `Graph::phi_var_tag` (which
 /// `node_kind_name` cannot access without graph context).
-fn kind_bucket(g: &strider_ir::Function, nid: strider_ir::node::NodeId) -> String {
-    let k = g.node_kind(nid);
+fn kind_bucket(function: &strider_ir::Function, nid: strider_ir::node::NodeId) -> String {
+    let k = function.node_kind(nid);
     match k {
-        NodeKind::Phi if g.phi_var_tag(nid).is_some() => "VarPhi".to_string(),
+        NodeKind::Phi if function.phi_var_tag(nid).is_some() => "VarPhi".to_string(),
         NodeKind::Phi => "ValuePhi".to_string(),
         _ => node_kind_name(k).to_string(),
     }
@@ -211,7 +211,7 @@ fn kind_bucket(g: &strider_ir::Function, nid: strider_ir::node::NodeId) -> Strin
 ///   * region count (one per `Region` reachable node — matches
 ///     how `strider_lift::cfg::Cfg` regions are projected into the IR),
 ///   * per-kind phi counts (broken out for sensitivity to kind drift).
-fn structural_fingerprint(g: &strider_ir::Function) -> Fingerprint {
+fn structural_fingerprint(function: &strider_ir::Function) -> Fingerprint {
     let mut kind_histogram: BTreeMap<String, usize> = BTreeMap::new();
     let mut reachable_nodes = 0usize;
     let mut regions = 0usize;
@@ -222,20 +222,20 @@ fn structural_fingerprint(g: &strider_ir::Function) -> Fingerprint {
     let mut edges_memory = 0usize;
     let mut edges_value = 0usize;
 
-    for nid in g.walk() {
+    for nid in function.walk() {
         reachable_nodes += 1;
-        let kind = g.node_kind(nid);
-        *kind_histogram.entry(kind_bucket(g, nid)).or_insert(0) += 1;
+        let kind = function.node_kind(nid);
+        *kind_histogram.entry(kind_bucket(function, nid)).or_insert(0) += 1;
         match kind {
             NodeKind::Region => regions += 1,
-            NodeKind::Phi if g.phi_var_tag(nid).is_some() => var_phis += 1,
+            NodeKind::Phi if function.phi_var_tag(nid).is_some() => var_phis += 1,
             NodeKind::Phi => value_phis += 1,
             NodeKind::MemPhi => mem_phis += 1,
             _ => {}
         }
         // Count incoming edges by producer-output kind.
-        for input in g.node_inputs(nid) {
-            match g.output_kind(input) {
+        for input in function.node_inputs(nid) {
+            match function.output_kind(input) {
                 NodeOutputKind::Control => edges_control += 1,
                 NodeOutputKind::Memory => edges_memory += 1,
                 NodeOutputKind::OutputType(_) => edges_value += 1,
