@@ -810,3 +810,171 @@ fn function_arg_node_label_includes_arg_index() {
         "arg carrier node must have peripheries attribute (double border):\n{dot}",
     );
 }
+
+// ── pred-numbered labels on Region / Phi / MemPhi inputs ────────────────
+//
+// A Region's k-th control input pairs 1:1 with the (k+1)-th value input
+// (i.e. value-slot k after the leading phi-token at slot 0) of every Phi
+// and MemPhi that joins at that Region.  Without per-edge index labels
+// the visual graph reader can't tell which value flows from which
+// predecessor — they have to count edge endpoints by hand.  Numbering
+// edges as `pred0` / `pred1` / … on BOTH ends turns the matching into a
+// single-glance scan.
+
+/// Build a function with shape
+///   Entry → If(true){RegionT}{RegionF};  RegionT → Join, RegionF → Join.
+/// Join is a 2-predecessor Region with a tagged Phi (value-typed) AND
+/// a MemPhi joining the per-arm memory chains.  Returns the rendered
+/// DOT string + the Join region's `NodeId` for assertion convenience.
+fn render_two_pred_join_with_phi_memphi() -> String {
+    use rsleigh::Vn;
+    let mut f = Function::new();
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    f.set_entry(entry);
+    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory(None)]);
+    let [im_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
+
+    // BoolConst(true) so DBE/DCE leave the If alone for the test.
+    let cond = f.create_node(
+        NodeKind::BoolConst(true),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+    );
+    let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
+    let if_node = f.create_node(
+        NodeKind::If,
+        [entry_ctrl, cond_out],
+        [NodeOutputKind::Control, NodeOutputKind::Control],
+    );
+    let if_outs = f.node_outputs(if_node).to_vec();
+
+    // Two 1-pred control-state regions, one per If arm.
+    let cs_t = f.create_node(
+        NodeKind::Region,
+        [if_outs[0]],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+    let cs_f = f.create_node(
+        NodeKind::Region,
+        [if_outs[1]],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+    let [cs_t_ctrl, _] = f.node_outputs_exact::<2>(cs_t).unwrap();
+    let [cs_f_ctrl, _] = f.node_outputs_exact::<2>(cs_f).unwrap();
+
+    // Join region with 2 control predecessors (the two If arms).
+    let join = f.create_node(
+        NodeKind::Region,
+        [cs_t_ctrl, cs_f_ctrl],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+    let [_join_ctrl, join_phi_token] = f.node_outputs_exact::<2>(join).unwrap();
+
+    // Two distinct values to phi over (so the Phi has two value inputs).
+    let v_t = f.create_node(
+        NodeKind::IntConst(0xAA),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let v_f = f.create_node(
+        NodeKind::IntConst(0xBB),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [v_t_out] = f.node_outputs_exact::<1>(v_t).unwrap();
+    let [v_f_out] = f.node_outputs_exact::<1>(v_f).unwrap();
+
+    // Tagged Phi at the join: [phi_token, v_t, v_f].
+    let phi = f.create_node(
+        NodeKind::Phi,
+        [join_phi_token, v_t_out, v_f_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [phi_out] = f.node_outputs_exact::<1>(phi).unwrap();
+    f.set_phi_var_tag(phi, Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 });
+
+    // MemPhi at the join: [phi_token, mem_t, mem_f].  Reuse im_out
+    // for both arms (the test doesn't need distinct mem producers; the
+    // edge-label structure is what we're pinning).
+    let mem_phi = f.create_node(
+        NodeKind::MemPhi,
+        [join_phi_token, im_out, im_out],
+        [NodeOutputKind::Memory(None)],
+    );
+    let [mp_out] = f.node_outputs_exact::<1>(mem_phi).unwrap();
+
+    // Wire the Phi's value + MemPhi's memory into Return so they're reachable.
+    let [join_ctrl, _] = f.node_outputs_exact::<2>(join).unwrap();
+    f.create_node(NodeKind::Return, [join_ctrl, mp_out, phi_out], []);
+
+    render(&f, entry)
+}
+
+#[test]
+fn region_control_inputs_are_labelled_with_pred_index() {
+    // The 2-predecessor Region MUST carry edges labelled "pred0" and
+    // "pred1" on its incoming control edges.  Without numbering the
+    // reader can't tell which arm corresponds to which Phi value slot
+    // when there are >1 predecessors.
+    let dot = render_two_pred_join_with_phi_memphi();
+    assert!(
+        dot.contains("label=pred0"),
+        "Region control input 0 must be labelled 'pred0':\n{dot}",
+    );
+    assert!(
+        dot.contains("label=pred1"),
+        "Region control input 1 must be labelled 'pred1':\n{dot}",
+    );
+}
+
+#[test]
+fn phi_value_inputs_are_labelled_with_matching_pred_index() {
+    // Phi inputs at slots 1, 2 (after the phi-token at slot 0) carry the
+    // per-predecessor values.  Number them with the SAME `predN`
+    // suffix the Region edge uses so the reader can match value to
+    // predecessor at a glance.
+    let dot = render_two_pred_join_with_phi_memphi();
+    // The Region's predN labels are pinned by the test above; here we
+    // pin that the Phi shares the same numbering scheme.  We count >=
+    // 2 `pred0` occurrences (one on Region, one on Phi) and likewise
+    // for pred1, plus the MemPhi pair (the next test pins MemPhi
+    // specifically; total here is >= 4 each).
+    assert!(
+        count_lines(&dot, |l| l.contains("label=pred0") || l.contains("label=\"pred0")) >= 2,
+        "expected pred0 on >= 2 edges (Region + Phi):\n{dot}",
+    );
+    assert!(
+        count_lines(&dot, |l| l.contains("label=pred1") || l.contains("label=\"pred1")) >= 2,
+        "expected pred1 on >= 2 edges (Region + Phi):\n{dot}",
+    );
+}
+
+#[test]
+fn mem_phi_value_inputs_are_labelled_with_matching_pred_index() {
+    // MemPhi's per-predecessor memory inputs use the same `predN`
+    // numbering as Region + Phi.  When the parent output is a
+    // partitioned memory edge (Memory(Some(class))), the label
+    // additionally carries the alias-class tag so the existing
+    // mem:Stack / mem:Unknown signal is preserved.
+    //
+    // This fixture uses unified Memory (None) on both inputs so the
+    // bare `predN` form is what we assert against.
+    let dot = render_two_pred_join_with_phi_memphi();
+    // Across Region + Phi + MemPhi we should see at least 3 occurrences
+    // of pred0 (one per edge) and at least 3 of pred1.
+    let pred0_count = count_lines(&dot, |l| {
+        l.contains("label=pred0") || l.contains("label=\"pred0")
+    });
+    let pred1_count = count_lines(&dot, |l| {
+        l.contains("label=pred1") || l.contains("label=\"pred1")
+    });
+    assert!(
+        pred0_count >= 3,
+        "expected pred0 on >= 3 edges (Region + Phi + MemPhi), got {pred0_count}:\n{dot}",
+    );
+    assert!(
+        pred1_count >= 3,
+        "expected pred1 on >= 3 edges (Region + Phi + MemPhi), got {pred1_count}:\n{dot}",
+    );
+}

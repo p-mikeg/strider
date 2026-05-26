@@ -301,6 +301,20 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             // the vn name if we know it; fall back to the signature's
             // generic "ret" label otherwise.
             self.return_ret_name(idx)?
+        } else if let Some(pred) = pred_index(kind, idx) {
+            // Region / Phi / MemPhi: per-predecessor inputs that pair
+            // 1-to-1 across all three node kinds that join at a
+            // common Region.  Numbering both sides with `predN`
+            // makes value-to-predecessor correspondence a single-
+            // glance scan in the rendered graph.  For partitioned
+            // MemPhi inputs, fold the alias-class tag into the same
+            // label so the existing mem:Stack / mem:Unknown signal
+            // survives.
+            let partition = self.function.output_kind(parent_output).memory_partition();
+            Some(match partition {
+                Some(class) => format!("\"pred{pred} mem:{}\"", class.as_str()),
+                None => format!("pred{pred}"),
+            })
         } else {
             // Partitioned memory edge: label with the alias class so the
             // reader can tell Stack from Unknown chains at a glance.
@@ -331,5 +345,23 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             self.emit_const_node(parent_id, &parent_dot_id, out);
         }
         Ok(())
+    }
+}
+
+/// Returns the predecessor index for an input that pairs across
+/// Region / Phi / MemPhi at a common join.
+///
+/// * `Region`: every input is a per-predecessor control edge —
+///   the predecessor index equals the input index.
+/// * `Phi` / `MemPhi`: input slot 0 is the phi-token, slots 1.. are
+///   the per-predecessor value (or memory-token) inputs that match
+///   the owning Region's control inputs 1-to-1 — the predecessor
+///   index is `idx - 1`.
+/// * Any other node kind: `None`.
+fn pred_index(kind: NodeKind, idx: usize) -> Option<usize> {
+    match kind {
+        NodeKind::Region => Some(idx),
+        NodeKind::Phi | NodeKind::MemPhi if idx >= 1 => Some(idx - 1),
+        _ => None,
     }
 }
