@@ -356,6 +356,18 @@ impl FunctionBuilder {
     ) -> Result<NodeOutputId> {
         self.require_integer_value(input)?;
         Self::require_float_type(float_type)?;
+        // A bit-reinterpret preserves width by definition; reject mismatched
+        // widths so a wrong-width reinterpret can't silently truncate or
+        // zero-pad (e.g. I64 → F32).
+        let input_ty = self.get_output_type(input)?;
+        if input_ty.byte_size() != float_type.byte_size() {
+            return Err(anyhow!(
+                "IntBitsToFloat width mismatch: input {input_ty:?} ({} bytes) \
+                 vs float {float_type:?} ({} bytes)",
+                input_ty.byte_size(),
+                float_type.byte_size(),
+            ));
+        }
         // Immediate fold: IntConst → FloatConst (same bits).  F80 is
         // 80-bit and `FloatConst`'s payload is `u64`, so the bit pattern
         // doesn't fit — skip the immediate-fold and emit the node
@@ -389,6 +401,17 @@ impl FunctionBuilder {
         self.require_float_value(input)?;
         Self::require_integer_type(int_type)?;
         let input_ty = self.get_output_type(input)?;
+        // A bit-reinterpret preserves width by definition; reject mismatched
+        // widths so a wrong-width reinterpret can't silently truncate or
+        // zero-pad (e.g. F64 → I32).
+        if input_ty.byte_size() != int_type.byte_size() {
+            return Err(anyhow!(
+                "FloatBitsToInt width mismatch: input {input_ty:?} ({} bytes) \
+                 vs int {int_type:?} ({} bytes)",
+                input_ty.byte_size(),
+                int_type.byte_size(),
+            ));
+        }
         // Immediate fold: FloatConst → IntConst (same bits).  F80 input
         // is skipped because `FloatConst` only stores 64 bits — even if a
         // FloatConst at F80 type somehow appeared, its u64 payload

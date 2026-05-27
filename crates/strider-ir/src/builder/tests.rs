@@ -351,6 +351,29 @@ fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
 }
 
 #[test]
+fn int_bits_to_float_rejects_width_mismatch() -> Result<()> {
+    let mut b = empty_builder()?;
+    // A bit-reinterpret must be same-width: I64 (8 bytes) -> F32 (4 bytes)
+    // is nonsensical and must error rather than silently truncate.
+    let int_out = b.build_int_const(0u64, NodeOutputType::I64)?;
+    assert!(b
+        .build_int_bits_to_float(int_out, NodeOutputType::F32)
+        .is_err());
+    Ok(())
+}
+
+#[test]
+fn float_bits_to_int_rejects_width_mismatch() -> Result<()> {
+    let mut b = empty_builder()?;
+    // F64 (8 bytes) -> I32 (4 bytes) reinterpret is a width mismatch.
+    let float_out = b.build_float_const(0u64, NodeOutputType::F64);
+    assert!(b
+        .build_float_bits_to_int(float_out, NodeOutputType::I32)
+        .is_err());
+    Ok(())
+}
+
+#[test]
 fn build_float_binary_op_produces_correct_node() -> Result<()> {
     let mut b = empty_builder()?;
     let lhs = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
