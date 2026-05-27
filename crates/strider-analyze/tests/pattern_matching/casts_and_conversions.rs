@@ -93,18 +93,9 @@ fn extend_then_truncate_chain_matches() {
     a::matches(&function, truncate(zero_extend(any())), 1);
 }
 
-// ── CastToFloat ──────────────────────────────────────────────────────────────
-
-#[test]
-fn cast_to_float_matches() {
-    let mut t = Tb::empty();
-    let v = t.u32(0x3F800000); // 1.0f32 bits
-    let c = t.cast_to_float(v, NodeOutputType::F32);
-    let as_int = t.float_to_int(c, NodeOutputType::I32);
-    let function = t.ret_val(as_int);
-
-    a::matches(&function, cast_to_float(any()), 1);
-}
+// (The `CastToFloat` matching test was removed with the node kind: an
+// int→float cast is now `IntBitsToFloat`, covered by
+// `int_bits_to_float_matches` below.)
 
 // ── Int ↔ Float conversions ──────────────────────────────────────────────────
 
@@ -176,5 +167,5 @@ fn cast_patterns_are_kind_sensitive() {
 
     a::none(&function, truncate(any()));
     a::none(&function, int_to_float(any()));
-    a::none(&function, cast_to_float(any()));
+    a::none(&function, int_bits_to_float(any()));
 }

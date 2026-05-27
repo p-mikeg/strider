@@ -122,7 +122,6 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
         NodeKind::FloatToFloat => "FloatToFloat",
         NodeKind::IntBitsToFloat => "IntBitsToFloat",
         NodeKind::FloatBitsToInt => "FloatBitsToInt",
-        NodeKind::CastToFloat => "CastToFloat",
         NodeKind::CallOther { .. } => "CallOther",
         NodeKind::SegmentOp { .. } => "SegmentOp",
         NodeKind::CPoolRef => "CPoolRef",

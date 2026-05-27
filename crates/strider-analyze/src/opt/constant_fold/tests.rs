@@ -1387,69 +1387,10 @@ fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> 
     Ok(())
 }
 
-// ── CastToFloat lowering tests ────────────────────────────────────────────
-
-#[test]
-fn cast_to_float_int_const_folds_to_float_const() -> Result<()> {
-    let bits = 1.0f64.to_bits();
-    let mut fg = make_fn(|b| {
-        let int_val = b.build_int_const(bits, NodeOutputType::I64).unwrap();
-        let cast = b.build_cast_to_float(int_val, NodeOutputType::F64);
-        Ok(cast)
-    })?;
-    let entry = fg.entry().unwrap();
-    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    // CastToFloat(IntConst(bits)) → FloatConst(bits)
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(bits));
-    Ok(())
-}
-
-#[test]
-fn cast_to_float_same_float_type_eliminates() -> Result<()> {
-    let bits = 1.0f32.to_bits() as u64;
-    let mut fg = make_fn(|b| {
-        let float_val = b.build_float_const(bits, NodeOutputType::F32);
-        let cast = b.build_cast_to_float(float_val, NodeOutputType::F32);
-        Ok(cast)
-    })?;
-    let entry = fg.entry().unwrap();
-    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    // CastToFloat(F32 → F32) → identity (FloatConst)
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(bits));
-    Ok(())
-}
-
-#[test]
-fn cast_to_float_int_non_const_lowers_to_int_bits_to_float() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let int_a = b.build_int_const(1u64, NodeOutputType::I32).unwrap();
-        let int_b = b.build_int_const(2u64, NodeOutputType::I32).unwrap();
-        // Non-const int (Add result).
-        let sum =
-            b.build_int_binary_operation(int_a, int_b, IntBinaryOp::Add, NodeOutputType::I32)?;
-        let cast = b.build_cast_to_float(sum, NodeOutputType::F32);
-        Ok(cast)
-    })?;
-    let entry = fg.entry().unwrap();
-    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    // Should lower to IntBitsToFloat.
-    assert_eq!(return_kind(&fg)?, NodeKind::IntBitsToFloat);
-    Ok(())
-}
-
-#[test]
-fn cast_to_float_cross_precision_lowers_to_float_to_float() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let f32_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
-        let cast = b.build_cast_to_float(f32_val, NodeOutputType::F64);
-        Ok(cast)
-    })?;
-    let entry = fg.entry().unwrap();
-    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    // F32 → F64 should lower to FloatToFloat.
-    assert_eq!(return_kind(&fg)?, NodeKind::FloatToFloat);
-    Ok(())
-}
+// (CastToFloat lowering tests removed: there is no CastToFloat node — an
+// int→float cast is built directly as IntBitsToFloat / FloatConst, and a
+// float→float cast as FloatToFloat, by `cast_to_float_if_needed` at build
+// time.  That lowering is covered by the strider-ir builder tests.)
 
 // ── Comprehensive tests ──────────────────────────────────────────────────────
 

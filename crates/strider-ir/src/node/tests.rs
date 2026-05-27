@@ -404,7 +404,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::FloatToInt,
         NodeKind::FloatBitsToInt,
         NodeKind::FloatToFloat,
-        NodeKind::CastToFloat,
         // pure value: sleigh pure user-op
         NodeKind::SegmentOp { op_id: 0 },
         // if is pure-value above; opaque user-ops left:

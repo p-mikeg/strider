@@ -390,15 +390,17 @@ fn build_int_bits_to_float_inserts_node_for_non_const() -> Result<()> {
     Ok(())
 }
 
-// ── CastToFloat tests ─────────────────────────────────────────────────────
+// ── int→float bitcast tests ────────────────────────────────────────────────
 
 #[test]
-fn build_cast_to_float_creates_cast_node() -> Result<()> {
+fn cast_to_float_of_int_is_int_bits_to_float() -> Result<()> {
     let mut b = empty_builder()?;
-    let int_val = b.build_int_const(42u64, NodeOutputType::I64)?;
-    let cast = b.build_cast_to_float(int_val, NodeOutputType::F64);
-    let kind = *b.function().kind_of_output(cast);
-    assert_eq!(kind, NodeKind::CastToFloat);
+    // A non-const int so the immediate IntConst→FloatConst fold doesn't apply.
+    let raw = b.build_int_const(42u64, NodeOutputType::I64)?;
+    let opaque = b.build_int_unary_operation(raw, crate::ops::IntUnaryOp::BitNot, NodeOutputType::I64)?;
+    let cast = b.cast_to_float_if_needed(opaque, NodeOutputType::F64)?;
+    // No CastToFloat node exists: a same-width int→float is a bitcast.
+    assert_eq!(*b.function().kind_of_output(cast), NodeKind::IntBitsToFloat);
     assert_eq!(b.get_output_type(cast)?, NodeOutputType::F64);
     Ok(())
 }
@@ -414,22 +416,25 @@ fn cast_to_float_if_needed_is_identity_for_same_type() -> Result<()> {
 }
 
 #[test]
-fn build_float_binary_op_with_int_inputs_auto_casts() -> Result<()> {
+fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
     let mut b = empty_builder()?;
-    let i1 = b.build_int_const(0x3F800000u64, NodeOutputType::I32)?;
-    let i2 = b.build_int_const(0x40000000u64, NodeOutputType::I32)?;
-    // Both inputs are I32 — builder should auto-insert CastToFloat.
+    // Non-const I32 operands (a const would immediately fold IntBitsToFloat
+    // into a FloatConst, hiding the bitcast node).
+    let c1 = b.build_int_const(0x3F800000u64, NodeOutputType::I32)?;
+    let c2 = b.build_int_const(0x40000000u64, NodeOutputType::I32)?;
+    let i1 = b.build_int_unary_operation(c1, crate::ops::IntUnaryOp::BitNot, NodeOutputType::I32)?;
+    let i2 = b.build_int_unary_operation(c2, crate::ops::IntUnaryOp::BitNot, NodeOutputType::I32)?;
+    // Both inputs are I32 — builder reinterprets each as F32 via IntBitsToFloat.
     let result = b.build_float_binary_op(i1, i2, FloatBinaryOp::Add, NodeOutputType::F32)?;
     let kind = *b.function().kind_of_output(result);
     assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
-    // Verify inputs are CastToFloat nodes.
     let [lhs, rhs] = b
         .function()
         .node_inputs_exact::<2>(b.function().node_for_output(result))?;
     let lhs_node = b.function().node_for_output(lhs);
     let rhs_node = b.function().node_for_output(rhs);
-    assert_eq!(*b.function().node_kind(lhs_node), NodeKind::CastToFloat);
-    assert_eq!(*b.function().node_kind(rhs_node), NodeKind::CastToFloat);
+    assert_eq!(*b.function().node_kind(lhs_node), NodeKind::IntBitsToFloat);
+    assert_eq!(*b.function().node_kind(rhs_node), NodeKind::IntBitsToFloat);
     Ok(())
 }
 

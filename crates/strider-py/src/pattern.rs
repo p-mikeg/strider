@@ -235,7 +235,6 @@ forall_castmask!(zero_extend => ZERO_EXTEND);
 forall_castmask!(sign_extend => SIGN_EXTEND);
 forall_castmask!(extend => EXTEND);
 forall_castmask!(truncate => TRUNCATE);
-forall_castmask!(cast_to_float => CAST_TO_FLOAT);
 forall_castmask!(int_bits_to_float => INT_BITS_TO_FLOAT);
 forall_castmask!(float_bits_to_int => FLOAT_BITS_TO_INT);
 forall_castmask!(all => fn all);
@@ -1297,7 +1296,6 @@ unary!(float_bits_to_int, "Pattern: `FloatBitsToInt` — reinterpret float bits 
 
 // ── Cast / coercion / width ops ──────────────────────────────────────────
 
-unary!(cast_to_float, "Pattern: `CastToFloat` — coerce any value to float.");
 unary!(truncate, "Pattern: `Truncate` — narrow an integer to a smaller width.");
 unary!(popcount, "Pattern: `Popcount` — count of set bits.");
 unary!(lzcount, "Pattern: `Lzcount` — count of leading zero bits.");
@@ -2038,7 +2036,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(float_to_float);
     add_fn!(int_bits_to_float);
     add_fn!(float_bits_to_int);
-    add_fn!(cast_to_float);
     add_fn!(truncate);
     add_fn!(popcount);
     add_fn!(lzcount);

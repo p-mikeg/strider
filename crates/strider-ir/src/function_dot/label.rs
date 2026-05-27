@@ -241,11 +241,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 self.input_type_str(node, 0),
                 self.out_type_str(node),
             ),
-            NodeKind::CastToFloat => format!(
-                "CastToFloat\n{} → {}",
-                self.input_type_str(node, 0),
-                self.out_type_str(node),
-            ),
 
             // ── user-defined / opaque opcodes ────────────────────────────────
             NodeKind::CallOther { user_op_id } => {

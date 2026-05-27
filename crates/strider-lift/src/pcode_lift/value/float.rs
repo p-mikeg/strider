@@ -35,7 +35,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a float binary p-code instruction into an IR float binary node.
     ///
     /// Reads inputs via `read_vn` (may produce int or float values); the builder
-    /// automatically inserts `CastToFloat` nodes as needed.
+    /// automatically inserts the int→float bitcast (`IntBitsToFloat`) as needed.
     pub(super) fn process_float_binary_op(
         &mut self,
         insn: &rsleigh::Insn,

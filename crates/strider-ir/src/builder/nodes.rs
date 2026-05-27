@@ -212,19 +212,6 @@ impl FunctionBuilder {
         self.build_single_output_pure(NodeKind::FloatConst(bits), [], output_type)
     }
 
-    /// Generic cast of any value (int or float) to `float_type` (F32 or F64).
-    ///
-    /// Never fails — accepts any input type.  The optimizer lowers the node to
-    /// `IntBitsToFloat`, `FloatToFloat`, or an identity depending on the actual
-    /// input type at optimization time.
-    pub fn build_cast_to_float(
-        &mut self,
-        input: NodeOutputId,
-        float_type: NodeOutputType,
-    ) -> NodeOutputId {
-        self.build_single_output_pure(NodeKind::CastToFloat, [input], float_type)
-    }
-
     /// Emits a float binary operation node.
     ///
     /// Inputs that are not already `output_type` are automatically wrapped in a

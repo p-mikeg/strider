@@ -23,7 +23,6 @@ bitflags! {
         const ZERO_EXTEND       = 1 << 0;
         const SIGN_EXTEND       = 1 << 1;
         const TRUNCATE          = 1 << 2;
-        const CAST_TO_FLOAT     = 1 << 4;
         const INT_BITS_TO_FLOAT = 1 << 6;
         const FLOAT_BITS_TO_INT = 1 << 7;
 
@@ -44,7 +43,6 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         NodeKind::Extend(ExtendOp::ZeroExtend) => CastMask::ZERO_EXTEND,
         NodeKind::Extend(ExtendOp::SignExtend) => CastMask::SIGN_EXTEND,
         NodeKind::Truncate => CastMask::TRUNCATE,
-        NodeKind::CastToFloat => CastMask::CAST_TO_FLOAT,
         NodeKind::IntBitsToFloat => CastMask::INT_BITS_TO_FLOAT,
         NodeKind::FloatBitsToInt => CastMask::FLOAT_BITS_TO_INT,
 

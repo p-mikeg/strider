@@ -149,16 +149,6 @@ pub enum NodeKind {
     /// `F32` → `I32`, `F64` → `I64`.  No value conversion — bits are unchanged.
     FloatBitsToInt,
 
-    // ── Generic float cast ────────────────────────────────────────────────────
-    /// Generic cast of any value to a floating-point type (F32 or F64).
-    ///
-    /// The optimizer lowers this to the appropriate specific form based on the
-    /// actual input type:
-    /// - Integer same size (I32→F32, I64→F64) → `IntBitsToFloat`
-    /// - Float same type → eliminated (identity)
-    /// - Float different size → `FloatToFloat`
-    CastToFloat,
-
     // ── User-defined / opaque opcodes ─────────────────────────────────────────
     /// User-defined operation (`CallOther` in Sleigh p-code): CPU intrinsics
     /// such as `cpuid`, `rdtsc`, `syscall`, x87 transcendentals, etc.
@@ -242,7 +232,6 @@ impl NodeKind {
             | Self::FloatToFloat
             | Self::IntBitsToFloat
             | Self::FloatBitsToInt
-            | Self::CastToFloat
             | Self::SegmentOp { .. }
             | Self::CPoolRef
             | Self::New => false,
@@ -292,7 +281,6 @@ impl NodeKind {
             | Self::FloatToFloat
             | Self::IntBitsToFloat
             | Self::FloatBitsToInt
-            | Self::CastToFloat
             | Self::SegmentOp { .. } => true,
 
             // Region header (inputs grow dynamically post-construction).
@@ -358,7 +346,6 @@ impl NodeKind {
             | Self::FloatToFloat
             | Self::IntBitsToFloat
             | Self::FloatBitsToInt
-            | Self::CastToFloat
             | Self::SegmentOp { .. }
             | Self::Return
             | Self::IndirectBranch

@@ -12,41 +12,6 @@ mod tests;
 
 use rules::*;
 
-/// Lowers a `CastToFloat` node to the appropriate specific form based on the
-/// actual input type:
-///
-/// - Input is the same float type as output → eliminated (identity).
-/// - Input is a different float type → lowered to `FloatToFloat`.
-/// - Input is an integer `IntConst(v)` → immediately constant-folded to `FloatConst(v)`.
-/// - Input is any other integer type → lowered to `IntBitsToFloat`.
-fn try_lower_cast_to_float(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    if !matches!(*ctx.node_kind(node_id), NodeKind::CastToFloat) {
-        return Ok(OptimizationResult::NoChange);
-    }
-
-    let [out] = ctx.node_outputs_exact::<1>(node_id)?;
-    let [input] = ctx.node_inputs_exact::<1>(node_id)?;
-
-    let out_ty = ctx.output_kind(out).as_value_or_err()?;
-    let in_ty = ctx.output_kind(input).as_value_or_err()?;
-
-    let new_out = if in_ty == out_ty {
-        input
-    } else if in_ty.is_float() {
-        ctx.make_float_to_float_node(input, out_ty)?
-    } else if let Some(bits) = ctx.int_const_val(input) {
-        ctx.make_float_const(bits, out_ty)?
-    } else {
-        ctx.make_int_bits_to_float_node(input, out_ty)?
-    };
-    // Absorb the rewritten cast node's asm-fingerprint into the new producer
-    // via `after_replace` (handles fingerprint union + replace_all_uses).
-    OptimizationResult::NoChange.after_replace(ctx, out, new_out)
-}
-
 // ── Public optimizer ──────────────────────────────────────────────────────────
 
 /// Folds constant expressions and applies algebraic identities.
@@ -74,7 +39,7 @@ impl PeepholePass for ConstantFold {
         ctx: &mut crate::pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
-        Ok(apply_all_rules(ctx, root)? | try_lower_cast_to_float(ctx, root)?)
+        apply_all_rules(ctx, root)
     }
 }
 

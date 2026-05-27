@@ -74,8 +74,7 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
         | NodeKind::FloatToInt
         | NodeKind::FloatToFloat
         | NodeKind::IntBitsToFloat
-        | NodeKind::FloatBitsToInt
-        | NodeKind::CastToFloat => "\"#302018\"", // dark amber
+        | NodeKind::FloatBitsToInt => "\"#302018\"", // dark amber
 
         _ => "\"#2d2d2d\"",
     }

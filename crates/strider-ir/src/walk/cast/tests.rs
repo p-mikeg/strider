@@ -13,7 +13,6 @@ fn individual_flags_use_distinct_bits() {
         CastMask::ZERO_EXTEND,
         CastMask::SIGN_EXTEND,
         CastMask::TRUNCATE,
-        CastMask::CAST_TO_FLOAT,
         CastMask::INT_BITS_TO_FLOAT,
         CastMask::FLOAT_BITS_TO_INT,
     ];
@@ -52,7 +51,6 @@ fn all_contains_every_individual_flag() {
         CastMask::ZERO_EXTEND,
         CastMask::SIGN_EXTEND,
         CastMask::TRUNCATE,
-        CastMask::CAST_TO_FLOAT,
         CastMask::INT_BITS_TO_FLOAT,
         CastMask::FLOAT_BITS_TO_INT,
     ];
@@ -123,14 +121,6 @@ fn cast_mask_of_truncate() {
 }
 
 #[test]
-fn cast_mask_of_cast_to_float() {
-    assert_eq!(
-        cast_mask_of(&NodeKind::CastToFloat),
-        CastMask::CAST_TO_FLOAT
-    );
-}
-
-#[test]
 fn cast_mask_of_int_bits_to_float() {
     assert_eq!(
         cast_mask_of(&NodeKind::IntBitsToFloat),
@@ -177,7 +167,6 @@ fn cast_mask_of_returns_non_empty_for_all_cast_kinds() {
         NodeKind::Extend(ExtendOp::ZeroExtend),
         NodeKind::Extend(ExtendOp::SignExtend),
         NodeKind::Truncate,
-        NodeKind::CastToFloat,
         NodeKind::IntBitsToFloat,
         NodeKind::FloatBitsToInt,
     ];

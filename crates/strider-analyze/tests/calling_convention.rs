@@ -140,7 +140,8 @@ fn assert_some_call_arg_threads_through(
                 if matches!(kind,
                     NodeKind::Extend(_)
                     | NodeKind::Truncate
-                    | NodeKind::CastToFloat
+                    | NodeKind::IntBitsToFloat
+                    | NodeKind::FloatBitsToInt
                     | NodeKind::Phi
                 ) {
                     let inputs = function.node_inputs(cur);

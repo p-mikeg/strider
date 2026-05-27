@@ -226,10 +226,20 @@ impl FunctionBuilder {
         input: NodeOutputId,
         float_ty: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        if self.get_output_type(input)? == float_ty {
+        let in_ty = self.get_output_type(input)?;
+        if in_ty == float_ty {
             return Ok(input);
         }
-        Ok(self.build_cast_to_float(input, float_ty))
+        // There is no `CastToFloat` node: an integer input is reinterpreted
+        // bit-for-bit as a float of the same width (`IntBitsToFloat`), and a
+        // float input of a different precision is converted (`FloatToFloat`).
+        // Register reads are always same-width integers, so the lifter takes
+        // the `IntBitsToFloat` arm.
+        if in_ty.is_float() {
+            self.build_float_to_float(input, float_ty)
+        } else {
+            self.build_int_bits_to_float(input, float_ty)
+        }
     }
 
     /// Infers the float type to use for a value that may be int or float.

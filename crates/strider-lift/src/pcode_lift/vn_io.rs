@@ -224,7 +224,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // the shift is zero (sub at offset 0 of the container), the
         // truncate is required — without it the caller receives the full
         // container width, which breaks downstream type-aware operations
-        // (e.g. CastToFloat(F32) on a I64 input cannot lower to a clean
+        // (e.g. bitcasting a I64 read to F32 is ill-defined — the widths differ —
         // IntBitsToFloat and the optimizer ends up dropping the chain).
         let reg_ty: strider_ir::ValueType = strider_ir::ValueType::int_for_byte_size(reg.size)?;
         let curr_reg_val = self.builder.read_variable(&ctx.container_reg)?;

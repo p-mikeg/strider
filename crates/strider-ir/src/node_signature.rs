@@ -353,7 +353,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::FloatToInt | NodeKind::FloatBitsToInt => {
             sig!(inputs: [FLOAT_VAL], outputs: [INT_VAL])
         }
-        NodeKind::CastToFloat => sig!(inputs: [ANY_VAL], outputs: [FLOAT_VAL]),
 
         // ── User-defined / opaque opcodes ───────────────────────────────────
         // CallOther: [control, memory, ...args].
@@ -634,7 +633,6 @@ mod tests {
             NodeKind::FloatToInt,
             NodeKind::FloatBitsToInt,
             NodeKind::FloatToFloat,
-            NodeKind::CastToFloat,
             NodeKind::CallOther { user_op_id: 0 },
             NodeKind::SegmentOp { op_id: 0 },
             NodeKind::CPoolRef,
