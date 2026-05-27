@@ -159,14 +159,14 @@ impl Match {
     /// * `InitialVar(vn)` — the varnode whose function-entry value is
     ///   read.
     /// * `Call` outputs at slot `2 + i` — the varnode at the per-Call
-    ///   override on [`strider_ir::Graph::call_clobbered_override`] when one
+    ///   override on [`strider_ir::Function::call_clobbered_override`] when one
     ///   was recorded (e.g. `__fentry__` callbacks built via
     ///   [`strider_ir::FunctionBuilder::build_call_with_cc`]), otherwise the
     ///   varnode at `Graph::call_clobbered[i]`.
     /// * `CallOther` outputs in their clobber slot range (slot 2.. for
     ///   value-less CallOther, slot 3.. for CallOther with a value
     ///   output) — the varnode at the per-CallOther override on
-    ///   [`strider_ir::Graph::call_clobbered_override`] when one was recorded,
+    ///   [`strider_ir::Function::call_clobbered_override`] when one was recorded,
     ///   otherwise the varnode at
     ///   `Graph::call_other_clobbered[i]`.
     ///
@@ -238,7 +238,7 @@ impl Match {
     /// when the capture is unbound or when the bound node has no
     /// recorded contributors (legitimately empty for region / phi /
     /// initial-state kinds — see
-    /// [`strider_ir::Graph::asm_fingerprint`] for the documented exempt set).
+    /// [`strider_ir::Function::asm_fingerprint`] for the documented exempt set).
     ///
     /// This is the proof-of-correctness aid: when a pattern query
     /// captures a value node, this slice lists the machine
@@ -273,9 +273,8 @@ impl Match {
     }
 
     /// Returns the SP-relative stack offset bound to `oc` by a preceding
-    /// [`crate::pattern::LoadPat::offset_capture`] or
-    /// [`crate::pattern::StorePat::offset_capture`] call, or `None` if `oc`
-    /// was not captured in this match.
+    /// `LoadPat::offset_capture` or `StorePat::offset_capture` call, or
+    /// `None` if `oc` was not captured in this match.
     ///
     /// The offset is the value from [`strider_ir::Function::stack_offset`]
     /// recorded at match time — it is always present when `offset_capture`

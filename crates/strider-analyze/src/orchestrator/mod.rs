@@ -1142,7 +1142,7 @@ fn edge_set_of(
 ///
 /// # Errors
 ///
-/// Returns an error if [`strider_ir::Graph::dot_dumper`] fails (graph
+/// Returns an error if [`strider_ir::Function::dot_dumper`] fails (graph
 /// not built), if HTML rendering fails, if a write to `out_dir` fails,
 /// or if the graph's generation no longer matches `lift_generation`.
 pub fn dump_per_region<R, I>(
@@ -1194,7 +1194,7 @@ where
 /// `anchor` (forward + backward) to `out_path`.
 ///
 /// Uses [`strider_ir::walk::collect_neighborhood`] to build the visible
-/// node set and renders via [`strider_ir::Graph::dot_dumper`]'s
+/// node set and renders via [`strider_ir::Function::dot_dumper`]'s
 /// `with_node_filter` chain.  Useful for "focus on this node" debug
 /// dumps when the whole-function view is too dense.
 ///

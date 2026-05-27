@@ -63,8 +63,8 @@ impl Default for Capture {
 
 /// Capture variable that binds an `i64` stack offset rather than a node id.
 ///
-/// Used with [`crate::pattern::LoadPat::offset_capture`] and
-/// [`crate::pattern::StorePat::offset_capture`] to record the SP-relative
+/// Used with `LoadPat::offset_capture` and
+/// `StorePat::offset_capture` to record the SP-relative
 /// offset of a matched Load/Store in a [`crate::pattern::Match`].  After a
 /// successful match, retrieve the bound value via
 /// [`crate::pattern::Match::captured_offset`].

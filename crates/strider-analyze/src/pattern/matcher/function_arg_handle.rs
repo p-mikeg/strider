@@ -21,7 +21,8 @@ pub enum ArgSource {
 }
 
 /// A cheap reference to the carrier [`NodeId`] for a function argument,
-/// accessed through [`Matcher::function_arg`] or [`Matcher::function_args`].
+/// accessed through [`crate::pattern::Matcher::function_arg`] or
+/// [`crate::pattern::Matcher::function_args`].
 ///
 /// The underlying node is an `InitialVar` (register arg) or `Load`
 /// (stack arg) as recorded in [`Function::arg_index_to_nodes`] by

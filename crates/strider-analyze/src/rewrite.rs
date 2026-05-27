@@ -68,7 +68,7 @@ pub struct GraphRewriter<'a> {
 }
 
 impl<'a> GraphRewriter<'a> {
-    /// Wraps a built [`Graph`].
+    /// Wraps a built [`strider_ir::Graph`].
     ///
     /// # Errors
     ///

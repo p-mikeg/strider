@@ -45,7 +45,7 @@ pub(crate) struct MatcherOptions {
     pub ignore_regions: bool,
 }
 
-/// Executes pattern queries against a [`Graph`].
+/// Executes pattern queries against a [`strider_ir::Graph`].
 ///
 /// Construction is O(1).  `find_all` / `match_at` do a single preorder
 /// walk of the graph each call and try the pattern against every
@@ -83,7 +83,7 @@ pub struct Matcher<'g> {
 }
 
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher` over a built [`Function`].  Wrapper around
+    /// Creates a new `Matcher` over a built [`strider_ir::Function`].  Wrapper around
     /// [`Self::for_function`] for callers that hold the fully-built form
     /// (the common query path).  Rewrite-only callers that have just
     /// `&Function + NodeId` should use [`Self::for_function`] directly.

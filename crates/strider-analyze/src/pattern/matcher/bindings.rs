@@ -43,7 +43,7 @@ pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
 ///
 /// A parallel journal `offset_entries: Vec<(OffsetCapture, i64)>` and
 /// `offset_index: FxHashMap<OffsetCapture, usize>` stores `i64` values
-/// bound by [`LoadPat::offset_capture`] / [`StorePat::offset_capture`].
+/// bound by `LoadPat::offset_capture` / `StorePat::offset_capture`.
 /// The mark/restore scheme covers both journals atomically via
 /// [`BindingsMark`], which carries cursors for both.
 ///
