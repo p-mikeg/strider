@@ -59,10 +59,22 @@ impl Optimizer for StackOffsetDetect {
                 NodeKind::Load(_) => function.node_inputs_exact::<2>(node)?[1],
                 _ => continue,
             };
-            if let Some(SpExpr::Terminal { offset, .. }) =
+            // Only stamp addresses that are unambiguously `InitialVar(sp) + K`.
+            // `decompose_sp` also yields a `Terminal` for an alignment-masked
+            // base (`And(sp, mask)`, e.g. `and $-16, %esp`), but that base is
+            // an opaque node whose offset is in a *different* coordinate system
+            // from canonical-SP offsets — stamping it would let downstream
+            // consumers (e.g. the CallStackArgCollect side-table fast path)
+            // compare offsets rooted at different bases.  Reject any base that
+            // is not the canonical stack-pointer `InitialVar`.
+            if let Some(SpExpr::Terminal { base, offset }) =
                 decompose_sp(function, addr, self.stack_vn, &mut memo)
             {
-                to_stamp.push((node, offset));
+                let base_node = function.graph().node_for_output(base);
+                if matches!(*function.node_kind(base_node), NodeKind::InitialVar(vn) if vn == self.stack_vn)
+                {
+                    to_stamp.push((node, offset));
+                }
             }
         }
 

@@ -76,6 +76,43 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
     assert_eq!(stamped, 0);
 }
 
+/// A store whose address is rooted at an *alignment-masked* base
+/// (`And(sp, mask)`, e.g. `and $0xfffffff8, %esp`) is NOT unambiguously
+/// `sp + K`: the mask shifts the value by a runtime amount, so the offset
+/// relative to entry-SP is unknown.  `stack_offset` is documented to hold a
+/// value only for addresses that *are* unambiguously `sp + K`, so such a
+/// store must be left unstamped — otherwise its offset is in a different
+/// coordinate system from canonical-SP stores and consumers that compare
+/// offsets (e.g. CallStackArgCollect's side-table fast path) mix bases.
+#[test]
+fn alignment_masked_base_store_is_not_stamped() {
+    use strider_ir::IntBinaryOp;
+    let sp = stack_vn_x86();
+    let mut f = make_sp_fn(sp, |b, sp_v| {
+        // Simulate `and $0xfffffff8, %esp` then a store at that aligned base.
+        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
+        let aligned = b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
+        b.build_store(aligned, data, rsleigh::VnSpace::RAM)?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+        b.build_return(Some(zero), &[])?;
+        Ok(())
+    })
+    .unwrap();
+
+    run(&mut f, sp);
+    let stamped = f
+        .all_node_ids()
+        .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
+        .filter(|&n| f.stack_offset(n).is_some())
+        .count();
+    assert_eq!(
+        stamped, 0,
+        "an alignment-masked-base store must not be stamped (not unambiguously sp+K)"
+    );
+}
+
 #[test]
 fn rerun_after_first_pass_reports_no_change() {
     let sp = stack_vn_x86();
