@@ -346,7 +346,7 @@ mod tests {
         let const_node = graph.create_node(
             NodeKind::IntConst(value),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
         let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
@@ -392,7 +392,7 @@ mod tests {
         let zombie = graph.create_node(
             NodeKind::IntConst(0xC0FFEE),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [zombie_out] = graph.node_outputs_exact::<1>(zombie).unwrap();
 
@@ -425,7 +425,7 @@ mod tests {
         let _zombie = graph.create_node(
             NodeKind::IntConst(0xDEAD),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
 
         let _ = graph.retain_reachable(entry).unwrap();
@@ -470,12 +470,12 @@ mod tests {
         let one_a = graph.create_node(
             NodeKind::IntConst(7),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let one_b = graph.create_node(
             NodeKind::IntConst(7),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         assert_eq!(one_a, one_b, "dedup cache must be rebuilt by retain_reachable");
     }

@@ -27,19 +27,19 @@ fn default_validate_flags_missing_asm_fingerprint() {
     let a = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let b = function.create_node(
         NodeKind::IntConst(2),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let a_out = function.node_outputs(a).iter().copied().next().unwrap();
     let b_out = function.node_outputs(b).iter().copied().next().unwrap();
     let add = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let add_out = function.node_outputs(add).iter().copied().next().unwrap();
 

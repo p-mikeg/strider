@@ -34,7 +34,7 @@
 //!
 //! // Build a minimal graph: `fn() -> 0u64`.
 //! let mut built = strider_ir_test_utils::make_empty_fn(|b| {
-//!     b.build_int_const(0u64, NodeOutputType::U64)
+//!     b.build_int_const(0u64, NodeOutputType::I64)
 //! })?;
 //!
 //! // A no-op rule: matches anything, returns `Ok(false)` (didn't fire).

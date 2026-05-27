@@ -44,17 +44,17 @@ const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 // ── Strategy primitives ───────────────────────────────────────────────────
 
 /// Integer widths the strategy emits.  We restrict to the four "common"
-/// widths (U8..U64) because:
+/// widths (I8..I64) because:
 ///   - they all fit in `u128` payloads (no wide-const interning required),
 ///   - they all admit binary ops directly without crossing the
 ///     `IntConstWide` boundary,
 ///   - they exercise truncate / extend behaviour with `convert_to_int_if_needed`.
 fn int_ty() -> impl Strategy<Value = NodeOutputType> {
     prop_oneof![
-        Just(NodeOutputType::U8),
-        Just(NodeOutputType::U16),
-        Just(NodeOutputType::U32),
-        Just(NodeOutputType::U64),
+        Just(NodeOutputType::I8),
+        Just(NodeOutputType::I16),
+        Just(NodeOutputType::I32),
+        Just(NodeOutputType::I64),
     ]
 }
 
@@ -184,10 +184,10 @@ struct Pools {
 impl Pools {
     fn bucket(&self, ty: NodeOutputType) -> &Vec<strider_ir::Value> {
         match ty {
-            NodeOutputType::U8 => &self.u8s,
-            NodeOutputType::U16 => &self.u16s,
-            NodeOutputType::U32 => &self.u32s,
-            NodeOutputType::U64 => &self.u64s,
+            NodeOutputType::I8 => &self.u8s,
+            NodeOutputType::I16 => &self.u16s,
+            NodeOutputType::I32 => &self.u32s,
+            NodeOutputType::I64 => &self.u64s,
             NodeOutputType::Bool => &self.bools,
             _ => panic!("unsupported width in strategy: {ty:?}"),
         }
@@ -195,10 +195,10 @@ impl Pools {
 
     fn bucket_mut(&mut self, ty: NodeOutputType) -> &mut Vec<strider_ir::Value> {
         match ty {
-            NodeOutputType::U8 => &mut self.u8s,
-            NodeOutputType::U16 => &mut self.u16s,
-            NodeOutputType::U32 => &mut self.u32s,
-            NodeOutputType::U64 => &mut self.u64s,
+            NodeOutputType::I8 => &mut self.u8s,
+            NodeOutputType::I16 => &mut self.u16s,
+            NodeOutputType::I32 => &mut self.u32s,
+            NodeOutputType::I64 => &mut self.u64s,
             NodeOutputType::Bool => &mut self.bools,
             _ => panic!("unsupported width in strategy: {ty:?}"),
         }
@@ -412,22 +412,22 @@ proptest! {
         let Some(mut fg) = replay(&steps) else {
             return Ok(());
         };
-        // IntConst(42 : U32) — cacheable, no input dependencies, so
+        // IntConst(42 : I32) — cacheable, no input dependencies, so
         // construction is independent of the graph's prior state.
         use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
         let a = fg.graph_mut().create_node(
             NodeKind::IntConst(42),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+            [NodeOutputKind::OutputType(NodeOutputType::I32)],
         );
         let b = fg.graph_mut().create_node(
             NodeKind::IntConst(42),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+            [NodeOutputKind::OutputType(NodeOutputType::I32)],
         );
         prop_assert_eq!(
             a, b,
-            "dedup cache returned distinct NodeIds for identical IntConst(42:U32)"
+            "dedup cache returned distinct NodeIds for identical IntConst(42:I32)"
         );
     }
 }

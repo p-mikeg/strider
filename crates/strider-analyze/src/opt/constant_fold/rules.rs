@@ -389,7 +389,7 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         // 1. IntBinaryOp(op)(IntConst(l), IntConst(r)) =>
         //        int_const(eval_int_binary(op, l, r, ty)?, ty)
         //    `eval_int_binary` returns `None` for div-by-zero / signed
-        //    overflow / U128+ masking failures; the closure opts out of the
+        //    overflow / I128+ masking failures; the closure opts out of the
         //    rewrite in that case via `crate::pattern::skip()`.
         {
             let op = Capture::new();
@@ -440,8 +440,8 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         //    The wider IntConst's raw value is *not* automatically masked
         //    to the truncate's output width — `make_int_const` stores raw
         //    u64s. Mask explicitly here so we don't plant an unmasked
-        //    narrow IntConst into the IR. Skip when ty is U128/U256 (the
-        //    truncate output is always narrower than U64 in practice, but
+        //    narrow IntConst into the IR. Skip when ty is I128/I256 (the
+        //    truncate output is always narrower than I64 in practice, but
         //    the skip costs nothing and is consistent with other rules).
         {
             let v = Capture::new();
@@ -520,7 +520,7 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
                         .ok_or_else(crate::pattern::skip)?;
                     let bits = input_ty.bit_width() as u32;
                     // Lzcount fold is only computable when the input type
-                    // fits in u128.  Wider widths (U256) skip cleanly — the
+                    // fits in u128.  Wider widths (I256) skip cleanly — the
                     // rule simply doesn't fire and the IR keeps the Lzcount
                     // node as opaque.
                     if bits > 128 {

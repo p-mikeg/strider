@@ -56,7 +56,7 @@ fn edge_lines(dot: &str) -> Vec<&str> {
     dot.lines().filter(|l| l.contains("->")).collect()
 }
 
-/// A `IntConstWide` (U256/U512) node must render its actual value, not the
+/// A `IntConstWide` (I256/I512) node must render its actual value, not the
 /// Debug form of the interning id (`IntConstWide(WideConstId(0))`).
 #[test]
 fn render_int_const_wide_shows_value_not_debug() {
@@ -67,17 +67,17 @@ fn render_int_const_wide_shows_value_not_debug() {
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
     // limbs are little-endian: value = 0xabcd<48 zeros>1234.
-    let id = f.intern_wide_const(crate::wide_const::WideConstStorage::U256([0x1234, 0xabcd, 0, 0]));
+    let id = f.intern_wide_const(crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]));
     let wide = f.create_node(
         NodeKind::IntConstWide(id),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U256)],
+        [NodeOutputKind::OutputType(NodeOutputType::I256)],
     );
     let [wide_out] = f.node_outputs_exact::<1>(wide).unwrap();
     f.create_node(NodeKind::Return, [ctrl, mem_out, wide_out], []);
 
     let dot = render(&f, entry);
-    assert!(dot.contains(":u256"), "wide const must render with a u256 suffix, got: {dot}");
+    assert!(dot.contains(":i256"), "wide const must render with a u256 suffix, got: {dot}");
     assert!(
         !dot.contains("IntConstWide"),
         "wide const must not render as the Debug fallback, got: {dot}"
@@ -103,7 +103,7 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
     let c = f.create_node(
         NodeKind::IntConst(0xABC),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [c_out] = f.node_outputs_exact::<1>(c).unwrap();
     f.create_node(NodeKind::Return, [ctrl, mem_out, c_out], []);
@@ -111,7 +111,7 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
     let zombie = f.create_node(
         NodeKind::IntConst(0xDEAD_BEEF),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
 
     let dot = f.raw_dot().expect("raw_dot must render");
@@ -351,7 +351,7 @@ fn int_const_label_contains_value_and_type() {
     let c = f.create_node(
         NodeKind::IntConst(0xdeadbeef),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [c_out] = f.node_outputs_exact::<1>(c).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -362,7 +362,7 @@ fn int_const_label_contains_value_and_type() {
         dot.contains("0xdeadbeef"),
         "hex value must be in label:\n{dot}"
     );
-    assert!(dot.contains("u32"), "type must be in label:\n{dot}");
+    assert!(dot.contains("i32"), "type must be in label:\n{dot}");
 }
 
 // ── if virtual-node ordering regression ───────────────────────────────────
@@ -482,19 +482,19 @@ fn cast_to_int_label_reflects_actual_input_type() {
     let c = f.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let c_out = f.node_outputs(c).iter().copied().next().unwrap();
     let cast = f.create_node(
         NodeKind::CastToInt,
         [c_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let cast_out = f.node_outputs(cast).iter().copied().next().unwrap();
     f.create_node(NodeKind::Return, [entry_ctrl, mem, cast_out], []);
 
     let dot = render(&f, entry);
-    assert!(dot.contains("from u64"), "expected 'from u64' in CastToInt label, got:\n{dot}");
+    assert!(dot.contains("from i64"), "expected 'from i64' in CastToInt label, got:\n{dot}");
     assert!(!dot.contains("from bool"), "CastToInt label must not hard-code 'from bool', got:\n{dot}");
 }
 
@@ -512,7 +512,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let target = f.create_node(
         NodeKind::IntConst(0x1000),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let target_out = f.node_outputs(target).iter().copied().next().unwrap();
     // One Bool clobbered output, but `call_clobbered` slice is empty.
@@ -622,7 +622,7 @@ fn store_addr_edge_suppressed_when_stack_offset_present() {
     let addr = f.create_node(
         NodeKind::IntConst(0x10),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [addr_out] = f.node_outputs_exact::<1>(addr).unwrap();
 
@@ -630,7 +630,7 @@ fn store_addr_edge_suppressed_when_stack_offset_present() {
     let val = f.create_node(
         NodeKind::IntConst(0xdeadbeef_u64 as u128),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [val_out] = f.node_outputs_exact::<1>(val).unwrap();
 
@@ -648,7 +648,7 @@ fn store_addr_edge_suppressed_when_stack_offset_present() {
 
     let dot_no_offset = render(&f, entry);
 
-    // The addr const node ("const 0x10:u64") must appear.
+    // The addr const node ("const 0x10:i64") must appear.
     assert!(
         dot_no_offset.contains("0x10"),
         "addr const must appear when no stack offset is set:\n{dot_no_offset}",
@@ -698,7 +698,7 @@ fn load_addr_edge_suppressed_when_stack_offset_present() {
     let addr = f.create_node(
         NodeKind::IntConst(0x8),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [addr_out] = f.node_outputs_exact::<1>(addr).unwrap();
 
@@ -706,7 +706,7 @@ fn load_addr_edge_suppressed_when_stack_offset_present() {
     let load = f.create_node(
         NodeKind::Load(rsleigh::VnSpace::RAM),
         [mem0, addr_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [load_out] = f.node_outputs_exact::<1>(load).unwrap();
 
@@ -752,7 +752,7 @@ fn function_arg_node_label_includes_arg_index() {
             size: 8,
         }),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [iv_out] = f.node_outputs_exact::<1>(init_var).unwrap();
     f.register_arg_node(0, init_var);
@@ -836,12 +836,12 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let v_t = f.create_node(
         NodeKind::IntConst(0xAA),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let v_f = f.create_node(
         NodeKind::IntConst(0xBB),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [v_t_out] = f.node_outputs_exact::<1>(v_t).unwrap();
     let [v_f_out] = f.node_outputs_exact::<1>(v_f).unwrap();
@@ -850,7 +850,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let phi = f.create_node(
         NodeKind::Phi,
         [join_phi_token, v_t_out, v_f_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [phi_out] = f.node_outputs_exact::<1>(phi).unwrap();
     f.set_phi_var_tag(phi, Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 });

@@ -200,7 +200,7 @@ fn rewrite_rule_on_call_root_returns_err() {
     fb.set_entry_region(region).unwrap();
     fb.set_region(region);
     fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let tgt = fb.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
+    let tgt = fb.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
     fb.build_call(tgt).unwrap();
     fb.build_return(None, &[]).unwrap();
     fb.set_lift_addr(None);

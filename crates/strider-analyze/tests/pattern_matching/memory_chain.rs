@@ -21,18 +21,18 @@ fn load_mem_in_matches_preceding_store() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr1 = b
-        .build_int_const(0x100u64, NodeOutputType::U64)
+        .build_int_const(0x100u64, NodeOutputType::I64)
         .expect("addr1");
     let val = b
-        .build_int_const(42u64, NodeOutputType::U32)
+        .build_int_const(42u64, NodeOutputType::I32)
         .expect("val");
     b.build_store(addr1, val, rsleigh::VnSpace::RAM)
         .expect("store");
     let addr2 = b
-        .build_int_const(0x200u64, NodeOutputType::U64)
+        .build_int_const(0x200u64, NodeOutputType::I64)
         .expect("addr2");
     let load_val = b
-        .build_load(addr2, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .build_load(addr2, rsleigh::VnSpace::RAM, NodeOutputType::I32)
         .expect("load");
     b.build_return(Some(load_val), &[]).expect("ret");
     let function = b.build().expect("build");
@@ -59,18 +59,18 @@ fn store_next_mem_matches_following_store() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr1 = b
-        .build_int_const(0x100u64, NodeOutputType::U64)
+        .build_int_const(0x100u64, NodeOutputType::I64)
         .expect("addr1");
     let v1 = b
-        .build_int_const(1u64, NodeOutputType::U32)
+        .build_int_const(1u64, NodeOutputType::I32)
         .expect("v1");
     b.build_store(addr1, v1, rsleigh::VnSpace::RAM)
         .expect("store_a");
     let addr2 = b
-        .build_int_const(0x200u64, NodeOutputType::U64)
+        .build_int_const(0x200u64, NodeOutputType::I64)
         .expect("addr2");
     let v2 = b
-        .build_int_const(2u64, NodeOutputType::U32)
+        .build_int_const(2u64, NodeOutputType::I32)
         .expect("v2");
     b.build_store(addr2, v2, rsleigh::VnSpace::RAM)
         .expect("store_b");
@@ -94,24 +94,24 @@ fn next_mem_returns_no_match_when_multi_consumer() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr1 = b
-        .build_int_const(0x100u64, NodeOutputType::U64)
+        .build_int_const(0x100u64, NodeOutputType::I64)
         .expect("addr1");
     let v1 = b
-        .build_int_const(1u64, NodeOutputType::U32)
+        .build_int_const(1u64, NodeOutputType::I32)
         .expect("v1");
     b.build_store(addr1, v1, rsleigh::VnSpace::RAM)
         .expect("store_a");
     let addr_l = b
-        .build_int_const(0x200u64, NodeOutputType::U64)
+        .build_int_const(0x200u64, NodeOutputType::I64)
         .expect("addr_l");
     let load_val = b
-        .build_load(addr_l, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .build_load(addr_l, rsleigh::VnSpace::RAM, NodeOutputType::I32)
         .expect("load");
     let addr2 = b
-        .build_int_const(0x300u64, NodeOutputType::U64)
+        .build_int_const(0x300u64, NodeOutputType::I64)
         .expect("addr2");
     let v2 = b
-        .build_int_const(2u64, NodeOutputType::U32)
+        .build_int_const(2u64, NodeOutputType::I32)
         .expect("v2");
     b.build_store(addr2, v2, rsleigh::VnSpace::RAM)
         .expect("store_b");
@@ -146,18 +146,18 @@ fn next_mem_returns_match_when_single_consumer() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr1 = b
-        .build_int_const(0x100u64, NodeOutputType::U64)
+        .build_int_const(0x100u64, NodeOutputType::I64)
         .expect("addr1");
     let v1 = b
-        .build_int_const(1u64, NodeOutputType::U32)
+        .build_int_const(1u64, NodeOutputType::I32)
         .expect("v1");
     b.build_store(addr1, v1, rsleigh::VnSpace::RAM)
         .expect("store_a");
     let addr2 = b
-        .build_int_const(0x200u64, NodeOutputType::U64)
+        .build_int_const(0x200u64, NodeOutputType::I64)
         .expect("addr2");
     let v2 = b
-        .build_int_const(2u64, NodeOutputType::U32)
+        .build_int_const(2u64, NodeOutputType::I32)
         .expect("v2");
     b.build_store(addr2, v2, rsleigh::VnSpace::RAM)
         .expect("store_b");
@@ -193,10 +193,10 @@ fn callother_next_mem_matches_following_store() {
     b.advance_cur_region_memory(lock_mem_out)
         .expect("advance mem to LOCK mem_out");
     let addr = b
-        .build_int_const(0x100u64, NodeOutputType::U64)
+        .build_int_const(0x100u64, NodeOutputType::I64)
         .expect("addr");
     let val = b
-        .build_int_const(42u64, NodeOutputType::U32)
+        .build_int_const(42u64, NodeOutputType::I32)
         .expect("val");
     b.build_store(addr, val, rsleigh::VnSpace::RAM)
         .expect("store");
@@ -233,10 +233,10 @@ fn matches_store_bracketed_by_lock_and_unlock() {
 
     // Store inside the bracket.
     let addr = b
-        .build_int_const(0x100u64, NodeOutputType::U64)
+        .build_int_const(0x100u64, NodeOutputType::I64)
         .expect("addr");
     let val = b
-        .build_int_const(42u64, NodeOutputType::U32)
+        .build_int_const(42u64, NodeOutputType::I32)
         .expect("val");
     b.build_store(addr, val, rsleigh::VnSpace::RAM)
         .expect("store");

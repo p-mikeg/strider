@@ -35,15 +35,15 @@ fn constant_fold_add_consts_preserves_fingerprints() {
     // propagates via after_replace).
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x100));
-        let c3 = b.build_int_const(3u64, NodeOutputType::U64)?;
+        let c3 = b.build_int_const(3u64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x104));
-        let c4 = b.build_int_const(4u64, NodeOutputType::U64)?;
+        let c4 = b.build_int_const(4u64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x108));
         let add = b.build_int_binary_operation(
             c3,
             c4,
             IntBinaryOp::Add,
-            NodeOutputType::U64,
+            NodeOutputType::I64,
         )?;
         b.set_lift_addr(None);
         Ok(add)
@@ -65,13 +65,13 @@ fn constant_fold_add_consts_preserves_fingerprints() {
 fn constant_fold_x_xor_x_preserves_fingerprints() {
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x200));
-        let x = b.build_int_const(0xABu64, NodeOutputType::U64)?;
+        let x = b.build_int_const(0xABu64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x204));
         let xor = b.build_int_binary_operation(
             x,
             x,
             IntBinaryOp::Xor,
-            NodeOutputType::U64,
+            NodeOutputType::I64,
         )?;
         b.set_lift_addr(None);
         Ok(xor)
@@ -97,24 +97,24 @@ fn known_bits_fold_preserves_fingerprints() {
     // contributor address from the chain.
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x300));
-        let x = b.build_int_const(0xFFu64, NodeOutputType::U64)?;
+        let x = b.build_int_const(0xFFu64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x304));
-        let m4 = b.build_int_const(0x04u64, NodeOutputType::U64)?;
+        let m4 = b.build_int_const(0x04u64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x308));
-        let m7 = b.build_int_const(0x07u64, NodeOutputType::U64)?;
+        let m7 = b.build_int_const(0x07u64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x30c));
         let inner = b.build_int_binary_operation(
             x,
             m4,
             IntBinaryOp::And,
-            NodeOutputType::U64,
+            NodeOutputType::I64,
         )?;
         b.set_lift_addr(Some(0x310));
         let outer = b.build_int_binary_operation(
             inner,
             m7,
             IntBinaryOp::Or,
-            NodeOutputType::U64,
+            NodeOutputType::I64,
         )?;
         b.set_lift_addr(None);
         Ok(outer)
@@ -147,24 +147,24 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     // carry the rewritten outer-And's address.
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x500));
-        let x = b.build_int_const(0xFFu64, NodeOutputType::U64)?;
+        let x = b.build_int_const(0xFFu64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x504));
-        let m4 = b.build_int_const(0x04u64, NodeOutputType::U64)?;
+        let m4 = b.build_int_const(0x04u64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x508));
-        let m7 = b.build_int_const(0x07u64, NodeOutputType::U64)?;
+        let m7 = b.build_int_const(0x07u64, NodeOutputType::I64)?;
         b.set_lift_addr(Some(0x50c));
         let inner = b.build_int_binary_operation(
             x,
             m4,
             IntBinaryOp::And,
-            NodeOutputType::U64,
+            NodeOutputType::I64,
         )?;
         b.set_lift_addr(Some(0x510));
         let outer = b.build_int_binary_operation(
             inner,
             m7,
             IntBinaryOp::And,
-            NodeOutputType::U64,
+            NodeOutputType::I64,
         )?;
         b.set_lift_addr(None);
         Ok(outer)

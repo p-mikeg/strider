@@ -771,7 +771,7 @@ pub fn var(c: PyRef<'_, PyCapture>) -> PyPat {
 /// 32-bit `IntConst(-50)` stored as `0xFFFFFFCE`.  But on x86-64
 /// (and similar) gcc -O2 emits 32-bit ops with zero-extended
 /// 64-bit results, so the same source `-50` lands as
-/// `IntConst(0x00000000FFFFFFCE)` at U64 — which `int_const(-50)`
+/// `IntConst(0x00000000FFFFFFCE)` at I64 — which `int_const(-50)`
 /// reads as the unsigned value `+4294967246` and **does not match**.
 ///
 /// Use `signed_int_const(value)` when you want to recognise the
@@ -1353,7 +1353,7 @@ pub struct LoadPatDef {
     #[field(accepts = "Pat", arg = "p")]
     mem_in: Option<strider_analyze::pattern::Pat>,
 
-    /// Filter loads by value width in bits (matches U32 and F32 on
+    /// Filter loads by value width in bits (matches I32 and F32 on
     /// bit_width(32), etc.).
     #[field(arg = "n")]
     bit_width: Option<u32>,
@@ -1415,7 +1415,7 @@ pub struct StorePatDef {
     #[field(accepts = "Pat", arg = "p")]
     next_mem: Option<strider_analyze::pattern::Pat>,
 
-    /// Filter stores by data width in bits (matches U32 and F32 on
+    /// Filter stores by data width in bits (matches I32 and F32 on
     /// bit_width(32), etc.).
     #[field(arg = "n")]
     bit_width: Option<u32>,

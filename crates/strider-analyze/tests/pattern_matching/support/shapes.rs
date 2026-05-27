@@ -10,7 +10,7 @@ use strider_ir::{
 use super::graph::{Tb, reg_vn, stack_vn};
 
 // ── Minimal op-rooted graphs ─────────────────────────────────────────────────
-// Each builds `return(op(5, 3))` (or similar) at U64 width.  Parameterising
+// Each builds `return(op(5, 3))` (or similar) at I64 width.  Parameterising
 // the op lets every test module drive the full op enum without open-coding
 // the boilerplate.
 
@@ -42,7 +42,7 @@ pub fn int_cmp_5_3(op: IntCmpOp) -> Function {
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, op);
-    let cast = t.as_int(c, NodeOutputType::U64);
+    let cast = t.as_int(c, NodeOutputType::I64);
     t.ret_val(cast)
 }
 
@@ -55,7 +55,7 @@ pub fn int_le_lowered_5_3() -> Function {
     // `5 <= 3`  →  `!(3 < 5)`  →  Less(rhs=3, lhs=5).
     let lt = t.int_cmp(r, l, IntCmpOp::Less);
     let neg = t.bool_un(lt, BoolUnaryOp::Neg);
-    let cast = t.as_int(neg, NodeOutputType::U64);
+    let cast = t.as_int(neg, NodeOutputType::I64);
     t.ret_val(cast)
 }
 
@@ -66,7 +66,7 @@ pub fn int_sle_lowered_5_3() -> Function {
     let r = t.u64(3);
     let lt = t.int_cmp(r, l, IntCmpOp::Sless);
     let neg = t.bool_un(lt, BoolUnaryOp::Neg);
-    let cast = t.as_int(neg, NodeOutputType::U64);
+    let cast = t.as_int(neg, NodeOutputType::I64);
     t.ret_val(cast)
 }
 
@@ -75,7 +75,7 @@ pub fn bool_bin(l: bool, r: bool, op: BoolBinaryOp) -> Function {
     let a = t.boolean(l);
     let b = t.boolean(r);
     let v = t.bool_bin(a, b, op);
-    let as_int = t.as_int(v, NodeOutputType::U64);
+    let as_int = t.as_int(v, NodeOutputType::I64);
     t.ret_val(as_int)
 }
 
@@ -84,11 +84,11 @@ pub fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> Function {
     let a = t.f64(l);
     let b = t.f64(r);
     let v = t.fbin(a, b, op, NodeOutputType::F64);
-    let as_int = t.float_to_int(v, NodeOutputType::U64);
+    let as_int = t.float_to_int(v, NodeOutputType::I64);
     t.ret_val(as_int)
 }
 
-/// `return(a + b)` — both operands are `IntConst` of type `U64`.
+/// `return(a + b)` — both operands are `IntConst` of type `I64`.
 pub fn add_consts(a: u64, b: u64) -> Function {
     let mut t = Tb::empty();
     let la = t.u64(a);
@@ -121,7 +121,7 @@ pub fn store_then_load_ram(addr: u64, data: u64) -> Function {
     let a = t.u64(addr);
     let d = t.u64(data);
     t.store_ram(a, d);
-    let v = t.load_ram(a, NodeOutputType::U64);
+    let v = t.load_ram(a, NodeOutputType::I64);
     t.ret_val(v)
 }
 

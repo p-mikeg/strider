@@ -68,7 +68,7 @@ fn build_bit_field_insert(
     len: u8,
     out_ty: NodeOutputType,
 ) -> Result<strider_ir::Value> {
-    // Compute masks in u128 so a U128 (or U80) `out_ty` with
+    // Compute masks in u128 so a I128 (or I80) `out_ty` with
     // `lsb + len > 64` produces correct bits in slots 64..127.
     let mask_raw: u128 = if (len as usize) >= 128 { u128::MAX } else { (1u128 << len) - 1 };
     let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
@@ -251,7 +251,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         };
         let narrowed = self.builder.truncate_if_needed(shifted, narrow_ty)?;
         let out = if (len as usize) < narrow_ty.bit_width() {
-            // Compute the AND-mask in u128 so a U128 narrow_ty with
+            // Compute the AND-mask in u128 so a I128 narrow_ty with
             // 64 ≤ len < 128 produces a mask covering the requested
             // upper bits.  Using u64 here would cap the mask at
             // 0xFFFF_FFFF_FFFF_FFFF, then `build_int_const` would

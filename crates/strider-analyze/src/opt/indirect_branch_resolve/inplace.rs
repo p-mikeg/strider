@@ -201,7 +201,7 @@ pub fn apply_tail_call(
     let function = ctx.function_mut();
 
     // Surface a non-integer target type as a typed error — silently
-    // defaulting to U64 would mask an upstream invariant break (every
+    // defaulting to I64 would mask an upstream invariant break (every
     // BranchIndirect placeholder's target_value must be an integer
     // address).
     let target_int_ty = function
@@ -288,7 +288,7 @@ mod tests {
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
         builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-        let target = builder.build_int_const(0xdeadu64, NodeOutputType::U64).unwrap();
+        let target = builder.build_int_const(0xdeadu64, NodeOutputType::I64).unwrap();
         builder.build_indirect_branch(target).expect("build_indirect_branch");
         builder.set_lift_addr(None);
         let built = builder.build().expect("build");
@@ -422,8 +422,8 @@ mod tests {
         // 0-indexed over the real return values).
         let (mut ctx, placeholder) = build_placeholder_graph();
         assert_eq!(ctx.node_inputs(placeholder).len(), 3);
-        let r0 = synth_value_output(&mut ctx, 0x42, NodeOutputType::U64);
-        let r1 = synth_value_output(&mut ctx, 0x43, NodeOutputType::U64);
+        let r0 = synth_value_output(&mut ctx, 0x42, NodeOutputType::I64);
+        let r1 = synth_value_output(&mut ctx, 0x43, NodeOutputType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[r0, r1]))
             .expect("apply");
@@ -442,9 +442,9 @@ mod tests {
         // Three arg-passing outputs → Call's inputs are
         // `[ctrl, mem, IntConst(target), arg_0, arg_1, arg_2]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let a0 = synth_value_output(&mut ctx, 0x01, NodeOutputType::U64);
-        let a1 = synth_value_output(&mut ctx, 0x02, NodeOutputType::U64);
-        let a2 = synth_value_output(&mut ctx, 0x03, NodeOutputType::U64);
+        let a0 = synth_value_output(&mut ctx, 0x01, NodeOutputType::I64);
+        let a1 = synth_value_output(&mut ctx, 0x02, NodeOutputType::I64);
+        let a2 = synth_value_output(&mut ctx, 0x03, NodeOutputType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
                 apply_tail_call(rctx, placeholder, 0xc0de, &[a0, a1, a2], &[], &[], false)
@@ -471,8 +471,8 @@ mod tests {
         // `[Control, Memory, clob_0, clob_1]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
         let clob_kinds = [
-            NodeOutputKind::OutputType(NodeOutputType::U64),
-            NodeOutputKind::OutputType(NodeOutputType::U32),
+            NodeOutputKind::OutputType(NodeOutputType::I64),
+            NodeOutputKind::OutputType(NodeOutputType::I32),
         ];
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
@@ -497,8 +497,8 @@ mod tests {
         // Two ret-val outputs → new Return's inputs are
         // `[call_ctrl, call_mem, ret_val_0, ret_val_1]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let r0 = synth_value_output(&mut ctx, 0x10, NodeOutputType::U64);
-        let r1 = synth_value_output(&mut ctx, 0x11, NodeOutputType::U64);
+        let r0 = synth_value_output(&mut ctx, 0x10, NodeOutputType::I64);
+        let r1 = synth_value_output(&mut ctx, 0x11, NodeOutputType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
                 apply_tail_call(rctx, placeholder, 0xface, &[], &[], &[r0, r1], false)
@@ -510,7 +510,7 @@ mod tests {
     }
 
     /// Regression: `apply_tail_call` must propagate an
-    /// `Err` (not silently default to `U64`) when the placeholder's
+    /// `Err` (not silently default to `I64`) when the placeholder's
     /// `target_value` has a non-integer output type.  We construct a
     /// malformed IndirectBranch directly via `Graph::create_node` so the
     /// builder's typechecking doesn't reject it; this exercises the

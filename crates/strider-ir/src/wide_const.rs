@@ -1,8 +1,8 @@
 //! Wide-integer constant storage — values whose width exceeds `u128`.
 //!
 //! [`crate::node::NodeKind::IntConst`] inlines values up to 128 bits in
-//! its payload word.  The wider integer types (`U256` for AVX-2 ymm
-//! registers, `U512` for AVX-512 zmm) don't fit; they live in
+//! its payload word.  The wider integer types (`I256` for AVX-2 ymm
+//! registers, `I512` for AVX-512 zmm) don't fit; they live in
 //! `Graph::wide_consts` and are referenced from the IR via
 //! [`crate::node::NodeKind::IntConstWide`] carrying a [`WideConstId`].
 //!
@@ -30,7 +30,7 @@ entity_impl!(WideConstId, "wide_const");
 
 /// Storage for a wide-integer constant value — the byte payload the IR
 /// carries when an [`crate::node::NodeKind::IntConstWide`] node
-/// produces a `U256` or `U512` output.
+/// produces a `I256` or `I512` output.
 ///
 /// Limbs are little-endian: `limbs[0]` is the low 64 bits, `limbs[N-1]`
 /// the high 64 bits.  This matches the lifter's natural ordering when
@@ -38,27 +38,27 @@ entity_impl!(WideConstId, "wide_const");
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WideConstStorage {
     /// 256-bit unsigned integer (AVX-2 `ymm`).
-    U256([u64; 4]),
+    I256([u64; 4]),
     /// 512-bit unsigned integer (AVX-512 `zmm`).
-    U512([u64; 8]),
+    I512([u64; 8]),
 }
 
 impl WideConstStorage {
-    /// Returns the byte width of this storage (32 for U256, 64 for U512).
+    /// Returns the byte width of this storage (32 for I256, 64 for I512).
     #[must_use]
     pub(crate) fn byte_size(&self) -> usize {
         self.limbs().len() * 8
     }
 
     /// Returns the limb storage as a slice — `limbs[0]` is the low
-    /// 64 bits, `limbs[N-1]` the high.  Length is 4 for `U256`, 8 for
-    /// `U512`.  Projection over the variant difference so width-agnostic
+    /// 64 bits, `limbs[N-1]` the high.  Length is 4 for `I256`, 8 for
+    /// `I512`.  Projection over the variant difference so width-agnostic
     /// callers (`byte_size`, `to_le_bytes`) don't have to match.
     #[must_use]
     pub(crate) fn limbs(&self) -> &[u64] {
         match self {
-            Self::U256(limbs) => limbs,
-            Self::U512(limbs) => limbs,
+            Self::I256(limbs) => limbs,
+            Self::I512(limbs) => limbs,
         }
     }
 
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn intern_dedups_equal_u256_values() {
         let mut g = Graph::new();
-        let v = WideConstStorage::U256([1, 2, 3, 4]);
+        let v = WideConstStorage::I256([1, 2, 3, 4]);
         let id1 = g.intern_wide_const(v.clone());
         let id2 = g.intern_wide_const(v);
         assert_eq!(id1, id2, "interning the same value must return the same id");
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn intern_dedups_equal_u512_values() {
         let mut g = Graph::new();
-        let v = WideConstStorage::U512([0xdead; 8]);
+        let v = WideConstStorage::I512([0xdead; 8]);
         let id1 = g.intern_wide_const(v.clone());
         let id2 = g.intern_wide_const(v);
         assert_eq!(id1, id2);
@@ -97,40 +97,40 @@ mod tests {
     #[test]
     fn intern_assigns_distinct_ids_for_distinct_values() {
         let mut g = Graph::new();
-        let id1 = g.intern_wide_const(WideConstStorage::U256([1; 4]));
-        let id2 = g.intern_wide_const(WideConstStorage::U256([2; 4]));
+        let id1 = g.intern_wide_const(WideConstStorage::I256([1; 4]));
+        let id2 = g.intern_wide_const(WideConstStorage::I256([2; 4]));
         assert_ne!(id1, id2);
     }
 
     #[test]
     fn intern_distinguishes_u256_from_u512_with_same_low_limbs() {
         let mut g = Graph::new();
-        let id_256 = g.intern_wide_const(WideConstStorage::U256([1, 0, 0, 0]));
-        let id_512 = g.intern_wide_const(WideConstStorage::U512([1, 0, 0, 0, 0, 0, 0, 0]));
+        let id_256 = g.intern_wide_const(WideConstStorage::I256([1, 0, 0, 0]));
+        let id_512 = g.intern_wide_const(WideConstStorage::I512([1, 0, 0, 0, 0, 0, 0, 0]));
         assert_ne!(id_256, id_512);
     }
 
     #[test]
     fn wide_const_lookup_returns_stored_value() {
         let mut g = Graph::new();
-        let v = WideConstStorage::U256([0x1234, 0x5678, 0x9abc, 0xdef0]);
+        let v = WideConstStorage::I256([0x1234, 0x5678, 0x9abc, 0xdef0]);
         let id = g.intern_wide_const(v.clone());
         assert_eq!(g.wide_const(id), &v);
     }
 
     #[test]
     fn u256_byte_size_is_32() {
-        assert_eq!(WideConstStorage::U256([0; 4]).byte_size(), 32);
+        assert_eq!(WideConstStorage::I256([0; 4]).byte_size(), 32);
     }
 
     #[test]
     fn u512_byte_size_is_64() {
-        assert_eq!(WideConstStorage::U512([0; 8]).byte_size(), 64);
+        assert_eq!(WideConstStorage::I512([0; 8]).byte_size(), 64);
     }
 
     #[test]
     fn to_le_bytes_u256_serialises_little_endian() {
-        let v = WideConstStorage::U256([0x0807_0605_0403_0201, 0, 0, 0]);
+        let v = WideConstStorage::I256([0x0807_0605_0403_0201, 0, 0, 0]);
         let bytes = v.to_le_bytes();
         assert_eq!(&bytes[..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(bytes.len(), 32);
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn to_le_bytes_u512_serialises_little_endian() {
-        let v = WideConstStorage::U512([
+        let v = WideConstStorage::I512([
             0x0807_0605_0403_0201,
             0x100f_0e0d_0c0b_0a09,
             0,

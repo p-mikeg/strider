@@ -282,7 +282,7 @@ impl FunctionBuilder {
     /// For integers, maps byte size: ≤4 → F32, =8 → F64, =10 → F80.
     ///
     /// The 10-byte case targets x87 ST0/STn registers (which the analyzer
-    /// represents as U80 on the int side); inferring F80 keeps the
+    /// represents as I80 on the int side); inferring F80 keeps the
     /// `CastToFloat` round-trip width-preserving.
     ///
     /// # Errors

@@ -1,6 +1,6 @@
 //! `LoadPat::bit_width(n)` / `StorePat::bit_width(n)` filter matches by
 //! the value-output / data-input width.  Matches both integer and float
-//! types of the same width (e.g. `bit_width(32)` matches U32 and F32).
+//! types of the same width (e.g. `bit_width(32)` matches I32 and F32).
 
 use strider_analyze::pattern::{Matcher, int_const, load, store};
 use strider_ir::FunctionBuilder;
@@ -9,23 +9,23 @@ use strider_ir_test_utils::RegisterSet;
 
 #[test]
 fn bit_width_filters_load_by_value_width() {
-    // Two Loads at the same address, U32 and U64.  Both must be reachable:
-    // we return the U32 load directly and route the U64 load through a
+    // Two Loads at the same address, I32 and I64.  Both must be reachable:
+    // we return the I32 load directly and route the I64 load through a
     // Store so it sits on the memory chain.
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr = b
-        .build_int_const(0x100u64, NodeOutputType::U64)
+        .build_int_const(0x100u64, NodeOutputType::I64)
         .expect("addr");
     let l32 = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
         .expect("u32 load");
     let l64 = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
         .expect("u64 load");
     let other_addr = b
-        .build_int_const(0x200u64, NodeOutputType::U64)
+        .build_int_const(0x200u64, NodeOutputType::I64)
         .expect("other_addr");
     b.build_store(other_addr, l64, rsleigh::VnSpace::RAM)
         .expect("store l64");
@@ -35,8 +35,8 @@ fn bit_width_filters_load_by_value_width() {
     let m = Matcher::try_new(&function).unwrap();
     let h32 = m.find_all(&load().addr(int_const(0x100u64)).bit_width(32).into());
     let h64 = m.find_all(&load().addr(int_const(0x100u64)).bit_width(64).into());
-    assert_eq!(h32.len(), 1, "bit_width(32) matches only the U32 load");
-    assert_eq!(h64.len(), 1, "bit_width(64) matches only the U64 load");
+    assert_eq!(h32.len(), 1, "bit_width(32) matches only the I32 load");
+    assert_eq!(h64.len(), 1, "bit_width(64) matches only the I64 load");
 }
 
 #[test]
@@ -47,18 +47,18 @@ fn bit_width_filters_store_by_data_width() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr1 = b
-        .build_int_const(0x100u64, NodeOutputType::U64)
+        .build_int_const(0x100u64, NodeOutputType::I64)
         .expect("addr1");
     let v32 = b
-        .build_int_const(1u64, NodeOutputType::U32)
+        .build_int_const(1u64, NodeOutputType::I32)
         .expect("v32");
     b.build_store(addr1, v32, rsleigh::VnSpace::RAM)
         .expect("u32 store");
     let addr2 = b
-        .build_int_const(0x108u64, NodeOutputType::U64)
+        .build_int_const(0x108u64, NodeOutputType::I64)
         .expect("addr2");
     let v64 = b
-        .build_int_const(2u64, NodeOutputType::U64)
+        .build_int_const(2u64, NodeOutputType::I64)
         .expect("v64");
     b.build_store(addr2, v64, rsleigh::VnSpace::RAM)
         .expect("u64 store");

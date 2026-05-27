@@ -443,7 +443,7 @@ mod tests {
         let src = graph.create_node(
             NodeKind::IntConst(42),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [data_out] = graph.node_outputs_exact::<1>(src).unwrap();
 
@@ -486,7 +486,7 @@ mod tests {
         let node = graph.create_node(
             NodeKind::IntConst(0),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let succs: Vec<_> = cfg_succs(&graph, node).collect();
         assert!(
@@ -556,7 +556,7 @@ mod tests {
             [],
             [
                 NodeOutputKind::Control,
-                NodeOutputKind::OutputType(NodeOutputType::U64),
+                NodeOutputKind::OutputType(NodeOutputType::I64),
                 NodeOutputKind::Memory,
                 NodeOutputKind::Control,
             ],
@@ -594,7 +594,7 @@ mod tests {
         let node = graph.create_node(
             NodeKind::IntConst(5),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+            [NodeOutputKind::OutputType(NodeOutputType::I32)],
         );
         let outs: Vec<_> = cfg_outputs(&graph, node).collect();
         assert!(outs.is_empty());
@@ -756,7 +756,7 @@ mod tests {
         let src = graph.create_node(
             NodeKind::IntConst(42),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [src_out] = graph.node_outputs_exact::<1>(src).unwrap();
         // entry → ret(data: src).
@@ -797,7 +797,7 @@ mod tests {
         let data = graph.create_node(
             NodeKind::IntConst(0),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [data_out] = graph.node_outputs_exact::<1>(data).unwrap();
         let ret = graph.create_node(NodeKind::Return, [], []);

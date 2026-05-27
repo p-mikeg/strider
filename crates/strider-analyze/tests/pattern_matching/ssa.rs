@@ -113,7 +113,7 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let sp_v = t.read_var(&sp);
     let four = t.u64(4);
     let addr = t.add(sp_v, four);
-    let v = t.load_ram(addr, NodeOutputType::U64);
+    let v = t.load_ram(addr, NodeOutputType::I64);
     let mut function = t.ret_val(v);
 
     let entry = function.entry().expect("entry");

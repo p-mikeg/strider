@@ -21,12 +21,12 @@
 //! fb.set_entry_region(region).unwrap();
 //! fb.set_region(region);
 //! fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-//! let base = fb.build_int_const(0x1000u64, NodeOutputType::U64).unwrap();
-//! let offset = fb.build_int_const(8u64, NodeOutputType::U64).unwrap();
+//! let base = fb.build_int_const(0x1000u64, NodeOutputType::I64).unwrap();
+//! let offset = fb.build_int_const(8u64, NodeOutputType::I64).unwrap();
 //! let addr = fb
-//!     .build_int_binary_operation(base, offset, IntBinaryOp::Add, NodeOutputType::U64)
+//!     .build_int_binary_operation(base, offset, IntBinaryOp::Add, NodeOutputType::I64)
 //!     .unwrap();
-//! let val = fb.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64).unwrap();
+//! let val = fb.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64).unwrap();
 //! fb.build_return(Some(val), &[]).unwrap();
 //! fb.set_lift_addr(None);
 //! let graph = fb.build().unwrap();

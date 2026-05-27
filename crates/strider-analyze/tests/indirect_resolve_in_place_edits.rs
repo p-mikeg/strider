@@ -292,7 +292,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         let nid = g.create_node(
             NodeKind::IntConst(v),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         // Stamp a sentinel asm-fingerprint so Layer-C validation
         // accepts this synthetic-direct `create_node` node (no
@@ -307,9 +307,9 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
 
     // Stand-in clobbered kinds (one per RBX/RBP/R12 → 3 slots).
     let clob_kinds = [
-        NodeOutputKind::OutputType(NodeOutputType::U64),
-        NodeOutputKind::OutputType(NodeOutputType::U64),
-        NodeOutputKind::OutputType(NodeOutputType::U64),
+        NodeOutputKind::OutputType(NodeOutputType::I64),
+        NodeOutputKind::OutputType(NodeOutputType::I64),
+        NodeOutputKind::OutputType(NodeOutputType::I64),
     ];
 
     let _new_return = function

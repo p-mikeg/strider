@@ -45,10 +45,10 @@ fn add_k_plus_zero(k: u64) -> Function {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let lhs = b.build_int_const(k, NodeOutputType::U64).unwrap();
-    let rhs = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
+    let lhs = b.build_int_const(k, NodeOutputType::I64).unwrap();
+    let rhs = b.build_int_const(0u64, NodeOutputType::I64).unwrap();
     let sum = b
-        .build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U64)
+        .build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I64)
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     b.set_lift_addr(None);
@@ -165,14 +165,14 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     b.set_entry_region(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let a = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
-    let z = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
-    let one = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
+    let a = b.build_int_const(7u64, NodeOutputType::I64).unwrap();
+    let z = b.build_int_const(0u64, NodeOutputType::I64).unwrap();
+    let one = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
     let add1 = b
-        .build_int_binary_operation(a, z, IntBinaryOp::Add, NodeOutputType::U64)
+        .build_int_binary_operation(a, z, IntBinaryOp::Add, NodeOutputType::I64)
         .unwrap();
     let add2 = b
-        .build_int_binary_operation(add1, one, IntBinaryOp::Add, NodeOutputType::U64)
+        .build_int_binary_operation(add1, one, IntBinaryOp::Add, NodeOutputType::I64)
         .unwrap();
     b.build_return(Some(add2), &[]).unwrap();
     b.set_lift_addr(None);

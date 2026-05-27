@@ -56,7 +56,7 @@ fn create_single_node() {
     let node_id = function.create_node(
         NodeKind::IntConst(5),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     assert_eq!(function.node_kind(node_id), &NodeKind::IntConst(5));
     assert_eq!(function.nodes.len(), 1);
@@ -64,7 +64,7 @@ fn create_single_node() {
     check_node_output_kinds(
         &function,
         node_id,
-        vec![NodeOutputKind::OutputType(NodeOutputType::U64)],
+        vec![NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     check_node_output_definitions(&function, node_id, vec![(node_id, 0)]);
 }
@@ -77,7 +77,7 @@ fn kind_of_output_matches_two_step_lookup() {
     let node_id = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [out] = function.node_outputs_exact::<1>(node_id).unwrap();
     let two_step = function.node_kind(function.node_for_output(out));
@@ -95,12 +95,12 @@ fn cacheable_node_is_deduplicated() {
     let id_a = function.create_node(
         NodeKind::IntConst(42),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let id_b = function.create_node(
         NodeKind::IntConst(42),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     assert_eq!(
         id_a, id_b,
@@ -127,14 +127,14 @@ fn cacheable_node_dedup_is_stable_across_many_calls() {
     let first = function.create_node(
         NodeKind::IntConst(0xdead_beefu128),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let arena_after_first = function.nodes.len();
     for _ in 0..1000 {
         let id = function.create_node(
             NodeKind::IntConst(0xdead_beefu128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         assert_eq!(id, first, "cache hit must return the original id");
     }
@@ -146,7 +146,7 @@ fn cacheable_node_dedup_is_stable_across_many_calls() {
 }
 
 /// Two cacheable nodes with identical kind + inputs but different
-/// `output_kinds` (e.g. `IntConst(0): U32` vs `IntConst(0): U64`)
+/// `output_kinds` (e.g. `IntConst(0): I32` vs `IntConst(0): I64`)
 /// must NOT dedup.  Pins that the dedup key includes `output_kinds`;
 /// a regression that hashed only `(kind, inputs)` would alias values
 /// of different widths and produce type-incorrect outputs at
@@ -157,16 +157,16 @@ fn cacheable_int_const_with_different_type_does_not_dedup() {
     let a = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let b = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     assert_ne!(
         a, b,
-        "IntConst(0):U32 must NOT alias IntConst(0):U64 — output_kinds is \
+        "IntConst(0):I32 must NOT alias IntConst(0):I64 — output_kinds is \
          part of the dedup key"
     );
 }
@@ -220,7 +220,7 @@ fn initial_var_dedupes_per_vn() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let output_kind = NodeOutputKind::OutputType(NodeOutputType::U64);
+    let output_kind = NodeOutputKind::OutputType(NodeOutputType::I64);
     let v1 = function.create_node(NodeKind::InitialVar(vn_a), [], [output_kind]);
     let v2 = function.create_node(NodeKind::InitialVar(vn_a), [], [output_kind]);
     assert_eq!(v1, v2, "InitialVar with the same Vn must dedupe");
@@ -242,7 +242,7 @@ fn adjacent_calls_with_same_args_are_distinct() {
     let target = function.create_node(
         NodeKind::IntConst(0x1000),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [target_out] = function.node_outputs_exact::<1>(target).unwrap();
     let outs = [NodeOutputKind::Control, NodeOutputKind::Memory];
@@ -297,7 +297,7 @@ fn add_node_input_registers_use() {
     let const_node = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [const_out] = function.node_outputs_exact::<1>(const_node).unwrap();
 
@@ -323,14 +323,14 @@ fn remove_node_input_cleans_up_use_list() {
     let c0 = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [out0] = function.node_outputs_exact::<1>(c0).unwrap();
 
     let c1 = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [out1] = function.node_outputs_exact::<1>(c1).unwrap();
 
@@ -371,14 +371,14 @@ fn update_input_moves_use_to_new_output() {
     let old = function.create_node(
         NodeKind::IntConst(10),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [old_out] = function.node_outputs_exact::<1>(old).unwrap();
 
     let new = function.create_node(
         NodeKind::IntConst(20),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [new_out] = function.node_outputs_exact::<1>(new).unwrap();
 
@@ -407,7 +407,7 @@ fn detach_node_inputs_removes_all_uses() {
     let c = function.create_node(
         NodeKind::IntConst(5),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [out] = function.node_outputs_exact::<1>(c).unwrap();
 
@@ -448,17 +448,17 @@ fn detach_evicts_cacheable_node_from_dedup_cache() {
     let lhs = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let rhs = function.create_node(
         NodeKind::IntConst(9),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [lhs_out] = function.node_outputs_exact::<1>(lhs).unwrap();
     let [rhs_out] = function.node_outputs_exact::<1>(rhs).unwrap();
 
-    let ty = NodeOutputKind::OutputType(NodeOutputType::U32);
+    let ty = NodeOutputKind::OutputType(NodeOutputType::I32);
     let add_a = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [lhs_out, rhs_out],
@@ -496,7 +496,7 @@ fn output_has_one_usage_tracks_consumer_count() {
     let c = function.create_node(
         NodeKind::IntConst(99),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [out] = function.node_outputs_exact::<1>(c).unwrap();
 
@@ -524,7 +524,7 @@ fn node_for_output_returns_source_node() {
     let node = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U8)],
+        [NodeOutputKind::OutputType(NodeOutputType::I8)],
     );
     let [out] = function.node_outputs_exact::<1>(node).unwrap();
     assert_eq!(function.node_for_output(out), node);
@@ -557,7 +557,7 @@ fn output_uses_reports_all_consumers_with_correct_indices() {
     let src = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -591,7 +591,7 @@ fn output_uses_same_output_multiple_times_reports_each_position() {
     let src = function.create_node(
         NodeKind::IntConst(3),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -618,14 +618,14 @@ fn output_use_cursor_replace_redirects_first_use() {
     let old_src = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [old_out] = function.node_outputs_exact::<1>(old_src).unwrap();
 
     let new_src = function.create_node(
         NodeKind::IntConst(2),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [new_out] = function.node_outputs_exact::<1>(new_src).unwrap();
 
@@ -667,14 +667,14 @@ fn output_use_cursor_replace_all_drains_source() {
     let old_src = function.create_node(
         NodeKind::IntConst(10),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [old_out] = function.node_outputs_exact::<1>(old_src).unwrap();
 
     let new_src = function.create_node(
         NodeKind::IntConst(20),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [new_out] = function.node_outputs_exact::<1>(new_src).unwrap();
 
@@ -714,7 +714,7 @@ fn remove_node_input_from_middle_reindexes_remaining() {
         let n = function.create_node(
             NodeKind::IntConst(10),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         function.node_outputs_exact::<1>(n).unwrap()[0]
     };
@@ -722,7 +722,7 @@ fn remove_node_input_from_middle_reindexes_remaining() {
         let n = function.create_node(
             NodeKind::IntConst(20),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         function.node_outputs_exact::<1>(n).unwrap()[0]
     };
@@ -730,7 +730,7 @@ fn remove_node_input_from_middle_reindexes_remaining() {
         let n = function.create_node(
             NodeKind::IntConst(30),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         function.node_outputs_exact::<1>(n).unwrap()[0]
     };
@@ -767,7 +767,7 @@ fn remove_node_input_from_end_leaves_others_intact() {
         let n = function.create_node(
             NodeKind::IntConst(1),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         function.node_outputs_exact::<1>(n).unwrap()[0]
     };
@@ -775,7 +775,7 @@ fn remove_node_input_from_end_leaves_others_intact() {
         let n = function.create_node(
             NodeKind::IntConst(2),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         function.node_outputs_exact::<1>(n).unwrap()[0]
     };
@@ -807,22 +807,22 @@ fn update_input_on_cacheable_evicts_stale_cache_entry() {
     let a = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let b = function.create_node(
         NodeKind::IntConst(2),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let c = function.create_node(
         NodeKind::IntConst(3),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [a_out] = function.node_outputs_exact::<1>(a).unwrap();
     let [b_out] = function.node_outputs_exact::<1>(b).unwrap();
     let [c_out] = function.node_outputs_exact::<1>(c).unwrap();
-    let ty = NodeOutputKind::OutputType(NodeOutputType::U32);
+    let ty = NodeOutputKind::OutputType(NodeOutputType::I32);
 
     // Cache key inserted: (Add, [a, b], [ty]) → add_ab.
     let add_ab = function.create_node(
@@ -861,7 +861,7 @@ fn update_input_to_same_output_is_idempotent() {
     let src = function.create_node(
         NodeKind::IntConst(99),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -888,7 +888,7 @@ fn detach_then_readd_restores_use_count() {
     let src = function.create_node(
         NodeKind::IntConst(42),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -926,7 +926,7 @@ fn two_independent_consumers_both_in_use_list() {
     let src = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -950,7 +950,7 @@ fn node_outputs_exact_errors_on_wrong_count() {
     let node = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U8)],
+        [NodeOutputKind::OutputType(NodeOutputType::I8)],
     );
     let err = function.node_outputs_exact::<2>(node).unwrap_err();
     assert!(
@@ -967,7 +967,7 @@ fn node_inputs_exact_errors_on_wrong_count() {
     let src = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [out] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -988,19 +988,19 @@ fn update_input_self_redirect_preserves_use_list_order() {
     let c = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let cval = function.node_outputs(c).iter().copied().next().unwrap();
     // Two consumers of cval to give the use-list real ordering.
     let _a = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [cval],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let b = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [cval],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
 
     let head_before = function.output_first_use_id(cval);
@@ -1039,7 +1039,7 @@ fn remove_node_input_on_cacheable_uses_dedicated_error() {
     let c = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let err = function
         .remove_node_input(c, 0)
@@ -1137,7 +1137,7 @@ fn call_clobbered_override_default_is_none() {
     let nid = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     assert!(function.call_clobbered_override(nid).is_none());
 }
@@ -1148,7 +1148,7 @@ fn call_clobbered_override_set_then_get_round_trips() {
     let nid = function.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let vns: Vec<rsleigh::Vn> = vec![];
     function.set_call_clobbered_override(nid, vns.clone());
@@ -1165,13 +1165,13 @@ fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
     let a = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     function.extend_asm_fingerprint(a, &[0x2000]);
     let b = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     assert_eq!(a, b, "cacheable nodes should dedup");
     function.extend_asm_fingerprint(b, &[0x3000]);

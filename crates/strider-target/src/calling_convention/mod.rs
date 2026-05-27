@@ -490,8 +490,8 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ret_val_regs: &["x0", "x1"],
             // AArch64 SIMD return regs (16-byte vector; contain s0/d0/q0
             // sub-registers).  Now that vn_mask + build_int_const support
-            // U128, the ABI-correct q0/q1 (16-byte) is preferred over d0/d1
-            // (which was an earlier workaround for missing U128 support).
+            // I128, the ABI-correct q0/q1 (16-byte) is preferred over d0/d1
+            // (which was an earlier workaround for missing I128 support).
             ret_val_regs_float: &["q0", "q1"],
             stack_arg_offsets: &[0, 8, 16, 24],
             ret_stack_pop: 0,
@@ -721,7 +721,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // x86 cdecl returns floats in `ST0` (the x87 FPU's 80-bit
             // top-of-stack).  GCC's i686 default lowers floats through
             // x87 even when arithmetic is via SSE.  Listing ST0 here
-            // (now that the IR has F80 / U80 support) keeps the Return
+            // (now that the IR has F80 / I80 support) keeps the Return
             // node connected to the float chain.
             //
             // XMM0 is also listed as a fallback for SSE-default builds

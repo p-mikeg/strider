@@ -30,11 +30,11 @@ fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
     b.build_if(cond, true_region, false_region)?;
 
     b.set_region(true_region);
-    let true_val = b.build_int_const(1u64, strider_ir::ValueType::U64)?;
+    let true_val = b.build_int_const(1u64, strider_ir::ValueType::I64)?;
     b.build_return(Some(true_val), &[])?;
 
     b.set_region(false_region);
-    let false_val = b.build_int_const(2u64, strider_ir::ValueType::U64)?;
+    let false_val = b.build_int_const(2u64, strider_ir::ValueType::I64)?;
     b.build_return(Some(false_val), &[])?;
     b.set_lift_addr(None);
 
@@ -152,7 +152,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     b.set_region(outer_f);
     b.build_return(None, &[])?;
     b.set_region(inner_t);
-    let v = b.build_int_const(1u64, strider_ir::ValueType::U64)?;
+    let v = b.build_int_const(1u64, strider_ir::ValueType::I64)?;
     b.build_return(Some(v), &[])?;
     b.set_region(inner_f);
     b.build_return(None, &[])?;
@@ -367,12 +367,12 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, NodeOutputType::U64)?;
+    let v_t = b.build_int_const(1u64, NodeOutputType::I64)?;
     b.write_variable(&var, v_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, NodeOutputType::U64)?;
+    let v_f = b.build_int_const(2u64, NodeOutputType::I64)?;
     b.write_variable(&var, v_f)?;
     b.build_branch(join)?;
 

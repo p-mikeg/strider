@@ -43,7 +43,7 @@ mod tests {
         b.set_entry_region(r)?;
         b.set_region(r);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let tgt = b.build_int_const(0x1234u64, NodeOutputType::U64)?;
+        let tgt = b.build_int_const(0x1234u64, NodeOutputType::I64)?;
         b.build_call(tgt)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);

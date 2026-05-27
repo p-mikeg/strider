@@ -245,11 +245,11 @@ mod tests {
     #[test]
     fn classify_int_const_returns_single() {
         let (function, anchor) = empty_graph_returning(|fb| {
-            // Single IntConst node.  Output type is U64 — chosen
+            // Single IntConst node.  Output type is I64 — chosen
             // because BranchIndirect targets are pointer-sized on
             // every supported 64-bit arch; smaller widths would
             // also fold via the `as u64` cast in the classifier.
-            fb.build_int_const(0x1234u64, NodeOutputType::U64).unwrap()
+            fb.build_int_const(0x1234u64, NodeOutputType::I64).unwrap()
         });
         let result = classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
@@ -261,7 +261,7 @@ mod tests {
         // `link_register_vn`.  A None lr (x86 / x86_64) must not
         // suppress IntConst classification.
         let (function, anchor) = empty_graph_returning(|fb| {
-            fb.build_int_const(0xfeed_face_u64, NodeOutputType::U64).unwrap()
+            fb.build_int_const(0xfeed_face_u64, NodeOutputType::I64).unwrap()
         });
         assert_eq!(
             classify_anchor_bare(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify"),
@@ -426,14 +426,14 @@ mod tests {
         // output ids so we can wire them into the ValuePhi below.
         let const_outputs: Vec<NodeOutputId> = per_pred_consts
             .iter()
-            .map(|k| builder.build_int_const(*k, NodeOutputType::U64).unwrap())
+            .map(|k| builder.build_int_const(*k, NodeOutputType::I64).unwrap())
             .collect();
 
         // Use a dummy IntConst as the synthetic placeholder anchor
         // so `build_return` succeeds and `build()` validates.  The
         // ValuePhi we synthesise after build is unreachable from
         // entry, so it can have any shape we want.
-        let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
+        let dummy = builder.build_int_const(0u64, NodeOutputType::I64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
         let mut function = builder.build().expect("build");
@@ -459,11 +459,11 @@ mod tests {
             .expect("token output");
 
         // Build the ValuePhi: inputs = [phi_token, ...vals]; output
-        // is a single value (U64 for definiteness).
+        // is a single value (I64 for definiteness).
         let vp_node = function.create_node(
             NodeKind::Phi,
             std::iter::once(token_out).chain(const_outputs.iter().copied()),
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [vp_out] = function
             .node_outputs_exact::<1>(vp_node)
@@ -505,9 +505,9 @@ mod tests {
             .tracked(other_vn)
             .build_fn_single_region()
             .expect("RegisterSet::build_fn_single_region");
-        let const_out = builder.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
+        let const_out = builder.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
         let var_out = builder.read_variable(&other_vn).expect("read_variable");
-        let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
+        let dummy = builder.build_int_const(0u64, NodeOutputType::I64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
         let mut function = builder.build().expect("build");
@@ -527,7 +527,7 @@ mod tests {
         let vp_node = function.create_node(
             NodeKind::Phi,
             [token_out, const_out, var_out],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [vp_out] = function
             .node_outputs_exact::<1>(vp_node)
@@ -561,9 +561,9 @@ mod tests {
         // An IntAdd node — not IntConst, not InitialVar, not
         // ValuePhi — must classify as None.
         let (function, anchor) = empty_graph_returning(|fb| {
-            let lhs = fb.build_int_const(1u64, NodeOutputType::U64).unwrap();
-            let rhs = fb.build_int_const(2u64, NodeOutputType::U64).unwrap();
-            fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, NodeOutputType::U64)
+            let lhs = fb.build_int_const(1u64, NodeOutputType::I64).unwrap();
+            let rhs = fb.build_int_const(2u64, NodeOutputType::I64).unwrap();
+            fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, NodeOutputType::I64)
                 .expect("build_int_binary_operation")
         });
         // Note: ConstantFold would turn 1+2 into IntConst(3), but

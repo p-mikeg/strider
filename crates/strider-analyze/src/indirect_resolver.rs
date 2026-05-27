@@ -363,7 +363,7 @@ fn resolve_const_loads(
         };
         let size = ty.byte_size();
         // `ReadOnlyMemory::read` returns `Option<u64>` — bail on
-        // wider loads (U80 / U128 / U256 / U512) rather than asking
+        // wider loads (I80 / I128 / I256 / I512) rather than asking
         // the impl to truncate silently into a u64.
         if size > 8 {
             continue;

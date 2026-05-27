@@ -166,7 +166,7 @@ fn get_int_const_on_unbound_var_returns_none() {
 fn get_bool_const_and_float_bits_helpers() {
     let mut t = Tb::empty();
     let bc = t.boolean(true);
-    let as_int = t.as_int(bc, NodeOutputType::U64);
+    let as_int = t.as_int(bc, NodeOutputType::I64);
     let function = t.ret_val(as_int);
 
     let v = Capture::new();

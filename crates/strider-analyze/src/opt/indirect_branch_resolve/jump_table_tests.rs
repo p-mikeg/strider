@@ -67,23 +67,23 @@ fn build_jt_load(
 ) -> (Function, NodeOutputId) {
     build_with_anchor(|fb| {
         let idx = idx_provider(fb);
-        let stride_c = fb.build_int_const(stride, NodeOutputType::U32).unwrap();
+        let stride_c = fb.build_int_const(stride, NodeOutputType::I32).unwrap();
         let mul = if commute_mul {
-            fb.build_int_binary_operation(stride_c, idx, IntBinaryOp::Mul, NodeOutputType::U32)
+            fb.build_int_binary_operation(stride_c, idx, IntBinaryOp::Mul, NodeOutputType::I32)
                 .expect("mul")
         } else {
-            fb.build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+            fb.build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
                 .expect("mul")
         };
-        let base_c = fb.build_int_const(base, NodeOutputType::U32).unwrap();
+        let base_c = fb.build_int_const(base, NodeOutputType::I32).unwrap();
         let addr = if commute_add {
-            fb.build_int_binary_operation(mul, base_c, IntBinaryOp::Add, NodeOutputType::U32)
+            fb.build_int_binary_operation(mul, base_c, IntBinaryOp::Add, NodeOutputType::I32)
                 .expect("add")
         } else {
-            fb.build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
+            fb.build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::I32)
                 .expect("add")
         };
-        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32)
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32)
             .expect("load")
     })
 }
@@ -97,8 +97,8 @@ fn build_jt_load(
 /// both mul operands are IntConsts and the matcher picks the
 /// wrong "stride".
 fn build_non_const_idx(fb: &mut FunctionBuilder) -> NodeOutputId {
-    let addr = fb.build_int_const(0x9000u64, NodeOutputType::U32).unwrap();
-    fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32)
+    let addr = fb.build_int_const(0x9000u64, NodeOutputType::I32).unwrap();
+    fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32)
         .expect("u32 load (idx)")
 }
 
@@ -155,19 +155,19 @@ fn build_jt_load_shl(
 ) -> (Function, NodeOutputId) {
     build_with_anchor(|fb| {
         let idx = idx_provider(fb);
-        let shift_c = fb.build_int_const(shift, NodeOutputType::U32).unwrap();
+        let shift_c = fb.build_int_const(shift, NodeOutputType::I32).unwrap();
         let scaled = fb
-            .build_int_binary_operation(idx, shift_c, IntBinaryOp::ShiftLeft, NodeOutputType::U32)
+            .build_int_binary_operation(idx, shift_c, IntBinaryOp::ShiftLeft, NodeOutputType::I32)
             .expect("shl");
-        let base_c = fb.build_int_const(base, NodeOutputType::U32).unwrap();
+        let base_c = fb.build_int_const(base, NodeOutputType::I32).unwrap();
         let addr = if commute_add {
-            fb.build_int_binary_operation(scaled, base_c, IntBinaryOp::Add, NodeOutputType::U32)
+            fb.build_int_binary_operation(scaled, base_c, IntBinaryOp::Add, NodeOutputType::I32)
                 .expect("add")
         } else {
-            fb.build_int_binary_operation(base_c, scaled, IntBinaryOp::Add, NodeOutputType::U32)
+            fb.build_int_binary_operation(base_c, scaled, IntBinaryOp::Add, NodeOutputType::I32)
                 .expect("add")
         };
-        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32)
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32)
             .expect("load")
     })
 }
@@ -212,7 +212,7 @@ fn match_jump_table_shape_rejects_shl_with_oversize_shift() {
 #[test]
 fn match_jump_table_shape_rejects_non_load_producer() {
     // Anchor is a raw IntConst, not a Load.  Reject.
-    let (g, anchor) = build_with_anchor(|fb| fb.build_int_const(0x1000u64, NodeOutputType::U32).unwrap());
+    let (g, anchor) = build_with_anchor(|fb| fb.build_int_const(0x1000u64, NodeOutputType::I32).unwrap());
     assert!(match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).is_none());
 }
 
@@ -221,8 +221,8 @@ fn match_jump_table_shape_rejects_load_with_unrelated_addr_shape() {
     // Load[IntConst(addr)] — a simple global read, no Add/Mul.
     // Our shape requires IntAdd at the top of the address tree.
     let (g, anchor) = build_with_anchor(|fb| {
-        let addr = fb.build_int_const(0x1234u64, NodeOutputType::U32).unwrap();
-        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
+        let addr = fb.build_int_const(0x1234u64, NodeOutputType::I32).unwrap();
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32).expect("load")
     });
     assert!(match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).is_none());
 }
@@ -236,18 +236,18 @@ fn match_jump_table_shape_rejects_load_without_intconst_base() {
     // Build: anchor = Load[IntAdd(IntMul(idx, 4), IntMul(idx, 4))]
     // — both add operands are mul-shaped, neither is an IntConst.
     let (g, anchor) = build_with_anchor(|fb| {
-        let idx = fb.build_int_const(2u64, NodeOutputType::U32).unwrap();
-        let stride_c = fb.build_int_const(4u64, NodeOutputType::U32).unwrap();
+        let idx = fb.build_int_const(2u64, NodeOutputType::I32).unwrap();
+        let stride_c = fb.build_int_const(4u64, NodeOutputType::I32).unwrap();
         let mul1 = fb
-            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
             .expect("mul1");
         let mul2 = fb
-            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
             .expect("mul2");
         let addr = fb
-            .build_int_binary_operation(mul1, mul2, IntBinaryOp::Add, NodeOutputType::U32)
+            .build_int_binary_operation(mul1, mul2, IntBinaryOp::Add, NodeOutputType::I32)
             .expect("add");
-        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32).expect("load")
     });
     assert!(match_jump_table_shape(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor).is_none());
 }
@@ -258,9 +258,9 @@ fn match_jump_table_shape_rejects_load_without_intconst_base() {
 fn bound_via_known_bits_returns_max_plus_one() {
     // idx = (some_var) & 0x7 → bound = 8.
     let (g, idx) = build_with_anchor(|fb| {
-        let v = fb.build_int_const(0xffff_ffffu64, NodeOutputType::U32).unwrap();
-        let mask = fb.build_int_const(0x7u64, NodeOutputType::U32).unwrap();
-        fb.build_int_binary_operation(v, mask, IntBinaryOp::And, NodeOutputType::U32)
+        let v = fb.build_int_const(0xffff_ffffu64, NodeOutputType::I32).unwrap();
+        let mask = fb.build_int_const(0x7u64, NodeOutputType::I32).unwrap();
+        fb.build_int_binary_operation(v, mask, IntBinaryOp::And, NodeOutputType::I32)
             .expect("and")
     });
     let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
@@ -270,10 +270,10 @@ fn bound_via_known_bits_returns_max_plus_one() {
 
 #[test]
 fn bound_via_known_bits_returns_none_when_unbounded() {
-    // idx = some unbounded U32 (a load output, no AND mask) → None.
+    // idx = some unbounded I32 (a load output, no AND mask) → None.
     let (g, idx) = build_with_anchor(|fb| {
-        let addr = fb.build_int_const(0x1000u64, NodeOutputType::U32).unwrap();
-        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
+        let addr = fb.build_int_const(0x1000u64, NodeOutputType::I32).unwrap();
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32).expect("load")
     });
     let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
     assert_eq!(bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), idx, &known), None);
@@ -285,7 +285,7 @@ fn bound_via_known_bits_with_int_const_input() {
     // bound = 6.  (Real graphs would have ConstantFold collapse
     // this to a Single, but the local recurrence handles it
     // anyway.)
-    let (g, idx) = build_with_anchor(|fb| fb.build_int_const(5u64, NodeOutputType::U32).unwrap());
+    let (g, idx) = build_with_anchor(|fb| fb.build_int_const(5u64, NodeOutputType::I32).unwrap());
     let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
     let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), idx, &known).expect("must bound a const");
     assert_eq!(bound, 6);
@@ -294,7 +294,7 @@ fn bound_via_known_bits_with_int_const_input() {
 #[test]
 fn bound_via_known_bits_handles_zero_extend() {
     // idx = ZeroExtend(u8 value).  Bound = 256 from the
-    // narrower-type mask, regardless of the wider U32's full
+    // narrower-type mask, regardless of the wider I32's full
     // range.  We build the Extend by hand (post-`build()`) because
     // the public `extend_if_needed` short-circuits constant inputs
     // to a folded IntConst, which would defeat the test's purpose;
@@ -307,20 +307,20 @@ fn bound_via_known_bits_handles_zero_extend() {
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let addr = builder.build_int_const(0x9000u64, NodeOutputType::U32).unwrap();
+    let addr = builder.build_int_const(0x9000u64, NodeOutputType::I32).unwrap();
     let narrow = builder
-        .build_load(addr, VnSpace::RAM, NodeOutputType::U8)
+        .build_load(addr, VnSpace::RAM, NodeOutputType::I8)
         .expect("u8 load");
     // Provide a placeholder return value so build() succeeds; we
     // rewire the Return's value input to the new Extend below.
-    let placeholder = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
+    let placeholder = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
     builder.build_indirect_branch(placeholder).expect("build_indirect_branch");
     builder.set_lift_addr(None);
     let mut function = builder.build().expect("build");
     let extend_node = function.create_node(
         NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
         [narrow],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     function.set_asm_fingerprint(extend_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let [idx] = function
@@ -331,7 +331,7 @@ fn bound_via_known_bits_handles_zero_extend() {
     function.replace_all_uses(placeholder, idx).expect("rewire");
     let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap()).expect("kb analyze");
     let bound = bound_via_known_bits(crate::pattern::RewriteCtxView::from_built(&function).unwrap(), idx, &known).expect("bound from zero-extend");
-    // U8 narrows to 0..255, so bound = 256.
+    // I8 narrows to 0..255, so bound = 256.
     assert_eq!(bound, 256);
 }
 
@@ -353,19 +353,19 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     // Build a placeholder Return so build() succeeds.
-    let placeholder = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
+    let placeholder = builder.build_int_const(0u64, NodeOutputType::I64).unwrap();
     builder.build_indirect_branch(placeholder).unwrap();
     builder.set_lift_addr(None);
     let mut function = builder.build().unwrap();
 
-    // Build a detached AND that's narrower than U64 — definitely a
+    // Build a detached AND that's narrower than I64 — definitely a
     // narrowing kb result IF the analyzer reached it.  Wire its
     // input to a fresh IntConst that is also detached so the AND is
     // truly unreachable from entry.
     let detached_const = function.create_node(
         NodeKind::IntConst(0xffff_ffffu128),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let detached_const_out = function
         .node_outputs_exact::<1>(detached_const)
@@ -373,7 +373,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     let mask_const = function.create_node(
         NodeKind::IntConst(0x7u128),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let mask_const_out = function
         .node_outputs_exact::<1>(mask_const)
@@ -381,7 +381,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     let detached_and = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::And),
         [detached_const_out, mask_const_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let detached_idx = function
         .node_outputs_exact::<1>(detached_and)
@@ -440,20 +440,20 @@ fn classify_jump_table_with_known_bits_bound_returns_multiple() {
     // table[0..8].
     let (g, anchor) = build_with_anchor(|fb| {
         // idx side: AND-masked to 0..7.
-        let raw = fb.build_int_const(0xffff_ffffu64, NodeOutputType::U32).unwrap();
-        let mask = fb.build_int_const(0x7u64, NodeOutputType::U32).unwrap();
+        let raw = fb.build_int_const(0xffff_ffffu64, NodeOutputType::I32).unwrap();
+        let mask = fb.build_int_const(0x7u64, NodeOutputType::I32).unwrap();
         let idx = fb
-            .build_int_binary_operation(raw, mask, IntBinaryOp::And, NodeOutputType::U32)
+            .build_int_binary_operation(raw, mask, IntBinaryOp::And, NodeOutputType::I32)
             .expect("and");
-        let stride_c = fb.build_int_const(4u64, NodeOutputType::U32).unwrap();
+        let stride_c = fb.build_int_const(4u64, NodeOutputType::I32).unwrap();
         let mul = fb
-            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
             .expect("mul");
-        let base_c = fb.build_int_const(0x4000u64, NodeOutputType::U32).unwrap();
+        let base_c = fb.build_int_const(0x4000u64, NodeOutputType::I32).unwrap();
         let addr = fb
-            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::I32)
             .expect("add");
-        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32)
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32)
             .expect("load")
     });
     let rom = MockRom::strided(
@@ -478,20 +478,20 @@ fn classify_jump_table_no_rom_returns_none() {
     // we can't read entries, and producing a Multiple without
     // entries is unsound.
     let (g, anchor) = build_with_anchor(|fb| {
-        let raw = fb.build_int_const(0xffff_ffffu64, NodeOutputType::U32).unwrap();
-        let mask = fb.build_int_const(0x3u64, NodeOutputType::U32).unwrap();
+        let raw = fb.build_int_const(0xffff_ffffu64, NodeOutputType::I32).unwrap();
+        let mask = fb.build_int_const(0x3u64, NodeOutputType::I32).unwrap();
         let idx = fb
-            .build_int_binary_operation(raw, mask, IntBinaryOp::And, NodeOutputType::U32)
+            .build_int_binary_operation(raw, mask, IntBinaryOp::And, NodeOutputType::I32)
             .expect("and");
-        let stride_c = fb.build_int_const(4u64, NodeOutputType::U32).unwrap();
+        let stride_c = fb.build_int_const(4u64, NodeOutputType::I32).unwrap();
         let mul = fb
-            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
             .expect("mul");
-        let base_c = fb.build_int_const(0x4000u64, NodeOutputType::U32).unwrap();
+        let base_c = fb.build_int_const(0x4000u64, NodeOutputType::I32).unwrap();
         let addr = fb
-            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::I32)
             .expect("add");
-        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32).expect("load")
     });
     let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
     let result = classify_jump_table(crate::pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, None, &known);
@@ -504,19 +504,19 @@ fn classify_jump_table_unbounded_idx_returns_none() {
     // mask; predecessor-If walk also can't bound it (no If on
     // the path).  Must return None, not a Multiple.
     let (g, anchor) = build_with_anchor(|fb| {
-        let some_addr = fb.build_int_const(0x9000u64, NodeOutputType::U32).unwrap();
+        let some_addr = fb.build_int_const(0x9000u64, NodeOutputType::I32).unwrap();
         let idx = fb
-            .build_load(some_addr, VnSpace::RAM, NodeOutputType::U32)
+            .build_load(some_addr, VnSpace::RAM, NodeOutputType::I32)
             .expect("load idx");
-        let stride_c = fb.build_int_const(4u64, NodeOutputType::U32).unwrap();
+        let stride_c = fb.build_int_const(4u64, NodeOutputType::I32).unwrap();
         let mul = fb
-            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
             .expect("mul");
-        let base_c = fb.build_int_const(0x4000u64, NodeOutputType::U32).unwrap();
+        let base_c = fb.build_int_const(0x4000u64, NodeOutputType::I32).unwrap();
         let addr = fb
-            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::I32)
             .expect("add");
-        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32).expect("load")
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let known = analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
@@ -535,10 +535,10 @@ fn bound_from_if_condition_idx_less_than_n_true() {
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    let idx = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
+    let n = builder.build_int_const(4u64, NodeOutputType::I32).unwrap();
     let cmp = builder
-        .build_int_cmp_operation(idx, n, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(idx, n, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     // Anchor with a placeholder return so build() succeeds.
     builder.build_indirect_branch(idx).unwrap();
@@ -556,10 +556,10 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    let idx = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
+    let n = builder.build_int_const(4u64, NodeOutputType::I32).unwrap();
     let cmp = builder
-        .build_int_cmp_operation(idx, n, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(idx, n, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
@@ -593,9 +593,9 @@ fn bound_from_if_condition_signed_less_unknown_sign_bit_returns_none() {
         .build_fn_single_region()
         .unwrap();
     let idx = b.read_variable(&idx_var).unwrap();
-    let n = b.build_int_const(8u64, NodeOutputType::U32).unwrap();
+    let n = b.build_int_const(8u64, NodeOutputType::I32).unwrap();
     let cmp = b
-        .build_int_cmp_operation(idx, n, IntCmpOp::Sless, NodeOutputType::U32)
+        .build_int_cmp_operation(idx, n, IntCmpOp::Sless, NodeOutputType::I32)
         .unwrap();
     b.build_indirect_branch(idx).unwrap();
     b.set_lift_addr(None);
@@ -614,7 +614,7 @@ fn bound_from_if_condition_signed_less_unknown_sign_bit_returns_none() {
 fn bound_from_if_condition_signed_less_with_known_nonneg_idx_accepts() {
     // POSITIVE: when KnownBits proves `idx`'s sign bit is zero (here
     // via `idx & 0x7F` — masking off the top 25 bits including the
-    // sign bit of a U32), the `Sless` arm is sound and the classifier
+    // sign bit of a I32), the `Sless` arm is sound and the classifier
     // accepts the bound `N`.  This pins the success path of the
     // INT_MIN gate: the bound IS recoverable when the surrounding
     // IR makes `idx` provably non-negative, matching the typical
@@ -632,13 +632,13 @@ fn bound_from_if_condition_signed_less_with_known_nonneg_idx_accepts() {
         .unwrap();
     let raw = b.read_variable(&idx_var).unwrap();
     // `raw & 0x7F` — clears the top bits including the sign bit.
-    let mask = b.build_int_const(0x7Fu64, NodeOutputType::U32).unwrap();
+    let mask = b.build_int_const(0x7Fu64, NodeOutputType::I32).unwrap();
     let idx = b
-        .build_int_binary_operation(raw, mask, IntBinaryOp::And, NodeOutputType::U32)
+        .build_int_binary_operation(raw, mask, IntBinaryOp::And, NodeOutputType::I32)
         .unwrap();
-    let n = b.build_int_const(8u64, NodeOutputType::U32).unwrap();
+    let n = b.build_int_const(8u64, NodeOutputType::I32).unwrap();
     let cmp = b
-        .build_int_cmp_operation(idx, n, IntCmpOp::Sless, NodeOutputType::U32)
+        .build_int_cmp_operation(idx, n, IntCmpOp::Sless, NodeOutputType::I32)
         .unwrap();
     b.build_indirect_branch(idx).unwrap();
     b.set_lift_addr(None);
@@ -665,12 +665,12 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    let idx = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
+    let n = builder.build_int_const(4u64, NodeOutputType::I32).unwrap();
     // BoolNeg(IntLess(n, idx)) — operand order is (n, idx) per the
     // lift-time swap, mirroring `strider_lift::pcode_lift::handle_int_less_equal`.
     let inner = builder
-        .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     let cmp = builder
         .build_boolean_unary_operation(inner, strider_ir::BoolUnaryOp::Neg)
@@ -706,9 +706,9 @@ fn build_pred_if_graph(
 
     b.set_region(entry);
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
-    let bound_c = b.build_int_const(bound, NodeOutputType::U32).unwrap();
+    let bound_c = b.build_int_const(bound, NodeOutputType::I32).unwrap();
     let cond = b
-        .build_int_cmp_operation(idx_at_entry, bound_c, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(idx_at_entry, bound_c, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -788,9 +788,9 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
         b.set_region(regions[i]);
         let idx = b.read_variable(&idx_var).unwrap();
         let bound = if i == 0 { TIGHT_BOUND } else { LOOSE_BOUND };
-        let bound_c = b.build_int_const(bound, NodeOutputType::U32).unwrap();
+        let bound_c = b.build_int_const(bound, NodeOutputType::I32).unwrap();
         let cond = b
-            .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, NodeOutputType::U32)
+            .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, NodeOutputType::I32)
             .unwrap();
         b.build_if(cond, regions[i + 1], exit).unwrap();
     }
@@ -892,9 +892,9 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
     b.set_region(entry);
     // Compare OTHER var, not idx.
     let other = b.read_variable(&other_var).unwrap();
-    let bound_c = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    let bound_c = b.build_int_const(4u64, NodeOutputType::I32).unwrap();
     let cond = b
-        .build_int_cmp_operation(other, bound_c, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(other, bound_c, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -934,10 +934,10 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    let idx = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
+    let n = builder.build_int_const(4u64, NodeOutputType::I32).unwrap();
     let cmp = builder
-        .build_int_cmp_operation(idx, n, IntCmpOp::Equal, NodeOutputType::U32)
+        .build_int_cmp_operation(idx, n, IntCmpOp::Equal, NodeOutputType::I32)
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
@@ -966,11 +966,11 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    let idx = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
+    let n = builder.build_int_const(4u64, NodeOutputType::I32).unwrap();
     // N on LHS, idx on RHS — `N < idx` shape.
     let cmp = builder
-        .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
@@ -993,11 +993,11 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    let other = builder.build_int_const(7u64, NodeOutputType::U32).unwrap();
-    let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    let idx = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
+    let other = builder.build_int_const(7u64, NodeOutputType::I32).unwrap();
+    let n = builder.build_int_const(4u64, NodeOutputType::I32).unwrap();
     let cmp = builder
-        .build_int_cmp_operation(other, n, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(other, n, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);
@@ -1059,27 +1059,27 @@ fn build_diamond_two_bounds(
     // We use `idx == 0` as a dummy so both paths exist.
     b.set_region(entry);
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
-    let zero = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
+    let zero = b.build_int_const(0u64, NodeOutputType::I32).unwrap();
     let dummy = b
-        .build_int_cmp_operation(idx_at_entry, zero, IntCmpOp::Equal, NodeOutputType::U32)
+        .build_int_cmp_operation(idx_at_entry, zero, IntCmpOp::Equal, NodeOutputType::I32)
         .unwrap();
     b.build_if(dummy, path_a, path_b).unwrap();
 
     // path_a: `if (idx < bound_a) goto dispatch else goto exit_a`
     b.set_region(path_a);
     let idx_a = b.read_variable(&idx_var).unwrap();
-    let bound_a_c = b.build_int_const(bound_a, NodeOutputType::U32).unwrap();
+    let bound_a_c = b.build_int_const(bound_a, NodeOutputType::I32).unwrap();
     let cond_a = b
-        .build_int_cmp_operation(idx_a, bound_a_c, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(idx_a, bound_a_c, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     b.build_if(cond_a, dispatch, exit_a).unwrap();
 
     // path_b: `if (idx < bound_b) goto dispatch else goto exit_b`
     b.set_region(path_b);
     let idx_b = b.read_variable(&idx_var).unwrap();
-    let bound_b_c = b.build_int_const(bound_b, NodeOutputType::U32).unwrap();
+    let bound_b_c = b.build_int_const(bound_b, NodeOutputType::I32).unwrap();
     let cond_b = b
-        .build_int_cmp_operation(idx_b, bound_b_c, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(idx_b, bound_b_c, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     b.build_if(cond_b, dispatch, exit_b).unwrap();
 
@@ -1156,18 +1156,18 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
     // entry: dummy split so both paths start.
     b.set_region(entry);
     let idx_e = b.read_variable(&idx_var).unwrap();
-    let zero = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
+    let zero = b.build_int_const(0u64, NodeOutputType::I32).unwrap();
     let dummy = b
-        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, NodeOutputType::U32)
+        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, NodeOutputType::I32)
         .unwrap();
     b.build_if(dummy, path_a, path_b).unwrap();
 
     // path_a: `if (idx < 4) goto dispatch else goto exit_a`
     b.set_region(path_a);
     let idx_a = b.read_variable(&idx_var).unwrap();
-    let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::I32).unwrap();
     let cond_a = b
-        .build_int_cmp_operation(idx_a, four, IntCmpOp::Less, NodeOutputType::U32)
+        .build_int_cmp_operation(idx_a, four, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     b.build_if(cond_a, dispatch, exit_a).unwrap();
 

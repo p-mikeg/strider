@@ -190,15 +190,15 @@ mod tests {
 
     /// `fn() -> u64 { return 7; }` — minimal reachable graph.
     fn one_const_fn() -> strider_ir::Function {
-        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
+        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::I64)).unwrap()
     }
 
     /// `fn() -> u64 { return Add(11, 13); }`.
     fn add_two_consts() -> strider_ir::Function {
         make_empty_fn(|b| {
-            let a = b.build_int_const(11u64, NodeOutputType::U64)?;
-            let bb = b.build_int_const(13u64, NodeOutputType::U64)?;
-            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)
+            let a = b.build_int_const(11u64, NodeOutputType::I64)?;
+            let bb = b.build_int_const(13u64, NodeOutputType::I64)?;
+            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)
         })
         .unwrap()
     }
@@ -276,11 +276,11 @@ mod tests {
         // `Add(Add(1,2), 3)` — outer consumes inner.  With propagate=false
         // each Add is visited at most once (the seed-time visit).
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, NodeOutputType::U64)?;
-            let bb = b.build_int_const(2u64, NodeOutputType::U64)?;
-            let c = b.build_int_const(3u64, NodeOutputType::U64)?;
-            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, NodeOutputType::U64)
+            let a = b.build_int_const(1u64, NodeOutputType::I64)?;
+            let bb = b.build_int_const(2u64, NodeOutputType::I64)?;
+            let c = b.build_int_const(3u64, NodeOutputType::I64)?;
+            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, NodeOutputType::I64)
         })
         .unwrap();
         let pass = ScriptedPass {
@@ -299,11 +299,11 @@ mod tests {
     #[test]
     fn run_peephole_with_propagate_true_reenqueues_consumers() {
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, NodeOutputType::U64)?;
-            let bb = b.build_int_const(2u64, NodeOutputType::U64)?;
-            let c = b.build_int_const(3u64, NodeOutputType::U64)?;
-            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, NodeOutputType::U64)
+            let a = b.build_int_const(1u64, NodeOutputType::I64)?;
+            let bb = b.build_int_const(2u64, NodeOutputType::I64)?;
+            let c = b.build_int_const(3u64, NodeOutputType::I64)?;
+            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, NodeOutputType::I64)
         })
         .unwrap();
         let pass = ScriptedPass {

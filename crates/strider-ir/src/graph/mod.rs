@@ -117,7 +117,7 @@ pub struct Graph {
     /// Deduplication cache: maps `(Node, inputs, output_kinds)` → `NodeId`
     /// for cacheable node kinds.
     pub(crate) node_to_id: HashMap<(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>), NodeId>,
-    /// Wide-integer constant values (U256, U512) referenced by
+    /// Wide-integer constant values (I256, I512) referenced by
     /// [`crate::node::NodeKind::IntConstWide`].
     ///
     /// Wide values don't fit in `IntConst`'s `u128` payload; the IR

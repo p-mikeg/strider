@@ -4,9 +4,9 @@
 //! sub-register's offset inside the container was zero (shift == 0), even if
 //! the sub-register was strictly narrower.  For example, on ARM soft-float ABI
 //! `s0` (4-byte float arg / return) lives at offset 0 inside `d0` (8-byte);
-//! before the fix `read_reg_vn(s0)` returned the 8-byte `d0` value (U64).
-//! That U64 then flowed into `IntBitsToFloat(F32)`, whose signature requires a
-//! U32 input, causing a validation error.
+//! before the fix `read_reg_vn(s0)` returned the 8-byte `d0` value (I64).
+//! That I64 then flowed into `IntBitsToFloat(F32)`, whose signature requires a
+//! I32 input, causing a validation error.
 //!
 //! **Fix**: always call `truncate_if_needed(shifted, reg_ty)` after computing
 //! the shifted value, even when shift == 0.  This ensures the returned value
@@ -16,13 +16,13 @@
 //! targets exercises exactly this path.  On those ABIs, the compiler lowers
 //! `float` arguments as raw integer bits in integer registers — the f32 arg
 //! lands in `s0`/`f12`, which are 4-byte sub-registers of their 8-byte
-//! containers.  The analyzer must emit a U32 value for such sub-register reads
+//! containers.  The analyzer must emit a I32 value for such sub-register reads
 //! so that `IntBitsToFloat(F32)` receives the correct input width.
 //!
 //! The write_reg_vn path uses positioned reg_mask + container-domain
 //! container_mask so x64 and aarch64 round-trip cleanly.  x86 has its
 //! own challenge: GCC uses the 80-bit x87 stack (10-byte registers),
-//! modelled by F80 / U80 NodeOutputType variants and ST0 in the x86
+//! modelled by F80 / I80 NodeOutputType variants and ST0 in the x86
 //! cdecl float-return regs.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
@@ -65,8 +65,8 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
     );
 
     // Critical: no Extend node must have a Bool-typed input, and no
-    // IntBitsToFloat node must have a U64 input (the latter would indicate
-    // that read_reg_vn failed to truncate s0/f12 to U32 before the fix).
+    // IntBitsToFloat node must have a I64 input (the latter would indicate
+    // that read_reg_vn failed to truncate s0/f12 to I32 before the fix).
     for nid in function.all_node_ids() {
         if matches!(function.node_kind(nid), NodeKind::IntBitsToFloat) {
             let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
@@ -74,10 +74,10 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
                 let kind = function.output_kind(*input);
                 assert_ne!(
                     kind,
-                    strider_ir::node::NodeOutputKind::OutputType(strider_ir::node::NodeOutputType::U64),
-                    "IntBitsToFloat node received a U64 input — \
+                    strider_ir::node::NodeOutputKind::OutputType(strider_ir::node::NodeOutputType::I64),
+                    "IntBitsToFloat node received a I64 input — \
                      read_reg_vn must truncate the sub-register to its declared \
-                     width (U32 for s0 / f12) before passing it to this node"
+                     width (I32 for s0 / f12) before passing it to this node"
                 );
             }
         }
@@ -91,21 +91,21 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
 // (`s0`, `f12`) is a 4-byte sub-register of an 8-byte container.
 //
 // Without the read_reg_vn fix these tests fail with an IR validation error:
-//   "OutputType(U64), expected AnyInt(U32)" from IntBitsToFloat's signature.
+//   "OutputType(I64), expected AnyInt(I32)" from IntBitsToFloat's signature.
 //
 // x64 and aarch64 also pass thanks to write_reg_vn's mask positioning.
-// x86 passes via F80/U80 NodeOutputType variants + ST0 in x86 cdecl's
+// x86 passes via F80/I80 NodeOutputType variants + ST0 in x86 cdecl's
 // float-return regs.
 
 // PPC FPRs (f0–f31) are natively 8 bytes — there's no 4-byte sub-register
 // view like ARM's s0/d0 split.  This test specifically asserts that
-// IntBitsToFloat receives a U32 input (the soft-float-via-int pattern that
-// caused the original BUG); on PPC it correctly receives U64, which the
+// IntBitsToFloat receives a I32 input (the soft-float-via-int pattern that
+// caused the original BUG); on PPC it correctly receives I64, which the
 // assertion intentionally rejects.  Per-arch.
 per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid, ignore = {
-    Ppc32be: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
-    Ppc32le: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
-    Ppc64be: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
-    Ppc64le: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
+    Ppc32be: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
+    Ppc32le: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
+    Ppc64be: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
+    Ppc64le: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
     ArmBe:   "ARM8_BE Sleigh's VFP register file uses descending offsets and d0 doesn't overlap s0; analyzer's container aliasing drops the entire VFP read/write chain — IR has 0 FloatBinaryOp / 0 Call nodes for f32_arith",
 });

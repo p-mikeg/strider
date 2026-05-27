@@ -677,7 +677,7 @@ mod tests {
 
     fn trivial_graph() -> strider_ir::Function {
         strider_ir_test_utils::make_empty_fn(|b| {
-            b.build_int_const(0u64, NodeOutputType::U64)
+            b.build_int_const(0u64, NodeOutputType::I64)
         })
         .expect("trivial graph")
     }

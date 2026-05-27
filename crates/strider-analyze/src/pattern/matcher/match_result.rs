@@ -260,7 +260,7 @@ impl Match {
 
     /// If the node bound to `c` is an [`strider_ir::node::NodeKind::IntConstWide`],
     /// returns the raw little-endian bytes of its stored value (32 bytes
-    /// for `U256`, 64 for `U512`).  Returns `None` for unbound captures
+    /// for `I256`, 64 for `I512`).  Returns `None` for unbound captures
     /// or non-`IntConstWide` producers — narrow constants go through
     /// [`Self::get_uint`] / [`Self::get_int`] instead.
     #[must_use]

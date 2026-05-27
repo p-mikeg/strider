@@ -35,7 +35,7 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
     let _bad = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [control_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
 
     let errs = validate(&function, entry).unwrap_err();
@@ -77,14 +77,14 @@ fn use_list_input_missing_from_use_list() {
     let c = function.create_node(
         NodeKind::IntConst(3),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let c_out = function.node_outputs(c).iter().copied().next().unwrap();
 
     let neg = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [c_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
 
     // Corrupt the forward link: clear the IntConst output's head-of-use
@@ -122,21 +122,21 @@ fn use_list_stale_input_in_use_list() {
     let a = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let a_out = function.node_outputs(a).iter().copied().next().unwrap();
 
     let b = function.create_node(
         NodeKind::IntConst(2),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let b_out = function.node_outputs(b).iter().copied().next().unwrap();
 
     let neg = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [a_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
 
     // Retarget the op's input at idx 0 to `b_out` without updating any
@@ -184,14 +184,14 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     let a = function.create_node(
         NodeKind::IntConst(11),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let a_out = function.node_outputs(a).iter().copied().next().unwrap();
 
     let b = function.create_node(
         NodeKind::IntConst(13),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let b_out = function.node_outputs(b).iter().copied().next().unwrap();
 
@@ -199,7 +199,7 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     let add = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
 
     // Corrupt only b's use-list head, leaving a's intact.  Only the
@@ -249,13 +249,13 @@ fn use_list_skips_unreachable_zombie_node() {
     let c = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let c_out = function.node_outputs(c).iter().copied().next().unwrap();
     let _zombie_consumer = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [c_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     function.test_only_clear_first_use(c_out); // Would fire the use-list check graph-wide.
 
@@ -370,7 +370,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
     let phi = function.create_node(
         NodeKind::Phi,
         [cs_control_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     function.set_phi_var_tag(phi, vn);
 
@@ -400,12 +400,12 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let c1 = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let c2 = function.create_node(
         NodeKind::IntConst(2),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
     let c2_out = function.node_outputs(c2).iter().copied().next().unwrap();
@@ -413,7 +413,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let phi = function.create_node(
         NodeKind::Phi,
         [cs_phi_out, c1_out, c2_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     function.set_phi_var_tag(phi, vn);
 
@@ -469,7 +469,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     let zombie = function.create_node(
         NodeKind::Phi,
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     function.set_phi_var_tag(zombie, vn);
 
@@ -488,7 +488,7 @@ fn local_typing_wrong_input_count() {
     let c = function.create_node(
         NodeKind::IntConst(5),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let c_out = function.node_outputs(c).iter().copied().next().unwrap();
 
@@ -496,7 +496,7 @@ fn local_typing_wrong_input_count() {
     let bad = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [c_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
 
@@ -664,7 +664,7 @@ fn graph_invariants_value_phi_arity_mismatch() {
     let c1 = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
 
@@ -672,7 +672,7 @@ fn graph_invariants_value_phi_arity_mismatch() {
     let vp = function.create_node(
         NodeKind::Phi,
         [cs_phi_out, c1_out, c1_out],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let vp_out = function.node_outputs(vp).iter().copied().next().unwrap();
     function.create_node(NodeKind::Return, [cs_ctrl_out, init_mem_out, vp_out], []);
@@ -701,8 +701,8 @@ fn local_typing_rejects_wrong_output_count() {
         NodeKind::IntConst(0),
         [],
         [
-            NodeOutputKind::OutputType(NodeOutputType::U64),
-            NodeOutputKind::OutputType(NodeOutputType::U64),
+            NodeOutputKind::OutputType(NodeOutputType::I64),
+            NodeOutputKind::OutputType(NodeOutputType::I64),
         ],
     );
     let bad_out0 = function.node_outputs(bad).iter().copied().next().unwrap();
@@ -791,7 +791,7 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     let _const_node = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     // The IntConst is unreachable from entry; default validate ignores it.
     validate(&function, entry).expect("default validate is unaffected");
@@ -808,7 +808,7 @@ fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
     let int_const = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let const_out = function.node_outputs(int_const).iter().copied().next().unwrap();
     // Return takes [ctrl, mem, ...values].
@@ -840,7 +840,7 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
     let int_const = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let const_out = function.node_outputs(int_const).iter().copied().next().unwrap();
     let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, const_out], []);
@@ -914,7 +914,7 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
     let int_const = function.create_node(
         NodeKind::IntConst(0x1234),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let bogus_input = function.node_outputs(int_const).iter().copied().next().unwrap();
     let _zombie_cs = function.create_node(
@@ -942,7 +942,7 @@ fn indirect_branch_with_control_memory_and_value_validates() {
     let target = function.create_node(
         NodeKind::IntConst(0x1234),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let target_val = function.node_outputs(target).iter().copied().next().unwrap();
     let ib = function.create_node(
@@ -968,7 +968,7 @@ fn graph_invariants_dangling_wide_const_id_detected() {
     let bogus = function.create_node(
         NodeKind::IntConstWide(bogus_id),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U256)],
+        [NodeOutputKind::OutputType(NodeOutputType::I256)],
     );
     let bogus_out = function.node_outputs(bogus).iter().copied().next().unwrap();
     let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, bogus_out], []);
@@ -990,12 +990,12 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
-    // Intern a U256 storage but assign it to a U512-typed output.
-    let id = function.intern_wide_const(WideConstStorage::U256([0; 4]));
+    // Intern a I256 storage but assign it to a I512-typed output.
+    let id = function.intern_wide_const(WideConstStorage::I256([0; 4]));
     let bad = function.create_node(
         NodeKind::IntConstWide(id),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U512)],
+        [NodeOutputKind::OutputType(NodeOutputType::I512)],
     );
     let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
     let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, bad_out], []);
@@ -1022,15 +1022,15 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
     let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
-    let id = function.intern_wide_const(WideConstStorage::U256([0; 4]));
-    // IntConstWide declaring a non-wide (U64) output type — invalid: only
-    // U256 / U512 are valid wide-const output types.  The validator must
+    let id = function.intern_wide_const(WideConstStorage::I256([0; 4]));
+    // IntConstWide declaring a non-wide (I64) output type — invalid: only
+    // I256 / I512 are valid wide-const output types.  The validator must
     // report this as a distinct WideConstInvalidOutputType, not a width
     // mismatch with a misleading 0-byte "expected" size.
     let bad = function.create_node(
         NodeKind::IntConstWide(id),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
     let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, bad_out], []);
@@ -1040,7 +1040,7 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
         errs.0.iter().any(|e| matches!(
             e,
             ValidationError::WideConstInvalidOutputType {
-                output_type: NodeOutputType::U64,
+                output_type: NodeOutputType::I64,
                 ..
             }
         )),
@@ -1094,7 +1094,7 @@ fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
     let v1 = f.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [v1_out] = f.node_outputs_exact::<1>(v1).unwrap();
     stamp(&mut f, v1);
@@ -1139,7 +1139,7 @@ fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
     let target = f.create_node(
         NodeKind::IntConst(0x1000),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [target_out] = f.node_outputs_exact::<1>(target).unwrap();
     stamp(&mut f, target);
@@ -1177,14 +1177,14 @@ fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
     let v1 = f.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [v1_out] = f.node_outputs_exact::<1>(v1).unwrap();
     stamp(&mut f, v1);
     let v2 = f.create_node(
         NodeKind::IntConst(8),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let [v2_out] = f.node_outputs_exact::<1>(v2).unwrap();
     stamp(&mut f, v2);

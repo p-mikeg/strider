@@ -89,8 +89,8 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
 /// Returns whether an actual [`NodeOutputKind`] satisfies the
 /// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
 ///
-/// `AnyInt` matches any integer-typed output (U8, U16, U32, U64, U80,
-/// U128, U256, U512); `AnyFloat` matches F32, F64, or F80; `Bool`
+/// `AnyInt` matches any integer-typed output (I8, I16, I32, I64, I80,
+/// I128, I256, I512); `AnyFloat` matches F32, F64, or F80; `Bool`
 /// matches only `OutputType(Bool)`.  `Control`, `Memory`, and
 /// `PhiToken` match their identically-named [`NodeOutputKind`]
 /// variants.
@@ -246,7 +246,7 @@ pub enum ValidationError {
 
     #[error(
         "node {node:?} (`IntConstWide`) declares non-wide output type \
-         {output_type:?}; only U256 / U512 are valid wide-const output types"
+         {output_type:?}; only I256 / I512 are valid wide-const output types"
     )]
     WideConstInvalidOutputType {
         node: NodeId,

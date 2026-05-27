@@ -45,8 +45,8 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns an error when `ty` is not an integer type, or is `U256` /
-    /// `U512` (neither is representable in the `u128` storage that
+    /// Returns an error when `ty` is not an integer type, or is `I256` /
+    /// `I512` (neither is representable in the `u128` storage that
     /// `IntConst` uses — wide constants must go through
     /// [`crate::FunctionBuilder::build_int_const_wide`]), or when the
     /// freshly-created node does not have exactly one output.
@@ -60,16 +60,16 @@ impl Graph {
                 "make_int_const called with non-integer type {ty:?}"
             ));
         }
-        if matches!(ty, NodeOutputType::U256 | NodeOutputType::U512) {
+        if matches!(ty, NodeOutputType::I256 | NodeOutputType::I512) {
             return Err(anyhow!(
                 "make_int_const({ty:?}) not supported - IntConst storage is u128; \
-                 use build_int_const_wide for U256/U512"
+                 use build_int_const_wide for I256/I512"
             ));
         }
         // Mask `val` to the declared output type's bit width so the
         // dedup-cache key sees the same `IntConst(u128)` payload for
-        // semantically-equal constants — `make_int_const(0x1FF, U8)`
-        // and `make_int_const(0xFF, U8)` must dedup to the same node.
+        // semantically-equal constants — `make_int_const(0x1FF, I8)`
+        // and `make_int_const(0xFF, I8)` must dedup to the same node.
         let masked = val.into() & ty.bit_mask_u128();
         let node = self.create_node(
             NodeKind::IntConst(masked),

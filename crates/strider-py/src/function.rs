@@ -301,11 +301,11 @@ impl PyFunction {
     }
 
     /// Returns the raw little-endian bytes of an `IntConstWide` node's
-    /// value (32 bytes for U256, 64 for U512), or `None` for narrow
+    /// value (32 bytes for I256, 64 for I512), or `None` for narrow
     /// `IntConst` and any non-const node kind.
     ///
     /// Use this for AVX-2 / AVX-512 register constants whose value
-    /// doesn't fit in `u128`; narrow constants (≤ U128) are accessible
+    /// doesn't fit in `u128`; narrow constants (≤ I128) are accessible
     /// via `Match.get_uint(c)` instead.
     fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
         self.with_read(|function| {

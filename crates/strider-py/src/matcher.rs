@@ -111,7 +111,7 @@ impl PyMatch {
             if let Some(v) = self.inner.get_uint(cap, g) {
                 // Pass `u128` directly — PyO3 handles the conversion to a
                 // Python int.  Casting to `i128` first would silently sign-
-                // truncate any U128 value with bit 127 set (e.g. `u128::MAX`
+                // truncate any I128 value with bit 127 set (e.g. `u128::MAX`
                 // would surface as `-1` to Python).
                 return v.into_py(py);
             }

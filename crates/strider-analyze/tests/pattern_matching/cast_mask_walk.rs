@@ -76,10 +76,10 @@ fn count(function: &Function, mask: CastMask) -> usize {
 
 // ── Add(Truncate(InitialVar), IntConst) ─────────────────────────────────────
 
-/// `Add(Truncate(InitialVar : U64) : U32, IntConst(7) : U32) : U32`.
+/// `Add(Truncate(InitialVar : I64) : I32, IntConst(7) : I32) : I32`.
 fn fixture_truncate_then_add() -> Function {
-    build_add_wrapped(x_vn(), NodeOutputType::U32, |fb, x| {
-        fb.truncate_if_needed(x, NodeOutputType::U32).unwrap()
+    build_add_wrapped(x_vn(), NodeOutputType::I32, |fb, x| {
+        fb.truncate_if_needed(x, NodeOutputType::I32).unwrap()
     })
 }
 
@@ -109,7 +109,7 @@ fn truncate_initial_var_all_mask_one_match() {
 
 // ── Add(ZeroExtend(InitialVar), IntConst) ───────────────────────────────────
 
-/// U32 register varnode used for the extend fixtures.
+/// I32 register varnode used for the extend fixtures.
 fn x_u32_vn() -> rsleigh::Vn {
     rsleigh::Vn {
         size: 4,
@@ -118,15 +118,15 @@ fn x_u32_vn() -> rsleigh::Vn {
     }
 }
 
-/// `Add(ZeroExt(InitialVar : U32) : U64, IntConst(7) : U64) : U64`.
+/// `Add(ZeroExt(InitialVar : I32) : I64, IntConst(7) : I64) : I64`.
 fn fixture_zext_then_add() -> Function {
-    build_add_wrapped(x_u32_vn(), NodeOutputType::U64, |fb, x| {
-        fb.extend_if_needed(x, NodeOutputType::U64, ExtendOp::ZeroExtend)
+    build_add_wrapped(x_u32_vn(), NodeOutputType::I64, |fb, x| {
+        fb.extend_if_needed(x, NodeOutputType::I64, ExtendOp::ZeroExtend)
             .unwrap()
     })
 }
 
-/// Pattern asking for the U32 InitialVar at offset 0x40.
+/// Pattern asking for the I32 InitialVar at offset 0x40.
 fn pat_u32_initial_var() -> Pat {
     add(initial_var_for(x_u32_vn()), any_int_const(Capture::new())).into()
 }
@@ -158,10 +158,10 @@ fn zext_initial_var_extend_mask_one_match() {
 
 // ── Add(SignExtend(InitialVar), IntConst) ───────────────────────────────────
 
-/// `Add(SignExt(InitialVar : U32) : U64, IntConst(7) : U64) : U64`.
+/// `Add(SignExt(InitialVar : I32) : I64, IntConst(7) : I64) : I64`.
 fn fixture_sext_then_add() -> Function {
-    build_add_wrapped(x_u32_vn(), NodeOutputType::U64, |fb, x| {
-        fb.extend_if_needed(x, NodeOutputType::U64, ExtendOp::SignExtend)
+    build_add_wrapped(x_u32_vn(), NodeOutputType::I64, |fb, x| {
+        fb.extend_if_needed(x, NodeOutputType::I64, ExtendOp::SignExtend)
             .unwrap()
     })
 }
@@ -194,13 +194,13 @@ fn x_u16_vn() -> rsleigh::Vn {
     }
 }
 
-/// `Add(Truncate(ZeroExt(InitialVar : U16) : U64) : U32, IntConst(7) : U32) : U32`.
+/// `Add(Truncate(ZeroExt(InitialVar : I16) : I64) : I32, IntConst(7) : I32) : I32`.
 fn fixture_truncate_of_zext_then_add() -> Function {
-    build_add_wrapped(x_u16_vn(), NodeOutputType::U32, |fb, x| {
+    build_add_wrapped(x_u16_vn(), NodeOutputType::I32, |fb, x| {
         let widened = fb
-            .extend_if_needed(x, NodeOutputType::U64, ExtendOp::ZeroExtend)
+            .extend_if_needed(x, NodeOutputType::I64, ExtendOp::ZeroExtend)
             .unwrap();
-        fb.truncate_if_needed(widened, NodeOutputType::U32).unwrap()
+        fb.truncate_if_needed(widened, NodeOutputType::I32).unwrap()
     })
 }
 
@@ -238,15 +238,15 @@ fn truncate_of_zext_truncate_or_zero_extend_mask_one_match() {
 
 // ── Stress test: deep cast chain ─────────────────────────────────────────
 
-/// Builds `Add(<truncate-extend tower>(InitialVar : U64), IntConst(7) : U64)`
-/// with `levels` round-trips of `Truncate(U64 → U32)` → `Extend(U32 → U64)`.
+/// Builds `Add(<truncate-extend tower>(InitialVar : I64), IntConst(7) : I64)`
+/// with `levels` round-trips of `Truncate(I64 → I32)` → `Extend(I32 → I64)`.
 fn fixture_deep_cast_chain(levels: usize) -> Function {
-    build_add_wrapped(x_vn(), NodeOutputType::U64, |fb, x| {
+    build_add_wrapped(x_vn(), NodeOutputType::I64, |fb, x| {
         let mut current = x;
         for _ in 0..levels {
-            current = fb.truncate_if_needed(current, NodeOutputType::U32).unwrap();
+            current = fb.truncate_if_needed(current, NodeOutputType::I32).unwrap();
             current = fb
-                .extend_if_needed(current, NodeOutputType::U64, ExtendOp::ZeroExtend)
+                .extend_if_needed(current, NodeOutputType::I64, ExtendOp::ZeroExtend)
                 .unwrap();
         }
         current

@@ -671,7 +671,7 @@ mod compact_tests {
         let _zombie = f.graph_mut().create_node(
             NodeKind::IntConst(0xdead),
             [],
-            [NodeOutputKind::OutputType(crate::node::NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(crate::node::NodeOutputType::I64)],
         );
         f.set_entry(entry);
         f.cc_metadata = CcMetadata {
@@ -723,7 +723,7 @@ mod compact_tests {
         let surviving = f.graph_mut().create_node(
             NodeKind::IntConst(0xCAFE_u128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [surv_out] = f.node_outputs_exact::<1>(surviving).unwrap();
         let _ret = f.graph_mut().create_node(
@@ -777,7 +777,7 @@ mod compact_tests {
         let zombie = f.graph_mut().create_node(
             NodeKind::IntConst(0xC0FFEE_u64 as u128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
 
         // Zombie must be in the arena before compact.
@@ -823,7 +823,7 @@ mod compact_tests {
         let zombie_phi = f.graph_mut().create_node(
             NodeKind::Phi,
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let dead_vn = rsleigh::Vn {
             size: 8,
@@ -841,7 +841,7 @@ mod compact_tests {
         let zombie_stack = f.graph_mut().create_node(
             NodeKind::IntConst(0xBEEF_u64 as u128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         f.set_stack_offset(zombie_stack, -8);
         assert_eq!(
@@ -912,7 +912,7 @@ mod compact_tests {
         let _zombie = f.graph_mut().create_node(
             NodeKind::IntConst(0xDEAD_u128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         // The arg carrier: a register-arg-style InitialVar kept live by Return.
         let arg_vn = rsleigh::Vn {
@@ -923,7 +923,7 @@ mod compact_tests {
         let arg_node = f.graph_mut().create_node(
             NodeKind::InitialVar(arg_vn),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();

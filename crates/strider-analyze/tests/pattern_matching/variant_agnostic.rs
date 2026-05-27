@@ -81,7 +81,7 @@ fn int_cmp_any_captures_variant() {
         let l = t.u64(5);
         let r = t.u64(3);
         let c = t.int_cmp(l, r, op);
-        let cast = t.as_int(c, NodeOutputType::U64);
+        let cast = t.as_int(c, NodeOutputType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -97,7 +97,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, IntCmpOp::Equal);
-    let cast = t.as_int(c, NodeOutputType::U64);
+    let cast = t.as_int(c, NodeOutputType::I64);
     let function = t.ret_val(cast);
     let ov = Capture::new();
     a::matches(&function, int_cmp_any(ov, int_const(3), int_const(5)), 1);
@@ -107,7 +107,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, IntCmpOp::Less);
-    let cast = t.as_int(c, NodeOutputType::U64);
+    let cast = t.as_int(c, NodeOutputType::I64);
     let function = t.ret_val(cast);
     let ov = Capture::new();
     a::none(&function, int_cmp_any(ov, int_const(3), int_const(5)));
@@ -120,7 +120,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let l = t.f64(1.0);
     let r = t.f64(2.0);
     let c = t.fcmp(l, r, FloatCmpOp::Equal);
-    let cast = t.as_int(c, NodeOutputType::U64);
+    let cast = t.as_int(c, NodeOutputType::I64);
     let function = t.ret_val(cast);
 
     let ov = Capture::new();
@@ -135,7 +135,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let l2 = t2.f64(1.0);
     let r2 = t2.f64(2.0);
     let c2 = t2.fcmp(l2, r2, FloatCmpOp::Less);
-    let cast2 = t2.as_int(c2, NodeOutputType::U64);
+    let cast2 = t2.as_int(c2, NodeOutputType::I64);
     let g2 = t2.ret_val(cast2);
     let ov2 = Capture::new();
     a::none(
@@ -153,7 +153,7 @@ fn bool_binary_any_captures_variant() {
         let a_ = t.boolean(true);
         let b_ = t.boolean(false);
         let c = t.bool_bin(a_, b_, op);
-        let cast = t.as_int(c, NodeOutputType::U64);
+        let cast = t.as_int(c, NodeOutputType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -168,7 +168,7 @@ fn bool_unary_any_captures_variant() {
     let mut t = Tb::empty();
     let v = t.boolean(true);
     let v = t.bool_un(v, op);
-    let cast = t.as_int(v, NodeOutputType::U64);
+    let cast = t.as_int(v, NodeOutputType::I64);
     let function = t.ret_val(cast);
 
     let ov = Capture::new();
@@ -185,7 +185,7 @@ fn float_binary_any_captures_variant() {
         let l = t.f64(1.0);
         let r = t.f64(2.0);
         let v = t.fbin(l, r, op, NodeOutputType::F64);
-        let cast = t.float_to_int(v, NodeOutputType::U64);
+        let cast = t.float_to_int(v, NodeOutputType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -208,7 +208,7 @@ fn float_unary_any_captures_variant() {
         let mut t = Tb::empty();
         let v = t.f64(9.0);
         let v = t.fun(v, op, NodeOutputType::F64);
-        let cast = t.float_to_int(v, NodeOutputType::U64);
+        let cast = t.float_to_int(v, NodeOutputType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -224,7 +224,7 @@ fn float_cmp_any_captures_variant() {
         let l = t.f64(1.0);
         let r = t.f64(2.0);
         let c = t.fcmp(l, r, op);
-        let cast = t.as_int(c, NodeOutputType::U64);
+        let cast = t.as_int(c, NodeOutputType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -245,7 +245,7 @@ fn int_binary_any_does_not_match_bool_op() {
     let a_ = t.boolean(true);
     let b_ = t.boolean(false);
     let c = t.bool_bin(a_, b_, BoolBinaryOp::Or);
-    let cast = t.as_int(c, NodeOutputType::U64);
+    let cast = t.as_int(c, NodeOutputType::I64);
     let function = t.ret_val(cast);
 
     let ov = Capture::new();

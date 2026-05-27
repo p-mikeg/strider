@@ -22,7 +22,7 @@ pub type KnownBitsMap = SecondaryMap<NodeOutputId, KnownBitsFacts>;
 
 /// Returns the all-ones bit mask for `ty` as a `u64`, or `None` if `ty` is not
 /// an integer type or its width exceeds 64 bits.  Used by [`KnownBits`] to gate
-/// out U80/U128/U256 (and Bool/floats) from the u64-bounded analysis.
+/// out I80/I128/I256 (and Bool/floats) from the u64-bounded analysis.
 fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
     if !ty.is_integer() || !ty.fits_u64() {
         return None;
@@ -54,7 +54,7 @@ pub struct KnownBitsFacts {
 
 impl KnownBitsFacts {
     /// Build the `KnownBitsFacts` for an integer constant.  Returns `None` for
-    /// types this analysis doesn't track (`Bool`, floats, U128, U256):
+    /// types this analysis doesn't track (`Bool`, floats, I128, I256):
     /// the caller treats `None` as "fully unknown" and skips
     /// propagation, which is the correct sound behaviour for a
     /// 64-bit-bound bit-tracker.  Previously this collapsed to
@@ -136,7 +136,7 @@ pub(crate) fn node_known_bits(
     };
     let out_kind = ctx.output_kind(out);
     let ty = out_kind.as_value_or_err()?;
-    // KnownBits tracks 64-bit masks only; types wider than U64 (U128/U256,
+    // KnownBits tracks 64-bit masks only; types wider than I64 (I128/I256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
     let Some(type_mask) = u64_type_mask(ty) else {
         return Ok(None);
@@ -145,7 +145,7 @@ pub(crate) fn node_known_bits(
     let kb = match kind {
         NodeKind::IntConst(v) => match KnownBitsFacts::from_const(v, ty) {
             Some(kb) => kb,
-            // Untracked type (Bool, float, U128, U256) — defer to default
+            // Untracked type (Bool, float, I128, I256) — defer to default
             // "fully unknown" via the worklist's missing-entry path.
             None => return Ok(None),
         },
@@ -284,7 +284,7 @@ pub(crate) fn node_known_bits(
             let [input] = ctx.node_inputs_exact::<1>(node_id)?;
             let input_kind = ctx.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
-            // Bail when the input width is unsupported (U80/U128/U256) —
+            // Bail when the input width is unsupported (I80/I128/I256) —
             // mirrors the SignExtend arm below.  Returning `Ok(None)`
             // leaves the output's KB at "fully unknown"; the previous
             // `unwrap_or(0)` here would have set `input_mask = 0` and
@@ -467,7 +467,7 @@ impl Optimizer for KnownBits {
                 if !ty.is_integer() {
                     continue;
                 }
-                // Skip types KnownBits doesn't track (U128/U256).
+                // Skip types KnownBits doesn't track (I128/I256).
                 let Some(type_mask) = u64_type_mask(ty) else {
                     continue;
                 };

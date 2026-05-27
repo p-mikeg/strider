@@ -191,7 +191,7 @@ fn match_jump_table_shape(
     }
     let entry_size = ty.byte_size();
     // A jump-table entry is a machine pointer (≤ 8 bytes).  Wide integer
-    // loads (U80/U128/U256/U512) are not table entries; reject them
+    // loads (I80/I128/I256/I512) are not table entries; reject them
     // explicitly rather than relying on the downstream `ReadOnlyMemory::read`
     // size>8 rejection to fail closed.
     if entry_size > 8 {
@@ -309,7 +309,7 @@ pub(super) fn bound_via_known_bits(
     if !ty.is_integer() {
         return None;
     }
-    // Type mask sets the maximum possible value (e.g. 0xff for U8).
+    // Type mask sets the maximum possible value (e.g. 0xff for I8).
     // KnownBits at most narrows below this; if no narrowing is
     // possible we return None so the predecessor-If fallback gets a
     // chance.

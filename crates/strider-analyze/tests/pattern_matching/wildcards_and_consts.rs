@@ -94,7 +94,7 @@ fn any_int_const_rejects_non_const() {
 fn bool_const_true_matches() {
     let mut t = Tb::empty();
     let b = t.boolean(true);
-    let as_int = t.as_int(b, NodeOutputType::U64);
+    let as_int = t.as_int(b, NodeOutputType::I64);
     let function = t.ret_val(as_int);
 
     a::matches(&function, bool_const(true), 1);
@@ -105,7 +105,7 @@ fn bool_const_true_matches() {
 fn any_bool_const_captures_value() {
     let mut t = Tb::empty();
     let b = t.boolean(true);
-    let as_int = t.as_int(b, NodeOutputType::U64);
+    let as_int = t.as_int(b, NodeOutputType::I64);
     let function = t.ret_val(as_int);
 
     let bv = Capture::new();
@@ -119,7 +119,7 @@ fn any_bool_const_captures_value() {
 fn float_const_exact_bits_matches() {
     let mut t = Tb::empty();
     let pi = t.f64(std::f64::consts::PI);
-    let pi_i = t.float_to_int(pi, NodeOutputType::U64);
+    let pi_i = t.float_to_int(pi, NodeOutputType::I64);
     let function = t.ret_val(pi_i);
 
     a::matches(&function, float_const(std::f64::consts::PI.to_bits()), 1);
@@ -132,7 +132,7 @@ fn float_const_nan_bits_match_separately_from_zero() {
     let nan = t.float_bits(f64::NAN.to_bits(), NodeOutputType::F64);
     let zero = t.float_bits(0.0f64.to_bits(), NodeOutputType::F64);
     let sum = t.fbin(nan, zero, strider_ir::FloatBinaryOp::Add, NodeOutputType::F64);
-    let as_int = t.float_to_int(sum, NodeOutputType::U64);
+    let as_int = t.float_to_int(sum, NodeOutputType::I64);
     let function = t.ret_val(as_int);
 
     a::matches(&function, float_const(f64::NAN.to_bits()), 1);
@@ -143,7 +143,7 @@ fn float_const_nan_bits_match_separately_from_zero() {
 fn any_float_const_captures_bits() {
     let mut t = Tb::empty();
     let c = t.f64(2.5);
-    let ci = t.float_to_int(c, NodeOutputType::U64);
+    let ci = t.float_to_int(c, NodeOutputType::I64);
     let function = t.ret_val(ci);
 
     let fv = Capture::new();

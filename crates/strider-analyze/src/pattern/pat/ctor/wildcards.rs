@@ -32,7 +32,7 @@ pub fn var(c: Capture) -> Pat {
 /// `v` accepts any signed or unsigned integer literal (`i32`, `i64`, `i128`,
 /// `u32`, `u64`).  Negative values are sign-extended to the IntConst's width
 /// before comparison, so `int_const(-50)` matches both
-/// `IntConst(0xffff_ffce, U32)` and `IntConst(0xffff_ffff_ffff_ffce, U64)` —
+/// `IntConst(0xffff_ffce, I32)` and `IntConst(0xffff_ffff_ffff_ffce, I64)` —
 /// no per-arch default needed.
 ///
 /// Values larger than `i128::MAX` (e.g. `u128::MAX` as raw bits) require
@@ -140,11 +140,11 @@ where
 /// **Why this matters.**  At -O2 on x86-64, `return -50;` lowers to
 /// `mov eax, 0xffffffce; ret` — the high 32 bits of `RAX` are zero
 /// (zero-extended from a 32-bit move), so the IR carries
-/// `IntConst(0x00000000FFFFFFCE)` at U64.  The conventional
+/// `IntConst(0x00000000FFFFFFCE)` at I64.  The conventional
 /// `int_const(-50)` does an exact-bit-pattern match at the output
 /// width and reads that value as `+4294967246`; `signed_int_const(-50)`
-/// recognises the U32-narrow signed form and matches.  Symmetrically
-/// it also matches the U32-only IntConst and the U64
+/// recognises the I32-narrow signed form and matches.  Symmetrically
+/// it also matches the I32-only IntConst and the I64
 /// sign-extended `0xFFFFFFFFFFFFFFCE` form, so a single pattern
 /// covers every natural width a compiler might emit.
 ///

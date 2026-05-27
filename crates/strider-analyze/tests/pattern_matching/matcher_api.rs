@@ -231,14 +231,14 @@ fn existing_pattern_unchanged_with_default_options() {
 
 // ── ignore_casts walk-through ────────────────────────────────────────────────
 
-/// Returns a graph whose return value is `Add(ZeroExt(Mul(2,3)), 4)` at U64,
-/// where the Mul is at U32.
+/// Returns a graph whose return value is `Add(ZeroExt(Mul(2,3)), 4)` at I64,
+/// where the Mul is at I32.
 fn graph_add_zext_mul() -> strider_ir::Function {
     let mut t = Tb::empty();
     let two = t.u32(2);
     let three = t.u32(3);
-    let mul = t.int_bin_at(two, three, IntBinaryOp::Mul, NodeOutputType::U32);
-    let widened = t.zext_to(mul, NodeOutputType::U64);
+    let mul = t.int_bin_at(two, three, IntBinaryOp::Mul, NodeOutputType::I32);
+    let widened = t.zext_to(mul, NodeOutputType::I64);
     let four = t.u64(4);
     let total = t.add(widened, four);
     t.ret_val(total)
@@ -267,8 +267,8 @@ fn add_mul_pattern_matches_through_chained_casts() {
         let two = t.u64(2);
         let three = t.u64(3);
         let mul = t.mul(two, three);
-        let truncated = t.trunc_to(mul, NodeOutputType::U32);
-        let widened = t.zext_to(truncated, NodeOutputType::U64);
+        let truncated = t.trunc_to(mul, NodeOutputType::I32);
+        let widened = t.zext_to(truncated, NodeOutputType::I64);
         let four = t.u64(4);
         let total = t.add(widened, four);
         t.ret_val(total)
@@ -285,7 +285,7 @@ fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
         let a = t.u64(0xDEAD_BEEF);
         let b = t.u64(0x1234_5678);
         let or = t.bor(a, b);
-        let truncated = t.trunc_to(or, NodeOutputType::U32);
+        let truncated = t.trunc_to(or, NodeOutputType::I32);
         t.ret_val(truncated)
     };
     let m = Matcher::try_new(&function).unwrap().ignore_casts();
@@ -300,8 +300,8 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
         let mut t = Tb::empty();
         let two = t.u32(2);
         let three = t.u32(3);
-        let mul = t.int_bin_at(two, three, IntBinaryOp::Mul, NodeOutputType::U32);
-        let widened = t.zext_to(mul, NodeOutputType::U64);
+        let mul = t.int_bin_at(two, three, IntBinaryOp::Mul, NodeOutputType::I32);
+        let widened = t.zext_to(mul, NodeOutputType::I64);
         let four = t.u64(4);
         let total = t.add(four, widened);
         t.ret_val(total)
@@ -322,7 +322,7 @@ fn graph_ret_via_region_after_call() -> strider_ir::Function {
 
     let target = t
         .fb_mut()
-        .build_int_const(0xCAFEu64, NodeOutputType::U64)
+        .build_int_const(0xCAFEu64, NodeOutputType::I64)
         .unwrap();
     t.fb_mut().build_call(target).expect("call");
 

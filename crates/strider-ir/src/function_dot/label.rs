@@ -123,7 +123,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 format!("const {v:#x}{ty}")
             }
             NodeKind::IntConstWide(id) => {
-                // U256 / U512 payload interned in `Graph::wide_consts`.
+                // I256 / I512 payload interned in `Graph::wide_consts`.
                 // Render the actual value (limbs are little-endian, so walk
                 // high→low) rather than the Debug form of the interning id.
                 let storage = self.function.graph().wide_const(*id);
@@ -142,7 +142,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 if hex.is_empty() {
                     hex.push('0');
                 }
-                format!("const 0x{hex}:u{}", limbs.len() * 64)
+                format!("const 0x{hex}:i{}", limbs.len() * 64)
             }
             NodeKind::FloatConst(bits) => match self.out_type(node) {
                 Some(NodeOutputType::F32) => {

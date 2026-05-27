@@ -305,7 +305,7 @@ mod tests {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(k, NodeOutputType::U64).unwrap();
+        let v = b.build_int_const(k, NodeOutputType::I64).unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
         b.build().unwrap()
@@ -431,11 +431,11 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x42u64, NodeOutputType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut function = b.build()?;
@@ -485,16 +485,16 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v0 = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
         b.write_variable(&sp, sp_v1)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
+        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-        let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::U32)?;
+        let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::I32)?;
         b.write_variable(&sp, sp_v2)?;
-        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -530,14 +530,14 @@ mod tests {
     fn long_reassoc_chain_converges() -> crate::opt::Result<()> {
         use strider_ir::IntBinaryOp;
         let mut function = strider_ir_test_utils::make_empty_fn(|b| {
-            let mut acc = b.build_int_const(0u64, NodeOutputType::U64)?;
+            let mut acc = b.build_int_const(0u64, NodeOutputType::I64)?;
             for _ in 0..50 {
-                let one = b.build_int_const(1u64, NodeOutputType::U64)?;
+                let one = b.build_int_const(1u64, NodeOutputType::I64)?;
                 acc = b.build_int_binary_operation(
                     acc,
                     one,
                     IntBinaryOp::Add,
-                    NodeOutputType::U64,
+                    NodeOutputType::I64,
                 )?;
             }
             Ok(acc)

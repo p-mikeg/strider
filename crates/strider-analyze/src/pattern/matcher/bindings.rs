@@ -379,15 +379,15 @@ mod tests {
         let mut a_out = None;
         let mut b_out = None;
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
+            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
+            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
             a_out = Some(av);
             b_out = Some(bv);
             b.build_int_binary_operation(
                 av,
                 bv,
                 IntBinaryOp::Add,
-                NodeOutputType::U64,
+                NodeOutputType::I64,
             )
         })
         .expect("build graph");
@@ -419,13 +419,13 @@ mod tests {
         // Thread distinct values through an Add so both constants
         // stay reachable.
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
+            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
+            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
             b.build_int_binary_operation(
                 av,
                 bv,
                 IntBinaryOp::Add,
-                NodeOutputType::U64,
+                NodeOutputType::I64,
             )
         })
         .expect("build graph");
@@ -455,7 +455,7 @@ mod tests {
     fn get_uint_reads_int_const_through_bound_capture() {
         let mut c_out = None;
         let function = make_empty_fn(|b| {
-            let c = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
+            let c = b.build_int_const(7u64, NodeOutputType::I64).unwrap();
             c_out = Some(c);
             Ok(c)
         })
@@ -473,14 +473,14 @@ mod tests {
     fn get_uint_returns_none_when_not_an_int_const() {
         let mut s_out = None;
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
+            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
+            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
             let s = b
                 .build_int_binary_operation(
                     av,
                     bv,
                     IntBinaryOp::Add,
-                    NodeOutputType::U64,
+                    NodeOutputType::I64,
                 )
                 .unwrap();
             s_out = Some(s);
@@ -500,14 +500,14 @@ mod tests {
     fn get_int_binary_op_reads_op_variant_through_bound_capture() {
         let mut s_out = None;
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
+            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
+            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
             let s = b
                 .build_int_binary_operation(
                     av,
                     bv,
                     IntBinaryOp::Add,
-                    NodeOutputType::U64,
+                    NodeOutputType::I64,
                 )
                 .unwrap();
             s_out = Some(s);
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn unbound_capture_yields_none_for_every_typed_extractor() {
         let function = make_empty_fn(|b| {
-            b.build_int_const(0u64, NodeOutputType::U64)
+            b.build_int_const(0u64, NodeOutputType::I64)
         })
         .expect("build graph");
         let bindings = Bindings::default();
@@ -559,7 +559,7 @@ mod tests {
     /// brand-new (not bounce off a stale overlay entry).
     #[test]
     fn restore_evicts_overlay_entries_for_dropped_journal_tail() {
-        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
+        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::I64))
             .expect("build graph");
         let n = function
             .walk()
@@ -599,7 +599,7 @@ mod tests {
     /// no-op — covers the early-return guard in `restore`.
     #[test]
     fn restore_to_current_mark_is_noop() {
-        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::U64))
+        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::I64))
             .expect("build graph");
         let n = function
             .walk()

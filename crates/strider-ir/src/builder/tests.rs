@@ -14,13 +14,13 @@ fn empty_builder() -> Result<FunctionBuilder> {
 
 // ── get_as_unsigned_int ──────────────────────────────────────────────────
 
-/// A U8 constant built from a wider raw value must be masked to `u8::MAX`.
+/// A I8 constant built from a wider raw value must be masked to `u8::MAX`.
 #[test]
 fn get_unsigned_int_truncates_to_declared_width() -> Result<()> {
     let mut b = empty_builder()?;
-    // Store u8::MAX + 1 — only the low byte is in-range for U8
-    let out = b.build_int_const(u8::MAX as u64 + 1, NodeOutputType::U8)?;
-    // The node was created with kind IntConst(256) but the type is U8,
+    // Store u8::MAX + 1 — only the low byte is in-range for I8
+    let out = b.build_int_const(u8::MAX as u64 + 1, NodeOutputType::I8)?;
+    // The node was created with kind IntConst(256) but the type is I8,
     // so get_as_unsigned_int must mask it.
     let val = b.get_as_unsigned_int(out)?;
     assert_eq!(val, Some(0)); // 256 & 0xFF == 0
@@ -41,29 +41,29 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
 #[test]
 fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, NodeOutputType::U64)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U64)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U64)?;
+    let lhs = b.build_int_const(1u64, NodeOutputType::I64)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I64)?;
     assert_eq!(b.get_as_unsigned_int(add)?, None);
     Ok(())
 }
 
 // ── get_as_signed_int ────────────────────────────────────────────────────
 
-/// A U8 value with MSB set (`u8::MAX`) must sign-extend to -1 as i64.
+/// A I8 value with MSB set (`u8::MAX`) must sign-extend to -1 as i64.
 #[test]
 fn get_signed_int_sign_extends_negative_u8() -> Result<()> {
     let mut b = empty_builder()?;
-    let out = b.build_int_const(u8::MAX as u64, NodeOutputType::U8)?;
+    let out = b.build_int_const(u8::MAX as u64, NodeOutputType::I8)?;
     assert_eq!(b.get_as_signed_int(out)?, Some(-1i64));
     Ok(())
 }
 
-/// A U8 value below the sign bit (`i8::MAX`) must stay positive.
+/// A I8 value below the sign bit (`i8::MAX`) must stay positive.
 #[test]
 fn get_signed_int_positive_u8_stays_positive() -> Result<()> {
     let mut b = empty_builder()?;
-    let out = b.build_int_const(i8::MAX as u64, NodeOutputType::U8)?;
+    let out = b.build_int_const(i8::MAX as u64, NodeOutputType::I8)?;
     assert_eq!(b.get_as_signed_int(out)?, Some(i8::MAX as i64));
     Ok(())
 }
@@ -75,8 +75,8 @@ fn get_signed_int_positive_u8_stays_positive() -> Result<()> {
 #[test]
 fn truncate_const_folds_to_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let out = b.build_int_const(0xABCDu64, NodeOutputType::U16)?;
-    let truncated = b.truncate_if_needed(out, NodeOutputType::U8)?;
+    let out = b.build_int_const(0xABCDu64, NodeOutputType::I16)?;
+    let truncated = b.truncate_if_needed(out, NodeOutputType::I8)?;
     // Must fold to a constant
     let val = b.get_as_unsigned_int(truncated)?;
     assert_eq!(val, Some(0xCD), "low byte of 0xABCD is 0xCD");
@@ -93,28 +93,28 @@ fn truncate_const_folds_to_const() -> Result<()> {
 #[test]
 fn truncate_noop_when_already_narrow_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    // Build a non-const U8 expression: add(1u8, 2u8)
-    let lhs = b.build_int_const(1u64, NodeOutputType::U8)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U8)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U8)?;
+    // Build a non-const I8 expression: add(1u8, 2u8)
+    let lhs = b.build_int_const(1u64, NodeOutputType::I8)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I8)?;
+    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I8)?;
     // "Truncating" to a wider type must return the same node unchanged
-    let result = b.truncate_if_needed(add, NodeOutputType::U16)?;
+    let result = b.truncate_if_needed(add, NodeOutputType::I16)?;
     assert_eq!(
         result, add,
-        "non-const U8 value must not be touched when target is U16"
+        "non-const I8 value must not be touched when target is I16"
     );
     Ok(())
 }
 
-/// A non-constant U32 truncated to U8 must emit a Truncate node.
+/// A non-constant I32 truncated to I8 must emit a Truncate node.
 #[test]
 fn truncate_emits_truncate_node_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, NodeOutputType::U32)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U32)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U32)?;
+    let lhs = b.build_int_const(1u64, NodeOutputType::I32)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I32)?;
+    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I32)?;
 
-    let truncated = b.truncate_if_needed(add, NodeOutputType::U8)?;
+    let truncated = b.truncate_if_needed(add, NodeOutputType::I8)?;
     let node = b.function().node_for_output(truncated);
     assert!(
         matches!(b.function().node_kind(node), NodeKind::Truncate),
@@ -131,21 +131,21 @@ fn truncate_emits_truncate_node_for_non_const() -> Result<()> {
 #[test]
 fn zero_extend_const_folds_to_wider_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let out = b.build_int_const(u8::MAX as u64, NodeOutputType::U8)?;
-    let extended = b.extend_if_needed(out, NodeOutputType::U32, ExtendOp::ZeroExtend)?;
+    let out = b.build_int_const(u8::MAX as u64, NodeOutputType::I8)?;
+    let extended = b.extend_if_needed(out, NodeOutputType::I32, ExtendOp::ZeroExtend)?;
     assert_eq!(b.get_as_unsigned_int(extended)?, Some(u8::MAX as u64));
     let node = b.function().node_for_output(extended);
     assert!(matches!(b.function().node_kind(node), NodeKind::IntConst(_)));
     Ok(())
 }
 
-/// Sign-extending a negative U8 constant (`u8::MAX` = -1 as i8) must fold
+/// Sign-extending a negative I8 constant (`u8::MAX` = -1 as i8) must fold
 /// to `u32::MAX` (all bits set) as a wider constant.
 #[test]
 fn sign_extend_const_folds_negative_value() -> Result<()> {
     let mut b = empty_builder()?;
-    let out = b.build_int_const(u8::MAX as u64, NodeOutputType::U8)?;
-    let extended = b.extend_if_needed(out, NodeOutputType::U32, ExtendOp::SignExtend)?;
+    let out = b.build_int_const(u8::MAX as u64, NodeOutputType::I8)?;
+    let extended = b.extend_if_needed(out, NodeOutputType::I32, ExtendOp::SignExtend)?;
     assert_eq!(b.get_as_unsigned_int(extended)?, Some(u32::MAX as u64));
     Ok(())
 }
@@ -154,11 +154,11 @@ fn sign_extend_const_folds_negative_value() -> Result<()> {
 #[test]
 fn extend_emits_extend_node_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, NodeOutputType::U8)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U8)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U8)?;
+    let lhs = b.build_int_const(1u64, NodeOutputType::I8)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I8)?;
+    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I8)?;
 
-    let extended = b.extend_if_needed(add, NodeOutputType::U64, ExtendOp::ZeroExtend)?;
+    let extended = b.extend_if_needed(add, NodeOutputType::I64, ExtendOp::ZeroExtend)?;
     let node = b.function().node_for_output(extended);
     assert!(
         matches!(b.function().node_kind(node), NodeKind::Extend(_)),
@@ -172,11 +172,11 @@ fn extend_emits_extend_node_for_non_const() -> Result<()> {
 #[test]
 fn extend_noop_when_already_wide_enough() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, NodeOutputType::U64)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U64)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U64)?;
+    let lhs = b.build_int_const(1u64, NodeOutputType::I64)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I64)?;
 
-    let result = b.extend_if_needed(add, NodeOutputType::U64, ExtendOp::ZeroExtend)?;
+    let result = b.extend_if_needed(add, NodeOutputType::I64, ExtendOp::ZeroExtend)?;
     assert_eq!(result, add);
     Ok(())
 }
@@ -187,7 +187,7 @@ fn extend_noop_when_already_wide_enough() -> Result<()> {
 #[test]
 fn convert_zero_int_to_bool_folds_to_false() -> Result<()> {
     let mut b = empty_builder()?;
-    let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+    let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
     let result = b.convert_to_bool_if_needed(zero)?;
     let node = b.function().node_for_output(result);
     assert_eq!(b.function().node_kind(node), &NodeKind::BoolConst(false));
@@ -198,7 +198,7 @@ fn convert_zero_int_to_bool_folds_to_false() -> Result<()> {
 #[test]
 fn convert_nonzero_int_to_bool_folds_to_true() -> Result<()> {
     let mut b = empty_builder()?;
-    let nonzero = b.build_int_const(99u64, NodeOutputType::U32)?;
+    let nonzero = b.build_int_const(99u64, NodeOutputType::I32)?;
     let result = b.convert_to_bool_if_needed(nonzero)?;
     let node = b.function().node_for_output(result);
     assert_eq!(b.function().node_kind(node), &NodeKind::BoolConst(true));
@@ -219,9 +219,9 @@ fn convert_bool_to_bool_is_identity() -> Result<()> {
 #[test]
 fn convert_non_const_int_emits_cast_to_bool_node() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, NodeOutputType::U32)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U32)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U32)?;
+    let lhs = b.build_int_const(1u64, NodeOutputType::I32)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I32)?;
+    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I32)?;
 
     let result = b.convert_to_bool_if_needed(add)?;
     let node = b.function().node_for_output(result);
@@ -239,10 +239,10 @@ fn convert_non_const_int_emits_cast_to_bool_node() -> Result<()> {
 #[test]
 fn build_int_binary_op_produces_binary_op_node() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(3u64, NodeOutputType::U64)?;
-    let rhs = b.build_int_const(4u64, NodeOutputType::U64)?;
+    let lhs = b.build_int_const(3u64, NodeOutputType::I64)?;
+    let rhs = b.build_int_const(4u64, NodeOutputType::I64)?;
     let result =
-        b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U64)?;
+        b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I64)?;
     let node = b.function().node_for_output(result);
     assert_eq!(
         b.function().node_kind(node),
@@ -256,13 +256,13 @@ fn build_int_binary_op_produces_binary_op_node() -> Result<()> {
 #[test]
 fn build_int_binary_op_coerces_narrower_operand() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, NodeOutputType::U8)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U64)?;
+    let lhs = b.build_int_const(1u64, NodeOutputType::I8)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I64)?;
     let result =
-        b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U64)?;
-    // The result must be typed as U64
+        b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I64)?;
+    // The result must be typed as I64
     let kind = b.function().output_kind(result);
-    assert_eq!(kind, NodeOutputKind::OutputType(NodeOutputType::U64));
+    assert_eq!(kind, NodeOutputKind::OutputType(NodeOutputType::I64));
     Ok(())
 }
 
@@ -273,9 +273,9 @@ fn build_int_binary_op_coerces_narrower_operand() -> Result<()> {
 #[test]
 fn build_int_cmp_produces_bool_output() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(10u64, NodeOutputType::U32)?;
-    let rhs = b.build_int_const(20u64, NodeOutputType::U32)?;
-    let result = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::U32)?;
+    let lhs = b.build_int_const(10u64, NodeOutputType::I32)?;
+    let rhs = b.build_int_const(20u64, NodeOutputType::I32)?;
+    let result = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::I32)?;
     let kind = b.function().output_kind(result);
     assert_eq!(kind, NodeOutputKind::OutputType(NodeOutputType::Bool));
     Ok(())
@@ -310,8 +310,8 @@ fn build_boolean_operation_produces_bool_binary_node() -> Result<()> {
 #[test]
 fn identical_constants_are_deduplicated() -> Result<()> {
     let mut b = empty_builder()?;
-    let a = b.build_int_const(77u64, NodeOutputType::U32)?;
-    let c = b.build_int_const(77u64, NodeOutputType::U32)?;
+    let a = b.build_int_const(77u64, NodeOutputType::I32)?;
+    let c = b.build_int_const(77u64, NodeOutputType::I32)?;
     assert_eq!(a, c, "same constant must reuse the same node");
     Ok(())
 }
@@ -320,8 +320,8 @@ fn identical_constants_are_deduplicated() -> Result<()> {
 #[test]
 fn different_constants_are_distinct() -> Result<()> {
     let mut b = empty_builder()?;
-    let a = b.build_int_const(1u64, NodeOutputType::U32)?;
-    let c = b.build_int_const(2u64, NodeOutputType::U32)?;
+    let a = b.build_int_const(1u64, NodeOutputType::I32)?;
+    let c = b.build_int_const(2u64, NodeOutputType::I32)?;
     assert_ne!(a, c);
     Ok(())
 }
@@ -368,7 +368,7 @@ fn get_as_float_bits_returns_bits_for_float_const() -> Result<()> {
 #[test]
 fn get_as_float_bits_returns_none_for_int_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let out = b.build_int_const(42u64, NodeOutputType::U64)?;
+    let out = b.build_int_const(42u64, NodeOutputType::I64)?;
     assert_eq!(b.get_as_float_bits(out)?, None);
     Ok(())
 }
@@ -377,7 +377,7 @@ fn get_as_float_bits_returns_none_for_int_const() -> Result<()> {
 fn int_bits_to_float_folds_int_const_immediately() -> Result<()> {
     let mut b = empty_builder()?;
     let bits = 1.0f32.to_bits() as u64;
-    let int_out = b.build_int_const(bits, NodeOutputType::U32)?;
+    let int_out = b.build_int_const(bits, NodeOutputType::I32)?;
     let float_out = b.build_int_bits_to_float(int_out, NodeOutputType::F32)?;
     // Should be a FloatConst, not an IntBitsToFloat node
     let kind = *b.function().kind_of_output(float_out);
@@ -390,7 +390,7 @@ fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
     let mut b = empty_builder()?;
     let bits = 1.0f64.to_bits();
     let float_out = b.build_float_const(bits, NodeOutputType::F64);
-    let int_out = b.build_float_bits_to_int(float_out, NodeOutputType::U64)?;
+    let int_out = b.build_float_bits_to_int(float_out, NodeOutputType::I64)?;
     // Should be an IntConst, not a FloatBitsToInt node
     let kind = *b.function().kind_of_output(int_out);
     assert_eq!(kind, NodeKind::IntConst(u128::from(bits)));
@@ -424,14 +424,14 @@ fn build_float_cmp_op_produces_bool_output() -> Result<()> {
 #[test]
 fn build_int_bits_to_float_inserts_node_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let int_val = b.build_int_const(0x3F800000u64, NodeOutputType::U32)?;
-    let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+    let int_val = b.build_int_const(0x3F800000u64, NodeOutputType::I32)?;
+    let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
     // Build an Add(x, 0) so the result is not an IntConst node.
     let non_const = b.build_int_binary_operation(
         int_val,
         zero,
         crate::ops::IntBinaryOp::Add,
-        NodeOutputType::U32,
+        NodeOutputType::I32,
     )?;
     let float_out = b.build_int_bits_to_float(non_const, NodeOutputType::F32)?;
     let kind = *b.function().kind_of_output(float_out);
@@ -444,7 +444,7 @@ fn build_int_bits_to_float_inserts_node_for_non_const() -> Result<()> {
 #[test]
 fn build_cast_to_float_creates_cast_node() -> Result<()> {
     let mut b = empty_builder()?;
-    let int_val = b.build_int_const(42u64, NodeOutputType::U64)?;
+    let int_val = b.build_int_const(42u64, NodeOutputType::I64)?;
     let cast = b.build_cast_to_float(int_val, NodeOutputType::F64);
     let kind = *b.function().kind_of_output(cast);
     assert_eq!(kind, NodeKind::CastToFloat);
@@ -465,9 +465,9 @@ fn cast_to_float_if_needed_is_identity_for_same_type() -> Result<()> {
 #[test]
 fn build_float_binary_op_with_int_inputs_auto_casts() -> Result<()> {
     let mut b = empty_builder()?;
-    let i1 = b.build_int_const(0x3F800000u64, NodeOutputType::U32)?;
-    let i2 = b.build_int_const(0x40000000u64, NodeOutputType::U32)?;
-    // Both inputs are U32 — builder should auto-insert CastToFloat.
+    let i1 = b.build_int_const(0x3F800000u64, NodeOutputType::I32)?;
+    let i2 = b.build_int_const(0x40000000u64, NodeOutputType::I32)?;
+    // Both inputs are I32 — builder should auto-insert CastToFloat.
     let result = b.build_float_binary_op(i1, i2, FloatBinaryOp::Add, NodeOutputType::F32)?;
     let kind = *b.function().kind_of_output(result);
     assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
@@ -520,12 +520,12 @@ fn build_call_other_modeled_without_output_advances_ctrl_only() -> Result<()> {
 #[test]
 fn build_call_other_modeled_with_output_returns_typed_value() -> Result<()> {
     let mut b = builder_with_region()?;
-    let arg = b.build_int_const(0x42u64, NodeOutputType::U64)?;
+    let arg = b.build_int_const(0x42u64, NodeOutputType::I64)?;
     let (node, value, _) = b.build_call_other_modeled(
         3,
         "cpuid",
         &[arg],
-        Some(NodeOutputType::U32),
+        Some(NodeOutputType::I32),
         &[],
         &[],
         &[],
@@ -533,7 +533,7 @@ fn build_call_other_modeled_with_output_returns_typed_value() -> Result<()> {
     let out = value.ok_or_else(|| anyhow!("output_ty = Some -> value output"))?;
     assert_eq!(
         b.function().output_kind(out),
-        NodeOutputKind::OutputType(NodeOutputType::U32)
+        NodeOutputKind::OutputType(NodeOutputType::I32)
     );
     assert_eq!(
         b.function().node_kind(node),
@@ -551,7 +551,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
         4,
         "cpuid",
         &[],
-        Some(NodeOutputType::U32),
+        Some(NodeOutputType::I32),
         &[],
         &[],
         &[],
@@ -564,7 +564,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
 #[test]
 fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
     let mut b = builder_with_region()?;
-    let c = b.build_int_const(7u64, NodeOutputType::U32)?;
+    let c = b.build_int_const(7u64, NodeOutputType::I32)?;
     let int_node = b.function().node_for_output(c);
     let err = b
         .function()
@@ -615,12 +615,12 @@ fn build_call_other_modeled_with_value_emits_value_then_clobbers_in_order() -> R
         8,
         "cpuid",
         &[],
-        Some(NodeOutputType::U32),
+        Some(NodeOutputType::I32),
         &[],
         &[r0, r1],
         &[
-            NodeOutputKind::OutputType(NodeOutputType::U32),
-            NodeOutputKind::OutputType(NodeOutputType::U32),
+            NodeOutputKind::OutputType(NodeOutputType::I32),
+            NodeOutputKind::OutputType(NodeOutputType::I32),
         ],
     )?;
     assert!(value.is_some(), "output_ty -> value slot");
@@ -677,10 +677,10 @@ fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
     let mut b = builder_with_region()?;
     // Seed two IntConsts under different lift_addrs.
     b.set_lift_addr(Some(0x100));
-    let l = b.build_int_const(5u64, NodeOutputType::U8)?;
+    let l = b.build_int_const(5u64, NodeOutputType::I8)?;
     let l_node = b.function().node_for_output(l);
     b.set_lift_addr(Some(0x104));
-    let r = b.build_int_const(7u64, NodeOutputType::U8)?;
+    let r = b.build_int_const(7u64, NodeOutputType::I8)?;
     let r_node = b.function().node_for_output(r);
     // Synthesise a fresh Or node attributing both.  Use the IR graph's
     // create_node_attributed directly (rather than going through the
@@ -689,7 +689,7 @@ fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
     let or_node = b.function_mut().create_node_attributed(
         NodeKind::IntBinaryOp(IntBinaryOp::Or),
         [l, r],
-        [crate::node::NodeOutputKind::OutputType(NodeOutputType::U8)],
+        [crate::node::NodeOutputKind::OutputType(NodeOutputType::I8)],
         &[l_node, r_node],
     );
     let fp = b.function().asm_fingerprint(or_node);
@@ -711,15 +711,15 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
     // second lift's attribution.
     let mut b = builder_with_region()?;
 
-    // First build of IntConst(42, U64) under lift_addr 0x100.
+    // First build of IntConst(42, I64) under lift_addr 0x100.
     b.set_lift_addr(Some(0x100));
-    let c1 = b.build_int_const(42u64, NodeOutputType::U64)?;
+    let c1 = b.build_int_const(42u64, NodeOutputType::I64)?;
     let c1_node = b.function().node_for_output(c1);
 
     // Second build under lift_addr 0x104.  Same kind+type+inputs, so
     // create_node returns the cached NodeId.
     b.set_lift_addr(Some(0x104));
-    let c2 = b.build_int_const(42u64, NodeOutputType::U64)?;
+    let c2 = b.build_int_const(42u64, NodeOutputType::I64)?;
     let c2_node = b.function().node_for_output(c2);
 
     assert_eq!(c1_node, c2_node, "cache must return the same NodeId");
@@ -770,14 +770,14 @@ fn build_call_other_terminal_closes_region() -> Result<()> {
 #[test]
 fn build_segment_op_produces_pure_node() -> Result<()> {
     let mut b = builder_with_region()?;
-    let seg = b.build_int_const(0x10u64, NodeOutputType::U16)?;
-    let off = b.build_int_const(0x100u64, NodeOutputType::U32)?;
-    let out = b.build_segment_op(1, seg, off, NodeOutputType::U64)?;
+    let seg = b.build_int_const(0x10u64, NodeOutputType::I16)?;
+    let off = b.build_int_const(0x100u64, NodeOutputType::I32)?;
+    let out = b.build_segment_op(1, seg, off, NodeOutputType::I64)?;
     let node = b.function().node_for_output(out);
     assert_eq!(b.function().node_kind(node), &NodeKind::SegmentOp { op_id: 1 });
     assert_eq!(
         b.function().output_kind(out),
-        NodeOutputKind::OutputType(NodeOutputType::U64)
+        NodeOutputKind::OutputType(NodeOutputType::I64)
     );
     Ok(())
 }
@@ -785,10 +785,10 @@ fn build_segment_op_produces_pure_node() -> Result<()> {
 #[test]
 fn build_segment_op_is_cacheable_across_identical_calls() -> Result<()> {
     let mut b = builder_with_region()?;
-    let seg = b.build_int_const(0x10u64, NodeOutputType::U16)?;
-    let off = b.build_int_const(0x100u64, NodeOutputType::U32)?;
-    let a = b.build_segment_op(1, seg, off, NodeOutputType::U64)?;
-    let c = b.build_segment_op(1, seg, off, NodeOutputType::U64)?;
+    let seg = b.build_int_const(0x10u64, NodeOutputType::I16)?;
+    let off = b.build_int_const(0x100u64, NodeOutputType::I32)?;
+    let a = b.build_segment_op(1, seg, off, NodeOutputType::I64)?;
+    let c = b.build_segment_op(1, seg, off, NodeOutputType::I64)?;
     assert_eq!(a, c, "SegmentOp is pure → identical calls must dedup");
     Ok(())
 }
@@ -796,9 +796,9 @@ fn build_segment_op_is_cacheable_across_identical_calls() -> Result<()> {
 #[test]
 fn build_cpool_ref_produces_typed_node() -> Result<()> {
     let mut b = builder_with_region()?;
-    let r0 = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
-    let r1 = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
-    let out = b.build_cpool_ref(&[r0, r1], NodeOutputType::U64)?;
+    let r0 = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
+    let r1 = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
+    let out = b.build_cpool_ref(&[r0, r1], NodeOutputType::I64)?;
     let node = b.function().node_for_output(out);
     assert_eq!(b.function().node_kind(node), &NodeKind::CPoolRef);
     Ok(())
@@ -807,9 +807,9 @@ fn build_cpool_ref_produces_typed_node() -> Result<()> {
 #[test]
 fn build_cpool_ref_is_not_deduplicated() -> Result<()> {
     let mut b = builder_with_region()?;
-    let r0 = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
-    let a = b.build_cpool_ref(&[r0], NodeOutputType::U64)?;
-    let c = b.build_cpool_ref(&[r0], NodeOutputType::U64)?;
+    let r0 = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
+    let a = b.build_cpool_ref(&[r0], NodeOutputType::I64)?;
+    let c = b.build_cpool_ref(&[r0], NodeOutputType::I64)?;
     assert_ne!(
         a, c,
         "CPoolRef is non-cacheable → must yield distinct nodes"
@@ -820,8 +820,8 @@ fn build_cpool_ref_is_not_deduplicated() -> Result<()> {
 #[test]
 fn build_new_produces_typed_node() -> Result<()> {
     let mut b = builder_with_region()?;
-    let size = b.build_int_const(32u64, NodeOutputType::U64)?;
-    let out = b.build_new(&[size], NodeOutputType::U64)?;
+    let size = b.build_int_const(32u64, NodeOutputType::I64)?;
+    let out = b.build_new(&[size], NodeOutputType::I64)?;
     let node = b.function().node_for_output(out);
     assert_eq!(b.function().node_kind(node), &NodeKind::New);
     Ok(())
@@ -830,9 +830,9 @@ fn build_new_produces_typed_node() -> Result<()> {
 #[test]
 fn build_new_is_not_deduplicated() -> Result<()> {
     let mut b = builder_with_region()?;
-    let size = b.build_int_const(32u64, NodeOutputType::U64)?;
-    let a = b.build_new(&[size], NodeOutputType::U64)?;
-    let c = b.build_new(&[size], NodeOutputType::U64)?;
+    let size = b.build_int_const(32u64, NodeOutputType::I64)?;
+    let a = b.build_new(&[size], NodeOutputType::I64)?;
+    let c = b.build_new(&[size], NodeOutputType::I64)?;
     assert_ne!(a, c, "each allocation must yield a distinct node");
     Ok(())
 }
@@ -847,10 +847,10 @@ fn build_new_is_not_deduplicated() -> Result<()> {
 fn piece_composition_auto_casts_float_input() -> Result<()> {
     let mut b = empty_builder()?;
     let float_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
-    let int_lo = b.build_int_const(0u64, NodeOutputType::U32)?;
+    let int_lo = b.build_int_const(0u64, NodeOutputType::I32)?;
 
     // Replicate the pcode-lift Piece composition.
-    let out_ty = NodeOutputType::U64;
+    let out_ty = NodeOutputType::I64;
     let hi_ty = b.get_output_type(float_val)?.to_natural_int_type();
     let hi_int = b.convert_to_int_if_needed(float_val, hi_ty)?;
     let lo_ty = b.get_output_type(int_lo)?.to_natural_int_type();
@@ -900,9 +900,9 @@ fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
 
     // Build a Bool value: an integer comparison 1 < 2 (always true, but
     // not folded at this layer — the builder does not constant-fold cmps).
-    let lhs = b.build_int_const(1u64, NodeOutputType::U32)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U32)?;
-    let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::U32)?;
+    let lhs = b.build_int_const(1u64, NodeOutputType::I32)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I32)?;
+    let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::I32)?;
 
     // Sanity: the comparison result is Bool-typed.
     assert_eq!(
@@ -911,14 +911,14 @@ fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
         "comparison must produce Bool"
     );
 
-    // Extend the Bool into a U32 — this is the path that broke before the fix.
-    let extended = b.extend_if_needed(bool_val, NodeOutputType::U32, ExtendOp::ZeroExtend)?;
+    // Extend the Bool into a I32 — this is the path that broke before the fix.
+    let extended = b.extend_if_needed(bool_val, NodeOutputType::I32, ExtendOp::ZeroExtend)?;
 
-    // The result must be U32-typed.
+    // The result must be I32-typed.
     assert_eq!(
         b.function().output_kind(extended),
-        NodeOutputKind::OutputType(NodeOutputType::U32),
-        "extend_if_needed must produce U32 when requested"
+        NodeOutputKind::OutputType(NodeOutputType::I32),
+        "extend_if_needed must produce I32 when requested"
     );
 
     // No Extend node must have a Bool-typed input — that was the invalid state.
@@ -955,10 +955,10 @@ fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
     Ok(())
 }
 
-// ── F80 / U80 bit-conversion: skip the immediate-fold ────────────────────
+// ── F80 / I80 bit-conversion: skip the immediate-fold ────────────────────
 //
 // `build_int_bits_to_float(IntConst, F32/F64)` and
-// `build_float_bits_to_int(FloatConst, U8..U128)` immediate-fold to the
+// `build_float_bits_to_int(FloatConst, I8..I128)` immediate-fold to the
 // other constant kind because F32/F64 fit in `FloatConst`'s u64 payload.
 // F80 is 80 bits — doesn't fit — so the immediate-fold must be skipped
 // and a real bit-conversion node emitted.  This pins that behavior so a
@@ -968,7 +968,7 @@ fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
 #[test]
 fn int_bits_to_float_f80_emits_node_not_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let int_const = b.build_int_const(0xDEAD_BEEF_CAFEu64, NodeOutputType::U80)?;
+    let int_const = b.build_int_const(0xDEAD_BEEF_CAFEu64, NodeOutputType::I80)?;
     let result = b.build_int_bits_to_float(int_const, NodeOutputType::F80)?;
     let node = b.function().node_for_output(result);
     assert_eq!(
@@ -978,7 +978,7 @@ fn int_bits_to_float_f80_emits_node_not_const() -> Result<()> {
     );
     // Non-F80 path still folds for safety regression: F64 IntBitsToFloat
     // collapses to FloatConst.
-    let int_const64 = b.build_int_const(0u64, NodeOutputType::U64)?;
+    let int_const64 = b.build_int_const(0u64, NodeOutputType::I64)?;
     let result_f64 = b.build_int_bits_to_float(int_const64, NodeOutputType::F64)?;
     let node_f64 = b.function().node_for_output(result_f64);
     assert!(
@@ -992,7 +992,7 @@ fn int_bits_to_float_f80_emits_node_not_const() -> Result<()> {
 fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
     let mut b = empty_builder()?;
     let float_const = b.build_float_const(0xBEEFu64, NodeOutputType::F80);
-    let result = b.build_float_bits_to_int(float_const, NodeOutputType::U80)?;
+    let result = b.build_float_bits_to_int(float_const, NodeOutputType::I80)?;
     let node = b.function().node_for_output(result);
     assert_eq!(
         b.function().node_kind(node),
@@ -1001,7 +1001,7 @@ fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
     );
     // Non-F80 path still folds: F64 FloatBitsToInt collapses to IntConst.
     let float_const64 = b.build_float_const(0u64, NodeOutputType::F64);
-    let result_u64 = b.build_float_bits_to_int(float_const64, NodeOutputType::U64)?;
+    let result_u64 = b.build_float_bits_to_int(float_const64, NodeOutputType::I64)?;
     let node_u64 = b.function().node_for_output(result_u64);
     assert!(
         matches!(b.function().node_kind(node_u64), NodeKind::IntConst(_)),
@@ -1026,7 +1026,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     b.set_region(region);
 
     let pre_sp = b.read_variable(&sp)?;
-    let target = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
+    let target = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
     b.build_call(target)?;
 
     let post_sp = b.read_variable(&sp)?;
@@ -1070,7 +1070,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     b.set_region(region);
 
     let pre_sp = b.read_variable(&sp)?;
-    let target = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
+    let target = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
     b.build_call(target)?;
 
     let post_sp = b.read_variable(&sp)?;
@@ -1159,7 +1159,7 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
 // Sleigh lifter for `cmp` writes Bool-producing ops (`IntCmpOp::Sless`,
 // `IntCmpOp::Sborrow`, ...) into those flag registers.  If the write side
 // stores the Bool node directly into the variable, downstream phi-reductions
-// can collapse a chain like `phi(U8) ← Sless@Bool, Sless@Bool` into a direct
+// can collapse a chain like `phi(I8) ← Sless@Bool, Sless@Bool` into a direct
 // Sless@Bool feed of a consumer that expects AnyInt — failing the IR
 // validator after the optimizer pipeline.
 //
@@ -1178,7 +1178,7 @@ fn flag_reg_byte() -> rsleigh::Vn {
     }
 }
 
-/// `convert_to_int_if_needed` on a Bool with U8 target produces a U8-typed
+/// `convert_to_int_if_needed` on a Bool with I8 target produces a I8-typed
 /// output, and a CastToInt node sits between the Bool and the result.
 #[test]
 fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
@@ -1189,10 +1189,10 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
         NodeOutputKind::OutputType(NodeOutputType::Bool),
         "BoolConst is Bool-typed"
     );
-    let coerced = b.convert_to_int_if_needed(bool_val, NodeOutputType::U8)?;
+    let coerced = b.convert_to_int_if_needed(bool_val, NodeOutputType::I8)?;
     assert_eq!(
         b.function().output_kind(coerced),
-        NodeOutputKind::OutputType(NodeOutputType::U8),
+        NodeOutputKind::OutputType(NodeOutputType::I8),
         "convert_to_int_if_needed must produce the requested int type"
     );
     let coerced_node = b.function().node_for_output(coerced);
@@ -1326,22 +1326,22 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
 
     // Synthesise a Bool-producing op (compare) — the same shape as
     // IntCmpOp::Sless that lifts from `cmp r0, #100`.
-    let lhs = b.build_int_const(1u64, NodeOutputType::U32)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::U32)?;
-    let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::U32)?;
+    let lhs = b.build_int_const(1u64, NodeOutputType::I32)?;
+    let rhs = b.build_int_const(2u64, NodeOutputType::I32)?;
+    let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::I32)?;
 
     // Mirror pcode-lift's write_reg_vn coercion: convert to reg's
-    // declared int type (U8 for a 1-byte flag), then write.
+    // declared int type (I8 for a 1-byte flag), then write.
     let reg_ty: NodeOutputType = flag.size.try_into()?;
     let coerced = b.convert_to_int_if_needed(bool_val, reg_ty)?;
     b.write_variable(&flag, coerced)?;
 
-    // Read back — must be U8-typed, never Bool.
+    // Read back — must be I8-typed, never Bool.
     let read_back = b.read_variable(&flag)?;
     assert_eq!(
         b.function().output_kind(read_back),
-        NodeOutputKind::OutputType(NodeOutputType::U8),
-        "1-byte flag variable must read back as U8 after a coerced Bool write"
+        NodeOutputKind::OutputType(NodeOutputType::I8),
+        "1-byte flag variable must read back as I8 after a coerced Bool write"
     );
     Ok(())
 }
@@ -1531,7 +1531,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let node_id = b.function_mut().create_node(
         NodeKind::IntConst(42u128),
         std::iter::empty(),
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     // Read back via the immutable view; the new node must be visible.
     let count_after = b.function().nodes.len();
@@ -1574,14 +1574,14 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     b.set_entry_region(region)?;
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let val = b.build_int_const(7u64, NodeOutputType::U64)?;
+    let val = b.build_int_const(7u64, NodeOutputType::I64)?;
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     // Mutate via graph_mut() in the same way an opt pass would.
     let extra = b.function_mut().create_node(
         NodeKind::IntConst(99u128),
         std::iter::empty(),
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     // The extra IntConst is detached / not reachable from the entry —
     // validation skips unreachable nodes via the reachability gate.  No
@@ -1606,14 +1606,14 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let a = b.function_mut().create_node(
         NodeKind::IntConst(1u128),
         std::iter::empty(),
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     // Second mutation: create constant B.  The second call sees the first
     // mutation (the underlying graph counter advanced) — node ids must differ.
     let b_id = b.function_mut().create_node(
         NodeKind::IntConst(2u128),
         std::iter::empty(),
-        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     assert_ne!(a, b_id, "consecutive create_node calls must produce distinct ids");
     // Both nodes are in the arena.
@@ -1661,11 +1661,11 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     // asm-fingerprint side-table entry.
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(0x10));
-    let outside_pre = b.build_int_const(1u64, NodeOutputType::U64)?;
+    let outside_pre = b.build_int_const(1u64, NodeOutputType::I64)?;
     b.set_lift_addr(Some(0xC0DE));
-    let inside = b.build_int_const(2u64, NodeOutputType::U64)?;
+    let inside = b.build_int_const(2u64, NodeOutputType::I64)?;
     b.set_lift_addr(Some(0x10));
-    let outside_post = b.build_int_const(3u64, NodeOutputType::U64)?;
+    let outside_post = b.build_int_const(3u64, NodeOutputType::I64)?;
 
     let pre_node = b.function().node_for_output(outside_pre);
     let in_node = b.function().node_for_output(inside);
@@ -1680,8 +1680,8 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
 #[test]
 fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
     let mut b = builder_with_region()?;
-    let v = crate::wide_const::WideConstStorage::U256([0x1234, 0xabcd, 0, 0]);
-    let out = b.build_int_const_wide(v.clone(), NodeOutputType::U256)?;
+    let v = crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]);
+    let out = b.build_int_const_wide(v.clone(), NodeOutputType::I256)?;
     let node = b.function().node_for_output(out);
     let NodeKind::IntConstWide(id) = b.function().node_kind(node) else {
         panic!("expected IntConstWide, got {:?}", b.function().node_kind(node));
@@ -1693,8 +1693,8 @@ fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
 #[test]
 fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
     let mut b = builder_with_region()?;
-    let v = crate::wide_const::WideConstStorage::U512([1, 2, 3, 4, 5, 6, 7, 8]);
-    let out = b.build_int_const_wide(v.clone(), NodeOutputType::U512)?;
+    let v = crate::wide_const::WideConstStorage::I512([1, 2, 3, 4, 5, 6, 7, 8]);
+    let out = b.build_int_const_wide(v.clone(), NodeOutputType::I512)?;
     let node = b.function().node_for_output(out);
     let NodeKind::IntConstWide(id) = b.function().node_kind(node) else {
         panic!();
@@ -1706,9 +1706,9 @@ fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
 #[test]
 fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
     let mut b = builder_with_region()?;
-    let v = crate::wide_const::WideConstStorage::U256([42, 0, 0, 0]);
-    let o1 = b.build_int_const_wide(v.clone(), NodeOutputType::U256)?;
-    let o2 = b.build_int_const_wide(v, NodeOutputType::U256)?;
+    let v = crate::wide_const::WideConstStorage::I256([42, 0, 0, 0]);
+    let o1 = b.build_int_const_wide(v.clone(), NodeOutputType::I256)?;
+    let o2 = b.build_int_const_wide(v, NodeOutputType::I256)?;
     let n1 = b.function().node_for_output(o1);
     let n2 = b.function().node_for_output(o2);
     assert_eq!(n1, n2, "structural dedup must reuse the same NodeId");
@@ -1716,20 +1716,20 @@ fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
 }
 
 /// Regression: `build_int_const` and `make_int_const`
-/// must reject `U512` (and `U256`) because both store the value in `u128`.
+/// must reject `I512` (and `I256`) because both store the value in `u128`.
 /// Without the guard, the resulting `IntConst` would claim a width its
 /// storage cannot represent — silent type confusion.
 #[test]
 fn build_int_const_rejects_u256_and_u512() -> Result<()> {
     let mut b = builder_with_region()?;
     let err256 = b
-        .build_int_const(0u64, NodeOutputType::U256)
-        .expect_err("U256 must be rejected — use build_int_const_wide");
-    assert!(err256.to_string().contains("U256"), "got: {err256}");
+        .build_int_const(0u64, NodeOutputType::I256)
+        .expect_err("I256 must be rejected — use build_int_const_wide");
+    assert!(err256.to_string().contains("I256"), "got: {err256}");
     let err512 = b
-        .build_int_const(0u64, NodeOutputType::U512)
-        .expect_err("U512 must be rejected — use build_int_const_wide");
-    assert!(err512.to_string().contains("U512"), "got: {err512}");
+        .build_int_const(0u64, NodeOutputType::I512)
+        .expect_err("I512 must be rejected — use build_int_const_wide");
+    assert!(err512.to_string().contains("I512"), "got: {err512}");
     Ok(())
 }
 
@@ -1738,22 +1738,22 @@ fn make_int_const_rejects_u256_and_u512() {
     use crate::graph::Graph;
     let mut g = Graph::new();
     let err256 = g
-        .make_int_const(0u64, NodeOutputType::U256)
-        .expect_err("U256 rejected");
-    assert!(err256.to_string().contains("U256"), "got: {err256}");
+        .make_int_const(0u64, NodeOutputType::I256)
+        .expect_err("I256 rejected");
+    assert!(err256.to_string().contains("I256"), "got: {err256}");
     let err512 = g
-        .make_int_const(0u64, NodeOutputType::U512)
-        .expect_err("U512 rejected");
-    assert!(err512.to_string().contains("U512"), "got: {err512}");
+        .make_int_const(0u64, NodeOutputType::I512)
+        .expect_err("I512 rejected");
+    assert!(err512.to_string().contains("I512"), "got: {err512}");
 }
 
 #[test]
 fn build_int_const_wide_rejects_non_wide_output_type() -> Result<()> {
     let mut b = builder_with_region()?;
-    let v = crate::wide_const::WideConstStorage::U256([0; 4]);
+    let v = crate::wide_const::WideConstStorage::I256([0; 4]);
     let err = b
-        .build_int_const_wide(v, NodeOutputType::U128)
-        .expect_err("U128 must be rejected — use build_int_const");
+        .build_int_const_wide(v, NodeOutputType::I128)
+        .expect_err("I128 must be rejected — use build_int_const");
     assert!(err.to_string().contains("non-wide output type"), "got: {err}");
     Ok(())
 }
@@ -1761,10 +1761,10 @@ fn build_int_const_wide_rejects_non_wide_output_type() -> Result<()> {
 #[test]
 fn build_int_const_wide_rejects_storage_byte_size_mismatch() -> Result<()> {
     let mut b = builder_with_region()?;
-    let v_256 = crate::wide_const::WideConstStorage::U256([0; 4]);
+    let v_256 = crate::wide_const::WideConstStorage::I256([0; 4]);
     let err = b
-        .build_int_const_wide(v_256, NodeOutputType::U512)
-        .expect_err("U256 storage with U512 output must be rejected");
+        .build_int_const_wide(v_256, NodeOutputType::I512)
+        .expect_err("I256 storage with I512 output must be rejected");
     assert!(err.to_string().contains("byte_size"), "got: {err}");
     Ok(())
 }
@@ -1774,8 +1774,8 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     use crate::validate::validate;
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let v = crate::wide_const::WideConstStorage::U256([0x1234_5678, 0, 0, 0]);
-    let out = b.build_int_const_wide(v, NodeOutputType::U256)?;
+    let v = crate::wide_const::WideConstStorage::I256([0x1234_5678, 0, 0, 0]);
+    let out = b.build_int_const_wide(v, NodeOutputType::I256)?;
     b.set_lift_addr(None);
     // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
     let entry_ctrl = b.function().node_outputs(b.entry()).iter().copied().next().unwrap();
@@ -1801,11 +1801,11 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     use crate::wide_const::WideConstStorage;
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let _live = b.build_int_const_wide(WideConstStorage::U256([1; 4]), NodeOutputType::U256)?;
+    let _live = b.build_int_const_wide(WideConstStorage::I256([1; 4]), NodeOutputType::I256)?;
     // Build an additional wide const that we'll never wire into the
     // reachable graph — `compact()` should drop it.
     let _zombie =
-        b.build_int_const_wide(WideConstStorage::U256([2; 4]), NodeOutputType::U256)?;
+        b.build_int_const_wide(WideConstStorage::I256([2; 4]), NodeOutputType::I256)?;
     b.set_lift_addr(None);
     // Zombie isn't referenced by `_live` and the only Return walk-spine
     // visits `_live` (we wire it through Return to keep it reachable).
@@ -1876,7 +1876,7 @@ mod build_call_with_cc {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let addr = b
-            .build_int_const(0xdead_beef_u64, NodeOutputType::U64)
+            .build_int_const(0xdead_beef_u64, NodeOutputType::I64)
             .unwrap();
         b.build_call_with_cc(addr, None).unwrap();
         // The Call output kinds match `build_call(addr)` exactly: Control,
@@ -1930,7 +1930,7 @@ mod build_call_with_cc {
         };
 
         let addr = b
-            .build_int_const(0xdead_beef_u64, NodeOutputType::U64)
+            .build_int_const(0xdead_beef_u64, NodeOutputType::I64)
             .unwrap();
         b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
         let function = b.function();
@@ -1968,7 +1968,7 @@ mod build_call_with_cc {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
+        let v = b.build_int_const(0u64, NodeOutputType::I64).unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
 
@@ -1978,7 +1978,7 @@ mod build_call_with_cc {
         let r1 = b.function_mut().create_node(
             NodeKind::IntConst(1u128),
             std::iter::empty(),
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         assert_eq!(b.entry(), entry, "entry() stable after first mutation");
 
@@ -1986,7 +1986,7 @@ mod build_call_with_cc {
         let r2 = b.function_mut().create_node(
             NodeKind::IntConst(2u128),
             std::iter::empty(),
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         assert_eq!(b.entry(), entry, "entry() stable after second mutation");
         assert_ne!(r1, r2, "consecutive create_node calls produce distinct ids");
@@ -2008,7 +2008,7 @@ mod build_call_with_cc {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
+        let v = b.build_int_const(7u64, NodeOutputType::I64).unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
 
@@ -2019,7 +2019,7 @@ mod build_call_with_cc {
             b.function_mut().create_node(
                 NodeKind::IntConst(k),
                 std::iter::empty(),
-                [NodeOutputKind::OutputType(NodeOutputType::U64)],
+                [NodeOutputKind::OutputType(NodeOutputType::I64)],
             );
         }
 

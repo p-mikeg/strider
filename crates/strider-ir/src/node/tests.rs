@@ -10,19 +10,19 @@ use super::*;
 fn unsigned_int_masks_to_declared_width() {
     let wide: u128 = u128::MAX;
     assert_eq!(
-        NodeOutputType::U8.get_unsigned_int(wide),
+        NodeOutputType::I8.get_unsigned_int(wide),
         Some(u128::from(u8::MAX))
     );
     assert_eq!(
-        NodeOutputType::U16.get_unsigned_int(wide),
+        NodeOutputType::I16.get_unsigned_int(wide),
         Some(u128::from(u16::MAX))
     );
     assert_eq!(
-        NodeOutputType::U32.get_unsigned_int(wide),
+        NodeOutputType::I32.get_unsigned_int(wide),
         Some(u128::from(u32::MAX))
     );
     assert_eq!(
-        NodeOutputType::U64.get_unsigned_int(wide),
+        NodeOutputType::I64.get_unsigned_int(wide),
         Some(u128::from(u64::MAX))
     );
 }
@@ -40,23 +40,23 @@ fn unsigned_int_is_none_for_bool() {
 #[test]
 fn signed_int_sign_extends_from_declared_width() {
     assert_eq!(
-        NodeOutputType::U8.get_signed_int(u128::from(u8::MAX)),
+        NodeOutputType::I8.get_signed_int(u128::from(u8::MAX)),
         Some(-1)
     );
     assert_eq!(
-        NodeOutputType::U8.get_signed_int(u128::from(i8::MIN as u8)),
+        NodeOutputType::I8.get_signed_int(u128::from(i8::MIN as u8)),
         Some(i128::from(i8::MIN))
     );
     assert_eq!(
-        NodeOutputType::U8.get_signed_int(i8::MAX as u128),
+        NodeOutputType::I8.get_signed_int(i8::MAX as u128),
         Some(i128::from(i8::MAX))
     );
     assert_eq!(
-        NodeOutputType::U16.get_signed_int(u128::from(i16::MIN as u16)),
+        NodeOutputType::I16.get_signed_int(u128::from(i16::MIN as u16)),
         Some(i128::from(i16::MIN))
     );
     assert_eq!(
-        NodeOutputType::U32.get_signed_int(u128::from(u32::MAX)),
+        NodeOutputType::I32.get_signed_int(u128::from(u32::MAX)),
         Some(-1)
     );
 }
@@ -72,13 +72,13 @@ fn signed_int_is_none_for_bool() {
 fn bit_width_is_eight_times_byte_size() {
     for ty in [
         NodeOutputType::Bool,
-        NodeOutputType::U8,
-        NodeOutputType::U16,
-        NodeOutputType::U32,
-        NodeOutputType::U64,
-        NodeOutputType::U80,
-        NodeOutputType::U128,
-        NodeOutputType::U256,
+        NodeOutputType::I8,
+        NodeOutputType::I16,
+        NodeOutputType::I32,
+        NodeOutputType::I64,
+        NodeOutputType::I80,
+        NodeOutputType::I128,
+        NodeOutputType::I256,
         NodeOutputType::F32,
         NodeOutputType::F64,
         NodeOutputType::F80,
@@ -96,7 +96,7 @@ fn bit_width_is_eight_times_byte_size() {
 /// `is_value` must be `true` only for `OutputType` variants.
 #[test]
 fn is_value_only_for_output_type() {
-    assert!(NodeOutputKind::OutputType(NodeOutputType::U64).is_value());
+    assert!(NodeOutputKind::OutputType(NodeOutputType::I64).is_value());
     assert!(!NodeOutputKind::Control.is_value());
     assert!(!NodeOutputKind::PhiToken.is_value());
     assert!(!NodeOutputKind::Memory.is_value());
@@ -106,7 +106,7 @@ fn is_value_only_for_output_type() {
 #[test]
 fn is_bool_only_for_bool_output_type() {
     assert!(NodeOutputKind::OutputType(NodeOutputType::Bool).is_bool());
-    assert!(!NodeOutputKind::OutputType(NodeOutputType::U8).is_bool());
+    assert!(!NodeOutputKind::OutputType(NodeOutputType::I8).is_bool());
     assert!(!NodeOutputKind::Control.is_bool());
 }
 
@@ -115,13 +115,13 @@ fn is_bool_only_for_bool_output_type() {
 #[test]
 fn is_integer_for_all_integer_output_types() {
     for ty in [
-        NodeOutputType::U8,
-        NodeOutputType::U16,
-        NodeOutputType::U32,
-        NodeOutputType::U64,
-        NodeOutputType::U80,
-        NodeOutputType::U128,
-        NodeOutputType::U256,
+        NodeOutputType::I8,
+        NodeOutputType::I16,
+        NodeOutputType::I32,
+        NodeOutputType::I64,
+        NodeOutputType::I80,
+        NodeOutputType::I128,
+        NodeOutputType::I256,
     ] {
         assert!(
             NodeOutputKind::OutputType(ty).is_integer(),
@@ -212,8 +212,8 @@ fn float_as_str() {
 fn is_float_only_for_float_types() {
     assert!(NodeOutputType::F32.is_float());
     assert!(NodeOutputType::F64.is_float());
-    assert!(!NodeOutputType::U32.is_float());
-    assert!(!NodeOutputType::U64.is_float());
+    assert!(!NodeOutputType::I32.is_float());
+    assert!(!NodeOutputType::I64.is_float());
     assert!(!NodeOutputType::Bool.is_float());
 }
 
@@ -263,8 +263,8 @@ fn float_ops_are_cacheable() {
 
 #[test]
 fn as_value_or_err_value_case() {
-    let kind = NodeOutputKind::OutputType(NodeOutputType::U32);
-    assert_eq!(kind.as_value_or_err().unwrap(), NodeOutputType::U32);
+    let kind = NodeOutputKind::OutputType(NodeOutputType::I32);
+    assert_eq!(kind.as_value_or_err().unwrap(), NodeOutputType::I32);
 }
 
 #[test]
@@ -279,8 +279,8 @@ fn as_value_or_err_control_case() {
 
 #[test]
 fn as_integer_or_err_int_case() {
-    let kind = NodeOutputKind::OutputType(NodeOutputType::U64);
-    assert_eq!(kind.as_integer_or_err().unwrap(), NodeOutputType::U64);
+    let kind = NodeOutputKind::OutputType(NodeOutputType::I64);
+    assert_eq!(kind.as_integer_or_err().unwrap(), NodeOutputType::I64);
 }
 
 #[test]
@@ -299,13 +299,13 @@ fn type_info_table_matches_variants() {
     // explicitly and check `info().name` / category.
     let cases: &[(NodeOutputType, &str, usize, bool, bool, bool)] = &[
         (NodeOutputType::Bool, "bool", 1, false, true, false),
-        (NodeOutputType::U8,   "u8",   1, true,  false, false),
-        (NodeOutputType::U16,  "u16",  2, true,  false, false),
-        (NodeOutputType::U32,  "u32",  4, true,  false, false),
-        (NodeOutputType::U64,  "u64",  8, true,  false, false),
-        (NodeOutputType::U80,  "u80",  10, true, false, false),
-        (NodeOutputType::U128, "u128", 16, true, false, false),
-        (NodeOutputType::U256, "u256", 32, true, false, false),
+        (NodeOutputType::I8,   "i8",   1, true,  false, false),
+        (NodeOutputType::I16,  "i16",  2, true,  false, false),
+        (NodeOutputType::I32,  "i32",  4, true,  false, false),
+        (NodeOutputType::I64,  "i64",  8, true,  false, false),
+        (NodeOutputType::I80,  "i80",  10, true, false, false),
+        (NodeOutputType::I128, "i128", 16, true, false, false),
+        (NodeOutputType::I256, "i256", 32, true, false, false),
         (NodeOutputType::F32,  "f32",  4, false, false, true),
         (NodeOutputType::F64,  "f64",  8, false, false, true),
         (NodeOutputType::F80,  "f80",  10, false, false, true),
@@ -322,13 +322,13 @@ fn type_info_table_matches_variants() {
 
 #[test]
 fn try_from_u32_size_to_node_output_type() {
-    assert_eq!(NodeOutputType::try_from(1u32).unwrap(), NodeOutputType::U8);
-    assert_eq!(NodeOutputType::try_from(2u32).unwrap(), NodeOutputType::U16);
-    assert_eq!(NodeOutputType::try_from(4u32).unwrap(), NodeOutputType::U32);
-    assert_eq!(NodeOutputType::try_from(8u32).unwrap(), NodeOutputType::U64);
-    assert_eq!(NodeOutputType::try_from(16u32).unwrap(), NodeOutputType::U128);
-    assert_eq!(NodeOutputType::try_from(32u32).unwrap(), NodeOutputType::U256);
-    assert_eq!(NodeOutputType::try_from(64u32).unwrap(), NodeOutputType::U512);
+    assert_eq!(NodeOutputType::try_from(1u32).unwrap(), NodeOutputType::I8);
+    assert_eq!(NodeOutputType::try_from(2u32).unwrap(), NodeOutputType::I16);
+    assert_eq!(NodeOutputType::try_from(4u32).unwrap(), NodeOutputType::I32);
+    assert_eq!(NodeOutputType::try_from(8u32).unwrap(), NodeOutputType::I64);
+    assert_eq!(NodeOutputType::try_from(16u32).unwrap(), NodeOutputType::I128);
+    assert_eq!(NodeOutputType::try_from(32u32).unwrap(), NodeOutputType::I256);
+    assert_eq!(NodeOutputType::try_from(64u32).unwrap(), NodeOutputType::I512);
     for bad in [0u32, 3, 5, 7, 9, 15, 17, 33, 65] {
         let err = NodeOutputType::try_from(bad).expect_err("invalid size");
         let msg = err.to_string();

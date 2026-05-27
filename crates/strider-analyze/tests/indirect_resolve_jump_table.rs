@@ -171,7 +171,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
 /// Same shape as the KnownBits test but the index has no AND-mask
 /// and no predecessor If — it's just a register read.  The classifier
 /// must return None.  A Multiple here would be unsound: the runtime
-/// index could be any U32 value; we'd be enumerating an arbitrary
+/// index could be any I32 value; we'd be enumerating an arbitrary
 /// prefix of memory as "targets".
 #[test]
 fn jump_table_unbounded_idx_returns_none() {

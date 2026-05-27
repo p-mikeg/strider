@@ -60,7 +60,7 @@ fn load_with_patterned_addr() {
     let base = t.u64(0x100);
     let off = t.u64(8);
     let addr = t.add(base, off);
-    let v = t.load_ram(addr, NodeOutputType::U64);
+    let v = t.load_ram(addr, NodeOutputType::I64);
     let function = t.ret_val(v);
 
     a::matches(
@@ -140,7 +140,7 @@ fn store_then_load_same_addr_match() {
 fn load_only_graph_matches() {
     let mut t = Tb::empty();
     let addr = t.u64(0x100);
-    let v = t.load_ram(addr, NodeOutputType::U64);
+    let v = t.load_ram(addr, NodeOutputType::I64);
     let function = t.ret_val(v);
 
     a::matches(&function, load(), 1);

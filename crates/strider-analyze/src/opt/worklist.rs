@@ -78,7 +78,7 @@ mod tests {
     /// A minimal function `fn() -> u64 { return 7; }` — Entry + Return chain,
     /// no orphans, single IntConst.
     fn trivial_const_fn() -> strider_ir::Function {
-        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
+        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::I64)).unwrap()
     }
 
     /// Helper: count nodes whose `inputs.is_empty()` is false in the full
@@ -106,9 +106,9 @@ mod tests {
         // `fn() -> u64 { return Add(11, 13); }` — the Add and both
         // IntConsts are reachable from Return → Entry.  No detach.
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(11u64, NodeOutputType::U64)?;
-            let bb = b.build_int_const(13u64, NodeOutputType::U64)?;
-            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)
+            let a = b.build_int_const(11u64, NodeOutputType::I64)?;
+            let bb = b.build_int_const(13u64, NodeOutputType::I64)?;
+            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)
         })
         .unwrap();
         let entry = fg.entry().unwrap();
@@ -128,12 +128,12 @@ mod tests {
         // Graft an orphan: an Add over two fresh IntConsts.  The Add has
         // inputs (so it's a detach candidate); detection should detach
         // its inputs without touching the reachable graph.
-        let orphan_a = fg.make_int_const(99u64, NodeOutputType::U64).unwrap();
-        let orphan_b = fg.make_int_const(100u64, NodeOutputType::U64).unwrap();
+        let orphan_a = fg.make_int_const(99u64, NodeOutputType::I64).unwrap();
+        let orphan_b = fg.make_int_const(100u64, NodeOutputType::I64).unwrap();
         let orphan_node = fg.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [orphan_a, orphan_b],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         fg.set_asm_fingerprint(orphan_node, vec![SENTINEL_LIFT_ADDR]);
 
@@ -158,9 +158,9 @@ mod tests {
         // grafted separately.  After detach: reachable Add keeps inputs;
         // unreachable Add has inputs cleared.
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, NodeOutputType::U64)?;
-            let bb = b.build_int_const(2u64, NodeOutputType::U64)?;
-            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)
+            let a = b.build_int_const(1u64, NodeOutputType::I64)?;
+            let bb = b.build_int_const(2u64, NodeOutputType::I64)?;
+            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)
         })
         .unwrap();
         // Locate the reachable Add for later assertion.
@@ -172,12 +172,12 @@ mod tests {
 
         // Graft an orphan Add — distinct constants so it isn't shared
         // with the reachable Add via dedup.
-        let oa = fg.make_int_const(101u64, NodeOutputType::U64).unwrap();
-        let ob = fg.make_int_const(103u64, NodeOutputType::U64).unwrap();
+        let oa = fg.make_int_const(101u64, NodeOutputType::I64).unwrap();
+        let ob = fg.make_int_const(103u64, NodeOutputType::I64).unwrap();
         let orphan = fg.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [oa, ob],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         fg.set_asm_fingerprint(orphan, vec![SENTINEL_LIFT_ADDR]);
         assert_eq!(fg.node_inputs(orphan).len(), 2);
@@ -202,12 +202,12 @@ mod tests {
         // After the first detach Changed, a second invocation returns
         // NoChange (no nodes left with both unreachable+nonempty inputs).
         let mut fg = trivial_const_fn();
-        let a = fg.make_int_const(7u64, NodeOutputType::U64).unwrap();
-        let b = fg.make_int_const(8u64, NodeOutputType::U64).unwrap();
+        let a = fg.make_int_const(7u64, NodeOutputType::I64).unwrap();
+        let b = fg.make_int_const(8u64, NodeOutputType::I64).unwrap();
         let orphan = fg.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [a, b],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         fg.set_asm_fingerprint(orphan, vec![SENTINEL_LIFT_ADDR]);
         let entry = fg.entry().unwrap();
@@ -232,12 +232,12 @@ mod tests {
         // a placeholder.
         let mut fg = trivial_const_fn();
         // Create a placeholder Add whose inputs are two consts.
-        let c1 = fg.make_int_const(50u64, NodeOutputType::U64).unwrap();
-        let c2 = fg.make_int_const(60u64, NodeOutputType::U64).unwrap();
+        let c1 = fg.make_int_const(50u64, NodeOutputType::I64).unwrap();
+        let c2 = fg.make_int_const(60u64, NodeOutputType::I64).unwrap();
         let orphan = fg.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [c1, c2],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         fg.set_asm_fingerprint(orphan, vec![SENTINEL_LIFT_ADDR]);
         // The orphan's output isn't fed back into itself (the IR doesn't

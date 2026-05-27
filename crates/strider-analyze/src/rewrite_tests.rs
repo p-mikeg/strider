@@ -31,7 +31,7 @@ fn one_const_fn(k: u64) -> strider_ir::Function {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let v = b.build_int_const(k, NodeOutputType::U64).unwrap();
+    let v = b.build_int_const(k, NodeOutputType::I64).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     b.set_lift_addr(None);
     b.build().unwrap()
@@ -49,10 +49,10 @@ fn add_x_plus_zero(x: u64) -> strider_ir::Function {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let lhs = b.build_int_const(x, NodeOutputType::U64).unwrap();
-    let rhs = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
+    let lhs = b.build_int_const(x, NodeOutputType::I64).unwrap();
+    let rhs = b.build_int_const(0u64, NodeOutputType::I64).unwrap();
     let sum = b
-        .build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U64)
+        .build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I64)
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     b.set_lift_addr(None);
@@ -76,17 +76,17 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::Function {
     bd.set_entry_region(region).unwrap();
     bd.set_region(region);
     bd.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let ac = bd.build_int_const(a, NodeOutputType::U64).unwrap();
-    let bc = bd.build_int_const(b, NodeOutputType::U64).unwrap();
-    let z0 = bd.build_int_const(0u64, NodeOutputType::U64).unwrap();
+    let ac = bd.build_int_const(a, NodeOutputType::I64).unwrap();
+    let bc = bd.build_int_const(b, NodeOutputType::I64).unwrap();
+    let z0 = bd.build_int_const(0u64, NodeOutputType::I64).unwrap();
     let lhs = bd
-        .build_int_binary_operation(ac, z0, IntBinaryOp::Add, NodeOutputType::U64)
+        .build_int_binary_operation(ac, z0, IntBinaryOp::Add, NodeOutputType::I64)
         .unwrap();
     let rhs = bd
-        .build_int_binary_operation(bc, z0, IntBinaryOp::Add, NodeOutputType::U64)
+        .build_int_binary_operation(bc, z0, IntBinaryOp::Add, NodeOutputType::I64)
         .unwrap();
     let diff = bd
-        .build_sub_as_add_neg(lhs, rhs, NodeOutputType::U64)
+        .build_sub_as_add_neg(lhs, rhs, NodeOutputType::I64)
         .unwrap();
     bd.build_return(Some(diff), &[]).unwrap();
     bd.set_lift_addr(None);

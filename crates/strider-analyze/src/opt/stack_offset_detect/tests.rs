@@ -23,11 +23,11 @@ fn run(function: &mut Function, sp: rsleigh::Vn) -> OptimizationResult {
 /// `store [sp-4] = 0x42; load [sp-4]; return loaded`.
 fn stack_store_load_return(sp: rsleigh::Vn) -> Function {
     make_sp_fn(sp, |b, sp_v| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x42u64, NodeOutputType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(Some(loaded), &[])?;
         Ok(())
@@ -61,11 +61,11 @@ fn sp_relative_store_and_load_get_offset_stamped() {
 fn non_sp_relative_store_leaves_side_table_untouched() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, _sp_v| {
-        let addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
+        let addr = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x42u64, NodeOutputType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+        let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })
@@ -90,12 +90,12 @@ fn alignment_masked_base_store_is_not_stamped() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
         // Simulate `and $0xfffffff8, %esp` then a store at that aligned base.
-        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
-        let aligned = b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
+        let aligned = b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x42u64, NodeOutputType::I32)?;
         b.build_store(aligned, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+        let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })

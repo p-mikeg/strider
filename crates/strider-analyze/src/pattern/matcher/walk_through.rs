@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn no_region_input_returns_false() {
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
-        let v = b.build_int_const(0xCAFEu64, NodeOutputType::U64).unwrap();
+        let v = b.build_int_const(0xCAFEu64, NodeOutputType::I64).unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
         let fg = b.build().unwrap();
@@ -112,7 +112,7 @@ mod tests {
         let tail = b.create_region().unwrap();
         b.set_entry_region(head).unwrap();
         b.set_region(head);
-        let target = b.build_int_const(0xCAFEu64, NodeOutputType::U64).unwrap();
+        let target = b.build_int_const(0xCAFEu64, NodeOutputType::I64).unwrap();
         b.build_call(target).unwrap();
         b.build_branch(tail).unwrap();
         b.set_region(tail);
@@ -148,12 +148,12 @@ mod tests {
         b.build_if(cond, arm_a, arm_b).unwrap();
 
         b.set_region(arm_a);
-        let ta = b.build_int_const(0xAu64, NodeOutputType::U64).unwrap();
+        let ta = b.build_int_const(0xAu64, NodeOutputType::I64).unwrap();
         b.build_call(ta).unwrap();
         b.build_branch(join).unwrap();
 
         b.set_region(arm_b);
-        let tb = b.build_int_const(0xBu64, NodeOutputType::U64).unwrap();
+        let tb = b.build_int_const(0xBu64, NodeOutputType::I64).unwrap();
         b.build_call(tb).unwrap();
         b.build_branch(join).unwrap();
 
@@ -195,7 +195,7 @@ mod tests {
         b.build_if(cond, arm_a, arm_b).unwrap();
 
         b.set_region(arm_a);
-        let ta = b.build_int_const(0xAu64, NodeOutputType::U64).unwrap();
+        let ta = b.build_int_const(0xAu64, NodeOutputType::I64).unwrap();
         b.build_call(ta).unwrap();
         b.build_branch(join).unwrap();
 
@@ -228,7 +228,7 @@ mod tests {
         let tail = b.create_region().unwrap();
         b.set_entry_region(head).unwrap();
         b.set_region(head);
-        let target = b.build_int_const(0xCAFEu64, NodeOutputType::U64).unwrap();
+        let target = b.build_int_const(0xCAFEu64, NodeOutputType::I64).unwrap();
         b.build_call(target).unwrap();
         b.build_branch(tail).unwrap();
         b.set_region(tail);
@@ -256,7 +256,7 @@ mod tests {
         b.set_entry_region(head).unwrap();
 
         b.set_region(head);
-        let target = b.build_int_const(0xC0FFEEu64, NodeOutputType::U64).unwrap();
+        let target = b.build_int_const(0xC0FFEEu64, NodeOutputType::I64).unwrap();
         b.build_call(target).unwrap();
         b.build_branch(mid).unwrap();
 

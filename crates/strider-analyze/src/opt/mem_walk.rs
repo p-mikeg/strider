@@ -424,7 +424,7 @@ mod tests {
 
     /// Build `fn() -> u64 { return 7; }` and return (graph, initial_mem_output).
     fn empty_chain() -> (strider_ir::Function, NodeOutputId) {
-        let fg = make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap();
+        let fg = make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::I64)).unwrap();
         // Locate the InitialMemory node and its output.
         let im = fg
             .walk()
@@ -442,11 +442,11 @@ mod tests {
             // Emit `depth` Stores using sentinel addresses so each is
             // structurally distinct (different value inputs).
             for i in 0..depth {
-                let addr = b.build_int_const(0x1000u64 + (i as u64) * 8, NodeOutputType::U64).unwrap();
-                let v = b.build_int_const(i as u64, NodeOutputType::U64).unwrap();
+                let addr = b.build_int_const(0x1000u64 + (i as u64) * 8, NodeOutputType::I64).unwrap();
+                let v = b.build_int_const(i as u64, NodeOutputType::I64).unwrap();
                 b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
             }
-            b.build_int_const(7u64, NodeOutputType::U64)
+            b.build_int_const(7u64, NodeOutputType::I64)
         })
         .unwrap();
         // The Return's slot-1 input is the final memory token — the
@@ -574,10 +574,10 @@ mod tests {
         // To ensure that, build an Add-chain function with a single Store
         // so a Region exists in the graph.
         let mut fg = make_empty_fn(|b| {
-            let addr = b.build_int_const(0x100u64, NodeOutputType::U64)?;
-            let v = b.build_int_const(0x42u64, NodeOutputType::U64)?;
+            let addr = b.build_int_const(0x100u64, NodeOutputType::I64)?;
+            let v = b.build_int_const(0x42u64, NodeOutputType::I64)?;
             b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-            b.build_int_const(7u64, NodeOutputType::U64)
+            b.build_int_const(7u64, NodeOutputType::I64)
         })
         .unwrap();
         let phi_out = mem_phi_all_initial(&mut fg, 3);
@@ -601,10 +601,10 @@ mod tests {
         // through InitialMemory.  PhiDisagreeStep returns Verdict(true)
         // on Store, Verdict(false) on IM, then combine_phi ORs → true.
         let mut fg = make_empty_fn(|b| {
-            let addr = b.build_int_const(0x200u64, NodeOutputType::U64)?;
-            let v = b.build_int_const(0x99u64, NodeOutputType::U64)?;
+            let addr = b.build_int_const(0x200u64, NodeOutputType::I64)?;
+            let v = b.build_int_const(0x99u64, NodeOutputType::I64)?;
             b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-            b.build_int_const(7u64, NodeOutputType::U64)
+            b.build_int_const(7u64, NodeOutputType::I64)
         })
         .unwrap();
         // Locate IM, Store, Region, then build a MemPhi[token, im_out, store_mem_out].
@@ -653,10 +653,10 @@ mod tests {
         // cycle_verdict.  With GuardPhiOnly, both arms classify
         // independently.  We pin both behaviours.
         let mut fg = make_empty_fn(|b| {
-            let addr = b.build_int_const(0x100u64, NodeOutputType::U64)?;
-            let v = b.build_int_const(0x42u64, NodeOutputType::U64)?;
+            let addr = b.build_int_const(0x100u64, NodeOutputType::I64)?;
+            let v = b.build_int_const(0x42u64, NodeOutputType::I64)?;
             b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-            b.build_int_const(7u64, NodeOutputType::U64)
+            b.build_int_const(7u64, NodeOutputType::I64)
         })
         .unwrap();
         let phi_out = mem_phi_all_initial(&mut fg, 2);

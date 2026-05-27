@@ -141,7 +141,7 @@ pub fn classify_stack_array(
 /// the inner constant masked to its consumer-declared output width.
 /// companion to the
 /// `flatten_add_tree` Or-arm fix: AArch64-BE lifter shapes wrap stored
-/// label addresses in `Truncate(IntConst, U32)` (32-bit ARM
+/// label addresses in `Truncate(IntConst, I32)` (32-bit ARM
 /// Thumb-interworking); ConstantFold normally folds these but the
 /// `StackStore` → `LoadForward` propagation can leave the wrapper
 /// in place when the load's declared output type matches the truncate.
@@ -569,45 +569,45 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         for (i, &target_addr) in targets.iter().enumerate() {
             let off = base_offset + (i as i64) * (stride as i64);
-            let off_const = b.build_int_const(off as u64, NodeOutputType::U64).unwrap();
+            let off_const = b.build_int_const(off as u64, NodeOutputType::I64).unwrap();
             let addr = b
-                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
+                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::I64)
                 .unwrap();
-            let target = b.build_int_const(target_addr, NodeOutputType::U64).unwrap();
+            let target = b.build_int_const(target_addr, NodeOutputType::I64).unwrap();
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
         let arg_u32 = b.function_mut().create_node(
             NodeKind::Truncate,
             [arg_val],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
+            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I32)],
         );
         b.function_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-        let one = b.build_int_const(1u64, NodeOutputType::U32).unwrap();
+        let one = b.build_int_const(1u64, NodeOutputType::I32).unwrap();
         let masked = b
-            .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, NodeOutputType::U32)
+            .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, NodeOutputType::I32)
             .unwrap();
         let idx_u64 = b.function_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         b.function_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-        let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
+        let stride_const = b.build_int_const(stride, NodeOutputType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
+            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::I64)
             .unwrap();
-        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
+        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::I64).unwrap();
         let sp_plus_base = b
-            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::U64)
+            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::I64)
             .unwrap();
         let load_addr = b
-            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::I64)
             .unwrap();
         let loaded = b
-            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
             .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);
@@ -646,13 +646,13 @@ mod tests {
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
-        let off = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
+        let off = b.build_int_const(24u64, NodeOutputType::I64).unwrap();
         let addr = b
-            .build_sub_as_add_neg(sp_val, off, NodeOutputType::U64)
+            .build_sub_as_add_neg(sp_val, off, NodeOutputType::I64)
             .unwrap();
-        let v = b.build_int_const(0xCAFEu64, NodeOutputType::U64).unwrap();
+        let v = b.build_int_const(0xCAFEu64, NodeOutputType::I64).unwrap();
         b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64).unwrap();
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64).unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);
         let mut fg = b.build().unwrap();
@@ -686,26 +686,26 @@ mod tests {
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
-        let off24 = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
+        let off24 = b.build_int_const(24u64, NodeOutputType::I64).unwrap();
         let addr_24 = b
-            .build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)
+            .build_sub_as_add_neg(sp_val, off24, NodeOutputType::I64)
             .unwrap();
-        let v = b.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
+        let v = b.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
         b.build_store(addr_24, v, rsleigh::VnSpace::RAM).unwrap();
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let stride = b.build_int_const(8u64, NodeOutputType::U64).unwrap();
+        let stride = b.build_int_const(8u64, NodeOutputType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(arg_val, stride, IntBinaryOp::Mul, NodeOutputType::U64)
+            .build_int_binary_operation(arg_val, stride, IntBinaryOp::Mul, NodeOutputType::I64)
             .unwrap();
-        let base = b.build_int_const((-24i64) as u64, NodeOutputType::U64).unwrap();
+        let base = b.build_int_const((-24i64) as u64, NodeOutputType::I64).unwrap();
         let sp_plus_base = b
-            .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, NodeOutputType::U64)
+            .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, NodeOutputType::I64)
             .unwrap();
         let load_addr = b
-            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::I64)
             .unwrap();
         let loaded = b
-            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
             .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);
@@ -759,7 +759,7 @@ mod tests {
         let mut b = RegisterSet::new().tracked(reg).build_fn_single_region().unwrap();
         let addr = b.read_variable(&reg).unwrap();
         let v = b
-            .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+            .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
             .unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
@@ -808,7 +808,7 @@ mod tests {
     fn strip_target_mask_and_with_const_rhs_strips_one_layer() {
         let (mut fg, inner) = build_load_anchor();
         let wrapped = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
@@ -819,7 +819,7 @@ mod tests {
     fn strip_target_mask_and_with_const_lhs_strips_one_layer() {
         let (mut fg, inner) = build_load_anchor();
         let wrapped = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, true,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
@@ -834,10 +834,10 @@ mod tests {
         // is fully cleared by the surviving mask `0xFFFE`).
         let (mut fg, inner) = build_load_anchor();
         let or_layer = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::Or, 1, NodeOutputType::U64, false,
+            &mut fg, inner, IntBinaryOp::Or, 1, NodeOutputType::I64, false,
         );
         let and_layer = build_binop_wrapped(
-            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
@@ -851,10 +851,10 @@ mod tests {
         // the surrounding And contributes its mask.
         let (mut fg, inner) = build_load_anchor();
         let or_layer = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::Or, 0xFF, NodeOutputType::U64, false,
+            &mut fg, inner, IntBinaryOp::Or, 0xFF, NodeOutputType::I64, false,
         );
         let and_layer = build_binop_wrapped(
-            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
@@ -867,10 +867,10 @@ mod tests {
         // Both layers strip; surviving mask is the intersection.
         let (mut fg, inner) = build_load_anchor();
         let inner_and = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::And, 0xFFFF, NodeOutputType::U64, false,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFF, NodeOutputType::I64, false,
         );
         let outer_and = build_binop_wrapped(
-            &mut fg, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
+            &mut fg, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::I64, false,
         );
         let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");
@@ -897,7 +897,7 @@ mod tests {
             let n = function.create_node(
                 NodeKind::IntConst(0u128),
                 [],
-                [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+                [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
             );
             function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
             function.node_outputs_exact::<1>(n).unwrap()[0]
@@ -907,7 +907,7 @@ mod tests {
                 let n = function.create_node(
                     NodeKind::IntConst(u128::from(i as u64)),
                     [],
-                    [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+                    [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
                 );
                 function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
                 function.node_outputs_exact::<1>(n).unwrap()[0]
@@ -915,7 +915,7 @@ mod tests {
             let add = function.create_node(
                 NodeKind::IntBinaryOp(IntBinaryOp::Add),
                 [leaf, cur],
-                [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+                [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
             );
             function.set_asm_fingerprint(add, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
             cur = function.node_outputs_exact::<1>(add).unwrap()[0];
@@ -965,7 +965,7 @@ mod tests {
         let n = fg.create_node(
             NodeKind::IntConst(0xABCDu128),
             [],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         fg.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let out = fg.node_outputs_exact::<1>(n).unwrap()[0];
@@ -1028,11 +1028,11 @@ mod tests {
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
-        let off_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
+        let off_const = b.build_int_const(base_offset as u64, NodeOutputType::I64).unwrap();
         let addr = b
-            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
+            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::I64)
             .unwrap();
-        let target = b.build_int_const(targets[0], NodeOutputType::U64).unwrap();
+        let target = b.build_int_const(targets[0], NodeOutputType::I64).unwrap();
         b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         let arg_val = b.read_variable(&arg_vn).unwrap();
         // Build the dispatch site: load through sp+base+idx*stride with
@@ -1040,34 +1040,34 @@ mod tests {
         let arg_u32 = b.function_mut().create_node(
             NodeKind::Truncate,
             [arg_val],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
+            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I32)],
         );
         b.function_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-        let mask0 = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
+        let mask0 = b.build_int_const(0u64, NodeOutputType::I32).unwrap();
         let masked = b
-            .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, NodeOutputType::U32)
+            .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, NodeOutputType::I32)
             .unwrap();
         let idx_u64 = b.function_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
+            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
         b.function_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-        let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
+        let stride_const = b.build_int_const(stride, NodeOutputType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
+            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::I64)
             .unwrap();
-        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
+        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::I64).unwrap();
         let sp_plus_base = b
-            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::U64)
+            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::I64)
             .unwrap();
         let load_addr = b
-            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::I64)
             .unwrap();
         let loaded = b
-            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
             .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);

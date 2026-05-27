@@ -54,7 +54,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     )
     .unwrap();
     let addr = b
-        .build_int_const(0xdead_u64, NodeOutputType::U64)
+        .build_int_const(0xdead_u64, NodeOutputType::I64)
         .unwrap();
     let _call_node = b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
     let ret_vars: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();
@@ -95,7 +95,7 @@ fn get_vn_for_callother_clobber_slot_uses_override_list() {
             None,
             &[rax_value],
             &[rax],
-            &[NodeOutputKind::OutputType(NodeOutputType::U64)],
+            &[NodeOutputKind::OutputType(NodeOutputType::I64)],
         )
         .expect("call_other_modeled");
     b.build_return(None, &[rax]).expect("ret");
@@ -133,10 +133,10 @@ fn get_vn_for_callother_value_output_returns_none() {
             7,
             "valued_op",
             &[],
-            Some(NodeOutputType::U32), // value output at slot 2
+            Some(NodeOutputType::I32), // value output at slot 2
             &[rax_value],
             &[rax],                                          // clobber output at slot 3
-            &[NodeOutputKind::OutputType(NodeOutputType::U64)],
+            &[NodeOutputKind::OutputType(NodeOutputType::I64)],
         )
         .expect("call_other_modeled with value");
     b.build_return(None, &[rax]).expect("ret");
@@ -186,7 +186,7 @@ fn get_vn_callother_override_shadows_function_default() {
             None,
             &[rbx_value],
             &[rbx],                                          // override list
-            &[NodeOutputKind::OutputType(NodeOutputType::U64)],
+            &[NodeOutputKind::OutputType(NodeOutputType::I64)],
         )
         .expect("call_other_modeled");
     b.build_return(None, &[rax, rbx]).expect("ret");
@@ -229,7 +229,7 @@ fn get_vn_for_call_clobber_slot_uses_function_default() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr = b
-        .build_int_const(0xdead_u64, NodeOutputType::U64)
+        .build_int_const(0xdead_u64, NodeOutputType::I64)
         .unwrap();
     b.build_call(addr).expect("build_call");
     b.build_return(None, &[rax]).expect("ret");
@@ -277,7 +277,7 @@ fn get_vn_for_call_clobber_slot_uses_override_when_set() {
         .tracked(rax)
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let addr = b.build_int_const(0xdead_u64, NodeOutputType::U64).unwrap();
+    let addr = b.build_int_const(0xdead_u64, NodeOutputType::I64).unwrap();
     b.build_call(addr).expect("build_call");
     b.build_return(None, &[rax]).expect("ret");
     let mut function = b.build().expect("build");

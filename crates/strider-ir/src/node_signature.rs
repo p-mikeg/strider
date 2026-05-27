@@ -36,7 +36,7 @@ pub enum ExpectedOutputKind {
     PhiToken,
     /// A `Bool` value.
     Bool,
-    /// Any integer-typed value (U8, U16, U32, U64, U80, U128, U256).
+    /// Any integer-typed value (I8, I16, I32, I64, I80, I128, I256).
     AnyInt,
     /// Any float-typed value (F32, F64, F80).
     AnyFloat,

@@ -360,13 +360,13 @@ mod tests {
 
     #[test]
     fn int_const_signed_u32_negative() -> crate::opt::Result<()> {
-        // 0xFFFF_FFFC at U32 must read as -4 signed.
+        // 0xFFFF_FFFC at I32 must read as -4 signed.
         let mut b = FunctionBuilder::empty()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
+        let v = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::I32)?;
         b.build_return(Some(v), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn int_const_signed_neg_of_min_uses_modular_negation() -> crate::opt::Result<()> {
         // `Neg(IntConst(0x8000_0000_U32))` must agree with the IR's modular
-        // semantics: in two's-complement at U32, `-(-2^31) = -2^31`.  The
+        // semantics: in two's-complement at I32, `-(-2^31) = -2^31`.  The
         // peephole here must NOT return `+2^31` (which is what
         // `checked_neg(-2^31i128)` produces) — that would silently disagree
         // with `ConstantFold::IntUnaryOp::Neg`'s `wrapping_neg` evaluator
@@ -388,8 +388,8 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let inner = b.build_int_const(0x8000_0000u64, NodeOutputType::U32)?;
-        let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, NodeOutputType::U32)?;
+        let inner = b.build_int_const(0x8000_0000u64, NodeOutputType::I32)?;
+        let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, NodeOutputType::I32)?;
         b.build_return(Some(neg), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -406,8 +406,8 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let inner = b.build_int_const(7u64, NodeOutputType::U32)?;
-        let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, NodeOutputType::U32)?;
+        let inner = b.build_int_const(7u64, NodeOutputType::I32)?;
+        let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, NodeOutputType::I32)?;
         b.build_return(Some(neg), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -436,8 +436,8 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -453,8 +453,8 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
-        let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -471,8 +471,8 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -496,7 +496,7 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let c = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        let c = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
         b.build_return(Some(c), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -516,13 +516,13 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
-        let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
-        let s1 = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
-        let s2 = b.build_sub_as_add_neg(s1, eight, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let eight = b.build_int_const(8u64, NodeOutputType::I32)?;
+        let twelve = b.build_int_const(12u64, NodeOutputType::I32)?;
+        let s1 = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::I32)?;
+        let s2 = b.build_sub_as_add_neg(s1, eight, NodeOutputType::I32)?;
         let s3 =
-            b.build_sub_as_add_neg(s2, twelve, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(s2, twelve, NodeOutputType::I32)?;
         b.build_return(Some(s3), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -553,7 +553,7 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let c = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        let c = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
         b.build_return(Some(c), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -592,16 +592,16 @@ mod tests {
         // a: sp = sp - 4 (SP-rooted)
         b.set_region(a);
         let sp_a = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let sp_minus_4 =
-            b.build_sub_as_add_neg(sp_a, four, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_a, four, NodeOutputType::I32)?;
         b.write_variable(&sp, sp_minus_4)?;
         b.build_branch(c)?;
 
         // bb: sp = 0xDEAD_BEEF (NOT SP-rooted — a literal value pretending
         // to be a new SP).
         b.set_region(bb);
-        let bogus = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
+        let bogus = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::I32)?;
         b.write_variable(&sp, bogus)?;
         b.build_branch(c)?;
 
@@ -637,9 +637,9 @@ mod tests {
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         // Simulate `and $0xfffffff8, %esp`.
-        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
         let aligned = b.build_int_binary_operation(
-            sp_val, mask, IntBinaryOp::And, NodeOutputType::U32)?;
+            sp_val, mask, IntBinaryOp::And, NodeOutputType::I32)?;
         b.build_return(Some(aligned), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -675,11 +675,11 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
         let aligned = b.build_int_binary_operation(
-            sp_val, mask, IntBinaryOp::And, NodeOutputType::U32)?;
-        let frame = b.build_int_const(0x1D0u64, NodeOutputType::U32)?;
-        let post_sub = b.build_sub_as_add_neg(aligned, frame, NodeOutputType::U32)?;
+            sp_val, mask, IntBinaryOp::And, NodeOutputType::I32)?;
+        let frame = b.build_int_const(0x1D0u64, NodeOutputType::I32)?;
+        let post_sub = b.build_sub_as_add_neg(aligned, frame, NodeOutputType::I32)?;
         b.build_return(Some(post_sub), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -718,11 +718,11 @@ mod tests {
         // 5001 nested Ands: each `And(prev_and, mask)` triggers one
         // recursion in `decompose_sp_inner`, so depth reaches MAX+1 and
         // the budget bails the outermost call.
-        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
         const N: usize = (super::MAX_DECOMPOSE_DEPTH as usize) + 1;
         for _ in 0..N {
             current = b.build_int_binary_operation(
-                current, mask, IntBinaryOp::And, NodeOutputType::U32)?;
+                current, mask, IntBinaryOp::And, NodeOutputType::I32)?;
         }
         b.build_return(Some(current), &[])?;
         b.set_lift_addr(None);
@@ -754,8 +754,8 @@ mod tests {
         let mut current = b.read_variable(&sp)?;
         const N: usize = 5000;
         for _ in 0..N {
-            let one = b.build_int_const(1u64, NodeOutputType::U32)?;
-            current = b.build_int_binary_operation(current, one, IntBinaryOp::Add, NodeOutputType::U32)?;
+            let one = b.build_int_const(1u64, NodeOutputType::I32)?;
+            current = b.build_int_binary_operation(current, one, IntBinaryOp::Add, NodeOutputType::I32)?;
         }
         b.build_return(Some(current), &[])?;
         b.set_lift_addr(None);

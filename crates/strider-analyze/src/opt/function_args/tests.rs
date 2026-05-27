@@ -107,10 +107,10 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // addr = sp + 4; load[addr]; return loaded
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -139,17 +139,17 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     Ok(())
 }
 
-/// Builds `load[sp + offset]` reading a U32 value.  Returns the loaded output.
+/// Builds `load[sp + offset]` reading a I32 value.  Returns the loaded output.
 fn build_sp_load(
     b: &mut FunctionBuilder,
     sp: &rsleigh::Vn,
     offset: u32,
 ) -> Result<strider_ir::node::NodeOutputId> {
     let sp_val = b.read_variable(sp)?;
-    let off_const = b.build_int_const(offset as u64, NodeOutputType::U32)?;
+    let off_const = b.build_int_const(offset as u64, NodeOutputType::I32)?;
     let addr =
-        b.build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     Ok(loaded)
 }
 
@@ -165,7 +165,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
         let a = build_sp_load(b, &sp, 4)?;
         let c = build_sp_load(b, &sp, 12)?;
         // Combine both loads so neither is dead.
-        let sum = b.build_int_binary_operation(a, c, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let sum = b.build_int_binary_operation(a, c, IntBinaryOp::Add, NodeOutputType::I32)?;
         b.build_return(Some(sum), &[])?;
         Ok(())
     })?;
@@ -202,12 +202,12 @@ fn prior_stackstore_shadows() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // *(sp + 4) = 0x11; return *(sp + 4)
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x11u64, NodeOutputType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -250,14 +250,14 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     // true_br: *(sp+4) = 0x22; goto join
     b.set_region(true_br);
     let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_t = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_t = b.build_int_binary_operation(
         sp_t,
         four_t,
         IntBinaryOp::Add,
-        NodeOutputType::U32,
+        NodeOutputType::I32,
     )?;
-    let data = b.build_int_const(0x22u64, NodeOutputType::U32)?;
+    let data = b.build_int_const(0x22u64, NodeOutputType::I32)?;
     b.build_store(addr_t, data, rsleigh::VnSpace::RAM)?;
     b.build_branch(join)?;
 
@@ -268,14 +268,14 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     // join: return *(sp+4)
     b.set_region(join);
     let sp_j = b.read_variable(&sp)?;
-    let four_j = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_j = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_j = b.build_int_binary_operation(
         sp_j,
         four_j,
         IntBinaryOp::Add,
-        NodeOutputType::U32,
+        NodeOutputType::I32,
     )?;
-    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -302,16 +302,16 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
 
     let sp = stack_vn_aarch64();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // Read sp+0 as U32, then sp+0 as U64.  Combine so neither is dead.
-        let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        let wide = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        // Read sp+0 as I32, then sp+0 as I64.  Combine so neither is dead.
+        let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        let wide = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         let narrow_ext =
-            b.extend_if_needed(narrow, NodeOutputType::U64, strider_ir::ExtendOp::ZeroExtend)?;
+            b.extend_if_needed(narrow, NodeOutputType::I64, strider_ir::ExtendOp::ZeroExtend)?;
         let sum = b.build_int_binary_operation(
             narrow_ext,
             wide,
             IntBinaryOp::Add,
-            NodeOutputType::U64,
+            NodeOutputType::I64,
         )?;
         b.build_return(Some(sum), &[])?;
         Ok(())
@@ -326,7 +326,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert_eq!(
         arg0_nodes.len(), 2,
-        "both Loads at sp+0 (U32 and U64) must be registered for arg 0"
+        "both Loads at sp+0 (I32 and I64) must be registered for arg 0"
     );
     assert!(
         arg0_nodes.iter().all(|&n| matches!(fg.node_kind(n), NodeKind::Load(_))),
@@ -360,7 +360,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
         .build_fn_single_region()?;
 
     // Return a constant — rdi is never read.
-    let c = b.build_int_const(0u64, NodeOutputType::U64)?;
+    let c = b.build_int_const(0u64, NodeOutputType::I64)?;
     b.build_return(Some(c), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -412,12 +412,12 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let a = b.read_variable(&rdi)?;
     let bb = b.read_variable(&rsi)?;
     let sp_val = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, NodeOutputType::U64)?;
+    let eight = b.build_int_const(8u64, NodeOutputType::I64)?;
     let addr =
-        b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, NodeOutputType::U64)?;
-    let c = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
-    let ab = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::U64)?;
-    let abc = b.build_int_binary_operation(ab, c, IntBinaryOp::Add, NodeOutputType::U64)?;
+        b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, NodeOutputType::I64)?;
+    let c = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
+    let ab = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)?;
+    let abc = b.build_int_binary_operation(ab, c, IntBinaryOp::Add, NodeOutputType::I64)?;
     b.build_return(Some(abc), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -457,7 +457,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 /// range nevertheless overlaps the load's must shadow it.  Exact-offset
 /// comparison would miss this.
 ///
-/// `*(sp+0) = U64(X); return *(sp+4) as U64` — store covers `[0,8)`, load
+/// `*(sp+0) = I64(X); return *(sp+4) as I64` — store covers `[0,8)`, load
 /// covers `[4,12)`.  With the byte-range overlap check the load is
 /// disqualified; with the old `k == offset` check it would be registered.
 #[test]
@@ -465,15 +465,15 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 
     let sp = stack_vn_aarch64();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // *(sp+0) = U64(0xDEAD_BEEF_CAFE_BABE)
-        let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::U64)?;
+        // *(sp+0) = I64(0xDEAD_BEEF_CAFE_BABE)
+        let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::I64)?;
         b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
 
-        // return *(sp+4) as U64
-        let four = b.build_int_const(4u64, NodeOutputType::U64)?;
+        // return *(sp+4) as I64
+        let four = b.build_int_const(4u64, NodeOutputType::I64)?;
         let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I64)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -494,22 +494,22 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 /// `overlapping_stackstore_at_different_offset_shadows`: a nearby
 /// SP-relative store whose range is *disjoint* from the load's must NOT shadow.
 ///
-/// `*(sp+0) = U32(X); return *(sp+4) as U32` — store covers `[0,4)`, load
+/// `*(sp+0) = I32(X); return *(sp+4) as I32` — store covers `[0,4)`, load
 /// covers `[4,8)`.  No overlap ⇒ the sp+4 slot is still a valid arg 0.
 #[test]
 fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // *(sp+0) = U32(0x11) — covers [0,4).
-        let a = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+        // *(sp+0) = I32(0x11) — covers [0,4).
+        let a = b.build_int_const(0x11u64, NodeOutputType::I32)?;
         b.build_store(sp_val, a, rsleigh::VnSpace::RAM)?;
 
-        // return *(sp+4) as U32 — covers [4,8); disjoint from store.
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        // return *(sp+4) as I32 — covers [4,8); disjoint from store.
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -535,9 +535,9 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 /// disjoint.  Under `any()` semantics for MemPhi any overlapping predecessor
 /// is a shadow, so the load must be disqualified.
 ///
-/// then: `*(sp+2) = U32` covers `[2,6)` — overlaps load `[4,8)`.
-/// else: `*(sp+8) = U32` covers `[8,12)` — disjoint from load `[4,8)`.
-/// merge: `return *(sp+4) as U32`.
+/// then: `*(sp+2) = I32` covers `[2,6)` — overlaps load `[4,8)`.
+/// else: `*(sp+8) = I32` covers `[8,12)` — disjoint from load `[4,8)`.
+/// merge: `return *(sp+4) as I32`.
 #[test]
 fn memphi_partial_overlap_shadows() -> Result<()> {
 
@@ -553,33 +553,33 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
-    // then: *(sp + 2) = U32(0x11)  — StackStore{+2, size 4} covers [2,6).
+    // then: *(sp + 2) = I32(0x11)  — StackStore{+2, size 4} covers [2,6).
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let two_t = b.build_int_const(2u64, NodeOutputType::U32)?;
+    let two_t = b.build_int_const(2u64, NodeOutputType::I32)?;
     let addr_t =
-        b.build_int_binary_operation(sp_t, two_t, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let data_t = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_t, two_t, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let data_t = b.build_int_const(0x11u64, NodeOutputType::I32)?;
     b.build_store(addr_t, data_t, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
-    // else: *(sp + 8) = U32(0x22)  — StackStore{+8, size 4} covers [8,12).
+    // else: *(sp + 8) = I32(0x22)  — StackStore{+8, size 4} covers [8,12).
     b.set_region(else_r);
     let sp_e = b.read_variable(&sp)?;
-    let eight_e = b.build_int_const(8u64, NodeOutputType::U32)?;
+    let eight_e = b.build_int_const(8u64, NodeOutputType::I32)?;
     let addr_e =
-        b.build_int_binary_operation(sp_e, eight_e, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let data_e = b.build_int_const(0x22u64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_e, eight_e, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let data_e = b.build_int_const(0x22u64, NodeOutputType::I32)?;
     b.build_store(addr_e, data_e, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
-    // merge: return *(sp + 4) as U32  — covers [4,8).
+    // merge: return *(sp + 4) as I32  — covers [4,8).
     b.set_region(merge);
     let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_m = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_m =
-        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -622,7 +622,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
 }
 
 /// `sub rsp, 0xFFFFFFFFFFFFFFFC` is an alternate encoding of `add rsp, 4`:
-/// when the constant is sign-extended from its U64 bit width it becomes
+/// when the constant is sign-extended from its I64 bit width it becomes
 /// `-4`, and `Sub(sp, -4) = sp + 4`.  `FunctionArgDetect` must recognise
 /// the resulting `Load` as a candidate for stack-arg offset `+4`.
 #[test]
@@ -632,10 +632,10 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // 0xFFFFFFFFFFFFFFFC_U64 == -4 when interpreted as signed i64.
-        let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, NodeOutputType::U64)?;
-        let addr = b.build_sub_as_add_neg(sp_val, neg_four, NodeOutputType::U64,
+        let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, NodeOutputType::I64)?;
+        let addr = b.build_sub_as_add_neg(sp_val, neg_four, NodeOutputType::I64,
         )?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -675,10 +675,10 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
 // (conservative dirty pin).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Pin: a plain `Store(addr=sp+K, U32)` whose K overlaps the load's range
+/// Pin: a plain `Store(addr=sp+K, I32)` whose K overlaps the load's range
 /// must mark the chain dirty (this was the pre-fix behaviour for ALL plain
 /// Stores; here we keep it for SP-rooted overlapping Stores).  Pipeline
-/// A plain `Store(addr=sp+4, U32)` whose range matches the load's range
+/// A plain `Store(addr=sp+4, I32)` whose range matches the load's range
 /// must mark the chain dirty.
 #[test]
 fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result<()> {
@@ -686,15 +686,15 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // *(sp + 4) = U32(0x11)  — covers [4,8).
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        // *(sp + 4) = I32(0x11)  — covers [4,8).
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x11u64, NodeOutputType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
 
-        // return *(sp + 4) as U32 — covers [4,8); same range, must shadow.
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        // return *(sp + 4) as I32 — covers [4,8); same range, must shadow.
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -707,7 +707,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
         arg0_nodes.is_empty(),
-        "plain Store(sp+4, U32) overlaps Load[sp+4]: chain must be dirty — no arg registered"
+        "plain Store(sp+4, I32) overlaps Load[sp+4]: chain must be dirty — no arg registered"
     );
     Ok(())
 }
@@ -725,16 +725,16 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Volatile global write: store to fixed `.data` address.
-        let global_addr = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
-        let global_data = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        let global_addr = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::I32)?;
+        let global_data = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
         b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
 
-        // return *(sp + 4) as U32 — the load's memory predecessor IS the
+        // return *(sp + 4) as I32 — the load's memory predecessor IS the
         // global Store above; cross-class against the SP load.
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -753,10 +753,10 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     Ok(())
 }
 
-/// NEW: an SP-rooted plain `Store(addr=sp+K2, U32)` whose byte range is
+/// NEW: an SP-rooted plain `Store(addr=sp+K2, I32)` whose byte range is
 /// disjoint from the load's must NOT mark the chain dirty.
 ///
-/// `*(sp + 0) = U32(X)` covers `[0,4)`; `return *(sp + 4)` covers `[4,8)`
+/// `*(sp + 0) = I32(X)` covers `[0,4)`; `return *(sp + 4)` covers `[4,8)`
 /// — disjoint, so sp+4 still qualifies as arg 0.
 #[test]
 fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
@@ -764,15 +764,15 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // *(sp + 0) = U32(0x11) — covers [0,4).
-        let zero_data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+        // *(sp + 0) = I32(0x11) — covers [0,4).
+        let zero_data = b.build_int_const(0x11u64, NodeOutputType::I32)?;
         b.build_store(sp_val, zero_data, rsleigh::VnSpace::RAM)?;
 
-        // return *(sp + 4) as U32 — covers [4,8); disjoint from [0,4).
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        // return *(sp + 4) as I32 — covers [4,8); disjoint from [0,4).
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -785,7 +785,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
         !arg0_nodes.is_empty(),
-        "disjoint SP-rooted Store(sp+0, U32) must not mark Load[sp+4] dirty: still registered as arg 0"
+        "disjoint SP-rooted Store(sp+0, I32) must not mark Load[sp+4] dirty: still registered as arg 0"
     );
     Ok(())
 }
@@ -821,18 +821,18 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     // then: sp -= 4
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_t = b.build_int_const(4u64, NodeOutputType::I32)?;
     let sp_t_new =
-        b.build_sub_as_add_neg(sp_t, four_t, NodeOutputType::U32)?;
+        b.build_sub_as_add_neg(sp_t, four_t, NodeOutputType::I32)?;
     b.write_variable(&sp, sp_t_new)?;
     b.build_branch(join)?;
 
     // else: sp -= 8
     b.set_region(else_r);
     let sp_e = b.read_variable(&sp)?;
-    let eight_e = b.build_int_const(8u64, NodeOutputType::U32)?;
+    let eight_e = b.build_int_const(8u64, NodeOutputType::I32)?;
     let sp_e_new =
-        b.build_sub_as_add_neg(sp_e, eight_e, NodeOutputType::U32)?;
+        b.build_sub_as_add_neg(sp_e, eight_e, NodeOutputType::I32)?;
     b.write_variable(&sp, sp_e_new)?;
     b.build_branch(join)?;
 
@@ -840,13 +840,13 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     // then load *(sp_orig + 4) and return it.
     b.set_region(join);
     let phi_sp = b.read_variable(&sp)?;
-    let trash = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+    let trash = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
     b.build_store(phi_sp, trash, rsleigh::VnSpace::RAM)?;
 
-    let four_j = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_j = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_j =
-        b.build_int_binary_operation(sp_orig, four_j, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_orig, four_j, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -876,20 +876,20 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // CHAIN_LEN disjoint stack stores at offsets [16, 20, 24, ...].
         for i in 0..CHAIN_LEN {
-            let off = b.build_int_const(((i * 4) as u64) + 16, NodeOutputType::U32)?;
+            let off = b.build_int_const(((i * 4) as u64) + 16, NodeOutputType::I32)?;
             let addr = b.build_int_binary_operation(
-                sp_val, off, IntBinaryOp::Add, NodeOutputType::U32,
+                sp_val, off, IntBinaryOp::Add, NodeOutputType::I32,
             )?;
-            let val = b.build_int_const(i as u64, NodeOutputType::U32)?;
+            let val = b.build_int_const(i as u64, NodeOutputType::I32)?;
             b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
         }
         // Load from sp+4 — disjoint from every store above.
         // The walker must pass through all 10k stores backwards.
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr4 = b.build_int_binary_operation(
-            sp_val, four, IntBinaryOp::Add, NodeOutputType::U32,
+            sp_val, four, IntBinaryOp::Add, NodeOutputType::I32,
         )?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -938,7 +938,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     b.advance_cur_region_memory(call_mem_out)?;
 
     // After the call, read *(sp + 0).
-    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;

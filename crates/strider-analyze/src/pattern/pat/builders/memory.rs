@@ -89,7 +89,7 @@ impl LoadPat {
     }
     /// Restrict the match to loads whose value output (`outputs[0]`) is
     /// `n` bits wide.  Matches both integer and float types of the
-    /// same width (e.g. `bit_width(32)` matches U32 and F32).
+    /// same width (e.g. `bit_width(32)` matches I32 and F32).
     #[must_use]
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);
@@ -267,7 +267,7 @@ impl StorePat {
     }
     /// Restrict the match to stores whose data input (`inputs[2]`) is
     /// `n` bits wide.  Matches both integer and float types of the
-    /// same width (e.g. `bit_width(32)` matches U32 and F32).
+    /// same width (e.g. `bit_width(32)` matches I32 and F32).
     #[must_use]
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);

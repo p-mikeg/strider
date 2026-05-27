@@ -53,22 +53,22 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Store 0x99 at sp+0 first (the value we'll forward to).
-        let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+        let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
         let target_addr = b.build_int_binary_operation(
-            sp_val, zero, IntBinaryOp::Add, NodeOutputType::U32,
+            sp_val, zero, IntBinaryOp::Add, NodeOutputType::I32,
         )?;
-        let target_val = b.build_int_const(0x99u64, NodeOutputType::U32)?;
+        let target_val = b.build_int_const(0x99u64, NodeOutputType::I32)?;
         b.build_store(target_addr, target_val, rsleigh::VnSpace::RAM)?;
 
         // CHAIN_LEN disjoint stores at increasing offsets.  Each is
         // a fresh SP-relative store in the memory chain that the probe must
         // walk past to reach the target store.
         for i in 1..=CHAIN_LEN {
-            let off = b.build_int_const(((i * 4) as u64) + 8, NodeOutputType::U32)?;
+            let off = b.build_int_const(((i * 4) as u64) + 8, NodeOutputType::I32)?;
             let addr = b.build_int_binary_operation(
-                sp_val, off, IntBinaryOp::Add, NodeOutputType::U32,
+                sp_val, off, IntBinaryOp::Add, NodeOutputType::I32,
             )?;
-            let val = b.build_int_const(i as u64, NodeOutputType::U32)?;
+            let val = b.build_int_const(i as u64, NodeOutputType::I32)?;
             b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
         }
 
@@ -77,7 +77,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
         // intermediate stores at irrelevant offsets should still exist
         // (they're side-effecting writes), but the load itself must
         // disappear.
-        let loaded = b.build_load(target_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(target_addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -98,12 +98,12 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x11u64, NodeOutputType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -124,19 +124,19 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let twelve = b.build_int_const(12u64, NodeOutputType::I32)?;
         let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
         let addr12 =
-            b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
-        let b_val = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let a = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
+        let b_val = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
         // Order: store at +4 first, then +12, then load +4.  The load's
         // memory input chain is store12 -> store4 -> InitialMemory.
         b.build_store(addr4, b_val, rsleigh::VnSpace::RAM)?;
         b.build_store(addr12, a, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -152,7 +152,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     Ok(())
 }
 
-/// Overlap case: `*(sp+0) = U64(...); return *(sp+4) as U32` — the store
+/// Overlap case: `*(sp+0) = I64(...); return *(sp+4) as I32` — the store
 /// covers `[0, 8)` which intersects the load's `[4, 8)`, so forwarding
 /// must bail and the load must remain.
 #[test]
@@ -160,13 +160,13 @@ fn bail_on_overlapping_store() -> Result<()> {
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U64)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I64)?;
         let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
-        // Store U64 at sp+0 (covers [0,8)), then load U32 from sp+4 ([4,8)).
-        let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::U64)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I64)?;
+        // Store I64 at sp+0 (covers [0,8)), then load I32 from sp+4 ([4,8)).
+        let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::I64)?;
         b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -182,7 +182,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     Ok(())
 }
 
-/// Type-mismatch at matching offset: `*(sp+0) = U32(...); return *(sp+0) as U64`.
+/// Type-mismatch at matching offset: `*(sp+0) = I32(...); return *(sp+0) as I64`.
 /// Offsets agree but widths differ, so the stored bytes don't fully back
 /// the load — bail.
 #[test]
@@ -190,9 +190,9 @@ fn bail_on_type_mismatch() -> Result<()> {
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let narrow = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+        let narrow = b.build_int_const(0x11u64, NodeOutputType::I32)?;
         b.build_store(sp_val, narrow, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -215,18 +215,18 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let a = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
         b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
         // Opaque store to a non-SP address (a compile-time constant address).
         // Cross-class against the SP-rooted load — cannot be proven disjoint
         // without `AliasMode::AssumeStackConstDisjoint`.
-        let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
-        let other = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let other = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
         b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -251,15 +251,15 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
 fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let a = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
         b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
-        let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
-        let other = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let other = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
         b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -289,19 +289,19 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
 fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let a = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
         b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
         // Anchor address: a load of a constant global, whose loaded
         // value is then used as a store address.  Neither SP-rooted
         // nor an IntConst.
-        let global_addr = b.build_int_const(0x2000u64, NodeOutputType::U32)?;
-        let p = b.build_load(global_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        let other = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        let global_addr = b.build_int_const(0x2000u64, NodeOutputType::I32)?;
+        let p = b.build_load(global_addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        let other = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
         b.build_store(p, other, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -329,13 +329,13 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
 fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let addr1 = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
-        let addr2 = b.build_int_const(0x2000u64, NodeOutputType::U32)?;
-        let data_a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
-        let data_b = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        let addr1 = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let addr2 = b.build_int_const(0x2000u64, NodeOutputType::I32)?;
+        let data_a = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
+        let data_b = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
         b.build_store(addr1, data_a, rsleigh::VnSpace::RAM)?;
         b.build_store(addr2, data_b, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr1, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr1, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -366,11 +366,11 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
 fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let table_base = b.build_int_const(0x100u64, NodeOutputType::U32)?;
-        let p = b.build_load(table_base, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        let data = b.build_int_const(0xCCu64, NodeOutputType::U32)?;
+        let table_base = b.build_int_const(0x100u64, NodeOutputType::I32)?;
+        let p = b.build_load(table_base, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        let data = b.build_int_const(0xCCu64, NodeOutputType::I32)?;
         b.build_store(p, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -405,15 +405,15 @@ fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
 fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let base1 = b.build_int_const(0x100u64, NodeOutputType::U32)?;
-        let base2 = b.build_int_const(0x200u64, NodeOutputType::U32)?;
-        let p = b.build_load(base1, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        let q = b.build_load(base2, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        let data_c = b.build_int_const(0xCCu64, NodeOutputType::U32)?;
-        let data_d = b.build_int_const(0xDDu64, NodeOutputType::U32)?;
+        let base1 = b.build_int_const(0x100u64, NodeOutputType::I32)?;
+        let base2 = b.build_int_const(0x200u64, NodeOutputType::I32)?;
+        let p = b.build_load(base1, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        let q = b.build_load(base2, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        let data_c = b.build_int_const(0xCCu64, NodeOutputType::I32)?;
+        let data_d = b.build_int_const(0xDDu64, NodeOutputType::I32)?;
         b.build_store(p, data_c, rsleigh::VnSpace::RAM)?;
         b.build_store(q, data_d, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -448,18 +448,18 @@ fn bail_on_call_between() -> Result<()> {
         .build_fn_single_region()?;
 
     let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U64)?;
+    let four = b.build_int_const(4u64, NodeOutputType::I64)?;
     let addr4 =
-        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
-    let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I64)?;
+    let data = b.build_int_const(0x11u64, NodeOutputType::I32)?;
     b.build_store(addr4, data, rsleigh::VnSpace::RAM)?;
-    let target = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
+    let target = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
     b.build_call(target)?;
     // SP did not shift (ret_stack_pop=0), so sp+4 is still the same slot.
     let sp_val2 = b.read_variable(&sp)?;
     let addr4b =
-        b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, NodeOutputType::U64)?;
-    let loaded = b.build_load(addr4b, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, NodeOutputType::I64)?;
+    let loaded = b.build_load(addr4b, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -499,30 +499,30 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     // then: *(sp+4) = 0xAA; goto merge
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_t = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_t =
-        b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let a = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
     b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
     // else: *(sp+4) = 0xBB; goto merge
     b.set_region(else_r);
     let sp_e = b.read_variable(&sp)?;
-    let four_e = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_e = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_e =
-        b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let bval = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let bval = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
     b.build_store(addr_e, bval, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
     // merge: return *(sp+4)
     b.set_region(merge);
     let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_m = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_m =
-        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -585,10 +585,10 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     // then: *(sp+4) = 0xAA
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_t = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_t =
-        b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let a = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
     b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
@@ -598,10 +598,10 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
 
     b.set_region(merge);
     let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_m = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_m =
-        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -644,10 +644,10 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let sp_e = b.read_variable(&sp)?;
-    let four_e = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_e = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_e =
-        b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let shared = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let shared = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
     b.build_store(addr_e, shared, rsleigh::VnSpace::RAM)?;
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
@@ -655,30 +655,30 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     // then: *(sp+8) = 0xBB; branch merge
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let eight_t = b.build_int_const(8u64, NodeOutputType::U32)?;
+    let eight_t = b.build_int_const(8u64, NodeOutputType::I32)?;
     let addr_t =
-        b.build_int_binary_operation(sp_t, eight_t, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let bt = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_t, eight_t, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let bt = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
     b.build_store(addr_t, bt, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
     // else: *(sp+12) = 0xCC; branch merge
     b.set_region(else_r);
     let sp_l = b.read_variable(&sp)?;
-    let twelve_l = b.build_int_const(12u64, NodeOutputType::U32)?;
+    let twelve_l = b.build_int_const(12u64, NodeOutputType::I32)?;
     let addr_l =
-        b.build_int_binary_operation(sp_l, twelve_l, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let cc = b.build_int_const(0xCCu64, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_l, twelve_l, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let cc = b.build_int_const(0xCCu64, NodeOutputType::I32)?;
     b.build_store(addr_l, cc, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
     // merge: return *(sp+4)
     b.set_region(merge);
     let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, NodeOutputType::U32)?;
+    let four_m = b.build_int_const(4u64, NodeOutputType::I32)?;
     let addr_m =
-        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -704,16 +704,16 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
 fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
         let store_addr =
-            b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x4242u64, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, four, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x4242u64, NodeOutputType::I32)?;
         b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
 
-        let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
+        let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::I32)?;
         let load_addr =
-            b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
-        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+            b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -757,13 +757,13 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
+        let eight = b.build_int_const(8u64, NodeOutputType::I32)?;
         let addr =
-            b.build_sub_as_add_neg(sp_val, eight, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, eight, NodeOutputType::I32)?;
         // Store the full 4-byte value, then load only the low byte.
-        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
+        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::I32)?;
         b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I8)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -781,11 +781,11 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
-    // `int_const_val` applies the output type's mask, so for a U8 output it
+    // `int_const_val` applies the output type's mask, so for a I8 output it
     // returns the low byte even when the backing `IntConst` node still
     // carries the full u32 bit-pattern internally.
     let val_ty = fg.output_kind(ret_inputs[2]).as_value();
-    assert_eq!(val_ty, Some(NodeOutputType::U8));
+    assert_eq!(val_ty, Some(NodeOutputType::I8));
     assert_eq!(
         fg.int_const_val(ret_inputs[2]),
         Some(0xEF),
@@ -803,12 +803,12 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
+        let twelve = b.build_int_const(12u64, NodeOutputType::I32)?;
         let addr =
-            b.build_sub_as_add_neg(sp_val, twelve, NodeOutputType::U32)?;
-        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, twelve, NodeOutputType::I32)?;
+        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::I32)?;
         b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U16)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I16)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -824,7 +824,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
     let val_ty = fg.output_kind(ret_inputs[2]).as_value();
-    assert_eq!(val_ty, Some(NodeOutputType::U16));
+    assert_eq!(val_ty, Some(NodeOutputType::I16));
     assert_eq!(
         fg.int_const_val(ret_inputs[2]),
         Some(0xBEEF),
@@ -848,13 +848,13 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
 fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
+        let eight = b.build_int_const(8u64, NodeOutputType::I32)?;
         let addr =
-            b.build_sub_as_add_neg(sp_val, eight, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, eight, NodeOutputType::I32)?;
         // Store the full 4-byte value, then load only the high byte (BE).
-        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
+        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::I32)?;
         b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I8)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -878,7 +878,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     // Return inputs: [ctrl, mem, val_0, ...].
     let val_out = ret_inputs[2];
     let val_ty = fg.output_kind(val_out).as_value();
-    assert_eq!(val_ty, Some(NodeOutputType::U8));
+    assert_eq!(val_ty, Some(NodeOutputType::I8));
 
     // Outer node: Truncate.
     let outer = fg.node_for_output(val_out);
@@ -932,11 +932,11 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
-    // then: *(sp+0) = U64 wide value (will trigger narrow synthesis at the
-    // U32 load below).
+    // then: *(sp+0) = I64 wide value (will trigger narrow synthesis at the
+    // I32 load below).
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let wide = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::U64)?;
+    let wide = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::I64)?;
     b.build_store(sp_t, wide, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
@@ -944,11 +944,11 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     b.set_region(else_r);
     b.build_branch(merge)?;
 
-    // merge: load U32 from sp+0.  resolve walks pred(then) first (narrow
+    // merge: load I32 from sp+0.  resolve walks pred(then) first (narrow
     // synthesis would create a Truncate), then pred(else) returns None.
     b.set_region(merge);
     let sp_m = b.read_variable(&sp)?;
-    let loaded = b.build_load(sp_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+    let loaded = b.build_load(sp_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -1020,14 +1020,14 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let twentyfour = b.build_int_const(24u64, NodeOutputType::U64)?;
-        let addr = b.build_sub_as_add_neg(sp_val, twentyfour, NodeOutputType::U64,
+        let twentyfour = b.build_int_const(24u64, NodeOutputType::I64)?;
+        let addr = b.build_sub_as_add_neg(sp_val, twentyfour, NodeOutputType::I64,
         )?;
-        let stored = b.build_int_const(0xCAFEu64, NodeOutputType::U64)?;
+        let stored = b.build_int_const(0xCAFEu64, NodeOutputType::I64)?;
         b.build_store(addr, stored, rsleigh::VnSpace::RAM)?;
         // Touch the stored memory token so it survives DCE: emit a load of the
         // same slot and return the loaded value.
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -1052,7 +1052,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
         &fg,
         mem,
         -24,
-        NodeOutputType::U64,
+        NodeOutputType::I64,
         sp,
         &mut memo,
         &mut walk_memo,
@@ -1072,17 +1072,17 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Two stores at distinct offsets that both belong to the chain reaching
         // a final load — mimics the array-of-labels prologue.
-        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
-        let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;
+        let off24 = b.build_int_const(24u64, NodeOutputType::I64)?;
+        let off16 = b.build_int_const(16u64, NodeOutputType::I64)?;
         let addr_24 =
-            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::I64)?;
         let addr_16 =
-            b.build_sub_as_add_neg(sp_val, off16, NodeOutputType::U64)?;
-        let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
-        let v_16 = b.build_int_const(0xBBBBu64, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off16, NodeOutputType::I64)?;
+        let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::I64)?;
+        let v_16 = b.build_int_const(0xBBBBu64, NodeOutputType::I64)?;
         b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
         b.build_store(addr_16, v_16, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -1106,7 +1106,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
         &fg,
         mem,
         -16,
-        NodeOutputType::U64,
+        NodeOutputType::I64,
         sp,
         &mut memo,
         &mut walk_memo,
@@ -1119,7 +1119,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
         &fg,
         mem,
         -24,
-        NodeOutputType::U64,
+        NodeOutputType::I64,
         sp,
         &mut memo,
         &mut walk_memo,
@@ -1135,12 +1135,12 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let off24 = b.build_int_const(24u64, NodeOutputType::I64)?;
         let addr_24 =
-            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
-        let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::I64)?;
+        let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::I64)?;
         b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -1162,7 +1162,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
         &fg,
         mem,
         -8,  // No store at -8.
-        NodeOutputType::U64,
+        NodeOutputType::I64,
         sp,
         &mut memo,
         &mut walk_memo,
@@ -1179,15 +1179,15 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let off24 = b.build_int_const(24u64, NodeOutputType::I64)?;
         let addr_24 =
-            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
-        let first = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
-        let second = b.build_int_const(0xBBBBu64, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::I64)?;
+        let first = b.build_int_const(0xAAAAu64, NodeOutputType::I64)?;
+        let second = b.build_int_const(0xBBBBu64, NodeOutputType::I64)?;
         // Two stores at the SAME offset; the second alias-overwrites the first.
         b.build_store(addr_24, first, rsleigh::VnSpace::RAM)?;
         b.build_store(addr_24, second, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -1209,7 +1209,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
         &fg,
         mem,
         -24,
-        NodeOutputType::U64,
+        NodeOutputType::I64,
         sp,
         &mut memo,
         &mut walk_memo,
@@ -1228,13 +1228,13 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let off24 = b.build_int_const(24u64, NodeOutputType::I64)?;
         let addr_24 =
-            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
-        // Store U32, then load U64 — overlapping byte ranges intersect.
-        let stored = b.build_int_const(0xAAAAu64, NodeOutputType::U32)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::I64)?;
+        // Store I32, then load I64 — overlapping byte ranges intersect.
+        let stored = b.build_int_const(0xAAAAu64, NodeOutputType::I32)?;
         b.build_store(addr_24, stored, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -1256,7 +1256,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
         &fg,
         mem,
         -24,
-        NodeOutputType::U64, // request U64 from a U32 store
+        NodeOutputType::I64, // request I64 from a I32 store
         sp,
         &mut memo,
         &mut walk_memo,
@@ -1276,21 +1276,21 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     let sp = sp64_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         // Mirror the x64 prologue: store target0 at sp-24, target1 at sp-16.
-        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
-        let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;
+        let off24 = b.build_int_const(24u64, NodeOutputType::I64)?;
+        let off16 = b.build_int_const(16u64, NodeOutputType::I64)?;
         let addr_24 =
-            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off24, NodeOutputType::I64)?;
         let addr_16 =
-            b.build_sub_as_add_neg(sp_val, off16, NodeOutputType::U64)?;
-        let target0 = b.build_int_const(0x401190u64, NodeOutputType::U64)?;
-        let target1 = b.build_int_const(0x401180u64, NodeOutputType::U64)?;
+            b.build_sub_as_add_neg(sp_val, off16, NodeOutputType::I64)?;
+        let target0 = b.build_int_const(0x401190u64, NodeOutputType::I64)?;
+        let target1 = b.build_int_const(0x401180u64, NodeOutputType::I64)?;
         b.build_store(addr_24, target0, rsleigh::VnSpace::RAM)?;
         b.build_store(addr_16, target1, rsleigh::VnSpace::RAM)?;
         // The actual load uses a symbolic address, but for THIS helper test we
         // only exercise the "look up by concrete offset" API — the symbolic
         // shape match lives in the classifier (tested separately in
         // `indirect_resolve_classify`).
-        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -1318,7 +1318,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
             &fg,
             mem,
             off,
-            NodeOutputType::U64,
+            NodeOutputType::I64,
             sp,
             &mut memo,
             &mut walk_memo,
@@ -1336,9 +1336,9 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::U32)?;
-        let data = b.build_int_const(0x99u64, NodeOutputType::U32)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x99u64, NodeOutputType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // Emit a LOCK CallOther.  LOCK is now FullClobber, so StackOffsetDetect
@@ -1348,7 +1348,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         )?;
         let lock_mem_out = b.function().memory_output_of(lock_node)?;
         b.advance_cur_region_memory(lock_mem_out)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;

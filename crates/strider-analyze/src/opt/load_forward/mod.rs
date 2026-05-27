@@ -514,7 +514,7 @@ fn realize_with_depth(
                     // so the freshly-introduced constant inherits the
                     // rewritten load's fingerprint — otherwise the Layer-C
                     // always-on check trips on the BE narrow-shift constant
-                    // (e.g. `IntConst(32)` for a U64→U32 narrow on aarch64be).
+                    // (e.g. `IntConst(32)` for a I64→I32 narrow on aarch64be).
                     let shift_const_node = ctx.create_node_attributed(
                         NodeKind::IntConst(u128::from(shift_bits) & data_ty.bit_mask_u128()),
                         [],

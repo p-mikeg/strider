@@ -90,12 +90,12 @@ pub enum NodeKind {
 
     // ── Integer constants and operations ──────────────────────────────────────
     /// A compile-time integer constant of value `u128`.  Covers
-    /// `Bool`/`U8`/`U16`/`U32`/`U64`/`U80`/`U128`.  Wider integer types
-    /// (`U256`/`U512`) use [`Self::IntConstWide`] which references
+    /// `Bool`/`I8`/`I16`/`I32`/`I64`/`I80`/`I128`.  Wider integer types
+    /// (`I256`/`I512`) use [`Self::IntConstWide`] which references
     /// `Graph::wide_consts` off-side.
     IntConst(u128),
     /// A compile-time integer constant whose value doesn't fit in
-    /// `u128` — `U256` or `U512`.  The actual byte payload lives in
+    /// `u128` — `I256` or `I512`.  The actual byte payload lives in
     /// `Graph::wide_consts` and this node carries a
     /// [`crate::wide_const::WideConstId`] index.
     ///
@@ -154,10 +154,10 @@ pub enum NodeKind {
 
     // ── Bitcasts (reinterpretation of bit patterns) ───────────────────────────
     /// Reinterpret an integer's raw bits as a float of the same size.
-    /// `U32` → `F32`, `U64` → `F64`.  No value conversion — bits are unchanged.
+    /// `I32` → `F32`, `I64` → `F64`.  No value conversion — bits are unchanged.
     IntBitsToFloat,
     /// Reinterpret a float's raw bits as an integer of the same size.
-    /// `F32` → `U32`, `F64` → `U64`.  No value conversion — bits are unchanged.
+    /// `F32` → `I32`, `F64` → `I64`.  No value conversion — bits are unchanged.
     FloatBitsToInt,
 
     // ── Generic float cast ────────────────────────────────────────────────────
@@ -165,7 +165,7 @@ pub enum NodeKind {
     ///
     /// The optimizer lowers this to the appropriate specific form based on the
     /// actual input type:
-    /// - Integer same size (U32→F32, U64→F64) → `IntBitsToFloat`
+    /// - Integer same size (I32→F32, I64→F64) → `IntBitsToFloat`
     /// - Float same type → eliminated (identity)
     /// - Float different size → `FloatToFloat`
     CastToFloat,

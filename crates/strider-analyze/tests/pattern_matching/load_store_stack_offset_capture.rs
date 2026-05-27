@@ -20,8 +20,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let mut t = Tb::empty();
     let addr_stack = t.u64(0x1000);
     let addr_heap = t.u64(0x2000);
-    let v_stack = t.load_ram(addr_stack, NodeOutputType::U64);
-    let v_heap = t.load_ram(addr_heap, NodeOutputType::U64);
+    let v_stack = t.load_ram(addr_stack, NodeOutputType::I64);
+    let v_heap = t.load_ram(addr_heap, NodeOutputType::I64);
     let sum = t.add(v_stack, v_heap);
     let mut function = t.ret_val(sum);
 
@@ -64,7 +64,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let data = t.u64(0xAB);
     t.store_ram(addr_stack, data);
     t.store_ram(addr_heap, data);
-    let v = t.load_ram(addr_stack, NodeOutputType::U64);
+    let v = t.load_ram(addr_stack, NodeOutputType::I64);
     let mut function = t.ret_val(v);
 
     // Identify the two stores.

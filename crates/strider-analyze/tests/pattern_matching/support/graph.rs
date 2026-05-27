@@ -125,13 +125,13 @@ impl Tb {
     // ── Constant builders ─────────────────────────────────────────────────────
 
     pub fn u64(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::U64).unwrap()
+        self.fb.build_int_const(v, NodeOutputType::I64).unwrap()
     }
     pub fn u32(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::U32).unwrap()
+        self.fb.build_int_const(v, NodeOutputType::I32).unwrap()
     }
     pub fn u8(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::U8).unwrap()
+        self.fb.build_int_const(v, NodeOutputType::I8).unwrap()
     }
     pub fn int_of(&mut self, v: u64, ty: NodeOutputType) -> NodeOutputId {
         self.fb.build_int_const(v, ty).unwrap()
@@ -177,7 +177,7 @@ impl Tb {
         self.int_bin(l, r, IntBinaryOp::ShiftLeft)
     }
     pub fn int_bin(&mut self, l: NodeOutputId, r: NodeOutputId, op: IntBinaryOp) -> NodeOutputId {
-        self.int_bin_at(l, r, op, NodeOutputType::U64)
+        self.int_bin_at(l, r, op, NodeOutputType::I64)
     }
     pub fn int_bin_at(
         &mut self,
@@ -195,7 +195,7 @@ impl Tb {
     }
     pub fn int_un(&mut self, v: NodeOutputId, op: IntUnaryOp) -> NodeOutputId {
         self.fb
-            .build_int_unary_operation(v, op, NodeOutputType::U64)
+            .build_int_unary_operation(v, op, NodeOutputType::I64)
             .expect("int_unary_operation")
     }
     pub fn int_un_at(
@@ -210,7 +210,7 @@ impl Tb {
     }
     pub fn int_cmp(&mut self, l: NodeOutputId, r: NodeOutputId, op: IntCmpOp) -> NodeOutputId {
         self.fb
-            .build_int_cmp_operation(l, r, op, NodeOutputType::U64)
+            .build_int_cmp_operation(l, r, op, NodeOutputType::I64)
             .expect("int_cmp_operation")
     }
     pub fn int_cmp_at(
@@ -226,12 +226,12 @@ impl Tb {
     }
     pub fn popcount(&mut self, v: NodeOutputId) -> NodeOutputId {
         self.fb
-            .build_popcount(v, NodeOutputType::U64)
+            .build_popcount(v, NodeOutputType::I64)
             .expect("popcount")
     }
     pub fn lzcount(&mut self, v: NodeOutputId) -> NodeOutputId {
         self.fb
-            .build_lzcount(v, NodeOutputType::U64)
+            .build_lzcount(v, NodeOutputType::I64)
             .expect("lzcount")
     }
 
@@ -419,7 +419,7 @@ impl Tb {
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 
-    /// `return(IntConst(v) : U64)` — convenience for the one-constant graph.
+    /// `return(IntConst(v) : I64)` — convenience for the one-constant graph.
     pub fn ret_const(mut self, v: u64) -> strider_ir::Function {
         let c = self.u64(v);
         self.ret_val(c)

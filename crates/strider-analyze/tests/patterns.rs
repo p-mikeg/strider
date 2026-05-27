@@ -69,10 +69,10 @@ fn if_const_pattern_finds_two_consts(function: &strider_ir::Function) {
     // After RedundantPhis, both arms of the If feed a Phi resolving to either
     // IntConst(100) or IntConst(-50).  Pin both constants.
     //
-    // On 32-bit archs (arm, mips32) the -50 constant lives in a U32 IntConst
+    // On 32-bit archs (arm, mips32) the -50 constant lives in a I32 IntConst
     // (0xffff_ffce).  On x86-64, the compiler zero-extends a 32-bit move so the
-    // constant appears as IntConst(0xffff_ffce) at U64 width, which is the same
-    // bit pattern but semantically +4294967246 (not -50) at U64.  The raw
+    // constant appears as IntConst(0xffff_ffce) at I64 width, which is the same
+    // bit pattern but semantically +4294967246 (not -50) at I64.  The raw
     // has_constant check covers all archs correctly:
     //   has_constant(g, 0xffff_ffce) matches the node regardless of its output type
     //   because the stored u128 value equals u128::from(0xffff_ffce as u64).

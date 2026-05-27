@@ -143,7 +143,7 @@ fn float_sub_and_div_do_not_commute() {
         let b = t.f64(2.0);
         let neg_b = t.fun(b, strider_ir::FloatUnaryOp::Neg, strider_ir::node::NodeOutputType::F64);
         let lowered = t.fbin(a, neg_b, FloatBinaryOp::Add, strider_ir::node::NodeOutputType::F64);
-        let as_int = t.float_to_int(lowered, strider_ir::node::NodeOutputType::U64);
+        let as_int = t.float_to_int(lowered, strider_ir::node::NodeOutputType::I64);
         t.ret_val(as_int)
     };
     a::none(
@@ -225,7 +225,7 @@ fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Function {
     let a = t.f64(l);
     let b = t.f64(r);
     let v = t.fcmp(a, b, op);
-    let as_int = t.as_int(v, strider_ir::node::NodeOutputType::U64);
+    let as_int = t.as_int(v, strider_ir::node::NodeOutputType::I64);
     t.ret_val(as_int)
 }
 
@@ -246,7 +246,7 @@ fn float_ne_commutes() {
         let b = t.f64(2.0);
         let eq = t.fcmp(a, b, FloatCmpOp::Equal);
         let ne = t.bool_un(eq, strider_ir::BoolUnaryOp::Neg);
-        let as_int = t.as_int(ne, strider_ir::node::NodeOutputType::U64);
+        let as_int = t.as_int(ne, strider_ir::node::NodeOutputType::I64);
         t.ret_val(as_int)
     };
     a::matches(&function, float_ne(float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);

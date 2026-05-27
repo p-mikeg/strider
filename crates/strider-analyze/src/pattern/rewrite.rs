@@ -478,15 +478,15 @@ mod tests {
 
     /// `fn() -> u64 { return 7; }` — no Add node, used by no-match tests.
     fn just_const() -> strider_ir::Function {
-        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::U64)).unwrap()
+        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::I64)).unwrap()
     }
 
     /// `fn() -> u64 { return Add(11, 0); }` — exactly one Add with `0` RHS.
     fn add_x_zero() -> strider_ir::Function {
         make_empty_fn(|b| {
-            let a = b.build_int_const(11u64, NodeOutputType::U64)?;
-            let z = b.build_int_const(0u64, NodeOutputType::U64)?;
-            b.build_int_binary_operation(a, z, IntBinaryOp::Add, NodeOutputType::U64)
+            let a = b.build_int_const(11u64, NodeOutputType::I64)?;
+            let z = b.build_int_const(0u64, NodeOutputType::I64)?;
+            b.build_int_binary_operation(a, z, IntBinaryOp::Add, NodeOutputType::I64)
         })
         .unwrap()
     }
@@ -554,11 +554,11 @@ mod tests {
         // IntConst).  `replace_all_uses` rewires every consumer in one
         // shot; this pins the multi-use rewire contract.
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(13u64, NodeOutputType::U64)?;
-            let z = b.build_int_const(0u64, NodeOutputType::U64)?;
-            let inner = b.build_int_binary_operation(a, z, IntBinaryOp::Add, NodeOutputType::U64)?;
+            let a = b.build_int_const(13u64, NodeOutputType::I64)?;
+            let z = b.build_int_const(0u64, NodeOutputType::I64)?;
+            let inner = b.build_int_binary_operation(a, z, IntBinaryOp::Add, NodeOutputType::I64)?;
             // outer Add consumes inner twice.
-            b.build_int_binary_operation(inner, inner, IntBinaryOp::Add, NodeOutputType::U64)
+            b.build_int_binary_operation(inner, inner, IntBinaryOp::Add, NodeOutputType::I64)
         })
         .unwrap();
         // Find the inner Add: the one whose second input is the IntConst(0).
@@ -714,9 +714,9 @@ mod tests {
     /// `crates/pattern/tests/matching/rewrite.rs::graph_add_const_const`.
     fn add_const_const(a: u64, b: u64) -> strider_ir::Function {
         make_empty_fn(|b_| {
-            let ca = b_.build_int_const(a, NodeOutputType::U64)?;
-            let cb = b_.build_int_const(b, NodeOutputType::U64)?;
-            b_.build_int_binary_operation(ca, cb, IntBinaryOp::Add, NodeOutputType::U64)
+            let ca = b_.build_int_const(a, NodeOutputType::I64)?;
+            let cb = b_.build_int_const(b, NodeOutputType::I64)?;
+            b_.build_int_binary_operation(ca, cb, IntBinaryOp::Add, NodeOutputType::I64)
         })
         .unwrap()
     }
@@ -828,11 +828,11 @@ mod tests {
         use crate::pattern::{any_int_const, truncate};
         use crate::pattern::macros::int_const_with;
         let mut function = make_empty_fn(|b_| {
-            let a_ = b_.build_int_const(1u64, NodeOutputType::U64)?;
-            let b_v = b_.build_int_const(2u64, NodeOutputType::U64)?;
-            let s = b_.build_int_binary_operation(a_, b_v, IntBinaryOp::Add, NodeOutputType::U64)?;
-            // Truncate U64 → U8.
-            b_.truncate_if_needed(s, NodeOutputType::U8)
+            let a_ = b_.build_int_const(1u64, NodeOutputType::I64)?;
+            let b_v = b_.build_int_const(2u64, NodeOutputType::I64)?;
+            let s = b_.build_int_binary_operation(a_, b_v, IntBinaryOp::Add, NodeOutputType::I64)?;
+            // Truncate I64 → I8.
+            b_.truncate_if_needed(s, NodeOutputType::I8)
         })
         .unwrap();
         let v = Capture::new();
@@ -893,7 +893,7 @@ mod tests {
         // fires as identity replacement at the value level.  No graph
         // structural change but `replace_all_uses` returns false because
         // old==new producer.
-        let mut fg = make_empty_fn(|b| b.build_int_const(42u64, NodeOutputType::U64)).unwrap();
+        let mut fg = make_empty_fn(|b| b.build_int_const(42u64, NodeOutputType::I64)).unwrap();
         // Locate the IntConst node.
         let c_node = fg
             .walk()

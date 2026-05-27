@@ -196,7 +196,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // Most archs feed `If` a Bool-typed flag-register or compare result,
         // but a few lift conditional branches off an integer varnode (e.g.
         // ARM's status flags are written as integers when the analyzer's
-        // write-side coercion stores them as the variable's declared U8).
+        // write-side coercion stores them as the variable's declared I8).
         // `build_if` requires Bool, so coerce here at the read site.
         let cond = self.builder.convert_to_bool_if_needed(cond_raw)?;
         let res = self.cfg.region_if(region_id)?;
