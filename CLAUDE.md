@@ -192,7 +192,7 @@ so the resolver-bearing dependency stays one-way.
     (`Function::dot_dumper`) inlines constants, adds virtual nodes, and
     needs a `Sleigh` for register names; `Function::raw_dot` /
     `raw_html` (the `function_dot::raw` submodule) render the graph
-    **exactly as stored** instead — one node per arena `NodeId`, one
+    **exactly as stored** instead — one node per reachable `NodeId`, one
     edge per input edge, side-tables shown inline, no Sleigh — for
     debugging the real graph shape.
   - **Asm-fingerprint side-table** (`Graph::asm_fingerprints`) — every

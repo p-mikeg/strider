@@ -196,10 +196,9 @@ g.compact()                   # drop unreachable nodes
 
 `to_html`/`html_str` render a *pretty* view (constants inlined, virtual
 nodes for Call clobbers / If branches). To see the graph **exactly as
-stored** — one node per `NodeId` (every arena node, including detached
-ones), one edge per input edge, side-tables (stack offset, phi tag, asm
-fingerprints, …) shown inline, no inlining or virtual nodes — use the raw
-renderer:
+stored** — one node per `NodeId` reachable from entry, one edge per input
+edge, side-tables (stack offset, phi tag, asm fingerprints, …) shown
+inline, no inlining or virtual nodes — use the raw renderer:
 
 ```python
 g.raw_dot_str()               # Graphviz DOT, 1:1 with the stored graph
