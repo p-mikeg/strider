@@ -228,17 +228,11 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         }
         let parent_kind = *self.function.node_kind(parent_id);
 
-        let inline_initial_var = false;
-
         // If the producing output has a virtual node, connect from
         // it.  For clobbered Call outputs (index >= 2), create the
         // virtual node on the fly the first time a consumer is
         // encountered.
-        let parent_dot_id = if inline_initial_var {
-            let v = state.alloc_virtual_id();
-            self.emit_initial_var_node(parent_id, &v, out);
-            v
-        } else {
+        let parent_dot_id = {
             let maybe_virt = state.virtual_nodes.get(&parent_output).cloned();
             if let Some(virt_id) = maybe_virt {
                 virt_id

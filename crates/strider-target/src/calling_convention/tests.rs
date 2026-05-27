@@ -871,3 +871,28 @@ fn positional_arg_layout_empty() {
     assert_eq!(layout.register_args().count(), 0);
     assert_eq!(layout.stack_args().count(), 0);
 }
+
+/// The Linux-kernel CC presets that have no architectural divergence from
+/// their userland counterparts are encoded as byte-for-byte copies in
+/// `CC_PRESETS` (the table favours data over runtime delegation).  Pin the
+/// documented twin equalities so that an edit to a userland row which
+/// should also apply to its kernel twin cannot silently drift the two
+/// apart.
+#[test]
+fn kernel_presets_match_their_userland_twins() {
+    let twins = [
+        ("x86_64_linux_kernel", "x86_64_systemv"),
+        ("aarch64_linux_kernel", "aarch64_aapcs64"),
+        ("arm_linux_kernel", "arm_aapcs"),
+        ("mips_linux_kernel_o32", "mips_o32"),
+        ("mips_linux_kernel_n64", "mips_n64"),
+    ];
+    for (kernel, userland) in twins {
+        let k = lookup_preset(kernel).expect("kernel preset must exist");
+        let u = lookup_preset(userland).expect("userland preset must exist");
+        assert_eq!(
+            k.cc, u.cc,
+            "kernel preset {kernel} must stay identical to its userland twin {userland}"
+        );
+    }
+}

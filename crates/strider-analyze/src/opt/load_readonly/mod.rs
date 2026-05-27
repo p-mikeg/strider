@@ -111,7 +111,11 @@ impl PeepholePass for LoadReadOnly {
             return Ok(OptimizationResult::NoChange);
         };
 
-        let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
+        // `size <= 8` (guarded above), so the masked value fits a u64 — but
+        // `make_int_const` takes `impl Into<u128>`, so pass the masked u128
+        // directly rather than round-tripping through an infallible
+        // `u64::try_from`.
+        let Some(masked) = ty.get_unsigned_int(u128::from(loaded)) else {
             return Ok(OptimizationResult::NoChange);
         };
         let new_out = ctx.make_int_const(masked, ty)?;

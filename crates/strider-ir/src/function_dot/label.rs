@@ -1,7 +1,7 @@
 use rsleigh::MemReader;
 use std::io;
 
-use super::{FunctionDotDumper, node_fillcolor, node_shape};
+use super::{FunctionDotDumper, node_fillcolor};
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
 /// Render a varnode to its display name by delegating to rsleigh's
@@ -93,6 +93,17 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .map_or_else(String::new, |t| format!("{sep}{}", t.as_str()))
     }
 
+    /// Prefixes `base` with the SP-relative offset annotation (`[sp+K]` /
+    /// `[sp-K]`) recorded for `node` in the stack-offset side-table, or
+    /// returns `base` unchanged when the node has no recorded offset.
+    fn sp_prefixed(&self, node: NodeId, base: String) -> String {
+        match self.function.stack_offset(node) {
+            Some(k) if k < 0 => format!("[sp-{}]\n{base}", -k),
+            Some(k) => format!("[sp+{k}]\n{base}"),
+            None => base,
+        }
+    }
+
     pub(super) fn pretty_label(&self, node: NodeId) -> io::Result<String> {
         let kind = self.function.node_kind(node);
 
@@ -158,22 +169,14 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 let space = self.pretty_vnspace(*space);
                 let ty = self.out_type_suffix(node, " ");
                 let base = format!("Load{ty}\n← {space}");
-                match self.function.stack_offset(node) {
-                    Some(k) if k < 0 => format!("[sp-{}]\n{base}", -k),
-                    Some(k) => format!("[sp+{k}]\n{base}"),
-                    None => base,
-                }
+                self.sp_prefixed(node, base)
             }
             NodeKind::Store(space) => {
                 let space = self.pretty_vnspace(*space);
                 // data is input 2; memory and addr are 0 and 1
                 let ty = self.input_type_suffix(node, 2, " ");
                 let base = format!("Store{ty}\n→ {space}");
-                match self.function.stack_offset(node) {
-                    Some(k) if k < 0 => format!("[sp-{}]\n{base}", -k),
-                    Some(k) => format!("[sp+{k}]\n{base}"),
-                    None => base,
-                }
+                self.sp_prefixed(node, base)
             }
             // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => {
@@ -290,23 +293,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .pretty_label(node)
             .unwrap_or_else(|_| format!("{kind:?}"));
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
-    }
-
-    /// Emits an `InitialVar` node at the given dot id.  Keeps the visual
-    /// style identical to the shared `InitialVar` rendering.
-    pub(super) fn emit_initial_var_node(
-        &self,
-        node: NodeId,
-        dot_id: &str,
-        out: &mut ::dot::DotEmitter,
-    ) {
-        let kind = self.function.node_kind(node);
-        let shape = node_shape(kind);
-        let fc = node_fillcolor(kind);
-        let label = self
-            .pretty_label(node)
-            .unwrap_or_else(|_| format!("{kind:?}"));
-        out.node(dot_id, &label, shape, &[("fillcolor", fc)]);
     }
 
     /// Returns the register name for a clobbered call output using the
