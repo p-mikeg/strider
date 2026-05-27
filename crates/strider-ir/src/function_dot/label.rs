@@ -125,23 +125,28 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 // I256 / I512 payload interned in `Graph::wide_consts`.
                 // Render the actual value (limbs are little-endian, so walk
                 // high→low) rather than the Debug form of the interning id.
-                let storage = self.function.graph().wide_const(*id);
-                let limbs = storage.limbs();
-                let mut hex = String::new();
-                for &limb in limbs.iter().rev() {
-                    if hex.is_empty() {
-                        if limb == 0 {
-                            continue;
+                // A dangling id (malformed graph) labels rather than panics.
+                match self.function.graph().wide_const_opt(*id) {
+                    None => format!("const <dangling wide-const {id:?}>"),
+                    Some(storage) => {
+                        let limbs = storage.limbs();
+                        let mut hex = String::new();
+                        for &limb in limbs.iter().rev() {
+                            if hex.is_empty() {
+                                if limb == 0 {
+                                    continue;
+                                }
+                                hex.push_str(&format!("{limb:x}"));
+                            } else {
+                                hex.push_str(&format!("{limb:016x}"));
+                            }
                         }
-                        hex.push_str(&format!("{limb:x}"));
-                    } else {
-                        hex.push_str(&format!("{limb:016x}"));
+                        if hex.is_empty() {
+                            hex.push('0');
+                        }
+                        format!("const 0x{hex}:i{}", limbs.len() * 64)
                     }
                 }
-                if hex.is_empty() {
-                    hex.push('0');
-                }
-                format!("const 0x{hex}:i{}", limbs.len() * 64)
             }
             NodeKind::FloatConst(bits) => match self.out_type(node) {
                 Some(NodeOutputType::F32) => {

@@ -224,6 +224,18 @@ impl Graph {
         &self.wide_consts[id]
     }
 
+    /// Non-panicking variant of [`Self::wide_const`]: returns `None` for a
+    /// dangling id rather than panicking.  The debug renderers use this so
+    /// they can label a malformed graph (e.g. one inspected mid-rewrite)
+    /// instead of aborting.
+    #[must_use]
+    pub fn wide_const_opt(
+        &self,
+        id: crate::wide_const::WideConstId,
+    ) -> Option<&crate::wide_const::WideConstStorage> {
+        self.wide_consts.get(id)
+    }
+
     /// Returns an iterator that visits all reachable nodes in pre-order,
     /// starting from the given `entry`.
     /// Used by opt passes that take `(graph, entry)` explicitly.

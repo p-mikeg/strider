@@ -58,15 +58,20 @@ impl<'a> RawFunctionDumper<'a> {
 
         // Wide constants carry their value off-side in `wide_consts`; show it.
         if let NodeKind::IntConstWide(id) = kind {
-            let hex: String = f
-                .wide_const(*id)
-                .limbs()
-                .iter()
-                .rev()
-                .map(|limb| format!("{limb:016x}"))
-                .collect();
-            let trimmed = hex.trim_start_matches('0');
-            s.push_str(&format!("\n= 0x{}", if trimmed.is_empty() { "0" } else { trimmed }));
+            let value = match f.wide_const_opt(*id) {
+                Some(storage) => {
+                    let hex: String = storage
+                        .limbs()
+                        .iter()
+                        .rev()
+                        .map(|limb| format!("{limb:016x}"))
+                        .collect();
+                    let trimmed = hex.trim_start_matches('0');
+                    format!("0x{}", if trimmed.is_empty() { "0" } else { trimmed })
+                }
+                None => format!("<dangling wide-const {id:?}>"),
+            };
+            s.push_str(&format!("\n= {value}"));
         }
 
         let outs: Vec<String> = f
