@@ -243,6 +243,15 @@ pub enum ValidationError {
         expected_bytes: usize,
         actual_bytes: usize,
     },
+
+    #[error(
+        "node {node:?} (`IntConstWide`) declares non-wide output type \
+         {output_type:?}; only U256 / U512 are valid wide-const output types"
+    )]
+    WideConstInvalidOutputType {
+        node: NodeId,
+        output_type: NodeOutputType,
+    },
 }
 
 impl std::fmt::Debug for ValidationErrors {

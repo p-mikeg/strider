@@ -190,12 +190,11 @@ pub(super) fn check_graph_invariants_cc_arity(
 ) {
     let ret_val_count = function.ret_val_regs().len();
     let default_clobber_count = function.call_clobbered_regs().len();
-    // Synthetic / partially-built fixtures legitimately have empty CC
-    // metadata recorded; skip arity checks since there's nothing to
-    // arity-check against.
-    if ret_val_count == 0 && default_clobber_count == 0 {
-        return;
-    }
+    // No top-level early-return on empty defaults: a Call can still carry a
+    // non-empty per-Call clobber override even when the function defaults are
+    // empty, and that override's arity must be checked.  The per-node escapes
+    // below (`clobber_count == 0` / `ret_val_count == 0`) preserve the
+    // synthetic / partially-built-fixture behaviour node by node.
     for (node, kind) in function.reachable_kind_iter(reachable) {
         match kind {
             NodeKind::Call => {
@@ -266,17 +265,13 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
 /// `None` when the node lacks a value-typed output (skip — let
 /// Layer A handle the structural error).
 ///
-/// Emits a `WideConstWidthMismatch { expected_bytes: 0, actual_bytes
-/// = actual }` sentinel when the declared output type isn't U256 or
-/// U512: IntConstWide's local-typing signature accepts any `INT_VAL`
-/// slot kind, but only U256/U512 are semantically valid storage
-/// widths.  `expected_bytes = 0` flags the violation as "no valid
-/// width" so callers can distinguish it from a genuine width
-/// mismatch.
+/// Emits [`ValidationError::WideConstInvalidOutputType`] when the declared
+/// output type isn't U256 or U512: IntConstWide's local-typing signature
+/// accepts any `INT_VAL` slot kind, but only U256/U512 are semantically
+/// valid wide-const storage widths.
 fn wide_const_expected_bytes(
     graph: &Graph,
     node: NodeId,
-    actual: usize,
 ) -> Result<Option<(usize, crate::node::NodeOutputType)>, ValidationError> {
     use crate::node::NodeOutputType;
     let outputs = graph.node_outputs(node);
@@ -289,11 +284,9 @@ fn wide_const_expected_bytes(
     match ty {
         NodeOutputType::U256 => Ok(Some((32, ty))),
         NodeOutputType::U512 => Ok(Some((64, ty))),
-        _ => Err(ValidationError::WideConstWidthMismatch {
+        _ => Err(ValidationError::WideConstInvalidOutputType {
             node,
             output_type: ty,
-            expected_bytes: 0,
-            actual_bytes: actual,
         }),
     }
 }
@@ -321,7 +314,7 @@ pub(super) fn check_graph_invariants_wide_consts(
             continue;
         }
         let actual = graph.wide_const(*id).byte_size();
-        match wide_const_expected_bytes(graph, node, actual) {
+        match wide_const_expected_bytes(graph, node) {
             Err(e) => errs.push(e),
             Ok(Some((expected, ty))) if expected != actual => {
                 errs.push(ValidationError::WideConstWidthMismatch {

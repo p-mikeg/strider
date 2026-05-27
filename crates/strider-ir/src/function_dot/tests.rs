@@ -56,6 +56,38 @@ fn edge_lines(dot: &str) -> Vec<&str> {
     dot.lines().filter(|l| l.contains("->")).collect()
 }
 
+/// A `IntConstWide` (U256/U512) node must render its actual value, not the
+/// Debug form of the interning id (`IntConstWide(WideConstId(0))`).
+#[test]
+fn render_int_const_wide_shows_value_not_debug() {
+    let mut f = Function::new();
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    f.set_entry(entry);
+    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    // limbs are little-endian: value = 0xabcd<48 zeros>1234.
+    let id = f.intern_wide_const(crate::wide_const::WideConstStorage::U256([0x1234, 0xabcd, 0, 0]));
+    let wide = f.create_node(
+        NodeKind::IntConstWide(id),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U256)],
+    );
+    let [wide_out] = f.node_outputs_exact::<1>(wide).unwrap();
+    f.create_node(NodeKind::Return, [ctrl, mem_out, wide_out], []);
+
+    let dot = render(&f, entry);
+    assert!(dot.contains(":u256"), "wide const must render with a u256 suffix, got: {dot}");
+    assert!(
+        !dot.contains("IntConstWide"),
+        "wide const must not render as the Debug fallback, got: {dot}"
+    );
+    assert!(
+        dot.contains("abcd") && dot.contains("1234"),
+        "wide const must show its limb hex digits, got: {dot}"
+    );
+}
+
 // ── determinism ───────────────────────────────────────────────────────────
 
 /// Rendering the same graph twice must produce identical DOT output.

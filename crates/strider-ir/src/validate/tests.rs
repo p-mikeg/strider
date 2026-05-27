@@ -1014,6 +1014,40 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     );
 }
 
+#[test]
+fn graph_invariants_wide_const_non_wide_output_type_detected() {
+    use crate::wide_const::WideConstStorage;
+    let mut function = Function::new();
+    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
+    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let id = function.intern_wide_const(WideConstStorage::U256([0; 4]));
+    // IntConstWide declaring a non-wide (U64) output type — invalid: only
+    // U256 / U512 are valid wide-const output types.  The validator must
+    // report this as a distinct WideConstInvalidOutputType, not a width
+    // mismatch with a misleading 0-byte "expected" size.
+    let bad = function.create_node(
+        NodeKind::IntConstWide(id),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
+    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, bad_out], []);
+
+    let errs = validate(&function, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::WideConstInvalidOutputType {
+                output_type: NodeOutputType::U64,
+                ..
+            }
+        )),
+        "expected WideConstInvalidOutputType for a non-wide output type, got: {errs:?}"
+    );
+}
+
 // ── CC arity check ───────────────────────────────────────────────────────
 
 /// Build a minimal Function whose `cc_metadata` declares
@@ -1075,6 +1109,61 @@ fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
             ValidationError::NodeInputCountMismatch { expected: 4, actual: 3, .. }
         )),
         "expected NodeInputCountMismatch {{ expected: 4, actual: 3 }} for the Return, got: {err:?}"
+    );
+}
+
+#[test]
+fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
+    use cranelift_entity::PrimaryMap;
+    // Function with EMPTY CC defaults (no call_clobbered, no ret_val_regs)
+    // but a Call carrying a non-empty per-Call clobber override.  The arity
+    // check must still validate the override against the Call's output count
+    // — the empty-defaults synthetic-fixture escape must not suppress it.
+    let mut f = Function::new();
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    stamp(&mut f, entry);
+    f.set_entry(entry);
+    f.cc_metadata = crate::graph::CcMetadata {
+        variables: PrimaryMap::new(),
+        variable_to_id: rustc_hash::FxHashMap::default(),
+        call_clobbered: Vec::new(),
+        ret_val_regs: Vec::new(),
+        call_other_clobbered: Vec::new(),
+        arg_passing_vars: Vec::new(),
+        cc: None,
+    };
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    stamp(&mut f, mem);
+    let target = f.create_node(
+        NodeKind::IntConst(0x1000),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [target_out] = f.node_outputs_exact::<1>(target).unwrap();
+    stamp(&mut f, target);
+    // Call has only [Control, Memory] outputs (2); the override declares 1
+    // clobbered reg, so the arity check expects 2 + 1 = 3 outputs.
+    let call = f.create_node(
+        NodeKind::Call,
+        [ctrl, mem_out, target_out],
+        [NodeOutputKind::Control, NodeOutputKind::Memory],
+    );
+    stamp(&mut f, call);
+    let clob = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    f.set_call_clobbered_override(call, vec![clob]);
+    let [call_ctrl, call_mem] = f.node_outputs_exact::<2>(call).unwrap();
+    let ret = f.create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+    stamp(&mut f, ret);
+
+    let err = validate(&f, entry).expect_err("expected cc-arity violation for the Call override");
+    assert!(
+        err.0.iter().any(|e| matches!(
+            e,
+            ValidationError::NodeOutputCountMismatch { expected: 3, actual: 2, .. }
+        )),
+        "expected NodeOutputCountMismatch {{ expected: 3, actual: 2 }} for the Call, got: {err:?}"
     );
 }
 
