@@ -328,6 +328,19 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
         });
         boxed_rule(rewrite_rule(pat, bit_not(var(x))))
     };
+    // x | all_ones → all_ones  (commutative; absorbing element).  The
+    // all-ones value depends on the output width, so match the captured
+    // constant against the node's all-ones mask and rewrite to that same
+    // constant.  At `I1` this subsumes the boolean `x | true → true`.
+    let or_all_ones_rule = {
+        let x = Capture::new();
+        let c = Capture::new();
+        let pat: Pat = or(var(x), any_int_const(c)).into();
+        let pat = pat.when_match(move |ctx, ty, b| {
+            b.get_uint(c, ctx) == ty.get_unsigned_int(u128::MAX)
+        });
+        boxed_rule(rewrite_rule(pat, var(c)))
+    };
 
     let rules: Vec<BoxedRule> = vec![
         // x + 0 → x  (commutative: also covers 0 + x)
@@ -360,6 +373,7 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
         boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), var(x))),
         all_ones_rule,
         xor_all_ones_rule,
+        or_all_ones_rule,
     ];
     rules
 }
@@ -547,8 +561,8 @@ static CONST_EVAL_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::ne
 /// Builds the rule vec for [`BOOL_FLOAT_RULES`].
 fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     use crate::pattern::{
-        BoxedRule, Capture, Pat, any_bool_const, any_float_const, bool_not, bool_or,
-        boxed_rule, float_binary_any, float_cmp_any, float_unary_any, rewrite_rule, var,
+        BoxedRule, Capture, any_float_const, bool_not, boxed_rule, float_binary_any,
+        float_cmp_any, float_unary_any, rewrite_rule, var,
     };
     use crate::pattern::macros::{bool_const_with, float_const_with};
 
@@ -566,16 +580,9 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     // `I1`: `BOr(true, _) → true` (no `x | all_ones → all_ones` integer
     // rule) and `!!x → x` (no double-`BitNot` integer rule).
     let rules: Vec<BoxedRule> = vec![
-        // BOr(true, _) => true  (absorbing element).  At I1 `true` is the
-        // all-ones value; there is no integer `x | all_ones → all_ones`
-        // rule, so this is kept.  The constraint that the const is the
-        // absorbing value lives in the pattern via `.when_match()`.
-        {
-            let l = Capture::new();
-            let pat: Pat = bool_or(any_bool_const(l), crate::pattern::any());
-            let pat = pat.when_match(move |ctx, _ty, b| b.get_bool(l, ctx) == Some(true));
-            boxed_rule(rewrite_rule(pat, bool_const_with!([] => true)))
-        },
+        // (`x | true → true` is handled generically by the integer
+        // `x | all_ones → all_ones` rule — at I1, `true` is the all-ones
+        // value — so no I1-specific Or-absorbing rule is needed here.)
         // !!x → x  (double-negation elimination — `BitNot(BitNot(x))` at
         // I1).  Compilers can produce chained NOTs through pcode lifting of
         // compare-and-invert idioms.  No general double-`BitNot` integer

@@ -845,6 +845,25 @@ fn fold_bool_or_true_to_true() -> Result<()> {
     Ok(())
 }
 
+// `x | all_ones → all_ones` at a wide width (I32): the general integer
+// Or-absorbing rule folds to the all-ones constant (it is NOT limited to
+// the I1 boolean `true`).
+#[test]
+fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
+    let vn = reg_vn(0x1000, 4); // 4-byte var → I32
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+        // Non-const I32 value, then `| 0xFFFF_FFFF`.
+        let x32 = b.build_int_unary_operation(x, IntUnaryOp::BitNot, NodeOutputType::I32)?;
+        let all_ones = b.build_int_const(0xFFFF_FFFFu64, NodeOutputType::I32).unwrap();
+        b.build_int_binary_operation(x32, all_ones, IntBinaryOp::Or, NodeOutputType::I32)
+    })?;
+    let entry = fg.entry().unwrap();
+    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
+    // Folds to the all-ones constant.
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFFFF_FFFF));
+    Ok(())
+}
+
 // `!!x → x` for non-const x (double-`BitNot` at I1).
 #[test]
 fn fold_bool_double_not_to_x() -> Result<()> {
