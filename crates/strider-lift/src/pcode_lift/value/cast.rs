@@ -198,7 +198,12 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let hi_int = self.builder.convert_to_int_if_needed(hi, hi_ty)?;
         let lo_ty = self.builder.get_output_type(lo)?.to_natural_int_type();
         let lo_int = self.builder.convert_to_int_if_needed(lo, lo_ty)?;
-        let lo_bits = lo_ty.bit_width() as u64;
+        // Shift `hi` by the *physical* bit-width of the low piece, derived from
+        // the varnode byte size — not from the SSA value's type.  These agree
+        // for every type except `I1` (a 1-bit boolean stored as-is in a 1-byte
+        // flag register, whose `bit_width()` is 1, not 8); using the varnode
+        // size keeps Piece faithful to the pcode geometry in that case.
+        let lo_bits = u64::from(lo_vn.size) * 8;
         let hi_wide = self.builder.convert_to_int_if_needed(hi_int, out_ty)?;
         let lo_wide = self.builder.convert_to_int_if_needed(lo_int, out_ty)?;
         let shift_amt = self.builder.build_int_const(lo_bits, out_ty)?;
@@ -223,12 +228,18 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // And mask when len < narrow_ty.bit_width() to preserve "upper bits zero".
         ensure_const_space(crate::pcode_lift::nth_input_or_err(insn, 1)?, insn.opcode, "Extract lsb")?;
         ensure_const_space(crate::pcode_lift::nth_input_or_err(insn, 2)?, insn.opcode, "Extract bit_count")?;
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let input_vn = crate::pcode_lift::nth_input_or_err(insn, 0)?;
+        let input = self.read_vn(input_vn)?;
         let lsb = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 1)?, insn.opcode, "Extract lsb")?;
         let len = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 2)?, insn.opcode, "Extract bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let narrow_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
+        // Work in the input's *physical* int width (from its varnode byte size),
+        // not the SSA value's natural type.  They agree for every type except
+        // `I1` (a 1-bit boolean held in a 1-byte flag register, whose
+        // `bit_width()` is 1, not 8); using the varnode size makes the slice
+        // bounds-check and the shift/mask operate on the real bit geometry.
+        let x_nat_ty = strider_ir::ValueType::int_for_byte_size(input_vn.size)?;
         // The extracted slice [lsb, lsb+len) must lie within the input width;
         // shifting past the width yields width-clamped (Sleigh) zero in the IR
         // but the host mask uses mod-width wrapping, so reject the mismatch.
