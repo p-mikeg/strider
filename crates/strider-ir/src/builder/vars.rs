@@ -73,11 +73,12 @@ impl FunctionBuilder {
     /// `link_memory_regions` / `link_region_variables` also
     /// propagate.
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
-        #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
-        let entry_node = self
-            .function
-            .entry()
-            .expect("entry is always set by build_entry(), which new_raw() calls unconditionally");
+        // `build_entry()` (called unconditionally by `new_raw()`) sets the
+        // entry, so this is an invariant — but return an error rather than
+        // panicking if it is ever violated.
+        let entry_node = self.function.entry().ok_or_else(|| {
+            anyhow!("set_entry_region: entry node is not set (build_entry must run in new_raw)")
+        })?;
         let [entry_control] = self.function().node_outputs_exact(entry_node)?;
         let entry_memory = self.entry_memory;
         self.link_control_regions(region_id, entry_control)?;
