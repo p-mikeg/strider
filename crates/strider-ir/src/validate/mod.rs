@@ -89,9 +89,9 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
 /// Returns whether an actual [`NodeOutputKind`] satisfies the
 /// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
 ///
-/// `AnyInt` matches any integer-typed output (I8, I16, I32, I64, I80,
+/// `AnyInt` matches any integer-typed output (I1, I8, I16, I32, I64, I80,
 /// I128, I256, I512); `AnyFloat` matches F32, F64, or F80; `Bool`
-/// matches only `OutputType(Bool)`.  `Control`, `Memory`, and
+/// matches only the 1-bit `OutputType(I1)`.  `Control`, `Memory`, and
 /// `PhiToken` match their identically-named [`NodeOutputKind`]
 /// variants.
 fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
@@ -100,7 +100,7 @@ fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
         ExpectedOutputKind::Memory => matches!(actual, NodeOutputKind::Memory),
         ExpectedOutputKind::PhiToken => matches!(actual, NodeOutputKind::PhiToken),
         ExpectedOutputKind::Bool => {
-            matches!(actual, NodeOutputKind::OutputType(NodeOutputType::Bool))
+            matches!(actual, NodeOutputKind::OutputType(NodeOutputType::I1))
         }
         ExpectedOutputKind::AnyInt => {
             matches!(actual, NodeOutputKind::OutputType(t) if t.is_integer())

@@ -3,9 +3,7 @@
 //! readability.
 
 use strider_ir::node::NodeOutputType;
-use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, Function, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
-};
+use strider_ir::{Function, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use super::graph::{Tb, reg_vn, stack_vn};
 
@@ -54,7 +52,7 @@ pub fn int_le_lowered_5_3() -> Function {
     let r = t.u64(3);
     // `5 <= 3`  →  `!(3 < 5)`  →  Less(rhs=3, lhs=5).
     let lt = t.int_cmp(r, l, IntCmpOp::Less);
-    let neg = t.bool_un(lt, BoolUnaryOp::Neg);
+    let neg = t.bool_un(lt, IntUnaryOp::BitNot);
     let cast = t.as_int(neg, NodeOutputType::I64);
     t.ret_val(cast)
 }
@@ -65,12 +63,12 @@ pub fn int_sle_lowered_5_3() -> Function {
     let l = t.u64(5);
     let r = t.u64(3);
     let lt = t.int_cmp(r, l, IntCmpOp::Sless);
-    let neg = t.bool_un(lt, BoolUnaryOp::Neg);
+    let neg = t.bool_un(lt, IntUnaryOp::BitNot);
     let cast = t.as_int(neg, NodeOutputType::I64);
     t.ret_val(cast)
 }
 
-pub fn bool_bin(l: bool, r: bool, op: BoolBinaryOp) -> Function {
+pub fn bool_bin(l: bool, r: bool, op: IntBinaryOp) -> Function {
     let mut t = Tb::empty();
     let a = t.boolean(l);
     let b = t.boolean(r);
@@ -181,7 +179,7 @@ pub fn if_cmp_then_return_inverted(c: u64) -> Function {
     let c_node = t.u64(c);
     let one = t.u64(1);
     let inner = t.int_cmp(c_node, one, IntCmpOp::Equal);
-    let cond = t.bool_un(inner, BoolUnaryOp::Neg);
+    let cond = t.bool_un(inner, IntUnaryOp::BitNot);
     t.build_if(cond, true_r, false_r);
     t.finish()
 }

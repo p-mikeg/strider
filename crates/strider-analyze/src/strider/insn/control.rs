@@ -193,12 +193,15 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         region_lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
         let cond_raw = self.read_vn(nth_input_or_err(insn, 1)?)?;
-        // Most archs feed `If` a Bool-typed flag-register or compare result,
-        // but a few lift conditional branches off an integer varnode (e.g.
-        // ARM's status flags are written as integers when the analyzer's
-        // write-side coercion stores them as the variable's declared I8).
-        // `build_if` requires Bool, so coerce here at the read site.
-        let cond = self.builder.convert_to_bool_if_needed(cond_raw)?;
+        // Sleigh always feeds `CBRANCH` an already-`I1` condition (a 1-byte
+        // comparison / flag result, value 0 or 1 — verified across arches).
+        // `build_if` requires `I1`; `truncate_if_needed` is a no-op in that
+        // common case.  Should a wider, provably-0/1 value ever reach here
+        // (e.g. a flag zero-extended into a multi-byte register), narrowing
+        // to the low bit is exact for a 0/1 value and keeps the IR sound.
+        let cond = self
+            .builder
+            .truncate_if_needed(cond_raw, strider_ir::ValueType::I1)?;
         let res = self.cfg.region_if(region_id)?;
         let if_true_region = res
             .if_true_region

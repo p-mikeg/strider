@@ -518,26 +518,28 @@ mod tests {
     #[test]
     fn apply_tail_call_rejects_non_integer_target_type() {
         let (mut ctx, placeholder) = build_placeholder_graph();
-        // Build a Bool-typed value that we'll splice into the placeholder's
-        // target_value slot.  `BoolConst` produces a single Bool output.
-        let bool_const = ctx.create_node(
-            NodeKind::BoolConst(true),
+        // Build a float-typed value that we'll splice into the placeholder's
+        // target_value slot.  Booleans are now 1-bit *integers*, so a float
+        // is the only non-integer value type that exercises the
+        // `as_integer_or_err()?` rejection path.
+        let float_const = ctx.create_node(
+            NodeKind::FloatConst(0),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+            [NodeOutputKind::OutputType(NodeOutputType::F32)],
         );
-        ctx.set_asm_fingerprint(bool_const, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let bool_out = ctx.node_outputs(bool_const).iter().copied().next().unwrap();
-        // Replace the IndirectBranch's input[2] (target_value) with the Bool output.
+        ctx.set_asm_fingerprint(float_const, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        let bool_out = ctx.node_outputs(float_const).iter().copied().next().unwrap();
+        // Replace the IndirectBranch's input[2] (target_value) with the float output.
         let target_input_id = ctx
             .node_input_id_at(placeholder, 2)
             .expect("input slot 2 exists");
         ctx.update_input(target_input_id, bool_out);
-        // Sanity: the placeholder now has a Bool target_value.
+        // Sanity: the placeholder now has a float (non-integer) target_value.
         let target_value_kind = ctx
             .output_kind(ctx.node_inputs(placeholder)[2]);
         assert!(
-            matches!(target_value_kind, NodeOutputKind::OutputType(NodeOutputType::Bool)),
-            "fixture must have Bool target_value, got {target_value_kind:?}"
+            matches!(target_value_kind, NodeOutputKind::OutputType(NodeOutputType::F32)),
+            "fixture must have a non-integer (float) target_value, got {target_value_kind:?}"
         );
 
         let result =

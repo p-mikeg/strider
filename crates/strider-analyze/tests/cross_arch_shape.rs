@@ -48,7 +48,7 @@ const CASE: &str = "control";
 /// (e.g. `IntBinaryOp(Add)` → `"IntBinaryOp(Add)"`).
 fn node_kind_name(k: &NodeKind) -> &'static str {
     use strider_ir::{
-        BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+        ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
         IntBinaryOp, IntCmpOp, IntUnaryOp,
     };
     match k {
@@ -92,7 +92,6 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
             IntCmpOp::Scarry => "IntCmpOp(Scarry)",
             IntCmpOp::Sborrow => "IntCmpOp(Sborrow)",
         },
-        NodeKind::CastToInt => "CastToInt",
         NodeKind::Truncate => "Truncate",
         NodeKind::Popcount => "Popcount",
         NodeKind::Lzcount => "Lzcount",
@@ -100,16 +99,6 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
             ExtendOp::ZeroExtend => "Extend(ZeroExtend)",
             ExtendOp::SignExtend => "Extend(SignExtend)",
         },
-        NodeKind::BoolConst(_) => "BoolConst",
-        NodeKind::BoolUnaryOp(op) => match op {
-            BoolUnaryOp::Neg => "BoolUnaryOp(Neg)",
-        },
-        NodeKind::BoolBinaryOp(op) => match op {
-            BoolBinaryOp::And => "BoolBinaryOp(And)",
-            BoolBinaryOp::Or => "BoolBinaryOp(Or)",
-            BoolBinaryOp::Xor => "BoolBinaryOp(Xor)",
-        },
-        NodeKind::CastToBool => "CastToBool",
         NodeKind::FloatConst(_) => "FloatConst",
         NodeKind::FloatBinaryOp(op) => match op {
             FloatBinaryOp::Add => "FloatBinaryOp(Add)",

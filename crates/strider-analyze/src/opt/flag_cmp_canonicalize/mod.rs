@@ -56,7 +56,7 @@ use std::sync::LazyLock;
 use strider_ir::node::{NodeId, NodeKind};
 use crate::pattern::{
     BoxedRule, Capture, add, apply_rules_in_order, bool_and, bool_not, bool_or, boxed_rule,
-    cast_to_int, int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var,
+    int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var, zero_extend,
 };
 
 use crate::opt::error::Result;
@@ -152,61 +152,61 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             bool_not(int_lt(var(r3_b), var(r3_a))),
         )),
-        // 4. LT:  BoolNeg(Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b)))) → IntSless(a, b)
+        // 4. LT:  BoolNeg(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))) → IntSless(a, b)
         boxed_rule(rewrite_rule(
             bool_not(int_eq(
-                cast_to_int(int_slt(add(var(r4_a), neg(var(r4_b))), int_const(0))),
-                cast_to_int(int_sborrow(var(r4_a), var(r4_b))),
+                zero_extend(int_slt(add(var(r4_a), neg(var(r4_b))), int_const(0))),
+                zero_extend(int_sborrow(var(r4_a), var(r4_b))),
             )),
             int_slt(var(r4_a), var(r4_b)),
         )),
-        // 5. GE:  Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b))) → BoolNeg(IntSless(a, b))
+        // 5. GE:  Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))) → BoolNeg(IntSless(a, b))
         boxed_rule(rewrite_rule(
             int_eq(
-                cast_to_int(int_slt(add(var(r5_a), neg(var(r5_b))), int_const(0))),
-                cast_to_int(int_sborrow(var(r5_a), var(r5_b))),
+                zero_extend(int_slt(add(var(r5_a), neg(var(r5_b))), int_const(0))),
+                zero_extend(int_sborrow(var(r5_a), var(r5_b))),
             ),
             bool_not(int_slt(var(r5_a), var(r5_b))),
         )),
         // 6. GT:  BoolAnd(BoolNeg(Equal(diff, 0)),
-        //                 Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b))))
+        //                 Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))))
         //         → IntSless(b, a)
         boxed_rule(rewrite_rule(
             bool_and(
                 bool_not(int_eq(add(var(r6_a), neg(var(r6_b))), int_const(0))),
                 int_eq(
-                    cast_to_int(int_slt(add(var(r6_a), neg(var(r6_b))), int_const(0))),
-                    cast_to_int(int_sborrow(var(r6_a), var(r6_b))),
+                    zero_extend(int_slt(add(var(r6_a), neg(var(r6_b))), int_const(0))),
+                    zero_extend(int_sborrow(var(r6_a), var(r6_b))),
                 ),
             ),
             int_slt(var(r6_b), var(r6_a)),
         )),
         // 7. LE:  BoolOr(Equal(diff, 0),
-        //                BoolNeg(Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b)))))
+        //                BoolNeg(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))))
         //         → BoolNeg(IntSless(b, a))
         boxed_rule(rewrite_rule(
             bool_or(
                 int_eq(add(var(r7_a), neg(var(r7_b))), int_const(0)),
                 bool_not(int_eq(
-                    cast_to_int(int_slt(add(var(r7_a), neg(var(r7_b))), int_const(0))),
-                    cast_to_int(int_sborrow(var(r7_a), var(r7_b))),
+                    zero_extend(int_slt(add(var(r7_a), neg(var(r7_b))), int_const(0))),
+                    zero_extend(int_sborrow(var(r7_a), var(r7_b))),
                 )),
             ),
             bool_not(int_slt(var(r7_b), var(r7_a))),
         )),
-        // 8. Thumb "false" flag test:  IntEqual(CastToInt(b), 0)  →  BoolNeg(b)
+        // 8. Thumb "false" flag test:  IntEqual(ZeroExtend(b), 0)  →  BoolNeg(b)
         //    Lifted by Thumb BNE / BCC / BPL / BVC, where the cond is
         //    `IntEqual(flag, 0)` rather than `BoolNeg(flag)` directly.
         boxed_rule(rewrite_rule(
-            int_eq(cast_to_int(var(r8_b)), int_const(0)),
+            int_eq(zero_extend(var(r8_b)), int_const(0)),
             bool_not(var(r8_b)),
         )),
-        // 9. Thumb "true" flag test:  BoolNeg(IntEqual(CastToInt(b), 0))  →  b
+        // 9. Thumb "true" flag test:  BoolNeg(IntEqual(ZeroExtend(b), 0))  →  b
         //    Lifted by Thumb BEQ / BCS / BMI / BVS — the lift-time
         //    canonicalisation `IntNotEqual(b, 0) → BoolNeg(IntEqual(b, 0))`
         //    plus our cast-to-int coercion gives this shape.
         boxed_rule(rewrite_rule(
-            bool_not(int_eq(cast_to_int(var(r9_b)), int_const(0))),
+            bool_not(int_eq(zero_extend(var(r9_b)), int_const(0))),
             var(r9_b),
         )),
     ]

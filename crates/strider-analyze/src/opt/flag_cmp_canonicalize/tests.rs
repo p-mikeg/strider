@@ -32,8 +32,9 @@ fn build_cmp_flags(
     let zr = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, NodeOutputType::I32)?;
     let ng = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Sless, NodeOutputType::I32)?;
     // CY = BoolNeg(IntLess(a, b))  — post lift-time canonicalisation of IntLessEqual(b, a).
+    // A logical NOT is `IntUnaryOp::BitNot` at I1 (booleans are 1-bit ints).
     let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
-    let cy = fb.build_boolean_unary_operation(alt, strider_ir::BoolUnaryOp::Neg)?;
+    let cy = fb.build_int_unary_operation(alt, IntUnaryOp::BitNot, NodeOutputType::I1)?;
     let ov = fb.build_int_cmp_operation(a, b, IntCmpOp::Sborrow, NodeOutputType::I32)?;
 
     Ok((zr, ng, cy, ov))
@@ -122,7 +123,7 @@ fn assert_if_cond_is_neg_intcmp(
     let neg_node = graph.node_for_output(cond_out);
     assert_eq!(
         *graph.node_kind(neg_node),
-        NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg),
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         "If cond should be BoolNeg(...)",
     );
     let [inner] = graph
@@ -159,7 +160,7 @@ fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
 fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
     // AArch64 `b.ne` cond is `BoolNeg(ZR)` = `BoolNeg(Equal(Add(a, Neg(b)), 0))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| {
-        fb.build_boolean_unary_operation(zr, strider_ir::BoolUnaryOp::Neg)
+        fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)
     })?;
 
     let entry = fg.entry().unwrap();
@@ -176,8 +177,8 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
     // simplified to `Equal(a, b)` and the BoolAnd rule fires, the cond
     // is `IntLess(b, a)` (= `a > b unsigned`).
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_zr = fb.build_boolean_unary_operation(zr, strider_ir::BoolUnaryOp::Neg)?;
-        fb.build_boolean_operation(cy, neg_zr, strider_ir::BoolBinaryOp::And)
+        let neg_zr = fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, NodeOutputType::I1)
     })?;
 
     let entry = fg.entry().unwrap();
@@ -202,8 +203,8 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
     // ConstantFold's algebraic-only rewrites preserve that agreement —
     // this test pins the contract.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_zr = fb.build_boolean_unary_operation(zr, strider_ir::BoolUnaryOp::Neg)?;
-        fb.build_boolean_operation(cy, neg_zr, strider_ir::BoolBinaryOp::And)
+        let neg_zr = fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, NodeOutputType::I1)
     })?;
 
     let entry = fg.entry().unwrap();
@@ -223,8 +224,8 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
     // `BoolOr(IntLess(a, b), Equal(a, b))` and our rule rewrites it to
     // `BoolNeg(IntLess(b, a))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_cy = fb.build_boolean_unary_operation(cy, strider_ir::BoolUnaryOp::Neg)?;
-        fb.build_boolean_operation(neg_cy, zr, strider_ir::BoolBinaryOp::Or)
+        let neg_cy = fb.build_int_unary_operation(cy, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        fb.build_int_binary_operation(neg_cy, zr, IntBinaryOp::Or, NodeOutputType::I1)
     })?;
 
     // Run ConstantFold first to collapse `BoolNeg(BoolNeg(IntLess(a, b))) → IntLess(a, b)`.
@@ -246,7 +247,7 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
     // `Equal(CastToInt(NG, I8), CastToInt(OV, I8))`.  The fixture matches.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
-        fb.build_boolean_unary_operation(eq, strider_ir::BoolUnaryOp::Neg)
+        fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)
     })?;
 
     let entry = fg.entry().unwrap();
@@ -276,9 +277,9 @@ fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
 fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
     // AArch64 `b.gt` cond is `BoolAnd(BoolNeg(ZR), Equal(NG, OV))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
-        let neg_zr = fb.build_boolean_unary_operation(zr, strider_ir::BoolUnaryOp::Neg)?;
+        let neg_zr = fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)?;
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
-        fb.build_boolean_operation(neg_zr, eq, strider_ir::BoolBinaryOp::And)
+        fb.build_int_binary_operation(neg_zr, eq, IntBinaryOp::And, NodeOutputType::I1)
     })?;
 
     let entry = fg.entry().unwrap();
@@ -294,8 +295,8 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
     // AArch64 `b.le` cond is `BoolOr(ZR, BoolNeg(Equal(NG, OV)))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
-        let neg_eq = fb.build_boolean_unary_operation(eq, strider_ir::BoolUnaryOp::Neg)?;
-        fb.build_boolean_operation(zr, neg_eq, strider_ir::BoolBinaryOp::Or)
+        let neg_eq = fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        fb.build_int_binary_operation(zr, neg_eq, IntBinaryOp::Or, NodeOutputType::I1)
     })?;
 
     let entry = fg.entry().unwrap();
@@ -321,7 +322,7 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
 
     assert_eq!(
         if_cond_node_kind(&fg, if_node),
-        NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg),
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
     );
     Ok(())
 }
@@ -358,7 +359,7 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
         //   BoolNeg(IntEqual(CastToInt(ZR, I8), 0:I8))
         let zero = fb.build_int_const(0u64, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, NodeOutputType::I8)?;
-        fb.build_boolean_unary_operation(eq, strider_ir::BoolUnaryOp::Neg)
+        fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)
     })?;
 
     // Run my pass twice (or run it once via the pipeline's fixed-point loop).

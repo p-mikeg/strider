@@ -5,8 +5,7 @@
 //! The top-level dispatch lives in the parent `lift` module.
 
 use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
-    IntCmpOp, IntUnaryOp,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 use rsleigh::Opcode;
 
@@ -63,15 +62,17 @@ static OPCODE_TO_EXTEND: &[(Opcode, ExtendOp)] = &[
     (Opcode::IntSext, ExtendOp::SignExtend),
 ];
 
-/// (Opcode, BoolBinaryOp) dispatch table.
-static OPCODE_TO_BOOL_BINARY: &[(Opcode, BoolBinaryOp)] = &[
-    (Opcode::BoolAnd, BoolBinaryOp::And),
-    (Opcode::BoolOr, BoolBinaryOp::Or),
-    (Opcode::BoolXor, BoolBinaryOp::Xor),
+/// (Opcode, IntBinaryOp) dispatch table for the boolean binary opcodes.
+/// Booleans are `I1`, so logical and/or/xor are integer and/or/xor at `I1`.
+static OPCODE_TO_BOOL_BINARY: &[(Opcode, IntBinaryOp)] = &[
+    (Opcode::BoolAnd, IntBinaryOp::And),
+    (Opcode::BoolOr, IntBinaryOp::Or),
+    (Opcode::BoolXor, IntBinaryOp::Xor),
 ];
 
-/// (Opcode, BoolUnaryOp) dispatch table.
-static OPCODE_TO_BOOL_UNARY: &[(Opcode, BoolUnaryOp)] = &[(Opcode::BoolNeg, BoolUnaryOp::Neg)];
+/// (Opcode, IntUnaryOp) dispatch table for the boolean unary opcode.
+/// Logical not of a 1-bit value is bitwise-not at `I1`.
+static OPCODE_TO_BOOL_UNARY: &[(Opcode, IntUnaryOp)] = &[(Opcode::BoolNeg, IntUnaryOp::BitNot)];
 
 /// (Opcode, FloatBinaryOp) dispatch table.
 static OPCODE_TO_FLOAT_BINARY: &[(Opcode, FloatBinaryOp)] = &[

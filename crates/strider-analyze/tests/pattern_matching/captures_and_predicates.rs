@@ -7,7 +7,6 @@
 //! including the "unbound var returns None" contract.
 
 use strider_analyze::pattern::*;
-use strider_ir::node::NodeOutputType;
 
 use super::support::{Tb, assertions as a, shapes};
 
@@ -164,10 +163,12 @@ fn get_int_const_on_unbound_var_returns_none() {
 
 #[test]
 fn get_bool_const_and_float_bits_helpers() {
+    // Return the I1 boolean const directly.  Widening it to a wider integer
+    // would const-fold it into a wider `IntConst`, and `get_bool` only reads
+    // back an `IntConst` typed `I1`.
     let mut t = Tb::empty();
     let bc = t.boolean(true);
-    let as_int = t.as_int(bc, NodeOutputType::I64);
-    let function = t.ret_val(as_int);
+    let function = t.ret_val(bc);
 
     let v = Capture::new();
     let m = a::unique(&function, bool_const(true).capture(v));

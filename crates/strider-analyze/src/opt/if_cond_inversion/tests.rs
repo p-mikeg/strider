@@ -18,9 +18,9 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::Function, strider_ir::node::N
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
             let neg_cond =
-                b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+                b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
             Ok((neg_cond, ()))
         })?;
     Ok((fg, if_node))
@@ -40,7 +40,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     // Before: cond is BoolUnaryOp::Neg.
     assert!(matches!(
         if_cond_kind(&fg, if_node),
-        NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)
+        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)
     ));
 
     let entry = fg.entry().unwrap();
@@ -52,7 +52,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     // on the If's cond input.
     assert!(!matches!(
         if_cond_kind(&fg, if_node),
-        NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)
+        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)
     ));
     Ok(())
 }
@@ -81,9 +81,9 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_bool_if_needed(raw)?;
-            let n1 = b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
-            let n2 = b.build_boolean_unary_operation(n1, strider_ir::BoolUnaryOp::Neg)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
+            let n1 = b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
+            let n2 = b.build_int_unary_operation(n1, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
             Ok((n2, ()))
         })?;
 
@@ -162,10 +162,10 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
             // BoolNeg so we can observe absorption.
             b.set_lift_addr(Some(0x500));
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
             b.set_lift_addr(Some(0x504));
             let neg_cond =
-                b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+                b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, ()))
         })?;
@@ -174,7 +174,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     // it becomes dead but stays in the arena.
     let bool_neg_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)))
         .expect("BoolUnaryOp::Neg present pre-pass");
 
     let entry = fg.entry().unwrap();
@@ -216,10 +216,10 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
         .build_if_then_else_returns(|b| {
             b.set_lift_addr(Some(0x800));
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
             b.set_lift_addr(Some(0x804));
             let neg_cond =
-                b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+                b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
             b.set_lift_addr(Some(0x808));
             Ok((neg_cond, ()))
         })?;
@@ -229,7 +229,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     // absorbed fingerprint).
     let bool_neg_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)))
         .expect("BoolNeg pre-pass");
     let if_node_pre = find_unique_if(&fg);
     let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
@@ -287,14 +287,14 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
         .build_if_then_else_returns(|b| {
             b.set_lift_addr(Some(0x900));
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_bool_if_needed(raw)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
             b.set_lift_addr(Some(0x904));
             let neg_cond =
-                b.build_boolean_unary_operation(cond_bool, strider_ir::BoolUnaryOp::Neg)?;
+                b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
             // Second consumer of the SAME `neg_cond` output.
             b.set_lift_addr(Some(0x908));
             let second_neg = b
-                .build_boolean_unary_operation(neg_cond, strider_ir::BoolUnaryOp::Neg)?;
+                .build_int_unary_operation(neg_cond, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
             let second_neg_node = b.function().node_for_output(second_neg);
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, second_neg_node))
@@ -306,7 +306,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
         .all_node_ids()
         .find(|&n| {
             n != second_neg_node
-                && matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg))
+                && matches!(fg.node_kind(n), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot))
         })
         .expect("first BoolNeg present pre-pass");
     let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;

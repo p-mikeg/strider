@@ -4,57 +4,19 @@ use smallvec::SmallVec;
 use super::FunctionBuilder;
 use crate::error::Result;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use crate::ops::{
-    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
-    IntUnaryOp,
-};
+use crate::ops::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// Emits a boolean constant node and returns its output id.
+    /// Emits a boolean constant — an `IntConst` of type `I1` (`true`→1,
+    /// `false`→0).  Booleans are 1-bit integers; logical operations on them
+    /// are ordinary `IntBinaryOp`/`IntUnaryOp` at `I1`.
     pub fn build_boolean_const(&mut self, val: bool) -> NodeOutputId {
-        self.build_single_output_pure(NodeKind::BoolConst(val), [], NodeOutputType::Bool)
-    }
-
-    /// Emits a boolean binary operation node and returns its output id.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when either operand is not a value edge.
-    pub fn build_boolean_operation(
-        &mut self,
-        lhs_id: NodeOutputId,
-        rhs_id: NodeOutputId,
-        op: BoolBinaryOp,
-    ) -> Result<NodeOutputId> {
-        self.require_value_kind(lhs_id)?;
-        self.require_value_kind(rhs_id)?;
-        let converted_lhs_id = self.convert_to_bool_if_needed(lhs_id)?;
-        let converted_rhs_id = self.convert_to_bool_if_needed(rhs_id)?;
-        Ok(self.build_single_output_pure(
-            NodeKind::BoolBinaryOp(op),
-            [converted_lhs_id, converted_rhs_id],
-            NodeOutputType::Bool,
-        ))
-    }
-
-    /// Emits a boolean unary operation node and returns its output id.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `input_id` is not a value edge.
-    pub fn build_boolean_unary_operation(
-        &mut self,
-        input_id: NodeOutputId,
-        op: BoolUnaryOp,
-    ) -> Result<NodeOutputId> {
-        self.require_value_kind(input_id)?;
-        let converted_input_id = self.convert_to_bool_if_needed(input_id)?;
-        Ok(self.build_single_output_pure(
-            NodeKind::BoolUnaryOp(op),
-            [converted_input_id],
-            NodeOutputType::Bool,
-        ))
+        self.build_single_output_pure(
+            NodeKind::IntConst(u128::from(val)),
+            [],
+            NodeOutputType::I1,
+        )
     }
 
     /// Emits an integer constant node.
@@ -238,7 +200,7 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(
             NodeKind::IntCmpOp(kind),
             [converted_lhs_id, converted_rhs_id],
-            NodeOutputType::Bool,
+            NodeOutputType::I1,
         ))
     }
 
@@ -322,7 +284,7 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(
             NodeKind::FloatCmpOp(op),
             [lhs, rhs],
-            NodeOutputType::Bool,
+            NodeOutputType::I1,
         ))
     }
 

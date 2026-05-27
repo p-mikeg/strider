@@ -1,9 +1,6 @@
 use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
-use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
-    IntUnaryOp,
-};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::pattern::var::{Capture, OffsetCapture};
 
@@ -226,15 +223,19 @@ impl Bindings {
         ty.get_signed_int(*val)
     }
 
-    /// If the node bound to `c` is a `BoolConst`, returns the stored
-    /// boolean value.
+    /// If the node bound to `c` is a boolean constant (an `IntConst`
+    /// typed `I1`), returns the stored boolean value (`!= 0`).
     #[must_use]
     pub fn get_bool(&self, c: Capture, graph: &Graph) -> Option<bool> {
         let out = self.get_output(c)?;
-        match graph.kind_of_output(out) {
-            NodeKind::BoolConst(val) => Some(*val),
-            _ => None,
+        let NodeKind::IntConst(val) = graph.kind_of_output(out) else {
+            return None;
+        };
+        let ty = graph.output_kind(out).as_value()?;
+        if !ty.is_bool() {
+            return None;
         }
+        Some(*val != 0)
     }
 
     /// If the node bound to `c` is a `FloatConst`, returns the raw
@@ -286,32 +287,42 @@ impl Bindings {
         }
     }
 
-    /// If the node bound to `c` is a `BoolBinaryOp`, returns the op variant.
+    /// If the node bound to `c` is a boolean binary op (an `IntBinaryOp`
+    /// whose output is `I1`), returns the op variant.
     #[must_use]
     pub fn get_bool_binary_op(
         &self,
         c: Capture,
         graph: &Graph,
-    ) -> Option<BoolBinaryOp> {
+    ) -> Option<IntBinaryOp> {
         let node = self.get_node(c)?;
-        match graph.node_kind(node) {
-            NodeKind::BoolBinaryOp(op) => Some(*op),
-            _ => None,
+        let NodeKind::IntBinaryOp(op) = graph.node_kind(node) else {
+            return None;
+        };
+        let out = self.get_output(c)?;
+        if !graph.output_kind(out).as_value()?.is_bool() {
+            return None;
         }
+        Some(*op)
     }
 
-    /// If the node bound to `c` is a `BoolUnaryOp`, returns the op variant.
+    /// If the node bound to `c` is a boolean unary op (an `IntUnaryOp`
+    /// whose output is `I1`), returns the op variant.
     #[must_use]
     pub fn get_bool_unary_op(
         &self,
         c: Capture,
         graph: &Graph,
-    ) -> Option<BoolUnaryOp> {
+    ) -> Option<IntUnaryOp> {
         let node = self.get_node(c)?;
-        match graph.node_kind(node) {
-            NodeKind::BoolUnaryOp(op) => Some(*op),
-            _ => None,
+        let NodeKind::IntUnaryOp(op) = graph.node_kind(node) else {
+            return None;
+        };
+        let out = self.get_output(c)?;
+        if !graph.output_kind(out).as_value()?.is_bool() {
+            return None;
         }
+        Some(*op)
     }
 
     /// If the node bound to `c` is a `FloatBinaryOp`, returns the op variant.

@@ -156,8 +156,9 @@ macro_rules! impl_variant_any {
     };
 }
 
-// Shorthands for each family's constant result type.
-fn bool_ty() -> BuildTy { BuildTy::Fixed(strider_ir::node::NodeOutputType::Bool) }
+// Shorthands for each family's constant result type.  Booleans are 1-bit
+// (`I1`) integers in this IR.
+fn bool_ty() -> BuildTy { BuildTy::Fixed(strider_ir::node::NodeOutputType::I1) }
 
 impl_variant_any!(
     binary, int_binary_any, IntBinaryOp, strider_ir::IntBinaryOp::Add,
@@ -177,16 +178,21 @@ impl_variant_any!(
     "Matches **any** integer comparison and binds the matched node to `c`.\n\nCommutative comparisons (`Equal`, `Carry`, `Scarry`) try both operand orderings automatically.  Recover the op via `Match::get_int_cmp_op(c, &graph)`."
 );
 
+// Booleans are 1-bit (`I1`) integers, so a boolean binary / unary op is an
+// `IntBinaryOp` / `IntUnaryOp` whose output is `I1`.  These keep their
+// historical `bool_*_any` names but match the integer kinds (result type
+// fixed to `I1`); recover the op via `Match::get_bool_binary_op` /
+// `get_bool_unary_op`, which inspect the same integer kinds.
 impl_variant_any!(
-    binary, bool_binary_any, BoolBinaryOp, strider_ir::BoolBinaryOp::And,
+    binary, bool_binary_any, IntBinaryOp, strider_ir::IntBinaryOp::And,
     bool_ty(), "bool_binary_any",
-    "Matches **any** boolean binary operation and binds the matched node to `c`.\n\nCommutative ops (`And`, `Or`, `Xor`) try both operand orderings automatically.  Recover the op via `Match::get_bool_binary_op(c, &graph)`."
+    "Matches **any** boolean binary operation (an `IntBinaryOp` at `I1`) and binds the matched node to `c`.\n\nCommutative ops (`And`, `Or`, `Xor`) try both operand orderings automatically.  Recover the op via `Match::get_bool_binary_op(c, &graph)`."
 );
 
 impl_variant_any!(
-    unary, bool_unary_any, BoolUnaryOp, strider_ir::BoolUnaryOp::Neg,
+    unary, bool_unary_any, IntUnaryOp, strider_ir::IntUnaryOp::BitNot,
     bool_ty(), "bool_unary_any",
-    "Matches **any** boolean unary operation and binds the matched node to `c`.\n\nRecover the op via `Match::get_bool_unary_op(c, &graph)`."
+    "Matches **any** boolean unary operation (an `IntUnaryOp` at `I1`) and binds the matched node to `c`.\n\nRecover the op via `Match::get_bool_unary_op(c, &graph)`."
 );
 
 impl_variant_any!(

@@ -584,9 +584,9 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     let phi_token = function.node_outputs(cs).iter().copied().nth(1).unwrap();
 
     let bc = function.create_node(
-        NodeKind::BoolConst(true),
+        NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        [NodeOutputKind::OutputType(NodeOutputType::I1)],
     );
     let bc_out = function.node_outputs(bc).iter().copied().next().unwrap();
 
@@ -594,7 +594,7 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     let vp = function.create_node(
         NodeKind::Phi,
         [phi_token, bc_out],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        [NodeOutputKind::OutputType(NodeOutputType::I1)],
     );
     let vp_out = function.node_outputs(vp).iter().copied().next().unwrap();
 

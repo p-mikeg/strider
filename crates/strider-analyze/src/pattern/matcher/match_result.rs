@@ -1,8 +1,5 @@
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
-use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
-    IntUnaryOp,
-};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::pattern::var::{Capture, OffsetCapture};
 
@@ -62,8 +59,8 @@ impl Match {
         self.bindings.get_int(c, graph)
     }
 
-    /// If the node bound to `c` is a `BoolConst`, returns the stored
-    /// boolean value.  Returns `None` otherwise.
+    /// If the node bound to `c` is a boolean constant (an `IntConst` typed
+    /// `I1`), returns the stored boolean value.  Returns `None` otherwise.
     #[must_use]
     pub fn get_bool(&self, c: Capture, graph: &strider_ir::Graph) -> Option<bool> {
         self.bindings.get_bool(c, graph)
@@ -102,23 +99,25 @@ impl Match {
         self.bindings.get_int_cmp_op(c, graph)
     }
 
-    /// If the node bound to `c` is a `BoolBinaryOp`, returns the op variant.
+    /// If the node bound to `c` is a boolean binary op (an `IntBinaryOp`
+    /// typed `I1`), returns the op variant.
     #[must_use]
     pub fn get_bool_binary_op(
         &self,
         c: Capture,
         graph: &strider_ir::Graph,
-    ) -> Option<BoolBinaryOp> {
+    ) -> Option<IntBinaryOp> {
         self.bindings.get_bool_binary_op(c, graph)
     }
 
-    /// If the node bound to `c` is a `BoolUnaryOp`, returns the op variant.
+    /// If the node bound to `c` is a boolean unary op (an `IntUnaryOp`
+    /// typed `I1`), returns the op variant.
     #[must_use]
     pub fn get_bool_unary_op(
         &self,
         c: Capture,
         graph: &strider_ir::Graph,
-    ) -> Option<BoolUnaryOp> {
+    ) -> Option<IntUnaryOp> {
         self.bindings.get_bool_unary_op(c, graph)
     }
 

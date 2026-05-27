@@ -8,7 +8,7 @@ use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 
 /// Helper: build a unary-input NodePat whose kind is determined by
 /// `build_kind` (match via `KindSpec::Exact`) and whose build side emits
-/// the same literal kind.  Covers the unit-variant casts (`CastToBool`,
+/// the same literal kind.  Covers the unit-variant casts (`CastToFloat`,
 /// `Truncate`, `Popcount`, …), the `Extend`-with-op variants, and the
 /// float conversions in `float.rs`.
 pub(super) fn unary_node(build_kind: NodeKind, build_ty: BuildTy, operand: impl Into<Pat>) -> Pat {
@@ -29,18 +29,6 @@ macro_rules! simple_unary_cast {
     };
 }
 
-simple_unary_cast!(
-    cast_to_bool,
-    CastToBool,
-    BuildTy::Fixed(strider_ir::node::NodeOutputType::Bool),
-    "Matches a `CastToBool` node (non-zero integer → `true`)."
-);
-simple_unary_cast!(
-    cast_to_int,
-    CastToInt,
-    BuildTy::InheritRoot,
-    "Matches a `CastToInt` node (`bool` → `0` or `1`)."
-);
 simple_unary_cast!(
     cast_to_float,
     CastToFloat,

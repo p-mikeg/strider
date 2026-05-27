@@ -18,7 +18,7 @@
 //! handlers live in [`super::cast`] (they manipulate bit positions
 //! rather than computing arithmetic).
 
-use strider_ir::{BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;
@@ -176,7 +176,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             .build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, cmp_width)?;
         let neq = self
             .builder
-            .build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
+            .build_int_unary_operation(eq, IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
         self.write_vn(out_vn, neq)
     }
 
@@ -200,7 +200,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             .build_int_cmp_operation(rhs, lhs, IntCmpOp::Less, cmp_width)?;
         let le = self
             .builder
-            .build_boolean_unary_operation(lt, BoolUnaryOp::Neg)?;
+            .build_int_unary_operation(lt, IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
         self.write_vn(out_vn, le)
     }
 
@@ -223,7 +223,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             .build_int_cmp_operation(rhs, lhs, IntCmpOp::Sless, cmp_width)?;
         let le = self
             .builder
-            .build_boolean_unary_operation(lt, BoolUnaryOp::Neg)?;
+            .build_int_unary_operation(lt, IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
         self.write_vn(out_vn, le)
     }
 

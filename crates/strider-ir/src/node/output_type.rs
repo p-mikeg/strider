@@ -2,12 +2,15 @@
 
 /// The value type carried by a node output.
 ///
-/// Integer variants correspond directly to their C-style unsigned integer
-/// widths.  `Bool` is a 1-bit logical value.  `F32`/`F64` are IEEE 754
-/// floating-point types whose raw bit patterns are stored as `u64`.
+/// Integer variants are widths in bits.  `I1` is the 1-bit integer that
+/// models a boolean (a comparison / logical-op result, value 0 or 1);
+/// it is an ordinary integer type, not a separate category.  `F32`/`F64`
+/// are IEEE 754 floating-point types whose raw bit patterns are stored as
+/// `u64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NodeOutputType {
-    Bool,
+    /// 1-bit integer — the boolean type (comparison / logical-op result).
+    I1,
     I8,
     I16,
     I32,
@@ -40,7 +43,6 @@ pub enum NodeOutputType {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeOutputTypeCategory {
-    Bool,
     Int,
     Float,
 }
@@ -48,24 +50,27 @@ enum NodeOutputTypeCategory {
 struct TypeInfo {
     name: &'static str,
     byte_size: u8,
+    /// Width in bits.  Distinct from `byte_size * 8` only for `I1`, whose
+    /// byte_size is 1 but whose bit width is 1.
+    bit_width: u16,
     category: NodeOutputTypeCategory,
 }
 
 // Order MUST match the `NodeOutputType` enum declaration order
 // (asserted by `type_info_table_matches_variants` in the test module).
 const TYPE_INFO: &[TypeInfo] = &[
-    TypeInfo { name: "bool", byte_size: 1,  category: NodeOutputTypeCategory::Bool  },
-    TypeInfo { name: "i8",   byte_size: 1,  category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i16",  byte_size: 2,  category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i32",  byte_size: 4,  category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i64",  byte_size: 8,  category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i80",  byte_size: 10, category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i128", byte_size: 16, category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i256", byte_size: 32, category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i512", byte_size: 64, category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "f32",  byte_size: 4,  category: NodeOutputTypeCategory::Float },
-    TypeInfo { name: "f64",  byte_size: 8,  category: NodeOutputTypeCategory::Float },
-    TypeInfo { name: "f80",  byte_size: 10, category: NodeOutputTypeCategory::Float },
+    TypeInfo { name: "i1",   byte_size: 1,  bit_width: 1,   category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "i8",   byte_size: 1,  bit_width: 8,   category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "i16",  byte_size: 2,  bit_width: 16,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "i32",  byte_size: 4,  bit_width: 32,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "i64",  byte_size: 8,  bit_width: 64,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "i80",  byte_size: 10, bit_width: 80,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "i128", byte_size: 16, bit_width: 128, category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "i256", byte_size: 32, bit_width: 256, category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "i512", byte_size: 64, bit_width: 512, category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "f32",  byte_size: 4,  bit_width: 32,  category: NodeOutputTypeCategory::Float },
+    TypeInfo { name: "f64",  byte_size: 8,  bit_width: 64,  category: NodeOutputTypeCategory::Float },
+    TypeInfo { name: "f80",  byte_size: 10, bit_width: 80,  category: NodeOutputTypeCategory::Float },
 ];
 
 impl NodeOutputType {
@@ -78,7 +83,7 @@ impl NodeOutputType {
     #[inline]
     fn info(self) -> &'static TypeInfo {
         match self {
-            Self::Bool => &TYPE_INFO[0],
+            Self::I1 => &TYPE_INFO[0],
             Self::I8 => &TYPE_INFO[1],
             Self::I16 => &TYPE_INFO[2],
             Self::I32 => &TYPE_INFO[3],
@@ -102,23 +107,26 @@ impl NodeOutputType {
 
     /// Returns the size of this type **in bytes**.
     ///
-    /// Both `Bool` and `I8` return 1.
+    /// Both `I1` and `I8` return 1.
     #[inline]
     #[must_use]
     pub fn byte_size(self) -> usize {
         self.info().byte_size as usize
     }
 
-    /// Returns the width of this type **in bits** (`byte_size * 8`).
+    /// Returns the width of this type **in bits**.
+    ///
+    /// This is `byte_size * 8` for every type except `I1`, which is 1 bit
+    /// despite occupying 1 byte.
     #[inline]
     #[must_use]
     pub fn bit_width(self) -> usize {
-        self.byte_size() * 8
+        self.info().bit_width as usize
     }
 
     /// Whether a constant of this type fits in a `u64` (i.e. `byte_size <= 8`).
     ///
-    /// Returns `true` for `Bool`, `I8`, `I16`, `I32`, `I64`, `F32`, and `F64`.
+    /// Returns `true` for `I1`, `I8`, `I16`, `I32`, `I64`, `F32`, and `F64`.
     /// Returns `false` for `I80` (10 bytes), `I128`, `I256`, `I512`, and `F80`
     /// (10 bytes).
     #[inline]
@@ -127,15 +135,18 @@ impl NodeOutputType {
         self.byte_size() <= 8
     }
 
-    /// Returns `true` if this type is `Bool`.
+    /// Returns `true` if this type is the 1-bit boolean integer `I1`.
+    ///
+    /// Sugar over `bit_width() == 1`, used by the pattern DSL to query
+    /// boolean-producing nodes.
     #[inline]
     #[must_use]
     pub fn is_bool(self) -> bool {
-        matches!(self.info().category, NodeOutputTypeCategory::Bool)
+        self == Self::I1
     }
 
-    /// Returns `true` if this type is one of the unsigned integer
-    /// variants (I8, I16, I32, I64, I80, I128, I256, I512).
+    /// Returns `true` if this type is one of the integer
+    /// variants (I1, I8, I16, I32, I64, I80, I128, I256, I512).
     #[inline]
     #[must_use]
     pub fn is_integer(self) -> bool {
@@ -150,13 +161,14 @@ impl NodeOutputType {
         matches!(self.info().category, NodeOutputTypeCategory::Float)
     }
 
-    /// Returns the unsigned integer type with the same byte size.
-    /// (Bool→I8, F32→I32, F64→I64, Ux→Ux)
+    /// Returns the integer type with the same byte size.
+    /// (I1→I1, F32→I32, F64→I64, Ix→Ix)
     #[inline]
     #[must_use]
     pub fn to_natural_int_type(self) -> NodeOutputType {
         match self {
-            NodeOutputType::Bool | NodeOutputType::I8 => NodeOutputType::I8,
+            NodeOutputType::I1 => NodeOutputType::I1,
+            NodeOutputType::I8 => NodeOutputType::I8,
             NodeOutputType::I16 => NodeOutputType::I16,
             NodeOutputType::I32 | NodeOutputType::F32 => NodeOutputType::I32,
             NodeOutputType::I64 | NodeOutputType::F64 => NodeOutputType::I64,
@@ -168,7 +180,7 @@ impl NodeOutputType {
     }
 
     /// Returns the all-ones bit mask for this integer type, as `u128`.
-    /// `Bool` returns `1`; integer widths up to 128 bits return their
+    /// `I1` returns `1`; integer widths up to 128 bits return their
     /// natural bit widths (e.g. `I64` returns `0xFFFF_FFFF_FFFF_FFFF`).
     /// `I128` returns `u128::MAX`.  `I256` and `I512` also return
     /// `u128::MAX` because the mask cannot represent 256+ bits in a
@@ -182,9 +194,6 @@ impl NodeOutputType {
     /// Float types return `0` (defensive — no caller should ask).
     #[must_use]
     pub fn bit_mask_u128(self) -> u128 {
-        if self.is_bool() {
-            return 1;
-        }
         let bits = self.bit_width();
         if bits == 0 || !self.is_integer() {
             return 0;
@@ -196,17 +205,12 @@ impl NodeOutputType {
     }
 
     /// Masks `val` to this type's bit width and returns the result, or `None`
-    /// if this type is not an integer (`Bool`, `F32`, `F64`, `F80`).
+    /// if this type is not an integer (`F32`, `F64`, `F80`).
     ///
     /// For widths >= 128 returns `val` unchanged (the carrier is `u128`, so
     /// `I128` returns its full mask and `I256` returns `val` as-is - callers
     /// that need to distinguish the two must check the type explicitly).
-    ///
-    /// **Bool exception.**  `Bool` is excluded even though
-    /// [`Self::bit_mask_u128`] returns `1` for it: `Bool` is its own
-    /// category in [`crate::node::NodeKind`], so callers reading a `Bool` constant
-    /// should match the `BoolConst` arm directly rather than going
-    /// through this helper.
+    /// `I1` masks to the low bit (returns `Some(val & 1)`).
     #[must_use]
     pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
         if !self.is_integer() {
@@ -303,7 +307,7 @@ mod tests {
 
     #[test]
     fn bit_mask_u128_widths() {
-        assert_eq!(NodeOutputType::Bool.bit_mask_u128(), 0x1u128);
+        assert_eq!(NodeOutputType::I1.bit_mask_u128(), 0x1u128);
         assert_eq!(NodeOutputType::I8.bit_mask_u128(), 0xffu128);
         assert_eq!(NodeOutputType::I16.bit_mask_u128(), 0xffffu128);
         assert_eq!(NodeOutputType::I32.bit_mask_u128(), 0xffff_ffffu128);
@@ -329,7 +333,9 @@ mod tests {
             Some(u128::MAX)
         );
         assert_eq!(NodeOutputType::F32.get_unsigned_int(0x12345678u128), None);
-        assert_eq!(NodeOutputType::Bool.get_unsigned_int(1), None);
+        // I1 is a 1-bit integer: masks to the low bit.
+        assert_eq!(NodeOutputType::I1.get_unsigned_int(1), Some(1));
+        assert_eq!(NodeOutputType::I1.get_unsigned_int(0xFE), Some(0));
     }
 
     #[test]

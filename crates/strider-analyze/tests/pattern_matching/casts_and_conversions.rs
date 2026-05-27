@@ -1,8 +1,8 @@
 //! Width-changing and type-converting cast patterns.
 //!
 //! Covers: `zero_extend`, `sign_extend`, `extend(ExtendOp::…)`, `truncate`,
-//! `cast_to_int`, `cast_to_bool`, `cast_to_float`, `int_to_float`,
-//! `float_to_int`, `float_to_float`, `int_bits_to_float`, `float_bits_to_int`.
+//! `cast_to_float`, `int_to_float`, `float_to_int`, `float_to_float`,
+//! `int_bits_to_float`, `float_bits_to_int`.
 //!
 //! Because most cast producers are introduced implicitly by coercion helpers
 //! on `FunctionBuilder`, tests use those helpers to create the target nodes
@@ -93,7 +93,7 @@ fn extend_then_truncate_chain_matches() {
     a::matches(&function, truncate(zero_extend(any())), 1);
 }
 
-// ── CastToFloat / CastToInt / CastToBool ─────────────────────────────────────
+// ── CastToFloat ──────────────────────────────────────────────────────────────
 
 #[test]
 fn cast_to_float_matches() {
@@ -104,28 +104,6 @@ fn cast_to_float_matches() {
     let function = t.ret_val(as_int);
 
     a::matches(&function, cast_to_float(any()), 1);
-}
-
-#[test]
-fn cast_to_int_matches_via_coerce_helper() {
-    // `convert_to_int_if_needed` on a Bool produces a CastToInt node.
-    let mut t = Tb::empty();
-    let b = t.boolean(true);
-    let i = t.as_int(b, NodeOutputType::I64);
-    let function = t.ret_val(i);
-    a::matches(&function, cast_to_int(any()), 1);
-}
-
-#[test]
-fn cast_to_bool_matches_via_coerce_helper() {
-    // `convert_to_bool_if_needed` folds `IntConst(n)` into `BoolConst(n != 0)`
-    // without emitting a CastToBool, so we feed it a non-const Add.
-    let mut t = Tb::empty();
-    let s = non_const_u64(&mut t, 1, 2);
-    let b = t.as_bool(s);
-    let as_int = t.as_int(b, NodeOutputType::I64);
-    let function = t.ret_val(as_int);
-    a::matches(&function, cast_to_bool(any()), 1);
 }
 
 // ── Int ↔ Float conversions ──────────────────────────────────────────────────
@@ -196,8 +174,7 @@ fn cast_patterns_are_kind_sensitive() {
     let x = t.zext_to(v, NodeOutputType::I64);
     let function = t.ret_val(x);
 
-    a::none(&function, cast_to_int(any()));
-    a::none(&function, cast_to_bool(any()));
     a::none(&function, truncate(any()));
     a::none(&function, int_to_float(any()));
+    a::none(&function, cast_to_float(any()));
 }

@@ -59,7 +59,9 @@ where
         .into_pat()
 }
 
-/// Builds a `BoolConst` node whose value is computed by `f` at build time.
+/// Builds a boolean constant node whose value is computed by `f` at build
+/// time.  Booleans are `I1` integers, so this emits `IntConst(b as u128)`
+/// typed `I1`.
 pub(crate) fn bool_const_with_fn<F>(f: F) -> Pat
 where
     F: Fn(&BuildCtx<'_>) -> Result<bool> + Send + Sync + 'static,
@@ -68,8 +70,8 @@ where
     NodePat::matcher(KindSpec::Any, InputsSpec::None)
         .with_post_match(never_match())
         .with_build_fn(
-            Arc::new(move |ctx| Ok(NodeKind::BoolConst(f(ctx)?))),
-            BuildTy::Fixed(NodeOutputType::Bool),
+            Arc::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)? as u128))),
+            BuildTy::Fixed(NodeOutputType::I1),
         )
         .into_pat()
 }

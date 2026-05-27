@@ -23,15 +23,16 @@ impl Graph {
         }
     }
 
-    /// Returns the boolean constant value of `out`, or `None` if it is not a
-    /// `BoolConst` node.
+    /// Returns the boolean constant value of `out`, or `None` if it is not an
+    /// `I1`-typed `IntConst` node.  Booleans are 1-bit integers, so `true` is
+    /// `IntConst(1):I1` and `false` is `IntConst(0):I1`.
     #[must_use]
     pub fn bool_const_val(&self, out: NodeOutputId) -> Option<bool> {
         if !self.output_kind(out).is_bool() {
             return None;
         }
         match *self.kind_of_output(out) {
-            NodeKind::BoolConst(v) => Some(v),
+            NodeKind::IntConst(v) => Some(v != 0),
             _ => None,
         }
     }

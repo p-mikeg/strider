@@ -117,7 +117,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             },
 
             // ── constants ─────────────────────────────────────────────────────
-            NodeKind::BoolConst(v) => format!("const {v}"),
             NodeKind::IntConst(v) => {
                 let ty = self.out_type_suffix(node, ":");
                 format!("const {v:#x}{ty}")
@@ -189,12 +188,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 let to = self.out_type_str(node);
                 format!("{op:?}\n{from} → {to}")
             }
-            NodeKind::CastToBool => format!("Cast → bool\nfrom {}", self.input_type_str(node, 0)),
-            NodeKind::CastToInt => format!(
-                "Cast → {}\nfrom {}",
-                self.out_type_str(node),
-                self.input_type_str(node, 0),
-            ),
             NodeKind::Popcount => {
                 let from = self.input_type_str(node, 0);
                 let to = self.out_type_str(node);
@@ -213,10 +206,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 self.out_type_str(node),
             ),
             NodeKind::IntCmpOp(op) => {
-                format!("{op:?}\n{} → bool", self.input_type_str(node, 0))
+                format!("{op:?}\n{} → i1", self.input_type_str(node, 0))
             }
-            NodeKind::BoolBinaryOp(op) => format!("{op:?}:bool"),
-            NodeKind::BoolUnaryOp(op) => format!("{op:?}:bool"),
 
             // ── float arithmetic / logical ────────────────────────────────────
             NodeKind::FloatBinaryOp(op) => format!("{op:?}{}", self.out_type_suffix(node, ":")),
@@ -226,7 +217,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 self.out_type_str(node),
             ),
             NodeKind::FloatCmpOp(op) => {
-                format!("{op:?}\n{} → bool", self.input_type_str(node, 0))
+                format!("{op:?}\n{} → i1", self.input_type_str(node, 0))
             }
 
             // ── float / integer conversions ───────────────────────────────────

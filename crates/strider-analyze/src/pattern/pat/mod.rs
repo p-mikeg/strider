@@ -12,7 +12,7 @@ pub(crate) mod node_pat;
 pub(crate) mod any;
 pub(crate) mod guards;
 pub use builders::{
-    BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
+    CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
     IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StorePat, ValuePhiPat,
 };
 // `BinaryOpPat<Op>` underlies the three aliases above; not re-exported
@@ -62,15 +62,17 @@ pub fn any_int_const(c: Capture) -> Pat {
     .capture(c)
 }
 
-/// Matches any `BoolConst` node and binds it to `c`.  Recover the
-/// value via [`crate::pattern::Match::get_bool`].
+/// Matches any boolean constant node and binds it to `c`.  Booleans are
+/// `I1` integers, so this matches an `IntConst` whose output type is `I1`.
+/// Recover the value via [`crate::pattern::Match::get_bool`].
 #[must_use]
 pub fn any_bool_const(c: Capture) -> Pat {
     crate::pattern::pat::node_pat::NodePat::matcher(
-        crate::pattern::pat::node_pat::KindSpec::variant(&NodeKind::BoolConst(false)),
+        crate::pattern::pat::node_pat::KindSpec::variant(&NodeKind::IntConst(0u128)),
         crate::pattern::pat::node_pat::InputsSpec::None,
     )
     .into_pat()
+    .when(|_g, ty, _o| ty.is_bool())
     .capture(c)
 }
 

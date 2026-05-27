@@ -42,8 +42,9 @@
 //! - [`RegionId`] — identifies a basic block within the function
 //! - [`node::NodeOutputType`] — `Bool`, integers `I8`/`I16`/`I32`/`I64`/`I80`/`I128`/`I256`/`I512`,
 //!   floats `F32`/`F64`/`F80`
-//! - [`IntBinaryOp`], [`IntUnaryOp`], [`IntCmpOp`], [`BoolBinaryOp`],
-//!   [`BoolUnaryOp`], [`ExtendOp`] — operation enumerations used in node kinds
+//! - [`IntBinaryOp`], [`IntUnaryOp`], [`IntCmpOp`], [`ExtendOp`] —
+//!   operation enumerations used in node kinds (logical ops on booleans
+//!   are integer ops at `I1`)
 
 mod builder;
 pub mod error;
@@ -69,7 +70,7 @@ pub(crate) mod wide_const;
 pub use crate::error::Result;
 pub use builder::FunctionBuilder;
 pub use ops::{
-    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
 };
 pub use region::RegionId;

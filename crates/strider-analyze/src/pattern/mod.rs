@@ -193,7 +193,7 @@ pub use pat::{
 
 #[rustfmt::skip]
 pub use pat::{
-    cast_to_bool, cast_to_float, cast_to_int, extend, float_bits_to_int,
+    cast_to_float, extend, float_bits_to_int,
     float_to_float, float_to_int, int_bits_to_float, int_to_float, sign_extend,
     truncate, zero_extend,
 };
@@ -228,6 +228,6 @@ pub use pat::{
 // `ir` crate directly.
 
 pub use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
     IntBinaryOp, IntCmpOp, IntUnaryOp,
 };

@@ -8,8 +8,7 @@
 mod op_kinds;
 
 pub use op_kinds::{
-    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
-    IntCmpOp, IntUnaryOp,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
 pub mod builder;

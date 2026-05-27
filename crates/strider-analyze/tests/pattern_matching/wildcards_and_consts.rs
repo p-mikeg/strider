@@ -103,10 +103,12 @@ fn bool_const_true_matches() {
 
 #[test]
 fn any_bool_const_captures_value() {
+    // Return the I1 boolean const directly: widening it to a wider integer
+    // (via `as_int`) would const-fold it into a wider `IntConst`, leaving no
+    // reachable I1 boolean const for `any_bool_const` to match.
     let mut t = Tb::empty();
     let b = t.boolean(true);
-    let as_int = t.as_int(b, NodeOutputType::I64);
-    let function = t.ret_val(as_int);
+    let function = t.ret_val(b);
 
     let bv = Capture::new();
     let m = a::unique(&function, any_bool_const(bv));

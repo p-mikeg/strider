@@ -1,36 +1,47 @@
 //! Boolean value-producing pcode opcodes: `BoolNeg`, `BoolAnd`, `BoolOr`,
 //! `BoolXor`.
+//!
+//! Booleans are modelled as the 1-bit integer `I1`, so these lower to
+//! ordinary integer operations: `BoolAnd`/`BoolOr`/`BoolXor` →
+//! `IntBinaryOp::{And,Or,Xor}` at `I1`, and `BoolNeg` (logical not of a
+//! 1-bit value) → `IntUnaryOp::BitNot` at `I1` (`~0 = 1`, `~1 = 0` once
+//! masked to one bit).  Sleigh always feeds these ops already-`I1` operands
+//! (comparison / flag results), so no int→bool conversion is needed.
 
-use strider_ir::{BoolBinaryOp, BoolUnaryOp};
+use strider_ir::{IntBinaryOp, IntUnaryOp, ValueType};
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
-    /// Translates a p-code boolean binary instruction into an IR boolean
-    /// operation node and writes the result to the output varnode.
+    /// Translates a p-code boolean binary instruction into an `I1` integer
+    /// binary operation node and writes the result to the output varnode.
     pub(super) fn process_bool_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
-        op: BoolBinaryOp,
+        op: IntBinaryOp,
     ) -> Result<()> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self.builder.build_boolean_operation(lhs, rhs, op)?;
+        let out = self
+            .builder
+            .build_int_binary_operation(lhs, rhs, op, ValueType::I1)?;
         self.write_vn(out_vn, out)
     }
 
-    /// Translates a p-code boolean unary instruction into an IR boolean
-    /// unary node and writes the result to the output varnode.
+    /// Translates a p-code boolean unary instruction (`BoolNeg`) into an `I1`
+    /// `IntUnaryOp::BitNot` node and writes the result to the output varnode.
     pub(super) fn process_bool_unary_op(
         &mut self,
         insn: &rsleigh::Insn,
-        op: BoolUnaryOp,
+        op: IntUnaryOp,
     ) -> Result<()> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self.builder.build_boolean_unary_operation(input, op)?;
+        let out = self
+            .builder
+            .build_int_unary_operation(input, op, ValueType::I1)?;
         self.write_vn(out_vn, out)
     }
 }

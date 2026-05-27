@@ -104,12 +104,18 @@ fn dead_branch_non_const_no_change() -> Result<()> {
         b.set_entry_region(entry)?;
         b.set_region(entry);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        // Non-constant condition: BoolConst(true) & BoolConst(false)
-        // (two nodes combined so it won't be constant at the If level until
-        // ConstantFold runs — but we don't run ConstantFold here).
+        // Non-constant condition: true & false (booleans are 1-bit ints, so
+        // this is `IntBinaryOp::And` at I1 over two I1 IntConsts).  Two nodes
+        // combined so it won't be constant at the If level until ConstantFold
+        // runs — but we don't run ConstantFold here.
         let t = b.build_boolean_const(true);
         let f = b.build_boolean_const(false);
-        let cond = b.build_boolean_operation(t, f, strider_ir::BoolBinaryOp::And)?;
+        let cond = b.build_int_binary_operation(
+            t,
+            f,
+            strider_ir::IntBinaryOp::And,
+            strider_ir::node::NodeOutputType::I1,
+        )?;
         b.build_if(cond, true_r, false_r)?;
         b.set_region(true_r);
         b.build_return(None, &[])?;

@@ -107,11 +107,10 @@ pub enum NodeKind {
     IntUnaryOp(crate::ops::IntUnaryOp),
     /// Integer binary operation (e.g. add, shift, bitwise AND).
     IntBinaryOp(crate::ops::IntBinaryOp),
-    /// Integer comparison operation; produces a `Bool` output.
+    /// Integer comparison operation; produces an `I1` (1-bit) output.
+    /// Logical operations on booleans are ordinary integer ops at `I1`
+    /// (`IntBinaryOp::{And,Or,Xor}`, `IntUnaryOp::BitNot`).
     IntCmpOp(crate::ops::IntCmpOp),
-    /// Cast any value (int / bool / float) to an integer of the declared
-    /// output type.
-    CastToInt,
     /// Narrow an integer value by dropping high bits.
     Truncate,
     /// Count the number of set bits in an integer value.
@@ -121,16 +120,6 @@ pub enum NodeKind {
     /// Widen an integer value by zero- or sign-extending it.
     Extend(crate::ops::ExtendOp),
 
-    // ── Boolean constants and operations ──────────────────────────────────────
-    /// A compile-time boolean constant.
-    BoolConst(bool),
-    /// Boolean unary operation (logical NOT).
-    BoolUnaryOp(crate::ops::BoolUnaryOp),
-    /// Boolean binary operation (AND, OR, XOR).
-    BoolBinaryOp(crate::ops::BoolBinaryOp),
-    /// Convert an integer value to `Bool`.
-    CastToBool,
-
     // ── Float constants and operations ────────────────────────────────────────
     /// A compile-time IEEE 754 floating-point constant.  The value is stored
     /// as its raw bit pattern in a `u64` (upper 32 bits are zero for `F32`).
@@ -139,7 +128,7 @@ pub enum NodeKind {
     FloatBinaryOp(crate::ops::FloatBinaryOp),
     /// Floating-point unary operation (neg, abs, sqrt, ceil, floor, round).
     FloatUnaryOp(crate::ops::FloatUnaryOp),
-    /// Floating-point comparison; produces a `Bool` output.
+    /// Floating-point comparison; produces an `I1` (1-bit) output.
     FloatCmpOp(crate::ops::FloatCmpOp),
 
     // ── Float / integer conversions ───────────────────────────────────────────
@@ -205,7 +194,7 @@ pub enum NodeKind {
 
 impl NodeKind {
     /// Returns `true` if this node represents a compile-time constant
-    /// (`BoolConst`, `IntConst`, `IntConstWide`, or `FloatConst`).
+    /// (`IntConst`, `IntConstWide`, or `FloatConst`).
     ///
     /// Exhaustive (no `_` arm) so adding a new const-shape `NodeKind`
     /// variant is a compile error here — see [`crate::walk::cast_mask_of`]
@@ -219,8 +208,7 @@ impl NodeKind {
     #[must_use]
     pub fn is_const(self) -> bool {
         match self {
-            Self::BoolConst(..)
-            | Self::IntConst(..)
+            Self::IntConst(..)
             | Self::IntConstWide(..)
             | Self::FloatConst(..) => true,
 
@@ -242,14 +230,10 @@ impl NodeKind {
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
             | Self::IntCmpOp(..)
-            | Self::CastToInt
             | Self::Truncate
             | Self::Popcount
             | Self::Lzcount
             | Self::Extend(..)
-            | Self::BoolUnaryOp(..)
-            | Self::BoolBinaryOp(..)
-            | Self::CastToBool
             | Self::FloatBinaryOp(..)
             | Self::FloatUnaryOp(..)
             | Self::FloatCmpOp(..)
@@ -295,15 +279,10 @@ impl NodeKind {
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
             | Self::IntCmpOp(..)
-            | Self::CastToInt
             | Self::Truncate
             | Self::Popcount
             | Self::Lzcount
             | Self::Extend(..)
-            | Self::BoolConst(..)
-            | Self::BoolUnaryOp(..)
-            | Self::BoolBinaryOp(..)
-            | Self::CastToBool
             | Self::FloatConst(..)
             | Self::FloatBinaryOp(..)
             | Self::FloatUnaryOp(..)
@@ -366,15 +345,10 @@ impl NodeKind {
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
             | Self::IntCmpOp(..)
-            | Self::CastToInt
             | Self::Truncate
             | Self::Popcount
             | Self::Lzcount
             | Self::Extend(..)
-            | Self::BoolConst(..)
-            | Self::BoolUnaryOp(..)
-            | Self::BoolBinaryOp(..)
-            | Self::CastToBool
             | Self::FloatConst(..)
             | Self::FloatBinaryOp(..)
             | Self::FloatUnaryOp(..)
@@ -416,7 +390,7 @@ impl NodeKind {
     #[inline]
     #[must_use]
     pub fn is_commutative(&self) -> bool {
-        use crate::ops::{BoolBinaryOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+        use crate::ops::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
         match self {
             Self::IntBinaryOp(op) => matches!(
                 op,
@@ -426,9 +400,6 @@ impl NodeKind {
                     | IntBinaryOp::Or
                     | IntBinaryOp::Xor
             ),
-            Self::BoolBinaryOp(op) => {
-                matches!(op, BoolBinaryOp::And | BoolBinaryOp::Or | BoolBinaryOp::Xor)
-            }
             Self::FloatBinaryOp(op) => matches!(op, FloatBinaryOp::Add | FloatBinaryOp::Mul),
             Self::IntCmpOp(op) => {
                 matches!(op, IntCmpOp::Equal | IntCmpOp::Carry | IntCmpOp::Scarry)

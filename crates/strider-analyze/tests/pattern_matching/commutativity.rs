@@ -11,7 +11,7 @@
 //! confirm they do NOT match.
 
 use strider_analyze::pattern::*;
-use strider_ir::{BoolBinaryOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp};
 
 use super::support::{Tb, assertions as a, shapes};
 
@@ -106,9 +106,9 @@ fn div_shl_shr_do_not_commute() {
 
 #[test]
 fn bool_and_or_xor_commute() {
-    let g_and = shapes::bool_bin(true, false, BoolBinaryOp::And);
-    let g_or = shapes::bool_bin(true, false, BoolBinaryOp::Or);
-    let g_xor = shapes::bool_bin(true, false, BoolBinaryOp::Xor);
+    let g_and = shapes::bool_bin(true, false, IntBinaryOp::And);
+    let g_or = shapes::bool_bin(true, false, IntBinaryOp::Or);
+    let g_xor = shapes::bool_bin(true, false, IntBinaryOp::Xor);
     a::matches(&g_and, bool_and(bool_const(false), bool_const(true)), 1);
     a::matches(&g_or, bool_or(bool_const(false), bool_const(true)), 1);
     a::matches(&g_xor, bool_xor(bool_const(false), bool_const(true)), 1);
@@ -245,7 +245,7 @@ fn float_ne_commutes() {
         let a = t.f64(1.0);
         let b = t.f64(2.0);
         let eq = t.fcmp(a, b, FloatCmpOp::Equal);
-        let ne = t.bool_un(eq, strider_ir::BoolUnaryOp::Neg);
+        let ne = t.bool_un(eq, strider_ir::IntUnaryOp::BitNot);
         let as_int = t.as_int(ne, strider_ir::node::NodeOutputType::I64);
         t.ret_val(as_int)
     };

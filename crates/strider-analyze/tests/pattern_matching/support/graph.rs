@@ -10,7 +10,7 @@
 //! via `Tb::fb_mut`.
 
 use strider_ir::node::{NodeOutputId, NodeOutputType};
-use strider_ir::{BoolBinaryOp, BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder};
 use strider_ir_test_utils::RegisterSet;
 
@@ -237,19 +237,22 @@ impl Tb {
 
     // ── Boolean ops ───────────────────────────────────────────────────────────
 
+    // Booleans are 1-bit (`I1`) integers: a boolean binary op is an
+    // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`, and a logical NOT is an
+    // `IntUnaryOp::BitNot` at `I1`.
     pub fn bool_bin(
         &mut self,
         l: NodeOutputId,
         r: NodeOutputId,
-        op: BoolBinaryOp,
+        op: IntBinaryOp,
     ) -> NodeOutputId {
         self.fb
-            .build_boolean_operation(l, r, op)
+            .build_int_binary_operation(l, r, op, NodeOutputType::I1)
             .expect("boolean_operation")
     }
-    pub fn bool_un(&mut self, v: NodeOutputId, op: BoolUnaryOp) -> NodeOutputId {
+    pub fn bool_un(&mut self, v: NodeOutputId, op: IntUnaryOp) -> NodeOutputId {
         self.fb
-            .build_boolean_unary_operation(v, op)
+            .build_int_unary_operation(v, op, NodeOutputType::I1)
             .expect("boolean_unary_operation")
     }
 
@@ -313,7 +316,10 @@ impl Tb {
         self.fb.truncate_if_needed(v, ty).expect("truncate")
     }
     pub fn as_bool(&mut self, v: NodeOutputId) -> NodeOutputId {
-        self.fb.convert_to_bool_if_needed(v).expect("as_bool")
+        // Booleans are 1-bit (`I1`) integers; coerce to that width.
+        self.fb
+            .convert_to_int_if_needed(v, NodeOutputType::I1)
+            .expect("as_bool")
     }
     pub fn as_int(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
         self.fb.convert_to_int_if_needed(v, ty).expect("as_int")

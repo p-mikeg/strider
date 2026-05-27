@@ -8,8 +8,8 @@
 //! both differences through one [`unary_pat`] helper so the family
 //! ctors collapse to one-liners.
 
-use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::{BoolUnaryOp, FloatUnaryOp, IntUnaryOp};
+use strider_ir::node::NodeKind;
+use strider_ir::{FloatUnaryOp, IntUnaryOp};
 
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
@@ -24,11 +24,6 @@ pub(crate) trait UnaryOpKind: Copy + 'static {
 impl UnaryOpKind for IntUnaryOp {
     fn node_kind(self) -> NodeKind { NodeKind::IntUnaryOp(self) }
     fn build_ty(self) -> BuildTy { BuildTy::InheritRoot }
-}
-
-impl UnaryOpKind for BoolUnaryOp {
-    fn node_kind(self) -> NodeKind { NodeKind::BoolUnaryOp(self) }
-    fn build_ty(self) -> BuildTy { BuildTy::Fixed(NodeOutputType::Bool) }
 }
 
 impl UnaryOpKind for FloatUnaryOp {

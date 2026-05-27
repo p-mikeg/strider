@@ -27,11 +27,12 @@ fn unsigned_int_masks_to_declared_width() {
     );
 }
 
-/// `get_unsigned_int` must return `None` for `Bool` because a boolean is
-/// not an integer representation.
+/// `I1` is a 1-bit integer, so `get_unsigned_int` masks to the low bit.
 #[test]
-fn unsigned_int_is_none_for_bool() {
-    assert_eq!(NodeOutputType::Bool.get_unsigned_int(1), None);
+fn unsigned_int_masks_i1_to_low_bit() {
+    assert_eq!(NodeOutputType::I1.get_unsigned_int(1), Some(1));
+    assert_eq!(NodeOutputType::I1.get_unsigned_int(0), Some(0));
+    assert_eq!(NodeOutputType::I1.get_unsigned_int(0xFE), Some(0));
 }
 
 /// `get_signed_int` must sign-extend values.  The MSB of the declared
@@ -61,17 +62,20 @@ fn signed_int_sign_extends_from_declared_width() {
     );
 }
 
-/// `get_signed_int` must return `None` for `Bool`.
+/// `I1` is a 1-bit signed integer: bit 0 set reads as `-1`, clear as `0`.
 #[test]
-fn signed_int_is_none_for_bool() {
-    assert_eq!(NodeOutputType::Bool.get_signed_int(1), None);
+fn signed_int_for_i1_is_one_bit() {
+    assert_eq!(NodeOutputType::I1.get_signed_int(1), Some(-1));
+    assert_eq!(NodeOutputType::I1.get_signed_int(0), Some(0));
 }
 
-/// `bit_width` must equal `byte_size * 8` for every variant.
+/// `bit_width` equals `byte_size * 8` for every variant except `I1`, which
+/// is 1 bit despite occupying 1 byte.
 #[test]
-fn bit_width_is_eight_times_byte_size() {
+fn bit_width_is_eight_times_byte_size_except_i1() {
+    assert_eq!(NodeOutputType::I1.bit_width(), 1);
+    assert_eq!(NodeOutputType::I1.byte_size(), 1);
     for ty in [
-        NodeOutputType::Bool,
         NodeOutputType::I8,
         NodeOutputType::I16,
         NodeOutputType::I32,
@@ -105,16 +109,18 @@ fn is_value_only_for_output_type() {
 /// `is_bool` must be `true` only when the wrapped type is `Bool`.
 #[test]
 fn is_bool_only_for_bool_output_type() {
-    assert!(NodeOutputKind::OutputType(NodeOutputType::Bool).is_bool());
+    assert!(NodeOutputKind::OutputType(NodeOutputType::I1).is_bool());
     assert!(!NodeOutputKind::OutputType(NodeOutputType::I8).is_bool());
     assert!(!NodeOutputKind::Control.is_bool());
 }
 
-/// `is_integer` must be `true` for all integer `OutputType` variants and
-/// `false` for `Bool`, `Control`, `PhiToken`, `Memory`, and floats.
+/// `is_integer` must be `true` for all integer `OutputType` variants
+/// (including the 1-bit `I1`) and `false` for `Control`, `PhiToken`,
+/// `Memory`, and floats.
 #[test]
 fn is_integer_for_all_integer_output_types() {
     for ty in [
+        NodeOutputType::I1,
         NodeOutputType::I8,
         NodeOutputType::I16,
         NodeOutputType::I32,
@@ -129,7 +135,6 @@ fn is_integer_for_all_integer_output_types() {
         );
     }
     for ty in [
-        NodeOutputType::Bool,
         NodeOutputType::F32,
         NodeOutputType::F64,
         NodeOutputType::F80,
@@ -145,12 +150,13 @@ fn is_integer_for_all_integer_output_types() {
 
 // ── NodeKind ─────────────────────────────────────────────────────────────
 
-/// Only `BoolConst` and `IntConst` should be considered constants; all
-/// other variants must not.
+/// Only constant kinds (`IntConst`, `IntConstWide`, `FloatConst`) should be
+/// considered constants; all other variants must not.  Booleans are
+/// `IntConst` values typed `I1`.
 #[test]
 fn is_const_only_for_constant_kinds() {
-    assert!(NodeKind::BoolConst(true).is_const());
     assert!(NodeKind::IntConst(42).is_const());
+    assert!(NodeKind::FloatConst(0).is_const());
     assert!(!NodeKind::Entry.is_const());
     assert!(!NodeKind::Return.is_const());
 }
@@ -182,7 +188,6 @@ fn non_cacheable_kinds_are_not_cacheable() {
 #[test]
 fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntConst(0).is_cacheable());
-    assert!(NodeKind::BoolConst(false).is_cacheable());
     assert!(NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add).is_cacheable());
     assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::BitNot).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
@@ -214,7 +219,7 @@ fn is_float_only_for_float_types() {
     assert!(NodeOutputType::F64.is_float());
     assert!(!NodeOutputType::I32.is_float());
     assert!(!NodeOutputType::I64.is_float());
-    assert!(!NodeOutputType::Bool.is_float());
+    assert!(!NodeOutputType::I1.is_float());
 }
 
 #[test]
@@ -298,7 +303,7 @@ fn type_info_table_matches_variants() {
     // Table indices must match discriminant order. Enumerate every variant
     // explicitly and check `info().name` / category.
     let cases: &[(NodeOutputType, &str, usize, bool, bool, bool)] = &[
-        (NodeOutputType::Bool, "bool", 1, false, true, false),
+        (NodeOutputType::I1,   "i1",   1, true,  true,  false),
         (NodeOutputType::I8,   "i8",   1, true,  false, false),
         (NodeOutputType::I16,  "i16",  2, true,  false, false),
         (NodeOutputType::I32,  "i32",  4, true,  false, false),
@@ -313,7 +318,9 @@ fn type_info_table_matches_variants() {
     for (ty, name, size, is_int, is_bool, is_float) in cases {
         assert_eq!(ty.as_str(), *name);
         assert_eq!(ty.byte_size(), *size);
-        assert_eq!(ty.bit_width(), *size * 8);
+        // I1 is the lone exception: 1 byte but 1 bit wide.
+        let expected_bits = if *ty == NodeOutputType::I1 { 1 } else { *size * 8 };
+        assert_eq!(ty.bit_width(), expected_bits);
         assert_eq!(ty.is_integer(), *is_int);
         assert_eq!(ty.is_bool(), *is_bool);
         assert_eq!(ty.is_float(), *is_float);
@@ -348,8 +355,7 @@ fn int_for_byte_size_to_node_output_type() {
 /// time, but a forgotten append here would silently shrink runtime coverage.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
     use crate::ops::{
-        BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
-        IntBinaryOp, IntCmpOp, IntUnaryOp,
+        ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
     };
     use cranelift_entity::EntityRef;
     let space = rsleigh::VnSpace::RAM;
@@ -387,12 +393,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Extend(ExtendOp::ZeroExtend),
         NodeKind::Popcount,
         NodeKind::Lzcount,
-        NodeKind::CastToInt,
-        // pure value: bool
-        NodeKind::BoolConst(false),
-        NodeKind::BoolUnaryOp(BoolUnaryOp::Neg),
-        NodeKind::BoolBinaryOp(BoolBinaryOp::And),
-        NodeKind::CastToBool,
         // pure value: float
         NodeKind::FloatConst(0),
         NodeKind::FloatBinaryOp(FloatBinaryOp::Add),

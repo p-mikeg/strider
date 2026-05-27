@@ -7,7 +7,7 @@
 use strider_analyze::pattern::*;
 use strider_ir::node::NodeOutputType;
 use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
     IntUnaryOp,
 };
 
@@ -148,7 +148,8 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
 
 #[test]
 fn bool_binary_any_captures_variant() {
-    for op in [BoolBinaryOp::And, BoolBinaryOp::Or, BoolBinaryOp::Xor] {
+    // Booleans are 1-bit ints: a boolean binary op is an `IntBinaryOp` at I1.
+    for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
         let mut t = Tb::empty();
         let a_ = t.boolean(true);
         let b_ = t.boolean(false);
@@ -164,7 +165,8 @@ fn bool_binary_any_captures_variant() {
 
 #[test]
 fn bool_unary_any_captures_variant() {
-    let op = BoolUnaryOp::Neg;
+    // A logical NOT is `IntUnaryOp::BitNot` at I1.
+    let op = IntUnaryOp::BitNot;
     let mut t = Tb::empty();
     let v = t.boolean(true);
     let v = t.bool_un(v, op);
@@ -234,22 +236,6 @@ fn float_cmp_any_captures_variant() {
         );
         assert_eq!(m.get_float_cmp_op(ov, &function), Some(op));
     }
-}
-
-// ── Cross-family rejection ───────────────────────────────────────────────────
-
-#[test]
-fn int_binary_any_does_not_match_bool_op() {
-    // Graph has a BoolBinaryOp::Or; int_binary_any must not match.
-    let mut t = Tb::empty();
-    let a_ = t.boolean(true);
-    let b_ = t.boolean(false);
-    let c = t.bool_bin(a_, b_, BoolBinaryOp::Or);
-    let cast = t.as_int(c, NodeOutputType::I64);
-    let function = t.ret_val(cast);
-
-    let ov = Capture::new();
-    a::none(&function, int_binary_any(ov, any(), any()));
 }
 
 // ── Op-variant capture combined with value capture ───────────────────────────

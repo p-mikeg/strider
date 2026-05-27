@@ -169,9 +169,9 @@ fn dot_output_diamond_is_deterministic() {
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cond = f.create_node(
-        NodeKind::BoolConst(false),
+        NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        [NodeOutputKind::OutputType(NodeOutputType::I1)],
     );
     let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.create_node(
@@ -214,9 +214,9 @@ fn all_edge_endpoints_are_declared() {
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cond = f.create_node(
-        NodeKind::BoolConst(true),
+        NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        [NodeOutputKind::OutputType(NodeOutputType::I1)],
     );
     let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.create_node(
@@ -292,9 +292,9 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cond = f.create_node(
-        NodeKind::BoolConst(true),
+        NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        [NodeOutputKind::OutputType(NodeOutputType::I1)],
     );
     let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.create_node(
@@ -381,9 +381,9 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cond_node = f.create_node(
-        NodeKind::BoolConst(true),
+        NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        [NodeOutputKind::OutputType(NodeOutputType::I1)],
     );
     let [cond] = f.node_outputs_exact::<1>(cond_node).unwrap();
     let if_node = f.create_node(
@@ -468,36 +468,6 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     );
 }
 
-/// CastToInt accepts `AnyValue` per its signature; the rendered label must
-/// reflect the actual input type, not a hard-coded "from bool".
-#[test]
-fn cast_to_int_label_reflects_actual_input_type() {
-    let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
-    let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
-
-    let c = f.create_node(
-        NodeKind::IntConst(0),
-        [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
-    );
-    let c_out = f.node_outputs(c).iter().copied().next().unwrap();
-    let cast = f.create_node(
-        NodeKind::CastToInt,
-        [c_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I32)],
-    );
-    let cast_out = f.node_outputs(cast).iter().copied().next().unwrap();
-    f.create_node(NodeKind::Return, [entry_ctrl, mem, cast_out], []);
-
-    let dot = render(&f, entry);
-    assert!(dot.contains("from i64"), "expected 'from i64' in CastToInt label, got:\n{dot}");
-    assert!(!dot.contains("from bool"), "CastToInt label must not hard-code 'from bool', got:\n{dot}");
-}
-
 /// Rendering a Call node with at least one clobbered output must succeed
 /// even when the caller passes `call_clobbered: &[]` (which is what every
 /// existing test does). Previously this panicked with an OOB slice index.
@@ -522,7 +492,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         [
             NodeOutputKind::Control,
             NodeOutputKind::Memory,
-            NodeOutputKind::OutputType(NodeOutputType::Bool),
+            NodeOutputKind::OutputType(NodeOutputType::I1),
         ],
     );
     let call_ctrl = f.node_outputs(call).iter().copied().next().unwrap();
@@ -796,11 +766,11 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let [im_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
-    // BoolConst(true) so DBE/DCE leave the If alone for the test.
+    // IntConst(1) (I1-typed true) so DBE/DCE leave the If alone for the test.
     let cond = f.create_node(
-        NodeKind::BoolConst(true),
+        NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        [NodeOutputKind::OutputType(NodeOutputType::I1)],
     );
     let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.create_node(

@@ -156,7 +156,7 @@ impl Pools {
             NodeOutputType::I16 => &self.u16s,
             NodeOutputType::I32 => &self.u32s,
             NodeOutputType::I64 => &self.u64s,
-            NodeOutputType::Bool => &self.bools,
+            NodeOutputType::I1 => &self.bools,
             _ => panic!("unsupported width in strategy: {ty:?}"),
         }
     }
@@ -167,7 +167,7 @@ impl Pools {
             NodeOutputType::I16 => &mut self.u16s,
             NodeOutputType::I32 => &mut self.u32s,
             NodeOutputType::I64 => &mut self.u64s,
-            NodeOutputType::Bool => &mut self.bools,
+            NodeOutputType::I1 => &mut self.bools,
             _ => panic!("unsupported width in strategy: {ty:?}"),
         }
     }
@@ -272,7 +272,7 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
                 return;
             };
             if let Ok(v) = b.build_int_cmp_operation(lhs, rhs, *op, *width) {
-                pools.bucket_mut(NodeOutputType::Bool).push(v);
+                pools.bucket_mut(NodeOutputType::I1).push(v);
             }
         }
         Step::EmitTruncate {

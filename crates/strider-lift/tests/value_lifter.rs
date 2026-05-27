@@ -32,7 +32,7 @@
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
 use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{BoolUnaryOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_lift::pcode_lift::ValueLifter;
 
 type TestReader = BufMemReader<Vec<u8>>;
@@ -424,8 +424,8 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
     }
     // Canonical shape: BoolUnaryOp::Neg over IntCmpOp::Less.
     assert!(
-        graph_has_kind(&builder, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg)),
-        "expected BoolUnaryOp::Neg in graph (the lowering wrap)"
+        graph_has_kind(&builder, NodeKind::IntUnaryOp(IntUnaryOp::BitNot)),
+        "expected IntUnaryOp::BitNot in graph (the I1 lowering wrap)"
     );
     assert!(
         graph_has_kind(&builder, NodeKind::IntCmpOp(IntCmpOp::Less)),
@@ -567,8 +567,8 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
         assert!(lifter.lift(&insn).unwrap());
     }
     assert!(
-        graph_has_kind(&builder, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg)),
-        "expected BoolUnaryOp::Neg in graph (the lowering wrap)"
+        graph_has_kind(&builder, NodeKind::IntUnaryOp(IntUnaryOp::BitNot)),
+        "expected IntUnaryOp::BitNot in graph (the I1 lowering wrap)"
     );
     assert!(
         graph_has_kind(&builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
@@ -831,8 +831,8 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
         assert!(lifter.lift(&insn).unwrap());
     }
     assert!(
-        graph_has_kind(&builder, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg)),
-        "FloatNotEqual lift must produce a BoolUnaryOp::Neg (the lowering wrap)"
+        graph_has_kind(&builder, NodeKind::IntUnaryOp(IntUnaryOp::BitNot)),
+        "FloatNotEqual lift must produce an IntUnaryOp::BitNot (the I1 lowering wrap)"
     );
     assert!(
         graph_has_kind(&builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)),
@@ -856,8 +856,8 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
         assert!(lifter.lift(&insn).unwrap());
     }
     assert!(
-        graph_has_kind(&builder, NodeKind::BoolBinaryOp(strider_ir::BoolBinaryOp::Or)),
-        "FloatLessEqual lift must produce a BoolBinaryOp::Or (the disjunction wrap)"
+        graph_has_kind(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Or)),
+        "FloatLessEqual lift must produce an IntBinaryOp::Or (the disjunction wrap)"
     );
     assert!(
         graph_has_kind(&builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Less)),

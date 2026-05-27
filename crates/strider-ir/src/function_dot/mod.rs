@@ -36,7 +36,7 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
 
         NodeKind::Return | NodeKind::IndirectBranch => "doublecircle",
 
-        NodeKind::IntConst(_) | NodeKind::BoolConst(_) | NodeKind::FloatConst(_) => "ellipse",
+        NodeKind::IntConst(_) | NodeKind::FloatConst(_) => "ellipse",
 
         _ => "box",
     }

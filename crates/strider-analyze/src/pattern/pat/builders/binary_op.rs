@@ -13,8 +13,8 @@
 //! …) re-export the three concrete instantiations as
 //! [`IntBinaryOpPat`] / [`BoolBinaryOpPat`] / [`FloatBinaryOpPat`].
 
-use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
+use strider_ir::node::NodeKind;
+use strider_ir::{FloatBinaryOp, IntBinaryOp};
 
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
@@ -36,11 +36,6 @@ pub(crate) trait BinaryOpKind: Copy + 'static {
 impl BinaryOpKind for IntBinaryOp {
     fn node_kind(self) -> NodeKind { NodeKind::IntBinaryOp(self) }
     fn build_ty(self) -> BuildTy { BuildTy::InheritRoot }
-}
-
-impl BinaryOpKind for BoolBinaryOp {
-    fn node_kind(self) -> NodeKind { NodeKind::BoolBinaryOp(self) }
-    fn build_ty(self) -> BuildTy { BuildTy::Fixed(NodeOutputType::Bool) }
 }
 
 impl BinaryOpKind for FloatBinaryOp {
@@ -101,8 +96,10 @@ impl<Op: BinaryOpKind> From<BinaryOpPat<Op>> for Pat {
 }
 
 /// Back-compat alias: typed builder for integer binary-op patterns.
+///
+/// Booleans are 1-bit integers (`I1`) in this IR, so a boolean binary op is
+/// just an [`IntBinaryOp`] (`And` / `Or` / `Xor`) whose output is `I1`; there
+/// is no separate `BoolBinaryOpPat` type.
 pub type IntBinaryOpPat = BinaryOpPat<IntBinaryOp>;
-/// Back-compat alias: typed builder for boolean binary-op patterns.
-pub type BoolBinaryOpPat = BinaryOpPat<BoolBinaryOp>;
 /// Back-compat alias: typed builder for float binary-op patterns.
 pub type FloatBinaryOpPat = BinaryOpPat<FloatBinaryOp>;

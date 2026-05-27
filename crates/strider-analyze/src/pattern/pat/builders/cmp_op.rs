@@ -41,6 +41,6 @@ pub(crate) fn cmp_pat<Op: CmpOpKind>(op: Op, lhs: Pat, rhs: Pat) -> Pat {
         InputsSpec::fixed_ordered(vec![lhs, rhs])
     };
     NodePat::matcher(KindSpec::Exact(kind), inputs)
-        .with_build_exact(kind, BuildTy::Fixed(NodeOutputType::Bool))
+        .with_build_exact(kind, BuildTy::Fixed(NodeOutputType::I1))
         .into_pat()
 }

@@ -1,21 +1,3 @@
-/// Binary operations on boolean (`Bool`) values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BoolBinaryOp {
-    /// Logical exclusive-or: `a ^ b`.
-    Xor,
-    /// Logical and: `a & b`.
-    And,
-    /// Logical or: `a | b`.
-    Or,
-}
-
-/// Unary operations on boolean (`Bool`) values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BoolUnaryOp {
-    /// Logical negation: `!a`.
-    Neg,
-}
-
 /// How to fill the bits produced by a widening integer extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExtendOp {

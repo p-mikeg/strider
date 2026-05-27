@@ -54,9 +54,7 @@ fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
     Matcher::try_new(function).unwrap()
         .ignore_casts_mask(
             CastMask::EXTEND
-                | CastMask::TRUNCATE
-                | CastMask::CAST_TO_BOOL
-                | CastMask::CAST_TO_INT,
+                | CastMask::TRUNCATE,
         )
         .ignore_regions()
 }
@@ -142,8 +140,6 @@ fn assert_some_call_arg_threads_through(
                 if matches!(kind,
                     NodeKind::Extend(_)
                     | NodeKind::Truncate
-                    | NodeKind::CastToInt
-                    | NodeKind::CastToBool
                     | NodeKind::CastToFloat
                     | NodeKind::Phi
                 ) {

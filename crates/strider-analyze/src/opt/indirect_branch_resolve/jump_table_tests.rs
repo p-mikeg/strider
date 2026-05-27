@@ -673,7 +673,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
         .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
     let cmp = builder
-        .build_boolean_unary_operation(inner, strider_ir::BoolUnaryOp::Neg)
+        .build_int_unary_operation(inner, strider_ir::IntUnaryOp::BitNot, NodeOutputType::I1)
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);

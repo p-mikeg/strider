@@ -84,16 +84,25 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
 impl_optimizer_from_peephole!(IfCondInversion);
 
 /// Returns `true` when the `If` node's cond input (slot 1) consumes the
-/// output of a `BoolUnaryOp::Neg` node.
+/// output of a logical-NOT node — an `IntUnaryOp::BitNot` whose output is
+/// `I1` (a 1-bit complement, i.e. `~0 & 1 == 1` / `~1 & 1 == 0`).
 fn is_inverted_cond(graph: &strider_ir::Graph, if_node: NodeId) -> bool {
     let Ok([_ctrl, cond_out]) = graph.node_inputs_exact::<2>(if_node) else {
         return false;
     };
     let cond_node = graph.node_for_output(cond_out);
-    matches!(
+    if !matches!(
         graph.node_kind(cond_node),
-        NodeKind::BoolUnaryOp(strider_ir::BoolUnaryOp::Neg)
-    )
+        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)
+    ) {
+        return false;
+    }
+    // Only a 1-bit BitNot is a logical NOT; a wider BitNot is a bitwise
+    // complement and inverting the `If` around it would change semantics.
+    graph
+        .output_kind(cond_out)
+        .as_value()
+        .is_some_and(|ty| ty.is_bool())
 }
 
 /// Performs the inversion in place:

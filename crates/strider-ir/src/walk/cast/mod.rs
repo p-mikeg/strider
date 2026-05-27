@@ -23,9 +23,7 @@ bitflags! {
         const ZERO_EXTEND       = 1 << 0;
         const SIGN_EXTEND       = 1 << 1;
         const TRUNCATE          = 1 << 2;
-        const CAST_TO_INT       = 1 << 3;
         const CAST_TO_FLOAT     = 1 << 4;
-        const CAST_TO_BOOL      = 1 << 5;
         const INT_BITS_TO_FLOAT = 1 << 6;
         const FLOAT_BITS_TO_INT = 1 << 7;
 
@@ -46,9 +44,7 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         NodeKind::Extend(ExtendOp::ZeroExtend) => CastMask::ZERO_EXTEND,
         NodeKind::Extend(ExtendOp::SignExtend) => CastMask::SIGN_EXTEND,
         NodeKind::Truncate => CastMask::TRUNCATE,
-        NodeKind::CastToInt => CastMask::CAST_TO_INT,
         NodeKind::CastToFloat => CastMask::CAST_TO_FLOAT,
-        NodeKind::CastToBool => CastMask::CAST_TO_BOOL,
         NodeKind::IntBitsToFloat => CastMask::INT_BITS_TO_FLOAT,
         NodeKind::FloatBitsToInt => CastMask::FLOAT_BITS_TO_INT,
 
@@ -76,9 +72,6 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::IntCmpOp(_)
         | NodeKind::Popcount
         | NodeKind::Lzcount
-        | NodeKind::BoolConst(_)
-        | NodeKind::BoolUnaryOp(_)
-        | NodeKind::BoolBinaryOp(_)
         | NodeKind::FloatConst(_)
         | NodeKind::FloatUnaryOp(_)
         | NodeKind::FloatBinaryOp(_)

@@ -5,7 +5,7 @@ use crate::{ExtendOp, FloatBinaryOp, IntBinaryOp, IntUnaryOp};
 
 // ── Bit-distinctness ────────────────────────────────────────────────────────
 
-/// All eight individual flags must use distinct, non-overlapping bits.
+/// All individual flags must use distinct, non-overlapping bits.
 /// If any two share a bit, `bit_a & bit_b` will be non-empty.
 #[test]
 fn individual_flags_use_distinct_bits() {
@@ -13,9 +13,7 @@ fn individual_flags_use_distinct_bits() {
         CastMask::ZERO_EXTEND,
         CastMask::SIGN_EXTEND,
         CastMask::TRUNCATE,
-        CastMask::CAST_TO_INT,
         CastMask::CAST_TO_FLOAT,
-        CastMask::CAST_TO_BOOL,
         CastMask::INT_BITS_TO_FLOAT,
         CastMask::FLOAT_BITS_TO_INT,
     ];
@@ -54,9 +52,7 @@ fn all_contains_every_individual_flag() {
         CastMask::ZERO_EXTEND,
         CastMask::SIGN_EXTEND,
         CastMask::TRUNCATE,
-        CastMask::CAST_TO_INT,
         CastMask::CAST_TO_FLOAT,
-        CastMask::CAST_TO_BOOL,
         CastMask::INT_BITS_TO_FLOAT,
         CastMask::FLOAT_BITS_TO_INT,
     ];
@@ -127,21 +123,11 @@ fn cast_mask_of_truncate() {
 }
 
 #[test]
-fn cast_mask_of_cast_to_int() {
-    assert_eq!(cast_mask_of(&NodeKind::CastToInt), CastMask::CAST_TO_INT);
-}
-
-#[test]
 fn cast_mask_of_cast_to_float() {
     assert_eq!(
         cast_mask_of(&NodeKind::CastToFloat),
         CastMask::CAST_TO_FLOAT
     );
-}
-
-#[test]
-fn cast_mask_of_cast_to_bool() {
-    assert_eq!(cast_mask_of(&NodeKind::CastToBool), CastMask::CAST_TO_BOOL);
 }
 
 #[test]
@@ -184,16 +170,14 @@ fn cast_mask_of_non_cast_kinds_is_empty() {
     }
 }
 
-/// All eight value-passthrough cast kinds must yield a non-empty mask.
+/// All value-passthrough cast kinds must yield a non-empty mask.
 #[test]
 fn cast_mask_of_returns_non_empty_for_all_cast_kinds() {
     let casts = [
         NodeKind::Extend(ExtendOp::ZeroExtend),
         NodeKind::Extend(ExtendOp::SignExtend),
         NodeKind::Truncate,
-        NodeKind::CastToInt,
         NodeKind::CastToFloat,
-        NodeKind::CastToBool,
         NodeKind::IntBitsToFloat,
         NodeKind::FloatBitsToInt,
     ];
@@ -217,7 +201,6 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntBinaryOp(IntBinaryOp::Mul),
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
-        NodeKind::BoolConst(true),
         NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
         NodeKind::FloatToFloat,
         NodeKind::FloatToInt,

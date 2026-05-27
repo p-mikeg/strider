@@ -34,14 +34,14 @@ pub enum ExpectedOutputKind {
     Memory,
     /// A `PhiToken` dispatch token.
     PhiToken,
-    /// A `Bool` value.
+    /// The 1-bit boolean integer `I1` (a comparison / logical-op result).
     Bool,
-    /// Any integer-typed value (I8, I16, I32, I64, I80, I128, I256).
+    /// Any integer-typed value (I1, I8, I16, I32, I64, I80, I128, I256, I512).
     AnyInt,
     /// Any float-typed value (F32, F64, F80).
     AnyFloat,
-    /// Any value-typed output: `Bool`, `AnyInt`, or `AnyFloat`.  Used by the
-    /// type-polymorphic cast ops (`CastToInt`, `CastToBool`, `CastToFloat`).
+    /// Any value-typed output: `AnyInt` or `AnyFloat`.  Used by the
+    /// type-polymorphic cast op `CastToFloat`.
     AnyValue,
 }
 
@@ -168,16 +168,6 @@ const FRHS: Slot = Slot {
     name: "rhs",
     role: R::Rhs,
 };
-const BLHS: Slot = Slot {
-    kind: Bool,
-    name: "lhs",
-    role: R::Lhs,
-};
-const BRHS: Slot = Slot {
-    kind: Bool,
-    name: "rhs",
-    role: R::Rhs,
-};
 const INT_VAL: Slot = Slot {
     kind: AnyInt,
     name: "val",
@@ -214,10 +204,10 @@ const TARGET: Slot = Slot {
     role: R::Target,
 };
 // `ARG` and `RET` are AnyValue, not AnyInt: registers used for argument
-// passing or return values can hold integer, float, or bool values (e.g.
-// the x86 flag registers CF/ZF/SF, modelled as Bool in the IR, are
-// caller-clobbered and therefore appear in Call / Return tails on real
-// binaries). Tightening to `AnyInt` would reject valid graphs.
+// passing or return values can hold integer or float values (e.g. the x86
+// flag registers CF/ZF/SF, modelled as I1 in the IR, are caller-clobbered
+// and therefore appear in Call / Return tails on real binaries — AnyInt
+// accepts them, but float-holding registers do not, so AnyValue is needed).
 const ARG: Slot = Slot {
     kind: AnyValue,
     name: "arg",
@@ -346,13 +336,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         | NodeKind::Extend(_) => sig!(inputs: [INT_VAL], outputs: [INT_VAL]),
         NodeKind::IntBinaryOp(_) => sig!(inputs: [LHS, RHS], outputs: [INT_VAL]),
         NodeKind::IntCmpOp(_) => sig!(inputs: [LHS, RHS], outputs: [BOOL_VAL]),
-        NodeKind::CastToInt => sig!(inputs: [ANY_VAL], outputs: [INT_VAL]),
-
-        // ── Boolean constants and operations ────────────────────────────────
-        NodeKind::BoolConst(_) => sig!(inputs: [], outputs: [BOOL_VAL]),
-        NodeKind::BoolUnaryOp(_) => sig!(inputs: [BOOL_VAL], outputs: [BOOL_VAL]),
-        NodeKind::BoolBinaryOp(_) => sig!(inputs: [BLHS, BRHS], outputs: [BOOL_VAL]),
-        NodeKind::CastToBool => sig!(inputs: [ANY_VAL], outputs: [BOOL_VAL]),
 
         // ── Float constants and operations ──────────────────────────────────
         NodeKind::FloatConst(_) => sig!(inputs: [], outputs: [FLOAT_VAL]),
@@ -514,20 +497,6 @@ mod tests {
     }
 
     #[test]
-    fn expected_signature_bool_const() {
-        let (inputs, outputs) = kinds(&NodeKind::BoolConst(true));
-        assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedOutputKind::Bool]);
-    }
-
-    #[test]
-    fn expected_signature_cast_to_bool() {
-        let (inputs, outputs) = kinds(&NodeKind::CastToBool);
-        assert_eq!(inputs, vec![ExpectedOutputKind::AnyValue]);
-        assert_eq!(outputs, vec![ExpectedOutputKind::Bool]);
-    }
-
-    #[test]
     fn expected_signature_region() {
         let (inputs, outputs) = kinds(&NodeKind::Region);
         assert_eq!(inputs, vec![]);
@@ -631,8 +600,7 @@ mod tests {
     #[test]
     fn expected_signature_covers_every_node_kind() {
         use crate::ops::{
-            BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
-            IntBinaryOp, IntCmpOp, IntUnaryOp,
+            ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
         };
         let space = rsleigh::VnSpace::RAM;
         let vn = smoke_vn();
@@ -657,11 +625,6 @@ mod tests {
             NodeKind::Extend(ExtendOp::ZeroExtend),
             NodeKind::Popcount,
             NodeKind::Lzcount,
-            NodeKind::CastToInt,
-            NodeKind::BoolConst(false),
-            NodeKind::BoolUnaryOp(BoolUnaryOp::Neg),
-            NodeKind::BoolBinaryOp(BoolBinaryOp::And),
-            NodeKind::CastToBool,
             NodeKind::FloatConst(0),
             NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
             NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),

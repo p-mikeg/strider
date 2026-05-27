@@ -377,12 +377,10 @@ static IDENTITY_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(
 
 /// Builds the rule vec for [`CONST_EVAL_RULES`].
 fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
-    use strider_ir::node::NodeOutputType;
     use crate::pattern::macros::{bool_const_with, int_const_with};
     use crate::pattern::{
-        BoxedRule, Capture, any_bool_const, any_int_const, boxed_rule,
-        cast_to_bool, cast_to_int, int_binary_any, int_cmp_any, int_unary_any,
-        lzcount, popcount, rewrite_rule, sign_extend, truncate, var, zero_extend,
+        BoxedRule, Capture, any_int_const, boxed_rule, int_binary_any, int_cmp_any, int_unary_any,
+        lzcount, popcount, rewrite_rule, sign_extend, truncate, zero_extend,
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -536,129 +534,52 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
                 }),
             ))
         },
-        // 9. CastToBool(IntConst(v)) => bool_const(v != 0)
-        {
-            let v = Capture::new();
-            boxed_rule(rewrite_rule(
-                cast_to_bool(any_int_const(v)),
-                bool_const_with!([v: uint] => v != 0),
-            ))
-        },
-        // 10. CastToInt(BoolConst(b)) => int_const(b as u128, ty)
-        {
-            let b = Capture::new();
-            boxed_rule(rewrite_rule(
-                cast_to_int(any_bool_const(b)),
-                int_const_with!([b: bool] => u128::from(b)),
-            ))
-        },
-        // 11. CastToBool(CastToInt(b)) => b   when `b` is Bool.
-        //
-        // The Bool→Int cast emits {0, 1}; the Int→Bool cast maps non-zero
-        // → true, zero → false; so the round-trip is identity over the
-        // {0, 1} subset that `CastToInt(Bool)` ever produces.  The
-        // `when_match` guard pins the captured operand to be Bool-typed
-        // — without it the rule would also fire on
-        // `CastToBool(CastToInt(int_x))`, which is **not** identity:
-        // `int_x = 5 → 5 → true → 1` loses information.
-        {
-            let x = Capture::new();
-            let pat = cast_to_bool(cast_to_int(var(x))).when_match(move |ctx, _ty, b| {
-                b.get(x)
-                    .and_then(|out| ctx.output_kind(out).as_value())
-                    == Some(NodeOutputType::Bool)
-            });
-            boxed_rule(rewrite_rule(pat, var(x)))
-        },
     ];
     rules
 }
 
 /// Full constant evaluation for integer binary ops, integer unary ops,
-/// integer comparisons, truncate, extend (zero/sign), popcount, lzcount,
-/// cast_to_bool, and cast_to_int.
+/// integer comparisons, truncate, extend (zero/sign), popcount, and lzcount.
+/// Boolean ops are 1-bit integers, so they fold through the same integer
+/// rules at `I1`.
 static CONST_EVAL_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_const_eval_rules);
 
 /// Builds the rule vec for [`BOOL_FLOAT_RULES`].
 fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     use crate::pattern::{
-        BoxedRule, Capture, Pat, any_bool_const, any_float_const, bool_and, bool_const, bool_not,
-        bool_or, bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any,
-        float_unary_any, rewrite_rule, var,
+        BoxedRule, Capture, Pat, any_bool_const, any_float_const, bool_not, bool_or,
+        boxed_rule, float_binary_any, float_cmp_any, float_unary_any, rewrite_rule, var,
     };
     use crate::pattern::macros::{bool_const_with, float_const_with};
 
+    // Booleans are 1-bit (`I1`) integers in this IR.  Most boolean
+    // const-folds / identities are therefore already covered by the
+    // generic integer rules in `build_const_eval_rules` /
+    // `build_identity_rules`, which fire at any width incl. `I1`:
+    //   - `BAnd/BOr/BXor(IntConst, IntConst)`     → integer rule 1
+    //     (`IntBinaryOp(op)(IntConst, IntConst)`).
+    //   - `BAnd(false, _) → false`                → `x & 0 → 0`.
+    //   - `BoolUnaryOp::Neg(IntConst) → !v`       → integer rule 2
+    //     (`IntUnaryOp(op)(IntConst)`, with `BitNot` masked to `I1`).
+    //   - `x ^ true → !x`                         → `x ^ all_ones → ~x`.
+    // Only the rules with no integer analogue are re-expressed here at
+    // `I1`: `BOr(true, _) → true` (no `x | all_ones → all_ones` integer
+    // rule) and `!!x → x` (no double-`BitNot` integer rule).
     let rules: Vec<BoxedRule> = vec![
-        // BAnd(BoolConst(l), BoolConst(r)) => bool_const(l && r)
+        // BOr(true, _) => true  (absorbing element).  At I1 `true` is the
+        // all-ones value; there is no integer `x | all_ones → all_ones`
+        // rule, so this is kept.  The constraint that the const is the
+        // absorbing value lives in the pattern via `.when_match()`.
         {
             let l = Capture::new();
-            let r = Capture::new();
-            boxed_rule(rewrite_rule(
-                bool_and(any_bool_const(l), any_bool_const(r)),
-                bool_const_with!([l: bool, r: bool] => l && r),
-            ))
-        },
-        // BOr(BoolConst(l), BoolConst(r)) => bool_const(l || r)
-        {
-            let l = Capture::new();
-            let r = Capture::new();
-            boxed_rule(rewrite_rule(
-                bool_or(any_bool_const(l), any_bool_const(r)),
-                bool_const_with!([l: bool, r: bool] => l || r),
-            ))
-        },
-        // BXor(BoolConst(l), BoolConst(r)) => bool_const(l ^ r)
-        {
-            let l = Capture::new();
-            let r = Capture::new();
-            boxed_rule(rewrite_rule(
-                bool_xor(any_bool_const(l), any_bool_const(r)),
-                bool_const_with!([l: bool, r: bool] => l ^ r),
-            ))
-        },
-        // BAnd(BoolConst(false), _) => bool_const(false)  (absorbing element).
-        // The constraint that the const is the absorbing value lives in the
-        // pattern via `.when_match()`, so the rewrite closure is a literal.
-        {
-            let l = Capture::new();
-            let pat: Pat = bool_and(any_bool_const(l), crate::pattern::any()).into();
-            let pat = pat.when_match(move |ctx, _ty, b| b.get_bool(l, ctx) == Some(false));
-            boxed_rule(rewrite_rule(pat, bool_const_with!([] => false)))
-        },
-        // BOr(BoolConst(true), _) => bool_const(true)  (absorbing element)
-        {
-            let l = Capture::new();
-            let pat: Pat = bool_or(any_bool_const(l), crate::pattern::any()).into();
+            let pat: Pat = bool_or(any_bool_const(l), crate::pattern::any());
             let pat = pat.when_match(move |ctx, _ty, b| b.get_bool(l, ctx) == Some(true));
             boxed_rule(rewrite_rule(pat, bool_const_with!([] => true)))
         },
-        // BoolUnaryOp(op)(BoolConst(v)) => bool_const(!v)
-        {
-            let op = Capture::new();
-            let v = Capture::new();
-            boxed_rule(rewrite_rule(
-                bool_unary_any(op, any_bool_const(v)),
-                bool_const_with!([op: bool_unary_op, v: bool] => {
-                    use strider_ir::BoolUnaryOp;
-                    match op {
-                        BoolUnaryOp::Neg => !v,
-                    }
-                }),
-            ))
-        },
-        // x ^ true → !x  (commutative — also covers true ^ x).  Compilers
-        // sometimes emit `xor c, true` instead of `not c`; canonicalize so
-        // downstream consumers (e.g. IfPat's symmetric matching, which keys
-        // off BoolUnaryOp::Neg) see a single shape.
-        {
-            let x = Capture::new();
-            boxed_rule(rewrite_rule(
-                bool_xor(var(x), bool_const(true)),
-                bool_not(var(x)),
-            ))
-        },
-        // !!x → x  (double-negation elimination).  Compilers can produce
-        // chained NOTs through pcode lifting of compare-and-invert idioms.
+        // !!x → x  (double-negation elimination — `BitNot(BitNot(x))` at
+        // I1).  Compilers can produce chained NOTs through pcode lifting of
+        // compare-and-invert idioms.  No general double-`BitNot` integer
+        // rule exists, so this is re-expressed via the I1 `bool_not` ctor.
         {
             let x = Capture::new();
             boxed_rule(rewrite_rule(

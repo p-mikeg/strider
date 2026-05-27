@@ -3,8 +3,8 @@ use crate::opt::pipeline::Optimizer;
 use anyhow::anyhow;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
-    IntBinaryOp, IntCmpOp,
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+    IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
 use crate::opt::test_support::{make_fn, make_fn_with_var, return_kind, return_value};
@@ -635,63 +635,6 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
     Ok(())
 }
 
-/// `CastToBool(CastToInt(b))` where `b` is `Bool` must collapse to `b`.
-/// The Bool→Int cast emits 0 or 1; the Int→Bool cast maps non-zero→true,
-/// zero→false; so the round-trip is identity over the {0,1} subset that
-/// CastToInt(Bool) ever produces.
-///
-/// Surfaces in real lifts as `CastToBool(CastToInt(BoolBinaryOp(…)))` —
-/// observed in arm64 kernel `cmp w8, #5; b.hi …` flag-based If conds.
-/// The diagnostic dump on `__mtx_assert` showed exactly this shape.
-///
-/// ## Soundness
-///
-/// Only the `Bool → Int → Bool` direction folds.  The reverse
-/// (`Int → Bool → Int`, equivalently `CastToInt(CastToBool(x))` for
-/// integer `x`) is **not** an identity — for `x = 5` the round-trip
-/// yields `1`, losing the original value.  That fold is gated by
-/// KnownBits proving `x ∈ {0, 1}` (see the `BAnd_with_one_proof` style
-/// rules); we don't include the reverse direction here.
-#[test]
-fn fold_cast_to_bool_of_cast_to_int_round_trip() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        // Non-const Bool: cast a non-const integer (a Load) to Bool.
-        // The Load must be reachable so its CastToBool survives the
-        // round-trip's collapse.  ConstantFold can't reduce the Load,
-        // so the inner Bool is genuinely non-constant.
-        let addr = b.build_int_const(0x1000u64, NodeOutputType::I64).unwrap();
-        let load = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
-        let inner_bool = b.convert_to_bool_if_needed(load)?;
-        // Round-trip: Bool → Int → Bool — the rule under test.
-        let int_form = b.convert_to_int_if_needed(inner_bool, NodeOutputType::I32)?;
-        let outer_bool = b.convert_to_bool_if_needed(int_form)?;
-        // Return needs an integer value; cast back once at the very end.
-        b.convert_to_int_if_needed(outer_bool, NodeOutputType::I64)
-    })?;
-    let mut changed = true;
-    while changed {
-        let entry = fg.entry().unwrap();
-        changed = ConstantFold.optimize(&mut fg, entry)?.changed();
-    }
-    // No reachable `CastToBool` may have a `CastToInt` immediately
-    // upstream — if any survives, the round-trip rule didn't fire.
-    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.walk().collect();
-    for n in fg.all_node_ids().filter(|n| reachable.contains(*n)) {
-        if !matches!(fg.node_kind(n), NodeKind::CastToBool) {
-            continue;
-        }
-        let inputs = fg.node_inputs(n);
-        let producer = fg.output_definition(inputs[0]).0;
-        assert!(
-            !matches!(fg.node_kind(producer), NodeKind::CastToInt),
-            "CastToBool(CastToInt(...)) round-trip must be folded; \
-             survived at {n:?}"
-        );
-    }
-    Ok(())
-}
-
 /// `Truncate_<W>(Or(any, And(high_mask, _)))` → `Truncate_<W>(any)` —
 /// the high-mask half contributes nothing to the lower W bits, so
 /// dropping it doesn't change the truncated value.  This is the x86
@@ -791,35 +734,45 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
 
 // ── boolean folding ───────────────────────────────────────────────────────
 
+// Booleans are 1-bit (`I1`) integers: a boolean NOT is `IntUnaryOp::BitNot`
+// at I1, AND/OR/XOR are `IntBinaryOp` at I1, and a boolean const is an
+// `IntConst(0|1)` typed I1.  These folds now flow through the generic
+// integer const-fold / identity rules at I1.
+
 #[test]
 fn fold_bool_neg_const() -> Result<()> {
+    // `!true` = `BitNot(IntConst(1):I1)` folds to `IntConst(0):I1`
+    // (`~1 & 1 == 0`) via the integer unary const-fold rule.
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
-        b.build_boolean_unary_operation(t, BoolUnaryOp::Neg)
+        b.build_int_unary_operation(t, IntUnaryOp::BitNot, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
 }
 
 #[test]
 fn fold_bool_and_consts() -> Result<()> {
+    // `true & false` folds to `IntConst(0):I1` via the integer binary
+    // const-fold rule.
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
         let f = b.build_boolean_const(false);
-        b.build_boolean_operation(t, f, BoolBinaryOp::And)
+        b.build_int_binary_operation(t, f, IntBinaryOp::And, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
 }
 
-// `xor b true` rewrites to `not b` so downstream IfPat-style symmetric
-// matching keys off a single canonical shape (`BoolUnaryOp::Neg`).
-// `b` must be non-const, otherwise the const-fold rule fires first and
-// the result is just a `BoolConst`.
+// `xor b true` rewrites to `not b` (`x ^ all_ones → ~x`; at I1 `true` is the
+// all-ones value), so downstream IfPat-style symmetric matching keys off a
+// single canonical shape (`IntUnaryOp::BitNot` at I1).  `b` must be
+// non-const, otherwise the const-fold rule fires first and the result is
+// just an `IntConst`.
 #[test]
 fn fold_bool_xor_true_to_not() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
@@ -828,11 +781,11 @@ fn fold_bool_xor_true_to_not() -> Result<()> {
         // Non-const Bool: `x == 5`.
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::I64)?;
         let t = b.build_boolean_const(true);
-        b.build_boolean_operation(cmp, t, BoolBinaryOp::Xor)
+        b.build_int_binary_operation(cmp, t, IntBinaryOp::Xor, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntUnaryOp(IntUnaryOp::BitNot));
     Ok(())
 }
 
@@ -845,15 +798,17 @@ fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::I64)?;
         let t = b.build_boolean_const(true);
         // Operands flipped relative to the previous test.
-        b.build_boolean_operation(t, cmp, BoolBinaryOp::Xor)
+        b.build_int_binary_operation(t, cmp, IntBinaryOp::Xor, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntUnaryOp(IntUnaryOp::BitNot));
     Ok(())
 }
 
-// `xor b false` should not be touched by the new rule (only `true` triggers).
+// `xor b false` does not match the `x ^ all_ones → ~x` canonicalization
+// (the const is `0`, not all-ones).  Instead the integer identity rule
+// `x ^ 0 → x` fires, collapsing it to the cmp directly.
 #[test]
 fn no_fold_bool_xor_false() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
@@ -861,29 +816,24 @@ fn no_fold_bool_xor_false() -> Result<()> {
         let c5 = b.build_int_const(5u64, NodeOutputType::I64).unwrap();
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::I64)?;
         let f = b.build_boolean_const(false);
-        b.build_boolean_operation(cmp, f, BoolBinaryOp::Xor)
+        b.build_int_binary_operation(cmp, f, IntBinaryOp::Xor, NodeOutputType::I1)
     })?;
-    // No rule fires: cmp is non-const so the both-const fold won't fire,
-    // and the new `x ^ true → !x` rule won't fire because the const is
-    // `false`, not `true`.  Return value is still the BXor node.
     let entry = fg.entry().unwrap();
-    assert!(!ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(
-        return_kind(&fg)?,
-        NodeKind::BoolBinaryOp(BoolBinaryOp::Xor)
-    );
+    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
+    // `x ^ 0 → x`: the Xor collapses to the cmp, not to a BitNot.
+    assert_eq!(return_kind(&fg)?, NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
-// `!!x → x` for non-const x.
+// `!!x → x` for non-const x (double-`BitNot` at I1).
 #[test]
 fn fold_bool_double_not_to_x() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let c5 = b.build_int_const(5u64, NodeOutputType::I64).unwrap();
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::I64)?;
-        let n1 = b.build_boolean_unary_operation(cmp, BoolUnaryOp::Neg)?;
-        b.build_boolean_unary_operation(n1, BoolUnaryOp::Neg)
+        let n1 = b.build_int_unary_operation(cmp, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        b.build_int_unary_operation(n1, IntUnaryOp::BitNot, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
@@ -901,9 +851,9 @@ fn fold_bool_xor_true_xor_true_collapses_to_x() -> Result<()> {
         let c5 = b.build_int_const(5u64, NodeOutputType::I64).unwrap();
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::I64)?;
         let t1 = b.build_boolean_const(true);
-        let xor1 = b.build_boolean_operation(cmp, t1, BoolBinaryOp::Xor)?;
+        let xor1 = b.build_int_binary_operation(cmp, t1, IntBinaryOp::Xor, NodeOutputType::I1)?;
         let t2 = b.build_boolean_const(true);
-        b.build_boolean_operation(xor1, t2, BoolBinaryOp::Xor)
+        b.build_int_binary_operation(xor1, t2, IntBinaryOp::Xor, NodeOutputType::I1)
     })?;
     let mut changed = true;
     while changed {
@@ -942,7 +892,7 @@ fn fold_int_cmp_equal_consts() -> Result<()> {
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(1));
     Ok(())
 }
 
@@ -955,7 +905,7 @@ fn fold_int_cmp_less_consts() -> Result<()> {
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(1));
     Ok(())
 }
 
@@ -1260,7 +1210,7 @@ fn fold_f32_less_true() -> Result<()> {
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(1));
     Ok(())
 }
 
@@ -1273,7 +1223,7 @@ fn fold_f64_equal_true() -> Result<()> {
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(1));
     Ok(())
 }
 
@@ -1288,7 +1238,7 @@ fn fold_f64_equal_nan_false() -> Result<()> {
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -1802,8 +1752,6 @@ fn eval_int_cmp_carry_unmasked_u8() {
 // convention where `IntNeg` is bit-flip).  The MVN-based ARM
 // `if_returns_const` lowering produces `IntUnaryOp::BitNot(IntConst(49))`
 // which must fold to `~49 = -50`, not to `wrapping_neg(49) = -49`.
-
-use strider_ir::IntUnaryOp;
 
 /// `IntUnaryOp::BitNot` of `IntConst(49)` at I32 must fold to `~49`
 /// (= 0xFFFF_FFCE = 4_294_967_246) — bitwise NOT, NOT two's complement.

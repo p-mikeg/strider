@@ -8,7 +8,7 @@
 //! `FloatTrunc`).
 
 use strider_ir::node::NodeOutputType;
-use strider_ir::{BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;
@@ -85,7 +85,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let eq = self
             .builder
             .build_float_cmp_op(input, input, FloatCmpOp::Equal)?;
-        let result = self.builder.build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
+        let result = self.builder.build_int_unary_operation(eq, strider_ir::IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
         self.write_vn(out_vn, result)
     }
 
@@ -117,7 +117,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.builder.build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
+        let result = self.builder.build_int_unary_operation(eq, strider_ir::IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
         self.write_vn(out_vn, result)
     }
 
@@ -135,7 +135,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let lt = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
         let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.builder.build_boolean_operation(lt, eq, BoolBinaryOp::Or)?;
+        let result = self.builder.build_int_binary_operation(lt, eq, strider_ir::IntBinaryOp::Or, strider_ir::ValueType::I1)?;
         self.write_vn(out_vn, result)
     }
 

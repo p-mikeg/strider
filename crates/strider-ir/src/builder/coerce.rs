@@ -15,7 +15,6 @@ use crate::ops::ExtendOp;
 /// from the surrounding op), so the type isn't carried here.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ConstValue {
-    Bool(bool),
     Int { val: u128, ty: NodeOutputType },
     Float { bits: u64 },
 }
@@ -37,9 +36,9 @@ impl FunctionBuilder {
     }
 
     /// Returns the constant value carried by `output_id` if its defining
-    /// node is `IntConst`, `BoolConst`, or `FloatConst`; `Ok(None)`
-    /// otherwise.  The five `get_as_*` helpers below are thin
-    /// projections off this unified shape.
+    /// node is `IntConst` or `FloatConst`; `Ok(None)` otherwise.  The
+    /// `get_as_*` helpers below are thin projections off this unified
+    /// shape.  Booleans are `IntConst` values typed `I1`.
     ///
     /// # Errors
     ///
@@ -48,55 +47,11 @@ impl FunctionBuilder {
         let ty = self.get_output_type(output_id)?;
         Ok(match self.function().kind_of_output(output_id) {
             NodeKind::IntConst(val) if ty.is_integer() => Some(ConstValue::Int { val: *val, ty }),
-            NodeKind::BoolConst(val) if ty.is_bool() => Some(ConstValue::Bool(*val)),
             NodeKind::FloatConst(bits) if ty.is_float() => {
                 Some(ConstValue::Float { bits: *bits })
             }
             _ => None,
         })
-    }
-
-    /// If `output_id` is a constant node, returns its value as a `bool`.
-    ///
-    /// Returns `Ok(None)` for non-constant nodes.  An `IntConst` is considered
-    /// `true` when non-zero.  Returns an error if the output is not a value.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
-    /// edge.
-    pub(crate) fn get_as_bool(&self, output_id: NodeOutputId) -> Result<Option<bool>> {
-        Ok(self.const_value(output_id)?.and_then(|c| match c {
-            ConstValue::Bool(b) => Some(b),
-            ConstValue::Int { val, .. } => Some(val != 0),
-            ConstValue::Float { .. } => None,
-        }))
-    }
-
-    /// Converts `output_id` to a boolean output, inserting a `CastToBool`
-    /// node if needed.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
-    /// edge.
-    pub fn convert_to_bool_if_needed(&mut self, output_id: NodeOutputId) -> Result<NodeOutputId> {
-        let output_kind = self.function().output_kind(output_id);
-        if !output_kind.is_value() {
-            return Err(anyhow!(
-                "output {output_id:?} is not a value edge (got {output_kind:?})"
-            ));
-        }
-
-        if let Some(bool_val) = self.get_as_bool(output_id)? {
-            return Ok(self.build_boolean_const(bool_val));
-        }
-
-        if output_kind.as_value() == Some(NodeOutputType::Bool) {
-            return Ok(output_id);
-        }
-
-        Ok(self.build_single_output_pure(NodeKind::CastToBool, [output_id], NodeOutputType::Bool))
     }
 
     /// If `output_id` is a constant node, returns its value truncated to the
@@ -113,17 +68,13 @@ impl FunctionBuilder {
             ConstValue::Int { val, ty } => {
                 ty.get_unsigned_int(val).and_then(|v| u64::try_from(v).ok())
             }
-            ConstValue::Bool(b) => Some(b as u64),
             ConstValue::Float { .. } => None,
         }))
     }
 
-    /// If `output_id` is an integer or bool constant, returns its value
+    /// If `output_id` is an integer constant, returns its value
     /// sign-extended to `i64` according to the declared [`NodeOutputType`].
-    ///
-    /// `BoolConst(true)` returns `Some(1)`; `BoolConst(false)` returns
-    /// `Some(0)` — consistent with [`Self::get_as_unsigned_int`], so that
-    /// [`Self::get_as_int`] can fold Bool constants in `extend_if_needed`.
+    /// An `I1` boolean folds as `0` / `1` per [`Self::get_as_unsigned_int`].
     ///
     /// Returns `Ok(None)` for non-constant nodes.
     ///
@@ -136,7 +87,6 @@ impl FunctionBuilder {
             ConstValue::Int { val, ty } => {
                 ty.get_signed_int(val).and_then(|v| i64::try_from(v).ok())
             }
-            ConstValue::Bool(b) => Some(i64::from(b)),
             ConstValue::Float { .. } => None,
         }))
     }
@@ -183,7 +133,7 @@ impl FunctionBuilder {
             return self.build_int_const(val, output_type);
         }
 
-        if curr_output_type.byte_size() <= output_type.byte_size() {
+        if curr_output_type.bit_width() <= output_type.bit_width() {
             return Ok(output_id);
         }
 
@@ -219,19 +169,20 @@ impl FunctionBuilder {
             return Err(anyhow!("output {output_id:?} is not an integer value"));
         }
 
-        // Non-integer input (Bool / Float) into an integer extend: insert a
-        // CastToInt first so the Extend node receives an AnyInt input as its
-        // signature requires.  Without this, comparison results (Bool) flowing
-        // through register writes via write_reg_vn would fail IR validation
-        // with "OutputType(Bool), expected AnyInt".
+        // Booleans are I1 (integer); the only non-integer input here would be
+        // a float, which cannot be width-extended as an integer — it needs an
+        // explicit bitcast (`FloatBitsToInt`) first.
         if !curr_output_type.is_integer() {
-            return self.convert_to_int_if_needed(output_id, output_type);
+            return Err(anyhow!(
+                "cannot integer-extend non-integer value {output_id:?} \
+                 ({curr_output_type}); a bitcast is required first"
+            ));
         }
 
-        if curr_output_type.byte_size() == output_type.byte_size() {
+        if curr_output_type.bit_width() == output_type.bit_width() {
             return Ok(output_id);
         }
-        if curr_output_type.byte_size() > output_type.byte_size() {
+        if curr_output_type.bit_width() > output_type.bit_width() {
             // Caller asked to extend a value that is already wider than the
             // target.  Truncate so the returned id always carries
             // `output_type`.
@@ -240,25 +191,29 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::Extend(op), [output_id], output_type))
     }
 
-    /// Converts `output_id` to `output_type`, truncating or zero-extending as needed.
+    /// Converts `output_id` to integer `output_type`, truncating or
+    /// zero-extending as needed.  Keys on **bit width**, so an `I1` boolean
+    /// widens to a wider integer via `ZeroExtend` (true→1, false→0) even
+    /// though `I1` and `I8` share a byte size.
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
-    /// edge.
+    /// Returns an error when `output_id` is not a value edge or carries a
+    /// non-integer (float) value.
     pub fn convert_to_int_if_needed(
         &mut self,
         output_id: NodeOutputId,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
         let curr_output_type = self.get_output_type(output_id)?;
-        if curr_output_type.is_integer() {
-            let truncate_id = self.truncate_if_needed(output_id, output_type)?;
-            let extend_id =
-                self.extend_if_needed(truncate_id, output_type, ExtendOp::ZeroExtend)?;
-            return Ok(extend_id);
+        if !curr_output_type.is_integer() {
+            return Err(anyhow!(
+                "cannot convert non-integer value {output_id:?} \
+                 ({curr_output_type}) to an integer; a bitcast is required first"
+            ));
         }
-        Ok(self.build_single_output_pure(NodeKind::CastToInt, [output_id], output_type))
+        let truncate_id = self.truncate_if_needed(output_id, output_type)?;
+        self.extend_if_needed(truncate_id, output_type, ExtendOp::ZeroExtend)
     }
 
     /// If `input` is not already `float_ty`, wraps it in a `CastToFloat` node.

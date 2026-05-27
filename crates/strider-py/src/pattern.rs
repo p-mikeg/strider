@@ -235,8 +235,6 @@ forall_castmask!(zero_extend => ZERO_EXTEND);
 forall_castmask!(sign_extend => SIGN_EXTEND);
 forall_castmask!(extend => EXTEND);
 forall_castmask!(truncate => TRUNCATE);
-forall_castmask!(cast_to_int => CAST_TO_INT);
-forall_castmask!(cast_to_bool => CAST_TO_BOOL);
 forall_castmask!(cast_to_float => CAST_TO_FLOAT);
 forall_castmask!(int_bits_to_float => INT_BITS_TO_FLOAT);
 forall_castmask!(float_bits_to_int => FLOAT_BITS_TO_INT);
@@ -293,7 +291,6 @@ pub enum PatLike<'py> {
     ValuePhiPat(Bound<'py, PyValuePhiPat>),
     FunctionArgPat(Bound<'py, PyFunctionArgPat>),
     IntBinaryPat(Bound<'py, PyIntBinaryPat>),
-    BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
     FloatBinaryPat(Bound<'py, PyFloatBinaryPat>),
 }
 
@@ -344,7 +341,6 @@ impl PatLike<'_> {
             PatLike::ValuePhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::FunctionArgPat(b) => Ok(b.borrow().finalise()),
             PatLike::IntBinaryPat(b) => Ok(b.borrow().finalise()),
-            PatLike::BoolBinaryPat(b) => Ok(b.borrow().finalise()),
             PatLike::FloatBinaryPat(b) => Ok(b.borrow().finalise()),
         }
     }
@@ -1301,8 +1297,6 @@ unary!(float_bits_to_int, "Pattern: `FloatBitsToInt` — reinterpret float bits 
 
 // ── Cast / coercion / width ops ──────────────────────────────────────────
 
-unary!(cast_to_int, "Pattern: `CastToInt` — coerce any value to int.");
-unary!(cast_to_bool, "Pattern: `CastToBool` — coerce any value to bool.");
 unary!(cast_to_float, "Pattern: `CastToFloat` — coerce any value to float.");
 unary!(truncate, "Pattern: `Truncate` — narrow an integer to a smaller width.");
 unary!(popcount, "Pattern: `Popcount` — count of set bits.");
@@ -1750,9 +1744,11 @@ fn parse_int_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
     lookup_op(TABLE, name, "IntBinaryOp")
 }
 
-fn parse_bool_binary_op(name: &str) -> PyResult<strider_ir::BoolBinaryOp> {
-    use strider_ir::BoolBinaryOp::*;
-    static TABLE: &[(&str, strider_ir::BoolBinaryOp)] = &[
+fn parse_bool_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
+    // Booleans are the 1-bit integer `I1`; logical and/or/xor are the
+    // corresponding `IntBinaryOp` variants at `I1`.
+    use strider_ir::IntBinaryOp::*;
+    static TABLE: &[(&str, strider_ir::IntBinaryOp)] = &[
         ("And", And),
         ("Or", Or),
         ("Xor", Xor),
@@ -1799,24 +1795,6 @@ pub struct IntBinaryPatDef {
     ordered: Option<bool>,
 }
 
-/// Typed builder for a boolean binary-op pattern.
-#[strider_pattern(
-    rust_name = "PyBoolBinaryPat",
-    py_name = "BoolBinaryPat",
-    py_module = "strider.pattern",
-    base_builder = "bool_binary",
-    node_phrase = "bool-binary node",
-    constructor_args = "op: strider_ir::BoolBinaryOp, lhs: strider_analyze::pattern::Pat, rhs: strider_analyze::pattern::Pat",
-)]
-pub struct BoolBinaryPatDef {
-    /// Force the pattern to match operands in the stated order only.
-    /// By default, commutative variants of the op family also try the
-    /// reversed operand order.  Terminal — finalises to a [`Pat`] and
-    /// does NOT chain (return type is `Pat`, not `BoolBinaryPat`).
-    #[field(terminal)]
-    ordered: Option<bool>,
-}
-
 /// Typed builder for a float binary-op pattern.
 #[strider_pattern(
     rust_name = "PyFloatBinaryPat",
@@ -1849,16 +1827,18 @@ pub fn int_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyIntBin
     ))
 }
 
-/// Build a `BoolBinaryOp` pattern for the named `op` (`"And"`, `"Or"`,
-/// `"Xor"`).  Returns a `BoolBinaryPat` (chain `.ordered()` to disable
-/// commutative matching).  Raises `StriderError` on an unknown op name.
+/// Build a boolean binary pattern for the named `op` (`"And"`, `"Or"`,
+/// `"Xor"`).  Booleans are 1-bit integers, so this matches the
+/// corresponding `IntBinaryOp` at `I1` (commutative — both orderings).
+/// Raises `StriderError` on an unknown op name.
 #[pyfunction]
-pub fn bool_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyBoolBinaryPat> {
-    Ok(PyBoolBinaryPat::new(
-        parse_bool_binary_op(op)?,
+pub fn bool_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
+    let op = parse_bool_binary_op(op)?;
+    Ok(PyPat::from_pat(strider_analyze::pattern::bool_binary(
+        op,
         l.into_pat()?,
         r.into_pat()?,
-    ))
+    )))
 }
 
 /// Build a `FloatBinaryOp` pattern for the named `op` (`"Add"`, `"Mul"`,
@@ -1964,7 +1944,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPat>()?;
     m.add_class::<PyPartialMatch>()?;
     m.add_class::<PyIntBinaryPat>()?;
-    m.add_class::<PyBoolBinaryPat>()?;
     m.add_class::<PyFloatBinaryPat>()?;
     m.add_class::<PyCallPat>()?;
     m.add_class::<PyCallOtherPat>()?;
@@ -2059,8 +2038,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(float_to_float);
     add_fn!(int_bits_to_float);
     add_fn!(float_bits_to_int);
-    add_fn!(cast_to_int);
-    add_fn!(cast_to_bool);
     add_fn!(cast_to_float);
     add_fn!(truncate);
     add_fn!(popcount);

@@ -6,8 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::{
-    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
-    IntUnaryOp,
+    ExtendOp, FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::make_empty_fn;
@@ -56,22 +55,24 @@ fn every_int_unary_op_validates() {
 
 #[test]
 fn bool_ops_validate() {
-    for op in [BoolBinaryOp::And, BoolBinaryOp::Or, BoolBinaryOp::Xor] {
+    // Booleans are I1 integers now: bitwise And/Or/Xor on I1 model the
+    // former BoolBinaryOp, and BitNot on I1 models the former BoolUnaryOp.
+    for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
         make_empty_fn(|fb| {
             let t = fb.build_boolean_const(true);
             let f = fb.build_boolean_const(false);
             let result = fb
-                .build_boolean_operation(t, f, op)
+                .build_int_binary_operation(t, f, op, NodeOutputType::I1)
                 .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
             Ok(result)
         })
         .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
     }
-    // BoolUnaryOp::Neg
+    // I1 BitNot (former BoolUnaryOp::Neg).
     make_empty_fn(|fb| {
         let t = fb.build_boolean_const(true);
         let result = fb
-            .build_boolean_unary_operation(t, BoolUnaryOp::Neg)
+            .build_int_unary_operation(t, IntUnaryOp::BitNot, NodeOutputType::I1)
             .expect("bool unary neg");
         Ok(result)
     })

@@ -3,7 +3,7 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
-use crate::ops::{BoolBinaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+use crate::ops::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
 /// Build a minimal builder with no variables so tests that do not need
@@ -32,7 +32,9 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
     let mut b = empty_builder()?;
     let bt = b.build_boolean_const(true);
     let bf = b.build_boolean_const(false);
-    assert_eq!(b.get_as_int(bt)?, Some((1u64, 1i64)));
+    // Booleans are 1-bit integers: the single bit is the sign bit, so a
+    // `true` (bit 1) sign-extends to -1, while its unsigned view is 1.
+    assert_eq!(b.get_as_int(bt)?, Some((1u64, -1i64)));
     assert_eq!(b.get_as_int(bf)?, Some((0u64, 0i64)));
     Ok(())
 }
@@ -181,57 +183,6 @@ fn extend_noop_when_already_wide_enough() -> Result<()> {
     Ok(())
 }
 
-// ── convert_to_bool_if_needed ─────────────────────────────────────────────
-
-/// A known zero integer must fold to `BoolConst(false)`.
-#[test]
-fn convert_zero_int_to_bool_folds_to_false() -> Result<()> {
-    let mut b = empty_builder()?;
-    let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
-    let result = b.convert_to_bool_if_needed(zero)?;
-    let node = b.function().node_for_output(result);
-    assert_eq!(b.function().node_kind(node), &NodeKind::BoolConst(false));
-    Ok(())
-}
-
-/// A known non-zero integer must fold to `BoolConst(true)`.
-#[test]
-fn convert_nonzero_int_to_bool_folds_to_true() -> Result<()> {
-    let mut b = empty_builder()?;
-    let nonzero = b.build_int_const(99u64, NodeOutputType::I32)?;
-    let result = b.convert_to_bool_if_needed(nonzero)?;
-    let node = b.function().node_for_output(result);
-    assert_eq!(b.function().node_kind(node), &NodeKind::BoolConst(true));
-    Ok(())
-}
-
-/// A value already of `Bool` type must be returned unchanged.
-#[test]
-fn convert_bool_to_bool_is_identity() -> Result<()> {
-    let mut b = empty_builder()?;
-    let bval = b.build_boolean_const(true);
-    let result = b.convert_to_bool_if_needed(bval)?;
-    assert_eq!(result, bval);
-    Ok(())
-}
-
-/// A non-constant integer must produce a `CastToBool` node.
-#[test]
-fn convert_non_const_int_emits_cast_to_bool_node() -> Result<()> {
-    let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, NodeOutputType::I32)?;
-    let rhs = b.build_int_const(2u64, NodeOutputType::I32)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I32)?;
-
-    let result = b.convert_to_bool_if_needed(add)?;
-    let node = b.function().node_for_output(result);
-    assert!(
-        matches!(b.function().node_kind(node), NodeKind::CastToBool),
-        "expected CastToBool node"
-    );
-    Ok(())
-}
-
 // ── build_int_binary_operation ────────────────────────────────────────────
 
 /// Building an Add on two constants of the same type must produce an
@@ -277,28 +228,28 @@ fn build_int_cmp_produces_bool_output() -> Result<()> {
     let rhs = b.build_int_const(20u64, NodeOutputType::I32)?;
     let result = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::I32)?;
     let kind = b.function().output_kind(result);
-    assert_eq!(kind, NodeOutputKind::OutputType(NodeOutputType::Bool));
+    assert_eq!(kind, NodeOutputKind::OutputType(NodeOutputType::I1));
     Ok(())
 }
 
-// ── build_boolean_operation ────────────────────────────────────────────────
+// ── boolean (I1) bitwise operation ──────────────────────────────────────────
 
-/// Boolean AND of two bool constants must produce a `BoolBinaryOp(And)`
-/// node.
+/// Boolean AND of two I1 constants is modelled as a bitwise
+/// `IntBinaryOp(And)` typed `I1` (booleans are 1-bit integers).
 #[test]
 fn build_boolean_operation_produces_bool_binary_node() -> Result<()> {
     let mut b = empty_builder()?;
     let t = b.build_boolean_const(true);
     let f = b.build_boolean_const(false);
-    let result = b.build_boolean_operation(t, f, BoolBinaryOp::And)?;
+    let result = b.build_int_binary_operation(t, f, IntBinaryOp::And, NodeOutputType::I1)?;
     let node = b.function().node_for_output(result);
     assert_eq!(
         b.function().node_kind(node),
-        &NodeKind::BoolBinaryOp(BoolBinaryOp::And)
+        &NodeKind::IntBinaryOp(IntBinaryOp::And)
     );
     assert_eq!(
         b.function().output_kind(result),
-        NodeOutputKind::OutputType(NodeOutputType::Bool)
+        NodeOutputKind::OutputType(NodeOutputType::I1)
     );
     Ok(())
 }
@@ -416,7 +367,7 @@ fn build_float_cmp_op_produces_bool_output() -> Result<()> {
     let out = b.build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
     assert_eq!(
         b.function().output_kind(out),
-        NodeOutputKind::OutputType(NodeOutputType::Bool)
+        NodeOutputKind::OutputType(NodeOutputType::I1)
     );
     Ok(())
 }
@@ -837,81 +788,32 @@ fn build_new_is_not_deduplicated() -> Result<()> {
     Ok(())
 }
 
-/// The analyzer lowers `Piece(hi, lo)` to
-/// `Or(ShiftLeft(ZeroExtend(hi), lo_bits), ZeroExtend(lo))`.  When `hi` is
-/// a float, the first `convert_to_int_if_needed` call must insert a
-/// `CastToInt` so the subsequent integer operations are well-typed.  This
-/// test replicates that lowering manually and verifies the `CastToInt`
-/// appears on the path from the float input.
-#[test]
-fn piece_composition_auto_casts_float_input() -> Result<()> {
-    let mut b = empty_builder()?;
-    let float_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
-    let int_lo = b.build_int_const(0u64, NodeOutputType::I32)?;
+// ── extend_if_needed with an I1 (boolean) input ───────────────────────────
 
-    // Replicate the pcode-lift Piece composition.
-    let out_ty = NodeOutputType::I64;
-    let hi_ty = b.get_output_type(float_val)?.to_natural_int_type();
-    let hi_int = b.convert_to_int_if_needed(float_val, hi_ty)?;
-    let lo_ty = b.get_output_type(int_lo)?.to_natural_int_type();
-    let lo_int = b.convert_to_int_if_needed(int_lo, lo_ty)?;
-    let lo_bits = lo_ty.bit_width() as u64;
-    let hi_wide = b.convert_to_int_if_needed(hi_int, out_ty)?;
-    let lo_wide = b.convert_to_int_if_needed(lo_int, out_ty)?;
-    let shift_amt = b.build_int_const(lo_bits, out_ty)?;
-    let hi_shifted = b.build_int_binary_operation(
-        hi_wide,
-        shift_amt,
-        IntBinaryOp::ShiftLeft,
-        out_ty,
-    )?;
-    let result = b.build_int_binary_operation(
-        hi_shifted,
-        lo_wide,
-        IntBinaryOp::Or,
-        out_ty,
-    )?;
-
-    // The root must be the Or.
-    let root_kind = *b.function().kind_of_output(result);
-    assert_eq!(root_kind, NodeKind::IntBinaryOp(IntBinaryOp::Or));
-
-    // `hi_int` consumes the float, so it must be a CastToInt node.
-    let hi_int_node = b.function().node_for_output(hi_int);
-    assert_eq!(*b.function().node_kind(hi_int_node), NodeKind::CastToInt);
-    Ok(())
-}
-
-// ── extend_if_needed with non-integer input ───────────────────────────────
-
-/// Regression for `extend_if_needed` with a Bool input must
-/// insert a `CastToInt` coercion so the resulting value is typed as an
-/// integer.  Before the fix the `Extend` node's signature (`AnyInt` input)
-/// was violated and the validator rejected the graph with
-/// "OutputType(Bool), expected AnyInt".
+/// `extend_if_needed` widening an I1 (boolean) value to a wider integer
+/// must emit a real `ZeroExtend` — I1 is now an ordinary 1-bit integer, so
+/// no separate bool→int cast is needed.
 ///
-/// Concretely: MIPS/ARM comparison instructions emit a Bool result that
-/// may then be zero-extended into a wider register.  The coerce path must
-/// be: BoolOp → CastToInt → (no Extend needed if sizes already match, or
-/// → Extend if narrower).
+/// Concretely: MIPS/ARM comparison instructions emit an I1 result that may
+/// then be zero-extended into a wider register.
 #[test]
 fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
     let mut b = empty_builder()?;
 
-    // Build a Bool value: an integer comparison 1 < 2 (always true, but
+    // Build an I1 value: an integer comparison 1 < 2 (always true, but
     // not folded at this layer — the builder does not constant-fold cmps).
     let lhs = b.build_int_const(1u64, NodeOutputType::I32)?;
     let rhs = b.build_int_const(2u64, NodeOutputType::I32)?;
     let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::I32)?;
 
-    // Sanity: the comparison result is Bool-typed.
+    // Sanity: the comparison result is I1-typed.
     assert_eq!(
         b.function().output_kind(bool_val),
-        NodeOutputKind::OutputType(NodeOutputType::Bool),
-        "comparison must produce Bool"
+        NodeOutputKind::OutputType(NodeOutputType::I1),
+        "comparison must produce I1"
     );
 
-    // Extend the Bool into a I32 — this is the path that broke before the fix.
+    // Extend the I1 into a I32.
     let extended = b.extend_if_needed(bool_val, NodeOutputType::I32, ExtendOp::ZeroExtend)?;
 
     // The result must be I32-typed.
@@ -921,35 +823,22 @@ fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
         "extend_if_needed must produce I32 when requested"
     );
 
-    // No Extend node must have a Bool-typed input — that was the invalid state.
-    // Walk every Extend node in the graph and verify its first input is AnyInt.
-    for n in b.function().nodes.keys() {
-        if matches!(b.function().node_kind(n), NodeKind::Extend(_)) {
-            let inputs = b.function().node_inputs(n);
-            let first_input = inputs.into_iter().next().expect("Extend has one input");
-            let input_kind = b.function().output_kind(first_input);
-            assert_ne!(
-                input_kind,
-                NodeOutputKind::OutputType(NodeOutputType::Bool),
-                "Extend node must never receive a Bool input; found one at {n:?}"
-            );
-        }
-    }
-
-    // The fix routes through CastToInt.  Assert the output traces back through
-    // a CastToInt node (possibly with a further Extend on top of it).
-    fn find_cast_to_int_ancestor(g: &crate::graph::Graph, output: NodeOutputId) -> bool {
-        let node = g.node_for_output(output);
-        if matches!(g.node_kind(node), NodeKind::CastToInt) {
-            return true;
-        }
-        g.node_inputs(node)
-            .into_iter()
-            .any(|inp| find_cast_to_int_ancestor(g, inp))
-    }
-    assert!(
-        find_cast_to_int_ancestor(b.function(), extended),
-        "a CastToInt node must appear on the path from the Bool value to the extended result"
+    // The widening produces a ZeroExtend node consuming the I1 directly.
+    let extended_node = b.function().node_for_output(extended);
+    assert_eq!(
+        *b.function().node_kind(extended_node),
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        "I1 → wider int must be a ZeroExtend"
+    );
+    let first_input = b
+        .function()
+        .node_inputs(extended_node)
+        .into_iter()
+        .next()
+        .expect("Extend has one input");
+    assert_eq!(
+        first_input, bool_val,
+        "ZeroExtend must consume the I1 comparison result directly"
     );
 
     Ok(())
@@ -1178,16 +1067,17 @@ fn flag_reg_byte() -> rsleigh::Vn {
     }
 }
 
-/// `convert_to_int_if_needed` on a Bool with I8 target produces a I8-typed
-/// output, and a CastToInt node sits between the Bool and the result.
+/// `convert_to_int_if_needed` on an I1 (boolean) with an I8 target produces
+/// an I8-typed output.  Because the boolean here is a *constant* (true), the
+/// width change folds directly into an `IntConst(1)` typed I8.
 #[test]
 fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     let mut b = empty_builder()?;
     let bool_val = b.build_boolean_const(true);
     assert_eq!(
         b.function().output_kind(bool_val),
-        NodeOutputKind::OutputType(NodeOutputType::Bool),
-        "BoolConst is Bool-typed"
+        NodeOutputKind::OutputType(NodeOutputType::I1),
+        "build_boolean_const is I1-typed"
     );
     let coerced = b.convert_to_int_if_needed(bool_val, NodeOutputType::I8)?;
     assert_eq!(
@@ -1198,8 +1088,8 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     let coerced_node = b.function().node_for_output(coerced);
     assert_eq!(
         b.function().node_kind(coerced_node),
-        &NodeKind::CastToInt,
-        "Bool → int must go through a CastToInt node (root mitigation)"
+        &NodeKind::IntConst(1),
+        "constant I1 → I8 must fold to IntConst(1) typed I8"
     );
     Ok(())
 }
