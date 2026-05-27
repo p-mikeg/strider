@@ -128,15 +128,17 @@ so the resolver-bearing dependency stays one-way.
     - **`PrimaryMap`:** `wide_consts` (`WideConstId → WideConstStorage`,
       consulted by `IntConstWide(WideConstId)` nodes for U256 / U512
       payloads that don't fit in the regular `IntConst(u128)`).
-    - **Side-table registry on `Function` (`SecondaryMap<NodeId, _>`):**
-      `stack_offsets` (SP-relative offset metadata for Store/Load
-      populated by `StackOffsetDetect`), `call_other_names`,
-      `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`
-      (per-node `Option<Vn>` source-varnode tag for `Phi` nodes),
-      `call_stack_arg_offsets_overrides`, and `arg_index_to_nodes`
-      (populated by `FunctionArgDetect`).  `Graph` itself only
-      holds structural state (nodes, edges, dedup cache,
-      `wide_consts`); per-function overlay state lives on `Function`.
+    - **Side-table registry on `Function`:** the `NodeId`-keyed
+      `SecondaryMap` side-tables `stack_offsets` (SP-relative offset
+      metadata for Store/Load populated by `StackOffsetDetect`),
+      `call_other_names`, `asm_fingerprints`, `call_clobbered_overrides`,
+      `phi_var_tag` (per-node `Option<Vn>` source-varnode tag for `Phi`
+      nodes), and `call_stack_arg_offsets_overrides`; plus the
+      index-keyed `arg_index_to_nodes` (`FxHashMap<u32, Vec<NodeId>>`,
+      populated by `FunctionArgDetect`).  All are remapped by
+      `Function::compact`.  `Graph` itself only holds structural state
+      (nodes, edges, dedup cache, `wide_consts`); per-function overlay
+      state lives on `Function`.
   - `FunctionBuilder` — builds the IR with SSA-like variable tracking.
     Variables map `rsleigh::Vn` → `VarId`.  Each region gets a
     `Region` node and per-variable `Phi` nodes whose source
@@ -177,10 +179,12 @@ so the resolver-bearing dependency stays one-way.
       between inputs and outputs' use-lists.
     - `validate/graph_invariants.rs` — whole-graph rules:
       Entry/InitialMemory uniqueness, Region predecessor kinds,
-      phi-token ownership and per-predecessor arity, FunctionArg
-      uniqueness, wide-const consistency, and the always-on
-      asm-fingerprint check (every reachable non-exempt node MUST carry
-      ≥1 fingerprint).
+      phi-token ownership and per-predecessor arity, Call/Return CC-arity
+      (output / input slot counts vs the calling convention, honouring
+      per-`Call` clobber overrides), wide-const consistency (including a
+      dedicated check that `IntConstWide` declares a U256/U512 output
+      type), and the always-on asm-fingerprint check (every reachable
+      non-exempt node MUST carry ≥1 fingerprint).
     - Errors are aggregated into a `ValidationErrors` bundle rather than
       failing fast.
   - `function_dot` module — IR-specific Graphviz / HTML rendering on top
@@ -255,32 +259,33 @@ so the resolver-bearing dependency stays one-way.
     region table with sections (e.g. `.got.plt`) that own relocation
     sites not yet covered.
 
-- **`strider-lift`** — binary → IR.  Three layered modules:
+- **`strider-lift`** — binary → IR.  Two modules (`pcode_lift`, `cfg`):
 
   - `pcode_lift` — pure value-producing pcode→IR lifter
     (`ValueLifter::lift(insn) -> Result<bool>`).  Owns the
-    register-aliasing logic (`vn_io.rs`).  See the "Register Aliasing"
+    register-aliasing logic (`vn_io.rs`) and the checked input
+    accessors `first_input_or_err` / `nth_input_or_err` (every
+    production-code varnode access returns a typed error instead of
+    panicking on an out-of-bounds index).  See the "Register Aliasing"
     section below.
   - `cfg` — builds a Control Flow Graph (`Cfg<R>`) from a binary using
-    `rsleigh`.  Uses `petgraph::StableDiGraph` internally.  Bounded-lift
-    semantics (`function_max_size`), `is_addr_tail_call`, and
-    `RegionBuilder::build` are the load-bearing primitives.  Exposes the
-    `IndirectResolverFn<R>` callback type (an `Arc<dyn Fn>` alias) —
-    the cfg builder calls back through the installed closure for
-    indirect-branch resolution, so the cfg-to-analyze direction stays
-    clean.  The only public construction
-    path is `Builder::for_arch(arch, sleigh, addr, options)` so
-    endianness and `ArchPreset` are derived from the arch atomically
-    (the older `Builder::new` / `with_endianness` ctors silently
-    defaulted `preset = X86_64` and have been removed).
-  - `lifter::Lifter::region(addr)` — per-region facade wrapping the
-    `Builder` + `DecodeCache`; preserves sequential-within-region
+    `rsleigh`.  Uses `petgraph::StableDiGraph` internally.  The
+    load-bearing per-region machinery lives in
+    `cfg/builder/region_builder.rs`: `RegionBuilder::build` decodes one
+    machine instruction at a time, preserving sequential-within-region
     decoding (Sleigh's `lift_one(&mut self)` carries context-register
-    state, so out-of-order per-insn lifting across regions is not
-    safe).
-  - `region_driver::RegionDriver` — stateless `set_lift_addr` /
-    `clear_lift_addr` funnel that wraps every per-instruction lift so
-    asm-fingerprints stamp correctly.
+    state, so out-of-order per-insn lifting across regions is not safe),
+    funnels each lift through the `set_lift_addr` fingerprint attribution
+    point, and consults the `DecodeCache`.  Bounded-lift semantics
+    (`function_max_size`) and `is_addr_tail_call` live alongside it.
+    Exposes the `IndirectResolverFn<R>` callback type (an `Arc<dyn Fn>`
+    alias) — the cfg builder calls back through the installed closure for
+    indirect-branch resolution, so the cfg-to-analyze direction stays
+    clean.  The only public construction path is
+    `Builder::for_arch(arch, sleigh, addr, options)` so endianness and
+    `ArchPreset` are derived from the arch atomically (the older
+    `Builder::new` / `with_endianness` ctors silently defaulted
+    `preset = X86_64` and have been removed).
 
 - **`strider-analyze`** — optimization + pattern queries +
   orchestration.
@@ -358,20 +363,26 @@ so the resolver-bearing dependency stays one-way.
     built via `strider_ir::walk::region_membership_from_exit`).
     `dump_neighborhood` writes a single depth-bounded HTML around a
     seed node for focused inspection.
-  - `errors` — typed error catalogue, including
-    `UnresolvedIndirectBranch`.
+  - Error handling — fallible operations return `anyhow::Result`
+    (`opt::Result` aliases it; `pattern::error` adds only the internal
+    `RewriteSkip` / `PatternBuildError` sentinels).  There is no bespoke
+    error catalogue in this crate; an indirect branch that can't be
+    resolved at the fixed-point exit surfaces as
+    `strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch` plus
+    an `anyhow` error from the orchestrator.  (The typed Python-facing
+    exception hierarchy lives in `strider-py`.)
 
 - **`strider-pattern-macros`** — proc-macro crate (`proc-macro = true`).
   Emits the PyO3 mirror only — `#[gen_stub_pyclass] #[pyclass]`
   wrapper + stub-gen methods — from one annotated `*Def` struct.  The
   Rust-side `Pat` builders themselves remain hand-written in
   `strider-analyze::pattern`; the macro's job is to spare you a
-  byte-for-byte duplicate on the Python side.  10 of 14 pattern
-  builders have macro-emitted mirrors; 4 PyO3 mirrors stay
-  hand-written: `PyFunctionArgPat` (enum-dispatch source) plus the
-  three binary-op mirrors (`PyIntBinaryPat`, `PyBoolBinaryPat`,
-  `PyFloatBinaryPat`) whose required-construction shape doesn't fit
-  the macro's field-based model.
+  byte-for-byte duplicate on the Python side.  12 of the 13 pattern
+  builders have macro-emitted mirrors (including the three binary-op
+  mirrors `PyIntBinaryPat` / `PyBoolBinaryPat` / `PyFloatBinaryPat`,
+  driven via the macro's `constructor_args`); only `PyFunctionArgPat`
+  (an enum-dispatch source whose shape doesn't fit the field-based
+  model) stays a hand-written `#[pyclass]`.
 
 - **`strider-ir-test-utils`** — `RegisterSet` (fluent builder over
   `FunctionBuilder::new_raw`), `make_empty_fn`, `make_fn_with_var`,
@@ -391,10 +402,11 @@ so the resolver-bearing dependency stays one-way.
   per-pass classes; `strider.pattern` is a full mirror of the Rust
   pattern crate.  Cross-pattern joins on shared captures via
   `Graph.find_all_requirements([pat1, pat2, …])`.  Asm-fingerprint
-  accessor: `match.asm_fingerprint(c) -> list[int]`.  Errors land as
-  `strider.errors.{StriderError, LiftError, ReaderError, PatternError,
-  RewriteError}` plus the typed `UnresolvedIndirectBranchError`.  Dev
-  workflow uses uv: `uv sync --group dev` → `uv run maturin develop` →
+  accessor: `match.asm_fingerprint(c) -> list[int]`.  Every Rust error
+  (including an unresolved indirect branch) lands in Python as a single
+  `strider.errors.StriderError` exception carrying an informative
+  message; the hierarchy is intentionally flat (no typed subclasses).
+  Dev workflow uses uv: `uv sync --group dev` → `uv run maturin develop` →
   `uv run pytest`.
 
 ### IR Node Model
@@ -462,10 +474,10 @@ truth for every node's input/output shape.  Node kinds, grouped:
   matching PyO3 mirror (`Py*Pat`) from the same `*Def` struct, so
   adding a field on the Python side updates the generated mirror
   automatically — the Rust builder must still be updated by hand.
-- 10 of 14 builders have macro-emitted PyO3 mirrors; 4 mirrors stay
-  hand-written: `PyFunctionArgPat` (enum-dispatch source) and the
-  three binary-op mirrors (`PyIntBinaryPat`, `PyBoolBinaryPat`,
-  `PyFloatBinaryPat`).
+- 12 of the 13 builders have macro-emitted PyO3 mirrors (the three
+  binary-op mirrors `PyIntBinaryPat` / `PyBoolBinaryPat` /
+  `PyFloatBinaryPat` are emitted via the macro's `constructor_args`);
+  only `PyFunctionArgPat` (enum-dispatch source) stays hand-written.
 - **Lift-time canonicalisation** (the lifter applies these so patterns
   match the canonical shape):
   - `IntSub(a, b)` → `Add(a, Neg(b))`.
@@ -509,6 +521,6 @@ the `&mut self` carries context-register state (ARM Thumb mode, x86
 segment selectors, MIPS16 mode).  Decoded instructions can modify this
 context (ARM `bx lr` switches Thumb / ARM mode).  Decode buffers reset
 per call, but context-register state persists.  Practical consequence:
-per-region sequential decoding must be preserved (`Lifter::region` and
-`RegionBuilder::build` honour this).  Across regions, context state is
+per-region sequential decoding must be preserved
+(`RegionBuilder::build` honours this).  Across regions, context state is
 assumed fixed per function entry.

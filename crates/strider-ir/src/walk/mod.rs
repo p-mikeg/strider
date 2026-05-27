@@ -25,7 +25,7 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 ///
 /// This is used by optimisation passes (e.g. `RedundantPhis`) to determine
 /// which basic-block headers are live and which predecessor slots on `Region`,
-/// `VarPhi`, and `MemPhi` nodes are dead.
+/// `Phi`, and `MemPhi` nodes are dead.
 #[must_use]
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
     let mut visited = DenseEntitySet::new();
@@ -226,8 +226,8 @@ pub fn region_membership_from_exit(
     // ONLY non-control inputs — control inputs are the spine's edges
     // (already handled in pass 1 with the Region barrier), and
     // following them here would re-cross the barrier from the other
-    // side (a `Region` that fed our seed has its control inputs
-    // listed alongside its phi inputs).
+    // side (a `Region` that fed our seed exposes its control inputs,
+    // which pass 1 already covered).
     let mut visible = spine.clone();
     let mut stack: Vec<NodeId> = visible.iter().collect();
     while let Some(node) = stack.pop() {

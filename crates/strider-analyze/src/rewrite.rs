@@ -13,7 +13,7 @@
 //!    [`crate::pattern::rewrite_rule`] hands back).  The walk fixes the
 //!    "rule applied at node N may match at node M too" gap left by
 //!    `rewrite_rule`, which is per-root.
-//! 2. [`GraphRewriter::graph_mut`] / [`GraphRewriter::entry`] accessors
+//! 2. [`GraphRewriter::function_mut`] / [`GraphRewriter::entry`] accessors
 //!    that let callers drive an [`crate::opt::OptimizerPipeline`] on
 //!    the wrapped graph after one or more rules fired — chaining
 //!    "rewrite → re-optimize → rewrite again" without leaving the

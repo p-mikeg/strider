@@ -13,7 +13,7 @@ mod tests;
 /// Strips dead Region predecessor slots and detaches the If node.
 ///
 /// For each `(region_node, dead_idx)` pair in `dead_uses` that refers to a
-/// `Region`: removes the dead predecessor's value slots from all VarPhis, then
+/// `Region`: removes the dead predecessor's value slots from all Phis, then
 /// removes the dead input from the Region itself.  Finally detaches the If's
 /// inputs so the outer pipeline stops re-visiting it.
 fn strip_dead_region_inputs(
@@ -43,16 +43,16 @@ fn strip_dead_region_inputs(
         }
         let region_phi_out = region_outputs[1];
 
-        // Collect VarPhi nodes that consume the phi token before we mutate.
+        // Collect Phi nodes that consume the phi token before we mutate.
         let phi_nodes: Vec<NodeId> = ctx
             .output_uses(region_phi_out)
             .map(|(phi, _)| phi)
             .collect();
 
-        // Remove the dead variable-value input from each VarPhi.
-        // VarPhi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
+        // Remove the dead variable-value input from each Phi.
+        // Phi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
         // So the variable value for predecessor at Region index
-        // `dead_idx` lives at VarPhi index `dead_idx + 1`.  Removals at
+        // `dead_idx` lives at Phi index `dead_idx + 1`.  Removals at
         // different consumers don't interact (each `remove_node_input`
         // only shifts its own later indices), and the
         // `phi_input_idx < phi_len` / `dead_idx < region_len` guards catch
@@ -85,7 +85,7 @@ fn strip_dead_region_inputs(
 /// * When the dead-branch subgraph is self-contained (no data outputs flow
 ///   to live consumers), the **dead** control output is removed from the
 ///   successor `Region`'s input list, the corresponding position is
-///   removed from every `VarPhi` of that region, and the If's own inputs
+///   removed from every `Phi` of that region, and the If's own inputs
 ///   are detached so the outer fixed-point loop stops re-visiting it.
 /// * When the dead-branch subgraph escapes (e.g. a dead `Call`'s
 ///   `mem_out` flows into the join's `MemPhi`), the dead branch is left
@@ -98,7 +98,7 @@ fn strip_dead_region_inputs(
 ///   the job.
 ///
 /// After this pass, dead `Region` nodes end up with zero control inputs
-/// and `VarPhi` nodes with a single value input; `RedundantPhis` then
+/// and `Phi` nodes with a single value input; `RedundantPhis` then
 /// cleans those up.
 fn try_eliminate_dead_branch(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
@@ -270,7 +270,7 @@ fn dead_subgraph_has_live_data_consumer(
 ///
 /// Works together with [`crate::opt::RedundantPhis`]: after dead-branch elimination
 /// the previously-live successor region may have a single-input `Region`
-/// and `VarPhi` nodes, which `RedundantPhis` can then collapse.
+/// and `Phi` nodes, which `RedundantPhis` can then collapse.
 #[derive(Clone)]
 pub struct DeadBranchElimination;
 

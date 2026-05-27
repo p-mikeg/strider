@@ -91,7 +91,7 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
 ///
 /// `AnyInt` matches any integer-typed output (U8, U16, U32, U64, U80,
 /// U128, U256, U512); `AnyFloat` matches F32, F64, or F80; `Bool`
-/// matches only `OutputType(Bool)`.  `Control`, `Memory(_)`, and
+/// matches only `OutputType(Bool)`.  `Control`, `Memory`, and
 /// `PhiToken` match their identically-named [`NodeOutputKind`]
 /// variants.
 fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {

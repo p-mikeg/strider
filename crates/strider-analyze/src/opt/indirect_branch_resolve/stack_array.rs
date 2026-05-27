@@ -423,8 +423,8 @@ fn match_stack_array_shape(
 /// constant) is negated and folded into `extra_offset`; non-constant
 /// rhs of Sub bails the flatten by pushing the Sub itself unmodified
 /// (which then fails the per-term decompose step downstream — sound).
-/// Capped at 32 nodes to defend against pathologically deep trees from
-/// buggy lifter output.
+/// Bounded by a shared budget of 32 *visited nodes* (not a depth cap) to
+/// defend against pathologically large trees from buggy lifter output.
 fn flatten_add_tree(
     graph: &Graph,
     out: NodeOutputId,

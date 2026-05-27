@@ -21,7 +21,9 @@
 //!    [`crate::opt::LoadReadOnly`] when the caller passes a [`strider_ir::ReadOnlyMemory`])
 //!    over the resulting [`strider_ir::Graph`].
 //! 4. Inspect the producer of the post-fold target value:
-//!    - `IntConst(k)` → [`ResolvedTargets::Single(k as u64)`].
+//!    - `IntConst(k)` → [`ResolvedTargets::Single`] when `k` fits a `u64`
+//!      (via `u128_to_branch_target`); a constant with high bits set
+//!      defers (`Ok(None)`) rather than truncating to a wrong address.
 //!    - `InitialVar(vn)` where `vn == cc_link_register_vn` →
 //!      [`ResolvedTargets::LinkRegister`].
 //!    - anything else → `Ok(None)`.  Unclassifiable targets are not

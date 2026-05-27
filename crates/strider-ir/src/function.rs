@@ -500,8 +500,10 @@ impl Function {
 
     /// Rebuilds the function's graph to retain only nodes reachable from
     /// [`Self::entry`].  The entry node id is remapped; the stored entry
-    /// is updated to the new id.  All five `NodeId`-keyed overlay tables are
-    /// remapped through the same translation.
+    /// is updated to the new id.  Every `NodeId`-keyed overlay table
+    /// (the `SecondaryMap` side-tables, `initial_var_index`, and
+    /// `arg_index_to_nodes`) is remapped through the same translation;
+    /// entries whose node did not survive compaction are dropped.
     ///
     /// # Errors
     ///
