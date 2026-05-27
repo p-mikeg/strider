@@ -185,6 +185,7 @@
             <div class="k">Type</div><div class="v" id="sType">—</div>
             <div class="k">Node</div><div class="v" id="sNode">—</div>
             <div class="k">Edge</div><div class="v" id="sEdge">—</div>
+            <div class="k">Edge label</div><div class="v" id="sEdgeLabel">—</div>
           </div>
           <div id="lblWrap"><pre id="lblText"></pre></div>
           <div class="row" style="margin-top:8px">
@@ -357,8 +358,15 @@ function setRS(ok,msg){const e=document.getElementById("rs");e.textContent=ok?"o
 function setDrag(on){drag=!!on;document.getElementById("ms").textContent=drag?"drag":"select";const b=document.getElementById("bDrag");b.textContent=`Drag: ${drag?"On":"Off"}`;b.classList.toggle("ac",!drag);const s=gw.querySelector("svg");if(s)s.style.cursor=drag?"grab":"default";}
 function updSelUI(){
   document.getElementById("sType").textContent=sel.type??"—";
-  document.getElementById("sNode").textContent=sel.name??"—";
+  // Node name as `n<serial>` (the graphviz node serial / <title>); the raw
+  // renderer's serial is the real IR NodeId, so there nXX is the IR id.
+  document.getElementById("sNode").textContent=sel.type==="node"?("n"+sel.name):"—";
   document.getElementById("sEdge").textContent=sel.ekey??"—";
+  // Edge label: the <text> rendered inside the selected g.edge (e.g. "lhs",
+  // "true", "arg0"). Only meaningful for an edge selection.
+  const elbl=(sel.type==="edge"&&sel.el)?labelOf(sel.el):"";
+  document.getElementById("sEdgeLabel").textContent=elbl||"—";
+  // #lblText still mirrors the selected element's full text (node or edge).
   const lbl=sel.el?labelOf(sel.el):"";
   const lw=document.getElementById("lblWrap");
   document.getElementById("lblText").textContent=lbl;
