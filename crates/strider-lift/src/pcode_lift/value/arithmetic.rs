@@ -101,9 +101,27 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self
-            .builder
-            .build_int_binary_operation(lhs, rhs, op, out_vn.size.try_into()?)?;
+        let out_ty = out_vn.size.try_into()?;
+        // The signed ops interpret their operands as signed, so a narrower
+        // operand must be SIGN-extended to the op width rather than
+        // zero-extended (`build_int_binary_operation`'s default coercion).
+        // `Sdiv` / `Srem` sign-extend both operands; `SShiftRight` (arithmetic
+        // shift) sign-extends only the value — its shift count is an unsigned
+        // amount.  Every other op keeps the default zero-extension (correct
+        // for bitwise / shift-left / unsigned ops, whose low-width result is
+        // sign-agnostic).  Equal-width operands (the common case) are
+        // unaffected: the extension is a no-op.
+        let (lhs, rhs) = match op {
+            IntBinaryOp::Sdiv | IntBinaryOp::Srem => (
+                self.builder.extend_if_needed(lhs, out_ty, ExtendOp::SignExtend)?,
+                self.builder.extend_if_needed(rhs, out_ty, ExtendOp::SignExtend)?,
+            ),
+            IntBinaryOp::SShiftRight => {
+                (self.builder.extend_if_needed(lhs, out_ty, ExtendOp::SignExtend)?, rhs)
+            }
+            _ => (lhs, rhs),
+        };
+        let out = self.builder.build_int_binary_operation(lhs, rhs, op, out_ty)?;
         self.write_vn(out_vn, out)
     }
 

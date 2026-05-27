@@ -275,6 +275,34 @@ fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId
 }
 
 #[test]
+fn signed_binary_op_sign_extends_narrower_operand() {
+    // IntSdiv with a 2-byte dividend (0xFFFF = -1) and a 4-byte output.
+    // A signed op must SIGN-extend the narrower operand to the op width
+    // (0xFFFF -> 0xFFFF_FFFF), not zero-extend it (-> 0x0000_FFFF).  Under
+    // the prior build_int_binary_operation zero-extension the 32-bit value
+    // 0xFFFF_FFFF never appeared.
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::IntSdiv,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(0xFFFF, 2), const_vn(2, 4)].into(),
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    assert!(
+        graph_has_kind(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Sdiv)),
+        "expected an Sdiv node"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::IntConst(0xFFFF_FFFF)),
+        "the 2-byte -1 dividend must be SIGN-extended to the 4-byte op width (0xFFFF_FFFF)"
+    );
+}
+
+#[test]
 fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
     // IntSless of a 4-byte operand (0xFFFFFFFF = -1) and an 8-byte operand.
     // Compare at the MAX of the two widths (8 bytes) so the wider operand is
