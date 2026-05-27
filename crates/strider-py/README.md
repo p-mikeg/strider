@@ -112,12 +112,12 @@ result = strider.run(
 # 3. Query the optimized graph with a pattern.
 base, off = Capture(), Capture()
 pat = load(addr=add(var(base), var(off)))
-for hit in result.graph.find_all(pat, ignore_casts=True):
+for hit in result.function.find_all(pat, ignore_casts=True):
     print(hit.uint(off))
 
 # 4. Visualize.
 result.cfg.to_html("cfg.html")
-result.graph.to_html("graph.html")
+result.function.to_html("graph.html")
 ```
 
 ## Building blocks
@@ -133,7 +133,7 @@ mem.add_region_from_elf("fixtures/out/x86/memory.elf")
 sleigh = strider.Sleigh(arch, mem)
 s = strider.Strider(arch, sleigh, cc)            # before build_cfg
 cfg = strider.build_cfg(sleigh, entry=0x401000)  # consumes Sleigh
-graph = s.analyze_cfg(cfg).graph
+graph = s.analyze_cfg(cfg).function
 
 pipe = s.build_optimizer_pipeline()
 pipe.add(strider.opt.LoadReadOnly(mem))
@@ -198,7 +198,7 @@ pat = int_binary("Add", "x", "y").ordered()  # left-to-right only
 ```
 
 The `_` and `any_` strings are reserved wildcards (they convert to
-`any_()`); using them via `.cap(...)` raises `PatternError`.
+`any_()`); using them via `.cap(...)` raises `StriderError`.
 
 ## Pattern coverage
 
@@ -222,9 +222,10 @@ The `_` and `any_` strings are reserved wildcards (they convert to
 * **Casts / widths:** `cast_to_int`, `cast_to_bool`,
   `cast_to_float`, `truncate`, `popcount`, `lzcount`,
   `zero_extend`, `sign_extend`, `extend(op_str, x)`.
-* **Memory & control:** `load`, `store`, `stack_store`,
-  `stack_store_phi`, `call`, `call_other`, `ret`, `if_`,
-  `phi`, `initial_var`, `function_arg`, `function_arg_any`.
+* **Memory & control:** `load`, `store` (use
+  `store().offset_capture(c)` / `.stack_only()` for SP-relative stores),
+  `call`, `call_other`, `ret`, `if_`, `phi`, `mem_phi`, `value_phi`,
+  `initial_var`, `function_arg`, `function_arg_any`.
 * **Typed family dispatchers:** `int_binary(op_str, l, r)`,
   `bool_binary(op_str, l, r)`, `float_binary(op_str, l, r)` —
   return builder objects that chain `.ordered()` / `.capture(c)` /
@@ -333,12 +334,13 @@ prefer `MemoryMap` for in-process bulk data.
 ```python
 try:
     mem.add_region(0xFFFFFFFFFFFFFFFE, b"\x00\x00\x00\x00")
-except strider.errors.ReaderError as e:
+except strider.errors.StriderError as e:
     print(e)
 ```
 
-The exception hierarchy (`StriderError → LiftError | ReaderError |
-PatternError | RewriteError`) is in `strider.errors`.
+Every error from the Rust layer surfaces as a single
+`strider.errors.StriderError` carrying an informative message; the
+hierarchy is intentionally flat (no typed subclasses).
 
 ## What's NOT in v1
 
