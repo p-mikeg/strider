@@ -262,7 +262,7 @@ pub fn signed_int_const(v: impl Into<i128>) -> Pat {
 /// Matches a boolean constant node with value exactly `v`.  Booleans are
 /// `I1` integers, so this matches/builds `IntConst(v as u128)` typed `I1`.
 ///
-/// Unlike [`any_bool_const`], this constructor is also usable on the RHS of
+/// Unlike `any_bool_const`, this constructor is also usable on the RHS of
 /// a rewrite rule (it builds an `IntConst` typed `I1`), so it deliberately
 /// carries no match-time width guard — the exact value pin plus the I1
 /// build type are sufficient, and a guard would make it match-only.
