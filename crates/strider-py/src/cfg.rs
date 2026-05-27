@@ -17,11 +17,30 @@ use crate::errors::into_strider_err;
 use crate::reader::AnyMemReader;
 use crate::sleigh::PySleigh;
 
+/// Control-flow graph of a single function, produced by `build_cfg`.
+/// Renderable to Graphviz dot / dark-themed HTML for inspection.
 #[pyclass(name = "Cfg", module = "strider")]
 pub struct PyCfg {
     pub(crate) inner: strider_lift::cfg::Cfg<AnyMemReader>,
 }
 
+/// Build a control-flow graph for the function at `entry`.
+///
+/// Consumes the inner `Sleigh` of the `sleigh` argument (it moves into
+/// the cfg builder); the `Sleigh` wrapper is left "in use" afterwards
+/// and reusing it raises `StriderError`.  Installs strider-analyze's
+/// indirect-branch resolver so `BranchIndirect` sites are classified at
+/// cfg time.
+///
+/// Args:
+///     sleigh: A `Sleigh` built for the target arch + memory.
+///     entry: Address of the function to analyse.
+///     allow_code_before_start_addr: Permit lifting instructions before
+///         `entry` (default `False`).
+///     function_max_size: Optional byte bound on how far past `entry`
+///         the lifter may decode.
+///
+/// Raises `StriderError` on a lift failure or if the Sleigh is already in use.
 #[pyfunction(signature = (sleigh, entry, allow_code_before_start_addr=false, function_max_size=None))]
 pub fn build_cfg(
     py: Python<'_>,
@@ -70,17 +89,22 @@ pub fn build_cfg(
 
 #[pymethods]
 impl PyCfg {
+    /// Render the CFG to a standalone HTML file at `path`.  `style`
+    /// selects the dot theme (default `"dark_cfg"`).
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark_cfg");
         let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
         d.dump_as_html(Path::new(path)).map_err(into_strider_err)
     }
+    /// Render the CFG to a Graphviz `.dot` file at `path`.
     #[pyo3(signature = (path,))]
     fn to_dot(&self, path: &str) -> PyResult<()> {
         let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some("dark_cfg")));
         d.dump_as_dot(Path::new(path)).map_err(into_strider_err)
     }
+    /// Return the CFG rendered as an HTML string (default `"dark_cfg"`
+    /// style) instead of writing it to a file.
     #[pyo3(signature = (style=None))]
     fn html_str(&self, style: Option<&str>) -> PyResult<String> {
         let style = style.unwrap_or("dark_cfg");

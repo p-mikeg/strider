@@ -21,6 +21,9 @@ pub(crate) enum CcImpl {
     Custom(Box<strider_target::BuiltCallingConvention>),
 }
 
+/// A calling convention.  Construct via a preset classmethod (e.g.
+/// `CallingConvention.x86_64_systemv()`) or `CallingConvention.custom(...)`
+/// for a binary whose ABI matches no built-in preset.
 #[pyclass(name = "CallingConvention", module = "strider", frozen)]
 #[derive(Clone)]
 pub struct PyCallingConvention {
@@ -174,10 +177,14 @@ impl PyCallingConvention {
         })
     }
 
+    /// The preset name this convention was constructed from (e.g.
+    /// `"x86_64_systemv"`), or `"custom"` for a `custom(...)`-built one.
     fn name(&self) -> &'static str {
         self.preset_name
     }
 
+    /// `CallingConvention.<preset>()` — the constructor call that produces
+    /// this convention.
     fn __repr__(&self) -> String {
         format!("CallingConvention.{}()", self.preset_name)
     }

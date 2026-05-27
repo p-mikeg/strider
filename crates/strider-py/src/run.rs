@@ -23,6 +23,8 @@ use crate::reader::{AnyMemReader, MemInput};
 use crate::sleigh::PySleigh;
 use crate::strider_cls::PyStrider;
 
+/// Result of `strider.run`: the lifted/optimised `function`, a snapshot
+/// `cfg`, and the `sleigh` handle.
 #[pyclass(name = "RunResult", module = "strider")]
 pub struct PyRunResult {
     /// Snapshot CFG built from the same memory reader the orchestrator
@@ -35,12 +37,40 @@ pub struct PyRunResult {
     /// uses.
     #[pyo3(get)]
     cfg: Py<PyCfg>,
+    /// The lifted and optimised IR graph for the analysed function.
     #[pyo3(get)]
     function: Py<PyFunction>,
+    /// The `Sleigh` handle used for the analysis (its `regs` stay
+    /// accessible even though the inner Sleigh was consumed).
     #[pyo3(get)]
     sleigh: Py<PySleigh>,
 }
 
+/// Lift and analyse the function at `entry`, returning a `RunResult`.
+///
+/// With no `pipeline`, runs the canonical orchestrator (drives the
+/// indirect-branch fixed-point loop, the stable optimiser between
+/// iterations, then the destructive subset once).  Passing
+/// `pipeline=` skips the orchestrator: it lifts once and applies your
+/// pipeline (indirect branches are not resolved on that path).
+///
+/// Args:
+///     arch: Target `SleighArch`.
+///     cc: Default `CallingConvention` for the function.
+///     mem: A `MemoryMap` or a `MemReader` subclass.
+///     entry: Address of the function to analyse.
+///     rom: Optional read-only memory for constant-load folding; on the
+///         custom-pipeline path it is wired in via a prepended
+///         `LoadReadOnly` pass.
+///     pipeline: Optional `OptimizerPipeline` (drained on use).
+///     allow_code_before_start_addr: Permit lifting before `entry`.
+///     function_max_size: Optional byte bound past `entry`; must be > 0.
+///     compact: Compact the IR arena after analysis (default `True`).
+///     per_address_ccs: Per-target-address calling-convention overrides
+///         (the orchestrator path accepts only preset CCs here).
+///
+/// Raises `ValueError` for `function_max_size == 0` and `StriderError`
+/// on lift/analysis failure.
 #[pyfunction(signature = (
     arch,
     cc,

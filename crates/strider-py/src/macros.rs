@@ -24,6 +24,11 @@ macro_rules! forall_preset {
         #[pymethods]
         impl $self_ty {
             $(
+                #[doc = concat!(
+                    "Preset `", stringify!($name),
+                    "` calling convention (resolved lazily against a Sleigh \
+                     register table at consumption time)."
+                )]
                 #[classmethod]
                 fn $name(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
                     let inner = <$inner_ty>::$name()
@@ -41,6 +46,10 @@ macro_rules! forall_preset {
         #[pymethods]
         impl $self_ty {
             $(
+                #[doc = concat!(
+                    "`", stringify!($name),
+                    "` architecture preset (Sleigh `.sla` + `.pspec` + endianness)."
+                )]
                 #[classmethod]
                 fn $name(_cls: &Bound<'_, PyType>) -> Self {
                     Self {

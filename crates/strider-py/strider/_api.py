@@ -202,10 +202,13 @@ class Strider:
 
     @property
     def arch(self) -> SleighArch:
+        """The target architecture (`SleighArch`) this loader uses."""
         return self._arch
 
     @property
     def cc(self) -> CallingConvention:
+        """The default calling convention (`CallingConvention`) applied
+        when analysing functions."""
         return self._cc
 
     def __repr__(self) -> str:

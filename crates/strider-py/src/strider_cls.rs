@@ -15,6 +15,9 @@ use crate::errors::into_strider_err;
 use crate::function::PyFunction;
 use crate::sleigh::PySleigh;
 
+/// Analysis driver bound to a `(SleighArch, Sleigh, CallingConvention)`
+/// triple.  Converts a `Cfg` into the IR graph via `analyze_cfg` and
+/// produces the canned optimizer pipelines.
 #[pyclass(name = "Strider", module = "strider")]
 pub struct PyStrider {
     pub(crate) inner: strider_analyze::Strider,
@@ -29,16 +32,22 @@ pub struct PyStrider {
 /// the boundary.
 #[pyclass(name = "AnalyzeOutcome", module = "strider")]
 pub struct PyAnalyzeOutcome {
+    /// The lifted IR graph for the analysed CFG.
     #[pyo3(get)]
     pub(crate) function: Py<PyFunction>,
+    /// Number of indirect branches the analysis could not resolve.
     #[pyo3(get)]
     pub(crate) unresolved_branch_count: usize,
+    /// Number of regions the CFG was lifted into.
     #[pyo3(get)]
     pub(crate) region_count: usize,
 }
 
 #[pymethods]
 impl PyStrider {
+    /// Construct a Strider for `arch` + `cc`, resolving the convention's
+    /// register names against `sleigh`'s register table (the Sleigh is
+    /// not consumed).  Raises `StriderError` if the CC can't be resolved.
     #[new]
     fn new(
         py: Python<'_>,
@@ -50,6 +59,10 @@ impl PyStrider {
         Ok(Self { inner })
     }
 
+    /// Lift `cfg` into the IR graph, returning an `AnalyzeOutcome`
+    /// (function + unresolved-branch / region counts).  Indirect
+    /// branches are not driven to a fixed point here — use `strider.run`
+    /// for that.
     fn analyze_cfg(&self, py: Python<'_>, cfg: Py<PyCfg>) -> PyResult<PyAnalyzeOutcome> {
         let cfg_borrow = cfg.borrow(py);
         let outcome = self

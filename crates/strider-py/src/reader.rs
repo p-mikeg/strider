@@ -56,6 +56,7 @@ pub struct PyRelocationStats {
 
 #[pymethods]
 impl PyRelocationStats {
+    /// Human-readable summary of the relocation counts.
     fn __repr__(&self) -> String {
         format!(
             "RelocationStats(seen={}, applied={}, skipped_unresolved_target={}, \
@@ -184,6 +185,8 @@ impl PyMemoryMap {
 
 #[pymethods]
 impl PyMemoryMap {
+    /// Create an empty memory map.  Add data with `add_region` /
+    /// `add_region_from_elf`.
     #[new]
     fn new() -> Self {
         Self {
@@ -221,6 +224,8 @@ impl PyMemoryMap {
         Ok(())
     }
 
+    /// Add a region of raw bytes `data` mapped at `start_addr`.
+    /// Raises `StriderError` if the region overlaps an existing one.
     fn add_region(&self, start_addr: u64, data: Vec<u8>) -> PyResult<()> {
         let region = MemRegion::new(start_addr, data).map_err(into_strider_err)?;
         let mut inner = self.inner.borrow_mut();
@@ -229,10 +234,14 @@ impl PyMemoryMap {
         Ok(())
     }
 
+    /// Number of regions currently in the map.
     fn region_count(&self) -> usize {
         self.inner.borrow().regions.len()
     }
 
+    /// Read up to `size` bytes starting at `addr`.  Returns the bytes
+    /// (possibly fewer than `size` near a region edge) or `None` when
+    /// `addr` is unmapped.
     fn read<'py>(
         &self,
         py: Python<'py>,
@@ -420,6 +429,8 @@ pub struct PyMemReader;
 
 #[pymethods]
 impl PyMemReader {
+    /// Base initialiser; accepts and ignores any args so subclasses can
+    /// call `super().__init__(...)` freely.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
@@ -429,6 +440,9 @@ impl PyMemReader {
         Self
     }
 
+    /// Override in a subclass to return up to `size` bytes at `addr`
+    /// (`bytes`) or `None` for unmapped.  The base raises
+    /// `NotImplementedError`.
     #[allow(unused_variables)]
     fn read<'py>(
         &self,
@@ -500,12 +514,18 @@ pub struct PyReadOnlyMemory;
 
 #[pymethods]
 impl PyReadOnlyMemory {
+    /// Base initialiser; accepts and ignores any args so subclasses can
+    /// call `super().__init__(...)` freely.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         Self
     }
 
+    /// Override in a subclass to return the target-endian-decoded value
+    /// of `size` bytes at `addr` (`int`) or `None` for unmapped.  The
+    /// subclass owns the byte-swap per the binary's endianness.  The
+    /// base raises `NotImplementedError`.
     #[allow(unused_variables)]
     fn read(&self, addr: u64, size: usize) -> PyResult<Option<u64>> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(

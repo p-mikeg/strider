@@ -97,7 +97,11 @@ impl PipelineState {
     }
 }
 
-/// Python-visible builder for an `strider_analyze::opt::OptimizerPipeline`.
+/// Builder for an optimizer pipeline.  Construct via `empty()`,
+/// `default()`, `stable_default()`, or `destructive_default()`, then
+/// `add(pass)` / `add_post(pass)`; apply it with `Function.optimize`
+/// or pass `pipeline=` to `strider.run`.  Applying a pipeline drains
+/// it, so rebuild before reuse.
 ///
 /// Holds the internal state behind a `Mutex` so `add` / `add_post`
 /// don't require `&mut self` (PyO3 method receivers are typically
@@ -197,43 +201,55 @@ impl PyOptimizerPipeline {
 
 #[pymethods]
 impl PyOptimizerPipeline {
+    /// A pipeline with no passes; build one up with `add` / `add_post`.
     #[classmethod]
     fn empty(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_with(PipelineState::new())
     }
 
+    /// The canonical default pipeline (all stable + destructive passes),
+    /// mirroring `strider_analyze::opt::default_pipeline`.
     #[classmethod]
     fn default(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_with(PipelineState::from_default())
     }
 
+    /// The stable (non-destructive) subset pipeline, mirroring
+    /// `strider_analyze::opt::stable_default_pipeline`.
     #[classmethod]
     fn stable_default(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_with(PipelineState::from_stable_default())
     }
 
+    /// The destructive subset pipeline, mirroring
+    /// `strider_analyze::opt::destructive_default_pipeline`.
     #[classmethod]
     fn destructive_default(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_with(PipelineState::from_destructive_default())
     }
 
+    /// Append a pass to the fixed-point pass list (any `strider.opt.*`
+    /// pass instance).
     fn add(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
         let mut state = self.lock_state()?;
         state.passes.push(pass_obj.into_erased());
         Ok(())
     }
 
+    /// Append a post-pass — run once after the fixed-point loop converges.
     fn add_post(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
         let mut state = self.lock_state()?;
         state.post_passes.push(pass_obj.into_erased());
         Ok(())
     }
 
+    /// Number of fixed-point passes currently registered.
     fn pass_count(&self) -> PyResult<usize> {
         let state = self.lock_state()?;
         Ok(state.passes.len())
     }
 
+    /// Number of post-passes currently registered.
     fn post_pass_count(&self) -> PyResult<usize> {
         let state = self.lock_state()?;
         Ok(state.post_passes.len())
@@ -251,24 +267,38 @@ impl PyOptimizerPipeline {
 // a single `#[new] fn new() -> Self { Self }`.
 
 macro_rules! pure_pass_class {
-    ($pyname:literal => $rust:ident) => {
+    ($pyname:literal => $rust:ident, $doc:literal) => {
+        #[doc = $doc]
         #[pyclass(name = $pyname, module = "strider.opt")]
         #[derive(Clone)]
         pub struct $rust;
         #[pymethods]
         impl $rust {
+            #[doc = concat!("Construct the ", $pyname, " pass (no configuration).")]
             #[new]
             fn new() -> Self { Self }
         }
     };
 }
 
-pure_pass_class!("ConstantFold" => PyConstantFold);
-pure_pass_class!("KnownBits" => PyKnownBits);
-pure_pass_class!("RedundantPhis" => PyRedundantPhis);
-pure_pass_class!("DeadBranchElim" => PyDeadBranchElim);
-pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize);
-pure_pass_class!("IfCondInversion" => PyIfCondInversion);
+pure_pass_class!("ConstantFold" => PyConstantFold,
+    "Constant-folds the IR: evaluates constant ops and applies algebraic \
+     identities (`x+0→x`, `x^x→0`, AND-mask merging, …).");
+pure_pass_class!("KnownBits" => PyKnownBits,
+    "Bit-level known-zeros / known-ones lattice propagation, simplifying \
+     ops whose result bits are statically determined.");
+pure_pass_class!("RedundantPhis" => PyRedundantPhis,
+    "Eliminates `Phi` / `MemPhi` / `Region` nodes with a single reachable \
+     predecessor (destructive).");
+pure_pass_class!("DeadBranchElim" => PyDeadBranchElim,
+    "Removes `If(const)` branches and strips the resulting dead control \
+     edges (destructive).");
+pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize,
+    "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
+     `IntCmpOp`.");
+pure_pass_class!("IfCondInversion" => PyIfCondInversion,
+    "Rewrites `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}` so patterns match the \
+     canonical, un-negated condition shape.");
 
 // ── CC/arch-aware passes ──────────────────────────────────────────────────
 //
@@ -284,13 +314,18 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion);
 // (e.g. LoadForward's `arch` param) stay hand-written below.
 
 macro_rules! cc_aware_pass_class {
-    ($pyname:literal => $rust:ident, $analyze:ty) => {
+    ($pyname:literal => $rust:ident, $analyze:ty, $doc:literal) => {
+        #[doc = $doc]
         #[pyclass(name = $pyname, module = "strider.opt")]
         pub struct $rust {
             pub(crate) inner: $analyze,
         }
         #[pymethods]
         impl $rust {
+            #[doc = concat!(
+                "`", $pyname, "(sleigh, cc)` — builds a calling convention \
+                 against `sleigh`'s register table and configures the pass."
+            )]
             #[new]
             fn new(
                 py: Python<'_>,
@@ -306,13 +341,16 @@ macro_rules! cc_aware_pass_class {
     };
 }
 
-/// `LoadForward(sleigh, cc, arch)`
+/// `LoadForward(sleigh, cc, arch)` — forwards values from stack-tagged
+/// `Store` nodes to subsequent same-offset `Load` nodes.
 #[pyclass(name = "LoadForward", module = "strider.opt")]
 pub struct PyLoadForward {
     pub(crate) inner: strider_analyze::opt::LoadForward,
 }
 #[pymethods]
 impl PyLoadForward {
+    /// `LoadForward(sleigh, cc, arch)` — resolves the convention against
+    /// `sleigh`'s registers and configures the pass for `arch`.
     #[new]
     fn new(
         py: Python<'_>,
@@ -335,6 +373,8 @@ pub struct PyStackOffsetDetect {
 }
 #[pymethods]
 impl PyStackOffsetDetect {
+    /// `StackOffsetDetect(sleigh, cc)` — resolves the convention against
+    /// `sleigh`'s registers and configures the pass.
     #[new]
     fn new(
         py: Python<'_>,
@@ -350,12 +390,17 @@ impl PyStackOffsetDetect {
 
 cc_aware_pass_class!(
     "FunctionArgDetect" => PyFunctionArgDetect,
-    strider_analyze::opt::FunctionArgDetect
+    strider_analyze::opt::FunctionArgDetect,
+    "Post-pass that canonicalises register / stack argument reads into \
+     the `Function.arg_index_to_nodes` side-table (carrier `InitialVar` \
+     for register args, `Load` for stack args)."
 );
 
 cc_aware_pass_class!(
     "CallStackArgCollect" => PyCallStackArgCollect,
-    strider_analyze::opt::CallStackArgCollect
+    strider_analyze::opt::CallStackArgCollect,
+    "Post-pass that wires positional stack arguments into `Call` nodes \
+     per the calling convention's stack-arg layout."
 );
 
 /// `LoadReadOnly(rom)` — `rom` is a `MemoryMap` or any
@@ -368,6 +413,8 @@ pub struct PyLoadReadOnly {
 }
 #[pymethods]
 impl PyLoadReadOnly {
+    /// `LoadReadOnly(rom)` — `rom` is a `MemoryMap` or any
+    /// `ReadOnlyMemory` subclass; folds constant-address loads from it.
     #[new]
     fn new(rom: crate::reader::MemInput) -> Self {
         Self { rom: rom.into_arc() }

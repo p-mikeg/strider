@@ -6,6 +6,9 @@ use pyo3::types::PyType;
 
 use crate::macros::forall_preset;
 
+/// A target architecture description (Sleigh `.sla` + `.pspec` +
+/// endianness).  Construct via one of the preset classmethods, e.g.
+/// `SleighArch.x86_64()`.
 #[pyclass(name = "SleighArch", module = "strider", frozen)]
 #[derive(Clone)]
 pub struct PySleighArch {
@@ -15,10 +18,12 @@ pub struct PySleighArch {
 
 #[pymethods]
 impl PySleighArch {
+    /// The preset name this arch was constructed from (e.g. `"x86_64"`).
     fn name(&self) -> &'static str {
         self.preset_name
     }
 
+    /// `SleighArch.<preset>()` — the constructor call that produces this arch.
     fn __repr__(&self) -> String {
         format!("SleighArch.{}()", self.preset_name)
     }

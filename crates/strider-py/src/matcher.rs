@@ -126,25 +126,35 @@ impl PyMatch {
         })
     }
 
+    /// `capture in m` — True if `key` (a `Capture` or string name) has
+    /// a binding in this match.
     fn __contains__(&self, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
         Ok(self.inner.node(cap).is_some())
     }
 
+    /// The capture's value as an unsigned `int`, or `None` when the
+    /// capture isn't bound to an integer-valued node.
     fn uint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u128>> {
         self.with_function(py, key, |c, g| self.inner.get_uint(c, g))
     }
 
+    /// The capture's value as a signed `int` (sign-interpreted at the
+    /// node's width), or `None` when not bound to an integer node.
     #[pyo3(name = "int")]
     fn int_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<i128>> {
         self.with_function(py, key, |c, g| self.inner.get_int(c, g))
     }
 
+    /// The capture's value as a `bool`, or `None` when not bound to a
+    /// boolean-valued node.
     #[pyo3(name = "bool")]
     fn bool_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<bool>> {
         self.with_function(py, key, |c, g| self.inner.get_bool(c, g))
     }
 
+    /// The capture's value as raw float bits (`u64`), or `None` when not
+    /// bound to a float-valued node.
     fn float_bits(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u64>> {
         self.with_function(py, key, |c, g| self.inner.get_float_bits(c, g))
     }

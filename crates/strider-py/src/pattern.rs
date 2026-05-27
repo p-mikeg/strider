@@ -42,6 +42,10 @@ use crate::errors::into_strider_err;
 // the type-info impl; the existing `#[pymethods]` block below is
 // unchanged (no `#[gen_stub_pymethods]` here — the hand-written
 // `pattern.pyi` already covers PyCapture's surface).
+/// An opaque capture variable that binds a matched node so its value /
+/// op-variant / fingerprint can be read back from the `Match`.  Each
+/// `Capture()` call produces a globally unique id; pass it to `var(c)`,
+/// `any_int_const(c)`, `.capture(c)`, etc.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Capture", module = "strider.pattern", frozen)]
 #[derive(Clone)]
@@ -51,6 +55,9 @@ pub struct PyCapture {
 
 #[pymethods]
 impl PyCapture {
+    /// Create a fresh, globally-unique capture variable for binding a
+    /// matched node.  Retrieve the binding after a match via
+    /// `Match[c]` / `Match.uint(c)` / etc.
     #[new]
     fn new() -> Self {
         Self {
@@ -58,10 +65,12 @@ impl PyCapture {
         }
     }
 
+    /// `Capture(<id>)`.
     fn __repr__(&self) -> String {
         format!("Capture({:?})", self.inner)
     }
 
+    /// Hash on the capture's globally-unique id (stable per instance).
     fn __hash__(&self) -> isize {
         // The Capture's globally-unique u32 id is the stable hash key.
         // (Earlier this used `format!("{:?}", self.inner).len()` which
@@ -89,6 +98,9 @@ pub struct PyOffsetCapture {
 
 #[pymethods]
 impl PyOffsetCapture {
+    /// Create a fresh, globally-unique offset capture for binding a
+    /// matched SP-relative stack offset.  Retrieve it via
+    /// `Match.captured_offset(c)`.
     #[new]
     fn new() -> Self {
         Self {
@@ -96,10 +108,12 @@ impl PyOffsetCapture {
         }
     }
 
+    /// `OffsetCapture(<id>)`.
     fn __repr__(&self) -> String {
         format!("OffsetCapture({:?})", self.inner)
     }
 
+    /// Hash on the offset capture's globally-unique id.
     fn __hash__(&self) -> isize {
         self.inner.id() as i64 as isize
     }
@@ -192,6 +206,10 @@ macro_rules! forall_castmask {
     ($name:ident => $value:ident) => {
         #[pymethods]
         impl PyCastMask {
+            #[doc = concat!(
+                "Mask selecting the `", stringify!($value),
+                "` value-passthrough cast for the matcher to walk through."
+            )]
             #[classmethod]
             fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
                 Self { inner: strider_analyze::pattern::CastMask::$value }
@@ -201,6 +219,10 @@ macro_rules! forall_castmask {
     ($name:ident => fn $value:ident) => {
         #[pymethods]
         impl PyCastMask {
+            #[doc = concat!(
+                "`CastMask::", stringify!($value), "()` — ",
+                "the all-casts (`all`) / no-casts (`empty`) mask."
+            )]
             #[classmethod]
             fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
                 Self { inner: strider_analyze::pattern::CastMask::$value() }
@@ -228,16 +250,22 @@ impl PyCastMask {
         Self::none(cls)
     }
 
+    /// Union of two masks (`a | b`).
     fn __or__(&self, other: &Self) -> Self {
         Self { inner: self.inner | other.inner }
     }
+    /// Intersection of two masks (`a & b`).
     fn __and__(&self, other: &Self) -> Self {
         Self { inner: self.inner & other.inner }
     }
+    /// Equality on the underlying bitset.
     fn __eq__(&self, other: &Self) -> bool { self.inner == other.inner }
+    /// Hash on the underlying bits (consistent with `__eq__`).
     fn __hash__(&self) -> u64 { self.inner.bits() as u64 }
+    /// The raw bitset value as a `u32`.
     fn bits(&self) -> u32 { self.inner.bits() }
 
+    /// `CastMask(0b........)` showing the raw bits.
     fn __repr__(&self) -> String {
         format!("CastMask(0b{:08b})", self.inner.bits())
     }
@@ -368,10 +396,11 @@ pub(crate) fn take_pending_control_flow_peek() -> bool {
     })
 }
 
-/// Stash a control-flow PyErr in the pending cell.  Overwrites any
-/// existing stash (the first error wins is preserved via the
-/// short-circuit on subsequent calls, so this only fires once per
-/// walk).
+/// Stash a control-flow PyErr in the pending cell, unconditionally
+/// overwriting any existing stash.  In practice "the first error wins"
+/// because the sole caller (`PyReadOnlyMemoryAdapter::read`) checks
+/// `take_pending_control_flow_peek` and bails before invoking the
+/// callback again, so this is only reached once per walk.
 pub(crate) fn stash_pending_control_flow(e: PyErr) {
     PENDING_CONTROL_FLOW.with(|cell| cell.set(Some(e)));
 }
@@ -386,6 +415,11 @@ pub(crate) fn stash_pending_control_flow(e: PyErr) {
 //
 // Bindings is `Clone + Default`, and clones are cheap (small Vec).
 
+/// Transient read-only view of the captures bound so far, passed to a
+/// `.when(...)` / `predicate(...)` Python callback.  Offers
+/// `uint`/`int`/`bool`/`float_bits`/`has`/`__getitem__`/`__contains__`
+/// over those bindings.  Valid only for the duration of the predicate
+/// call; accessors return `None`/`False` if used afterwards.
 #[pyclass(name = "PartialMatch", module = "strider.pattern", unsendable)]
 pub struct PyPartialMatch {
     bindings: strider_analyze::pattern::Bindings,
@@ -483,23 +517,31 @@ impl<'py> FromPyObject<'py> for CaptureKeyOwned {
 
 #[pymethods]
 impl PyPartialMatch {
+    /// The capture's value as an unsigned `int`, or `None` when not
+    /// bound to an integer node (or the proxy has expired).
     fn uint(&self, key: CaptureKeyOwned) -> PyResult<Option<u128>> {
         let cap = self.capture_from_key(&key)?;
         Ok(self.with_graph(|g| self.bindings.get_uint(cap, g)).flatten())
     }
 
+    /// The capture's value as a signed `int`, or `None` when not bound
+    /// to an integer node.
     #[pyo3(name = "int")]
     fn int_(&self, key: CaptureKeyOwned) -> PyResult<Option<i128>> {
         let cap = self.capture_from_key(&key)?;
         Ok(self.with_graph(|g| self.bindings.get_int(cap, g)).flatten())
     }
 
+    /// The capture's value as a `bool`, or `None` when not bound to a
+    /// boolean node.
     #[pyo3(name = "bool")]
     fn bool_(&self, key: CaptureKeyOwned) -> PyResult<Option<bool>> {
         let cap = self.capture_from_key(&key)?;
         Ok(self.with_graph(|g| self.bindings.get_bool(cap, g)).flatten())
     }
 
+    /// The capture's value as raw float bits (`u64`), or `None` when not
+    /// bound to a float node.
     fn float_bits(&self, key: CaptureKeyOwned) -> PyResult<Option<u64>> {
         let cap = self.capture_from_key(&key)?;
         Ok(self
@@ -507,6 +549,7 @@ impl PyPartialMatch {
             .flatten())
     }
 
+    /// True if the capture has a binding so far in this partial match.
     fn has(&self, key: CaptureKeyOwned) -> PyResult<bool> {
         let cap = self.capture_from_key(&key)?;
         Ok(self.bindings.get_node(cap).is_some())
@@ -697,6 +740,8 @@ impl PyPat {
         )))
     }
 
+    /// Opaque `Pat(...)` repr (the pattern's internal structure is not
+    /// surfaced to Python).
     fn __repr__(&self) -> String {
         "Pat(...)".to_string()
     }
@@ -704,11 +749,14 @@ impl PyPat {
 
 // ── Free constructors ────────────────────────────────────────────────────
 
+/// Wildcard: matches any node without binding it.
 #[pyfunction]
 pub fn any_() -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::any())
 }
 
+/// Wildcard that binds the matched node to capture `c` (retrieve via
+/// `Match[c]` etc.).
 #[pyfunction]
 pub fn var(c: PyRef<'_, PyCapture>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::var(c.inner))
@@ -767,31 +815,40 @@ pub fn int_const_any_of(values: Vec<i128>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::int_const_any_of(values))
 }
 
+/// Match a `BoolConst` equal to `value`.
 #[pyfunction]
 pub fn bool_const(value: bool) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::bool_const(value))
 }
 
+/// Match a `FloatConst` whose raw bits equal `bits`.
 #[pyfunction]
 pub fn float_const(bits: u64) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::float_const(bits))
 }
 
+/// Match any `IntConst` and bind its value to `c`
+/// (read back via `Match.uint(c)` / `Match.int(c)`).
 #[pyfunction]
 pub fn any_int_const(c: PyRef<'_, PyCapture>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::any_int_const(c.inner))
 }
 
+/// Match any `BoolConst` and bind it to `c` (read back via `Match.bool(c)`).
 #[pyfunction]
 pub fn any_bool_const(c: PyRef<'_, PyCapture>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::any_bool_const(c.inner))
 }
 
+/// Match any `FloatConst` and bind it to `c`
+/// (read back via `Match.float_bits(c)`).
 #[pyfunction]
 pub fn any_float_const(c: PyRef<'_, PyCapture>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::any_float_const(c.inner))
 }
 
+/// Match any `InitialVar` node (an initial-state register read).  Use
+/// `initial_var_for(vn)` to pin a specific varnode.
 #[pyfunction]
 pub fn initial_var() -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::initial_var())
@@ -835,6 +892,7 @@ pub struct PhiPatDef {
     input: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
 }
 
+/// Start a tagged-`Phi` pattern builder (see `PhiPat`).
 #[pyfunction]
 pub fn phi() -> PyPhiPat { PyPhiPat::new() }
 
@@ -865,6 +923,7 @@ pub struct MemPhiPatDef {
     input: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
 }
 
+/// Start a `MemPhi` pattern builder (memory-token phi; see `MemPhiPat`).
 #[pyfunction]
 pub fn mem_phi() -> PyMemPhiPat { PyMemPhiPat::new() }
 
@@ -884,6 +943,8 @@ pub struct ValuePhiPatDef {
     input: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
 }
 
+/// Start a `ValuePhi` pattern builder (anonymous value phi synthesised
+/// by `LoadForward`; see `ValuePhiPat`).
 #[pyfunction]
 pub fn value_phi() -> PyValuePhiPat { PyValuePhiPat::new() }
 
@@ -945,6 +1006,8 @@ impl PyFunctionArgPat {
     }
 }
 
+/// Start a `FunctionArg` pattern builder constrained to argument index
+/// `i` (see `FunctionArgPat`).
 #[pyfunction]
 pub fn function_arg(i: u32) -> PyFunctionArgPat {
     let b = PyFunctionArgPat::new();
@@ -952,6 +1015,7 @@ pub fn function_arg(i: u32) -> PyFunctionArgPat {
     b
 }
 
+/// Start a `FunctionArg` pattern builder matching any argument index.
 #[pyfunction]
 pub fn function_arg_any() -> PyFunctionArgPat {
     PyFunctionArgPat::new()
@@ -973,6 +1037,9 @@ pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i64) -> PyFun
     b
 }
 
+/// Match any node, subject to the Python predicate `f` (called with a
+/// `PartialMatch` proxy; returning `False` fails the match).  Shorthand
+/// for `any_().when(f)`.
 #[pyfunction]
 pub fn predicate(f: PyObject) -> PyPat {
     PyPat::from_pat(wrap_when(strider_analyze::pattern::any(), f))
@@ -986,7 +1053,8 @@ pub fn predicate(f: PyObject) -> PyPat {
 // already returns `Pat`.
 
 macro_rules! binary {
-    ($name:ident) => {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
         #[pyfunction]
         pub fn $name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
             let lp = l.into_pat()?;
@@ -994,7 +1062,8 @@ macro_rules! binary {
             Ok(PyPat::from_pat(strider_analyze::pattern::$name(lp, rp)))
         }
     };
-    ($name:ident, into) => {
+    ($name:ident, into, $doc:literal) => {
+        #[doc = $doc]
         #[pyfunction]
         pub fn $name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
             let lp = l.into_pat()?;
@@ -1005,7 +1074,8 @@ macro_rules! binary {
     // Python-name override: exported Rust fn is `$py_name` (matching the
     // Python attribute literal), but the underlying `strider_analyze::pattern`
     // constructor is `$rust_name` without the keyword-collision suffix.
-    ($py_name:ident as $py_name_lit:literal => $rust_name:ident, into) => {
+    ($py_name:ident as $py_name_lit:literal => $rust_name:ident, into, $doc:literal) => {
+        #[doc = $doc]
         #[pyfunction(name = $py_name_lit)]
         pub fn $py_name(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
             let lp = l.into_pat()?;
@@ -1016,14 +1086,16 @@ macro_rules! binary {
 }
 
 macro_rules! unary {
-    ($name:ident) => {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
         #[pyfunction]
         pub fn $name(operand: PatLike<'_>) -> PyResult<PyPat> {
             let op = operand.into_pat()?;
             Ok(PyPat::from_pat(strider_analyze::pattern::$name(op)))
         }
     };
-    ($name:ident, into) => {
+    ($name:ident, into, $doc:literal) => {
+        #[doc = $doc]
         #[pyfunction]
         pub fn $name(operand: PatLike<'_>) -> PyResult<PyPat> {
             let op = operand.into_pat()?;
@@ -1033,7 +1105,8 @@ macro_rules! unary {
     // Python-name override: exported Rust fn is `$py_name` (matching the
     // Python attribute literal), but the underlying `strider_analyze::pattern`
     // constructor is `$rust_name`.
-    ($py_name:ident as $py_name_lit:literal => $rust_name:ident) => {
+    ($py_name:ident as $py_name_lit:literal => $rust_name:ident, $doc:literal) => {
+        #[doc = $doc]
         #[pyfunction(name = $py_name_lit)]
         pub fn $py_name(operand: PatLike<'_>) -> PyResult<PyPat> {
             let op = operand.into_pat()?;
@@ -1044,28 +1117,37 @@ macro_rules! unary {
 
 // ── Binary integer ops ───────────────────────────────────────────────────
 
-binary!(add, into);
-binary!(sub, into);
-binary!(mul, into);
-binary!(div, into);
-binary!(sdiv, into);
-binary!(rem, into);
-binary!(srem, into);
-binary!(shl, into);
-binary!(shr, into);
-binary!(sshr, into);
+binary!(add, into, "Pattern: `IntBinaryOp::Add` (`a + b`).  Commutative — \
+    tries both operand orders.");
+binary!(sub, into, "Pattern: integer subtraction `a - b`.  The IR has no \
+    Sub op; this matches the lifter-canonical `Add(a, Neg(b))` shape.");
+binary!(mul, into, "Pattern: `IntBinaryOp::Mul` (`a * b`).  Commutative.");
+binary!(div, into, "Pattern: `IntBinaryOp::Div` (unsigned `a / b`).");
+binary!(sdiv, into, "Pattern: `IntBinaryOp::Sdiv` (signed `a / b`).");
+binary!(rem, into, "Pattern: `IntBinaryOp::Rem` (unsigned `a % b`).");
+binary!(srem, into, "Pattern: `IntBinaryOp::Srem` (signed `a % b`).");
+binary!(shl, into, "Pattern: `IntBinaryOp::ShiftLeft` (`a << b`).");
+binary!(shr, into, "Pattern: `IntBinaryOp::ShiftRight` (logical `a >> b`).");
+binary!(sshr, into, "Pattern: `IntBinaryOp::SShiftRight` (arithmetic `a >> b`).");
 // `and` / `or` are Python keywords; expose as `and_` / `or_`.
-binary!(and_ as "and_" => and, into);
-binary!(or_ as "or_" => or, into);
-binary!(xor, into);
-binary!(int_eq, into);
-binary!(int_lt, into);
-binary!(int_le, into);
-binary!(int_slt, into);
-binary!(int_sle, into);
-binary!(int_carry, into);
-binary!(int_scarry, into);
-binary!(int_sborrow, into);
+binary!(and_ as "and_" => and, into,
+    "Pattern: `IntBinaryOp::And` (`a & b`).  Commutative.");
+binary!(or_ as "or_" => or, into,
+    "Pattern: `IntBinaryOp::Or` (`a | b`).  Commutative.");
+binary!(xor, into, "Pattern: `IntBinaryOp::Xor` (`a ^ b`).  Commutative.");
+binary!(int_eq, into, "Pattern: `IntCmpOp::Equal` (`a == b`).  Commutative.");
+binary!(int_lt, into, "Pattern: `IntCmpOp::Less` (unsigned `a < b`).");
+binary!(int_le, into, "Pattern: unsigned `a <= b`.  The IR has no LessEqual \
+    op; this matches the lifter-canonical `BoolNeg(IntLess(b, a))` shape.");
+binary!(int_slt, into, "Pattern: `IntCmpOp::Sless` (signed `a < b`).");
+binary!(int_sle, into, "Pattern: signed `a <= b`.  Matches the \
+    lifter-canonical `BoolNeg(Sless(b, a))` shape.");
+binary!(int_carry, into,
+    "Pattern: `IntCmpOp::Carry` (unsigned add carry-out).  Commutative.");
+binary!(int_scarry, into,
+    "Pattern: `IntCmpOp::Scarry` (signed add overflow).  Commutative.");
+binary!(int_sborrow, into,
+    "Pattern: `IntCmpOp::Sborrow` (signed subtract overflow).");
 
 /// Match a specific `IntCmpOp` variant.  Op names: "Equal",
 /// "Less" / "lt", "LessEqual" / "le", "Sless" / "slt",
@@ -1132,23 +1214,30 @@ fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
 // ── Integer unary ops ────────────────────────────────────────────────────
 
 // `pattern.neg(x)` matches two's-complement negation (`-x`).
-unary!(neg);
+unary!(neg, "Pattern: `IntUnaryOp::Neg` — two's-complement negation (`-x`).");
 // `pattern.bit_not(x)` matches bitwise complement (`~x`).
-unary!(bit_not);
+unary!(bit_not, "Pattern: `IntUnaryOp::BitNot` — bitwise complement (`~x`).");
 // `pattern.not_(x)` is the keyword-collision-renamed alias for
 // `bit_not` — the Rust pattern crate keeps `not` since it's not a Rust
 // keyword, but `not` is a Python keyword so the Python surface uses
 // `not_` (matching the `and_` / `or_` convention above).
-unary!(not_ as "not_" => bit_not);
+unary!(not_ as "not_" => bit_not,
+    "Pattern: bitwise complement (`~x`).  Alias for `bit_not` (`not` is a \
+     Python keyword).");
 
 // ── Bool binary ops ──────────────────────────────────────────────────────
 
-binary!(bool_and, into);
-binary!(bool_or, into);
-binary!(bool_xor, into);
+binary!(bool_and, into,
+    "Pattern: `BoolBinaryOp::And` (`a && b`).  Commutative.");
+binary!(bool_or, into,
+    "Pattern: `BoolBinaryOp::Or` (`a || b`).  Commutative.");
+binary!(bool_xor, into,
+    "Pattern: `BoolBinaryOp::Xor` (boolean `a ^ b`).  Commutative.");
 
 // ── Bool unary ops ───────────────────────────────────────────────────────
 
+/// Pattern: `BoolUnaryOp::Neg` — boolean negation (`!x`).  The canonical
+/// shape for `a != b` is `bool_not(int_cmp("Equal", a, b))`.
 #[pyfunction]
 pub fn bool_not(operand: PatLike<'_>) -> PyResult<PyPat> {
     let op = operand.into_pat()?;
@@ -1157,20 +1246,28 @@ pub fn bool_not(operand: PatLike<'_>) -> PyResult<PyPat> {
 
 // ── Float binary ops ─────────────────────────────────────────────────────
 
-binary!(float_add, into);
-binary!(float_sub, into);
-binary!(float_mul, into);
-binary!(float_div, into);
+binary!(float_add, into,
+    "Pattern: `FloatBinaryOp::Add` (`a + b`).  Commutative.");
+binary!(float_sub, into,
+    "Pattern: float subtraction `a - b`.  No Sub op in the IR; matches the \
+     lifter-canonical `FloatAdd(a, Neg(b))` shape.");
+binary!(float_mul, into,
+    "Pattern: `FloatBinaryOp::Mul` (`a * b`).  Commutative.");
+binary!(float_div, into, "Pattern: `FloatBinaryOp::Div` (`a / b`).");
 
 // ── Float unary ops ──────────────────────────────────────────────────────
 
-unary!(float_neg);
-unary!(float_abs);
-unary!(float_sqrt);
-unary!(float_ceil);
-unary!(float_floor);
-unary!(float_round);
+unary!(float_neg, "Pattern: `FloatUnaryOp::Neg` (`-x`).");
+unary!(float_abs, "Pattern: `FloatUnaryOp::Abs` (`fabs(x)`).");
+unary!(float_sqrt, "Pattern: `FloatUnaryOp::Sqrt` (`sqrt(x)`).");
+unary!(float_ceil, "Pattern: `FloatUnaryOp::Ceil` (`ceil(x)`).");
+unary!(float_floor, "Pattern: `FloatUnaryOp::Floor` (`floor(x)`).");
+unary!(float_round, "Pattern: `FloatUnaryOp::Round` (`round(x)`).");
 
+/// Pattern: `x` is NaN.  Matches the lifter-canonical IEEE 754
+/// self-inequality `BoolNeg(FloatEqual(x, x))` (the shape Sleigh's
+/// `FLOAT_NAN` lowers to, and what `x != x` produces).
+//
 // `float_is_nan(x)` is implemented as the IEEE 754 self-inequality
 // `x != x` — the only value that is not equal to itself is NaN.  The
 // pcode lifter lowers `FloatNan` to exactly this shape at lift time
@@ -1187,29 +1284,31 @@ pub fn float_is_nan(operand: PatLike<'_>) -> PyResult<PyPat> {
 
 // ── Float comparisons ────────────────────────────────────────────────────
 
-binary!(float_eq);
-binary!(float_ne);
-binary!(float_lt);
-binary!(float_le);
+binary!(float_eq, "Pattern: `FloatCmpOp::Equal` (`a == b`).  Commutative.");
+binary!(float_ne, "Pattern: float `a != b`.  No NotEqual op; matches the \
+    lifter-canonical `BoolNeg(FloatEqual(a, b))` shape.");
+binary!(float_lt, "Pattern: `FloatCmpOp::Less` (`a < b`).");
+binary!(float_le, "Pattern: float `a <= b`.  No LessEqual op; matches the \
+    lifter-canonical `Or(FloatLess(a, b), FloatEqual(a, b))` (NaN-aware) shape.");
 
 // ── Float / int conversions ──────────────────────────────────────────────
 
-unary!(int_to_float);
-unary!(float_to_int);
-unary!(float_to_float);
-unary!(int_bits_to_float);
-unary!(float_bits_to_int);
+unary!(int_to_float, "Pattern: `IntToFloat` — int→float value conversion.");
+unary!(float_to_int, "Pattern: `FloatToInt` — float→int value conversion.");
+unary!(float_to_float, "Pattern: `FloatToFloat` — float→float (re-width) conversion.");
+unary!(int_bits_to_float, "Pattern: `IntBitsToFloat` — reinterpret int bits as a float.");
+unary!(float_bits_to_int, "Pattern: `FloatBitsToInt` — reinterpret float bits as an int.");
 
 // ── Cast / coercion / width ops ──────────────────────────────────────────
 
-unary!(cast_to_int);
-unary!(cast_to_bool);
-unary!(cast_to_float);
-unary!(truncate);
-unary!(popcount);
-unary!(lzcount);
-unary!(zero_extend);
-unary!(sign_extend);
+unary!(cast_to_int, "Pattern: `CastToInt` — coerce any value to int.");
+unary!(cast_to_bool, "Pattern: `CastToBool` — coerce any value to bool.");
+unary!(cast_to_float, "Pattern: `CastToFloat` — coerce any value to float.");
+unary!(truncate, "Pattern: `Truncate` — narrow an integer to a smaller width.");
+unary!(popcount, "Pattern: `Popcount` — count of set bits.");
+unary!(lzcount, "Pattern: `Lzcount` — count of leading zero bits.");
+unary!(zero_extend, "Pattern: `Extend(ZeroExtend)` — zero-extend to a wider width.");
+unary!(sign_extend, "Pattern: `Extend(SignExtend)` — sign-extend to a wider width.");
 
 /// `extend(op, operand)` where `op` is "zero" / "zero_extend" / "sign" /
 /// "sign_extend".
@@ -1271,6 +1370,8 @@ pub struct LoadPatDef {
     offset_capture: Option<strider_analyze::pattern::OffsetCapture>,
 }
 
+/// Start a `Load` pattern builder, optionally pre-setting the address
+/// operand (see `LoadPat`).
 #[pyfunction]
 #[pyo3(signature = (addr=None))]
 pub fn load(addr: Option<PatLike<'_>>) -> PyResult<PyLoadPat> {
@@ -1331,6 +1432,8 @@ pub struct StorePatDef {
     offset_capture: Option<strider_analyze::pattern::OffsetCapture>,
 }
 
+/// Start a `Store` pattern builder, optionally pre-setting the address
+/// and stored-value operands (see `StorePat`).
 #[pyfunction]
 #[pyo3(signature = (addr=None, data=None))]
 pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<PyStorePat> {
@@ -1346,17 +1449,6 @@ pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<P
 
 // ── Calls ────────────────────────────────────────────────────────────────
 
-/// Typed builder for `Call` node patterns.  Wraps `strider_analyze::pattern::CallPat`
-/// so callers can chain `.at(addr)`, `.target(p)`, `.arg(idx, p)`,
-/// `.ret_output(idx, p)`, plus the universal capture / predicate /
-/// finaliser methods (`.capture(c)` / `.cap(name)` / `.when(f)` /
-/// `.into_pat()`).
-///
-/// Returned by [`call`] (the free function).  Because [`PyCallPat`]
-/// is a variant of [`PatLike`], an un-finalised builder can be
-/// passed directly to any field setter or query that takes a
-/// pattern (e.g. `g.find_all(call().arg(0, int_const(8)))`); the
-/// `into_pat()` call is implicit at use-site.
 /// Typed builder for `Call` node patterns.  Wraps `strider_analyze::pattern::CallPat`
 /// so callers can chain `.at(addr)`, `.target(p)`, `.arg(idx, p)`,
 /// `.ret_output(idx, p)`, plus the universal capture / predicate /
@@ -1427,6 +1519,8 @@ impl PyCallPat {
     }
 }
 
+/// Start a `Call` pattern builder, optionally pinning the call target
+/// to literal address `at` (see `CallPat`).
 #[pyfunction]
 #[pyo3(signature = (at=None))]
 pub fn call(at: Option<u64>) -> PyCallPat {
@@ -1545,6 +1639,7 @@ impl PyCallOtherPat {
     }
 }
 
+/// Start a `CallOther` pattern builder (see `CallOtherPat`).
 #[pyfunction]
 pub fn call_other() -> PyCallOtherPat {
     PyCallOtherPat::new()
@@ -1577,6 +1672,7 @@ pub struct RetPatDef {
     ret_val: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
 }
 
+/// Start a `Return` pattern builder (see `RetPat`).
 #[pyfunction]
 pub fn ret() -> PyRetPat {
     PyRetPat::new()
@@ -1610,6 +1706,8 @@ pub struct IfPatDef {
     false_branch: Option<strider_analyze::pattern::Pat>,
 }
 
+/// Start an `If` pattern builder, optionally pre-setting the condition
+/// operand (see `IfPat`).
 #[pyfunction]
 #[pyo3(signature = (cond=None))]
 pub fn if_(cond: Option<PatLike<'_>>) -> PyResult<PyIfPat> {
@@ -1737,6 +1835,11 @@ pub struct FloatBinaryPatDef {
     ordered: Option<bool>,
 }
 
+/// Build an `IntBinaryOp` pattern for the named `op` (e.g. `"Add"`,
+/// `"And"`, `"ShiftLeft"` / `"shl"`).  Returns an `IntBinaryPat` so you
+/// can chain `.ordered()` to disable commutative matching.  `Sub` is
+/// not a valid op — use `sub(a, b)`.  Raises `StriderError` on an
+/// unknown op name.
 #[pyfunction]
 pub fn int_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyIntBinaryPat> {
     Ok(PyIntBinaryPat::new(
@@ -1746,6 +1849,9 @@ pub fn int_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyIntBin
     ))
 }
 
+/// Build a `BoolBinaryOp` pattern for the named `op` (`"And"`, `"Or"`,
+/// `"Xor"`).  Returns a `BoolBinaryPat` (chain `.ordered()` to disable
+/// commutative matching).  Raises `StriderError` on an unknown op name.
 #[pyfunction]
 pub fn bool_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyBoolBinaryPat> {
     Ok(PyBoolBinaryPat::new(
@@ -1755,6 +1861,10 @@ pub fn bool_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyBoolB
     ))
 }
 
+/// Build a `FloatBinaryOp` pattern for the named `op` (`"Add"`, `"Mul"`,
+/// `"Div"`).  Returns a `FloatBinaryPat` (chain `.ordered()` to disable
+/// commutative matching).  `Sub` is not a valid op — use
+/// `float_sub(a, b)`.  Raises `StriderError` on an unknown op name.
 #[pyfunction]
 pub fn float_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyFloatBinaryPat> {
     Ok(PyFloatBinaryPat::new(
@@ -1776,6 +1886,8 @@ pub fn float_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyFloa
 // `bool_bin_any`, `bool_un_any`, `float_bin_any`, `float_un_any`,
 // `float_cmp_any`.  Each takes a `Capture` for the matched op variant
 // — recover the op via `Match.*_op(capture)` once those accessors land.
+/// Match any `IntBinaryOp` over `(l, r)` and bind the op variant to `c`.
+/// Recover the variant after a match via `Match.int_binary_op(c)`.
 #[pyfunction]
 pub fn int_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
@@ -1783,12 +1895,16 @@ pub fn int_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> P
     Ok(PyPat::from_pat(strider_analyze::pattern::int_binary_any(c.inner, lp, rp)))
 }
 
+/// Match any `IntUnaryOp` over `operand` and bind the op variant to `c`.
+/// Recover via `Match.int_unary_op(c)`.
 #[pyfunction]
 pub fn int_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<PyPat> {
     let p = operand.into_pat()?;
     Ok(PyPat::from_pat(strider_analyze::pattern::int_unary_any(c.inner, p)))
 }
 
+/// Match any `IntCmpOp` over `(l, r)` and bind the op variant to `c`.
+/// Recover via `Match.int_cmp_op(c)`.
 #[pyfunction]
 pub fn int_cmp_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
@@ -1796,6 +1912,8 @@ pub fn int_cmp_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> P
     Ok(PyPat::from_pat(strider_analyze::pattern::int_cmp_any(c.inner, lp, rp)))
 }
 
+/// Match any `BoolBinaryOp` over `(l, r)` and bind the op variant to `c`.
+/// Recover via `Match.bool_binary_op(c)`.
 #[pyfunction]
 pub fn bool_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
@@ -1803,12 +1921,16 @@ pub fn bool_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> 
     Ok(PyPat::from_pat(strider_analyze::pattern::bool_binary_any(c.inner, lp, rp)))
 }
 
+/// Match any `BoolUnaryOp` over `operand` and bind the op variant to `c`.
+/// Recover via `Match.bool_unary_op(c)`.
 #[pyfunction]
 pub fn bool_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<PyPat> {
     let p = operand.into_pat()?;
     Ok(PyPat::from_pat(strider_analyze::pattern::bool_unary_any(c.inner, p)))
 }
 
+/// Match any `FloatBinaryOp` over `(l, r)` and bind the op variant to `c`.
+/// Recover via `Match.float_binary_op(c)`.
 #[pyfunction]
 pub fn float_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
@@ -1816,12 +1938,16 @@ pub fn float_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) ->
     Ok(PyPat::from_pat(strider_analyze::pattern::float_binary_any(c.inner, lp, rp)))
 }
 
+/// Match any `FloatUnaryOp` over `operand` and bind the op variant to `c`.
+/// Recover via `Match.float_unary_op(c)`.
 #[pyfunction]
 pub fn float_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<PyPat> {
     let p = operand.into_pat()?;
     Ok(PyPat::from_pat(strider_analyze::pattern::float_unary_any(c.inner, p)))
 }
 
+/// Match any `FloatCmpOp` over `(l, r)` and bind the op variant to `c`.
+/// Recover via `Match.float_cmp_op(c)`.
 #[pyfunction]
 pub fn float_cmp_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;

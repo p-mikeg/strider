@@ -60,12 +60,16 @@ impl PySleigh {
 
 #[pymethods]
 impl PySleigh {
+    /// Construct a Sleigh for `arch` reading from `mem` (a `MemoryMap`
+    /// or `MemReader` subclass).  Raises `StriderError` if Sleigh
+    /// initialisation fails.
     #[new]
     fn new(arch: PySleighArch, mem: MemInput) -> PyResult<Self> {
         let reader = mem.into_any();
         Self::new_internal(arch, reader)
     }
 
+    /// The arch preset name this Sleigh was built for (e.g. `"x86_64"`).
     fn arch_name(&self) -> &'static str {
         self.arch_name
     }
@@ -80,6 +84,7 @@ impl PySleigh {
         self.regs.name_to_vn(name).map(PyVn::from_inner)
     }
 
+    /// `Sleigh(arch=<preset>)`.
     fn __repr__(&self) -> String {
         format!("Sleigh(arch={})", self.arch_name)
     }
@@ -109,23 +114,29 @@ pub struct PyVnSpace {
 
 #[pymethods]
 impl PyVnSpace {
+    /// The RAM (main memory) address space.
     #[classmethod]
     fn ram(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
         Self { inner: rsleigh::VnSpace::RAM }
     }
+    /// The register address space.
     #[classmethod]
     fn register(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
         Self { inner: rsleigh::VnSpace::REGISTER }
     }
+    /// The constant ("const") address space.
     #[classmethod]
     fn const_(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
         Self { inner: rsleigh::VnSpace::CONST }
     }
+    /// The unique (temporary) address space.
     #[classmethod]
     fn unique(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
         Self { inner: rsleigh::VnSpace::UNIQUE }
     }
 
+    /// The space's name (`"RAM"`, `"REGISTER"`, `"CONST"`, `"UNIQUE"`,
+    /// or `"OTHER"`).
     fn name(&self) -> &'static str {
         if self.inner == rsleigh::VnSpace::RAM { "RAM" }
         else if self.inner == rsleigh::VnSpace::REGISTER { "REGISTER" }
@@ -134,14 +145,17 @@ impl PyVnSpace {
         else { "OTHER" }
     }
 
+    /// `VnSpace.<name>` (lowercased).
     fn __repr__(&self) -> String {
         format!("VnSpace.{}", self.name().to_lowercase())
     }
 
+    /// Equality on the underlying Sleigh space identity.
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
     }
 
+    /// Hash consistent with `__eq__` (keyed on the space identity).
     fn __hash__(&self) -> u64 {
         // Hash the inner identity (the shortcut byte that's the
         // PartialEq/Hash key on `rsleigh::VnSpace`) — NOT the heap
@@ -184,6 +198,7 @@ impl PyVn {
 
 #[pymethods]
 impl PyVn {
+    /// Construct a varnode from `(space, offset, size_in_bytes)`.
     #[new]
     fn new(space: PyVnSpace, off: u64, size: u32) -> Self {
         Self {
@@ -195,19 +210,23 @@ impl PyVn {
         }
     }
 
+    /// The varnode's address space.
     #[getter]
     fn space(&self) -> PyVnSpace {
         PyVnSpace { inner: self.inner.addr_space }
     }
+    /// The varnode's offset within its space.
     #[getter]
     fn off(&self) -> u64 {
         self.inner.addr_off
     }
+    /// The varnode's size in bytes.
     #[getter]
     fn size(&self) -> u32 {
         self.inner.size
     }
 
+    /// rsleigh's `Display` form, e.g. `%[0x20]:8` for a register varnode.
     fn __repr__(&self) -> String {
         // Delegate to rsleigh's `impl Display for Vn` (core_types.rs:139)
         // so the spelling tracks rsleigh upstream.  For a register varnode
@@ -216,10 +235,12 @@ impl PyVn {
         format!("{}", self.inner)
     }
 
+    /// Equality on all three varnode fields (space, offset, size).
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
     }
 
+    /// Hash consistent with `__eq__` (mixes space, offset, and size).
     fn __hash__(&self) -> u64 {
         // Mix all three Vn fields into the hash so varnodes that differ
         // only in `addr_space` (e.g. RAM[0x10]:8 vs REGISTER[0x10]:8)
