@@ -825,6 +825,26 @@ fn no_fold_bool_xor_false() -> Result<()> {
     Ok(())
 }
 
+// `x | true → true` for non-const x (Or-absorbing at I1; `true` is the
+// all-ones value).  Pins the re-expressed `BOr(true, _) → true` rule —
+// `Or` is commutative so `true | x` rewrites the same.
+#[test]
+fn fold_bool_or_true_to_true() -> Result<()> {
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+        let c5 = b.build_int_const(5u64, NodeOutputType::I64).unwrap();
+        // Non-const Bool: `x == 5`.
+        let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::I64)?;
+        let t = b.build_boolean_const(true);
+        b.build_int_binary_operation(cmp, t, IntBinaryOp::Or, NodeOutputType::I1)
+    })?;
+    let entry = fg.entry().unwrap();
+    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
+    // `x | true → true`: folds to the constant 1 (true at I1), not the cmp.
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(1));
+    Ok(())
+}
+
 // `!!x → x` for non-const x (double-`BitNot` at I1).
 #[test]
 fn fold_bool_double_not_to_x() -> Result<()> {
