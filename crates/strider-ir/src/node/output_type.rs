@@ -244,11 +244,20 @@ impl NodeOutputType {
     }
 }
 
-impl TryFrom<u32> for NodeOutputType {
-    type Error = anyhow::Error;
-
-    fn try_from(value: u32) -> crate::error::Result<Self> {
-        match value {
+impl NodeOutputType {
+    /// Maps a varnode byte size to the corresponding **integer** output
+    /// type: `1 → I8`, `2 → I16`, `4 → I32`, `8 → I64`, `10 → I80`,
+    /// `16 → I128`, `32 → I256`, `64 → I512`.
+    ///
+    /// Byte size 1 maps to `I8`, never `I1` — `I1` (the 1-bit boolean) is
+    /// produced only by comparisons and logical ops, not by a varnode width.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for any byte size that has no corresponding integer
+    /// type.
+    pub fn int_for_byte_size(n: u32) -> crate::error::Result<Self> {
+        match n {
             1 => Ok(Self::I8),
             2 => Ok(Self::I16),
             4 => Ok(Self::I32),
@@ -260,9 +269,7 @@ impl TryFrom<u32> for NodeOutputType {
             n => Err(anyhow::anyhow!("unsupported node output size: {n} bytes")),
         }
     }
-}
 
-impl NodeOutputType {
     /// Maps a varnode byte size to the corresponding **float** output type:
     /// `4 → F32`, `8 → F64`, `10 → F80` (x87 extended precision).
     ///
@@ -433,12 +440,22 @@ mod tests {
         );
     }
 
-    /// `TryFrom<u32> for NodeOutputType` must accept 10 → I80 so the
-    /// lifter's varnode→type conversion succeeds for x87 80-bit regs.
+    /// `int_for_byte_size` must accept 10 → I80 so the lifter's
+    /// varnode→type conversion succeeds for x87 80-bit regs.
     #[test]
-    fn try_from_u32_10_is_u80() {
-        let ty: NodeOutputType = 10u32.try_into().expect("10 must convert to I80");
+    fn int_for_byte_size_10_is_i80() {
+        let ty = NodeOutputType::int_for_byte_size(10).expect("10 must convert to I80");
         assert_eq!(ty, NodeOutputType::I80);
+    }
+
+    /// `int_for_byte_size` maps every supported width and rejects others.
+    #[test]
+    fn int_for_byte_size_maps_widths() {
+        use super::NodeOutputType as T;
+        assert_eq!(T::int_for_byte_size(1).unwrap(), T::I8);
+        assert_eq!(T::int_for_byte_size(8).unwrap(), T::I64);
+        assert_eq!(T::int_for_byte_size(64).unwrap(), T::I512);
+        assert!(T::int_for_byte_size(3).is_err());
     }
 
     /// `bit_mask_u128` for `I256` and `I512` must return

@@ -1332,7 +1332,7 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
 
     // Mirror pcode-lift's write_reg_vn coercion: convert to reg's
     // declared int type (I8 for a 1-byte flag), then write.
-    let reg_ty: NodeOutputType = flag.size.try_into()?;
+    let reg_ty = NodeOutputType::int_for_byte_size(flag.size)?;
     let coerced = b.convert_to_int_if_needed(bool_val, reg_ty)?;
     b.write_variable(&flag, coerced)?;
 

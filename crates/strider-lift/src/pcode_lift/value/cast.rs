@@ -137,17 +137,17 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             );
             let shift_const = self
                 .builder
-                .build_int_const(bit_shift, input_vn.size.try_into()?)?;
+                .build_int_const(bit_shift, strider_ir::ValueType::int_for_byte_size(input_vn.size)?)?;
             self.builder.build_int_binary_operation(
                 input,
                 shift_const,
                 IntBinaryOp::ShiftRight,
-                input_vn.size.try_into()?,
+                strider_ir::ValueType::int_for_byte_size(input_vn.size)?,
             )?
         };
         let out = self
             .builder
-            .truncate_if_needed(shifted, out_vn.size.try_into()?)?;
+            .truncate_if_needed(shifted, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
         self.write_vn(out_vn, out)
     }
 
@@ -156,14 +156,14 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self
             .builder
-            .build_popcount(input, out_vn.size.try_into()?)?;
+            .build_popcount(input, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
         self.write_vn(out_vn, out)
     }
 
     pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self.builder.build_lzcount(input, out_vn.size.try_into()?)?;
+        let out = self.builder.build_lzcount(input, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
         self.write_vn(out_vn, out)
     }
 
@@ -191,7 +191,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         }
         let hi = self.read_vn(hi_vn)?;
         let lo = self.read_vn(lo_vn)?;
-        let out_ty: NodeOutputType = out_vn.size.try_into()?;
+        let out_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let hi_ty = self.builder.get_output_type(hi)?.to_natural_int_type();
         let hi_int = self.builder.convert_to_int_if_needed(hi, hi_ty)?;
         let lo_ty = self.builder.get_output_type(lo)?.to_natural_int_type();
@@ -225,7 +225,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lsb = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 1)?, insn.opcode, "Extract lsb")?;
         let len = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 2)?, insn.opcode, "Extract bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let narrow_ty: NodeOutputType = out_vn.size.try_into()?;
+        let narrow_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
         // The extracted slice [lsb, lsb+len) must lie within the input width;
         // shifting past the width yields width-clamped (Sleigh) zero in the IR
@@ -285,7 +285,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lsb = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 2)?, insn.opcode, "Insert lsb")?;
         let len = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 3)?, insn.opcode, "Insert bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out_ty: NodeOutputType = out_vn.size.try_into()?;
+        let out_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // The inserted field [lsb, lsb+len) must fit in the destination.  Past
         // the width the host-side `wrapping_shl` mask and the IR `ShiftLeft`
         // (width-clamped) disagree, so reject rather than emit wrong bits.
@@ -315,7 +315,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let index = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let elem_size = crate::pcode_lift::nth_input_or_err(insn, 2)?.addr_off;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out_ty: strider_ir::ValueType = out_vn.size.try_into()?;
+        let out_ty: strider_ir::ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let elem_const = self.builder.build_int_const(elem_size, out_ty)?;
         let scaled = self.builder.build_int_binary_operation(
             index,
@@ -340,7 +340,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let base = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let index = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out_ty = out_vn.size.try_into()?;
+        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let neg_index = self.builder.build_int_unary_operation(
             index,
             strider_ir::IntUnaryOp::Neg,

@@ -287,7 +287,7 @@ impl FunctionBuilder {
         ret_stack_pop: i64,
     ) -> Result<()> {
         if let Some((sp, pre)) = sp_pre_call {
-            let sp_ty: NodeOutputType = sp.size.try_into()?;
+            let sp_ty = NodeOutputType::int_for_byte_size(sp.size)?;
             let const_id = self.build_int_const(ret_stack_pop as u64, sp_ty)?;
             let adjusted =
                 self.build_int_binary_operation(pre, const_id, IntBinaryOp::Add, sp_ty)?;

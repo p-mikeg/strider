@@ -38,7 +38,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out = self
             .builder
-            .extend_if_needed(input, out_vn.size.try_into()?, op)?;
+            .extend_if_needed(input, strider_ir::ValueType::int_for_byte_size(out_vn.size)?, op)?;
         self.write_vn(out_vn, out)
     }
 }

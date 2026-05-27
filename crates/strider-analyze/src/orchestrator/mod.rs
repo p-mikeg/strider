@@ -891,7 +891,7 @@ impl crate::opt::AnchorCallingContext {
 /// 32, 64} which all map cleanly; the Err arm exists so a future CC
 /// addition with an exotic size surfaces the gap immediately.
 fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::NodeOutputType> {
-    strider_ir::node::NodeOutputType::try_from(vn.size).map_err(|_| {
+    strider_ir::node::NodeOutputType::int_for_byte_size(vn.size).map_err(|_| {
         anyhow::anyhow!(
             "varnode size {} has no NodeOutputType — calling-convention \
              register {:?} cannot be modelled (supported sizes are 1, 2, 4, \

@@ -27,7 +27,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         vn: &rsleigh::Vn,
         float_val: strider_ir::Value,
     ) -> Result<()> {
-        let int_ty: NodeOutputType = vn.size.try_into()?;
+        let int_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(vn.size)?;
         let int_val = self.builder.build_float_bits_to_int(float_val, int_ty)?;
         self.write_vn(vn, int_val)
     }
@@ -149,7 +149,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // when the input is an UNIQUE temp left over from a prior float op,
         // cast it back to int first.  `convert_to_int_if_needed` is
         // identity for already-int values and inserts CastToInt otherwise.
-        let in_size: NodeOutputType = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let in_size: NodeOutputType = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
         let int_input = self
             .builder
             .convert_to_int_if_needed(raw_input, in_size)?;
@@ -175,7 +175,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_float_trunc(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let raw_input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let int_ty: NodeOutputType = out_vn.size.try_into()?;
+        let int_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // build_float_to_int requires float input.  Cast first via the
         // input's natural float width.
         let in_float_ty = Self::float_type_from_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;

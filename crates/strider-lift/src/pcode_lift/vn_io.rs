@@ -71,7 +71,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         match space {
             rsleigh::VnSpace::CONST => self
                 .builder
-                .build_int_const(vn.addr_off, vn.size.try_into()?),
+                .build_int_const(vn.addr_off, strider_ir::ValueType::int_for_byte_size(vn.size)?),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
             space if space == default_code_space => {
                 let space_info = self
@@ -80,8 +80,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                     .ok_or_else(|| anyhow!("no space info for default code space {space:?}"))?;
                 let addr = self
                     .builder
-                    .build_int_const(vn.addr_off, space_info.addr_size().try_into()?)?;
-                Ok(self.builder.build_load(addr, space, vn.size.try_into()?)?)
+                    .build_int_const(vn.addr_off, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)?;
+                Ok(self.builder.build_load(addr, space, strider_ir::ValueType::int_for_byte_size(vn.size)?)?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
         }
@@ -115,7 +115,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                     .ok_or_else(|| anyhow!("no space info for default code space {space:?}"))?;
                 let addr = self
                     .builder
-                    .build_int_const(vn.addr_off, space_info.addr_size().try_into()?)?;
+                    .build_int_const(vn.addr_off, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)?;
                 Ok(self.builder.build_store(addr, val, space)?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
@@ -226,7 +226,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // container width, which breaks downstream type-aware operations
         // (e.g. CastToFloat(F32) on a I64 input cannot lower to a clean
         // IntBitsToFloat and the optimizer ends up dropping the chain).
-        let reg_ty: strider_ir::ValueType = reg.size.try_into()?;
+        let reg_ty: strider_ir::ValueType = strider_ir::ValueType::int_for_byte_size(reg.size)?;
         let curr_reg_val = self.builder.read_variable(&ctx.container_reg)?;
         let shifted = if ctx.shift_bits == 0 {
             curr_reg_val
@@ -274,7 +274,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 // needs it.  The ConstantFold bitcast-extend rules
                 // (`IntBitsToFloat(FloatBitsToInt(x)) → x`) clean up the
                 // round-trip when both sides match.
-                let reg_ty: strider_ir::ValueType = reg.size.try_into()?;
+                let reg_ty: strider_ir::ValueType = strider_ir::ValueType::int_for_byte_size(reg.size)?;
                 let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
                 return self.builder.write_variable(reg, coerced);
             }
@@ -346,7 +346,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 container_reg,
             ));
         }
-        let container_ty: strider_ir::ValueType = container_reg.size.try_into()?;
+        let container_ty: strider_ir::ValueType = strider_ir::ValueType::int_for_byte_size(container_reg.size)?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
         // Defensive bound: any shift ≥ container_bits is undefined per the
         // IR's `ShiftRight` / `ShiftLeft` semantics (the lifted shift would

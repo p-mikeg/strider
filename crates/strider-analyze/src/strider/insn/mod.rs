@@ -144,7 +144,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         //    value lifter.
         let args = self.read_call_other_args(insn)?;
         let output_ty: Option<NodeOutputType> = match insn.output.as_ref() {
-            Some(out_vn) => Some(out_vn.size.try_into()?),
+            Some(out_vn) => Some(strider_ir::ValueType::int_for_byte_size(out_vn.size)?),
             None => None,
         };
 
@@ -159,7 +159,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         let implicit_write_kinds: Vec<strider_ir::node::NodeOutputKind> = implicit_writes_vns
             .iter()
             .map(|vn| -> Result<strider_ir::node::NodeOutputKind> {
-                Ok(strider_ir::node::NodeOutputKind::OutputType(vn.size.try_into()?))
+                Ok(strider_ir::node::NodeOutputKind::OutputType(strider_ir::ValueType::int_for_byte_size(vn.size)?))
             })
             .collect::<Result<_>>()?;
 

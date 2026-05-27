@@ -89,7 +89,7 @@ impl FunctionBuilder {
         let mut initial_variables = SecondaryMap::new();
         for var_id in var_ids {
             let var = self.function.cc_metadata.variables[var_id];
-            let output_type = var.size.try_into()?;
+            let output_type = crate::node::NodeOutputType::int_for_byte_size(var.size)?;
             let out =
                 self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
             initial_variables[var_id] = out;

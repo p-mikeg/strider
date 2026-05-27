@@ -76,7 +76,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out = self
             .builder
-            .build_int_unary_operation(input, op, out_vn.size.try_into()?)?;
+            .build_int_unary_operation(input, op, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
         self.write_vn(out_vn, out)
     }
 
@@ -101,7 +101,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out_ty = out_vn.size.try_into()?;
+        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // The signed ops interpret their operands as signed, so a narrower
         // operand must be SIGN-extended to the op width rather than
         // zero-extended (`build_int_binary_operation`'s default coercion).
@@ -144,7 +144,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let cmp_width = in0_size.max(in1_size).try_into()?;
+        let cmp_width = strider_ir::ValueType::int_for_byte_size(in0_size.max(in1_size))?;
         let ext_op = match op {
             IntCmpOp::Sless | IntCmpOp::Scarry | IntCmpOp::Sborrow => ExtendOp::SignExtend,
             IntCmpOp::Equal | IntCmpOp::Less | IntCmpOp::Carry => ExtendOp::ZeroExtend,
@@ -170,7 +170,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let cmp_width = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
         let eq = self
             .builder
             .build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, cmp_width)?;
@@ -194,7 +194,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let cmp_width = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
         let lt = self
             .builder
             .build_int_cmp_operation(rhs, lhs, IntCmpOp::Less, cmp_width)?;
@@ -217,7 +217,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let cmp_width = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
         let lt = self
             .builder
             .build_int_cmp_operation(rhs, lhs, IntCmpOp::Sless, cmp_width)?;
@@ -255,7 +255,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out_ty = out_vn.size.try_into()?;
+        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let in0_size = crate::pcode_lift::nth_input_or_err(insn, 0)?.size;
         if in0_size != out_vn.size {
             return Err(anyhow::anyhow!(

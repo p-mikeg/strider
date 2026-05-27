@@ -32,7 +32,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             op_id,
             segment,
             offset,
-            out_vn.size.try_into()?,
+            strider_ir::ValueType::int_for_byte_size(out_vn.size)?,
         )?;
         self.write_vn(out_vn, out)
     }
@@ -47,7 +47,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out = self
             .builder
-            .build_cpool_ref(&refs, out_vn.size.try_into()?)?;
+            .build_cpool_ref(&refs, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
         self.write_vn(out_vn, out)
     }
 
@@ -59,7 +59,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             .map(|vn| self.read_vn(vn))
             .collect::<Result<_>>()?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self.builder.build_new(&args, out_vn.size.try_into()?)?;
+        let out = self.builder.build_new(&args, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
         self.write_vn(out_vn, out)
     }
 }

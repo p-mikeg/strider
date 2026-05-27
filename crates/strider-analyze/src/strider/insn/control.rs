@@ -239,7 +239,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         let target_addr = target_vn.addr_off;
         let call_address = self
             .builder
-            .build_int_const(target_addr, space_info.addr_size().try_into()?)?;
+            .build_int_const(target_addr, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)?;
         // Per-address CC override: when the call target matches a
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.
@@ -277,7 +277,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             })?;
         let call_address = self
             .builder
-            .build_int_const(target, space_info.addr_size().try_into()?)?;
+            .build_int_const(target, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)?;
         // Per-address CC override applies to lift-time tail calls too.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target));
         let call_id = self.builder.build_call_with_cc(call_address, override_cc)?;

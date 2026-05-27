@@ -713,7 +713,7 @@ impl FunctionBuilder {
     ) -> Result<NodeOutputId> {
         self.require_phi_token_kind(phi_token)?;
         self.validate_value_inputs(incoming_values)?;
-        let output_type = var.size.try_into()?;
+        let output_type = NodeOutputType::int_for_byte_size(var.size)?;
         let out = self.build_single_output_pure(
             NodeKind::Phi,
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),

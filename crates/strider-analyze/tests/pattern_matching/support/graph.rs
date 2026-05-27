@@ -368,7 +368,7 @@ impl Tb {
             .iter()
             .map(|vn| {
                 strider_ir::node::NodeOutputKind::OutputType(
-                    vn.size.try_into().expect("vn size -> output type"),
+                    strider_ir::ValueType::int_for_byte_size(vn.size).expect("vn size -> output type"),
                 )
             })
             .collect();
