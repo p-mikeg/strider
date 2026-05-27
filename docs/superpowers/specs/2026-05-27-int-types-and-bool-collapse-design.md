@@ -66,17 +66,37 @@ ops). Convert the ignored `aarch64_scalar_fp_write_zeroes_upper_bits_of_simd_con
 test into a positive test that lifts `fmov s0,w0` and asserts the IR
 zeroes the upper container bytes.
 
-### Mission 4 — the soundness wrinkle (and how the design handles it)
+### Mission 4 — int→bool is never needed (VERIFIED)
 
-`CastToBool` means **`value != 0`** (`get_as_bool` folds a constant int
-as `val != 0`), **not** "truncate to the low bit". So int→bool must lower
-to the `!= 0` comparison, which already produces a 1-bit value
-(`BoolNeg(IntEqual(x,0))` today → `BitNot(IntEqual(x,0))` at `I1`). A bare
-`Truncate` to `I1` (low bit) would be unsound for a condition register
-holding e.g. `2`. The bool→int direction *is* a clean `ZeroExtend`
-(true=1, false=0). `IntUnaryOp::BitNot` folds with masking to the type
-width (`ty.get_unsigned_int(!v)`), so logical-NOT at `I1` is sound
-(`~0 & 1 = 1`, `~1 & 1 = 0`).
+Empirically, **Sleigh never feeds a raw multi-bit integer into a boolean
+context.** Every CBRANCH condition and every `BOOL_AND/OR/NEGATE` /
+flag-comparison operand is a 1-byte value produced by an explicit
+comparison. Even register-direct branches emit the comparison:
+
+```
+AArch64 cbz x0  →  unique:1 = IntEqual(x0:8,#0);   CondBranch(.., unique:1)
+MIPS    bnez $4 →  unique:1 = IntNotEqual(a0:4,#0); CondBranch(.., unique:1)
+x86_64  jbe     →  unique:1 = BoolOr(CF:1, ZF:1);   CondBranch(.., unique:1)
+        jle     →  IntNotEqual(OF:1,SF:1); BoolOr(ZF:1,..); CondBranch(.., :1)
+```
+
+So:
+- **`get_as_bool` is removed** — there is no sound need to fold
+  "multi-bit int `!= 0`" into a bool; Sleigh never emits that shape.
+- **No int→bool conversion node** (`CastToBool` / `ensure_i1` /
+  `convert_to_bool_if_needed`). Boolean contexts (the `If` condition and
+  logical ops, now integer ops at `I1`) **strict-require an `I1`** input.
+  Sleigh always supplies one; if it ever didn't, the strict builder
+  errors (sound lift failure, never wrong IR).
+- The remaining bool↔int conversion is **bool→int widening only**
+  (e.g. `setcc al; add bl, al`): a clean `ZeroExtend`. The conversion
+  helpers must key on **bit width** (not byte size) so `I1`→`I8` actually
+  extends — `I1` and `I8` share byte size 1 but differ in bit width
+  (1 vs 8). This is the *only* type pair where bit-width keying changes
+  behaviour, so the blast radius is contained to `I1`.
+- `IntUnaryOp::BitNot` folds with masking to the type width
+  (`ty.get_unsigned_int(!v)`), so logical-NOT at `I1` is sound
+  (`~0 & 1 = 1`, `~1 & 1 = 0`).
 
 ## Design
 
@@ -127,13 +147,13 @@ Mappings applied by the lifter / opt:
 | `BoolBinaryOp::{And,Or,Xor}` | `IntBinaryOp::{And,Or,Xor}` typed `I1` |
 | `BoolUnaryOp::Neg` (logical not) | `IntUnaryOp::BitNot` typed `I1` |
 | `IntCmpOp` / `FloatCmpOp` output | `I1` (was `Bool`) |
-| `CastToInt(bool→int)` | `Extend(ZeroExtend)` |
-| `CastToBool(int→bool)` | `IntNotEqual(x,0)` = `BitNot(IntEqual(x,0))` → `I1` |
+| `CastToInt(bool→int)` | `Extend(ZeroExtend)`, keyed on bit width |
+| `CastToBool(int→bool)` | removed — bool contexts strict-require `I1` (Sleigh always supplies it) |
 | `CastToFloat(int→float)` | `IntBitsToFloat` (same width) |
 
-`If` requires an `I1` condition. The lifter guarantees this: a condition
-already produced by a comparison is `I1` (no node added); a wider integer
-condition is lowered to `x != 0` (produces `I1`).
+`If` requires an `I1` condition, supplied directly by the comparison that
+produced it (no conversion node). `get_as_bool` and any int→bool fold are
+removed.
 
 ### Mission 3 — strict builders, lifter owns fixups
 
