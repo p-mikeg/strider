@@ -96,10 +96,18 @@ def _build_default_equivalent_pipeline(sleigh, sl, cc, mem):
 @pytest.mark.parametrize(
     "use_custom_pipeline,with_override,expected_hits",
     [
-        (False, False, 0),  # default pipeline, no override → hook clobbers rdi
-        (False, True, 0),   # default pipeline, override     → BUG: RDI not detected as FunctionArg(0)
-        (True, False, 0),   # custom pipeline,  no override  → same as default
-        (True, True, 0),    # custom pipeline,  override     → same gap
+        # No override: the hook at 0x2000 uses the default SysV CC and
+        # clobbers RDI, so the sink's arg0 is the hook's clobber output, not
+        # the function's arg0 — function_arg(0) must NOT match.
+        (False, False, 0),  # default pipeline, no override
+        (True, False, 0),   # custom pipeline,  no override
+        # With an all-preserving override at 0x2000 the hook preserves RDI,
+        # so the sink's arg0 is still the function's InitialVar(rdi) =
+        # function_arg(0) — the pattern matches exactly once.  (This was
+        # previously masked by stale arg-carrier ids surviving graph
+        # compaction; the side-table is now remapped through compact().)
+        (False, True, 1),   # default pipeline, override
+        (True, True, 1),    # custom pipeline,  override
     ],
 )
 def test_per_address_ccs_honoured_in_both_pipeline_paths(
