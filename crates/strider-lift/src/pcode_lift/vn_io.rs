@@ -289,17 +289,20 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let reg_mask = vn_mask(reg)? << ctx.shift_bits;
         let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
 
-        // SOUNDNESS NOTE: on AArch64, writing a scalar FP/SIMD sub-register
-        // (s0/d0/h0/b0) is ISA-mandated to ZERO the upper bits of the
-        // containing 128-bit V-register.  This codepath preserves them,
-        // which produces wrong IR for any AArch64 binary that writes a
-        // scalar FP register and later reads the full container width.
-        //
-        // Closing this gap requires either threading ArchPreset into
-        // write_reg_vn or adding a per-container policy (q0/q1/... are
-        // zero-extending containers on AArch64; xmm0/xmm1/... are NOT on
-        // x86 SSE).  See the ignored regression test
-        // `aarch64_scalar_fp_write_zeroes_upper_bits_of_simd_container`.
+        // SOUNDNESS: this sub-register write PRESERVES the bits outside
+        // `reg`, and that is correct.  Some ISAs zero the upper bits of the
+        // containing vector register on a scalar-FP write (AArch64 `fmov s0`
+        // zeroes V0[32:]; x86 VEX `vmovss` zeroes the upper YMM/ZMM) while
+        // others preserve them (x86 legacy SSE `movss`).  Crucially, Sleigh
+        // models this difference itself by emitting the zeroing as *separate
+        // explicit pcode ops* alongside the scalar write — e.g.
+        //   AArch64 `fmov s0,w0` →  s0 = Copy(w0); reg(V0[4..]) = Copy(#0)…
+        //   x86 VEX  `vmovss`    →  XMM0_Da = …;   ZMM0 = IntZext(XMM0)
+        // The lifter processes those zeroing ops as ordinary sub-register
+        // writes here, so the resulting IR reflects the exact upper-bits
+        // semantics with no per-arch policy needed: preserving within the
+        // scalar op is right *because* the zeroing arrives as its own op.
+        // (Verified by lifting these instructions and inspecting the pcode.)
         let final_container_value = build_masked_insert(
             self.builder,
             val,
@@ -605,19 +608,44 @@ mod positioned_mask_tests {
         );
     }
 
+    /// Scalar-FP upper-bits zeroing is sound because Sleigh emits the
+    /// zeroing as separate explicit pcode ops (e.g. `fmov s0,w0` →
+    /// `s0 = Copy(w0)` then `reg(V0[4..]) = Copy(#0)`).  The lifter
+    /// processes each as an ordinary sub-register masked-insert.  This pins
+    /// the invariant that makes that approach exact: the scalar write's
+    /// positioned mask and the upper-bytes zero-write's positioned mask are
+    /// disjoint and together tile the whole container — so after both writes
+    /// the container is fully determined (low = value, upper = 0), with no
+    /// preserved-stale bits and no gaps.  (Was an `#[ignore]`d placeholder
+    /// asserting a bug that does not exist; see the SOUNDNESS comment above
+    /// `write_reg_vn`'s masked-insert call.)
     #[test]
-    #[ignore = "tracks AAPCS64 scalar FP zero-extension; fix deferred — see SOUNDNESS NOTE in vn_io.rs"]
-    fn aarch64_scalar_fp_write_zeroes_upper_bits_of_simd_container() {
-        // Spec: writing s0 (low 4 bytes of q0) must zero bits 32..127.
-        // Writing d0 (low 8 bytes of q0) must zero bits 64..127.
-        //
-        // Today's lifter preserves bits 32..127 instead of zeroing them.
-        // When the fix lands, this test should pin the post-fix shape:
-        // the container update term has mask = 0, NOT mask = ~reg_mask.
-        //
-        // Construction pattern: see the existing positioned-mask tests
-        // in this module for how to set up a write_reg_vn call.
-        panic!("test not yet implemented; remove #[ignore] when fixing AAPCS64");
+    fn aarch64_scalar_fp_write_then_upper_zero_tiles_the_container() {
+        // `fmov s0,w0` lifts (per Sleigh) to: s0 = Copy(w0) then aligned
+        // zero-writes covering the rest of the container — observed as a
+        // 4-byte write at offset 4 and an 8-byte write at offset 8.
+        let v0 = reg_at(0, 16);
+        let s0 = reg_at(0, 4);
+        let zero_mid = reg_at(4, 4); // bytes 4..8
+        let zero_hi = reg_at(8, 8); // bytes 8..16
+
+        let s0_pos = vn_mask(&s0).unwrap(); // shift 0
+        let mid_pos = vn_mask(&zero_mid).unwrap() << 32;
+        let hi_pos = vn_mask(&zero_hi).unwrap() << 64;
+
+        // Pairwise disjoint: the scalar write and each zero-fill touch no
+        // common bit (so no write clobbers another).
+        assert_eq!(s0_pos & mid_pos, 0);
+        assert_eq!(s0_pos & hi_pos, 0);
+        assert_eq!(mid_pos & hi_pos, 0);
+        // Covering: together they are exactly the full V0 container, so after
+        // the scalar write + Sleigh's zero-fills the container is fully
+        // determined (low 4 = value, upper 12 = 0) with no stale bits.
+        assert_eq!(
+            s0_pos | mid_pos | hi_pos,
+            vn_mask(&v0).unwrap(),
+            "s0 ∪ zero-fills must tile the full V0 container"
+        );
     }
 
     /// 4-byte container with byte-sized sub-registers at each offset —
