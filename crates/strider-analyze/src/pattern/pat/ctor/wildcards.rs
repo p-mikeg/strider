@@ -260,15 +260,23 @@ pub fn signed_int_const(v: impl Into<i128>) -> Pat {
 }
 
 /// Matches a boolean constant node with value exactly `v`.  Booleans are
-/// `I1` integers, so this matches/builds `IntConst(v as u128)` typed `I1`.
+/// `I1` integers, so this matches an `IntConst(v as u128)` typed `I1` and,
+/// on the RHS of a rewrite rule, builds the same.
 ///
-/// Unlike [`crate::pattern::any_bool_const`], this constructor is also usable on the RHS of
-/// a rewrite rule (it builds an `IntConst` typed `I1`), so it deliberately
-/// carries no match-time width guard — the exact value pin plus the I1
-/// build type are sufficient, and a guard would make it match-only.
+/// The match side carries an `I1` width guard (post-match), so `bool_const`
+/// does *not* spuriously match a wide `IntConst(0/1)` of some other width;
+/// the guard is independent of the build spec, so this stays usable as a
+/// rewrite RHS.
 #[must_use]
 pub fn bool_const(v: bool) -> Pat {
     NodePat::matcher(KindSpec::Exact(NodeKind::IntConst(v as u128)), InputsSpec::None)
+        .with_post_match(Arc::new(|ctx, node, _b| {
+            ctx.function
+                .node_outputs(node)
+                .iter()
+                .find_map(|&out| ctx.function.output_kind(out).as_value())
+                .is_some_and(|ty| ty.bit_width() == 1)
+        }))
         .with_build_exact(NodeKind::IntConst(v as u128), BuildTy::Fixed(NodeOutputType::I1))
         .into_pat()
 }

@@ -11,11 +11,27 @@
 //! `BitNot` at `I1` (`~0 & 1 == 1`, `~1 & 1 == 0`).  These constructors keep
 //! their historical `bool_*` names but build/match the integer shapes at `I1`.
 
+use std::sync::Arc;
+
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{IntBinaryOp, IntUnaryOp};
 
-use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
+use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodeKindCheck, NodePat};
 use crate::pattern::pat::Pat;
+
+/// Post-match guard restricting a match to a node whose value output is the
+/// 1-bit boolean `I1`.  Without it the `bool_*` matchers would also accept a
+/// same-shaped wide integer op (e.g. a 64-bit `And`), since after the bool→I1
+/// collapse a boolean op and a wide integer op share the same `NodeKind`.
+fn require_i1_output() -> NodeKindCheck {
+    Arc::new(|ctx, node, _bindings| {
+        ctx.function
+            .node_outputs(node)
+            .iter()
+            .find_map(|&out| ctx.function.output_kind(out).as_value())
+            .is_some_and(|ty| ty.bit_width() == 1)
+    })
+}
 
 /// Build an `I1`-typed integer binary-op pattern.  Commutative ops
 /// (`And` / `Or` / `Xor`) try both operand orderings automatically.
@@ -27,6 +43,7 @@ fn i1_binary(op: IntBinaryOp, lhs: Pat, rhs: Pat) -> Pat {
         InputsSpec::fixed_ordered(vec![lhs, rhs])
     };
     NodePat::matcher(KindSpec::Exact(kind), inputs)
+        .with_post_match(require_i1_output())
         .with_build_exact(kind, BuildTy::Fixed(NodeOutputType::I1))
         .into_pat()
 }
@@ -60,6 +77,7 @@ pub fn bool_xor(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
 pub fn bool_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
     let kind = NodeKind::IntUnaryOp(op);
     NodePat::matcher(KindSpec::Exact(kind), InputsSpec::fixed_ordered(vec![operand.into()]))
+        .with_post_match(require_i1_output())
         .with_build_exact(kind, BuildTy::Fixed(NodeOutputType::I1))
         .into_pat()
 }

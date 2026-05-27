@@ -92,10 +92,12 @@ fn any_int_const_rejects_non_const() {
 
 #[test]
 fn bool_const_true_matches() {
+    // Return the I1 boolean const directly.  Widening it (via `as_int`) would
+    // const-fold it into a wider `IntConst`, which `bool_const` (an I1-typed
+    // matcher) must NOT match.
     let mut t = Tb::empty();
     let b = t.boolean(true);
-    let as_int = t.as_int(b, NodeOutputType::I64);
-    let function = t.ret_val(as_int);
+    let function = t.ret_val(b);
 
     a::matches(&function, bool_const(true), 1);
     a::none(&function, bool_const(false));

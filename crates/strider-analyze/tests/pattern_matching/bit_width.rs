@@ -133,3 +133,35 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
     // value_of_width(32) matches the wide nodes (the two I32 consts).
     assert!(!m.find_all(&value_of_width(32)).is_empty());
 }
+
+/// The `bool_*` constructors are boolean-specific: they match only nodes whose
+/// value output is 1-bit (`I1`), never a same-shaped wide integer op/const.
+#[test]
+fn bool_ctors_require_i1_output() {
+    use strider_analyze::pattern::{any, bool_and, bool_const};
+    use strider_ir::IntBinaryOp;
+
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
+    // A wide (I64) And and a wide IntConst(1) — neither is a boolean.
+    let x = b.build_int_const(0xFFu64, NodeOutputType::I64).expect("x");
+    let one = b.build_int_const(1u64, NodeOutputType::I64).expect("one");
+    let wide_and = b
+        .build_int_binary_operation(x, one, IntBinaryOp::And, NodeOutputType::I64)
+        .expect("wide and");
+    b.build_return(Some(wide_and), &[]).expect("ret");
+    let function = b.build().expect("build");
+
+    let m = Matcher::try_new(&function).unwrap();
+    assert_eq!(
+        m.find_all(&bool_and(any(), any())).len(),
+        0,
+        "bool_and is boolean-specific and must not match a 64-bit And"
+    );
+    assert_eq!(
+        m.find_all(&bool_const(true)).len(),
+        0,
+        "bool_const matches only an I1 constant, not a wide IntConst(1)"
+    );
+}
