@@ -255,7 +255,7 @@ A few common surprises when a pattern that "should obviously match" returns no h
 
 4. **`phi()` matches a tagged `Phi` only** (one whose `Graph::phi_var_tag` entry is `Some`, i.e. the lifter-emitted SSA φ for a register-aliased read).  Use `mem_phi()` for the memory-token phi at join points; `value_phi()` for the anonymous value phi `LoadForward` synthesises (its `phi_var_tag` is `None`).
 
-5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `Region`, `Or(BoolConst(false), x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
+5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `Region`, `Or(IntConst(0):I1, x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
 
 6. **Width mismatch / signedness.**  `int_const(42)` matches a constant whose value equals 42 at the node's own width, so a `42` lifted as `IntConst(42 : U32)` and one lifted as `IntConst(42 : U64)` both match.  The subtlety is *signed* values: a negative constant narrowed to U32 (e.g. `-50` as `0xFFFFFFCE`) is a different bit pattern from its 64-bit sign-extension, so `int_const(-50)` won't match the narrowed form.  Use `signed_int_const(-50)`, which matches the value sign-correctly at whatever width the node carries.
 

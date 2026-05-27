@@ -126,7 +126,7 @@ so the resolver-bearing dependency stays one-way.
       clobbered list, and `no_memory_clobber` flag).  Both populated
       by `FunctionBuilder::build`.
     - **`PrimaryMap`:** `wide_consts` (`WideConstId → WideConstStorage`,
-      consulted by `IntConstWide(WideConstId)` nodes for U256 / U512
+      consulted by `IntConstWide(WideConstId)` nodes for I256 / I512
       payloads that don't fit in the regular `IntConst(u128)`).
     - **Side-table registry on `Function`:** the `NodeId`-keyed
       `SecondaryMap` side-tables `stack_offsets` (SP-relative offset
@@ -160,11 +160,16 @@ so the resolver-bearing dependency stays one-way.
     doesn't depend on the reader crate.
   - `NodeOutputKind` — `Control`, `Memory`, `PhiToken`, or
     `OutputType(NodeOutputType)`.
-  - `NodeOutputType` — integers `Bool`, `U8`, `U16`, `U32`, `U64`, `U80`
-    (x87 80-bit extended), `U128`, `U256`, `U512`; floats `F32`, `F64`,
-    `F80`.  Wide types (`U256` / `U512`) are stored via
-    `IntConstWide(WideConstId)` interned in `Graph::wide_consts`;
-    `IntConst(u128)` rejects them.
+  - `NodeOutputType` — integers `I1` (the 1-bit boolean), `I8`, `I16`,
+    `I32`, `I64`, `I80` (x87 80-bit extended), `I128`, `I256`, `I512`;
+    floats `F32`, `F64`, `F80`.  There is no separate `Bool` type or
+    category: a boolean is the 1-bit integer `I1`, so `is_integer()` is
+    true for it and `bit_width(I1) == 1` (the lone case where bit width
+    isn't `byte_size * 8`).  `NodeOutputType::int_for_byte_size(n)` /
+    `float_for_byte_size(n)` map a varnode byte size to a type (byte size
+    1 → `I8`, never `I1`); there is no `TryFrom<u32>`.  Wide types
+    (`I256` / `I512`) are stored via `IntConstWide(WideConstId)` interned
+    in `Graph::wide_consts`; `IntConst(u128)` rejects them.
   - `walk::walk_graph(graph, entry)` (`pub(crate)`) — preorder
     traversal that follows both backward-data and forward-control
     edges.  Used by the validator and several internal passes; not
@@ -182,7 +187,7 @@ so the resolver-bearing dependency stays one-way.
       phi-token ownership and per-predecessor arity, Call/Return CC-arity
       (output / input slot counts vs the calling convention, honouring
       per-`Call` clobber overrides), wide-const consistency (including a
-      dedicated check that `IntConstWide` declares a U256/U512 output
+      dedicated check that `IntConstWide` declares a I256/I512 output
       type), and the always-on asm-fingerprint check (every reachable
       non-exempt node MUST carry ≥1 fingerprint).
     - Errors are aggregated into a `ValidationErrors` bundle rather than
@@ -383,12 +388,13 @@ so the resolver-bearing dependency stays one-way.
   wrapper + stub-gen methods — from one annotated `*Def` struct.  The
   Rust-side `Pat` builders themselves remain hand-written in
   `strider-analyze::pattern`; the macro's job is to spare you a
-  byte-for-byte duplicate on the Python side.  12 of the 13 pattern
-  builders have macro-emitted mirrors (including the three binary-op
-  mirrors `PyIntBinaryPat` / `PyBoolBinaryPat` / `PyFloatBinaryPat`,
-  driven via the macro's `constructor_args`); only `PyFunctionArgPat`
-  (an enum-dispatch source whose shape doesn't fit the field-based
-  model) stays a hand-written `#[pyclass]`.
+  byte-for-byte duplicate on the Python side.  Most pattern builders have
+  macro-emitted mirrors (including the binary-op mirrors `PyIntBinaryPat`
+  / `PyFloatBinaryPat`, driven via the macro's `constructor_args`).
+  `PyFunctionArgPat` (an enum-dispatch source whose shape doesn't fit the
+  field-based model) stays a hand-written `#[pyclass]`, and `bool_binary`
+  is a plain function (a boolean AND/OR/XOR is `IntBinaryOp` at `I1`, so
+  it needs no dedicated builder).
 
 - **`strider-ir-test-utils`** — `RegisterSet` (fluent builder over
   `FunctionBuilder::new_raw`), `make_empty_fn`, `make_fn_with_var`,
@@ -450,23 +456,29 @@ truth for every node's input/output shape.  Node kinds, grouped:
   lives in `Function::stack_offsets` as a side-table keyed by
   `NodeId`; the underlying node kind stays `Store(VnSpace)` /
   `Load(VnSpace)`.
-- **Integer:** `IntConst(u128)`, `IntConstWide(WideConstId)` (U256 /
-  U512, interned in `Graph::wide_consts`), `IntUnaryOp` (`BitNot` for
-  `~x`, `Neg` for `-x`), `IntBinaryOp` (no `Sub`; lifter lowers to
+- **Integer (incl. booleans):** `IntConst(u128)`, `IntConstWide(WideConstId)`
+  (I256 / I512, interned in `Graph::wide_consts`), `IntUnaryOp` (`BitNot`
+  for `~x`, `Neg` for `-x`), `IntBinaryOp` (`And` / `Or` / `Xor` /
+  `Add` / `Mul` / shifts / …; no `Sub`; lifter lowers to
   `Add(_, Neg(_))`), `IntCmpOp` (`Equal`, `Less`, `Sless`, `Carry`,
   `Scarry`, `Sborrow`; no `LessEqual` / `SlessEqual` — both are
-  lift-time-lowered shapes), `Truncate`, `Extend(ExtendOp)`,
-  `Popcount`, `Lzcount`, `CastToInt`.
-- **Boolean:** `BoolConst(bool)`, `BoolUnaryOp`, `BoolBinaryOp`,
-  `CastToBool`.
+  lift-time-lowered shapes; output is `I1`), `Truncate`,
+  `Extend(ExtendOp)`, `Popcount`, `Lzcount`.  **Booleans are the 1-bit
+  integer `I1`** — there is no `BoolConst` / `BoolBinaryOp` /
+  `BoolUnaryOp` / `CastToBool` / `CastToInt`: a bool constant is
+  `IntConst(0|1):I1`, logical and/or/xor are `IntBinaryOp::{And,Or,Xor}`
+  at `I1`, logical not is `IntUnaryOp::BitNot` at `I1`, bool→int widening
+  is `Extend(ZeroExtend)`, and int→bool conversion is never needed (Sleigh
+  always feeds an already-`I1` condition).
 - **Float:** `FloatConst(u64)` (bits), `FloatUnaryOp`, `FloatBinaryOp`
   (`Add` / `Mul` / `Div`; no `Sub`, lifter lowers to
-  `Add(_, Neg(_))`), `FloatCmpOp` (`Equal`, `Less`; no `NotEqual` /
-  `LessEqual` — both lifted to lowered shapes; `FLOAT_NAN(x)` is
-  lowered to `BoolNeg(FloatEqual(x, x))`).
+  `Add(_, Neg(_))`), `FloatCmpOp` (`Equal`, `Less`; output `I1`; no
+  `NotEqual` / `LessEqual` — both lifted to lowered shapes; `FLOAT_NAN(x)`
+  is lowered to `BitNot(FloatEqual(x, x))` at `I1`).
 - **Float / int conversions:** `IntToFloat`, `FloatToInt`,
-  `FloatToFloat`, `IntBitsToFloat`, `FloatBitsToInt`, `CastToFloat`.
-  The cast ops accept any value-typed input; `FloatToFloat` is
+  `FloatToFloat`, `IntBitsToFloat`, `FloatBitsToInt`.  There is no
+  `CastToFloat`: an int→float cast is a same-width `IntBitsToFloat`, and a
+  float→float reprecision is `FloatToFloat`.  `FloatToFloat` is
   float→float only.
 - **Opaque / user-defined:** `SegmentOp { op_id }`, `CPoolRef`, `New`.
 
@@ -480,21 +492,29 @@ truth for every node's input/output shape.  Node kinds, grouped:
   matching PyO3 mirror (`Py*Pat`) from the same `*Def` struct, so
   adding a field on the Python side updates the generated mirror
   automatically — the Rust builder must still be updated by hand.
-- 12 of the 13 builders have macro-emitted PyO3 mirrors (the three
-  binary-op mirrors `PyIntBinaryPat` / `PyBoolBinaryPat` /
-  `PyFloatBinaryPat` are emitted via the macro's `constructor_args`);
-  only `PyFunctionArgPat` (enum-dispatch source) stays hand-written.
+- Most builders have macro-emitted PyO3 mirrors (the binary-op mirrors
+  `PyIntBinaryPat` / `PyFloatBinaryPat` are emitted via the macro's
+  `constructor_args`); `PyFunctionArgPat` (enum-dispatch source) stays
+  hand-written, and `bool_binary` is now a plain function returning a
+  `Pat` (a boolean AND/OR/XOR is just `IntBinaryOp` at `I1`).
+- **Querying booleans by width** (booleans are `I1`, not a distinct type):
+  `value_of_width(n)` / `bool_value()` filter by *output* width (width 1 =
+  "produces a bool", including comparisons); `inputs_of_width(n, inner)` /
+  `bool_inputs(inner)` filter by *input* width (width 1 = "operates on
+  booleans", excluding comparisons whose operands are wider).
 - **Lift-time canonicalisation** (the lifter applies these so patterns
   match the canonical shape):
   - `IntSub(a, b)` → `Add(a, Neg(b))`.
-  - `IntLessEqual(a, b)` → `BoolNeg(IntLess(b, a))` (swap args).
-  - `IntNotEqual(a, b)` → `BoolNeg(IntEqual(a, b))`.
+  - `IntLessEqual(a, b)` → `BitNot(IntLess(b, a))` at `I1` (swap args;
+    logical-not of a 1-bit value is `IntUnaryOp::BitNot`).
+  - `IntNotEqual(a, b)` → `BitNot(IntEqual(a, b))` at `I1`.
   - `FloatSub(a, b)` → `FloatAdd(a, Neg(b))`.
-  - `FloatNotEqual(a, b)` → `BoolNeg(FloatEqual(a, b))`.
-  - `FloatLessEqual(a, b)` → `Or(FloatLess(a, b), FloatEqual(a, b))`
-    (NaN-aware).
-  - `FLOAT_NAN(x)` → `BoolNeg(FloatEqual(x, x))`.
-  - `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}` (via `opt::IfCondInversion`).
+  - `FloatNotEqual(a, b)` → `BitNot(FloatEqual(a, b))` at `I1`.
+  - `FloatLessEqual(a, b)` → `Or(FloatLess(a, b), FloatEqual(a, b))` at
+    `I1` (NaN-aware; `Or` is `IntBinaryOp::Or`).
+  - `FLOAT_NAN(x)` → `BitNot(FloatEqual(x, x))` at `I1`.
+  - `If(BitNot(C)){A}{B}` → `If(C){B}{A}` (via `opt::IfCondInversion`,
+    matching a 1-bit `BitNot`).
 - **Commutative matching:** `add`, `mul`, `and`, `or`, `xor` (and bool
   equivalents), `int_cmp(Equal/Carry/Scarry)`, and `float_cmp(Equal)`
   automatically try both operand orderings.  Driven by
