@@ -183,7 +183,6 @@
         <div class="sec-bd open" id="s-sel">
           <div class="kv">
             <div class="k">Type</div><div class="v" id="sType">—</div>
-            <div class="k">Node</div><div class="v" id="sNode">—</div>
             <div class="k">Edge</div><div class="v" id="sEdge">—</div>
             <div class="k">Edge label</div><div class="v" id="sEdgeLabel">—</div>
           </div>
@@ -366,12 +365,6 @@ function setRS(ok,msg){const e=document.getElementById("rs");e.textContent=ok?"o
 function setDrag(on){drag=!!on;document.getElementById("ms").textContent=drag?"drag":"select";const b=document.getElementById("bDrag");b.textContent=`Drag: ${drag?"On":"Off"}`;b.classList.toggle("ac",!drag);const s=gw.querySelector("svg");if(s)s.style.cursor=drag?"grab":"default";}
 function updSelUI(){
   document.getElementById("sType").textContent=sel.type??"—";
-  // Node name as `n<serial>`. The pretty renderer's <title> is a bare number
-  // (e.g. "14") → prefix to "n14"; the raw renderer already names nodes "n14"
-  // (and virtual nodes "v3"), so only prefix a purely-numeric title to avoid
-  // doubling it ("nn14").
-  document.getElementById("sNode").textContent=
-    sel.type==="node"?(/^\d+$/.test(sel.name)?("n"+sel.name):sel.name):"—";
   document.getElementById("sEdge").textContent=sel.ekey??"—";
   // Edge label: the <text> rendered inside the selected g.edge (e.g. "lhs",
   // "true", "arg0"). Only meaningful for an edge selection.
