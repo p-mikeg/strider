@@ -25,6 +25,7 @@
 
 use std::sync::Arc;
 
+use entity_utils::DenseEntitySet;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::pattern::error::Result;
@@ -520,14 +521,18 @@ pub(crate) fn match_consumer_node(
     b: &mut Bindings,
 ) -> bool {
     // Walk forward through single-consumer `Region` headers iteratively.
-    // A single-consumer chain is bounded by CFG nesting depth in practice,
-    // but a control back-edge could otherwise loop forever and a pathological
-    // depth could overflow the stack — so cap the walk with the same bound as
-    // the backward walk-through guard and surface a clean no-match if hit.
-    const MAX_WALK_THROUGH_DEPTH: usize = 512;
+    // A `DenseEntitySet` visited-set bounds the walk to distinct nodes and
+    // bails cleanly the instant a control back-edge would revisit one, so a
+    // cyclic CFG can neither loop forever nor grow the stack.
     let mark = b.mark();
+    let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
     let mut cur = node;
-    for _ in 0..=MAX_WALK_THROUGH_DEPTH {
+    loop {
+        if !visited.insert(cur) {
+            // Already tried this node on this walk — a control cycle; the
+            // pattern doesn't match along it.  Bindings are at `mark`.
+            return false;
+        }
         if ctx.matcher.match_node_id(cur, pat, b) {
             return true;
         }
@@ -554,6 +559,4 @@ pub(crate) fn match_consumer_node(
         };
         cur = next;
     }
-    // Depth cap exceeded — clean no-match (bindings already at `mark`).
-    false
 }
