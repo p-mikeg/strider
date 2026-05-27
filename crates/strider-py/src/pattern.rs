@@ -178,9 +178,9 @@ impl PyPat {
 /// `CastMask` — bitset selecting which value-passthrough cast
 /// `NodeKind`s the matcher walks through transparently.  Mirrors
 /// `strider_analyze::pattern::CastMask`.  Construct via the classmethods (`zero_extend`,
-/// `sign_extend`, `extend`, `truncate`, `cast_to_int`, `cast_to_bool`,
-/// `cast_to_float`, `int_bits_to_float`, `float_bits_to_int`,
-/// `all`, `none`/`empty`); combine with `|` (Python `__or__`).
+/// `sign_extend`, `extend`, `truncate`, `int_bits_to_float`,
+/// `float_bits_to_int`, `all`, `none`/`empty`); combine with `|`
+/// (Python `__or__`).
 ///
 /// Pass to `Graph.find_all(pat, ignore_casts_mask=...)` — granular
 /// alternative to the all-or-nothing `ignore_casts=True`.
@@ -621,18 +621,17 @@ pub(crate) fn wrap_when(inner: strider_analyze::pattern::Pat, py_func: PyObject)
             // Always invalidate the proxy's graph pointer so any
             // subsequent use from Python doesn't deref a stale ptr.
             //
-            // use `borrow` (panicking
-            // on conflict) instead of `try_borrow` + silent skip.
-            // `try_borrow` only fails when an active `&mut self`
+            // `try_borrow` can only fail when an active `&mut self`
             // borrow is held; `PyPartialMatch` exposes only `&self`
             // methods via #[pymethods] AND is `unsendable`, so that
             // failure mode is unreachable from any synchronous path.
-            // Using `borrow` makes the unreachability explicit — a
-            // future change that adds a `&mut self` method on the
-            // proxy would surface as a clean panic instead of
-            // silently leaking the pointer past the predicate's
-            // return.
-            py_proxy.borrow(py).clear_graph_ptr();
+            // We still avoid the panicking `borrow` so that a future
+            // `&mut self` method (or a re-entrant call) degrades to a
+            // skipped invalidation rather than panicking across the
+            // FFI boundary.
+            if let Ok(proxy_ref) = py_proxy.try_borrow(py) {
+                proxy_ref.clear_graph_ptr();
+            }
             match result {
                 Ok(obj) => match obj.extract::<bool>(py) {
                     Ok(b) => b,

@@ -50,15 +50,11 @@ enum DotResult {
 /// Convert a Python-supplied `u32` node id into a validated `strider_ir::NodeId`,
 /// returning `StriderError` on lookup failure.
 fn node_id_from_u32(function: &strider_ir::Function, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
-    let nid = function
-        .all_node_ids()
-        .find(|n| n.as_u32() == node_id)
-        .ok_or_else(|| {
-            crate::errors::into_strider_err(anyhow::anyhow!(
-                "no node with id {node_id} in function"
-            ))
-        })?;
-    Ok(nid)
+    // O(1) validated lookup (NodeIds are dense arena indices), replacing an
+    // O(N) scan over `all_node_ids` on every per-node accessor call.
+    function.node_id_from_u32(node_id).ok_or_else(|| {
+        crate::errors::into_strider_err(anyhow::anyhow!("no node with id {node_id} in function"))
+    })
 }
 
 impl PyFunction {

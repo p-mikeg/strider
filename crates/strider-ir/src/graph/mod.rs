@@ -196,6 +196,17 @@ impl Graph {
         self.nodes.is_valid(id)
     }
 
+    /// Validated construction of a [`NodeId`](crate::node::NodeId) from a raw
+    /// `u32` index supplied by an external caller (e.g. the Python bindings).
+    /// Returns `None` if no node with that index exists in this graph.  O(1):
+    /// `NodeId`s are dense arena indices, so this is a bounds check, not a scan.
+    #[must_use]
+    pub fn node_id_from_u32(&self, raw: u32) -> Option<crate::node::NodeId> {
+        use cranelift_entity::EntityRef;
+        let id = crate::node::NodeId::new(raw as usize);
+        self.has_node(id).then_some(id)
+    }
+
     /// Interns `value` and returns its `crate::wide_const::WideConstId`.
     /// Subsequent calls with an equal value return the same id — the
     /// dedup invariant the [`Self::create_node`] cache relies on so
