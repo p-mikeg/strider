@@ -21,7 +21,15 @@ fn strip_dead_region_inputs(
     dead_uses: &[(NodeId, u32)],
     if_node_id: NodeId,
 ) -> Result<()> {
-    for (region_node, dead_idx) in dead_uses {
+    // Process highest predecessor index first.  `remove_node_input` shifts
+    // every later input down by one, so if the same dead control edge feeds
+    // one Region at multiple slots, removing the lower index first would
+    // leave the higher (already-recorded) index pointing at the wrong slot.
+    // Descending order makes the removals index-stable; distinct consumers
+    // still don't interact.
+    let mut dead_uses = dead_uses.to_vec();
+    dead_uses.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    for (region_node, dead_idx) in &dead_uses {
         let region_node = *region_node;
         let dead_idx = *dead_idx;
         if !matches!(*ctx.node_kind(region_node), NodeKind::Region) {

@@ -190,6 +190,13 @@ fn match_jump_table_shape(
         return None;
     }
     let entry_size = ty.byte_size();
+    // A jump-table entry is a machine pointer (≤ 8 bytes).  Wide integer
+    // loads (U80/U128/U256/U512) are not table entries; reject them
+    // explicitly rather than relying on the downstream `ReadOnlyMemory::read`
+    // size>8 rejection to fail closed.
+    if entry_size > 8 {
+        return None;
+    }
 
     // CORRECTNESS — pattern-DSL form is sound-equivalent to the four
     // hand-written commutativity cases the prior version expanded:

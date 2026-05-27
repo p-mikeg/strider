@@ -136,16 +136,16 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
 
     match kind {
         strider_ir::node::NodeKind::IntConst(k) => {
-            // IntConst stores a u128.  `BranchIndirect` targets are
-            // always machine pointers (≤ 64 bits on every supported
-            // arch), but a higher-bit constant could in principle slip
-            // through — e.g. a 128-bit SIMD register used as a target
-            // VN.  Mask to 64 bits since virtual-address space is
-            // 64-bit and any extra bits are garbage from the resolver's
-            // perspective.
-            #[allow(clippy::cast_possible_truncation)]
-            let truncated = k as u64;
-            Ok(Some(ResolvedTargets::Single(truncated)))
+            // IntConst stores a u128.  `BranchIndirect` targets are always
+            // machine pointers (≤ 64 bits on every supported arch); a
+            // higher-bit constant (e.g. a 128-bit SIMD register used as a
+            // target VN) is not a valid jump target, so defer rather than
+            // silently truncate to a wrong address.  Mirrors the opt-time
+            // `classify_anchor` policy via the shared helper.
+            match crate::opt::indirect_branch_resolve::u128_to_branch_target(k) {
+                Some(target) => Ok(Some(ResolvedTargets::Single(target))),
+                None => Ok(None),
+            }
         }
         strider_ir::node::NodeKind::InitialVar(vn) if Some(vn) == cc_link_register_vn => {
             Ok(Some(ResolvedTargets::LinkRegister))

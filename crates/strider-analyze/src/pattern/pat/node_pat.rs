@@ -519,35 +519,41 @@ pub(crate) fn match_consumer_node(
     pat: &crate::pattern::pat::Pat,
     b: &mut Bindings,
 ) -> bool {
+    // Walk forward through single-consumer `Region` headers iteratively.
+    // A single-consumer chain is bounded by CFG nesting depth in practice,
+    // but a control back-edge could otherwise loop forever and a pathological
+    // depth could overflow the stack — so cap the walk with the same bound as
+    // the backward walk-through guard and surface a clean no-match if hit.
+    const MAX_WALK_THROUGH_DEPTH: usize = 512;
     let mark = b.mark();
-    if ctx.matcher.match_node_id(node, pat, b) {
-        return true;
-    }
-    b.restore(mark);
-    if !ctx.matcher.options.ignore_regions {
-        return false;
-    }
-    // Region's outputs are [Control, PhiToken]; the Control
-    // output is the one consumed by the next region's body.
-    if !matches!(ctx.function.node_kind(node), NodeKind::Region) {
-        return false;
-    }
-    let outputs = ctx.function.node_outputs(node);
-    let Some(&ctrl_out) = outputs.iter().find(|out| {
-        matches!(
-            ctx.function.output_kind(**out),
-            strider_ir::node::NodeOutputKind::Control
-        )
-    }) else {
-        return false;
-    };
-    let Some(next) = consumer::next_control_node(ctx.matcher, ctrl_out) else {
-        return false;
-    };
-    if match_consumer_node(ctx, next, pat, b) {
-        true
-    } else {
+    let mut cur = node;
+    for _ in 0..=MAX_WALK_THROUGH_DEPTH {
+        if ctx.matcher.match_node_id(cur, pat, b) {
+            return true;
+        }
         b.restore(mark);
-        false
+        if !ctx.matcher.options.ignore_regions {
+            return false;
+        }
+        // Region's outputs are [Control, PhiToken]; the Control
+        // output is the one consumed by the next region's body.
+        if !matches!(ctx.function.node_kind(cur), NodeKind::Region) {
+            return false;
+        }
+        let outputs = ctx.function.node_outputs(cur);
+        let Some(&ctrl_out) = outputs.iter().find(|out| {
+            matches!(
+                ctx.function.output_kind(**out),
+                strider_ir::node::NodeOutputKind::Control
+            )
+        }) else {
+            return false;
+        };
+        let Some(next) = consumer::next_control_node(ctx.matcher, ctrl_out) else {
+            return false;
+        };
+        cur = next;
     }
+    // Depth cap exceeded — clean no-match (bindings already at `mark`).
+    false
 }
