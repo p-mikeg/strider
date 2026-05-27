@@ -1,6 +1,6 @@
 //! Whole-graph validator for the IR.
 //!
-//! The validator walks a built [`Graph`] starting from an entry [`NodeId`] and
+//! The validator walks a built [`crate::graph::Graph`] starting from an entry [`NodeId`] and
 //! checks structural invariants across three groups:
 //!   - **Local typing** (`local_typing`): per-node input/output kind checks
 //!     against `node_signature::expected_signature` (reachability-scoped).

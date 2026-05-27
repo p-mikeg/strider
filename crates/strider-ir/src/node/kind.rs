@@ -2,7 +2,7 @@
 
 /// Where a function argument originates in the calling convention.
 ///
-/// Used by the pattern builder [`strider_analyze::pattern::FunctionArgPat`] to
+/// Used by the `strider-analyze` pattern builder `FunctionArgPat` to
 /// filter matches by ABI source — register-passed (`Register`) or
 /// stack-passed (`Stack`).  No longer embedded in a `NodeKind` variant; arg
 /// tracking lives in the `Function::arg_index_to_nodes` side-table.
@@ -49,9 +49,9 @@ pub enum NodeKind {
     /// φ for register-aliased reads); others are anonymous value phis
     /// synthesised by `LoadForward` when forwarding a
     /// `Load[sp+K]` across a `MemPhi`.  The tag (when present) is
-    /// stored in [`crate::graph::Graph::phi_var_tag`] (an
+    /// stored in [`crate::Function::phi_var_tag`] (an
     /// `Option<Vn>` side-table); query it via
-    /// [`crate::graph::Graph::phi_var_tag`].  Anonymous phis have no
+    /// [`crate::Function::phi_var_tag`].  Anonymous phis have no
     /// entry (the side-table returns `None`).  Non-cacheable: phi
     /// identity matters.
     Phi,

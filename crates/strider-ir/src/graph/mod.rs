@@ -138,7 +138,7 @@ pub struct Graph {
     /// Monotonic version counter incremented by every operation that
     /// invalidates pre-existing `NodeId` / `NodeOutputId` /
     /// `NodeInputId` values — currently [`Self::retain_reachable`] (and
-    /// transitively [`Self::compact`]).  External callers that captured
+    /// transitively [`crate::Function::compact`]).  External callers that captured
     /// node ids before the arena was reshuffled compare snapshots via
     /// [`Self::generation`] to detect staleness instead of dereferencing
     /// a recycled id into the wrong node.
@@ -170,7 +170,7 @@ impl Graph {
 
     /// Returns the current generation counter.  Bumped by every
     /// arena-reshuffling operation ([`Self::retain_reachable`] and
-    /// transitively [`Self::compact`]); external callers that captured
+    /// transitively [`crate::Function::compact`]); external callers that captured
     /// a node id before the bump should not dereference it on the
     /// post-bump graph.  See the field-level doc on `generation` for
     /// the lifecycle.
