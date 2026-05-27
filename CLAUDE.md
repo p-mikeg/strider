@@ -236,8 +236,8 @@ so the resolver-bearing dependency stays one-way.
     `strider_analyze::strider::PerRegionDriver::handle_call_other`.
     `ArchPreset` arrives via `cfg::Builder::for_arch(arch, …)`.
     `CallOtherAbi` carries `implicit_reads` / `implicit_writes` /
-    `memory_edge` describing the ISA-fixed register-and-memory footprint
-    beyond Sleigh's pcode-explicit args.
+    `clobbers_memory` (a `bool`) describing the ISA-fixed
+    register-and-memory footprint beyond Sleigh's pcode-explicit args.
   - `PositionalArgLayout` — canonical positional-arg-layout DTO derived
     from a `BuiltCallingConvention` via
     `PositionalArgLayout::from_convention(&cc)`.  Single source of

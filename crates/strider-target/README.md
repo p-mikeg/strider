@@ -44,7 +44,7 @@ names the same types.
   `CallingConvention` but with `Vn`s in place of static strings.
 - `PositionalArgLayout` / `PositionalArg` — canonical positional-arg
   enumeration DTO consumed by `FunctionArgDetect` and
-  `CallStackArgCollect` (`AliasSplit` and `LoadForward` only need
+  `CallStackArgCollect` (`StackOffsetDetect` and `LoadForward` only need
   `sp_vn`, not the layout).
   Indices `0..arg_passing_regs.len()` are register slots; indices
   `arg_passing_regs.len()..` are stack slots at the convention's
@@ -56,12 +56,11 @@ names the same types.
 - `call_other_abi::CallOtherAbi` — describes the *implicit* (ISA-fixed,
   not pcode-explicit) channel of a CallOther beyond Sleigh's pcode
   operands.  Fields: `implicit_reads: &'static [&'static str]`,
-  `implicit_writes: &'static [&'static str]`,
-  `mem_clobbers: &'static [AliasClass]` (per-partition memory clobber
-  set — replaces the old coarse `memory_edge: bool`; `MEM_CLOBBER_NONE`
-  for pure compute, `MEM_CLOBBER_HEAP_UNKNOWN` for barriers / atomics
-  / port-I/O, `MEM_CLOBBER_FULL` for kernel-entry paths that can also
-  mutate the user stack frame).
+  `implicit_writes: &'static [&'static str]`, and `clobbers_memory:
+  bool` (`false` for pure compute like cpuid / rdtsc; `true` for
+  anything touching memory — atomics, barriers, port-I/O, syscalls,
+  kernel entries — all treated uniformly as a memory clobber that
+  advances the IR's memory edge).
 - `call_other_abi::CallOtherClass` — `NoOp` | `NoReturn` |
   `Call(CallOtherAbi)`.  The classifier's verdict for a given user-op
   name.
@@ -90,9 +89,10 @@ userland, Linux kernel internal, and Linux syscall ABIs for every
 supported architecture.
 
 `src/call_other_abi.rs` is the single-source-of-truth `name →
-CallOtherClass` table.  Unknown user-op names raise
-`ir::error::UnknownCallOtherError` at the IR builder, so the table
-grows incrementally with what real lifts emit rather than silently
+CallOtherClass` table.  `classify` returns `None` for an unknown name,
+which the strider lift layer turns into a (plain `anyhow`) lift error
+pointing the user at `call_other_abi::classify`, so the table grows
+incrementally with what real lifts emit rather than silently
 misclassifying.
 
 ## Key invariants
@@ -110,9 +110,9 @@ misclassifying.
   x86 user-ops (`rdtsc`, `rdmsr`) emit the EDX/EAX writes as
   explicit pcode after the CALLOTHER, and declaring them implicitly
   on top would double-clobber the call site.
-- `classify` returns `None` for unknown names; the IR builder turns
-  this into `UnknownCallOtherError` so the table can grow
-  incrementally.
+- `classify` returns `None` for unknown names; the strider lift layer
+  turns this into a lift error so the table can grow incrementally
+  (missing entries are intentional — users add them on demand).
 - No `Opaque` variant in `CallOtherClass` — every previously-Opaque
   entry was reclassified to `NoOp`, `NoReturn`, or precise `Call(abi)`.
 - **LR is intentionally listed in `callee_saved_regs`** for AArch64,

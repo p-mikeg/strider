@@ -15,11 +15,14 @@ loads).  Same regions, two views.
   `contains`, `read`.
 - `MemRegionsLookupTable` — `BTreeMap<u64, MemRegion>` keyed by start
   address.  `new(regions)`, `read(addr, out)`.  O(log n) in the common
-  non-overlapping case; resolves overlaps by walking candidates from
-  highest `start_addr <= addr` downward.
+  non-overlapping case; for overlaps it picks the region that best
+  satisfies the request (a fully-covering region with the highest start
+  address wins, otherwise the one covering the most of the request) and
+  fills the buffer exactly once.
 - `ReadOnlyMemory` (re-exported from `strider-ir`) — single method
   `fn read(&self, addr: u64, size: usize) -> Option<u64>` returning up
-  to 8 bytes as a little-endian-decoded `u64`, or `None` for unmapped
+  to 8 bytes as a target-endian-decoded `u64` (the `ElfFileMemReader`
+  impl byte-swaps per the ELF's endianness), or `None` for unmapped
   addresses / sizes > 8.  Blanket impls for `Arc<T>` and `Box<T>`.
 - `MemReadError` — `std::error::Error`-implementing wrapper around
   `anyhow::Error` so reader impls satisfy rsleigh 4.0.0's
@@ -102,9 +105,11 @@ cargo test --package strider-reader
   use by default.
 - `ReadOnlyMemory::read` returns a `u64` regardless of `size` — the
   caller is responsible for masking / sign-extending for sizes < 8.
-- Two regions overlapping at *different* start addresses are walked
-  from highest-start downward; the first containing region wins.
-  Worst-case O(n) when many regions stack at the same prefix.
+- Two regions overlapping at *different* start addresses: a read picks
+  the region that best satisfies the requested length (a fully-covering
+  region with the highest start address wins; a read straddling a
+  shorter inner region's end falls through to the covering outer
+  region).  Worst-case O(n) when many regions stack at the same prefix.
 - Depends on `object`, `rsleigh`, `strider-ir`, and `anyhow`.  The
   lookup primitives (`MemRegion`, `MemRegionsLookupTable`,
   `MemReadError`) do not depend on `object` and can be reused by

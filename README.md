@@ -39,7 +39,7 @@ Binary → CFG → IR → Optimizations → Pattern Queries (Python)
 | `strider-ir` | Sea-of-nodes IR graph (`Graph`, `FunctionBuilder`) |
 | `strider-target` | SleighArch + CallingConvention presets, CallOther ABI table |
 | `strider-analyze` | Orchestrator, optimizer pipeline, pattern matcher, indirect-branch resolver |
-| `strider-pattern-macros` | Proc-macro that emits paired Rust + PyO3 pattern builders |
+| `strider-pattern-macros` | Proc-macro that emits the PyO3 mirror of each hand-written Rust pattern builder |
 | `strider-ir-test-utils` | Mock-IR helpers with sentinel asm-fingerprint stamping |
 | `strider-py` | **Python bindings — the primary user-facing query interface** |
 | `dot` | Generic Graphviz / dark-themed HTML renderer |
@@ -87,9 +87,9 @@ result = strider.run(
     allow_code_before_start_addr=True,
 )
 
-# 3. Query the optimized graph.
+# 3. Query the optimized graph.  `result.function` is the lifted IR.
 ptr, off = Capture(), Capture()
-for hit in result.graph.find_all(
+for hit in result.function.find_all(
     load(addr=add(var(ptr), var(off))),
     ignore_casts=True,
 ):
@@ -97,14 +97,14 @@ for hit in result.graph.find_all(
 
 # 4. Visualise.
 result.cfg.to_html("cfg.html")
-result.graph.to_html("graph.html")
+result.function.to_html("graph.html")
 ```
 
 ---
 
 ## Pattern features
 
-The pattern crate covers every IR node kind the lifter emits.  Below are the highest-leverage features when querying a real graph.
+The pattern crate covers every IR node kind the lifter emits.  Below are the highest-leverage features when querying a real graph.  In the snippets below `g` is the lifted IR queried — i.e. the `result.function` from the quickstart.
 
 ### Set-membership target queries
 
@@ -141,14 +141,15 @@ for tup in g.find_all_requirements([
 
 ### Stack-offset recovery
 
-Capture a `StackStore` and read its compile-time SP-relative offset:
+Capture an SP-relative `Store` and read its compile-time offset (`g` is
+the `result.function` from the quickstart):
 
 ```python
-from strider.pattern import Capture, stack_store
+from strider.pattern import OffsetCapture, store
 
-c = Capture()
-for hit in g.find_all(stack_store().offset_any([-8, -16, -24]).capture(c)):
-    print(f"stack store at offset {hit.stack_offset(c)}")
+c = OffsetCapture()
+for hit in g.find_all(store().offset_capture(c)):
+    print(f"stack store at offset {hit.captured_offset(c)}")
 ```
 
 ### Asm-fingerprint attribution
@@ -187,7 +188,7 @@ g.node_kind(node_id)          # "IntConst", "Call", "Phi", ...
 g.node_ids()                  # [0, 1, 2, ...] every reachable node
 g.asm_fingerprint(node_id)    # [0x1000, 0x1004, ...]
 g.call_other_name(node_id)    # "cpuid" or None
-g.validate(check_asm_fingerprints=True)  # None on success, str on failure
+g.validate()                  # None on success, error string on failure
 g.compact()                   # drop unreachable nodes
 ```
 
@@ -223,7 +224,7 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 | `CallStackArgCollect` (post-pass) | Collects positional stack args at `Call` sites. |
 | `FunctionArgDetect` (post-pass) | Canonicalises register- and stack-passed arg reads at the function boundary by populating `Function::arg_index_to_nodes` (carrier `NodeId` is `InitialVar` for register args, `Load` for stack args).  There is no `FunctionArg` `NodeKind` variant. |
 
-`opt::indirect_branch_resolve` is a module of free-function classifiers (link-register-return, tail call, jump table, stack-array dispatch, plus the `Truncate(IntConst)` / `Extend(IntConst)` arms) and in-place IR editors (`apply_link_register`, `apply_tail_call`).  There is no `Optimizer`-implementing struct — the strider orchestrator calls them directly, outside any pipeline.
+`opt::indirect_branch_resolve` is a module of free-function classifiers (link-register-return, tail call, jump table, stack-array dispatch) and in-place IR editors (`apply_link_register`, `apply_tail_call`).  A constant target reached through cast/extend chains is resolved by the prior `ConstantFold` pass rather than a dedicated arm here.  There is no `Optimizer`-implementing struct — the strider orchestrator calls them directly, outside any pipeline.
 
 ---
 
@@ -241,7 +242,7 @@ A few common surprises when a pattern that "should obviously match" returns no h
 
 5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `Region`, `Or(BoolConst(false), x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
 
-6. **Width mismatch.**  `int_const(42)` defaults to a "any-width" constant; on a 32-bit comparison your `42` may be lifted as `IntConst(42 : U32)` while your pattern expects `IntConst(42 : U64)`.  Use `int_const(42).with_type(NodeOutputType::U32)` or `signed_int_const(42)` for the typed variant.
+6. **Width mismatch / signedness.**  `int_const(42)` matches a constant whose value equals 42 at the node's own width, so a `42` lifted as `IntConst(42 : U32)` and one lifted as `IntConst(42 : U64)` both match.  The subtlety is *signed* values: a negative constant narrowed to U32 (e.g. `-50` as `0xFFFFFFCE`) is a different bit pattern from its 64-bit sign-extension, so `int_const(-50)` won't match the narrowed form.  Use `signed_int_const(-50)`, which matches the value sign-correctly at whatever width the node carries.
 
 When stuck, dump the IR (`result.graph.to_html("graph.html")` and open in a browser) and walk forward from `entry` looking for the shape you expected.
 
@@ -317,4 +318,4 @@ uv run pytest tests/python/
 
 ## Project status
 
-The 11-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  The `feature/ai` branch carries day-to-day work.  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface; the design specs that drove major refactors live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.
+The 11-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface; the design specs that drove major refactors live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.
