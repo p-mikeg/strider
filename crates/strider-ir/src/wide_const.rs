@@ -8,7 +8,7 @@
 //!
 //! ## Interning contract
 //!
-//! [`crate::Graph::intern_wide_const`] dedups by value: two interns of
+//! `crate::Graph::intern_wide_const` dedups by value: two interns of
 //! the same [`WideConstStorage`] always return the same id.  This is
 //! load-bearing for the dedup-cache contract — two structurally
 //! identical `IntConstWide(id)` nodes (same id) are equal at the
@@ -22,7 +22,7 @@ use cranelift_entity::entity_impl;
 /// Dense, typed identifier for a wide-integer constant value stored in
 /// `Graph::wide_consts`.
 ///
-/// Allocated by [`crate::Graph::intern_wide_const`]; opaque to
+/// Allocated by `crate::Graph::intern_wide_const`; opaque to
 /// callers — use [`crate::Graph::wide_const`] to look up the value.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WideConstId(u32);

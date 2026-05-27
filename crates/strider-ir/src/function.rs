@@ -265,7 +265,7 @@ impl Function {
 
     /// Returns the per-Call clobber-list override for `node_id`, or `None`
     /// if the Call uses the function-default
-    /// [`CcMetadata::call_clobbered`].
+    /// `CcMetadata::call_clobbered`.
     #[inline]
     #[must_use]
     pub fn call_clobbered_override(&self, node_id: NodeId) -> Option<&[rsleigh::Vn]> {

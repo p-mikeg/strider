@@ -49,7 +49,7 @@ impl FunctionBuilder {
 
     /// Builds an integer constant whose value exceeds `u128` — `I256`
     /// (32 bytes) or `I512` (64 bytes).  Interns `value` via
-    /// [`crate::Graph::intern_wide_const`] so two builds with equal
+    /// `crate::Graph::intern_wide_const` so two builds with equal
     /// values share the same `WideConstId` (and hence the same
     /// `NodeId` under the dedup cache).
     ///

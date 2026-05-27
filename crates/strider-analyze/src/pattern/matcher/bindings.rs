@@ -42,7 +42,7 @@ pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
 /// `offset_index: FxHashMap<OffsetCapture, usize>` stores `i64` values
 /// bound by `LoadPat::offset_capture` / `StorePat::offset_capture`.
 /// The mark/restore scheme covers both journals atomically via
-/// [`BindingsMark`], which carries cursors for both.
+/// `BindingsMark`, which carries cursors for both.
 ///
 /// External callers see `Bindings` as read-only: construction is via
 /// `Default::default()`, and the production mutation path

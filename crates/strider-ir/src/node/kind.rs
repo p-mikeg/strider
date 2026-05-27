@@ -97,11 +97,11 @@ pub enum NodeKind {
     /// A compile-time integer constant whose value doesn't fit in
     /// `u128` — `I256` or `I512`.  The actual byte payload lives in
     /// `Graph::wide_consts` and this node carries a
-    /// [`crate::wide_const::WideConstId`] index.
+    /// `crate::wide_const::WideConstId` index.
     ///
     /// Interning makes structural equality work: two `IntConstWide(id)`
     /// nodes with the same `id` reference the same value (the
-    /// [`crate::Graph::intern_wide_const`] contract).
+    /// `crate::Graph::intern_wide_const` contract).
     IntConstWide(crate::wide_const::WideConstId),
     /// Integer unary operation (e.g. bitwise NOT, two's-complement negate).
     IntUnaryOp(crate::ops::IntUnaryOp),

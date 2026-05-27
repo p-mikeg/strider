@@ -45,11 +45,11 @@ mod tests;
 ///
 /// Pure ABI declarations (the stack pointer varnode, `ret_stack_pop`,
 /// `no_memory_clobber`, link register, etc.) live on the embedded
-/// [`Self::cc`] copy rather than being mirrored here — they are read
+/// `Self::cc` copy rather than being mirrored here — they are read
 /// through `cc.as_ref().map(...)` and surfaced by the
-/// [`crate::Function`] accessors ([`crate::Function::stack_vn`] /
-/// [`crate::Function::ret_stack_pop`] /
-/// [`crate::Function::no_memory_clobber`]).  The fields below are the
+/// [`crate::Function`] accessors (`crate::Function::stack_vn` /
+/// `crate::Function::ret_stack_pop` /
+/// `crate::Function::no_memory_clobber`).  The fields below are the
 /// per-function-effective lists, which differ from the raw ABI lists
 /// after dedup / `upgrade_to_tracked_for`.
 #[derive(Clone, Debug, Default)]
@@ -122,14 +122,14 @@ pub struct Graph {
     ///
     /// Wide values don't fit in `IntConst`'s `u128` payload; the IR
     /// stores them off-side here and the node carries a
-    /// [`crate::wide_const::WideConstId`] index instead.  Interning
-    /// (via [`Self::intern_wide_const`]) dedups by value so two
+    /// `crate::wide_const::WideConstId` index instead.  Interning
+    /// (via `Self::intern_wide_const`) dedups by value so two
     /// `IntConstWide(id)` nodes referencing the same id are
     /// structurally equal under [`Self::create_node`]'s dedup cache.
     pub(crate) wide_consts:
         PrimaryMap<crate::wide_const::WideConstId, crate::wide_const::WideConstStorage>,
     /// Reverse-dedup index for [`Self::wide_consts`]: value → id.
-    /// Owned by [`Self::intern_wide_const`]; never read directly by
+    /// Owned by `Self::intern_wide_const`; never read directly by
     /// other code.
     pub(crate) wide_const_dedup: rustc_hash::FxHashMap<
         crate::wide_const::WideConstStorage,
@@ -196,7 +196,7 @@ impl Graph {
         self.nodes.is_valid(id)
     }
 
-    /// Interns `value` and returns its [`crate::wide_const::WideConstId`].
+    /// Interns `value` and returns its `crate::wide_const::WideConstId`.
     /// Subsequent calls with an equal value return the same id — the
     /// dedup invariant the [`Self::create_node`] cache relies on so
     /// two `IntConstWide(id)` nodes referencing the same logical value
@@ -214,7 +214,7 @@ impl Graph {
     }
 
     /// Looks up a wide-const value by id.  The id must have been
-    /// produced by [`Self::intern_wide_const`] on this graph; ids
+    /// produced by `Self::intern_wide_const` on this graph; ids
     /// from other graphs are not portable.
     #[must_use]
     pub fn wide_const(

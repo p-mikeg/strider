@@ -24,7 +24,7 @@ pub enum NodeOutputType {
     I128,
     I256,
     /// 512-bit unsigned integer (AVX-512 `zmm` registers).  Stored
-    /// off-side via [`crate::wide_const::WideConstStorage::I512`]
+    /// off-side via `crate::wide_const::WideConstStorage::I512`
     /// because the value doesn't fit in `IntConst`'s `u128` payload.
     I512,
     /// 32-bit IEEE 754 single-precision float.
