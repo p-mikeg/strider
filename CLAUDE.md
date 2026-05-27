@@ -188,7 +188,13 @@ so the resolver-bearing dependency stays one-way.
     - Errors are aggregated into a `ValidationErrors` bundle rather than
       failing fast.
   - `function_dot` module — IR-specific Graphviz / HTML rendering on top
-    of the generic `dot` crate.
+    of the generic `dot` crate.  The pretty `FunctionDotDumper`
+    (`Function::dot_dumper`) inlines constants, adds virtual nodes, and
+    needs a `Sleigh` for register names; `Function::raw_dot` /
+    `raw_html` (the `function_dot::raw` submodule) render the graph
+    **exactly as stored** instead — one node per arena `NodeId`, one
+    edge per input edge, side-tables shown inline, no Sleigh — for
+    debugging the real graph shape.
   - **Asm-fingerprint side-table** (`Graph::asm_fingerprints`) — every
     `NodeId` carries a sorted-deduplicated list of machine-instruction
     addresses identifying the asm insns whose lifting (or subsequent

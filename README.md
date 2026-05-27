@@ -192,6 +192,22 @@ g.validate()                  # None on success, error string on failure
 g.compact()                   # drop unreachable nodes
 ```
 
+### Raw graph dump (debugging the real shape)
+
+`to_html`/`html_str` render a *pretty* view (constants inlined, virtual
+nodes for Call clobbers / If branches). To see the graph **exactly as
+stored** — one node per `NodeId` (every arena node, including detached
+ones), one edge per input edge, side-tables (stack offset, phi tag, asm
+fingerprints, …) shown inline, no inlining or virtual nodes — use the raw
+renderer:
+
+```python
+g.raw_dot_str()               # Graphviz DOT, 1:1 with the stored graph
+g.raw_html_str()              # same, wrapped in self-contained HTML
+g.to_raw_dot("raw.dot")       # write DOT to a file
+g.to_raw_html("raw.html")     # write HTML to a file
+```
+
 ---
 
 ## Bounded vs unbounded lifts
