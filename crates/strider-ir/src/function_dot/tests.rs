@@ -88,11 +88,11 @@ fn render_int_const_wide_shows_value_not_debug() {
     );
 }
 
-/// The raw renderer emits exactly one DOT node per arena `NodeId` — no
-/// constant inlining, no synthetic virtual nodes — unlike the pretty
-/// renderer (which inlines consts per-consumer and adds virtual nodes).
+/// The raw renderer emits exactly one DOT node per reachable `NodeId` — no
+/// constant inlining, no synthetic virtual nodes (unlike the pretty
+/// renderer) — and omits detached / unreachable nodes.
 #[test]
-fn raw_dot_is_one_node_per_arena_node_no_inlining() {
+fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     f.set_entry(entry);
@@ -107,23 +107,28 @@ fn raw_dot_is_one_node_per_arena_node_no_inlining() {
     );
     let [c_out] = f.node_outputs_exact::<1>(c).unwrap();
     f.create_node(NodeKind::Return, [ctrl, mem_out, c_out], []);
+    // A detached node not reachable from entry — must NOT appear in the raw view.
+    let zombie = f.create_node(
+        NodeKind::IntConst(0xDEAD_BEEF),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
 
     let dot = f.raw_dot().expect("raw_dot must render");
 
-    // Exactly one DOT node declaration per arena node — no inlining/virtuals.
+    // Exactly one DOT node declaration per reachable node — no inlining/virtuals.
     assert_eq!(
         node_decls(&dot).len(),
-        f.all_node_ids().count(),
-        "raw dot must have one node per arena NodeId, got dot:\n{dot}"
+        f.walk().count(),
+        "raw dot must have one node per reachable NodeId, got dot:\n{dot}"
     );
-    // Every arena node id appears, and the IntConst is its own node (not inlined).
-    for id in f.all_node_ids() {
-        assert!(
-            dot.contains(&format!("n{}", id.as_u32())),
-            "raw dot must contain node n{}", id.as_u32()
-        );
-    }
-    assert!(dot.contains("IntConst"), "the constant is a standalone node, not inlined");
+    // The detached node is excluded; reachable < arena here.
+    assert!(f.walk().count() < f.all_node_ids().count());
+    assert!(
+        !dot.contains(&format!("\"n{}\"", zombie.as_u32())),
+        "detached node n{} must not be rendered", zombie.as_u32()
+    );
+    assert!(dot.contains("IntConst(2748)"), "the reachable constant is a standalone node, not inlined");
     // The Return's three inputs are real edges.
     assert!(edge_lines(&dot).len() >= 3, "Return's input edges must be present");
 }

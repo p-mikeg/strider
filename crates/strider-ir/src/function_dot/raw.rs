@@ -1,9 +1,9 @@
 //! Raw, structure-faithful graph renderer for debugging.
 //!
 //! Unlike the pretty [`super::FunctionDotDumper`], this renders the graph
-//! **exactly as stored**: one DOT node per [`NodeId`] (every node in the
-//! arena, including detached / unreachable ones), one edge per input edge,
-//! with no constant inlining, no synthetic virtual nodes, no commutative
+//! **exactly as stored**: one DOT node per reachable-from-entry [`NodeId`],
+//! one edge per input edge, with no constant inlining, no synthetic virtual
+//! nodes, no commutative
 //! reordering, and no Sleigh register-name translation.  Each node also
 //! shows the per-node side-table state ([`Function::stack_offset`],
 //! [`Function::phi_var_tag`], [`Function::asm_fingerprint`],
@@ -110,9 +110,12 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
     fn create_initial_state(&self) -> Self::State {}
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = NodeId> {
-        // Every node in the arena, not just those reachable from entry, so
-        // detached / zombie nodes are visible — the point of a raw view.
-        self.function.all_node_ids().collect::<Vec<_>>()
+        // Nodes reachable from entry — the function's live graph.  Detached /
+        // dedup-cache nodes are omitted so the view stays readable; because
+        // the walk follows backward-data and forward-control edges, every
+        // rendered node's input producers are also rendered (no dangling
+        // edges).
+        self.function.walk().collect::<Vec<_>>()
     }
 
     fn dump_as_dot(
@@ -137,11 +140,11 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
 }
 
 impl Function {
-    /// Renders the graph **exactly as stored** to Graphviz DOT: every arena
-    /// node, every input edge, side-tables shown inline, with none of the
-    /// pretty renderer's cosmetic transforms (constant inlining, virtual
-    /// nodes, commutative reordering).  A debugging aid for inspecting the
-    /// real graph shape; see the `function_dot::raw` module.
+    /// Renders the graph **exactly as stored** to Graphviz DOT: every node
+    /// reachable from entry, every input edge, side-tables shown inline, with
+    /// none of the pretty renderer's cosmetic transforms (constant inlining,
+    /// virtual nodes, commutative reordering).  A debugging aid for inspecting
+    /// the real graph shape; see the `function_dot::raw` module.
     ///
     /// # Errors
     ///

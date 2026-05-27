@@ -41,17 +41,19 @@ def test_graph_node_count_positive(x86_memory_elf):
     assert g.node_count() > 0
 
 
-def test_raw_dot_is_one_node_per_arena_node(x86_memory_elf):
-    # The raw renderer reflects the graph exactly as stored: one DOT node per
-    # arena NodeId (== g.node_ids()), no constant inlining or synthetic
-    # virtual nodes (which the pretty renderer adds).
+def test_raw_dot_is_one_node_per_reachable_node(x86_memory_elf):
+    # The raw renderer reflects the graph as stored: one DOT node per node
+    # reachable from entry, no constant inlining or synthetic virtual nodes
+    # (which the pretty renderer adds).  Reachable nodes are a subset of the
+    # arena (g.node_ids()); the strict 1:1 + detached-exclusion contract is
+    # pinned by the Rust unit test.
     g = _build_graph(x86_memory_elf)
     dot = g.raw_dot_str()
     assert isinstance(dot, str) and "digraph" in dot.lower()
     node_decls = [ln for ln in dot.splitlines() if "[label=" in ln and "->" not in ln]
-    assert len(node_decls) == len(g.node_ids()), (
-        f"raw dot must have one node per arena node: "
-        f"{len(node_decls)} decls vs {len(g.node_ids())} node ids"
+    assert 0 < len(node_decls) <= len(g.node_ids()), (
+        f"raw dot must have one node per reachable node (<= arena): "
+        f"{len(node_decls)} decls vs {len(g.node_ids())} arena node ids"
     )
 
 
