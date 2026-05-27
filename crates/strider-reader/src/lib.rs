@@ -163,14 +163,22 @@ impl MemRegion {
     ///   (`data.len() == 0`), `start_addr == end_addr`, so every address
     ///   satisfies `addr >= end_addr` and reads always return `None`.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
-        let offset = usize::try_from(addr.checked_sub(self.start_addr)?).ok()?;
-        let available = self.data.len().checked_sub(offset)?;
-        if available == 0 {
-            return None;
-        }
+        let (offset, available) = self.available_at(addr)?;
         let to_copy = available.min(out.len());
         out[..to_copy].copy_from_slice(&self.data[offset..offset + to_copy]);
         Some(to_copy)
+    }
+
+    /// Returns `(offset, available)` for `addr` within this region, where
+    /// `offset` is the byte index into [`data`](Self::data) and `available`
+    /// is the (non-zero) number of bytes from `addr` to the region's end.
+    ///
+    /// Returns `None` when `!contains(addr)`.  Lets a caller decide which of
+    /// several overlapping regions best satisfies a request before writing.
+    fn available_at(&self, addr: u64) -> Option<(usize, usize)> {
+        let offset = usize::try_from(addr.checked_sub(self.start_addr)?).ok()?;
+        let available = self.data.len().checked_sub(offset)?;
+        (available != 0).then_some((offset, available))
     }
 }
 
@@ -209,17 +217,33 @@ impl MemRegionsLookupTable {
     /// Returns `None` when no region contains `addr`.
     /// Partial reads are possible — see [`MemRegion::read`].
     ///
-    /// Candidates are walked from highest `start_addr <= addr` downward: the
-    /// usual no-overlap case returns on the first candidate, but if a later,
-    /// shorter region sits inside an earlier one the outer region is consulted
-    /// for addresses past the inner region's end.
+    /// Candidates are walked from highest `start_addr <= addr` downward.  A
+    /// region that fully satisfies the request (highest such start address
+    /// wins) is used immediately; otherwise the region covering the most of
+    /// the request is chosen.  This means a shorter region sitting inside a
+    /// larger one shadows the larger one only for the bytes it actually
+    /// covers — a read straddling the inner region's end falls through to the
+    /// fully-covering outer region rather than returning a short partial read.
+    ///
+    /// Availability is computed without writing so `out` is filled exactly
+    /// once from the winning region (no cross-region byte mixing).
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
+        let mut best: Option<(&MemRegion, usize)> = None;
         for (_, region) in self.regions.range(..=addr).rev() {
-            if let Some(n) = region.read(addr, out) {
-                return Some(n);
+            let Some((_, available)) = region.available_at(addr) else {
+                continue;
+            };
+            let n = available.min(out.len());
+            // A region that covers the whole request wins outright; iterating
+            // highest-start-first means the latest-starting such region wins.
+            if n == out.len() {
+                return region.read(addr, out);
+            }
+            if best.is_none_or(|(_, best_n)| n > best_n) {
+                best = Some((region, n));
             }
         }
-        None
+        best.and_then(|(region, _)| region.read(addr, out))
     }
 }
 

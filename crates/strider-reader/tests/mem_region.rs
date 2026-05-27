@@ -244,6 +244,43 @@ fn lookup_table_shorter_inner_region_does_not_shadow_outer_tail() {
     assert_eq!(buf[0], 0xbb);
 }
 
+// ── Pinned contract #4: multibyte read straddling an inner region's end ───
+
+/// Pinned contract: a multi-byte read that *starts inside* a shorter inner
+/// region but whose requested length runs *past* that inner region's end
+/// must be satisfied by the fully-covering outer region, not truncated to
+/// the inner region's partial tail.
+///
+/// Regression guard: `MemRegionsLookupTable::read` previously returned on
+/// the first candidate that produced any `Some`, so the inner region's
+/// short partial read shadowed the outer region — and because the
+/// `ReadOnlyMemory` consumer rejects partial reads, a fully-mapped address
+/// was reported as unmapped.
+#[test]
+fn lookup_table_multibyte_read_straddling_inner_end_uses_outer() {
+    // Outer A: [0x1000..0x1100), byte i == i & 0xff.
+    // Inner B: [0x1080..0x1090), all 0xbb (fully inside A).
+    let a = make_region(0x1000, 0x100);
+    let b = MemRegion::new(0x1080, vec![0xbb; 0x10]).expect("valid region");
+    let table = MemRegionsLookupTable::new([a, b]);
+
+    // 8-byte read at 0x108C: only 4 bytes remain inside B, but A covers all 8.
+    let mut buf = [0u8; 8];
+    assert_eq!(
+        table.read(0x108C, &mut buf),
+        Some(8),
+        "outer region must satisfy the full request when inner can't"
+    );
+    // Bytes must come from A (offset 0x8C..0x94), not a corrupted A/B mix.
+    let expected: Vec<u8> = (0x8C..0x94).map(|i| i as u8).collect();
+    assert_eq!(&buf[..], &expected[..]);
+
+    // A read that the inner region fully satisfies still resolves to it.
+    let mut buf2 = [0u8; 4];
+    assert_eq!(table.read(0x1082, &mut buf2), Some(4));
+    assert_eq!(&buf2, &[0xbb; 4], "inner still wins when it covers the whole read");
+}
+
 // ── MemRegion::new overflow rejection ─────────────────────────────────────
 
 /// `MemRegion::new` rejects any (start_addr, data) whose end exceeds u64::MAX.

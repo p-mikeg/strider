@@ -433,19 +433,24 @@ fn find_loadable_section_containing<'data, 'a>(
         // malformed-ELF without scraping stderr.  No `eprintln!`: this
         // is library code, and stderr writes from a deep helper are
         // un-suppressable noise for embedders.
-        match sec.data() {
+        let data_len = match sec.data() {
             Ok(d) => {
                 if d.is_empty() {
                     return false;
                 }
+                d.len() as u64
             }
             Err(_) => {
                 *parse_failure_count += 1;
                 return false;
             }
-        }
+        };
+        // Bound coverage by the actual staged byte count (`data().len()`),
+        // not `sh_size`: the staged `MemRegion` spans only `data().len()`
+        // bytes, so a site in `[addr + data_len, addr + sh_size)` could pass
+        // an `sh_size`-based check yet have no region to patch.
         let lo = sec.address();
-        let hi = lo.saturating_add(sec.size());
+        let hi = lo.saturating_add(data_len);
         addr >= lo && addr < hi
     })
 }
