@@ -227,6 +227,16 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let narrow_ty: NodeOutputType = out_vn.size.try_into()?;
         let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
+        // The extracted slice [lsb, lsb+len) must lie within the input width;
+        // shifting past the width yields width-clamped (Sleigh) zero in the IR
+        // but the host mask uses mod-width wrapping, so reject the mismatch.
+        let in_bits = x_nat_ty.bit_width();
+        if lsb as usize + len as usize > in_bits {
+            bail!(
+                "Extract slice [lsb={lsb}, len={len}] exceeds input width {in_bits} bits (opcode {:?})",
+                insn.opcode
+            );
+        }
         let x_int = self.builder.convert_to_int_if_needed(input, x_nat_ty)?;
         let shifted = if lsb == 0 {
             x_int
@@ -276,6 +286,16 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let len = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 3)?, insn.opcode, "Insert bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty: NodeOutputType = out_vn.size.try_into()?;
+        // The inserted field [lsb, lsb+len) must fit in the destination.  Past
+        // the width the host-side `wrapping_shl` mask and the IR `ShiftLeft`
+        // (width-clamped) disagree, so reject rather than emit wrong bits.
+        let out_bits = out_ty.bit_width();
+        if lsb as usize + len as usize > out_bits {
+            bail!(
+                "Insert field [lsb={lsb}, len={len}] exceeds destination width {out_bits} bits (opcode {:?})",
+                insn.opcode
+            );
+        }
 
         let dest_ty = self.builder.get_output_type(dest)?.to_natural_int_type();
         let dest_int = self.builder.convert_to_int_if_needed(dest, dest_ty)?;

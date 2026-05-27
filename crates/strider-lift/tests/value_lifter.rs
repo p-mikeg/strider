@@ -165,6 +165,44 @@ fn lift_extract_returns_slice() {
 }
 
 #[test]
+fn lift_insert_field_past_destination_width_errors() {
+    // Insert(dest, src, lsb=24, bit_count=16) into a 4-byte (32-bit) dest:
+    // 24 + 16 = 40 > 32, so the field does not fit.  Must surface a typed
+    // error rather than silently produce wrong bits (the host-side
+    // wrapping_shl mask and the IR ShiftLeft diverge past the width).
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let insn = Insn {
+        opcode: Opcode::Insert,
+        output: Some(reg(0)),
+        inputs: vec![reg(0), reg(8), const_vn(24, 4), const_vn(16, 4)].into(),
+    };
+    assert!(
+        lifter.lift(&insn).is_err(),
+        "Insert field exceeding destination width must error"
+    );
+}
+
+#[test]
+fn lift_extract_field_past_input_width_errors() {
+    // Extract(value, lsb=28, bit_count=8) from a 4-byte (32-bit) input:
+    // 28 + 8 = 36 > 32 — the slice runs past the input.  Must error.
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let insn = Insn {
+        opcode: Opcode::Extract,
+        output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
+        inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(28, 4), const_vn(8, 4)].into(),
+    };
+    assert!(
+        lifter.lift(&insn).is_err(),
+        "Extract slice exceeding input width must error"
+    );
+}
+
+#[test]
 fn lift_popcount() {
     assert_lifts_one(Opcode::Popcount, Some(reg(0)), vec![const_vn(0b1011, 4)]);
 }

@@ -526,6 +526,16 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // `Multiple` is exclusively an IR-level indirect-branch
                 // resolver feedback shape; the cfg-time mini-graph
                 // resolver only ever returns Single / LinkRegister / None.
+                //
+                // Defend the documented non-empty invariant: an empty target
+                // set carries no dispatch information, so treat it as
+                // unresolved rather than emit a Switch region with zero edges.
+                if targets.is_empty() {
+                    self.finish_current_region(
+                        RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
+                    )?;
+                    return Ok(ProcessInsnRes::FinishedProcessing);
+                }
                 let any_out_of_range = targets.iter().any(|t| {
                     self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
                 });
