@@ -45,6 +45,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
+        let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
+        let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
         let result = self.builder.build_float_binary_op(lhs, rhs, op, float_ty)?;
         self.write_float_to_vn(out_vn, result)
     }
@@ -58,6 +60,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
+        let input = self.builder.cast_to_float_if_needed(input, float_ty)?;
         let result = self.builder.build_float_unary_op(input, op, float_ty)?;
         self.write_float_to_vn(out_vn, result)
     }
@@ -71,8 +74,24 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let result = self.builder.build_float_cmp_op(lhs, rhs, op)?;
         self.write_vn(out_vn, result)
+    }
+
+    /// Casts both operands of a float comparison to a single common float
+    /// type, reproducing the coercion that `build_float_cmp_op` used to do
+    /// internally: the float type is inferred from `lhs`, then both
+    /// operands are cast to it.
+    fn cast_float_cmp_operands(
+        &mut self,
+        lhs: strider_ir::Value,
+        rhs: strider_ir::Value,
+    ) -> Result<(strider_ir::Value, strider_ir::Value)> {
+        let float_ty = self.builder.infer_float_type(lhs)?;
+        let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
+        let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
+        Ok((lhs, rhs))
     }
 
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -82,6 +101,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
         // lift to `BoolNeg(FloatEqual)`), build the lowered shape
         // directly: `BoolNeg(FloatEqual(input, input))`.
+        let (input, _) = self.cast_float_cmp_operands(input, input)?;
         let eq = self
             .builder
             .build_float_cmp_op(input, input, FloatCmpOp::Equal)?;
@@ -101,6 +121,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
+        let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
+        let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
         let neg_rhs = self.builder.build_float_unary_op(rhs, FloatUnaryOp::Neg, float_ty)?;
         let result = self.builder.build_float_binary_op(lhs, neg_rhs, FloatBinaryOp::Add, float_ty)?;
         self.write_float_to_vn(out_vn, result)
@@ -116,6 +138,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
         let result = self.builder.build_int_unary_operation(eq, strider_ir::IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
         self.write_vn(out_vn, result)
@@ -133,6 +156,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let lt = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
         let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
         let result = self.builder.build_int_binary_operation(lt, eq, strider_ir::IntBinaryOp::Or, strider_ir::ValueType::I1)?;

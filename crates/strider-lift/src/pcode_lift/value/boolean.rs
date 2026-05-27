@@ -24,6 +24,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let lhs = self.builder.convert_to_int_if_needed(lhs, ValueType::I1)?;
+        let rhs = self.builder.convert_to_int_if_needed(rhs, ValueType::I1)?;
         let out = self
             .builder
             .build_int_binary_operation(lhs, rhs, op, ValueType::I1)?;
@@ -39,6 +41,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<()> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let input = self.builder.convert_to_int_if_needed(input, ValueType::I1)?;
         let out = self
             .builder
             .build_int_unary_operation(input, op, ValueType::I1)?;

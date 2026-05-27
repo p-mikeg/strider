@@ -86,12 +86,14 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
     }
 
-    /// Emits an integer binary operation node with automatic type coercion.
+    /// Emits an integer binary operation node.  **Strict:** both operands
+    /// must already carry `output_type` — the caller inserts any
+    /// truncate / extend fix-up (the builder no longer auto-coerces).
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when either operand is not a
-    /// value edge.
+    /// Returns an error when an operand is not a value edge or does not
+    /// already have type `output_type`.
     pub fn build_int_binary_operation(
         &mut self,
         lhs_id: NodeOutputId,
@@ -99,31 +101,32 @@ impl FunctionBuilder {
         op: IntBinaryOp,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let converted_lhs_id = self.convert_to_int_if_needed(lhs_id, output_type)?;
-        let converted_rhs_id = self.convert_to_int_if_needed(rhs_id, output_type)?;
+        let lhs_id = self.require_value_type(lhs_id, output_type)?;
+        let rhs_id = self.require_value_type(rhs_id, output_type)?;
         Ok(self.build_single_output_pure(
             NodeKind::IntBinaryOp(op),
-            [converted_lhs_id, converted_rhs_id],
+            [lhs_id, rhs_id],
             output_type,
         ))
     }
 
-    /// Emits an integer unary operation node with automatic type coercion.
+    /// Emits an integer unary operation node.  **Strict:** the operand must
+    /// already carry `output_type` (the caller inserts any fix-up).
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `input_id` is not a value
-    /// edge.
+    /// Returns an error when `input_id` is not a value edge or does not
+    /// already have type `output_type`.
     pub fn build_int_unary_operation(
         &mut self,
         input_id: NodeOutputId,
         op: IntUnaryOp,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let converted_input_id = self.convert_to_int_if_needed(input_id, output_type)?;
+        let input_id = self.require_value_type(input_id, output_type)?;
         Ok(self.build_single_output_pure(
             NodeKind::IntUnaryOp(op),
-            [converted_input_id],
+            [input_id],
             output_type,
         ))
     }
@@ -163,7 +166,7 @@ impl FunctionBuilder {
         input_id: NodeOutputId,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let input = self.convert_to_int_if_needed(input_id, output_type)?;
+        let input = self.require_value_type(input_id, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::Popcount, [input], output_type))
     }
 
@@ -178,7 +181,7 @@ impl FunctionBuilder {
         input_id: NodeOutputId,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let input = self.convert_to_int_if_needed(input_id, output_type)?;
+        let input = self.require_value_type(input_id, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::Lzcount, [input], output_type))
     }
 
@@ -188,18 +191,25 @@ impl FunctionBuilder {
     ///
     /// Returns `ExpectedValue` when either operand is not a
     /// value edge.
+    /// Emits an integer comparison node (output `I1`).  **Strict:** both
+    /// operands must already carry `operand_type` (the comparison width).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an operand is not a value edge or does not
+    /// already have type `operand_type`.
     pub fn build_int_cmp_operation(
         &mut self,
         lhs_id: NodeOutputId,
         rhs_id: NodeOutputId,
         kind: IntCmpOp,
-        output_type: NodeOutputType,
+        operand_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let converted_lhs_id = self.convert_to_int_if_needed(lhs_id, output_type)?;
-        let converted_rhs_id = self.convert_to_int_if_needed(rhs_id, output_type)?;
+        let lhs_id = self.require_value_type(lhs_id, operand_type)?;
+        let rhs_id = self.require_value_type(rhs_id, operand_type)?;
         Ok(self.build_single_output_pure(
             NodeKind::IntCmpOp(kind),
-            [converted_lhs_id, converted_rhs_id],
+            [lhs_id, rhs_id],
             NodeOutputType::I1,
         ))
     }
@@ -212,15 +222,14 @@ impl FunctionBuilder {
         self.build_single_output_pure(NodeKind::FloatConst(bits), [], output_type)
     }
 
-    /// Emits a float binary operation node.
-    ///
-    /// Inputs that are not already `output_type` are automatically wrapped in a
-    /// `CastToFloat` node (int inputs, or float inputs of a different precision).
+    /// Emits a float binary operation node.  **Strict:** both operands must
+    /// already carry the float `output_type` (the caller inserts any
+    /// `IntBitsToFloat` / `FloatToFloat` fix-up).
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when either operand is not a
-    /// value edge.
+    /// Returns an error when an operand is not a value edge or does not
+    /// already have type `output_type`.
     pub fn build_float_binary_op(
         &mut self,
         lhs: NodeOutputId,
@@ -228,46 +237,49 @@ impl FunctionBuilder {
         op: FloatBinaryOp,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let lhs = self.cast_to_float_if_needed(lhs, output_type)?;
-        let rhs = self.cast_to_float_if_needed(rhs, output_type)?;
+        let lhs = self.require_value_type(lhs, output_type)?;
+        let rhs = self.require_value_type(rhs, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatBinaryOp(op), [lhs, rhs], output_type))
     }
 
-    /// Emits a float unary operation node (neg, abs, sqrt, ceil, floor, round).
-    ///
-    /// If `input` is not already `output_type`, a `CastToFloat` node is inserted.
+    /// Emits a float unary operation node (neg, abs, sqrt, ceil, floor,
+    /// round).  **Strict:** the operand must already carry `output_type`.
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `input` is not a value edge.
+    /// Returns an error when `input` is not a value edge or does not already
+    /// have type `output_type`.
     pub fn build_float_unary_op(
         &mut self,
         input: NodeOutputId,
         op: FloatUnaryOp,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let input = self.cast_to_float_if_needed(input, output_type)?;
+        let input = self.require_value_type(input, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatUnaryOp(op), [input], output_type))
     }
 
-    /// Emits a float comparison node; produces a `Bool` output.
-    ///
-    /// The float type is inferred from the inputs (existing float type, or
-    /// mapped from integer byte size).  Both inputs are cast if needed.
+    /// Emits a float comparison node (output `I1`).  **Strict:** both
+    /// operands must already be the same float type (the caller inserts any
+    /// bit-cast fix-up).
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when either operand is not a
-    /// value edge.
+    /// Returns an error when an operand is not a float value edge, or when
+    /// the operands' float types differ.
     pub fn build_float_cmp_op(
         &mut self,
         lhs: NodeOutputId,
         rhs: NodeOutputId,
         op: FloatCmpOp,
     ) -> Result<NodeOutputId> {
-        let float_ty = self.infer_float_type(lhs)?;
-        let lhs = self.cast_to_float_if_needed(lhs, float_ty)?;
-        let rhs = self.cast_to_float_if_needed(rhs, float_ty)?;
+        let float_ty = self.get_output_type(lhs)?;
+        if !float_ty.is_float() {
+            return Err(anyhow!(
+                "build_float_cmp_op: lhs {lhs:?} has type {float_ty}, expected a float"
+            ));
+        }
+        let rhs = self.require_value_type(rhs, float_ty)?;
         Ok(self.build_single_output_pure(
             NodeKind::FloatCmpOp(op),
             [lhs, rhs],

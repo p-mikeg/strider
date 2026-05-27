@@ -246,6 +246,8 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
     // width to `build_int_cmp_operation`, so the IR has
     // `Equal(CastToInt(NG, I8), CastToInt(OV, I8))`.  The fixture matches.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
+        let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
+        let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
         fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)
     })?;
@@ -262,6 +264,8 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
 fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
     // AArch64 `b.ge` cond is `Equal(NG, OV)`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
+        let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
+        let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
         fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)
     })?;
 
@@ -278,6 +282,8 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
     // AArch64 `b.gt` cond is `BoolAnd(BoolNeg(ZR), Equal(NG, OV))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
         let neg_zr = fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
+        let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
         fb.build_int_binary_operation(neg_zr, eq, IntBinaryOp::And, NodeOutputType::I1)
     })?;
@@ -294,6 +300,8 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
 fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
     // AArch64 `b.le` cond is `BoolOr(ZR, BoolNeg(Equal(NG, OV)))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
+        let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
+        let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
         let neg_eq = fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)?;
         fb.build_int_binary_operation(zr, neg_eq, IntBinaryOp::Or, NodeOutputType::I1)
@@ -358,6 +366,7 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
         // Mimic `IntNotEqual(ZR, 0:1)` post-canonicalisation:
         //   BoolNeg(IntEqual(CastToInt(ZR, I8), 0:I8))
         let zero = fb.build_int_const(0u64, NodeOutputType::I8)?;
+        let zr = fb.convert_to_int_if_needed(zr, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, NodeOutputType::I8)?;
         fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)
     })?;

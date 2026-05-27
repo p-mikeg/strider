@@ -35,6 +35,34 @@ impl FunctionBuilder {
             .ok_or_else(|| anyhow!("output {output_id:?} is not a value edge (got {kind:?})"))
     }
 
+    /// Asserts that `output_id` already carries exactly `expected`, returning
+    /// it unchanged on success.  This is the strict counterpart to the
+    /// coercion helpers: the value-producing `build_*` constructors call it
+    /// instead of silently truncating / extending / bit-casting an operand,
+    /// so the **lifter** (or any caller) is responsible for inserting the
+    /// right fix-up node beforehand.  A mismatch is a hard error rather than
+    /// wrong IR.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `output_id` is not a value edge, or when its
+    /// type differs from `expected`.
+    pub fn require_value_type(
+        &self,
+        output_id: NodeOutputId,
+        expected: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        let actual = self.get_output_type(output_id)?;
+        if actual != expected {
+            return Err(anyhow!(
+                "operand {output_id:?} has type {actual} but the operation \
+                 requires {expected}; the caller must insert the truncate / \
+                 extend / bitcast fix-up (builders no longer auto-coerce)"
+            ));
+        }
+        Ok(output_id)
+    }
+
     /// Returns the constant value carried by `output_id` if its defining
     /// node is `IntConst` or `FloatConst`; `Ok(None)` otherwise.  The
     /// `get_as_*` helpers below are thin projections off this unified

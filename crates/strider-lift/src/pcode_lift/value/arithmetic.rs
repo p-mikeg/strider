@@ -74,9 +74,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         require_equal_input_output_width(crate::pcode_lift::nth_input_or_err(insn, 0)?, out_vn)?;
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let out = self
-            .builder
-            .build_int_unary_operation(input, op, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
+        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
+        let out = self.builder.build_int_unary_operation(input, op, out_ty)?;
         self.write_vn(out_vn, out)
     }
 
@@ -116,10 +116,14 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 self.builder.extend_if_needed(lhs, out_ty, ExtendOp::SignExtend)?,
                 self.builder.extend_if_needed(rhs, out_ty, ExtendOp::SignExtend)?,
             ),
-            IntBinaryOp::SShiftRight => {
-                (self.builder.extend_if_needed(lhs, out_ty, ExtendOp::SignExtend)?, rhs)
-            }
-            _ => (lhs, rhs),
+            IntBinaryOp::SShiftRight => (
+                self.builder.extend_if_needed(lhs, out_ty, ExtendOp::SignExtend)?,
+                self.builder.convert_to_int_if_needed(rhs, out_ty)?,
+            ),
+            _ => (
+                self.builder.convert_to_int_if_needed(lhs, out_ty)?,
+                self.builder.convert_to_int_if_needed(rhs, out_ty)?,
+            ),
         };
         let out = self.builder.build_int_binary_operation(lhs, rhs, op, out_ty)?;
         self.write_vn(out_vn, out)
@@ -171,6 +175,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
+        let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
+        let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
         let eq = self
             .builder
             .build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, cmp_width)?;
@@ -195,6 +201,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
+        let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
+        let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
         let lt = self
             .builder
             .build_int_cmp_operation(rhs, lhs, IntCmpOp::Less, cmp_width)?;
@@ -218,6 +226,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
+        let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
+        let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
         let lt = self
             .builder
             .build_int_cmp_operation(rhs, lhs, IntCmpOp::Sless, cmp_width)?;
@@ -266,6 +276,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         }
         // `Neg`'s width matches the operand's read width (`out_ty`,
         // since all three sizes agree).
+        let lhs = self.builder.convert_to_int_if_needed(lhs, out_ty)?;
+        let rhs = self.builder.convert_to_int_if_needed(rhs, out_ty)?;
         let neg_rhs = self
             .builder
             .build_int_unary_operation(rhs, IntUnaryOp::Neg, out_ty)?;

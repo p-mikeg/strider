@@ -154,16 +154,18 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self
-            .builder
-            .build_popcount(input, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
+        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
+        let out = self.builder.build_popcount(input, out_ty)?;
         self.write_vn(out_vn, out)
     }
 
     pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self.builder.build_lzcount(input, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
+        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
+        let out = self.builder.build_lzcount(input, out_ty)?;
         self.write_vn(out_vn, out)
     }
 
@@ -316,6 +318,8 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let elem_size = crate::pcode_lift::nth_input_or_err(insn, 2)?.addr_off;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty: strider_ir::ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let base = self.builder.convert_to_int_if_needed(base, out_ty)?;
+        let index = self.builder.convert_to_int_if_needed(index, out_ty)?;
         let elem_const = self.builder.build_int_const(elem_size, out_ty)?;
         let scaled = self.builder.build_int_binary_operation(
             index,
@@ -341,6 +345,8 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let index = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let base = self.builder.convert_to_int_if_needed(base, out_ty)?;
+        let index = self.builder.convert_to_int_if_needed(index, out_ty)?;
         let neg_index = self.builder.build_int_unary_operation(
             index,
             strider_ir::IntUnaryOp::Neg,

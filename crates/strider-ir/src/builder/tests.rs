@@ -202,13 +202,15 @@ fn build_int_binary_op_produces_binary_op_node() -> Result<()> {
     Ok(())
 }
 
-/// When the operands differ in width, `build_int_binary_operation` must
-/// insert a coercion node so both reach the target type.
+/// The builder is strict: when an operand is narrower than the target
+/// type, the *caller* inserts the coercion (`convert_to_int_if_needed`)
+/// so both operands reach the target type before the build.
 #[test]
 fn build_int_binary_op_coerces_narrower_operand() -> Result<()> {
     let mut b = empty_builder()?;
     let lhs = b.build_int_const(1u64, NodeOutputType::I8)?;
     let rhs = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let lhs = b.convert_to_int_if_needed(lhs, NodeOutputType::I64)?;
     let result =
         b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::I64)?;
     // The result must be typed as I64
@@ -424,7 +426,10 @@ fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
     let c2 = b.build_int_const(0x40000000u64, NodeOutputType::I32)?;
     let i1 = b.build_int_unary_operation(c1, crate::ops::IntUnaryOp::BitNot, NodeOutputType::I32)?;
     let i2 = b.build_int_unary_operation(c2, crate::ops::IntUnaryOp::BitNot, NodeOutputType::I32)?;
-    // Both inputs are I32 — builder reinterprets each as F32 via IntBitsToFloat.
+    // Both inputs are I32 — the caller reinterprets each as F32 via
+    // IntBitsToFloat (`cast_to_float_if_needed`) before the strict build.
+    let i1 = b.cast_to_float_if_needed(i1, NodeOutputType::F32)?;
+    let i2 = b.cast_to_float_if_needed(i2, NodeOutputType::F32)?;
     let result = b.build_float_binary_op(i1, i2, FloatBinaryOp::Add, NodeOutputType::F32)?;
     let kind = *b.function().kind_of_output(result);
     assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
