@@ -133,9 +133,10 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
     // IfCondInversion: canonicalises `If(BoolNeg(C))` into `If(C)` with
     // branches swapped.  Runs after ConstantFold so the
     // `BoolNeg(BoolNeg(x)) → x` rule has collapsed double negations
-    // first, and so any `BoolConst`-cond `If` has already had its cond
-    // simplified (we don't want to swap branches under a `BoolConst`,
-    // because `DeadBranchElimination` would then strip the wrong arm).
+    // first, and so any constant-cond `If` (an `IntConst` typed `I1`) has
+    // already had its cond simplified (we don't want to swap branches under
+    // a constant cond, because `DeadBranchElimination` would then strip the
+    // wrong arm).
     p.add(IfCondInversion);
     p
 }
@@ -172,7 +173,7 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// The pipeline runs all passes in a single shared fixed-point loop: every
 /// pass executes once per iteration, and the loop repeats until no pass
 /// reports a change.  This means a simplification made by one pass (e.g.
-/// folding a condition to `BoolConst(false)`) is immediately visible to later
+/// folding a condition to a false constant (`IntConst(0)` at `I1`)) is immediately visible to later
 /// passes in the same iteration and will be propagated further in subsequent
 /// iterations without any extra configuration.
 ///

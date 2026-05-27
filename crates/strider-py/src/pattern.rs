@@ -846,7 +846,7 @@ pub fn int_const_any_of(values: Vec<i128>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::int_const_any_of(values))
 }
 
-/// Match a `BoolConst` equal to `value`.
+/// Match an `I1` boolean constant (an `IntConst` typed `I1`) equal to `value`.
 #[pyfunction]
 pub fn bool_const(value: bool) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::bool_const(value))
@@ -865,7 +865,8 @@ pub fn any_int_const(c: PyRef<'_, PyCapture>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::any_int_const(c.inner))
 }
 
-/// Match any `BoolConst` and bind it to `c` (read back via `Match.bool(c)`).
+/// Match any `I1` boolean constant (an `IntConst` typed `I1`) and bind it to
+/// `c` (read back via `Match.bool(c)`).
 #[pyfunction]
 pub fn any_bool_const(c: PyRef<'_, PyCapture>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::any_bool_const(c.inner))
@@ -1259,16 +1260,16 @@ unary!(not_ as "not_" => bit_not,
 // ── Bool binary ops ──────────────────────────────────────────────────────
 
 binary!(bool_and, into,
-    "Pattern: `BoolBinaryOp::And` (`a && b`).  Commutative.");
+    "Pattern: `IntBinaryOp::And` at `I1` (boolean `a && b`).  Commutative.");
 binary!(bool_or, into,
-    "Pattern: `BoolBinaryOp::Or` (`a || b`).  Commutative.");
+    "Pattern: `IntBinaryOp::Or` at `I1` (boolean `a || b`).  Commutative.");
 binary!(bool_xor, into,
-    "Pattern: `BoolBinaryOp::Xor` (boolean `a ^ b`).  Commutative.");
+    "Pattern: `IntBinaryOp::Xor` at `I1` (boolean `a ^ b`).  Commutative.");
 
 // ── Bool unary ops ───────────────────────────────────────────────────────
 
-/// Pattern: `BoolUnaryOp::Neg` — boolean negation (`!x`).  The canonical
-/// shape for `a != b` is `bool_not(int_cmp("Equal", a, b))`.
+/// Pattern: `IntUnaryOp::BitNot` at `I1` — boolean negation (`!x`).  The
+/// canonical shape for `a != b` is `bool_not(int_cmp("Equal", a, b))`.
 #[pyfunction]
 pub fn bool_not(operand: PatLike<'_>) -> PyResult<PyPat> {
     let op = operand.into_pat()?;
@@ -1787,7 +1788,7 @@ fn parse_bool_binary_op(name: &str) -> PyResult<strider_ir::IntBinaryOp> {
         ("Or", Or),
         ("Xor", Xor),
     ];
-    lookup_op(TABLE, name, "BoolBinaryOp")
+    lookup_op(TABLE, name, "boolean binary op")
 }
 
 fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
@@ -1926,7 +1927,8 @@ pub fn int_cmp_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> P
     Ok(PyPat::from_pat(strider_analyze::pattern::int_cmp_any(c.inner, lp, rp)))
 }
 
-/// Match any `BoolBinaryOp` over `(l, r)` and bind the op variant to `c`.
+/// Match any boolean binary op (an `IntBinaryOp` — `And`/`Or`/`Xor` — at `I1`)
+/// over `(l, r)` and bind the op variant to `c`.
 /// Recover via `Match.bool_binary_op(c)`.
 #[pyfunction]
 pub fn bool_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
@@ -1935,7 +1937,8 @@ pub fn bool_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> 
     Ok(PyPat::from_pat(strider_analyze::pattern::bool_binary_any(c.inner, lp, rp)))
 }
 
-/// Match any `BoolUnaryOp` over `operand` and bind the op variant to `c`.
+/// Match any boolean unary op (an `IntUnaryOp` — `BitNot` — at `I1`) over
+/// `operand` and bind the op variant to `c`.
 /// Recover via `Match.bool_unary_op(c)`.
 #[pyfunction]
 pub fn bool_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<PyPat> {

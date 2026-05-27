@@ -196,8 +196,8 @@ impl Graph {
         self.nodes.is_valid(id)
     }
 
-    /// Validated construction of a [`NodeId`](crate::node::NodeId) from a raw
-    /// `u32` index supplied by an external caller (e.g. the Python bindings).
+    /// Validated construction of a [`NodeId`] from a raw `u32` index supplied
+    /// by an external caller (e.g. the Python bindings).
     /// Returns `None` if no node with that index exists in this graph.  O(1):
     /// `NodeId`s are dense arena indices, so this is a bounds check, not a scan.
     #[must_use]

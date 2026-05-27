@@ -38,8 +38,9 @@ pub(crate) type MatchPredicateFn = Arc<
 // ── any_*_const constructors ──────────────────────────────────────────────────
 //
 // Each takes a [`Capture`] and builds a pattern that matches any
-// `IntConst` / `BoolConst` / `FloatConst` node and binds it to the
-// capture.  After the match, callers extract the constant value via
+// `IntConst` / `FloatConst` node (the boolean case is an `IntConst`
+// typed `I1`) and binds it to the capture.  After the match, callers
+// extract the constant value via
 // [`crate::pattern::Match::get_uint`] / `get_bool` / `get_float_bits`.
 //
 // These are intentionally function-only (no trait dispatch) — the

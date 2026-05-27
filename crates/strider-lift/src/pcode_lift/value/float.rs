@@ -172,7 +172,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // FloatBitsToInt before storage), so this is usually a no-op — but
         // when the input is an UNIQUE temp left over from a prior float op,
         // cast it back to int first.  `convert_to_int_if_needed` is
-        // identity for already-int values and inserts CastToInt otherwise.
+        // identity for already-int values and inserts a `FloatBitsToInt`
+        // bit-reinterpret otherwise.
         let in_size: NodeOutputType = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
         let int_input = self
             .builder

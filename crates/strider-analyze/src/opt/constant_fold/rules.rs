@@ -16,9 +16,9 @@ use super::eval_int::{eval_int_binary, eval_int_cmp};
 /// (identity / const-eval / bool-float / reassoc-and-mask /
 /// bitcast-extend) for readers, but the per-group wrapper functions
 /// they used to feed were byte-identical boilerplate — this single
-/// entry point replaces them.  The `CastToFloat` lowering is graph
-/// surgery that doesn't fit the rule shape and is invoked separately
-/// by the caller.
+/// entry point replaces them.  The bitcast-extend group includes the
+/// `IntBitsToFloat`/`FloatBitsToInt` round-trip identities, so int↔float
+/// bitcasts are folded inline; there is no separate lowering step.
 pub(super) fn apply_all_rules(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     node: NodeId,
@@ -573,7 +573,7 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     //   - `BAnd/BOr/BXor(IntConst, IntConst)`     → integer rule 1
     //     (`IntBinaryOp(op)(IntConst, IntConst)`).
     //   - `BAnd(false, _) → false`                → `x & 0 → 0`.
-    //   - `BoolUnaryOp::Neg(IntConst) → !v`       → integer rule 2
+    //   - `BitNot(IntConst) → !v` at `I1` (BoolNeg) → integer rule 2
     //     (`IntUnaryOp(op)(IntConst)`, with `BitNot` masked to `I1`).
     //   - `x ^ true → !x`                         → `x ^ all_ones → ~x`.
     // Only the rules with no integer analogue are re-expressed here at
@@ -640,12 +640,9 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-/// Constant evaluation and absorbing-element rules for bool binary ops,
-/// bool unary ops, and all float ops.  Also canonicalises:
+/// Constant evaluation and absorbing-element rules for the I1 boolean ops
+/// (`IntBinaryOp`/`IntUnaryOp` at `I1`) and all float ops.  Also
+/// canonicalises:
 /// - `x ^ true → !x` (commutative)
 /// - `!!x → x`
-///
-/// `CastToFloat` lowering is too stateful for a rule (it does graph
-/// surgery); the caller invokes `try_lower_cast_to_float` separately
-/// after the rule sweep.
 static BOOL_FLOAT_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_bool_float_rules);

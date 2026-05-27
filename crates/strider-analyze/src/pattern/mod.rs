@@ -82,7 +82,7 @@
 //! `int_cmp_any`, `float_cmp_any`) inspect the matched op and apply the
 //! same rule per-match.  Call `.ordered()` on the returned builder to opt
 //! out — only the typed binary-op builders (`IntBinaryOpPat`,
-//! `BoolBinaryOpPat`, `FloatBinaryOpPat`) expose `.ordered()`; the bare
+//! `FloatBinaryOpPat`) expose `.ordered()`; the bare
 //! `int_cmp` / `float_cmp` ctors return a `Pat` directly.
 //!
 //! ## Walk-through flags (`MatcherOptions`)
@@ -93,8 +93,8 @@
 //! makes patterns brittle:
 //!
 //! * [`Matcher::ignore_casts`] — walk through every value-passthrough
-//!   cast (`Extend`, `Truncate`, `CastToInt`, `CastToFloat`,
-//!   `CastToBool`, `IntBitsToFloat`, `FloatBitsToInt`) when matching
+//!   cast (`Extend`, `Truncate`, `IntBitsToFloat`, `FloatBitsToInt`)
+//!   when matching
 //!   value inputs.  Equivalent to
 //!   `.ignore_casts_mask(CastMask::all())`.  Lets `add(mul(_,_), _)`
 //!   find `Add(Extend(Mul), arg)` without re-shaping the source.

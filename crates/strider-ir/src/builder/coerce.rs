@@ -244,7 +244,9 @@ impl FunctionBuilder {
         self.extend_if_needed(truncate_id, output_type, ExtendOp::ZeroExtend)
     }
 
-    /// If `input` is not already `float_ty`, wraps it in a `CastToFloat` node.
+    /// If `input` is not already `float_ty`, converts it: an integer input is
+    /// reinterpreted bit-for-bit via `IntBitsToFloat`, and a float of a
+    /// different precision is converted via `FloatToFloat`.
     ///
     /// # Errors
     ///
@@ -276,7 +278,7 @@ impl FunctionBuilder {
     ///
     /// The 10-byte case targets x87 ST0/STn registers (which the analyzer
     /// represents as I80 on the int side); inferring F80 keeps the
-    /// `CastToFloat` round-trip width-preserving.
+    /// int→float bit-reinterpret round-trip width-preserving.
     ///
     /// # Errors
     ///

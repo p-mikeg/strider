@@ -40,8 +40,9 @@ pub enum ExpectedOutputKind {
     AnyInt,
     /// Any float-typed value (F32, F64, F80).
     AnyFloat,
-    /// Any value-typed output: `AnyInt` or `AnyFloat`.  Used by the
-    /// type-polymorphic cast op `CastToFloat`.
+    /// Any value-typed output: `AnyInt` or `AnyFloat`.  Used for `Phi`
+    /// outputs and the `ARG` / `RET` / `CALL_OUT` / `IN_PHI` input tails,
+    /// which accept a value of any type.
     AnyValue,
 }
 

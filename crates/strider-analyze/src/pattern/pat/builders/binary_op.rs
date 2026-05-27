@@ -1,17 +1,19 @@
 //! Generic typed binary-op builder shared by [`IntBinaryOp`] /
-//! [`BoolBinaryOp`] / [`FloatBinaryOp`].
+//! [`FloatBinaryOp`].
 //!
-//! The three families differ only in three small details:
+//! The two families differ only in two small details:
 //! * which `NodeKind` variant the op enum produces;
-//! * the result type ([`BuildTy::InheritRoot`] for arithmetic / bitwise
-//!   ops, [`BuildTy::Fixed(Bool)`] for boolean ops);
 //! * which subset of variants is commutative.
 //!
-//! [`BinaryOpKind`] threads those three differences through one
-//! generic [`BinaryOpPat<Op>`] type so the matcher / build-side code
-//! stays factored.  Free constructors (`add`, `bool_and`, `float_add`,
-//! …) re-export the three concrete instantiations as
-//! [`IntBinaryOpPat`] / [`BoolBinaryOpPat`] / [`FloatBinaryOpPat`].
+//! Both build with [`BuildTy::InheritRoot`]; a boolean op is just an
+//! [`IntBinaryOp`] whose root output type is `I1`, so it reuses the
+//! integer instantiation rather than getting a family of its own.
+//!
+//! [`BinaryOpKind`] threads those differences through one generic
+//! [`BinaryOpPat<Op>`] type so the matcher / build-side code stays
+//! factored.  Free constructors (`add`, `bool_and`, `float_add`, …)
+//! re-export the two concrete instantiations as [`IntBinaryOpPat`] /
+//! [`FloatBinaryOpPat`].
 
 use strider_ir::node::NodeKind;
 use strider_ir::{FloatBinaryOp, IntBinaryOp};
@@ -22,9 +24,9 @@ use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 /// Per-family parameters threaded through the generic [`BinaryOpPat`].
 ///
 /// Implemented for every binary-op enum the IR exposes
-/// ([`IntBinaryOp`] / [`BoolBinaryOp`] / [`FloatBinaryOp`]).  Crate-
-/// private because `build_ty` returns the crate-private [`BuildTy`]
-/// and the public surface only needs the three concrete alias types.
+/// ([`IntBinaryOp`] / [`FloatBinaryOp`]).  Crate-private because
+/// `build_ty` returns the crate-private [`BuildTy`] and the public
+/// surface only needs the two concrete alias types.
 ///
 /// Commutativity is read off the resulting `NodeKind` via
 /// [`NodeKind::is_commutative`] — no per-family helper is needed.
@@ -47,13 +49,13 @@ impl BinaryOpKind for FloatBinaryOp {
 ///
 /// Constructed by free functions (`add`, `bool_and`, `float_add`, …)
 /// or via the family-level dispatchers (`int_binary`, `bool_binary`,
-/// `float_binary`).  See [`IntBinaryOpPat`] / [`BoolBinaryOpPat`] /
-/// [`FloatBinaryOpPat`] for the three concrete instantiations the
-/// public API exposes.
+/// `float_binary`).  See [`IntBinaryOpPat`] / [`FloatBinaryOpPat`] for
+/// the two concrete instantiations the public API exposes (boolean ops
+/// reuse [`IntBinaryOpPat`] at `I1`).
 ///
 /// `BinaryOpKind` is crate-private — the only way to construct a
 /// value of this type from outside the crate is through one of the
-/// free constructors, which always returns one of the three aliased
+/// free constructors, which always returns one of the two aliased
 /// instantiations.  `#[allow(private_bounds)]` documents that intent.
 #[allow(private_bounds)]
 pub struct BinaryOpPat<Op: BinaryOpKind> {

@@ -75,9 +75,9 @@ fn strip_dead_region_inputs(
     Ok(())
 }
 
-/// Eliminates `If` nodes whose condition is a `BoolConst`.
+/// Eliminates `If` nodes whose condition is a constant (an `IntConst` typed `I1`).
 ///
-/// For `If(ctrl_in, BoolConst(b))` with outputs `[ctrl_true, ctrl_false]`:
+/// For `If(ctrl_in, IntConst(b) : I1)` with outputs `[ctrl_true, ctrl_false]`:
 ///
 /// * The **live** control output (`ctrl_true` when `b=true`, `ctrl_false` when
 ///   `b=false`) is replaced with `ctrl_in` so the successor region receives

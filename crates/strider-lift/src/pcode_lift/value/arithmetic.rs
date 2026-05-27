@@ -162,10 +162,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Lowers `IntNotEqual(a, b)` to `BoolNeg(IntEqual(a, b))`.
     ///
     /// Matches strider's pre-existing canonical form (one IntCmpOp + one
-    /// BoolUnaryOp instead of an IntCmpOp::NotEqual variant — keeps the
-    /// cmp-op enum smaller).  The cmp's operand width is the *input*
-    /// width, NOT the output width: the output is a 1-byte bool, the
-    /// inputs may be any integer width.
+    /// `IntUnaryOp::BitNot` at `I1` — the BoolNeg shape — instead of an
+    /// IntCmpOp::NotEqual variant, keeping the cmp-op enum smaller).  The
+    /// cmp's operand width is the *input* width, NOT the output width: the
+    /// output is a 1-bit `I1`, the inputs may be any integer width.
     pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         require_equal_input_widths(
             crate::pcode_lift::nth_input_or_err(insn, 0)?,

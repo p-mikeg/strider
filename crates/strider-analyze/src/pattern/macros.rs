@@ -110,7 +110,7 @@ macro_rules! int_const_with {
     };
 }
 
-/// Builds a `BoolConst` node whose value is computed from LHS captures.
+/// Builds an `I1` boolean constant (an `IntConst` typed `I1`) whose value is computed from LHS captures.
 macro_rules! bool_const_with {
     ([$($caps:tt)*] => $body:expr) => {
         $crate::pattern::bool_const_with_fn(move |__strider_ctx: &$crate::pattern::BuildCtx<'_>| {

@@ -2,7 +2,7 @@
 //!
 //! Most builders produce a [`crate::pattern::pat::node_pat::NodePat`] via
 //! `NodePat::matcher(...)` plus the `.with_*` fluent setters.  Data builders
-//! (`IntBinaryOpPat`, `BoolBinaryOpPat`, `FloatBinaryOpPat`, the memory
+//! (`IntBinaryOpPat`, `FloatBinaryOpPat`, the memory
 //! family, `PhiPat`, `FunctionArgPat`) use `InputsSpec::Fixed` or
 //! `InputsSpec::Indexed`; control builders (`CallPat`, `CallOtherPat`,
 //! `RetPat`) use `InputsSpec::Indexed`.  `IfPat` is the exception — it

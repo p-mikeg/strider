@@ -1,4 +1,4 @@
-//! `IfCondInversion` — canonicalises `If(BoolUnaryOp::Neg(C)) {A} {B}` into
+//! `IfCondInversion` — canonicalises `If(BoolNeg(C)) {A} {B}` into
 //! `If(C) {B} {A}` so every `If` node in the optimised IR has a non-`BoolNeg`
 //! condition.
 //!

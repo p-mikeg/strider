@@ -22,7 +22,8 @@ pub type KnownBitsMap = SecondaryMap<NodeOutputId, KnownBitsFacts>;
 
 /// Returns the all-ones bit mask for `ty` as a `u64`, or `None` if `ty` is not
 /// an integer type or its width exceeds 64 bits.  Used by [`KnownBits`] to gate
-/// out I80/I128/I256 (and Bool/floats) from the u64-bounded analysis.
+/// out the wide integers (I80/I128/I256/I512) and the float types from the
+/// u64-bounded analysis; the narrow integers (including the 1-bit `I1`) pass.
 fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
     if !ty.is_integer() || !ty.fits_u64() {
         return None;

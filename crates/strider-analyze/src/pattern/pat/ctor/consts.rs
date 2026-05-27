@@ -5,8 +5,9 @@
 //! These constructors are match-only-false (their `post_match` always
 //! returns `false`), so accidentally pasting one on the LHS of a rule
 //! causes a silent no-match rather than a panic.  Their purpose is to
-//! materialize an `IntConst` / `BoolConst` / `FloatConst` node whose
-//! value is computed from captured bindings at build time.
+//! materialize an `IntConst` / `FloatConst` node (the boolean case is an
+//! `IntConst` typed `I1`) whose value is computed from captured bindings
+//! at build time.
 
 use std::sync::Arc;
 

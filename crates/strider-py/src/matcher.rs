@@ -191,12 +191,14 @@ impl PyMatch {
         self.with_function(py, key, |c, g| self.inner.get_int_cmp_op(c, g).map(op_name))
     }
 
-    /// Recover the matched `BoolBinaryOp` variant name from `c`.
+    /// Recover the matched boolean binary op's variant name (an `IntBinaryOp`
+    /// — `And` / `Or` / `Xor` — at `I1`) from `c`.
     fn bool_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
         self.with_function(py, key, |c, g| self.inner.get_bool_binary_op(c, g).map(op_name))
     }
 
-    /// Recover the matched `BoolUnaryOp` variant name from `c`.
+    /// Recover the matched boolean unary op's variant name (an `IntUnaryOp`
+    /// — `BitNot` — at `I1`) from `c`.
     fn bool_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
         self.with_function(py, key, |c, g| self.inner.get_bool_unary_op(c, g).map(op_name))
     }
@@ -275,9 +277,8 @@ impl PyMatch {
 // `Debug`-formatted variant name, which matches the string the
 // constructor accepts, so a `find_all → recover op → reconstruct
 // pattern` round-trip stays consistent.  Every op enum (IntBinaryOp,
-// IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, FloatBinaryOp,
-// FloatUnaryOp, FloatCmpOp) derives `Debug` whose output is exactly
-// the variant identifier.
+// IntUnaryOp, IntCmpOp, FloatBinaryOp, FloatUnaryOp, FloatCmpOp)
+// derives `Debug` whose output is exactly the variant identifier.
 
 fn op_name<T: std::fmt::Debug>(op: T) -> String {
     format!("{op:?}")
