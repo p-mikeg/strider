@@ -241,8 +241,16 @@
       </div>
 
       <div class="sec">
-        <div class="sec-hd" data-s="legend"><span class="chev">▶</span><span class="sec-lbl">Node kinds</span></div>
-        <div class="sec-bd" id="s-legend"><div class="legend" id="legend"></div></div>
+        <div class="sec-hd open" data-s="legend"><span class="chev">▶</span><span class="sec-lbl">Node kinds</span></div>
+        <div class="sec-bd open" id="s-legend">
+          <div class="row">
+            <select id="kindSel" style="flex:1;padding:6px 8px;border-radius:var(--r2);border:1px solid var(--border2);background:#111115;color:var(--text);font-size:12px;outline:none;cursor:pointer">
+              <option value="">Kind: (all) — pick to iterate</option>
+            </select>
+          </div>
+          <div class="row"><button class="f" id="kindPrev" disabled>◀</button><button class="f" id="kindNext" disabled>▶</button><span class="hint" style="margin-left:auto"><span id="kindCount">—</span></span></div>
+          <div class="legend" id="legend"></div>
+        </div>
       </div>
 
       <div class="sec">
@@ -785,6 +793,50 @@ function stepSearch(dir){
   selN(h.n,h.g,true);
 }
 
+// ── kind picker + iterate ──────────────────────────────────────────────────
+// Buckets nodes by the coarse category `classify()` already computes, and
+// lets the user step through every node of a chosen category. The <select> is
+// rebuilt once after each index (O(N), same cost as applyKinds).
+const KIND_LABEL=new Map(KINDS.map(([,cls,lbl])=>[cls,lbl]));
+let kindHits=[],kindIdx=-1;
+function buildKindList(){
+  const sel=document.getElementById("kindSel");
+  const counts=new Map();
+  for(const[n]of nIdx.entries()){
+    const c=classify(nLabel.get(n)||"");
+    if(c)counts.set(c,(counts.get(c)||0)+1);
+  }
+  sel.length=1; // keep only the "(all)" option
+  for(const[cls,cnt]of[...counts.entries()].sort((a,b)=>b[1]-a[1])){
+    const o=document.createElement("option");
+    o.value=cls;o.textContent=`${KIND_LABEL.get(cls)||cls} (${cnt})`;
+    sel.appendChild(o);
+  }
+  sel.value="";kindHits=[];kindIdx=-1;updKindCounter();
+}
+function updKindCounter(){
+  const el=document.getElementById("kindCount");
+  if(el)el.textContent=kindHits.length?`${kindIdx+1}/${kindHits.length}`:"—";
+  const dis=kindHits.length<2;
+  document.getElementById("kindPrev").disabled=dis;
+  document.getElementById("kindNext").disabled=dis;
+}
+function pickKind(cls){
+  kindHits=[];kindIdx=-1;
+  if(cls){
+    for(const[n,g]of nIdx.entries())
+      if(classify(nLabel.get(n)||"")===cls)kindHits.push({n,g});
+  }
+  updKindCounter();
+  if(kindHits.length){kindIdx=0;selN(kindHits[0].n,kindHits[0].g,true);}
+}
+function stepKind(dir){
+  if(!kindHits.length)return;
+  kindIdx=(kindIdx+dir+kindHits.length)%kindHits.length;
+  updKindCounter();
+  const h=kindHits[kindIdx];selN(h.n,h.g,true);
+}
+
 // ── interactivity ─────────────────────────────────────────────────────────────
 // Pick the <g.node> or <g.edge> under the pointer, preferring nodes when both
 // overlap (edges often route over nodes so closest() alone picks the edge).
@@ -910,7 +962,7 @@ async function render(dot,engine){
     svg.setAttribute("width","100%");svg.setAttribute("height","100%");
     svg.style.background="transparent";
     gw.appendChild(svg);
-    indexSvg(svg);applyKinds();installEvents(svg);
+    indexSvg(svg);applyKinds();buildKindList();installEvents(svg);
     initPZ(svg);
     buildMM(svg,origVB);
     const ms=Math.round(performance.now()-t0);
@@ -936,6 +988,9 @@ document.getElementById("sfind").addEventListener("click",runSearch);
 document.getElementById("sclear").addEventListener("click",clrSearch);
 document.getElementById("sPrev").addEventListener("click",()=>stepSearch(-1));
 document.getElementById("sNext").addEventListener("click",()=>stepSearch(+1));
+document.getElementById("kindSel").addEventListener("change",e=>pickKind(e.target.value));
+document.getElementById("kindPrev").addEventListener("click",()=>stepKind(-1));
+document.getElementById("kindNext").addEventListener("click",()=>stepKind(+1));
 document.getElementById("bClearSel").addEventListener("click",()=>clrSel());
 document.getElementById("bZoomSel").addEventListener("click",()=>{
   if(sel.type==="node"&&sel.name)centerOnNeighborhood(sel.name);
