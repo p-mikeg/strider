@@ -18,7 +18,7 @@
 //! handlers live in [`super::cast`] (they manipulate bit positions
 //! rather than computing arithmetic).
 
-use strider_ir::{BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;
@@ -110,18 +110,29 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a p-code integer comparison instruction into an IR
     /// comparison node and writes the boolean result to the output varnode.
     ///
-    /// Same width-permissiveness rationale as `process_int_binary_op`
-    /// above — observed Sleigh output on 64-bit arches violates a strict
-    /// equal-input-widths contract here.
+    /// Sleigh can emit comparison operands of differing widths on 64-bit
+    /// arches, so the comparison is performed at the **max** of the two
+    /// input widths — neither operand is truncated.  The narrower operand
+    /// is extended sign-correctly for the predicate: signed comparisons
+    /// (`Sless` / `Scarry` / `Sborrow`) sign-extend, the unsigned ones
+    /// (`Equal` / `Less` / `Carry`) zero-extend.
     pub(super) fn process_int_cmp_op(
         &mut self,
         insn: &rsleigh::Insn,
         op: IntCmpOp,
     ) -> Result<()> {
+        let in0_size = crate::pcode_lift::nth_input_or_err(insn, 0)?.size;
+        let in1_size = crate::pcode_lift::nth_input_or_err(insn, 1)?.size;
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let cmp_width = crate::pcode_lift::nth_input_or_err(insn, 0)?.size.try_into()?;
+        let cmp_width = in0_size.max(in1_size).try_into()?;
+        let ext_op = match op {
+            IntCmpOp::Sless | IntCmpOp::Scarry | IntCmpOp::Sborrow => ExtendOp::SignExtend,
+            IntCmpOp::Equal | IntCmpOp::Less | IntCmpOp::Carry => ExtendOp::ZeroExtend,
+        };
+        let lhs = self.builder.extend_if_needed(lhs, cmp_width, ext_op)?;
+        let rhs = self.builder.extend_if_needed(rhs, cmp_width, ext_op)?;
         let out = self.builder.build_int_cmp_operation(lhs, rhs, op, cmp_width)?;
         self.write_vn(out_vn, out)
     }

@@ -275,6 +275,37 @@ fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId
 }
 
 #[test]
+fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
+    // IntSless of a 4-byte operand (0xFFFFFFFF = -1) and an 8-byte operand.
+    // Compare at the MAX of the two widths (8 bytes) so the wider operand is
+    // never truncated, and SIGN-extend the narrower *signed* operand so -1
+    // stays -1 (0xFFFF_FFFF_FFFF_FFFF), not the zero-extended
+    // 0x0000_0000_FFFF_FFFF.  Under the old inputs[0]-width behavior the
+    // 8-byte operand was truncated to 4 bytes and this 64-bit sign-extended
+    // constant never appeared.
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::IntSless,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(5, 8)].into(),
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    assert!(
+        graph_has_kind(&builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
+        "expected an Sless comparison node"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::IntConst(0xFFFF_FFFF_FFFF_FFFF)),
+        "the 4-byte -1 operand must be SIGN-extended to the 8-byte max width \
+         (0xFFFF_FFFF_FFFF_FFFF) — proving max-width comparison + sign-correct extension"
+    );
+}
+
+#[test]
 fn lift_with_set_lift_addr_records_asm_fingerprint() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
