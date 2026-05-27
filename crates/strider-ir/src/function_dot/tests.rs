@@ -88,6 +88,46 @@ fn render_int_const_wide_shows_value_not_debug() {
     );
 }
 
+/// The raw renderer emits exactly one DOT node per arena `NodeId` — no
+/// constant inlining, no synthetic virtual nodes — unlike the pretty
+/// renderer (which inlines consts per-consumer and adds virtual nodes).
+#[test]
+fn raw_dot_is_one_node_per_arena_node_no_inlining() {
+    let mut f = Function::new();
+    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    f.set_entry(entry);
+    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    // A constant the pretty renderer would inline into its consumer.
+    let c = f.create_node(
+        NodeKind::IntConst(0xABC),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [c_out] = f.node_outputs_exact::<1>(c).unwrap();
+    f.create_node(NodeKind::Return, [ctrl, mem_out, c_out], []);
+
+    let dot = f.raw_dot().expect("raw_dot must render");
+
+    // Exactly one DOT node declaration per arena node — no inlining/virtuals.
+    assert_eq!(
+        node_decls(&dot).len(),
+        f.all_node_ids().count(),
+        "raw dot must have one node per arena NodeId, got dot:\n{dot}"
+    );
+    // Every arena node id appears, and the IntConst is its own node (not inlined).
+    for id in f.all_node_ids() {
+        assert!(
+            dot.contains(&format!("n{}", id.as_u32())),
+            "raw dot must contain node n{}", id.as_u32()
+        );
+    }
+    assert!(dot.contains("IntConst"), "the constant is a standalone node, not inlined");
+    // The Return's three inputs are real edges.
+    assert!(edge_lines(&dot).len() >= 3, "Return's input edges must be present");
+}
+
 // ── determinism ───────────────────────────────────────────────────────────
 
 /// Rendering the same graph twice must produce identical DOT output.

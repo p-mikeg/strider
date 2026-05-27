@@ -7,6 +7,7 @@ use crate::node::{NodeId, NodeKind, NodeOutputId};
 use crate::node_signature::{SlotRole, expected_signature};
 
 pub mod label;
+mod raw;
 mod render;
 #[cfg(test)]
 mod tests;

@@ -39,3 +39,34 @@ def test_graph_html_str_returns_html(x86_memory_elf):
 def test_graph_node_count_positive(x86_memory_elf):
     g = _build_graph(x86_memory_elf)
     assert g.node_count() > 0
+
+
+def test_raw_dot_is_one_node_per_arena_node(x86_memory_elf):
+    # The raw renderer reflects the graph exactly as stored: one DOT node per
+    # arena NodeId (== g.node_ids()), no constant inlining or synthetic
+    # virtual nodes (which the pretty renderer adds).
+    g = _build_graph(x86_memory_elf)
+    dot = g.raw_dot_str()
+    assert isinstance(dot, str) and "digraph" in dot.lower()
+    node_decls = [ln for ln in dot.splitlines() if "[label=" in ln and "->" not in ln]
+    assert len(node_decls) == len(g.node_ids()), (
+        f"raw dot must have one node per arena node: "
+        f"{len(node_decls)} decls vs {len(g.node_ids())} node ids"
+    )
+
+
+def test_raw_html_str_returns_html(x86_memory_elf):
+    g = _build_graph(x86_memory_elf)
+    html = g.raw_html_str()
+    assert isinstance(html, str)
+    assert "<html" in html.lower() or "svg" in html.lower()
+
+
+def test_to_raw_dot_and_to_raw_html_write_files(x86_memory_elf, tmp_path):
+    g = _build_graph(x86_memory_elf)
+    dot_out = tmp_path / "raw.dot"
+    html_out = tmp_path / "raw.html"
+    g.to_raw_dot(str(dot_out))
+    g.to_raw_html(str(html_out))
+    assert dot_out.exists() and dot_out.stat().st_size > 0
+    assert html_out.exists() and html_out.stat().st_size > 0

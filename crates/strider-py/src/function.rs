@@ -194,6 +194,41 @@ impl PyFunction {
         }
     }
 
+    /// Render the graph **exactly as stored** to a Graphviz `.dot` string:
+    /// one node per `NodeId` (every arena node, incl. detached ones), one
+    /// edge per input edge, side-tables (stack offset, phi tag, asm
+    /// fingerprints, call-other name, clobber override, arg index) shown
+    /// inline.  No constant inlining, virtual nodes, or commutative
+    /// reordering — a debugging view of the real graph shape, distinct from
+    /// the pretty `to_dot`/`html_str`.
+    fn raw_dot_str(&self) -> PyResult<String> {
+        self.with_read_value(strider_ir::Function::raw_dot)?
+            .map_err(crate::errors::into_strider_err)
+    }
+
+    /// Like `raw_dot_str` but wraps the DOT in a self-contained HTML page
+    /// (embedded viz.js; no external `dot` binary needed).
+    fn raw_html_str(&self) -> PyResult<String> {
+        self.with_read_value(strider_ir::Function::raw_html)?
+            .map_err(crate::errors::into_strider_err)
+    }
+
+    /// Write the raw (as-stored) Graphviz `.dot` rendering to `path`.
+    /// See `raw_dot_str` for what "raw" means.
+    fn to_raw_dot(&self, path: &str) -> PyResult<()> {
+        let dot = self.raw_dot_str()?;
+        std::fs::write(path, dot)
+            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+    }
+
+    /// Write the raw (as-stored) standalone HTML rendering to `path`.
+    /// See `raw_dot_str` for what "raw" means.
+    fn to_raw_html(&self, path: &str) -> PyResult<()> {
+        let html = self.raw_html_str()?;
+        std::fs::write(path, html)
+            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
+    }
+
     /// Returns the number of nodes reachable from entry in the IR graph.
     fn node_count(&self) -> PyResult<usize> {
         self.with_read_value(|function| function.all_node_ids().count())
