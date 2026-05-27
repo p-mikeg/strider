@@ -76,3 +76,60 @@ fn bit_width_filters_store_by_data_width() {
     assert_eq!(h32_wrong.len(), 0);
     assert_eq!(h64_wrong.len(), 0);
 }
+
+// ── output-width vs input-width queries (booleans = 1-bit I1) ───────────────
+
+/// `bool_value()` (output width 1) matches anything that *produces* a bool —
+/// both a comparison and a boolean-AND.  `bool_inputs(...)` (input width 1)
+/// matches only operations that *operate on* booleans — the boolean-AND, not
+/// the comparisons (whose operands are 32-bit even though they produce I1).
+#[test]
+fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
+    use strider_analyze::pattern::{any, bool_and, bool_inputs, bool_value, value_of_width};
+    use strider_ir::{IntBinaryOp, IntCmpOp};
+
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
+    let a = b.build_int_const(1u64, NodeOutputType::I32).expect("a");
+    let c = b.build_int_const(2u64, NodeOutputType::I32).expect("c");
+    // Two comparisons (wide inputs → I1 output)…
+    let cmp1 = b
+        .build_int_cmp_operation(a, c, IntCmpOp::Equal, NodeOutputType::I32)
+        .expect("cmp1");
+    let cmp2 = b
+        .build_int_cmp_operation(a, c, IntCmpOp::Sless, NodeOutputType::I32)
+        .expect("cmp2");
+    // …combined by a boolean AND (I1 inputs → I1 output).
+    let and = b
+        .build_int_binary_operation(cmp1, cmp2, IntBinaryOp::And, NodeOutputType::I1)
+        .expect("bool and");
+    // Return the AND so the comparisons stay reachable; the I32 consts are
+    // reachable as the comparisons' operands.
+    b.build_return(Some(and), &[]).expect("ret");
+    let function = b.build().expect("build");
+
+    let m = Matcher::try_new(&function).unwrap();
+
+    // Output width 1 = "produces a bool": both comparisons + the AND.
+    assert_eq!(
+        m.find_all(&bool_value()).len(),
+        3,
+        "two comparisons and the boolean AND all produce I1"
+    );
+
+    // Input width 1 = "operates on booleans": only the AND (its operands are
+    // I1).  Comparisons (I32 operands) and the consts (no value inputs) are
+    // excluded.
+    assert_eq!(
+        m.find_all(&bool_inputs(any())).len(),
+        1,
+        "only the boolean AND consumes 1-bit operands"
+    );
+
+    // The two width queries compose: an AND specifically on boolean operands.
+    assert_eq!(m.find_all(&bool_inputs(bool_and(any(), any()))).len(), 1);
+
+    // value_of_width(32) matches the wide nodes (the two I32 consts).
+    assert!(!m.find_all(&value_of_width(32)).is_empty());
+}

@@ -16,9 +16,6 @@ from strider.pattern import (
     any_,
     bool_const,
     bool_not,
-    cast_to_bool,
-    cast_to_float,
-    cast_to_int,
     extend,
     float_abs,
     float_add,
@@ -101,7 +98,7 @@ def test_conversion_ops_return_pat(ctor):
 # ── Cast / coercion ops ──────────────────────────────────────────────
 
 @pytest.mark.parametrize(
-    "ctor", [cast_to_int, cast_to_bool, cast_to_float, truncate, popcount, lzcount]
+    "ctor", [truncate, popcount, lzcount]
 )
 def test_cast_ops_return_pat(ctor):
     assert isinstance(ctor(var(Capture())), Pat)
@@ -228,11 +225,12 @@ def test_float_binary_into_pat_returns_pat():
     assert isinstance(p, Pat)
 
 
-def test_bool_binary_into_pat_returns_pat():
-    from strider.pattern import bool_binary, BoolBinaryPat
-    builder = bool_binary("And", "x", "y")
-    assert isinstance(builder, BoolBinaryPat)
-    p = builder.into_pat()
+def test_bool_binary_returns_pat():
+    # Booleans are the 1-bit integer I1, so bool_binary builds an
+    # IntBinaryOp at I1 and returns a finalised Pat directly (the old
+    # BoolBinaryPat builder no longer exists).
+    from strider.pattern import bool_binary
+    p = bool_binary("And", "x", "y")
     assert isinstance(p, Pat)
 
 

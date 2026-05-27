@@ -73,7 +73,6 @@ EXPECTED_PATTERN = {
     "Pat",
     "PartialMatch",
     "IntBinaryPat",
-    "BoolBinaryPat",
     "FloatBinaryPat",
     # Builder types (one per matchable kind).
     "CallPat", "CallOtherPat",
@@ -86,6 +85,7 @@ EXPECTED_PATTERN = {
     "RetPat",
     # Wildcards / consts / phi / initial.
     "any_", "var", "predicate",
+    "value_of_width", "bool_value", "inputs_of_width", "bool_inputs",
     "int_const", "signed_int_const", "bool_const", "float_const",
     "any_int_const", "any_bool_const", "any_float_const",
     "int_const_any_of",
@@ -111,7 +111,6 @@ EXPECTED_PATTERN = {
     # Conversions / bitcasts / casts.
     "int_to_float", "float_to_int", "float_to_float",
     "int_bits_to_float", "float_bits_to_int",
-    "cast_to_int", "cast_to_bool", "cast_to_float",
     "truncate", "popcount", "lzcount",
     "zero_extend", "sign_extend", "extend",
     # Memory & control flow.

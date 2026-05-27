@@ -159,7 +159,9 @@ pub use var::{Capture, OffsetCapture};
 
 // ── Wildcards, captures, predicates ──────────────────────────────────────────
 
-pub use pat::{any, predicate, var};
+pub use pat::{
+    any, bool_inputs, bool_value, inputs_of_width, predicate, value_of_width, var,
+};
 
 // ── Int ops (binary, unary, comparison, variant-agnostic) ────────────────────
 

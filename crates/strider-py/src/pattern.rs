@@ -757,6 +757,43 @@ pub fn var(c: PyRef<'_, PyCapture>) -> PyPat {
     PyPat::from_pat(strider_analyze::pattern::var(c.inner))
 }
 
+/// Match any value output exactly `n` bits wide (the output-width filter).
+/// `value_of_width(1)` (see `bool_value`) selects booleans; matches both
+/// integer and float types of the width (e.g. 32 matches `I32` and `F32`).
+#[pyfunction]
+pub fn value_of_width(n: u32) -> PyPat {
+    PyPat::from_pat(strider_analyze::pattern::value_of_width(n))
+}
+
+/// Match any boolean value — any 1-bit (`I1`) value output.  Note this
+/// matches anything that *produces* a bool, including comparisons; to match
+/// operations that *operate on* booleans use `bool_inputs`.
+#[pyfunction]
+pub fn bool_value() -> PyPat {
+    PyPat::from_pat(strider_analyze::pattern::bool_value())
+}
+
+/// Match `inner` and require all of the matched node's value inputs to be
+/// `n` bits wide (the input-width filter).  `inputs_of_width(1, ...)`
+/// (see `bool_inputs`) selects operations that operate on booleans.
+#[pyfunction]
+pub fn inputs_of_width(n: u32, inner: PatLike<'_>) -> PyResult<PyPat> {
+    Ok(PyPat::from_pat(strider_analyze::pattern::inputs_of_width(
+        n,
+        inner.into_pat()?,
+    )))
+}
+
+/// Match `inner` whose value inputs are all booleans (1-bit `I1`) — i.e. an
+/// operation that operates on booleans (`And`/`Or`/`Xor`/`Not` of bools),
+/// excluding comparisons (whose operands are wider).
+#[pyfunction]
+pub fn bool_inputs(inner: PatLike<'_>) -> PyResult<PyPat> {
+    Ok(PyPat::from_pat(strider_analyze::pattern::bool_inputs(
+        inner.into_pat()?,
+    )))
+}
+
 /// Match an `IntConst` whose stored value, masked to the node's
 /// output width, equals `value` (interpreted as a signed i128 and
 /// reinterpreted as u128 for bit-pattern equality).
@@ -1963,6 +2000,10 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // wildcards / consts / phi / initial
     add_fn!(any_);
     add_fn!(var);
+    add_fn!(value_of_width);
+    add_fn!(bool_value);
+    add_fn!(inputs_of_width);
+    add_fn!(bool_inputs);
     add_fn!(int_const);
     add_fn!(signed_int_const);
     add_fn!(int_const_any_of);

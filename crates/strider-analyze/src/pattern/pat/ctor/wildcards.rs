@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use strider_ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
-use crate::pattern::pat::any::{AnyPat, VarPat};
+use crate::pattern::pat::any::{AnyPat, InputWidthPat, ValueWidthPat, VarPat};
 use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 use crate::pattern::pat::{IntoPat, Pat};
 use crate::pattern::var::Capture;
@@ -13,6 +13,43 @@ use crate::pattern::var::Capture;
 #[must_use]
 pub fn any() -> Pat {
     Pat::from_dyn(Arc::new(AnyPat))
+}
+
+/// Matches any value output that is exactly `n` bits wide.
+///
+/// The width-limit mechanism for querying by output type: `value_of_width(1)`
+/// (a.k.a. [`bool_value`]) selects booleans (the 1-bit `I1`); `value_of_width(32)`
+/// matches any `I32`- or `F32`-typed value, etc.
+#[must_use]
+pub fn value_of_width(n: u32) -> Pat {
+    Pat::from_dyn(Arc::new(ValueWidthPat { width: n }))
+}
+
+/// Matches any boolean value — i.e. any value output 1 bit wide (`I1`).
+/// Sugar for [`value_of_width`]`(1)`.
+#[must_use]
+pub fn bool_value() -> Pat {
+    value_of_width(1)
+}
+
+/// Matches `inner` **and** requires all of the matched node's value inputs
+/// to be `n` bits wide.  The input-side width filter: `inputs_of_width(1, …)`
+/// (a.k.a. [`bool_inputs`]) selects operations that *operate on* booleans
+/// (`And`/`Or`/`Xor`/`BitNot` on `I1`) and excludes comparisons (whose
+/// operands are wider even though they produce `I1`).
+#[must_use]
+pub fn inputs_of_width(n: u32, inner: impl Into<Pat>) -> Pat {
+    Pat::from_dyn(Arc::new(InputWidthPat {
+        width: n,
+        inner: inner.into(),
+    }))
+}
+
+/// Matches `inner` whose value inputs are all booleans (1-bit `I1`).
+/// Sugar for [`inputs_of_width`]`(1, inner)`.
+#[must_use]
+pub fn bool_inputs(inner: impl Into<Pat>) -> Pat {
+    inputs_of_width(1, inner)
 }
 
 /// Matches any output and binds it to `c`.
