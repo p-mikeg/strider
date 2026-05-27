@@ -562,3 +562,25 @@ mod engine_choice_tests {
         assert_eq!(dot_node_count("digraph G { }"), 0);
     }
 }
+
+#[cfg(test)]
+mod template_tests {
+    /// Guards that the viewer template keeps the controls the JS wires up:
+    /// the edge-label / node-name fields and the NodeKind picker. A typo in
+    /// an element id or a deleted control would silently break the feature in
+    /// the browser; this fails the build instead.
+    #[test]
+    fn template_contains_new_viewer_controls() {
+        let t = super::HTML_DOT_TEMPLATE;
+        for id in ["sEdgeLabel", "kindSel", "kindPrev", "kindNext", "kindCount"] {
+            assert!(
+                t.contains(&format!("id=\"{id}\"")),
+                "viewer template missing id=\"{id}\""
+            );
+        }
+        assert!(
+            t.contains("function buildKindList"),
+            "viewer template missing buildKindList()"
+        );
+    }
+}
