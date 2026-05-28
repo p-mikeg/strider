@@ -162,7 +162,7 @@ where
     if state.no_unresolved() {
         return state.finalize();
     }
-    let cap = state.cap();
+    let cap = state.guard.cap;
     for _ in 0..cap {
         match state.step()? {
             Decision::FixedPoint => return state.finalize(),
@@ -186,47 +186,130 @@ enum Decision {
     Rebuild,
 }
 
-/// Stall-guard helper for the fixed-point loop's `step` method.
-/// extracted to a free function so the
-/// invariant can be unit-tested directly without constructing a
-/// real `LoopState` (which requires a `Sleigh<R>`, `Graph`,
-/// and full CFG state).
+/// Loop-termination safety for the fixed-point loop.
 ///
-/// Fires `Err` when an in-place-only iteration's unresolved count
-/// **strictly grew** AND the budget is exhausted.  Count-stable
-/// iterations (`unresolved_after == prev_unresolved`) do NOT
-/// consume budget: they may represent real progress through an
-/// anchor-replacement chain (one anchor resolved, one new
-/// placeholder materialised).  The outer
-/// `cap = 2 * pending_at_iter_0 + 4` bound still terminates
-/// count-stable infinite loops.
+/// `cap` is the hard upper bound on total iterations, fixed from the
+/// pending-anchor count at iteration 0 (`2 * pending + 4`).  `budget` is
+/// the soft allowance for consecutive in-place-only iterations that fail
+/// to make progress; it is reset on every rebuild (which is by definition
+/// forward progress) and decremented only when an in-place-only iteration
+/// strictly grows the unresolved count.
 ///
-/// Pre-fix the comparison was `>=`, which
-/// incorrectly consumed budget on every count-stable iteration.
-///
-/// # Errors
-///
-/// Returns `Err` when `!edge_set_changed && unresolved_after >
-/// unresolved_before && *stall_budget == 0`.  Otherwise decrements
-/// `stall_budget` (when both growth and no-edge-change conditions
-/// hold) and returns `Ok(())`.
-fn apply_stall_guard(
-    stall_budget: &mut usize,
-    edge_set_changed: bool,
-    unresolved_after: usize,
-    unresolved_before: usize,
-) -> Result<()> {
-    if !edge_set_changed && unresolved_after > unresolved_before {
-        if *stall_budget == 0 {
-            bail!(
-                "in-place edits stalled: {} unresolved branches after edit (grew from {}), no edge-set growth",
-                unresolved_after,
-                unresolved_before,
-            );
+/// A self-contained value type so the guard invariant can be unit-tested
+/// directly without standing up a whole `LoopState`.
+struct StallGuard {
+    /// Hard iteration cap; see [`StallGuard::new`].
+    cap: usize,
+    /// Remaining consecutive-stall allowance.
+    budget: usize,
+}
+
+impl StallGuard {
+    /// Initialise from the pending-anchor count at iteration 0.  The cap
+    /// `2 * pending + 4` bounds even count-stable infinite loops; the
+    /// budget allows one stall per pending anchor (each in-place edit must
+    /// remove at least one placeholder, so we can't legitimately stall
+    /// more often than that without progress).
+    fn new(pending_at_iter_0: usize) -> Self {
+        Self {
+            cap: 2usize.saturating_mul(pending_at_iter_0).saturating_add(4),
+            budget: pending_at_iter_0,
         }
-        *stall_budget -= 1;
     }
-    Ok(())
+
+    /// Reset the stall budget after a rebuild grew the edge set (forward
+    /// progress), proportional to what's still pending.
+    fn reset_budget(&mut self, pending: usize) {
+        self.budget = pending;
+    }
+
+    /// Record one iteration's progress.
+    ///
+    /// Fires `Err` when an in-place-only iteration's unresolved count
+    /// **strictly grew** AND the budget is exhausted.  Count-stable
+    /// iterations (`unresolved_after == unresolved_before`) do NOT consume
+    /// budget: they may represent real progress through an
+    /// anchor-replacement chain (one anchor resolved, one new placeholder
+    /// materialised); the `cap` still terminates such loops.
+    ///
+    /// # Errors
+    /// Returns `Err` when `!edge_set_changed && unresolved_after >
+    /// unresolved_before && self.budget == 0`.
+    fn record(
+        &mut self,
+        edge_set_changed: bool,
+        unresolved_after: usize,
+        unresolved_before: usize,
+    ) -> Result<()> {
+        if !edge_set_changed && unresolved_after > unresolved_before {
+            if self.budget == 0 {
+                bail!(
+                    "in-place edits stalled: {} unresolved branches after edit (grew from {}), no edge-set growth",
+                    unresolved_after,
+                    unresolved_before,
+                );
+            }
+            self.budget -= 1;
+        }
+        Ok(())
+    }
+}
+
+/// Immutable parameters for the whole run, resolved once at construction
+/// from [`Config`].  Pure data, never mutated across iterations — grouped
+/// so `Config` is their single source.
+struct RunParams {
+    /// Function entry address; from [`Config::start_addr`].
+    start_addr: strider_lift::cfg::MachineInsnAddr,
+    /// Read-only memory image; from [`Config::rom`].
+    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    /// Function-size cap; from [`Config::fn_max_size`].
+    fn_max_size: Option<u64>,
+    /// Code-before-start permission; from [`Config::allow_code_before_start_addr`].
+    allow_code_before_start_addr: bool,
+    /// Compaction flag for the finalize step; from [`Config::compact`].
+    compact: bool,
+    /// Per-target-address CC overrides, register-resolved once at
+    /// construction from [`Config::per_address_ccs_unbuilt`].
+    per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention>,
+}
+
+/// Cross-rebuild cache of the varnodes seen so far, feeding
+/// `analyze_cfg_with`'s `all_vns`.  A pure performance optimisation:
+/// dropping it only re-scans regions that were already scanned.
+#[derive(Default)]
+struct VnCache {
+    /// Every varnode seen across all iterations.
+    set: rustc_hash::FxHashSet<rsleigh::Vn>,
+    /// High-water mark of regions already scanned.  `set` is up-to-date
+    /// for the first `region_count` regions; later regions are new and
+    /// get scanned and unioned in.
+    region_count: usize,
+}
+
+impl VnCache {
+    /// Union the varnodes from any regions added since the last call into
+    /// the cache, then return the sorted set as a `Vec` ready to feed into
+    /// `strider.analyze_cfg_with`.
+    ///
+    /// petgraph's `StableDiGraph` allocates monotonic `NodeIndex`s, so
+    /// `regions().skip(region_count)` yields exactly the new ones; at iter 0
+    /// the cache is empty and every region is scanned.  Region splits leave
+    /// the cache slightly conservative (an over-tracked vn allocates one
+    /// extra `InitialVar` and never miscompiles).
+    fn scan_new(&mut self, cfg: &Cfg) -> Vec<rsleigh::Vn> {
+        for region in cfg.regions().skip(self.region_count) {
+            for wrapped in region.insns.iter() {
+                for vn in wrapped.insn.all_vns() {
+                    self.set.insert(vn);
+                }
+            }
+        }
+        self.region_count = cfg.regions().count();
+        let mut all_vns: Vec<rsleigh::Vn> = self.set.iter().copied().collect();
+        all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
+        all_vns
+    }
 }
 
 /// The fixed-point loop's spanning state.
@@ -236,21 +319,8 @@ where
 {
     /// The strider — stable across iterations.
     strider: &'a Strider,
-    /// Function entry address; copied from [`Config::start_addr`].
-    start_addr: strider_lift::cfg::MachineInsnAddr,
-    /// Read-only memory image; copied from [`Config::rom`].
-    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
-    /// Function-size cap; copied from [`Config::fn_max_size`].
-    fn_max_size: Option<u64>,
-    /// Code-before-start permission; copied from [`Config::allow_code_before_start_addr`].
-    allow_code_before_start_addr: bool,
-    /// Compaction flag for the finalize step; copied from [`Config::compact`].
-    compact: bool,
-    /// Pre-resolved per-target-address CC overrides.  See the
-    /// [`Config::per_address_ccs_unbuilt`] doc.  Resolved once at
-    /// `LoopState::new` so any unresolved register name surfaces
-    /// before iteration starts.
-    per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    /// Immutable run parameters, resolved once from [`Config`].
+    params: RunParams,
     /// Accumulator of IR-level indirect-branch resolver resolutions across iterations.
     /// Monotonically grows: once an anchor's targets land here, the
     /// CFG-rebuild path keeps using them.  Per-iteration classifications
@@ -277,12 +347,8 @@ where
     function: strider_ir::Function,
     /// Pending placeholder anchors for the current iteration.
     unresolved: Vec<(PcodeInsnAddr, strider_ir::Value)>,
-    /// Pending count at iter 0; sets the cap.
-    pending_at_iter_0: usize,
-    /// Remaining stall budget.  Decrements each consecutive
-    /// in-place-only iteration that didn't reduce `unresolved`; reaching
-    /// zero is a misclassifying-resolver bug, surfaced as a typed error.
-    stall_budget: usize,
+    /// Loop-termination guard: iteration cap + stall budget (see [`StallGuard`]).
+    guard: StallGuard,
     /// Per-iteration region index, rebuilt by `build_initial_iteration` /
     /// `rebuild` from the latest `RegionLiftHandles` snapshot.
     region_index: RegionIndex,
@@ -291,24 +357,8 @@ where
     /// every iteration; threaded into each fresh `strider_lift::cfg::Builder` so
     /// machine-instruction decodes are paid once per address per run.
     decode_cache: DecodeCache,
-    /// Cached set of varnodes seen so far across all CFG iterations.
-    /// Amortises `find_all_unique_vns` across CFG-rebuild iterations:
-    /// without the cache, every Rebuild iteration would re-scan every
-    /// region's every instruction's every varnode; here we only scan
-    /// the regions added since the previous iteration (petgraph's
-    /// `StableDiGraph` allocates monotonic `NodeIndex`s, so the new
-    /// regions sit at indices `[prev_count..current_count)`).
-    ///
-    /// The set is conservative under region splits: a split region's
-    /// original vns stay in the cache even if the original's insn
-    /// list got truncated.  Over-tracking a vn allocates one extra
-    /// `InitialVar` (cheap) and never miscompiles.
-    vn_cache: rustc_hash::FxHashSet<rsleigh::Vn>,
-    /// Region count at the most recent `find_all_unique_vns` call.
-    /// `vn_cache` is up-to-date for the first `vn_cache_region_count`
-    /// regions in the CFG; later regions need to be scanned and unioned
-    /// into the cache.
-    vn_cache_region_count: usize,
+    /// Cross-rebuild varnode cache (see [`VnCache`]).
+    vn_cache: VnCache,
 }
 
 impl<'a, R> LoopState<'a, R>
@@ -346,21 +396,23 @@ where
             // before any consumer reads it.
             function: strider_ir::Function::new(),
             unresolved: Vec::new(),
-            pending_at_iter_0: 0,
-            stall_budget: 0,
+            // Placeholder; overwritten by `build_initial_iteration` once the
+            // iteration-0 pending count is known.
+            guard: StallGuard::new(0),
             region_index: RegionIndex {
                 by_exit_control: rustc_hash::FxHashMap::default(),
             },
             decode_cache: DecodeCache::new(),
-            vn_cache: rustc_hash::FxHashSet::default(),
-            vn_cache_region_count: 0,
+            vn_cache: VnCache::default(),
             strider: config.strider,
-            start_addr: config.start_addr,
-            rom: config.rom,
-            fn_max_size: config.fn_max_size,
-            allow_code_before_start_addr: config.allow_code_before_start_addr,
-            compact: config.compact,
-            per_address_built_ccs,
+            params: RunParams {
+                start_addr: config.start_addr,
+                rom: config.rom,
+                fn_max_size: config.fn_max_size,
+                allow_code_before_start_addr: config.allow_code_before_start_addr,
+                compact: config.compact,
+                per_address_built_ccs,
+            },
         })
     }
 
@@ -368,12 +420,7 @@ where
     /// region index.
     fn build_initial_iteration(&mut self) -> Result<()> {
         self.lift_and_seat("build_initial_iteration")?;
-        self.pending_at_iter_0 = self.unresolved.len();
-        // Allow an in-place-only stall for at most `pending_at_iter_0`
-        // iterations: each in-place edit must remove at least one
-        // placeholder, so we can't legitimately stall that many times
-        // in a row without making progress.
-        self.stall_budget = self.pending_at_iter_0;
+        self.guard = StallGuard::new(self.unresolved.len());
         Ok(())
     }
 
@@ -402,7 +449,7 @@ where
     ///
     /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
     /// IR lift via [`Strider::analyze_cfg_with`], harvests the post-lift
-    /// varnode delta via [`scan_new_vns`], and finishes with the stable
+    /// varnode delta via [`VnCache::scan_new`], and finishes with the stable
     /// optimiser pipeline.  The named helpers carry the per-step
     /// commentary.
     #[allow(clippy::type_complexity)]
@@ -421,15 +468,15 @@ where
         let (cfg, sleigh) = build_cfg(
             sleigh,
             self.strider,
-            self.start_addr,
-            self.rom.clone(),
-            self.fn_max_size,
-            self.allow_code_before_start_addr,
+            self.params.start_addr,
+            self.params.rom.clone(),
+            self.params.fn_max_size,
+            self.params.allow_code_before_start_addr,
             &self.known_targets,
             &self.decode_cache,
         )?;
 
-        let all_vns = scan_new_vns(&cfg, &mut self.vn_cache, &mut self.vn_cache_region_count);
+        let all_vns = self.vn_cache.scan_new(&cfg);
 
         let AnalyzeOutcome {
             mut function,
@@ -440,7 +487,7 @@ where
             &sleigh,
             crate::AnalyzeOptions {
                 all_vns: Some(all_vns),
-                per_address_ccs: Some(&self.per_address_built_ccs),
+                per_address_ccs: Some(&self.params.per_address_built_ccs),
             },
         )?;
         let region_index = RegionIndex::from_handles(region_handles);
@@ -456,12 +503,6 @@ where
 
     fn no_unresolved(&self) -> bool {
         self.unresolved.is_empty()
-    }
-
-    fn cap(&self) -> usize {
-        2usize
-            .saturating_mul(self.pending_at_iter_0)
-            .saturating_add(4)
     }
 
     /// Run one iteration of the loop.
@@ -495,9 +536,7 @@ where
             return Ok(Decision::FixedPoint);
         }
 
-        // Track stall guard via the apply_stall_guard helper.
-        apply_stall_guard(
-            &mut self.stall_budget,
+        self.guard.record(
             edge_set_changed,
             unresolved_after_edits.len(),
             prev_unresolved_len,
@@ -536,7 +575,7 @@ where
     /// point was making progress.
     fn rebuild(&mut self) -> Result<()> {
         self.lift_and_seat("rebuild")?;
-        self.stall_budget = self.unresolved.len();
+        self.guard.reset_budget(self.unresolved.len());
         Ok(())
     }
 
@@ -544,7 +583,7 @@ where
     /// final graph.
     fn finalize(mut self) -> Result<strider_ir::Function> {
         let pipeline = self.strider.build_destructive_optimizer_pipeline();
-        let compact = self.compact;
+        let compact = self.params.compact;
         let entry = self.function.entry().ok_or_else(|| {
             anyhow::anyhow!("finalize: graph has not been built (entry is None)")
         })?;
@@ -565,7 +604,7 @@ where
         Vec<(NodeId, ResolvedTargets)>,
     )> {
         let function = &self.function;
-        let rom_ref: Option<&dyn ReadOnlyMemory> = self.rom.as_deref();
+        let rom_ref: Option<&dyn ReadOnlyMemory> = self.params.rom.as_deref();
         // Start from the previous iteration's resolutions so anchors
         // already lowered to switch edges by an earlier Rebuild stay in
         // the known_targets map.  Wiping them would re-introduce the
@@ -597,9 +636,9 @@ where
                 (ResolvedTargets::LinkRegister, Some(_)) => true,
                 (ResolvedTargets::Single(target), Some(_)) => is_tail_call(
                     *target,
-                    self.start_addr,
-                    self.fn_max_size,
-                    self.allow_code_before_start_addr,
+                    self.params.start_addr,
+                    self.params.fn_max_size,
+                    self.params.allow_code_before_start_addr,
                 ),
                 _ => false,
             };
@@ -620,7 +659,7 @@ where
     ) -> Result<()> {
         let strider = self.strider;
         let region_index = &self.region_index;
-        let per_address_built_ccs = &self.per_address_built_ccs;
+        let per_address_built_ccs = &self.params.per_address_built_ccs;
         let function = &mut self.function;
         // `Graph::initial_var_for` is maintained on the graph itself
         // (populated by `FunctionBuilder::set_entry_region` at lift
@@ -1039,34 +1078,6 @@ where
         .build()
 }
 
-/// Union the varnodes from any regions added since the last
-/// `scan_new_vns` call into `vn_cache`, then return the sorted set as
-/// a `Vec` ready to feed into `strider.analyze_cfg_with`.
-///
-/// petgraph's `StableDiGraph` allocates monotonic `NodeIndex`s, so
-/// `regions().skip(*vn_cache_region_count)` yields exactly the new
-/// ones; at iter 0 the cache is empty and every region is scanned.
-/// Region splits leave the cache slightly conservative — see the
-/// field doc on `LoopState::vn_cache` for why that's safe.
-fn scan_new_vns(
-    cfg: &Cfg,
-    vn_cache: &mut rustc_hash::FxHashSet<rsleigh::Vn>,
-    vn_cache_region_count: &mut usize,
-) -> Vec<rsleigh::Vn> {
-    let starting = *vn_cache_region_count;
-    for region in cfg.regions().skip(starting) {
-        for wrapped in region.insns.iter() {
-            for vn in wrapped.insn.all_vns() {
-                vn_cache.insert(vn);
-            }
-        }
-    }
-    *vn_cache_region_count = cfg.regions().count();
-    let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
-    all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
-    all_vns
-}
-
 /// The induced edge set of a `known_targets` map.  Used to test
 /// convergence between iterations.
 ///
@@ -1243,52 +1254,62 @@ mod tests {
     }
 
 
-    // ── apply_stall_guard tests ──────────────────────────────────
+    // ── StallGuard tests ──────────────────────────────────────────
     //
-    // These tests pin the fix (`>=` → `>`) by exercising the
-    // stall-guard behavior directly via the extracted helper.  Each
-    // case names the relevant scenario from the orchestrator's
-    // fixed-point loop.
+    // These pin the stall-guard invariant (the `>=` → `>` fix) by
+    // exercising `StallGuard::record` directly, plus the cap formula.
+    // Each case names the relevant fixed-point-loop scenario.
+
+    /// A guard with the given budget and an irrelevant cap, for the
+    /// `record` cases (which never read `cap`).
+    fn guard_with_budget(budget: usize) -> StallGuard {
+        StallGuard { cap: 0, budget }
+    }
 
     #[test]
-    fn apply_stall_guard_no_change_in_count_does_not_consume_budget() {
-        // regression: a count-stable in-place-only
-        // iteration (one anchor resolved, one new placeholder
-        // materialised) is legitimate progress and must NOT consume
-        // budget.  Pre-fix (`>=`) this ate one budget per stable
-        // iteration; post-fix (`>`) the budget stays full.
-        let mut budget = 3usize;
+    fn stall_guard_new_sets_cap_and_budget() {
+        let g = StallGuard::new(3);
+        assert_eq!(g.cap, 10, "cap = 2 * pending + 4");
+        assert_eq!(g.budget, 3, "budget seeded from pending");
+        let z = StallGuard::new(0);
+        assert_eq!(z.cap, 4);
+        assert_eq!(z.budget, 0);
+    }
+
+    #[test]
+    fn stall_guard_no_change_in_count_does_not_consume_budget() {
+        // regression: a count-stable in-place-only iteration (one anchor
+        // resolved, one new placeholder materialised) is legitimate
+        // progress and must NOT consume budget.  Pre-fix (`>=`) ate one
+        // budget per stable iteration; post-fix (`>`) it stays full.
+        let mut g = guard_with_budget(3);
         for _ in 0..5 {
-            apply_stall_guard(&mut budget, /* edge_set_changed */ false, 4, 4)
+            g.record(/* edge_set_changed */ false, 4, 4)
                 .expect("count-stable iteration must not error");
         }
-        assert_eq!(budget, 3, "budget must stay full across 5 count-stable iterations");
+        assert_eq!(g.budget, 3, "budget must stay full across 5 count-stable iterations");
     }
 
     #[test]
-    fn apply_stall_guard_count_decrease_does_not_consume_budget() {
-        // The natural progress shape: count strictly decreases.  Budget
-        // stays full.
-        let mut budget = 3usize;
-        apply_stall_guard(&mut budget, false, 3, 4)
-            .expect("count-decrease must not error");
-        assert_eq!(budget, 3);
+    fn stall_guard_count_decrease_does_not_consume_budget() {
+        // The natural progress shape: count strictly decreases.
+        let mut g = guard_with_budget(3);
+        g.record(false, 3, 4).expect("count-decrease must not error");
+        assert_eq!(g.budget, 3);
     }
 
     #[test]
-    fn apply_stall_guard_count_growth_consumes_budget() {
-        // Strictly-growing count (resolver producing more anchors than
-        // it resolves) is the real stall pathology.  Each growth step
+    fn stall_guard_count_growth_consumes_budget() {
+        // Strictly-growing count (resolver producing more anchors than it
+        // resolves) is the real stall pathology.  Each growth step
         // decrements budget; reaching zero raises Err.
-        let mut budget = 2usize;
-        // Iter 1: 4 → 5 (grew by 1). Budget: 2 → 1.
-        apply_stall_guard(&mut budget, false, 5, 4).expect("first growth ok");
-        assert_eq!(budget, 1);
-        // Iter 2: 5 → 6. Budget: 1 → 0.
-        apply_stall_guard(&mut budget, false, 6, 5).expect("second growth ok");
-        assert_eq!(budget, 0);
-        // Iter 3: 6 → 7. Budget: 0 — bail.
-        let err = apply_stall_guard(&mut budget, false, 7, 6)
+        let mut g = guard_with_budget(2);
+        g.record(false, 5, 4).expect("first growth ok"); // 4 → 5, budget 2 → 1
+        assert_eq!(g.budget, 1);
+        g.record(false, 6, 5).expect("second growth ok"); // 5 → 6, budget 1 → 0
+        assert_eq!(g.budget, 0);
+        let err = g
+            .record(false, 7, 6) // 6 → 7, budget 0 → bail
             .expect_err("third growth must surface the stall");
         assert!(
             err.to_string().contains("in-place edits stalled"),
@@ -1297,23 +1318,23 @@ mod tests {
     }
 
     #[test]
-    fn apply_stall_guard_edge_set_change_skips_check() {
+    fn stall_guard_edge_set_change_skips_check() {
         // When edge_set_changed (Rebuild path), the stall guard is
         // entirely skipped.  Budget stays untouched even on growth.
-        let mut budget = 1usize;
-        apply_stall_guard(&mut budget, /* edge_set_changed */ true, 100, 1)
+        let mut g = guard_with_budget(1);
+        g.record(/* edge_set_changed */ true, 100, 1)
             .expect("rebuild path skips stall check");
-        assert_eq!(budget, 1, "edge-set change must not consume budget");
+        assert_eq!(g.budget, 1, "edge-set change must not consume budget");
     }
 
     #[test]
-    fn apply_stall_guard_zero_budget_with_no_growth_is_ok() {
+    fn stall_guard_zero_budget_with_no_growth_is_ok() {
         // Budget 0 + no growth = no stall fires.  Documents that
         // exhausted budget plus benign progress remains progress.
-        let mut budget = 0usize;
-        apply_stall_guard(&mut budget, false, 4, 4).expect("count-stable + 0-budget ok");
-        apply_stall_guard(&mut budget, false, 3, 4).expect("count-decrease + 0-budget ok");
-        apply_stall_guard(&mut budget, true, 100, 4).expect("edge-change + 0-budget ok");
+        let mut g = guard_with_budget(0);
+        g.record(false, 4, 4).expect("count-stable + 0-budget ok");
+        g.record(false, 3, 4).expect("count-decrease + 0-budget ok");
+        g.record(true, 100, 4).expect("edge-change + 0-budget ok");
     }
 
     // ── existing edge-set tests ───────────────────────────────────────────
