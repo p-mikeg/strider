@@ -3,9 +3,9 @@
 //! Wraps the `pattern` crate.  Provides:
 //! - `Capture` — opaque capture-variable handle.
 //! - `Pat` — opaque wrapped pattern.  Constructed via free functions
-//!   (`add`, `load`, `call`, `float_add`, `cast_to_int`, …) and chained
-//!   via builder methods (`.addr()`, `.arg()`, `.capture()`, `.cap()`,
-//!   `.when()`, `.ordered()`, etc.).
+//!   (`add`, `load`, `call`, `float_add`, `int_bits_to_float`, …) and
+//!   chained via builder methods (`.addr()`, `.arg()`, `.capture()`,
+//!   `.cap()`, `.when()`, `.ordered()`, etc.).
 //! - String-keyed captures: any free function that accepts a sub-pattern
 //!   also accepts a string; the string is interned to a `Capture` at
 //!   the point the outermost pattern is finalized, so back-references
