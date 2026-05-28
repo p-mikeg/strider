@@ -7,8 +7,10 @@
 //! Slots are described by [`Slot`] carrying [`ExpectedOutputKind`] —
 //! a coarser classification than the concrete [`NodeOutputKind`] stored on
 //! actual outputs.  Integer slots accept any width via
-//! [`ExpectedOutputKind::AnyInt`], float slots accept F32 or F64 via
-//! [`ExpectedOutputKind::AnyFloat`].  Bool remains distinct.
+//! [`ExpectedOutputKind::AnyInt`], float slots accept `F32`/`F64`/`F80` via
+//! [`ExpectedOutputKind::AnyFloat`].  The signature-level
+//! [`ExpectedOutputKind::Bool`] selector matches exactly the 1-bit integer
+//! `I1` (there is no distinct boolean type).
 //!
 //! Variadic arity is modelled by [`SlotList::tail`]: a `None` tail means
 //! the slot list is fixed-arity (equal to `head.len()`), while `Some(tail)`

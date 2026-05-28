@@ -40,7 +40,7 @@
 //! - [`Graph`] — sea-of-nodes IR store (structural state only; no entry/CC)
 //! - [`FunctionBuilder`] — constructs the graph with SSA variable tracking
 //! - [`RegionId`] — identifies a basic block within the function
-//! - [`node::NodeOutputType`] — `Bool`, integers `I8`/`I16`/`I32`/`I64`/`I80`/`I128`/`I256`/`I512`,
+//! - [`node::NodeOutputType`] — integers `I1` (the 1-bit boolean)/`I8`/`I16`/`I32`/`I64`/`I80`/`I128`/`I256`/`I512`,
 //!   floats `F32`/`F64`/`F80`
 //! - [`IntBinaryOp`], [`IntUnaryOp`], [`IntCmpOp`], [`ExtendOp`] —
 //!   operation enumerations used in node kinds (logical ops on booleans

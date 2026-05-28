@@ -58,7 +58,10 @@ fn upgrade_to_tracked_for(
     if !is_aliasable_space(vn.addr_space) {
         return None;
     }
-    let vn_end = vn.addr_off + vn.size as u64;
+    // `saturating_add` matches the convention `largest_container_for`
+    // documents: some Sleigh varnodes (ppc64 / aarch64be CR slices) sit
+    // at very high offsets where `off + size` would overflow `u64`.
+    let vn_end = vn.addr_off.saturating_add(vn.size as u64);
 
     // Smallest tracked container that COVERS vn (existing behaviour).
     if let Some(cover) = var_table
@@ -66,7 +69,7 @@ fn upgrade_to_tracked_for(
         .filter(|t| {
             t.addr_space == vn.addr_space
                 && t.addr_off <= vn.addr_off
-                && t.addr_off + t.size as u64 >= vn_end
+                && t.addr_off.saturating_add(t.size as u64) >= vn_end
         })
         .min_by_key(|t| t.size)
         .copied()
@@ -86,7 +89,7 @@ fn upgrade_to_tracked_for(
         .filter(|t| {
             t.addr_space == vn.addr_space
                 && t.addr_off >= vn.addr_off
-                && t.addr_off + t.size as u64 <= vn_end
+                && t.addr_off.saturating_add(t.size as u64) <= vn_end
         })
         .max_by_key(|t| (t.size, t.addr_off))
         .copied()
@@ -114,7 +117,8 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
                 other != *v
                     && other.addr_space == v.addr_space
                     && other.addr_off <= v.addr_off
-                    && other.addr_off + other.size as u64 >= v.addr_off + v.size as u64
+                    && other.addr_off.saturating_add(other.size as u64)
+                        >= v.addr_off.saturating_add(v.size as u64)
                     && other.size > v.size
             })
         })

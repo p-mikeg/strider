@@ -54,8 +54,9 @@ impl NodeOutputKind {
     ///
     /// # Errors
     ///
-    /// Returns an error when `self` is not a value edge, or when the value
-    /// is `Bool`, `F32`, or `F64`.
+    /// Returns an error when `self` is not a value edge, or when the value is
+    /// a float (`F32`/`F64`/`F80`).  Booleans are the integer `I1`, so an
+    /// `I1` value is accepted.
     pub fn as_integer_or_err(self) -> crate::Result<NodeOutputType> {
         let ty = self.as_value_or_err()?;
         if ty.is_integer() {

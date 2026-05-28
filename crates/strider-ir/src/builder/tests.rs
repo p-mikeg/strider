@@ -586,6 +586,20 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
+/// Regression: high-offset register varnodes (e.g. ppc64 / aarch64be
+/// condition-register slices) can have `addr_off + size` overflow `u64`.
+/// The overlap-dedup helper must use saturating arithmetic to match the
+/// convention `largest_container_for` already documents — a plain `+`
+/// panics in debug and wrap-misclassifies containment in release.
+#[test]
+fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
+    let wide = reg_vn(u64::MAX - 1, 8);
+    let narrow = reg_vn(u64::MAX - 1, 4);
+    // Must not panic; the wider varnode subsumes the narrower one.
+    let kept = dedup_overlapping_largest(&[wide, narrow]);
+    assert_eq!(kept, vec![wide], "wider high-offset varnode wins, no overflow");
+}
+
 #[test]
 fn build_call_other_modeled_with_value_emits_value_then_clobbers_in_order() -> Result<()> {
     // Two synthetic implicit-write kinds; their corresponding Vns are
