@@ -22,7 +22,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///
     /// The following fixups ARE performed manually:
     /// 1. Incoming edges (parents) are rewired to the first region.
-    /// 2. A [`RegionEdgeKind::Fallthrough`] edge is added from first → second.
+    /// 2. A [`RegionEdgeKind::Unconditional`] edge is added from first → second.
     /// 3. The `start_addr_to_region_id` map is updated for both halves.
     ///
     /// Returns `region_id` (the second region) on success, or `region_id`
@@ -115,7 +115,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
         // link the first and the second regions with fallthrough
         self.region_graph
-            .add_edge(first_region, region_id, RegionEdgeKind::Fallthrough);
+            .add_edge(first_region, region_id, RegionEdgeKind::Unconditional);
         Ok(region_id)
     }
 }

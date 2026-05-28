@@ -157,8 +157,7 @@ fn contains_addr_returns_true_for_empty_region_at_start_addr() {
 #[test]
 fn region_edge_kind_variants_are_pairwise_distinct() {
     let kinds = [
-        RegionEdgeKind::Fallthrough,
-        RegionEdgeKind::Branch,
+        RegionEdgeKind::Unconditional,
         RegionEdgeKind::IfCaseTrue,
         RegionEdgeKind::IfCaseFalse,
     ];

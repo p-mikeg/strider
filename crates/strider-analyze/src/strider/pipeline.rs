@@ -519,24 +519,15 @@ where
         let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
             continue;
         };
-        match weight {
-            strider_lift::cfg::RegionEdgeKind::Fallthrough => {
-                driver
-                    .builder
-                    .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
-            }
-            strider_lift::cfg::RegionEdgeKind::Branch => {
-                let src_region = cfg
-                    .region_graph()
-                    .node_weight(src)
-                    .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?;
-                if src_region.insns.is_empty() {
-                    driver
-                        .builder
-                        .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
-                }
-            }
-            _ => {}
+        // Every unconditional successor — explicit pcode `Branch` or plain
+        // fall-through — is wired here, the single linking path
+        // (`handle_branch` is a no-op so this can't double-link).
+        // `IfCaseTrue` / `IfCaseFalse` are wired by `handle_cond_branch`
+        // (via `region_if` + `build_if`), not here.
+        if *weight == strider_lift::cfg::RegionEdgeKind::Unconditional {
+            driver
+                .builder
+                .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
         }
     }
     Ok(())

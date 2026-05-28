@@ -108,27 +108,17 @@ pub(crate) fn build_switch_if_ladder(
 impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     pub(super) fn handle_branch(
         &mut self,
-        region_id: strider_lift::cfg::RegionId,
-        region_lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
+        _region_id: strider_lift::cfg::RegionId,
+        _region_lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
-        // Most unconditional p-code `Branch` ops correspond to a `Branch`
-        // CFG edge, which we lower into an explicit IR branch.  The cfg
-        // builder reclassifies a `Branch` whose target is the next
-        // machine instruction (clang -O0 idiom on aarch64be / ppc32le)
-        // as a `Fallthrough` edge.  In that case the IR-level
-        // fallthrough linker in `pipeline.rs` wires the edge using
-        // `cur_ctrl` / `cur_memory`; we skip the explicit IR branch
-        // here to avoid double-linking the successor.
-        if let Some(branch_region) = self.cfg.region_branch(region_id)? {
-            let dest_block = region_lookup(branch_region)?;
-            self.builder.build_branch(dest_block)?;
-            return Ok(());
-        }
-        if self.cfg.region_fallthrough(region_id)?.is_some() {
-            // Fallthrough successor — leave to the post-loop linker.
-            return Ok(());
-        }
-        Err(anyhow!("invalid region index {region_id:?}"))
+        // Nothing to do per-region.  An unconditional pcode `Branch`
+        // produces a single `Unconditional` CFG edge to its successor,
+        // and EVERY unconditional successor — branch or plain
+        // fall-through — is wired uniformly by the post-loop region
+        // linker (`pipeline.rs::link_region_edges`).  Lowering an
+        // explicit IR branch here as well would double-link the
+        // successor (and thus its `Phi` predecessor inputs).
+        Ok(())
     }
 
     /// Lifts a region whose CFG terminator is

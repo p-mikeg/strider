@@ -81,8 +81,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
             let src_id = edge.source().index().to_string();
             let edge_label = format!("{:?}", edge.weight());
             let edge_style = match edge.weight() {
-                RegionEdgeKind::Branch => "bold",
-                RegionEdgeKind::Fallthrough => "solid",
+                RegionEdgeKind::Unconditional => "solid",
                 RegionEdgeKind::IfCaseFalse | RegionEdgeKind::IfCaseTrue => "dashed",
             };
             out.edge(

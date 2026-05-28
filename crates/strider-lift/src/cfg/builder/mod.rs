@@ -42,7 +42,7 @@ use crate::cfg::Result;
 /// ).expect("create Sleigh");
 /// let opts = OptionsBuilder::new().build();
 /// let arch = SleighArch::x86_64();
-/// let cfg = Builder::for_arch(&arch, sleigh, fn_addr, opts).build()?;
+/// let (cfg, _sleigh) = Builder::for_arch(&arch, sleigh, fn_addr, opts).build()?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
@@ -559,7 +559,7 @@ mod tests {
 
         let edges: Vec<_> = b.region_graph.edge_references().collect();
         assert_eq!(edges.len(), 1);
-        assert_eq!(*edges[0].weight(), RegionEdgeKind::Fallthrough);
+        assert_eq!(*edges[0].weight(), RegionEdgeKind::Unconditional);
         assert_eq!(edges[0].target(), original);
     }
 
@@ -570,22 +570,25 @@ mod tests {
         let b_id = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
-        b.region_graph.add_edge(a, b_id, RegionEdgeKind::Branch);
+        b.region_graph.add_edge(a, b_id, RegionEdgeKind::Unconditional);
 
         b.split_region(b_id, addr(0x1004, 0)).unwrap();
 
         let first = b.start_addr_to_region_id[&addr(0x1000, 0)];
         let incoming: Vec<_> = b.region_graph.edges_directed(first, petgraph::Incoming).collect();
         assert_eq!(incoming.len(), 1);
-        assert_eq!(*incoming[0].weight(), RegionEdgeKind::Branch);
+        assert_eq!(*incoming[0].weight(), RegionEdgeKind::Unconditional);
         assert_eq!(incoming[0].source(), a);
 
-        let second_branch_incoming: Vec<_> = b
+        // The original `a → b_id` edge was rewired to `a → first`, so the
+        // second half's only remaining incoming edge is the split's own
+        // fall-through from `first` — not from `a`.
+        let second_incoming: Vec<_> = b
             .region_graph
             .edges_directed(b_id, petgraph::Incoming)
-            .filter(|e| *e.weight() == RegionEdgeKind::Branch)
             .collect();
-        assert!(second_branch_incoming.is_empty());
+        assert_eq!(second_incoming.len(), 1);
+        assert_eq!(second_incoming[0].source(), first);
     }
 
     #[test]

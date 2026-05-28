@@ -7,12 +7,14 @@ use petgraph::stable_graph::StableDiGraph;
 /// source region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RegionEdgeKind {
-    /// Sequential execution: the source region ends without a branch and
-    /// execution falls directly into the target region.
-    Fallthrough,
-    /// Unconditional jump: the source region ends with a pcode `Branch` and
-    /// always transfers control to the target.
-    Branch,
+    /// Unconditional successor: control always transfers from the source
+    /// region to the target.  Covers both sequential fall-through (the
+    /// source ends without a branch opcode) and an explicit pcode `Branch`
+    /// — the CFG draws the same edge for both, because the IR lifter links
+    /// every unconditional successor the same way (via the region linker).
+    /// The source [`Region::terminator`] still records which opcode (if
+    /// any) ended the region, for callers that care.
+    Unconditional,
     /// Conditional branch — taken path: the source region ends with a pcode
     /// `CondBranch` and the branch condition evaluated to *true*.
     IfCaseTrue,
@@ -94,11 +96,12 @@ pub enum RegionTerminator {
     /// No terminator opcode; control falls into the next region.  This
     /// covers the case where decoding hits the start of an
     /// already-discovered region and the current region is closed out
-    /// with a [`RegionEdgeKind::Fallthrough`] edge, as well as the
+    /// with a [`RegionEdgeKind::Unconditional`] edge, as well as the
     /// first half of a split region.
     Fallthrough,
     /// Direct unconditional branch, intra-function.  Successor lives on
-    /// the [`RegionEdgeKind::Branch`] edge.
+    /// the [`RegionEdgeKind::Unconditional`] edge (the same edge kind a
+    /// `Fallthrough` terminator uses — both are unconditional transfers).
     Branch,
     /// Direct conditional branch.  Successors live on the
     /// [`RegionEdgeKind::IfCaseTrue`] / [`RegionEdgeKind::IfCaseFalse`]

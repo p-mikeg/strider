@@ -78,27 +78,17 @@ impl Cfg {
         Ok(found)
     }
 
-    /// Returns the unconditional-branch successor of `region_id`, if any.
+    /// Returns the unconditional successor of `region_id`, if any.
+    ///
+    /// This is the single successor reached on the
+    /// [`RegionEdgeKind::Unconditional`] edge — whether the region ended
+    /// with an explicit pcode `Branch` or fell through to the next region.
     ///
     /// # Errors
-    /// Returns an error when more than one `Branch` edge leaves
+    /// Returns an error when more than one `Unconditional` edge leaves
     /// `region_id`.
-    pub fn region_branch(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
-        self.unique_outgoing(region_id, RegionEdgeKind::Branch)
-    }
-
-    /// Returns the fallthrough successor of `region_id`, if any.
-    ///
-    /// A region's fallthrough edge is its successor on the
-    /// `Fallthrough` edge kind — emitted either by sequential decode
-    /// reaching a known region OR by the builder reclassifying a
-    /// `Branch` whose target was the next machine instruction.
-    ///
-    /// # Errors
-    /// Returns an error when more than one `Fallthrough` edge leaves
-    /// `region_id`.
-    pub fn region_fallthrough(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
-        self.unique_outgoing(region_id, RegionEdgeKind::Fallthrough)
+    pub fn region_successor(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
+        self.unique_outgoing(region_id, RegionEdgeKind::Unconditional)
     }
 
     /// Returns both conditional-branch successors of `region_id`.
@@ -163,9 +153,9 @@ impl Cfg {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for `Cfg`'s query API: `region_if`, `region_branch`,
+    //! Tests for `Cfg`'s query API: `region_if`, `region_successor`,
     //! `regions`, `region_ids`, `region_id_at_start`, and the
-    //! DuplicateEdgeKind error path through `region_branch` / `region_if`.
+    //! DuplicateEdgeKind error path through `region_successor` / `region_if`.
     //!
     //! Ported from pre-rewrite `crates/cfg/tests/cfg_query.rs`.  The
     //! malformed-CFG tests live inline so they can populate the
@@ -258,12 +248,12 @@ mod tests {
         assert_eq!(cfg.region_ids().count(), cfg.region_graph.node_count());
     }
 
-    // ── region_branch ────────────────────────────────────────────────────
+    // ── region_successor ────────────────────────────────────────────────────
 
     #[test]
-    fn region_branch_returns_none_for_linear_entry() {
+    fn region_successor_returns_none_for_linear_entry() {
         let cfg = real_cfg("arithmetic", "add");
-        assert!(cfg.region_branch(cfg.entry).unwrap().is_none());
+        assert!(cfg.region_successor(cfg.entry).unwrap().is_none());
     }
 
     // ── region_if ────────────────────────────────────────────────────────
@@ -289,16 +279,16 @@ mod tests {
     // ── DuplicateEdgeKind error ──────────────────────────────────────────
 
     #[test]
-    fn duplicate_edge_kind_is_detected_by_region_branch() {
+    fn duplicate_edge_kind_is_detected_by_region_successor() {
         // Construct a malformed Cfg with two Branch edges from one node
-        // to distinct destinations.  region_branch (via unique_outgoing)
+        // to distinct destinations.  region_successor (via unique_outgoing)
         // must error with "more than one outgoing edge".
         let mut graph: StableDiGraph<Region, RegionEdgeKind> = StableDiGraph::new();
         let src = graph.add_node(make_region(&[(0x1000, 0)]));
         let dst1 = graph.add_node(make_region(&[(0x2000, 0)]));
         let dst2 = graph.add_node(make_region(&[(0x3000, 0)]));
-        graph.add_edge(src, dst1, RegionEdgeKind::Branch);
-        graph.add_edge(src, dst2, RegionEdgeKind::Branch);
+        graph.add_edge(src, dst1, RegionEdgeKind::Unconditional);
+        graph.add_edge(src, dst2, RegionEdgeKind::Unconditional);
 
         let cfg = Cfg {
             region_graph: graph,
@@ -306,7 +296,7 @@ mod tests {
             start_addr_to_region_id: BTreeMap::new(),
         };
 
-        let err = cfg.region_branch(src).unwrap_err();
+        let err = cfg.region_successor(src).unwrap_err();
         assert!(
             err.to_string().contains("more than one outgoing edge"),
             "got: {err}"

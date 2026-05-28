@@ -76,7 +76,7 @@ fn back_jump_splits_region() {
     let branch_edges = cfg
         .region_graph
         .edge_references()
-        .filter(|e| *e.weight() == RegionEdgeKind::Branch)
+        .filter(|e| *e.weight() == RegionEdgeKind::Unconditional)
         .count();
     assert!(branch_edges >= 1, "expected at least one Branch edge from the back-jump");
 }
@@ -142,7 +142,7 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     assert!(
         cfg.region_graph
             .edge_references()
-            .any(|e| *e.weight() == RegionEdgeKind::Branch),
+            .any(|e| *e.weight() == RegionEdgeKind::Unconditional),
         "expected at least one Branch edge since the below-start target is followed"
     );
 }

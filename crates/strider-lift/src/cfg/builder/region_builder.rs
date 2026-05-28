@@ -261,9 +261,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     }
 
     /// Handles a `Branch` opcode: decode the target, classify as tail-call
-    /// vs intra-function branch (with the clang-`b <next>` fall-through
-    /// normalisation), finalise the region, and enqueue the successor when
-    /// it's not a tail call.
+    /// vs intra-function branch, finalise the region, and enqueue the
+    /// successor (on an `Unconditional` edge) when it's not a tail call.
     fn process_branch(
         &mut self,
         insn: &rsleigh::Insn,
@@ -279,33 +278,6 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         if is_tail_call && branch_target_addr.insn_index != 0 {
             bail!("invalid tail call at opcode {branch_target_addr:?}");
         }
-        // clang at -O0 (used for the aarch64be / ppc32le
-        // fixtures, where no Debian gcc cross exists) emits
-        // explicit unconditional `b <next-instr>` between
-        // adjacent basic blocks instead of letting control
-        // fall through.  Without normalisation every such
-        // transition shows up as a `Branch` edge and the CFG
-        // never has any `Fallthrough` edges, breaking
-        // downstream passes / queries that distinguish the
-        // two.  When the branch target is exactly the address
-        // that decoding would naturally advance to next AND
-        // is the start of a machine instruction (`insn_index
-        // == 0`), classify the edge as `Fallthrough`.
-        // Restricting to machine-instruction boundaries
-        // avoids reclassifying any intra-machine-instruction
-        // p-code `Branch` whose target happens to be the
-        // next p-code op in the same insn.  This is an
-        // edge-classification change only — the target is
-        // still enqueued for exploration the same way.
-        let edge_kind = if !is_tail_call
-            && branch_target_addr.insn_index == 0
-            && next_pcode_addr(addr, lift_res)
-                .is_ok_and(|next| next == branch_target_addr)
-        {
-            RegionEdgeKind::Fallthrough
-        } else {
-            RegionEdgeKind::Branch
-        };
         let terminator = if is_tail_call {
             RegionTerminator::TailCall {
                 target: branch_target_addr.machine_addr.addr,
@@ -315,10 +287,16 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         };
         let region = self.finish_current_region(terminator)?;
         if !is_tail_call {
-            // Not a tail call — enqueue the target so the builder explores it next.
-            self.builder
-                .work_queue
-                .push((Some((region, edge_kind)), branch_target_addr));
+            // Not a tail call — enqueue the target so the builder explores it
+            // next.  The edge is `Unconditional`: the IR lifter wires every
+            // unconditional successor through the region linker, so a real
+            // `b <target>` and clang's -O0 `b <next-instr>` fall-through idiom
+            // need no edge-level distinction here (the `Branch` terminator
+            // still records that this region ended with a branch opcode).
+            self.builder.work_queue.push((
+                Some((region, RegionEdgeKind::Unconditional)),
+                branch_target_addr,
+            ));
         }
         Ok(ProcessInsnRes::FinishedProcessing)
     }
@@ -408,7 +386,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 let region = self.finish_current_region(RegionTerminator::Branch)?;
                 self.builder
                     .work_queue
-                    .push((Some((region, RegionEdgeKind::Branch)), in_range));
+                    .push((Some((region, RegionEdgeKind::Unconditional)), in_range));
             }
         }
         Ok(ProcessInsnRes::FinishedProcessing)
@@ -518,7 +496,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // nothing to validate.
                 self.finish_branch_or_tail_call(
                     target_addr,
-                    RegionEdgeKind::Branch,
+                    RegionEdgeKind::Unconditional,
                     self.is_branch_tail_call_nocheck(target_addr),
                 )?;
             }
@@ -554,7 +532,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     let target_addr = PcodeInsnAddr::at_machine_start(target);
                     self.builder
                         .work_queue
-                        .push((Some((region, RegionEdgeKind::Branch)), target_addr));
+                        .push((Some((region, RegionEdgeKind::Unconditional)), target_addr));
                 }
             }
         }
@@ -608,7 +586,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     ///
     /// If so, the current region has fallen through into an already-explored
     /// region: the current region is finalised and a
-    /// [`RegionEdgeKind::Fallthrough`] edge is added to the existing region.
+    /// [`RegionEdgeKind::Unconditional`] edge is added to the existing region.
     /// Otherwise delegates to [`process_new_insn`](Self::process_new_insn).
     ///
     /// **Zero-pcode-op stretch case.**  When the outer `build` loop walks
@@ -642,7 +620,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             let region = self.finish_current_region(RegionTerminator::Fallthrough)?;
             self.builder
                 .region_graph
-                .add_edge(region, existing_region_id, RegionEdgeKind::Fallthrough);
+                .add_edge(region, existing_region_id, RegionEdgeKind::Unconditional);
             return Ok(ProcessInsnRes::FinishedProcessing);
         }
         self.process_new_insn(insn, addr, lift_res)

@@ -9,7 +9,7 @@
 //! Coverage:
 //! - Non-empty output with the per-region label header.
 //! - IfCase edge labelling + dashed style on a conditional CFG.
-//! - Solid / bold style on a back-edge (loop).
+//! - Solid style on a back-edge (loop) unconditional edge.
 //! - Per-region label count matches `graph.node_count()`.
 //! - Per-insn line uses rsleigh's `InsnCtxFmt` (space-separated opcode
 //!   + operands), not the hand-rolled `<Opcode>, <Reg>` form.
@@ -70,7 +70,7 @@ fn dot_output_for_conditional_function_contains_if_case_edges_and_dashed_style()
 }
 
 #[test]
-fn dot_output_for_loop_contains_solid_or_bold_edges() {
+fn dot_output_for_loop_contains_solid_unconditional_edges() {
     // `xor eax, eax; xor eax, eax; jmp -4` — a 2-region body whose
     // second half branches back to itself (a back-edge loop).  Same
     // byte sequence as `cfg_build_end_to_end.rs`'s
@@ -79,8 +79,8 @@ fn dot_output_for_loop_contains_solid_or_bold_edges() {
     let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg, &sleigh);
     assert!(
-        s.contains("solid") || s.contains("bold"),
-        "a looping CFG should have solid (fallthrough) or bold (branch) edges"
+        s.contains("solid"),
+        "a looping CFG's unconditional edges (incl. the back-edge) render solid"
     );
 }
 
