@@ -62,7 +62,7 @@ fn upgrade_to_tracked_for(
 
     // Smallest tracked container that COVERS vn (existing behaviour).
     if let Some(cover) = var_table
-        .vns()
+        .values()
         .filter(|t| {
             t.addr_space == vn.addr_space
                 && t.addr_off <= vn.addr_off
@@ -82,7 +82,7 @@ fn upgrade_to_tracked_for(
     // de-overlap during `new_raw`'s filter — but defensive against
     // FxHashMap's non-deterministic iteration order).
     var_table
-        .vns()
+        .values()
         .filter(|t| {
             t.addr_space == vn.addr_space
                 && t.addr_off >= vn.addr_off
@@ -395,7 +395,7 @@ impl FunctionBuilder {
         );
         let mut var_table = crate::graph::VarTable::default();
         for variable in all_variables {
-            var_table.insert(variable);
+            var_table.intern(variable);
         }
         // For arg-passing and ret-val regs that `dedup_overlapping_largest`
         // dropped (because the function uses a different-width view of the
@@ -522,7 +522,7 @@ impl FunctionBuilder {
 
     /// Returns an iterator over all tracked varnodes.
     pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
-        self.function.cc_metadata.var_table.vns()
+        self.function.cc_metadata.var_table.values()
     }
 
     /// Returns the largest tracked variable in the same fixed-offset
@@ -561,7 +561,7 @@ impl FunctionBuilder {
             // overflow `u64`.  Saturation is safe: a saturated
             // endpoint can only fail the containment test (it's the
             // weakest possible upper bound), never spuriously succeed.
-            let vars: Vec<rsleigh::Vn> = self.function.cc_metadata.var_table.vns().copied().collect();
+            let vars: Vec<rsleigh::Vn> = self.function.cc_metadata.var_table.values().copied().collect();
             let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
                 FxHashMap::with_capacity_and_hasher(vars.len(), Default::default());
 
@@ -635,7 +635,7 @@ impl FunctionBuilder {
     /// stores.
     #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
-        self.function.cc_metadata.var_table.vn(var_id)
+        self.function.cc_metadata.var_table.get(var_id).copied()
     }
 
     /// Returns the calling convention's return-value registers, in ABI order.
@@ -666,7 +666,7 @@ impl FunctionBuilder {
             .function
             .cc_metadata
             .var_table
-            .vns()
+            .values()
             .copied()
             .filter(|v| Some(*v) != stack_vn)
             .collect();

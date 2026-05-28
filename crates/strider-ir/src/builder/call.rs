@@ -156,7 +156,7 @@ impl FunctionBuilder {
                 });
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = cc_meta
                     .var_table
-                    .vns()
+                    .values()
                     .copied()
                     .filter(|v| cc.clobbers_override_var(v, function_sp))
                     .collect();

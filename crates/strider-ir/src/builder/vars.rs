@@ -18,7 +18,7 @@ impl FunctionBuilder {
     /// Returns `NoCurrentRegion` when no region is active. (Does
     /// not error when the variable is not tracked — that returns `Ok(None)`.)
     pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
-        if let Some(variable_id) = self.function.cc_metadata.var_table.id(var) {
+        if let Some(variable_id) = self.function.cc_metadata.var_table.key_of(var) {
             Ok(Some(self.read_variable_from_id(variable_id)?))
         } else {
             Ok(None)
@@ -39,7 +39,7 @@ impl FunctionBuilder {
             .function
             .cc_metadata
             .var_table
-            .id(variable)
+            .key_of(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.read_variable_from_id(id)
     }
@@ -56,7 +56,7 @@ impl FunctionBuilder {
             .function
             .cc_metadata
             .var_table
-            .id(variable)
+            .key_of(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.write_variable_from_id(var_id, value)
     }
@@ -85,7 +85,7 @@ impl FunctionBuilder {
         self.link_memory_regions(region_id, entry_memory)?;
 
         // Create initial variables
-        let var_ids: Vec<_> = self.function.cc_metadata.var_table.ids().collect();
+        let var_ids: Vec<_> = self.function.cc_metadata.var_table.keys().collect();
         let mut initial_variables = SecondaryMap::new();
         for var_id in var_ids {
             let var = self.function.cc_metadata.var_table[var_id];
@@ -130,7 +130,7 @@ impl FunctionBuilder {
         // automatic discovery via output_uses(cs_phi_out)).
         self.function_mut().add_node_input(memory_node, phi_token)?;
 
-        let var_ids: Vec<_> = self.function.cc_metadata.var_table.ids().collect();
+        let var_ids: Vec<_> = self.function.cc_metadata.var_table.keys().collect();
         let mut variables = SecondaryMap::new();
         for var_id in var_ids {
             let var = self.function.cc_metadata.var_table[var_id];

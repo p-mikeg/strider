@@ -261,8 +261,8 @@ impl Graph {
         Ok(remap)
     }
 
-    /// Rebuilds [`Self::wide_consts`] + [`Self::wide_const_dedup`] over
-    /// only the values referenced by surviving `IntConstWide` nodes.
+    /// Rebuilds [`Self::wide_const_interner`] over only the values
+    /// referenced by surviving `IntConstWide` nodes.
     /// Each `IntConstWide(old_id)` in the arena is rewritten in place
     /// to carry the new id assigned by the rebuilt side-table.
     ///
@@ -278,7 +278,7 @@ impl Graph {
     /// path should call `retain_reachable` instead.
     pub(crate) fn gc_wide_consts(&mut self) {
         use crate::node::NodeKind;
-        use crate::wide_const::{WideConstId, WideConstStorage};
+        use crate::wide_const::WideConstId;
 
         // Build the live-id set + collect every IntConstWide node's old id.
         let mut live_old_ids: Vec<WideConstId> = Vec::new();
@@ -289,33 +289,27 @@ impl Graph {
                 live_old_ids.push(id);
             }
         }
-        if live_old_ids.is_empty() && self.wide_consts.is_empty() {
+        if live_old_ids.is_empty() && self.wide_const_interner.is_empty() {
             return;
         }
 
-        // Rebuild the side-table + dedup map over only live values.
-        let mut new_consts: cranelift_entity::PrimaryMap<WideConstId, WideConstStorage> =
-            cranelift_entity::PrimaryMap::new();
-        let mut new_dedup: rustc_hash::FxHashMap<WideConstStorage, WideConstId> =
-            rustc_hash::FxHashMap::default();
+        // Rebuild the interner over only live values; `intern` dedups, so
+        // distinct old ids that aliased one value collapse to one new id.
+        let mut new_interner: entity_utils::EntityInterner<
+            WideConstId,
+            crate::wide_const::WideConstStorage,
+        > = entity_utils::EntityInterner::default();
         let mut old_to_new: rustc_hash::FxHashMap<WideConstId, WideConstId> =
             rustc_hash::FxHashMap::default();
         for old_id in live_old_ids {
             if old_to_new.contains_key(&old_id) {
                 continue;
             }
-            let value = self.wide_consts[old_id].clone();
-            let new_id = if let Some(&existing) = new_dedup.get(&value) {
-                existing
-            } else {
-                let id = new_consts.push(value.clone());
-                new_dedup.insert(value, id);
-                id
-            };
+            let value = self.wide_const_interner[old_id].clone();
+            let new_id = new_interner.intern(value);
             old_to_new.insert(old_id, new_id);
         }
-        self.wide_consts = new_consts;
-        self.wide_const_dedup = new_dedup;
+        self.wide_const_interner = new_interner;
 
         // Rewrite the surviving IntConstWide nodes' payloads in place.
         for node in wide_nodes {

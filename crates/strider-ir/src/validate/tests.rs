@@ -1114,8 +1114,8 @@ fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
         size: 8,
     };
     let mut var_table = crate::graph::VarTable::default();
-    var_table.insert(mk_vn(0x10));
-    var_table.insert(mk_vn(0x18));
+    var_table.intern(mk_vn(0x10));
+    var_table.intern(mk_vn(0x18));
     f.cc_metadata = crate::graph::CcMetadata {
         var_table,
         call_clobbered: Vec::new(),

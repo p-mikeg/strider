@@ -29,6 +29,14 @@ pub(crate) use compact::SideTableRemap;
 #[cfg(test)]
 mod tests;
 
+/// Bidirectional tracked-variable table (`VarId ↔ Vn`): the forward
+/// `VarId → Vn` map plus its `Vn → VarId` reverse index, kept consistent by
+/// construction.  An [`entity_utils::EntityInterner`] — `intern` is the sole
+/// mutator (writes both halves), `key_of`/`get` resolve either direction in
+/// O(1), and `keys()`/`values()` iterate in insertion (`VarId`) order for
+/// the consumers that need ABI slot order.
+pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, rsleigh::Vn>;
+
 /// Calling-convention metadata captured at build time.
 ///
 /// Always present on every [`crate::Function`] (possibly with every
@@ -52,66 +60,6 @@ mod tests;
 /// `crate::Function::no_memory_clobber`).  The fields below are the
 /// per-function-effective lists, which differ from the raw ABI lists
 /// after dedup / `upgrade_to_tracked_for`.
-/// Bidirectional tracked-variable table: the forward `VarId → Vn` map and
-/// its `Vn → VarId` reverse index, kept consistent by construction.
-///
-/// The reverse index lets SSA reads / writes resolve a tracked varnode to
-/// its dense [`crate::builder::VarId`] in O(1); the forward map preserves
-/// insertion (`VarId`) order for the consumers that iterate slots in ABI
-/// order.  The single mutating entry point [`VarTable::insert`] writes both
-/// halves, so the two can never drift — the invariant the old separate
-/// `variables` / `variable_to_id` fields had to maintain by hand.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct VarTable {
-    forward: PrimaryMap<crate::builder::VarId, rsleigh::Vn>,
-    reverse: rustc_hash::FxHashMap<rsleigh::Vn, crate::builder::VarId>,
-}
-
-impl VarTable {
-    /// Track `vn`, returning its [`crate::builder::VarId`].  Idempotent:
-    /// returns the existing id when `vn` is already tracked.
-    pub(crate) fn insert(&mut self, vn: rsleigh::Vn) -> crate::builder::VarId {
-        if let Some(&id) = self.reverse.get(&vn) {
-            return id;
-        }
-        let id = self.forward.push(vn);
-        self.reverse.insert(vn, id);
-        id
-    }
-
-    /// The varnode for `id`, or `None` when `id` is out of range.
-    pub(crate) fn vn(&self, id: crate::builder::VarId) -> Option<rsleigh::Vn> {
-        self.forward.get(id).copied()
-    }
-
-    /// The id for `vn`, or `None` when `vn` is not tracked.
-    pub(crate) fn id(&self, vn: &rsleigh::Vn) -> Option<crate::builder::VarId> {
-        self.reverse.get(vn).copied()
-    }
-
-    /// Whether `vn` is tracked.
-    pub(crate) fn contains(&self, vn: &rsleigh::Vn) -> bool {
-        self.reverse.contains_key(vn)
-    }
-
-    /// Iterate tracked varnodes in `VarId` (insertion) order.
-    pub(crate) fn vns(&self) -> impl Iterator<Item = &rsleigh::Vn> {
-        self.forward.values()
-    }
-
-    /// Iterate the tracked [`crate::builder::VarId`]s in order.
-    pub(crate) fn ids(&self) -> impl Iterator<Item = crate::builder::VarId> + '_ {
-        self.forward.keys()
-    }
-}
-
-impl std::ops::Index<crate::builder::VarId> for VarTable {
-    type Output = rsleigh::Vn;
-    fn index(&self, id: crate::builder::VarId) -> &rsleigh::Vn {
-        &self.forward[id]
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct CcMetadata {
     /// Bidirectional tracked-variable table (`VarId ↔ Vn`); see [`VarTable`].
@@ -143,7 +91,6 @@ pub struct CcMetadata {
     /// than duplicating those scalars on this struct.
     pub(crate) cc: Option<strider_target::BuiltCallingConvention>,
 }
-
 
 /// The core IR graph structure.
 ///
@@ -180,14 +127,11 @@ pub struct Graph {
     /// (via `Self::intern_wide_const`) dedups by value so two
     /// `IntConstWide(id)` nodes referencing the same id are
     /// structurally equal under [`Self::create_node`]'s dedup cache.
-    pub(crate) wide_consts:
-        PrimaryMap<crate::wide_const::WideConstId, crate::wide_const::WideConstStorage>,
-    /// Reverse-dedup index for [`Self::wide_consts`]: value → id.
-    /// Owned by `Self::intern_wide_const`; never read directly by
-    /// other code.
-    pub(crate) wide_const_dedup: rustc_hash::FxHashMap<
-        crate::wide_const::WideConstStorage,
+    /// An [`entity_utils::EntityInterner`] owns both the forward
+    /// `WideConstId → value` map and the reverse value-dedup index.
+    pub(crate) wide_const_interner: entity_utils::EntityInterner<
         crate::wide_const::WideConstId,
+        crate::wide_const::WideConstStorage,
     >,
     /// Monotonic version counter incremented by every operation that
     /// invalidates pre-existing `NodeId` / `NodeOutputId` /
@@ -216,8 +160,7 @@ impl Graph {
             output_pool: ListPool::new(),
             input_pool: ListPool::new(),
             node_to_id: HashMap::new(),
-            wide_consts: PrimaryMap::new(),
-            wide_const_dedup: rustc_hash::FxHashMap::default(),
+            wide_const_interner: entity_utils::EntityInterner::default(),
             generation: 0,
         }
     }
@@ -270,12 +213,7 @@ impl Graph {
         &mut self,
         value: crate::wide_const::WideConstStorage,
     ) -> crate::wide_const::WideConstId {
-        if let Some(&id) = self.wide_const_dedup.get(&value) {
-            return id;
-        }
-        let id = self.wide_consts.push(value.clone());
-        self.wide_const_dedup.insert(value, id);
-        id
+        self.wide_const_interner.intern(value)
     }
 
     /// Looks up a wide-const value by id.  The id must have been
@@ -286,7 +224,7 @@ impl Graph {
         &self,
         id: crate::wide_const::WideConstId,
     ) -> &crate::wide_const::WideConstStorage {
-        &self.wide_consts[id]
+        &self.wide_const_interner[id]
     }
 
     /// Non-panicking variant of [`Self::wide_const`]: returns `None` for a
@@ -298,7 +236,7 @@ impl Graph {
         &self,
         id: crate::wide_const::WideConstId,
     ) -> Option<&crate::wide_const::WideConstStorage> {
-        self.wide_consts.get(id)
+        self.wide_const_interner.get(id)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,

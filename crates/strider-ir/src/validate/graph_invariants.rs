@@ -335,7 +335,7 @@ pub(super) fn check_graph_invariants_wide_consts(
         let NodeKind::IntConstWide(id) = kind else {
             continue;
         };
-        if graph.wide_consts.get(*id).is_none() {
+        if graph.wide_const_interner.get(*id).is_none() {
             errs.push(ValidationError::DanglingWideConstId { node, id: *id });
             continue;
         }

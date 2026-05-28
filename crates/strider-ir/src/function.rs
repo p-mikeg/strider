@@ -213,7 +213,7 @@ impl Function {
     /// Iterate the function's tracked varnodes in `VarId` (insertion) order.
     #[inline]
     pub fn tracked_vns(&self) -> impl Iterator<Item = rsleigh::Vn> + '_ {
-        self.cc_metadata.var_table.vns().copied()
+        self.cc_metadata.var_table.values().copied()
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────

@@ -1295,7 +1295,7 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
 fn var_table_of(vns: impl IntoIterator<Item = rsleigh::Vn>) -> crate::graph::VarTable {
     let mut table = crate::graph::VarTable::default();
     for vn in vns {
-        table.insert(vn);
+        table.intern(vn);
     }
     table
 }
@@ -1753,13 +1753,13 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .create_node(NodeKind::Return, [entry_ctrl, mem_out, _live], []);
     b.function_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
 
-    let pre = b.function().wide_consts.len();
+    let pre = b.function().wide_const_interner.len();
     assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
 
     let mut bfg = b.build()?;
     bfg.compact()?;
 
-    let post = bfg.wide_consts.len();
+    let post = bfg.wide_const_interner.len();
     assert_eq!(
         post, 1,
         "compact must drop the unreferenced zombie wide const; got {post} entries"
