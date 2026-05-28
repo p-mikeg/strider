@@ -49,7 +49,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     }
     let stack_node = stack_node.expect("stack load node");
     let heap_node = heap_node.expect("heap load node");
-    function.set_stack_offset(stack_node, 0x10);
+    let stack_base = function.node_inputs(stack_node)[1];
+    function.set_stack_offset(stack_node, stack_base, 0x10);
     (function, stack_node, heap_node)
 }
 
@@ -89,7 +90,8 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     }
     let stack_store = stack_store.expect("stack store node");
     let heap_store = heap_store.expect("heap store node");
-    function.set_stack_offset(stack_store, 0x10);
+    let stack_base = function.node_inputs(stack_store)[1];
+    function.set_stack_offset(stack_store, stack_base, 0x10);
     (function, stack_store, heap_store)
 }
 

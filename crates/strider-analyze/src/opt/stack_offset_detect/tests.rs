@@ -45,12 +45,12 @@ fn sp_relative_store_and_load_get_offset_stamped() {
     let store_offsets: Vec<i64> = f
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-        .filter_map(|n| f.stack_offset(n))
+        .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
         .collect();
     let load_offsets: Vec<i64> = f
         .all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
-        .filter_map(|n| f.stack_offset(n))
+        .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
         .collect();
 
     assert_eq!(store_offsets, vec![-4]);
@@ -77,15 +77,13 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
 }
 
 /// A store whose address is rooted at an *alignment-masked* base
-/// (`And(sp, mask)`, e.g. `and $0xfffffff8, %esp`) is NOT unambiguously
-/// `sp + K`: the mask shifts the value by a runtime amount, so the offset
-/// relative to entry-SP is unknown.  `stack_offset` is documented to hold a
-/// value only for addresses that *are* unambiguously `sp + K`, so such a
-/// store must be left unstamped — otherwise its offset is in a different
-/// coordinate system from canonical-SP stores and consumers that compare
-/// offsets (e.g. CallStackArgCollect's side-table fast path) mix bases.
+/// (`And(sp, mask)`, e.g. `and $0xfffffff8, %esp`) IS a stack access — just
+/// in a different coordinate system from entry-SP.  `StackOffsetDetect`
+/// stamps it with that aligned base (offset 0 here, no `Add`), so aligned
+/// frames are covered; the recorded `base` keeps its offset from being
+/// conflated with an entry-SP offset.
 #[test]
-fn alignment_masked_base_store_is_not_stamped() {
+fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     use strider_ir::IntBinaryOp;
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
@@ -101,15 +99,19 @@ fn alignment_masked_base_store_is_not_stamped() {
     })
     .unwrap();
 
-    run(&mut f, sp);
-    let stamped = f
+    assert_eq!(run(&mut f, sp), OptimizationResult::Changed);
+    // The aligned-base store IS stamped, and its base is the `And` node's
+    // output (NOT the canonical `InitialVar(sp)`).
+    let store = f
         .all_node_ids()
-        .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-        .filter(|&n| f.stack_offset(n).is_some())
-        .count();
-    assert_eq!(
-        stamped, 0,
-        "an alignment-masked-base store must not be stamped (not unambiguously sp+K)"
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
+        .expect("store node");
+    let (base, offset) = f.stack_offset(store).expect("aligned store must be stamped");
+    assert_eq!(offset, 0, "store at the aligned base directly => offset 0");
+    let base_node = f.node_for_output(base);
+    assert!(
+        matches!(f.node_kind(base_node), NodeKind::IntBinaryOp(IntBinaryOp::And)),
+        "recorded base must be the alignment `And` node, not InitialVar(sp)"
     );
 }
 

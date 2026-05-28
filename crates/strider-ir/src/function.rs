@@ -19,7 +19,7 @@ use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
 use crate::graph::{CcMetadata, Graph, NodeIdRemap, SideTableRemap};
-use crate::node::NodeId;
+use crate::node::{NodeId, NodeOutputId};
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
@@ -82,12 +82,15 @@ pub struct Function {
     /// Populated by `FunctionArgDetect`; empty until that pass runs.
     arg_index_to_nodes: FxHashMap<u32, Vec<NodeId>>,
 
-    /// Stack offset for Store/Load nodes whose address decomposes to
-    /// `sp + K` for a single concrete `K`.  Populated by the
-    /// `StackOffsetDetect` classifier.  The phi-of-offsets case (address is a
-    /// phi of different constants per branch) is not recorded — consumers
-    /// can re-decompose via `decompose_sp` if needed.
-    stack_offsets: SecondaryMap<NodeId, Option<i64>>,
+    /// Stack slot for Store/Load nodes whose address decomposes to
+    /// `base + K` for a single concrete `K`, where `base` is the SP-derived
+    /// terminal node (`InitialVar(sp)` or an alignment-masked `sp & -16`).
+    /// Stored as `(base, K)`: the offset `K` is only meaningful relative to
+    /// its `base`, and two accesses are the same slot iff they share both.
+    /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
+    /// case (address is a phi of different constants per branch) is not
+    /// recorded — consumers can re-decompose via `decompose_sp` if needed.
+    stack_offsets: SecondaryMap<NodeId, Option<(NodeOutputId, i64)>>,
 
     /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
     /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
@@ -330,27 +333,30 @@ impl Function {
 
     // ── stack_offsets accessors ───────────────────────────────────────────
 
-    /// Returns the stack offset recorded for a Store/Load node, or `None`
-    /// if the node has no recorded offset (non-stack node, or a phi-of-
-    /// offsets address whose single concrete offset cannot be named).
+    /// Returns the stack slot `(base, offset)` recorded for a Store/Load
+    /// node, or `None` if the node has no recorded slot (non-stack node, or
+    /// a phi-of-offsets address whose single concrete offset cannot be
+    /// named).  `base` is the SP-derived terminal node the offset is
+    /// relative to; the offset is only comparable against another access's
+    /// offset when their bases match.
     #[must_use]
     #[inline]
-    pub fn stack_offset(&self, id: NodeId) -> Option<i64> {
+    pub fn stack_offset(&self, id: NodeId) -> Option<(NodeOutputId, i64)> {
         self.stack_offsets[id]
     }
 
-    /// Records a concrete stack offset for a Store/Load node.
+    /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
     #[inline]
-    pub fn set_stack_offset(&mut self, id: NodeId, offset: i64) {
-        self.stack_offsets[id] = Some(offset);
+    pub fn set_stack_offset(&mut self, id: NodeId, base: NodeOutputId, offset: i64) {
+        self.stack_offsets[id] = Some((base, offset));
     }
 
-    /// Iterates over all `(NodeId, offset)` pairs in the side-table.
+    /// Iterates over all `(NodeId, base, offset)` triples in the side-table.
     #[inline]
-    pub fn stack_offsets(&self) -> impl Iterator<Item = (NodeId, i64)> + '_ {
+    pub fn stack_offsets(&self) -> impl Iterator<Item = (NodeId, NodeOutputId, i64)> + '_ {
         self.stack_offsets
             .iter()
-            .filter_map(|(id, o)| o.map(|off| (id, off)))
+            .filter_map(|(id, slot)| slot.map(|(base, off)| (id, base, off)))
     }
 
     // ── initial_var_index accessors ───────────────────────────────────────
@@ -516,7 +522,26 @@ impl Function {
         self.call_clobbered_overrides.remap_node_keyed(&remap);
         self.phi_var_tag.remap_node_keyed(&remap);
         self.call_stack_arg_offsets_overrides.remap_node_keyed(&remap);
-        self.stack_offsets.remap_node_keyed(&remap);
+        // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
+        // also references a node — the slot `base` (a `NodeOutputId`).  So
+        // remap both the key (NodeId) and the value's base through the same
+        // translation table.  An entry whose node or base didn't survive
+        // compaction is dropped (the slot becomes "unknown", which is safe —
+        // consumers treat a missing entry as non-stack).
+        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(NodeOutputId, i64)>> =
+            SecondaryMap::new();
+        for (old_id, slot) in self.stack_offsets.iter() {
+            let Some((old_base, off)) = *slot else {
+                continue;
+            };
+            if let (Some(new_id), Some(new_base)) = (
+                remap.node_old_to_new(old_id),
+                remap.output_old_to_new(old_base),
+            ) {
+                new_stack_offsets[new_id] = Some((new_base, off));
+            }
+        }
+        self.stack_offsets = new_stack_offsets;
         // `initial_var_index` is `FxHashMap<Vn, NodeId>` — Vn-keyed, not
         // NodeId-keyed, so the standard `SecondaryMap` remap helper
         // doesn't fit.  Entries whose NodeId didn't survive compaction
@@ -822,10 +847,11 @@ mod compact_tests {
             [],
             [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
-        f.set_stack_offset(zombie_stack, -8);
+        let zombie_out = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
+        f.set_stack_offset(zombie_stack, zombie_out, -8);
         assert_eq!(
             f.stack_offset(zombie_stack),
-            Some(-8),
+            Some((zombie_out, -8)),
             "offset must be set before compact"
         );
 
@@ -854,7 +880,7 @@ mod compact_tests {
         );
         let surviving_with_offset = f
             .all_node_ids()
-            .any(|n| f.stack_offset(n) == Some(-8));
+            .any(|n| f.stack_offset(n).map(|(_, o)| o) == Some(-8));
         assert!(
             !surviving_with_offset,
             "stack_offset -8 must not survive compaction on a surviving node"

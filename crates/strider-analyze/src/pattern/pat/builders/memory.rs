@@ -182,7 +182,7 @@ impl From<LoadPat> for Pat {
                     }
                 }
                 if do_stack_only || off_filter.is_some() {
-                    let Some(offset) = ctx.function.stack_offset(node) else {
+                    let Some((_base, offset)) = ctx.function.stack_offset(node) else {
                         return false;
                     };
                     if let Some(ref f) = off_filter
@@ -383,7 +383,7 @@ impl From<StorePat> for Pat {
                     return false;
                 }
                 if do_stack_only || off_filter.is_some() {
-                    let Some(offset) = ctx.function.stack_offset(node) else {
+                    let Some((_base, offset)) = ctx.function.stack_offset(node) else {
                         return false;
                     };
                     if let Some(ref f) = off_filter

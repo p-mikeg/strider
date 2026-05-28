@@ -83,7 +83,7 @@ impl<'a> RawFunctionDumper<'a> {
             s.push_str(&format!("\nout: {}", outs.join(", ")));
         }
 
-        if let Some(off) = f.stack_offset(node) {
+        if let Some((_, off)) = f.stack_offset(node) {
             s.push_str(&format!("\nsp[{off}]"));
         }
         if let Some(vn) = f.phi_var_tag(node) {

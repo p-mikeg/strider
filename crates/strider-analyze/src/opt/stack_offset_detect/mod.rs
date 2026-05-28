@@ -7,7 +7,7 @@
 //! everything else (Phi-of-offsets, non-SP-rooted addresses).
 
 use strider_ir::Function;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -46,7 +46,7 @@ impl Optimizer for StackOffsetDetect {
         _entry: NodeId,
     ) -> Result<OptimizationResult> {
         let mut memo = SpExprMemo::default();
-        let mut to_stamp: Vec<(NodeId, i64)> = Vec::new();
+        let mut to_stamp: Vec<(NodeId, NodeOutputId, i64)> = Vec::new();
 
         for node in function.walk() {
             // Skip nodes whose offset is already known — keeps the
@@ -59,30 +59,26 @@ impl Optimizer for StackOffsetDetect {
                 NodeKind::Load(_) => function.node_inputs_exact::<2>(node)?[1],
                 _ => continue,
             };
-            // Only stamp addresses that are unambiguously `InitialVar(sp) + K`.
-            // `decompose_sp` also yields a `Terminal` for an alignment-masked
-            // base (`And(sp, mask)`, e.g. `and $-16, %esp`), but that base is
-            // an opaque node whose offset is in a *different* coordinate system
-            // from canonical-SP offsets — stamping it would let downstream
-            // consumers (e.g. the CallStackArgCollect side-table fast path)
-            // compare offsets rooted at different bases.  Reject any base that
-            // is not the canonical stack-pointer `InitialVar`.
+            // `decompose_sp` returns a `Terminal` only for genuinely
+            // SP-rooted addresses: `InitialVar(sp)` OR an alignment-masked
+            // `sp & mask` (the And arm guards against `And(rax, mask)` and the
+            // like).  So any base it yields is a real stack base.  Record
+            // `(base, offset)` — the offset is only comparable against another
+            // access that shares the same base (different SP bases, e.g.
+            // entry-SP vs an aligned SP, differ by the caller-dependent
+            // `sp mod align`).
             if let Some(SpExpr::Terminal { base, offset }) =
                 decompose_sp(function, addr, self.stack_vn, &mut memo)
             {
-                let base_node = function.graph().node_for_output(base);
-                if matches!(*function.node_kind(base_node), NodeKind::InitialVar(vn) if vn == self.stack_vn)
-                {
-                    to_stamp.push((node, offset));
-                }
+                to_stamp.push((node, base, offset));
             }
         }
 
         if to_stamp.is_empty() {
             return Ok(OptimizationResult::NoChange);
         }
-        for (node, offset) in to_stamp {
-            function.set_stack_offset(node, offset);
+        for (node, base, offset) in to_stamp {
+            function.set_stack_offset(node, base, offset);
         }
         Ok(OptimizationResult::Changed)
     }

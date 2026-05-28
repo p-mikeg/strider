@@ -626,7 +626,7 @@ fn store_addr_edge_suppressed_when_stack_offset_present() {
 
     // ── Case 2: stack_offset present — addr edge must be suppressed ─────
 
-    f.set_stack_offset(store, 0x10_i64);
+    f.set_stack_offset(store, addr_out, 0x10_i64);
 
     let dot_with_offset = render(&f, entry);
 
@@ -684,7 +684,7 @@ fn load_addr_edge_suppressed_when_stack_offset_present() {
     let edges_no_offset = edge_lines(&dot_no_offset).len();
 
     // With stack offset: addr edge is suppressed.
-    f.set_stack_offset(load, -8_i64);
+    f.set_stack_offset(load, addr_out, -8_i64);
     let dot_with_offset = render(&f, entry);
 
     assert!(

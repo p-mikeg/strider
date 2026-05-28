@@ -109,10 +109,11 @@ fn collect_stack_args_in_chain_order(
         return Vec::new();
     }
     let mut cur = mem;
-    // `anchor_base` tracks the SP root node used by decompose_sp-path stores.
-    // All SP-relative stores in a function trace to the same SP root by
-    // construction (InitialVar(sp) or the post-alignment And node), so when
-    // the side-table path is used no per-store base check is needed.
+    // `anchor_base` pins the SP root that all collected arg stores must
+    // share; a base mismatch terminates the chain rather than merging
+    // offsets rooted at different SP versions.  Both the side-table fast
+    // path and the `decompose_sp` slow path feed it, since
+    // `StackOffsetDetect` now stamps multiple bases (entry SP + aligned SP).
     let mut anchor_base: Option<NodeOutputId> = None;
     let mut anchor_space: Option<rsleigh::VnSpace> = None;
     let mut chain_anchor_offset: Option<i64> = None;
@@ -140,11 +141,18 @@ fn collect_stack_args_in_chain_order(
                 }
                 let addr = inputs[1];
                 let prev = inputs[0];
-                if let Some(offset) = ctx.function_ref().stack_offset(node) {
-                    // Fast path: side-table hit.  All side-table
-                    // stores in a function share the same SP root by
-                    // construction, so no per-store anchor_base check
-                    // is needed.
+                if let Some((base, offset)) = ctx.function_ref().stack_offset(node) {
+                    // Fast path: side-table hit.  `StackOffsetDetect` now
+                    // stamps aligned bases too, so side-table stores no
+                    // longer share one SP root by construction — apply the
+                    // same base-consistency check as the slow path: a base
+                    // mismatch terminates the chain (don't merge offsets
+                    // rooted at different SP versions).
+                    match anchor_base {
+                        None => anchor_base = Some(base),
+                        Some(b) if b == base => {}
+                        _ => return dense_prefix(slots),
+                    }
                     (offset, space, inputs[2], prev)
                 } else {
                     // Slow path: no side-table entry.

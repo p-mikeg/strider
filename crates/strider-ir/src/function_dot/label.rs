@@ -98,8 +98,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// returns `base` unchanged when the node has no recorded offset.
     fn sp_prefixed(&self, node: NodeId, base: String) -> String {
         match self.function.stack_offset(node) {
-            Some(k) if k < 0 => format!("[sp-{}]\n{base}", -k),
-            Some(k) => format!("[sp+{k}]\n{base}"),
+            Some((_, k)) if k < 0 => format!("[sp-{}]\n{base}", -k),
+            Some((_, k)) => format!("[sp+{k}]\n{base}"),
             None => base,
         }
     }

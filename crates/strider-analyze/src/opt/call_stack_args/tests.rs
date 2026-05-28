@@ -965,9 +965,17 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR],
     );
 
-    // Populate the side-table: offset 4 for arg0_store (what StackOffsetDetect would
-    // have recorded from the original sp+4 address before we clobbered it).
-    fg.set_stack_offset(arg0_store, 4);
+    // Populate the side-table: (base, offset) = (InitialVar(sp) output, 4) —
+    // what StackOffsetDetect would have recorded from the original sp+4
+    // address.  The base must equal what the anchor store (sp+0) resolves to
+    // via decompose_sp, so the fast-path and slow-path stores agree on one
+    // SP root (the per-store base-consistency check).
+    let sp_base = fg
+        .walk_from(entry)
+        .find(|&n| matches!(*fg.node_kind(n), NodeKind::InitialVar(vn) if vn == sp))
+        .map(|n| fg.node_outputs(n).iter().copied().next().unwrap())
+        .expect("InitialVar(sp) node must exist");
+    fg.set_stack_offset(arg0_store, sp_base, 4);
 
     // Run CallStackArgCollect with slot table [4, 8] (offset 0 = anchor).
     let pass = CallStackArgCollect::new(vec![4, 8], sp);

@@ -67,10 +67,10 @@ impl NodeIdRemap {
     }
 
     /// Returns the post-compaction `NodeOutputId` for `old`, or
-    /// `None` if `old`'s producing node was dropped.  Test-only:
-    /// production code uses `Function::remap_side_table_*` instead of
-    /// poking the remap directly.
-    #[cfg(test)]
+    /// `None` if `old`'s producing node was dropped.  Used by
+    /// `Function::compact` to remap the `stack_offsets` side-table's slot
+    /// `base` (a `NodeOutputId` stored in the value), the one side-table
+    /// whose value references a node.
     #[inline]
     #[must_use]
     pub(crate) fn output_old_to_new(&self, old: NodeOutputId) -> Option<NodeOutputId> {
