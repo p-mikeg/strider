@@ -125,11 +125,6 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     /// (asm fingerprints, call-other names, stack-phi offsets, phi var tags).
     pub(crate) function: &'a Function,
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
-    pub(crate) call_clobbered: &'a [rsleigh::Vn],
-    /// Calling convention's return-value registers in ABI order.  Used to
-    /// label `Return` input edges at slots 2.. with the register name so
-    /// visualising the graph shows which vn each return slot carries.
-    pub(crate) ret_val_regs: &'a [rsleigh::Vn],
     /// Optional node-id filter.  When `Some(set)`, [`Self::iter_nodes`]
     /// yields only nodes in `set` AND the per-node edge emitter skips
     /// edges whose producer is not in `set`.  Used by per-region /

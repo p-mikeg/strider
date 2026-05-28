@@ -301,7 +301,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         let Some(i) = output_index.checked_sub(2).map(|i| i as usize) else {
             return Ok(format!("out{output_index}"));
         };
-        match self.call_clobbered.get(i) {
+        match self.function.call_clobbered_regs().get(i) {
             Some(vn) => self.vn_to_name(vn),
             None => Ok(format!("clob{i}")),
         }
@@ -316,7 +316,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         let Some(i) = input_slot.checked_sub(2) else {
             return Ok(None);
         };
-        let Some(vn) = self.ret_val_regs.get(i) else {
+        let Some(vn) = self.function.ret_val_regs().get(i) else {
             return Ok(None);
         };
         self.vn_to_name(vn).map(Some)

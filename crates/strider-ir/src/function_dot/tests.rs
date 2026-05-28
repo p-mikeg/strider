@@ -28,8 +28,6 @@ fn render(function: &Function, entry: NodeId) -> String {
         entry,
         function,
         sleigh: &sleigh,
-        call_clobbered: &[],
-        ret_val_regs: &[],
         node_filter: None,
         node_to_arg_indices: build_arg_reverse_map(function),
     };
@@ -417,8 +415,6 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         entry,
         function: &f,
         sleigh: &sleigh,
-        call_clobbered: &[],
-        ret_val_regs: &[],
         node_filter: None,
         node_to_arg_indices: build_arg_reverse_map(&f),
     };
@@ -469,8 +465,9 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
 }
 
 /// Rendering a Call node with at least one clobbered output must succeed
-/// even when the caller passes `call_clobbered: &[]` (which is what every
-/// existing test does). Previously this panicked with an OOB slice index.
+/// even when the function's `call_clobbered` list is empty (the default for
+/// a function built without a calling convention). Previously this panicked
+/// with an OOB slice index.
 #[test]
 fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let mut f = Function::new();
@@ -485,7 +482,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let target_out = f.node_outputs(target).iter().copied().next().unwrap();
-    // One Bool clobbered output, but `call_clobbered` slice is empty.
+    // One Bool clobbered output, but the function's call_clobbered list is empty.
     let call = f.create_node(
         NodeKind::Call,
         [entry_ctrl, mem, target_out],

@@ -563,14 +563,11 @@ impl Function {
         let entry = self.entry.ok_or_else(|| {
             anyhow::anyhow!("Function::dot_dumper: entry node is not set")
         })?;
-        let cc = &self.cc_metadata;
         let node_to_arg_indices = crate::function_dot::build_arg_reverse_map(self);
         Ok(crate::function_dot::FunctionDotDumper {
             entry,
             function: self,
             sleigh,
-            call_clobbered: &cc.call_clobbered,
-            ret_val_regs: &cc.ret_val_regs,
             node_filter: None,
             node_to_arg_indices,
         })
