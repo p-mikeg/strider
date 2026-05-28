@@ -127,6 +127,14 @@ fn build_rules() -> Vec<BoxedRule> {
     let r7_b = Capture::new();
     let r8_b = Capture::new();
     let r9_b = Capture::new();
+    let r10_a = Capture::new();
+    let r10_b = Capture::new();
+    let r11_a = Capture::new();
+    let r11_b = Capture::new();
+    let r12_a = Capture::new();
+    let r12_b = Capture::new();
+    let r13_a = Capture::new();
+    let r13_b = Capture::new();
 
     vec![
         // 1. EQ / ZR identity:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
@@ -222,6 +230,53 @@ fn build_rules() -> Vec<BoxedRule> {
                     .is_some_and(|t| t.bit_width() == 1)
             }),
             var(r9_b),
+        )),
+        // ── Decomposed flag-tree shapes ──────────────────────────────────
+        //
+        // Rules 2/3/6/7 match the *raw* flag tree (with `Equal(diff, 0)` and
+        // `Equal(zext(Sless), zext(Sborrow))`).  When the branch is lifted with
+        // inverted sense (ARM/Thumb wrap the tree in an outer `BoolNeg`), this
+        // pass can't fire until `IfCondInversion` strips that `BoolNeg`, and by
+        // then ConstantFold rule 1 (`Equal(a-b,0) → Equal(a,b)`) and rule 5
+        // (`Equal(zext N, zext V) → BoolNeg(Sless(a,b))`) have already
+        // decomposed the sub-terms into direct comparisons on `(a, b)`.  These
+        // four rules canonicalise that decomposed form.  They are sound
+        // arch-independent identities, so they are harmless where the raw
+        // rules already fired (the decomposed shape simply never appears).
+        //
+        // 10. GT (signed):  And(BoolNeg(Equal(a,b)), BoolNeg(Sless(a,b))) → Sless(b,a)
+        //     (a≠b) ∧ ¬(a<b)  ≡  a>b  ≡  b<a
+        boxed_rule(rewrite_rule(
+            bool_and(
+                bool_not(int_eq(var(r10_a), var(r10_b))),
+                bool_not(int_slt(var(r10_a), var(r10_b))),
+            ),
+            int_slt(var(r10_b), var(r10_a)),
+        )),
+        // 11. LE (signed):  Or(Equal(a,b), Sless(a,b)) → BoolNeg(Sless(b,a))
+        //     (a=b) ∨ (a<b)  ≡  a≤b  ≡  ¬(b<a)
+        boxed_rule(rewrite_rule(
+            bool_or(
+                int_eq(var(r11_a), var(r11_b)),
+                int_slt(var(r11_a), var(r11_b)),
+            ),
+            bool_not(int_slt(var(r11_b), var(r11_a))),
+        )),
+        // 12. HI (unsigned):  And(BoolNeg(Equal(a,b)), BoolNeg(Less(a,b))) → Less(b,a)
+        boxed_rule(rewrite_rule(
+            bool_and(
+                bool_not(int_eq(var(r12_a), var(r12_b))),
+                bool_not(int_lt(var(r12_a), var(r12_b))),
+            ),
+            int_lt(var(r12_b), var(r12_a)),
+        )),
+        // 13. LS (unsigned):  Or(Equal(a,b), Less(a,b)) → BoolNeg(Less(b,a))
+        boxed_rule(rewrite_rule(
+            bool_or(
+                int_eq(var(r13_a), var(r13_b)),
+                int_lt(var(r13_a), var(r13_b)),
+            ),
+            bool_not(int_lt(var(r13_b), var(r13_a))),
         )),
     ]
 }

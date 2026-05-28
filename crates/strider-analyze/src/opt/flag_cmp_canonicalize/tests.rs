@@ -400,3 +400,97 @@ fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
     );
     Ok(())
 }
+
+// ── Decomposed-form rules (10–13) ─────────────────────────────────────────
+//
+// ARM/Thumb lift comparison branches with inverted sense, so by the time this
+// pass runs ConstantFold has already decomposed the flag tree into direct
+// comparisons on `(a, b)`.  These tests build that decomposed shape and pin
+// both the rewrite and the swapped operand order.
+
+/// Build an If whose cond the closure derives directly from the two register
+/// reads `(a, b)` — for the decomposed-form rules whose inputs are plain
+/// comparisons on `(a, b)`, not the raw flag tree.
+fn build_if_with_ab_cond<F>(
+    make_cond: F,
+) -> Result<(strider_ir::Function, NodeId, NodeOutputId, NodeOutputId)>
+where
+    F: FnOnce(&mut FunctionBuilder, NodeOutputId, NodeOutputId) -> Result<NodeOutputId>,
+{
+    let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
+    let (fg, if_node, (a, b)) = RegisterSet::new()
+        .tracked(a_vn)
+        .tracked(b_vn)
+        .build_if_then_else_returns(|fb| {
+            let a = fb.read_variable(&a_vn)?;
+            let b = fb.read_variable(&b_vn)?;
+            let cond = make_cond(fb, a, b)?;
+            Ok((cond, (a, b)))
+        })?;
+    Ok((fg, if_node, a, b))
+}
+
+#[test]
+fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
+    // (a != b) && !(a < b)  ≡  a > b  ≡  b < a  →  Sless(b, a)
+    let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
+        let neq = fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, NodeOutputType::I32)?;
+        let nlt = fb.build_int_unary_operation(lt, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, NodeOutputType::I1)
+    })?;
+    let entry = fg.entry().unwrap();
+    let r = FlagCmpCanonicalize.optimize(&mut fg, entry)?;
+    assert!(r.changed(), "decomposed GT should canonicalize");
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
+    Ok(())
+}
+
+#[test]
+fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
+    // (a == b) || (a < b)  ≡  a <= b  ≡  !(b < a)  →  BoolNeg(Sless(b, a))
+    let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, NodeOutputType::I32)?;
+        fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, NodeOutputType::I1)
+    })?;
+    let entry = fg.entry().unwrap();
+    let r = FlagCmpCanonicalize.optimize(&mut fg, entry)?;
+    assert!(r.changed(), "decomposed LE should canonicalize");
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
+    Ok(())
+}
+
+#[test]
+fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
+    // unsigned: (a != b) && !(a < b)  →  Less(b, a)
+    let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
+        let neq = fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
+        let nlt = fb.build_int_unary_operation(lt, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, NodeOutputType::I1)
+    })?;
+    let entry = fg.entry().unwrap();
+    let r = FlagCmpCanonicalize.optimize(&mut fg, entry)?;
+    assert!(r.changed(), "decomposed HI should canonicalize");
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
+    Ok(())
+}
+
+#[test]
+fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
+    // unsigned: (a == b) || (a < b)  →  BoolNeg(Less(b, a))
+    let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
+        fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, NodeOutputType::I1)
+    })?;
+    let entry = fg.entry().unwrap();
+    let r = FlagCmpCanonicalize.optimize(&mut fg, entry)?;
+    assert!(r.changed(), "decomposed LS should canonicalize");
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
+    Ok(())
+}
