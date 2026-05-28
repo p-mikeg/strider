@@ -93,6 +93,19 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .map_or_else(String::new, |t| format!("{sep}{}", t.as_str()))
     }
 
+    /// Appends a `base sp ± K` line to a Store/Load label when the node has a
+    /// `stack_offsets` entry.  The base is shown generically as `base sp`
+    /// (rather than the literal `sp`) because the SP-derived base can be the
+    /// entry SP *or* an alignment-masked SP — the address-input edge resolves
+    /// which one concretely; this line is just the quick-read offset.
+    fn with_sp_offset(&self, node: NodeId, label: String) -> String {
+        match self.function.stack_offset(node) {
+            Some((_, k)) if k < 0 => format!("{label}\nbase sp - {}", -k),
+            Some((_, k)) => format!("{label}\nbase sp + {k}"),
+            None => label,
+        }
+    }
+
     pub(super) fn pretty_label(&self, node: NodeId) -> io::Result<String> {
         let kind = self.function.node_kind(node);
 
@@ -161,13 +174,13 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             NodeKind::Load(space) => {
                 let space = self.pretty_vnspace(*space);
                 let ty = self.out_type_suffix(node, " ");
-                format!("Load{ty}\n← {space}")
+                self.with_sp_offset(node, format!("Load{ty}\n← {space}"))
             }
             NodeKind::Store(space) => {
                 let space = self.pretty_vnspace(*space);
                 // data is input 2; memory and addr are 0 and 1
                 let ty = self.input_type_suffix(node, 2, " ");
-                format!("Store{ty}\n→ {space}")
+                self.with_sp_offset(node, format!("Store{ty}\n→ {space}"))
             }
             // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => {
