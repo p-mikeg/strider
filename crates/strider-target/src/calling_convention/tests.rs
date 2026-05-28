@@ -8,6 +8,25 @@ fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
         .unwrap()
 }
 
+/// PPC System V (32-bit and both PPC64 ELF variants) returns a scalar
+/// floating-point value in `f1` only.  `f2`–`f13` are volatile
+/// argument/scratch float registers, not return registers — so the
+/// float-return list must be exactly `["f1"]`.
+#[test]
+fn ppc_float_return_is_f1_only() {
+    for cc in [
+        CallingConvention::powerpc_sysv32(),
+        CallingConvention::powerpc64_elf_v1(),
+        CallingConvention::powerpc64_elf_v2(),
+    ] {
+        let cc = cc.expect("PPC preset exists");
+        assert_eq!(
+            cc.ret_val_regs_float, &["f1"],
+            "PPC SysV returns floats only in f1, not f2",
+        );
+    }
+}
+
 /// One row describes a supported calling convention and everything we
 /// expect `build()` to produce for it.  Adding a new convention means
 /// adding one entry here — every invariant test picks it up.

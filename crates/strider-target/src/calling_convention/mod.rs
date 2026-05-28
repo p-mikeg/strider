@@ -610,7 +610,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
                 "r30", "r31", "LR",
             ],
             ret_val_regs: &["r3", "r4"],
-            ret_val_regs_float: &["f1", "f2"],
+            ret_val_regs_float: &["f1"],
             stack_arg_offsets: &[8, 12, 16, 20, 24, 28, 32, 36],
             ret_stack_pop: 0,
             // PowerPC `bl` writes the return address to the `LR` SPR;
@@ -655,7 +655,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
                 "LR",
             ],
             ret_val_regs: &["r3", "r4"],
-            ret_val_regs_float: &["f1", "f2"],
+            ret_val_regs_float: &["f1"],
             stack_arg_offsets: &[48, 56, 64, 72],
             ret_stack_pop: 0,
             // Same as 32-bit PPC SysV: the return address lives in `LR`.
@@ -689,7 +689,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
                 "LR",
             ],
             ret_val_regs: &["r3", "r4"],
-            ret_val_regs_float: &["f1", "f2"],
+            ret_val_regs_float: &["f1"],
             stack_arg_offsets: &[32, 40, 48, 56],
             ret_stack_pop: 0,
             // Same as ELFv1: the return address lives in `LR`.
