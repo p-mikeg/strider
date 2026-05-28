@@ -173,6 +173,41 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 }
 
 #[test]
+fn switch_targets_are_not_double_linked_by_the_region_linker() {
+    // Regression: a `Switch` region's per-target CFG edges carry the
+    // `Unconditional` edge kind, but the region's *IR* control flow is
+    // wired exclusively by `handle_switch`'s If-ladder (`build_if` /
+    // `build_branch`).  The post-loop `link_region_edges` linker MUST
+    // therefore skip a `Switch` region's `Unconditional` edges — re-linking
+    // them adds the switch region's pre-If control as a spurious second
+    // predecessor to every target region.  The structural validator can't
+    // catch it on its own because the target's `Region` fan-in and `MemPhi`
+    // arity inflate in lock-step (both grow by one per spurious link).
+    //
+    // The synthetic fixture (`jmp rax` → N single-`ret` targets) has no
+    // merging control flow, so a correctly-lifted graph is a pure control
+    // tree: every `Region` node has at most one control predecessor.  The
+    // double-link gave each of the N target regions two.
+    for n in [1usize, 2, 3] {
+        let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(n);
+        let (g, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+        let over_linked: Vec<_> = g
+            .walk()
+            .filter(|&nid| matches!(g.node_kind(nid), NodeKind::Region))
+            .filter(|&nid| g.node_inputs(nid).len() >= 2)
+            .collect();
+        assert!(
+            over_linked.is_empty(),
+            "{n}-target switch: tree-shaped control flow must have no merge \
+             regions, but these Region nodes carry >=2 control predecessors \
+             (link_region_edges double-linked the Switch region's \
+             Unconditional edges that handle_switch already wired): \
+             {over_linked:?}",
+        );
+    }
+}
+
+#[test]
 fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // End-to-end pin: a CFG that has a `BranchIndirect` resolved
     // to `Multiple([t0, t1])` via `with_known_targets` produces an

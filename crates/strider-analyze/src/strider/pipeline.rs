@@ -496,13 +496,18 @@ where
 }
 
 /// `link_region_edges` — third stage of [`Strider::analyze_cfg_with`]:
-/// wire region edges that the per-insn loop didn't.  Fallthrough
-/// edges always need linking here; Branch edges out of empty regions
-/// (produced by the bounded-lift CondBranch-OOB collapse) too, since
-/// their absent pcode means no per-insn `handle_branch` call ran.
-/// Non-empty Branch regions are already wired by the trailing
-/// `Branch` p-code insn — re-linking would double-add the edge and
-/// break graph-invariants predecessor counts.
+/// wire the `Unconditional` region successors that no per-terminator
+/// handler wired.  `Fallthrough` and `Branch` regions have no such
+/// handler (`handle_branch` is a no-op), so the linker is their sole
+/// wiring path.  `Switch` regions are the exception: their per-target
+/// edges also carry the `Unconditional` kind, but `handle_switch`'s
+/// If-ladder already wires them — re-linking here would add the switch
+/// region's pre-If control as a spurious second predecessor to every
+/// target.  So the gate is on the *source region's terminator*, not the
+/// edge kind alone (the edge kind can't distinguish a plain branch's
+/// `Unconditional` edge from a switch dispatch's).  `IfCaseTrue` /
+/// `IfCaseFalse` edges are wired by `handle_cond_branch` (via `region_if`
+/// + `build_if`), not here.
 fn link_region_edges<R, F>(
     driver: &mut PerRegionDriver<'_, R>,
     cfg: &strider_lift::cfg::Cfg,
@@ -519,12 +524,24 @@ where
         let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
             continue;
         };
-        // Every unconditional successor — explicit pcode `Branch` or plain
-        // fall-through — is wired here, the single linking path
-        // (`handle_branch` is a no-op so this can't double-link).
-        // `IfCaseTrue` / `IfCaseFalse` are wired by `handle_cond_branch`
-        // (via `region_if` + `build_if`), not here.
-        if *weight == strider_lift::cfg::RegionEdgeKind::Unconditional {
+        if *weight != strider_lift::cfg::RegionEdgeKind::Unconditional {
+            // `IfCaseTrue` / `IfCaseFalse` are wired by `handle_cond_branch`.
+            continue;
+        }
+        // A `Switch` region's `Unconditional` edges are wired by
+        // `handle_switch`'s If-ladder, not here; linking them again would
+        // double-add the predecessor.  Only `Fallthrough` / `Branch`
+        // sources (which have no per-terminator handler) are wired here.
+        let src_terminator = &cfg
+            .region_graph()
+            .node_weight(src)
+            .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?
+            .terminator;
+        if matches!(
+            src_terminator,
+            strider_lift::cfg::RegionTerminator::Fallthrough
+                | strider_lift::cfg::RegionTerminator::Branch
+        ) {
             driver
                 .builder
                 .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;

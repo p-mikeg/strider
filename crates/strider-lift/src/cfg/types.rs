@@ -2,7 +2,7 @@ use petgraph::stable_graph::StableDiGraph;
 
 /// Classifies the control-flow relationship between two CFG regions.
 ///
-/// Every edge in the `RegionGraph` carries one of these four labels.
+/// Every edge in the `RegionGraph` carries one of these three labels.
 /// The label determines which outgoing path is taken when execution leaves the
 /// source region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
