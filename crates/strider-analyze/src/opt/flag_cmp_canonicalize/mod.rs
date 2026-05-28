@@ -197,16 +197,30 @@ fn build_rules() -> Vec<BoxedRule> {
         // 8. Thumb "false" flag test:  IntEqual(ZeroExtend(b), 0)  →  BoolNeg(b)
         //    Lifted by Thumb BNE / BCC / BPL / BVC, where the cond is
         //    `IntEqual(flag, 0)` rather than `BoolNeg(flag)` directly.
+        //    Only sound when `b` is the 1-bit flag itself: `zext(b) == 0`
+        //    equals `!b` only for an `I1` `b`.  Without the guard a chained
+        //    zero-extend (e.g. `I1 → I8 → I32`) would bind `b` to the wider
+        //    intermediate, yielding a malformed `BitNot` of a non-`I1` value.
         boxed_rule(rewrite_rule(
-            int_eq(zero_extend(var(r8_b)), int_const(0)),
+            int_eq(zero_extend(var(r8_b)), int_const(0)).when_match(move |ctx, _ty, b| {
+                b.get(r8_b)
+                    .and_then(|o| ctx.output_kind(o).as_value())
+                    .is_some_and(|t| t.bit_width() == 1)
+            }),
             bool_not(var(r8_b)),
         )),
         // 9. Thumb "true" flag test:  BoolNeg(IntEqual(ZeroExtend(b), 0))  →  b
         //    Lifted by Thumb BEQ / BCS / BMI / BVS — the lift-time
         //    canonicalisation `IntNotEqual(b, 0) → BoolNeg(IntEqual(b, 0))`
-        //    plus our cast-to-int coercion gives this shape.
+        //    plus our cast-to-int coercion gives this shape.  Same `I1`
+        //    guard as rule 8: replacing the test with `b` only preserves
+        //    booleanness when `b` is the 1-bit flag.
         boxed_rule(rewrite_rule(
-            bool_not(int_eq(zero_extend(var(r9_b)), int_const(0))),
+            bool_not(int_eq(zero_extend(var(r9_b)), int_const(0))).when_match(move |ctx, _ty, b| {
+                b.get(r9_b)
+                    .and_then(|o| ctx.output_kind(o).as_value())
+                    .is_some_and(|t| t.bit_width() == 1)
+            }),
             var(r9_b),
         )),
     ]

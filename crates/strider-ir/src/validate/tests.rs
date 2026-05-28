@@ -442,6 +442,57 @@ fn graph_invariants_phi_value_arity_mismatch() {
 }
 
 #[test]
+fn graph_invariants_phi_input_type_mismatch() {
+    let mut function = Function::new();
+    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
+
+    let cs = function.create_node(
+        NodeKind::Region,
+        [entry_out],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+    let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
+
+    // One value input typed I8 but the phi declares output I64 — a type
+    // mismatch: a value phi must merge values of a single type.
+    let c1 = function.create_node(
+        NodeKind::IntConst(1),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I8)],
+    );
+    let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
+    let phi = function.create_node(
+        NodeKind::Phi,
+        [cs_phi_out, c1_out],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+    function.set_phi_var_tag(phi, test_vn());
+
+    // Put the phi on the reachable spine (see the arity test above).
+    let cs_ctrl_out = function.node_outputs(cs).iter().copied().next().unwrap();
+    let phi_val_out = function.node_outputs(phi).iter().copied().next().unwrap();
+    let ret = function.create_node(NodeKind::Return, [], []);
+    function.add_node_input(ret, cs_ctrl_out).unwrap();
+    function.add_node_input(ret, phi_val_out).unwrap();
+
+    let errs = validate(&function, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PhiInputTypeMismatch {
+                input_index: 1,
+                output_ty: NodeOutputType::I64,
+                input_ty: NodeOutputType::I8,
+                ..
+            }
+        )),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
 fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     // V-2 regression: opt passes (RedundantPhis, DeadBranchElimination)
     // detach phi inputs and leave the zero-input zombie node in the

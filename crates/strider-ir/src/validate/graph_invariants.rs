@@ -149,6 +149,32 @@ pub(super) fn check_graph_invariants_phis(
                 actual_values,
             });
         }
+
+        // Value-phi type consistency: every value input must carry the same
+        // value type as the phi's own output.  (`MemPhi` merges Memory
+        // tokens, which have no value type, so it is exempt; a non-value
+        // input is already reported by the local-typing check, so only
+        // mismatched concrete value types are flagged here.)
+        if matches!(kind, NodeKind::Phi) {
+            let phi_out_ty = graph
+                .node_outputs(node)
+                .iter()
+                .find_map(|&o| graph.output_kind(o).as_value());
+            if let Some(out_ty) = phi_out_ty {
+                for (i, &inp) in inputs.iter().enumerate().skip(1) {
+                    if let Some(in_ty) = graph.output_kind(inp).as_value()
+                        && in_ty != out_ty
+                    {
+                        errs.push(ValidationError::PhiInputTypeMismatch {
+                            phi: node,
+                            input_index: i,
+                            output_ty: out_ty,
+                            input_ty: in_ty,
+                        });
+                    }
+                }
+            }
+        }
     }
 }
 

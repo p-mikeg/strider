@@ -215,6 +215,18 @@ pub enum ValidationError {
     },
 
     #[error(
+        "value phi {phi:?} declares output type {output_ty:?} but value input \
+         at position {input_index} has type {input_ty:?}; a phi must merge \
+         values of a single type"
+    )]
+    PhiInputTypeMismatch {
+        phi: NodeId,
+        input_index: usize,
+        output_ty: NodeOutputType,
+        input_ty: NodeOutputType,
+    },
+
+    #[error(
         "node {node:?} (kind {kind:?}) is reachable but has an empty \
          asm-fingerprint; non-exempt nodes must record at least one \
          contributing machine-instruction address"

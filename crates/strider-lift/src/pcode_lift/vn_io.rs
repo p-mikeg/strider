@@ -265,21 +265,19 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let ctx = match self.enter_sub_register(reg, "write_reg_vn")? {
             SubRegOutcome::Direct { container_reg: _ } => {
                 // Direct full-container write.  Register variables hold
-                // integer-typed values.  Store `val` as-is when it already
-                // occupies the register's byte width — this keeps a 1-byte
-                // `I1` boolean (a comparison / flag result) stored as `I1`
-                // rather than zero-extending it to `I8`, so the value still
-                // reads back as `I1` for the next boolean op / `If` condition.
-                // Only a genuine byte-width mismatch coerces (truncate / zero-
-                // extend by bit width).
+                // integer-typed values at the register's natural width.
+                // Coerce `val` to that width: a same-width value is stored
+                // unchanged, a same-width float is bit-reinterpreted, and a
+                // 1-bit `I1` (a comparison / flag result, value 0 or 1) is
+                // zero-extended to the register width.  This guarantees no
+                // sub-width value — notably `I1` — ever lives in a register
+                // SSA slot, so cross-region `Phi`s over a register are
+                // type-homogeneous.  The flag→`If` flow stays correct: the
+                // cond-branch lifter narrows the register read back to `I1`,
+                // and ConstantFold collapses the extend/truncate round-trip.
                 let reg_ty: strider_ir::ValueType =
                     strider_ir::ValueType::int_for_byte_size(reg.size)?;
-                let val_ty = self.builder.get_output_type(val)?;
-                let coerced = if val_ty.is_integer() && val_ty.byte_size() == reg_ty.byte_size() {
-                    val
-                } else {
-                    self.builder.convert_to_int_if_needed(val, reg_ty)?
-                };
+                let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
                 return self.builder.write_variable(reg, coerced);
             }
             SubRegOutcome::SubReg(ctx) => ctx,
