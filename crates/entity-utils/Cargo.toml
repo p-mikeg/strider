@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 cranelift-bitset.workspace = true
 cranelift-entity.workspace = true
+rustc-hash = "2"
 
 [lints]
 workspace = true

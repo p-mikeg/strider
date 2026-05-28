@@ -375,6 +375,7 @@ version = "0.1.0"
 dependencies = [
  "cranelift-bitset",
  "cranelift-entity",
+ "rustc-hash",
 ]
 
 [[package]]
