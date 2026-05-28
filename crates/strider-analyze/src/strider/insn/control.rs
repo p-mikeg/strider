@@ -235,8 +235,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         let target_vn = nth_input_or_err(insn, 0)?;
         let space = target_vn.addr_space;
         let space_info = self
-            .cfg
-            .sleigh()
+            .sleigh
             .space_info(space)
             .ok_or_else(|| anyhow::anyhow!("no space info for call target space {space:?}"))?;
         let target_addr = target_vn.addr_off;
@@ -270,10 +269,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// resolved constant target) and a Return that hands the
     /// caller's frame back.
     pub(crate) fn handle_tail_call(&mut self, target: u64) -> Result<()> {
-        let default_code_space = self.cfg.sleigh().default_code_space();
+        let default_code_space = self.sleigh.default_code_space();
         let space_info = self
-            .cfg
-            .sleigh()
+            .sleigh
             .space_info(default_code_space)
             .ok_or_else(|| {
                 anyhow::anyhow!("no space info for default code space {default_code_space:?}")

@@ -138,13 +138,13 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         ResolvedTargets::Multiple(target_addrs.clone()),
     );
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
+    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known_targets)
         .build()
         .expect("cfg build");
 
     let strider = common::strider_x86_64();
-    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
     let mut function = outcome.function;
 
     // Sanity: pre-optimization, the `build_switch_if_ladder` if-ladder produced N-1 = 2

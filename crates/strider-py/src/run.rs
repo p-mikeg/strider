@@ -323,16 +323,19 @@ fn run_with_custom_pipeline(
         };
 
     let strider_borrow = strider_obj.borrow(py);
+    let cfg_borrow = cfg_obj.borrow(py);
     let outcome = strider_borrow
         .inner
         .analyze_cfg_with(
-            &cfg_obj.borrow(py).inner,
+            &cfg_borrow.inner,
+            &cfg_borrow.sleigh,
             strider_analyze::AnalyzeOptions {
                 per_address_ccs: Some(&per_address_built_ccs),
                 ..strider_analyze::AnalyzeOptions::default()
             },
         )
         .map_err(into_strider_err)?;
+    drop(cfg_borrow);
     let function = outcome.function;
     drop(strider_borrow);
     let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;

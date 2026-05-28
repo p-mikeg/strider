@@ -22,7 +22,7 @@ use strider_target::SleighArch;
 
 type TestReader = BufMemReader<Vec<u8>>;
 
-fn build_from_bytes(bytes: Vec<u8>, start: u64) -> Cfg<TestReader> {
+fn build_from_bytes(bytes: Vec<u8>, start: u64) -> (Cfg, Sleigh<TestReader>) {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, start);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
@@ -31,8 +31,8 @@ fn build_from_bytes(bytes: Vec<u8>, start: u64) -> Cfg<TestReader> {
         .expect("Builder::build")
 }
 
-fn dot_source(cfg: &Cfg<TestReader>) -> String {
-    GraphDot::new(cfg.dot_dumper(), DotStyle::dark())
+fn dot_source(cfg: &Cfg, sleigh: &Sleigh<TestReader>) -> String {
+    GraphDot::new(cfg.dot_dumper(sleigh), DotStyle::dark())
         .as_dot()
         .expect("dot rendering must not fail")
 }
@@ -40,8 +40,8 @@ fn dot_source(cfg: &Cfg<TestReader>) -> String {
 #[test]
 fn dot_output_non_empty_for_linear_function() {
     // `add eax, ebx; ret` — a linear single-region body.
-    let cfg = build_from_bytes(vec![0x01, 0xd8, 0xc3], 0x1000);
-    let s = dot_source(&cfg);
+    let (cfg, sleigh) = build_from_bytes(vec![0x01, 0xd8, 0xc3], 0x1000);
+    let s = dot_source(&cfg, &sleigh);
     assert!(!s.is_empty(), "DOT output must not be empty");
     assert!(
         s.contains("Instruction(addr="),
@@ -57,8 +57,8 @@ fn dot_output_for_conditional_function_contains_if_case_edges_and_dashed_style()
     //   0x1004: xor eax, eax   (2 bytes; fall-through path)
     //   0x1006: ret            (1 byte; taken target)
     let bytes = vec![0x31, 0xc0, 0x74, 0x02, 0x31, 0xc0, 0xc3];
-    let cfg = build_from_bytes(bytes, 0x1000);
-    let s = dot_source(&cfg);
+    let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
+    let s = dot_source(&cfg, &sleigh);
     assert!(
         s.contains("IfCaseTrue") || s.contains("IfCaseFalse"),
         "a conditional function's DOT output must label IfCase edges"
@@ -76,8 +76,8 @@ fn dot_output_for_loop_contains_solid_or_bold_edges() {
     // byte sequence as `cfg_build_end_to_end.rs`'s
     // `split_first_half_becomes_fallthrough_second_half_branch`.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
-    let cfg = build_from_bytes(bytes, 0x1000);
-    let s = dot_source(&cfg);
+    let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
+    let s = dot_source(&cfg, &sleigh);
     assert!(
         s.contains("solid") || s.contains("bold"),
         "a looping CFG should have solid (fallthrough) or bold (branch) edges"
@@ -89,8 +89,8 @@ fn dot_output_mentions_every_region() {
     // Use the same conditional shape as the IfCase test.  Every region
     // must emit exactly one `Instruction(addr=...)` label header.
     let bytes = vec![0x31, 0xc0, 0x74, 0x02, 0x31, 0xc0, 0xc3];
-    let cfg = build_from_bytes(bytes, 0x1000);
-    let s = dot_source(&cfg);
+    let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
+    let s = dot_source(&cfg, &sleigh);
     let expected = cfg.region_graph().node_count();
     let actual = s.matches("Instruction(addr=").count();
     assert_eq!(
@@ -113,8 +113,8 @@ fn dot_output_uses_rsleigh_insn_ctx_fmt() {
     // `add eax, ebx; ret` — `IntAdd` opcode with at least one register
     // operand.
     let bytes = vec![0x01, 0xd8, 0xc3];
-    let cfg = build_from_bytes(bytes, 0x1000);
-    let s = dot_source(&cfg);
+    let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
+    let s = dot_source(&cfg, &sleigh);
     assert!(
         s.contains("IntAdd R") || s.contains("IntAdd E"),
         "expected `IntAdd R<...>` or `IntAdd E<...>` (InsnCtxFmt \

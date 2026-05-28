@@ -230,13 +230,13 @@ pub fn analyze_with_known_targets(
         ResolvedTargets::Multiple(targets.to_vec()),
     );
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
+    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known_targets)
         .build()
         .expect("cfg build with Multiple known targets");
 
     let strider = strider_x86_64();
-    let function = strider.analyze_cfg(&cfg).expect("analyze_cfg").function;
+    let function = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg").function;
     (function, strider)
 }
 
@@ -318,10 +318,10 @@ pub fn lift_for_pipeline(
     // from `sleigh_arch` atomically.  (Earlier `Builder::new` /
     // `Builder::with_endianness` ctors silently defaulted the preset
     // to `X86_64`; they are no longer exposed.)
-    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
+    let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
-    let outcome = ana.analyze_cfg(&cfg)
+    let outcome = ana.analyze_cfg(&cfg, &sleigh)
         .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"));
     let rom_for_opt: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),

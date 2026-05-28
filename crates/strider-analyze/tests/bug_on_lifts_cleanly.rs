@@ -25,11 +25,11 @@ fn x86_64_ud2_terminates_cleanly() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
+    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
         .build()
         .expect("cfg");
 
-    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
     assert!(
         outcome.unresolved_branches.is_empty(),
         "ud2 produced {} unresolved branch(es); expected 0",
@@ -53,11 +53,11 @@ fn aarch64_brk_terminates_cleanly() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
+    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
         .build()
         .expect("cfg");
 
-    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
     assert!(
         outcome.unresolved_branches.is_empty(),
         "brk produced {} unresolved branch(es); expected 0",

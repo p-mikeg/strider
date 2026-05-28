@@ -63,7 +63,7 @@ pub fn run_pipeline_x86_64(
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create x86_64 sleigh");
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
+    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build");
 
@@ -72,7 +72,7 @@ pub fn run_pipeline_x86_64(
         Strider::new(arch, regs, CallingConvention::x86_64_systemv().unwrap()).expect("Strider::new");
     let lr_vn = strider.calling_convention().link_register_vn;
     let outcome = strider
-        .analyze_cfg(&cfg)
+        .analyze_cfg(&cfg, &sleigh)
         .expect("analyze_cfg");
     let mut function = outcome.function;
 

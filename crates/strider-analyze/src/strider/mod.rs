@@ -15,7 +15,12 @@ pub(crate) use pipeline::RegionLiftHandles;
 pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     pub(crate) strider: &'a Strider,
     pub(crate) builder: strider_ir::FunctionBuilder,
-    pub(crate) cfg: &'a strider_lift::cfg::Cfg<R>,
+    pub(crate) cfg: &'a strider_lift::cfg::Cfg,
+    /// The Sleigh handle that built `cfg`.  The CFG is a pure data
+    /// structure and no longer owns it; the caller threads it in so the
+    /// lifter can resolve register aliasing, the code space, and
+    /// CallOther names.
+    pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
     /// Anchors for the indirect-branch resolver.  Each entry maps a
     /// `BranchIndirect`'s pcode address to the IR `NodeOutputId` whose
     /// producer represents `target_vn`'s value at that BranchIndirect
@@ -38,7 +43,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// override map; pass `None` when the caller has no overrides.
     pub(crate) fn new(
         strider: &'a Strider,
-        cfg: &'a strider_lift::cfg::Cfg<R>,
+        cfg: &'a strider_lift::cfg::Cfg,
+        sleigh: &'a rsleigh::Sleigh<R>,
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: Option<
             &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
@@ -52,6 +58,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             strider,
             builder,
             cfg,
+            sleigh,
             unresolved_branches: Vec::new(),
             per_address_ccs,
         })

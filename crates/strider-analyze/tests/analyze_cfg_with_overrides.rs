@@ -34,7 +34,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
-    let cfg = strider_lift::cfg::Builder::for_arch(&arch, sleigh, entry, strider_lift::cfg::OptionsBuilder::new().build())
+    let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&arch, sleigh, entry, strider_lift::cfg::OptionsBuilder::new().build())
         .build()
         .unwrap();
 
@@ -47,6 +47,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     let outcome = strider
         .analyze_cfg_with(
             &cfg,
+            &sleigh,
             AnalyzeOptions {
                 per_address_ccs: Some(&built),
                 ..AnalyzeOptions::default()
@@ -77,13 +78,13 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
-    let cfg = strider_lift::cfg::Builder::for_arch(&arch, sleigh, entry, strider_lift::cfg::OptionsBuilder::new().build())
+    let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&arch, sleigh, entry, strider_lift::cfg::OptionsBuilder::new().build())
         .build()
         .unwrap();
 
-    let outcome_default = strider.analyze_cfg(&cfg).unwrap();
+    let outcome_default = strider.analyze_cfg(&cfg, &sleigh).unwrap();
     let outcome_with = strider
-        .analyze_cfg_with(&cfg, AnalyzeOptions::default())
+        .analyze_cfg_with(&cfg, &sleigh, AnalyzeOptions::default())
         .unwrap();
 
     let n_default = outcome_default.function.all_node_ids().count();

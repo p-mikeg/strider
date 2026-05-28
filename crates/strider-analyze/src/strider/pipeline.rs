@@ -284,9 +284,9 @@ impl Strider {
     ///
     /// Determinism (sort by `(space-shortcut, offset, size)`) is required
     /// so that downstream `VarId` numbering is stable across runs.
-    pub(crate) fn find_all_unique_vns<R: rsleigh::MemReader>(
+    pub(crate) fn find_all_unique_vns(
         &self,
-        cfg: &strider_lift::cfg::Cfg<R>,
+        cfg: &strider_lift::cfg::Cfg,
     ) -> Vec<rsleigh::Vn> {
         let mut all_vns: rustc_hash::FxHashSet<rsleigh::Vn> =
             rustc_hash::FxHashSet::default();
@@ -316,9 +316,10 @@ impl Strider {
     /// unsupported opcode or varnode), or IR validation fails.
     pub fn analyze_cfg<R: rsleigh::MemReader>(
         &self,
-        cfg: &strider_lift::cfg::Cfg<R>,
+        cfg: &strider_lift::cfg::Cfg,
+        sleigh: &rsleigh::Sleigh<R>,
     ) -> Result<AnalyzeOutcome> {
-        self.analyze_cfg_with(cfg, AnalyzeOptions::default())
+        self.analyze_cfg_with(cfg, sleigh, AnalyzeOptions::default())
     }
 
     /// Translates a complete CFG into an [`AnalyzeOutcome`] with
@@ -344,14 +345,15 @@ impl Strider {
     /// `FunctionBuilder::build`'s `strider_ir::validate::validate` pass.
     pub fn analyze_cfg_with<R: rsleigh::MemReader>(
         &self,
-        cfg: &strider_lift::cfg::Cfg<R>,
+        cfg: &strider_lift::cfg::Cfg,
+        sleigh: &rsleigh::Sleigh<R>,
         opts: AnalyzeOptions<'_>,
     ) -> Result<AnalyzeOutcome> {
         // Allocate one IR region per CFG region and wire the entry region.
         let all_vns = opts
             .all_vns
             .unwrap_or_else(|| self.find_all_unique_vns(cfg));
-        let mut driver = PerRegionDriver::new(self, cfg, all_vns, opts.per_address_ccs)?;
+        let mut driver = PerRegionDriver::new(self, cfg, sleigh, all_vns, opts.per_address_ccs)?;
         let (cfg_region_ids, region_map) = init_region_map(&mut driver, cfg)?;
         let ir_region_of = |region_id: strider_lift::cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
@@ -382,7 +384,7 @@ impl Strider {
 /// map.
 fn init_region_map<R: rsleigh::MemReader>(
     driver: &mut PerRegionDriver<'_, R>,
-    cfg: &strider_lift::cfg::Cfg<R>,
+    cfg: &strider_lift::cfg::Cfg,
 ) -> Result<(Vec<strider_lift::cfg::RegionId>, Vec<Option<strider_ir::RegionId>>)> {
     driver.builder.build_entry()?;
 
@@ -413,7 +415,7 @@ fn init_region_map<R: rsleigh::MemReader>(
 /// asm-fingerprint attribution to the region's last machine address.
 fn translate_regions<R, F>(
     driver: &mut PerRegionDriver<'_, R>,
-    cfg: &strider_lift::cfg::Cfg<R>,
+    cfg: &strider_lift::cfg::Cfg,
     cfg_region_ids: &[strider_lift::cfg::RegionId],
     ir_region_of: &F,
 ) -> Result<()>
@@ -503,7 +505,7 @@ where
 /// break graph-invariants predecessor counts.
 fn link_region_edges<R, F>(
     driver: &mut PerRegionDriver<'_, R>,
-    cfg: &strider_lift::cfg::Cfg<R>,
+    cfg: &strider_lift::cfg::Cfg,
     ir_region_of: &F,
 ) -> Result<()>
 where
@@ -546,7 +548,7 @@ where
 /// `AnalyzeOutcome` with the post-build generation snapshot.
 fn finalise_outcome<R, F>(
     mut driver: PerRegionDriver<'_, R>,
-    _cfg: &strider_lift::cfg::Cfg<R>,
+    _cfg: &strider_lift::cfg::Cfg,
     cfg_region_ids: &[strider_lift::cfg::RegionId],
     ir_region_of: &F,
 ) -> Result<AnalyzeOutcome>
@@ -694,10 +696,10 @@ mod tests {
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
             .expect("sleigh");
-        let cfg = strider_lift::cfg::Builder::for_arch(&arch, sleigh, 0x1000, strider_lift::cfg::OptionsBuilder::new().build())
+        let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&arch, sleigh, 0x1000, strider_lift::cfg::OptionsBuilder::new().build())
             .build()
             .expect("cfg");
-        let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+        let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
         let s = format!("{outcome}");
         assert!(s.contains("unresolved_branches: 0"));
         assert!(s.contains("regions: 1"));

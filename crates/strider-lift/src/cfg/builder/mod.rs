@@ -280,7 +280,13 @@ impl<R: rsleigh::MemReader> Builder<R> {
         self
     }
 
-    /// Builds and returns the completed [`Cfg`].
+    /// Builds the completed [`Cfg`] and returns it together with the
+    /// [`Sleigh`](rsleigh::Sleigh) handle that drove construction.
+    ///
+    /// The `Cfg` itself is a pure data structure (regions + edges) and no
+    /// longer owns the Sleigh; the caller keeps the returned handle and
+    /// threads it into the IR lifter / dot renderer (and into the next
+    /// CFG rebuild, so the SLA spec is loaded once per analysis).
     ///
     /// Seeds the work queue with the entry address, processes items until the
     /// queue is empty, then locates the entry region.
@@ -289,7 +295,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Returns an `anyhow::Error` if disassembly fails, if the start region
     /// cannot be located after processing, or if any region split or edge
     /// routing fails.
-    pub fn build(mut self) -> Result<Cfg<R>> {
+    pub fn build(mut self) -> Result<(Cfg, rsleigh::Sleigh<R>)> {
         self.work_queue.push((None, self.start_pcode_addr()));
         while let Some((parent_region, address)) = self.work_queue.pop() {
             self.explore(parent_region, address)?;
@@ -304,12 +310,12 @@ impl<R: rsleigh::MemReader> Builder<R> {
                 )
             })?;
 
-        Ok(Cfg {
+        let cfg = Cfg {
             region_graph: self.region_graph,
-            sleigh: self.sleigh,
             entry: starting_region,
             start_addr_to_region_id: self.start_addr_to_region_id,
-        })
+        };
+        Ok((cfg, self.sleigh))
     }
 }
 

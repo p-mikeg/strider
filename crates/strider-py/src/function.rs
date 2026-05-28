@@ -140,7 +140,7 @@ impl PyFunction {
         let cfg_borrow = self.cfg.borrow(py);
         self.with_read(|function| {
             let dumper = function
-                .dot_dumper(cfg_borrow.inner.sleigh())
+                .dot_dumper(&cfg_borrow.sleigh)
                 .map_err(crate::errors::into_strider_err)?;
             let d = dot::GraphDot::new(dumper, dot_style_for(style));
             match op {

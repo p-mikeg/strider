@@ -1,8 +1,9 @@
 //! `PyCfg` — wraps `strider_lift::cfg::Cfg` and exposes dot rendering.
 //!
 //! `build_cfg` consumes the inner `Sleigh` of its `PySleigh` argument
-//! (the Sleigh moves into `strider_lift::cfg::Builder`, then into the resulting
-//! `Cfg`).  The PySleigh wrapper is left "empty" — `inner = None` —
+//! (the Sleigh moves into `strider_lift::cfg::Builder`, which hands it
+//! back from `build()`; `PyCfg` keeps it in its own `sleigh` field since
+//! the `Cfg` itself no longer owns it).  The PySleigh wrapper is left "empty" — `inner = None` —
 //! after a successful build.  Subsequent uses of the same PySleigh after
 //! `build_cfg` will raise `StriderError("Sleigh already in use")`.  `Sleigh.regs`
 //! was eagerly cached at construction time so callers can still build
@@ -21,7 +22,11 @@ use crate::sleigh::PySleigh;
 /// Renderable to Graphviz dot / dark-themed HTML for inspection.
 #[pyclass(name = "Cfg", module = "strider")]
 pub struct PyCfg {
-    pub(crate) inner: strider_lift::cfg::Cfg<AnyMemReader>,
+    pub(crate) inner: strider_lift::cfg::Cfg,
+    /// The Sleigh handle that built `inner`.  The `Cfg` is a pure data
+    /// structure and no longer owns it; we keep it here so dot rendering
+    /// and the IR lift (`Strider.analyze`) can resolve register names.
+    pub(crate) sleigh: rsleigh::Sleigh<AnyMemReader>,
 }
 
 /// Build a control-flow graph for the function at `entry`.
@@ -79,12 +84,12 @@ pub fn build_cfg(
                 insns, target_vn, sleigh, lr_vn, rom, endianness,
             )
         });
-    let built = strider_lift::cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
+    let (inner, sleigh) = strider_lift::cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .with_indirect_resolver(resolver)
         .build()
         .map_err(into_strider_err)?;
 
-    Ok(PyCfg { inner: built })
+    Ok(PyCfg { inner, sleigh })
 }
 
 #[pymethods]
@@ -94,13 +99,13 @@ impl PyCfg {
     #[pyo3(signature = (path, style=None))]
     fn to_html(&self, path: &str, style: Option<&str>) -> PyResult<()> {
         let style = style.unwrap_or("dark_cfg");
-        let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
+        let d = dot::GraphDot::new(self.inner.dot_dumper(&self.sleigh), dot_style_for(Some(style)));
         d.dump_as_html(Path::new(path)).map_err(into_strider_err)
     }
     /// Render the CFG to a Graphviz `.dot` file at `path`.
     #[pyo3(signature = (path,))]
     fn to_dot(&self, path: &str) -> PyResult<()> {
-        let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some("dark_cfg")));
+        let d = dot::GraphDot::new(self.inner.dot_dumper(&self.sleigh), dot_style_for(Some("dark_cfg")));
         d.dump_as_dot(Path::new(path)).map_err(into_strider_err)
     }
     /// Return the CFG rendered as an HTML string (default `"dark_cfg"`
@@ -108,7 +113,7 @@ impl PyCfg {
     #[pyo3(signature = (style=None))]
     fn html_str(&self, style: Option<&str>) -> PyResult<String> {
         let style = style.unwrap_or("dark_cfg");
-        let d = dot::GraphDot::new(self.inner.dot_dumper(), dot_style_for(Some(style)));
+        let d = dot::GraphDot::new(self.inner.dot_dumper(&self.sleigh), dot_style_for(Some(style)));
         d.as_html_from_dot().map_err(into_strider_err)
     }
 }

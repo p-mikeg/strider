@@ -67,7 +67,7 @@ impl PyStrider {
         let cfg_borrow = cfg.borrow(py);
         let outcome = self
             .inner
-            .analyze_cfg(&cfg_borrow.inner)
+            .analyze_cfg(&cfg_borrow.inner, &cfg_borrow.sleigh)
             .map_err(into_strider_err)?;
         let unresolved_branch_count = outcome.unresolved_branches.len();
         let region_count = outcome.region_count();

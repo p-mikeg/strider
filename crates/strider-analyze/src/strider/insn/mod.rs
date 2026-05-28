@@ -106,7 +106,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     }
 
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let (user_op_id, name) = decode_user_op(insn, self.cfg.sleigh())?;
+        let (user_op_id, name) = decode_user_op(insn, self.sleigh)?;
         let class = strider_target::call_other_abi::classify(self.strider.arch.preset(), name)
             .ok_or_else(|| anyhow::anyhow!(
                 "unknown CallOther user-op {name:?}; \

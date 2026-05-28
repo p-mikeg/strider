@@ -57,7 +57,7 @@ pub struct IfRegionState {
     pub if_false_region: Option<NodeIndex>,
 }
 
-impl<R: rsleigh::MemReader> Cfg<R> {
+impl Cfg {
     /// Returns the sole successor of `region_id` whose edge weight is `kind`,
     /// or `None` if no such edge exists.
     ///
@@ -176,7 +176,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     use petgraph::stable_graph::StableDiGraph;
-    use rsleigh::mem_readers::BufMemReader;
     use strider_target::SleighArch;
 
     use super::*;
@@ -216,16 +215,9 @@ mod tests {
         }
     }
 
-    fn empty_sleigh() -> rsleigh::Sleigh<BufMemReader<Vec<u8>>> {
-        let arch = SleighArch::x86_64();
-        let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-            .expect("create empty Sleigh")
-    }
-
     // ── real-binary helpers ──────────────────────────────────────────────
 
-    fn real_cfg(case: &str, fn_name: &str) -> Cfg<strider_reader::ElfFileMemReader> {
+    fn real_cfg(case: &str, fn_name: &str) -> Cfg {
         use object::{Object, ObjectSymbol};
 
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -249,6 +241,7 @@ mod tests {
         Builder::for_arch(&arch, sleigh, entry_addr, OptionsBuilder::new().build())
             .build()
             .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
+            .0
     }
 
     // ── regions / region_ids iteration ───────────────────────────────────
@@ -308,7 +301,6 @@ mod tests {
         graph.add_edge(src, dst2, RegionEdgeKind::Branch);
 
         let cfg = Cfg {
-            sleigh: empty_sleigh(),
             region_graph: graph,
             entry: src,
             start_addr_to_region_id: BTreeMap::new(),
@@ -331,7 +323,6 @@ mod tests {
         graph.add_edge(src, dst2, RegionEdgeKind::IfCaseTrue);
 
         let cfg = Cfg {
-            sleigh: empty_sleigh(),
             region_graph: graph,
             entry: src,
             start_addr_to_region_id: BTreeMap::new(),

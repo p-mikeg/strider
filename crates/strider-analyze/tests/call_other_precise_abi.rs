@@ -26,10 +26,10 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("sleigh");
-    let cfg = strider_lift::cfg::Builder::for_arch(&arch, sleigh, entry, strider_lift::cfg::OptionsBuilder::new().build())
+    let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&arch, sleigh, entry, strider_lift::cfg::OptionsBuilder::new().build())
         .build()
         .expect("cfg");
-    let outcome = strider_h.analyze_cfg(&cfg).expect("analyze_cfg");
+    let outcome = strider_h.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
 
     // Find a cpuid* CallOther.  Sleigh's lift selects one of
     // cpuid / cpuid_<leaf>_info based on EAX; with no EAX setup it
@@ -100,10 +100,10 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("sleigh");
-    let cfg = strider_lift::cfg::Builder::for_arch(&arch, sleigh, entry, strider_lift::cfg::OptionsBuilder::new().build())
+    let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&arch, sleigh, entry, strider_lift::cfg::OptionsBuilder::new().build())
         .build()
         .expect("cfg");
-    let outcome = strider_h.analyze_cfg(&cfg).expect("analyze_cfg");
+    let outcome = strider_h.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
 
     let pat = strider_analyze::pattern::Pat::from(call_other().name("UnkSytemRegRead"));
     let matches = Matcher::try_new(&outcome.function).unwrap().find_all(&pat);

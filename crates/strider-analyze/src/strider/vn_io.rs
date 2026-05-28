@@ -17,7 +17,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     pub(super) fn value_lifter(&mut self) -> strider_lift::pcode_lift::ValueLifter<'_, R> {
         strider_lift::pcode_lift::ValueLifter::new(
             &mut self.builder,
-            self.cfg.sleigh(),
+            self.sleigh,
             self.strider.arch.endianness(),
         )
     }

@@ -263,9 +263,9 @@ where
     known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// The Sleigh handle we thread through every iteration.  Initialised
     /// from `Config::sleigh` at construction; consumed by
-    /// `Builder::for_arch` per iteration and harvested back from the
-    /// resulting `Cfg::into_sleigh()`.  `None` only momentarily inside
-    /// `build_lift_stable`.
+    /// `Builder::for_arch` per iteration and handed back alongside the
+    /// `Cfg` by `Builder::build` (the `Cfg` no longer owns it).  `None`
+    /// only momentarily inside `build_lift_stable`.
     sleigh: Option<rsleigh::Sleigh<R>>,
     /// The current optimised IR function.  Initialised to an empty
     /// placeholder by [`LoopState::new`] and overwritten with the real
@@ -423,7 +423,10 @@ where
         RegionIndex,
         rsleigh::Sleigh<R>,
     )> {
-        let cfg = build_cfg(
+        // `build_cfg` hands the Sleigh back alongside the CFG (the CFG no
+        // longer owns it); we keep the handle to thread into the IR lift and
+        // to re-use in the next iteration without re-loading the SLA spec.
+        let (cfg, sleigh) = build_cfg(
             sleigh,
             self.strider,
             self.start_addr,
@@ -442,6 +445,7 @@ where
             region_handles,
         } = self.strider.analyze_cfg_with(
             &cfg,
+            &sleigh,
             crate::AnalyzeOptions {
                 all_vns: Some(all_vns),
                 per_address_ccs: Some(&self.per_address_built_ccs),
@@ -455,10 +459,7 @@ where
         })?;
         pipeline.run(&mut function, entry)?;
 
-        // Harvest the Sleigh handle out of the consumed Cfg so the next
-        // iteration can re-use it without re-loading the SLA spec.
-        let harvested = cfg.into_sleigh();
-        Ok((function, unresolved, region_index, harvested))
+        Ok((function, unresolved, region_index, sleigh))
     }
 
     fn no_unresolved(&self) -> bool {
@@ -1001,7 +1002,7 @@ fn build_cfg<R>(
     allow_code_before_start_addr: bool,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     decode_cache: &DecodeCache,
-) -> Result<Cfg<R>>
+) -> Result<(Cfg, rsleigh::Sleigh<R>)>
 where
     R: rsleigh::MemReader,
 {
@@ -1054,14 +1055,11 @@ where
 /// ones; at iter 0 the cache is empty and every region is scanned.
 /// Region splits leave the cache slightly conservative — see the
 /// field doc on `LoopState::vn_cache` for why that's safe.
-fn scan_new_vns<R>(
-    cfg: &Cfg<R>,
+fn scan_new_vns(
+    cfg: &Cfg,
     vn_cache: &mut rustc_hash::FxHashSet<rsleigh::Vn>,
     vn_cache_region_count: &mut usize,
-) -> Vec<rsleigh::Vn>
-where
-    R: rsleigh::MemReader,
-{
+) -> Vec<rsleigh::Vn> {
     let starting = *vn_cache_region_count;
     for region in cfg.regions().skip(starting) {
         for wrapped in region.insns.iter() {

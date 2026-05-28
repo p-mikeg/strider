@@ -21,26 +21,28 @@ use super::strider_x86_64;
 /// `0x1000`, build a CFG via `Builder::for_arch`, then run `analyze_cfg`.
 /// All three `lift_*_snippet_x86_64` helpers are thin wrappers that
 /// differ only in the bytes vector.
-fn lift_x86_64_bytes(bytes: Vec<u8>) -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
+type LiftResult = (AnalyzeOutcome, Cfg, Sleigh<BufMemReader<Vec<u8>>>);
+
+fn lift_x86_64_bytes(bytes: Vec<u8>) -> LiftResult {
     let strider = strider_x86_64();
     let arch = SleighArch::x86_64();
 
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
+    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
         .build()
         .expect("cfg");
 
-    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
-    (outcome, cfg)
+    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+    (outcome, cfg, sleigh)
 }
 
 /// Build an x86_64 [`Cfg`] for the trivial single-region snippet
 /// `0xc3` (`ret`), then run `analyze_cfg` on it.  Returns the lifted
 /// outcome alongside the original CFG (which owns the Sleigh handle
 /// that the dump helpers need for register name labelling).
-pub fn lift_ret_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
+pub fn lift_ret_snippet_x86_64() -> LiftResult {
     lift_x86_64_bytes(vec![0xc3u8]) // ret
 }
 
@@ -58,7 +60,7 @@ pub fn lift_ret_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>)
 /// produces two `RegionLiftHandles` entries.  Used by
 /// `dump_per_region_writes_one_html_per_region` to verify
 /// multi-region emission without depending on a built ELF fixture.
-pub fn lift_branch_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
+pub fn lift_branch_snippet_x86_64() -> LiftResult {
     // test rax, rax ; jz +1 ; ret ; ret
     lift_x86_64_bytes(vec![0x48u8, 0x85, 0xc0, 0x74, 0x01, 0xc3, 0xc3])
 }
@@ -79,7 +81,7 @@ pub fn lift_branch_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>
 /// `IntBinaryOp(Add)` nodes feeding `Return` via the SystemV ret-val
 /// register read.  Used by the depth-3 neighborhood test to verify
 /// that `dump_neighborhood` walks more than one hop.
-pub fn lift_add_chain_snippet_x86_64() -> (AnalyzeOutcome, Cfg<BufMemReader<Vec<u8>>>) {
+pub fn lift_add_chain_snippet_x86_64() -> LiftResult {
     lift_x86_64_bytes(vec![
         0x48, 0x01, 0xc0, // add rax, rax
         0x48, 0x01, 0xc0, // add rax, rax

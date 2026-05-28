@@ -92,10 +92,10 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // atomically.  (The deleted `Builder::with_endianness` ctor would
     // silently default the preset to `X86_64`.)
-    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
+    let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .expect("Cfg build");
-    let mut function = ana.analyze_cfg(&cfg).expect("analyze_cfg").function;
+    let mut function = ana.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg").function;
     let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));

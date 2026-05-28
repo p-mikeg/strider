@@ -30,13 +30,13 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let reader = BufMemReader::new(bytes, base);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
+    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build");
 
     let regs = arch.probe_regs().expect("probe regs");
     let strider = Strider::new(arch, regs, cc).expect("Strider::new");
-    let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
     let mut function = outcome.function;
 
     let p = strider.build_optimizer_pipeline();

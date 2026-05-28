@@ -44,38 +44,7 @@ use petgraph::graph::NodeIndex;
 /// where each node is a [`Region`] (basic block) and each edge is a
 /// [`RegionEdgeKind`] (the type of control transfer).
 #[derive(Debug)]
-pub struct Cfg<R: rsleigh::MemReader> {
-    /// The Sleigh context used during construction.
-    ///
-    /// Owned by the [`Cfg`] across the analysis lifetime; `strider::run`
-    /// harvests it out of `Cfg::sleigh` between iterations of the
-    /// indirect-branch fixed-point loop and threads it back into the
-    /// next [`Builder`] so the SLA spec is loaded once per analysis,
-    /// not once per CFG rebuild.  See `tests/sleigh_reuse.rs` for the
-    /// round-trip pin.
-    ///
-    /// Reusing one Sleigh across many `lift_one` calls is sound only
-    /// within a single function's lifetime: `lift_one(&mut self)`
-    /// carries context-register state (ARM Thumb mode, x86 segment
-    /// selectors, MIPS16 mode) across calls.  Within a region, decoding
-    /// must be sequential.  Across regions of the same function, the
-    /// context register is assumed fixed at function entry.  The
-    /// `DecodeCache` must therefore stay scoped to one Sleigh handle
-    /// (which the orchestrator enforces by constructing one `DecodeCache`
-    /// per `strider::run` call).  For ARM binaries that switch
-    /// Thumb/ARM mode mid-function via `bx lr`, the cache can return
-    /// stale `LiftRes`; this is a known limitation, not exercised by
-    /// any fixture today.
-    ///
-    /// The field is also retained so register names can be resolved
-    /// for visualisation.
-    /// Kept `pub` so the strider orchestrator can field-move it out of
-    /// the consumed `Cfg` between iterations of the indirect-branch
-    /// fixed-point loop (see `tests/sleigh_reuse.rs` and the
-    /// `into_sleigh()` accessor below).  Mutating it post-build would
-    /// be surprising but is not a documented invariant the way the
-    /// `graph` / `start_addr_to_region_id` consistency is.
-    pub sleigh: rsleigh::Sleigh<R>,
+pub struct Cfg {
     /// The underlying directed graph.  Nodes are regions; edges are labeled
     /// with [`RegionEdgeKind`].
     ///
@@ -85,16 +54,9 @@ pub struct Cfg<R: rsleigh::MemReader> {
     /// corrupt subsequent `region_id_at_start` lookups — a prior bug
     /// where direct map mutation produced exactly this divergence
     /// motivated the `pub(crate)` tightening on the index.  New code
-    /// should read via
-    /// [`Self::region_graph`].  Field kept `pub` because the
-    /// orchestrator's `sleigh_reuse.rs` test pattern partial-moves
-    /// `sleigh` out and continues to read `region_graph` afterward; a
-    /// `pub(crate)` tightening with a `region_graph(&self)` accessor would
-    /// fail to borrow `&self` after the partial move.
+    /// should read via [`Self::region_graph`].
     pub region_graph: RegionGraph,
     /// The [`NodeIndex`] of the function entry-point region.
-    /// Read-only by convention; same partial-move rationale as
-    /// [`Self::region_graph`].
     pub entry: NodeIndex,
     /// Index from a region's start address to its [`NodeIndex`], for
     /// O(log R) `region_id_at_start` lookups instead of an O(R) graph
@@ -109,7 +71,7 @@ pub struct Cfg<R: rsleigh::MemReader> {
         std::collections::BTreeMap<types::PcodeInsnAddr, NodeIndex>,
 }
 
-impl<R: rsleigh::MemReader> Cfg<R> {
+impl Cfg {
     /// Read-only access to the underlying directed region graph.
     #[must_use]
     pub fn region_graph(&self) -> &RegionGraph {
@@ -120,21 +82,6 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     #[must_use]
     pub fn entry(&self) -> NodeIndex {
         self.entry
-    }
-
-    /// Read-only access to the Sleigh handle.
-    #[must_use]
-    pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
-        &self.sleigh
-    }
-
-    /// Consume the `Cfg` and return the inner Sleigh handle so a
-    /// subsequent CFG rebuild can reuse it without re-loading the SLA
-    /// spec.  Used by the strider orchestrator between iterations of
-    /// the indirect-branch fixed-point loop.
-    #[must_use]
-    pub fn into_sleigh(self) -> rsleigh::Sleigh<R> {
-        self.sleigh
     }
 }
 
@@ -148,7 +95,7 @@ pub type RegionId = NodeIndex;
 /// (Fallthrough / Branch / IfCaseTrue / IfCaseFalse); callers that
 /// need edge-kind filtering should walk `cfg.region_graph().edges(node)`
 /// directly.
-impl<R: rsleigh::MemReader> graphwalk::GraphRef for Cfg<R> {
+impl graphwalk::GraphRef for Cfg {
     type NodeId = NodeIndex;
 
     fn try_successors(

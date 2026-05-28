@@ -44,14 +44,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("'{symbol}' symbol not found in {binary_path}"))?
         .address();
 
-    let cfg = strider_lift::cfg::Builder::for_arch(&arch, sleigh, addr, cfg_options).build()?;
+    let (cfg, sleigh) =
+        strider_lift::cfg::Builder::for_arch(&arch, sleigh, addr, cfg_options).build()?;
 
-    let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark_cfg());
+    let dot = dot::GraphDot::new(cfg.dot_dumper(&sleigh), dot::DotStyle::dark_cfg());
     dot.dump_as_html("memory-cfg.html")?;
 
-    let mut function = strider.analyze_cfg(&cfg)?.function;
+    let mut function = strider.analyze_cfg(&cfg, &sleigh)?.function;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh)?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(function.dot_dumper(&sleigh)?, dot::DotStyle::dark());
     println!("dumping pre-opt IR graph -> memory-graph.html");
     std::fs::write("memory-graph.html", dot.as_html_from_dot()?)?;
 
@@ -62,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("memory_demo: built function missing entry")?;
     pipeline.run(&mut function, entry)?;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh)?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(function.dot_dumper(&sleigh)?, dot::DotStyle::dark());
     println!("dumping post-opt IR graph -> memory-graph-opt.html");
     std::fs::write("memory-graph-opt.html", dot.as_html_from_dot()?)?;
 

@@ -34,7 +34,7 @@ mod common;
 /// constant write to RAX), so the cfg builder defers via the the cfg-time placeholder lift
 /// fall-through and we end up with the new terminator.
 fn make_unresolved_indirect_branch_cfg(
-) -> (strider_lift::cfg::Cfg<BufMemReader<Vec<u8>>>, SleighArch) {
+) -> (strider_lift::cfg::Cfg, Sleigh<BufMemReader<Vec<u8>>>, SleighArch) {
     let base = 0x1000u64;
     let bytes: Vec<u8> = vec![0xff, 0xe0];
     let arch = SleighArch::x86_64();
@@ -45,10 +45,10 @@ fn make_unresolved_indirect_branch_cfg(
     // return address onto the stack), so cfg-time resolver's LinkRegister arm
     // can't classify either.
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
+    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build must succeed under the cfg-time placeholder lift deferral");
-    (cfg, arch)
+    (cfg, sleigh, arch)
 }
 
 /// Placeholder contract: a region terminated with
@@ -66,11 +66,11 @@ fn make_unresolved_indirect_branch_cfg(
 /// target_value at slot 2 — slots 0/1 are control/memory).
 #[test]
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
-    let (cfg, arch) = make_unresolved_indirect_branch_cfg();
+    let (cfg, sleigh, arch) = make_unresolved_indirect_branch_cfg();
     let _ = arch; // arch is the SleighArch the cfg was built with; unused here
     let strider = common::strider_x86_64();
     let function = strider
-        .analyze_cfg(&cfg)
+        .analyze_cfg(&cfg, &sleigh)
         .expect("strider must lift unresolved branches as IndirectBranch placeholder")
         .function;
 
@@ -107,11 +107,11 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 /// walks this table.
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {
-    let (cfg, arch) = make_unresolved_indirect_branch_cfg();
+    let (cfg, sleigh, arch) = make_unresolved_indirect_branch_cfg();
     let _ = arch; // arch is the SleighArch the cfg was built with; unused here
     let strider = common::strider_x86_64();
     let outcome = strider
-        .analyze_cfg(&cfg)
+        .analyze_cfg(&cfg, &sleigh)
         .expect("analyze_cfg");
     // Single deferred branch in this synthetic fixture.
     assert_eq!(

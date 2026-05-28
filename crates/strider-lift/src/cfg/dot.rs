@@ -8,15 +8,24 @@ use anyhow::anyhow;
 
 use crate::cfg::Result;
 
-impl<R: rsleigh::MemReader> Cfg<R> {
+impl Cfg {
     /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.
+    ///
+    /// Register names are resolved from `sleigh`; the CFG no longer owns a
+    /// Sleigh handle, so the caller threads the one that built it.
     #[must_use]
-    pub fn dot_dumper(&self) -> CfgDotDumper<'_, R> {
-        CfgDotDumper(self)
+    pub fn dot_dumper<'a, R: rsleigh::MemReader>(
+        &'a self,
+        sleigh: &'a rsleigh::Sleigh<R>,
+    ) -> CfgDotDumper<'a, R> {
+        CfgDotDumper { cfg: self, sleigh }
     }
 }
 
-pub struct CfgDotDumper<'a, R: rsleigh::MemReader>(&'a Cfg<R>);
+pub struct CfgDotDumper<'a, R: rsleigh::MemReader> {
+    cfg: &'a Cfg,
+    sleigh: &'a rsleigh::Sleigh<R>,
+}
 
 impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     type Node = NodeIndex;
@@ -26,7 +35,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     fn create_initial_state(&self) -> Self::State {}
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        self.0.region_graph.node_indices()
+        self.cfg.region_graph.node_indices()
     }
 
     fn dump_as_dot(
@@ -39,7 +48,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
 
         let dot_id = node_id.index().to_string();
         let node = self
-            .0
+            .cfg
             .region_graph
             .node_weight(node_id)
             .ok_or_else(|| anyhow!("invalid region index {node_id:?}"))?;
@@ -55,10 +64,10 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         // inspection.  Resolving `regs` is not free (FFI walk over the
         // arch's register table), so we cache it once per `dump_as_dot`
         // invocation rather than per-instruction.
-        let regs = self.0.sleigh.regs()?;
+        let regs = self.sleigh.regs()?;
         for insn in &node.insns {
             let insn_addr = insn.addr.machine_addr.addr;
-            let pretty = insn.insn.ctx_fmt(&self.0.sleigh, &regs);
+            let pretty = insn.insn.ctx_fmt(self.sleigh, &regs);
             write!(&mut label, "\\l{insn_addr:#x}: {pretty}")
                 .map_err(anyhow::Error::from)?;
         }
@@ -68,7 +77,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         out.node(&dot_id, &label, "box", &[]);
 
         // Incoming edges
-        for edge in self.0.region_graph.edges_directed(node_id, petgraph::Incoming) {
+        for edge in self.cfg.region_graph.edges_directed(node_id, petgraph::Incoming) {
             let src_id = edge.source().index().to_string();
             let edge_label = format!("{:?}", edge.weight());
             let edge_style = match edge.weight() {
