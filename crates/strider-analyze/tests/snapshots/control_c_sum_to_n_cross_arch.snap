@@ -219,42 +219,11 @@ mips64le:
     VarPhi: 2
 ppc32be:
   status: OK
-  reachable_nodes: 61
-  regions: 1
-  edges_control: 4
-  edges_memory: 11
-  edges_value: 76
-  var_phis: 0
-  mem_phis: 1
-  value_phis: 5
-  kind_histogram:
-    Entry: 1
-    Extend(ZeroExtend): 3
-    If: 1
-    InitialMemory: 1
-    InitialVar: 7
-    IntBinaryOp(Add): 10
-    IntBinaryOp(And): 1
-    IntBinaryOp(Or): 3
-    IntBinaryOp(ShiftLeft): 3
-    IntBinaryOp(ShiftRight): 1
-    IntCmpOp(Equal): 1
-    IntCmpOp(Sless): 2
-    IntConst: 10
-    Load: 1
-    MemPhi: 1
-    Region: 1
-    Return: 1
-    Store: 7
-    Truncate: 1
-    ValuePhi: 5
-ppc32le:
-  status: OK
   reachable_nodes: 60
   regions: 1
   edges_control: 4
   edges_memory: 11
-  edges_value: 76
+  edges_value: 75
   var_phis: 0
   mem_phis: 1
   value_phis: 5
@@ -279,13 +248,44 @@ ppc32le:
     Store: 7
     Truncate: 1
     ValuePhi: 5
+ppc32le:
+  status: OK
+  reachable_nodes: 59
+  regions: 1
+  edges_control: 4
+  edges_memory: 11
+  edges_value: 75
+  var_phis: 0
+  mem_phis: 1
+  value_phis: 5
+  kind_histogram:
+    Entry: 1
+    Extend(ZeroExtend): 3
+    If: 1
+    InitialMemory: 1
+    InitialVar: 5
+    IntBinaryOp(Add): 10
+    IntBinaryOp(And): 1
+    IntBinaryOp(Or): 3
+    IntBinaryOp(ShiftLeft): 3
+    IntBinaryOp(ShiftRight): 1
+    IntCmpOp(Equal): 1
+    IntCmpOp(Sless): 2
+    IntConst: 10
+    Load: 1
+    MemPhi: 1
+    Region: 1
+    Return: 1
+    Store: 7
+    Truncate: 1
+    ValuePhi: 5
 ppc64be:
   status: OK
-  reachable_nodes: 63
+  reachable_nodes: 62
   regions: 1
   edges_control: 4
   edges_memory: 9
-  edges_value: 78
+  edges_value: 77
   var_phis: 0
   mem_phis: 1
   value_phis: 5
@@ -295,7 +295,7 @@ ppc64be:
     Extend(ZeroExtend): 7
     If: 1
     InitialMemory: 1
-    InitialVar: 5
+    InitialVar: 4
     IntBinaryOp(Add): 8
     IntBinaryOp(And): 1
     IntBinaryOp(Or): 3
@@ -313,11 +313,11 @@ ppc64be:
     ValuePhi: 5
 ppc64le:
   status: OK
-  reachable_nodes: 70
+  reachable_nodes: 69
   regions: 1
   edges_control: 4
   edges_memory: 11
-  edges_value: 85
+  edges_value: 84
   var_phis: 0
   mem_phis: 1
   value_phis: 5
@@ -327,7 +327,7 @@ ppc64le:
     Extend(ZeroExtend): 6
     If: 1
     InitialMemory: 1
-    InitialVar: 7
+    InitialVar: 6
     IntBinaryOp(Add): 10
     IntBinaryOp(And): 1
     IntBinaryOp(Or): 3
