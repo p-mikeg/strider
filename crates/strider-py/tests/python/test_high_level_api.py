@@ -11,8 +11,49 @@ from __future__ import annotations
 import pytest
 
 import strider
+from strider import _api
 
 from .conftest import fixture_path
+
+
+# ── ARM Thumb interworking arch selection (pure unit, no lifting) ──────
+
+
+def test_effective_arch_arm_odd_addr_picks_thumb():
+    """An ARM (non-Thumb) arch with an odd entry address is a Thumb
+    function (interworking convention): pick `arm_thumb` and strip
+    the low bit before lifting."""
+    arch, addr = _api._effective_arch_and_addr(strider.SleighArch.arm(), 0x8001)
+    assert arch.name() == "arm_thumb"
+    assert addr == 0x8000
+
+
+def test_effective_arch_arm_even_addr_keeps_arm():
+    """An ARM arch with an even (halfword-aligned) entry is a plain
+    ARM function: keep `arm`, keep the address."""
+    arch, addr = _api._effective_arch_and_addr(strider.SleighArch.arm(), 0x8000)
+    assert arch.name() == "arm"
+    assert addr == 0x8000
+
+
+def test_effective_arch_arm_thumb_odd_addr_strips_bit():
+    """When the arch is already `arm_thumb`, an odd entry still gets
+    its interworking low bit stripped to a halfword-aligned address."""
+    arch, addr = _api._effective_arch_and_addr(
+        strider.SleighArch.arm_thumb(), 0x8001
+    )
+    assert arch.name() == "arm_thumb"
+    assert addr == 0x8000
+
+
+def test_effective_arch_non_arm_odd_addr_unchanged():
+    """x86 (and other non-ARM arches) never interwork: an odd address
+    is passed through verbatim with the arch unchanged."""
+    arch, addr = _api._effective_arch_and_addr(
+        strider.SleighArch.x86_64(), 0x401001
+    )
+    assert arch.name() == "x86_64"
+    assert addr == 0x401001
 
 
 # ── Basic load + analyze + find ────────────────────────────────────────

@@ -120,9 +120,10 @@ class MemReader:
 
 class ReadOnlyMemory:
     """Subclass and override `read(addr, size) -> Optional[int]` to
-    back a `LoadReadOnly` opt pass with Python data.  Returned
-    integer is the little-endian-decoded value of `size` bytes
-    starting at `addr`.
+    back a `LoadReadOnly` opt pass with Python data.  Returns up to 8
+    bytes at `addr` decoded as a target-endian `int`; the implementation
+    is responsible for byte order.  Returns `None` for unmapped
+    addresses or sizes > 8.
 
     The pass only invokes `read` for RAM loads — non-RAM spaces
     (REGISTER, CONST, UNIQUE) are short-circuited by the adapter

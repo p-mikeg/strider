@@ -132,6 +132,35 @@ def _arch_and_cc_for_elf(
     )
 
 
+# ── ARM Thumb interworking arch selection ──────────────────────────────────
+
+
+def _effective_arch_and_addr(
+    arch: SleighArch, raw_addr: int
+) -> tuple[SleighArch, int]:
+    """Resolve the arch + address to actually lift, honouring the ARM
+    Thumb interworking convention.
+
+    A Thumb function pointer / entry has its low bit set; the real
+    instruction address is `raw_addr & ~1` and it must be decoded with
+    the Thumb Sleigh spec.  When `arch` is ARM-family (`arm`, `arm_be`,
+    `arm_thumb`) and the low bit is set, return `(arm_thumb, raw_addr & ~1)`.
+    Otherwise the arch is returned unchanged and the address verbatim
+    (x86 et al. never interwork).
+
+    Pure — no Sleigh / extension calls — so it is unit-testable without
+    lifting.
+    """
+    if raw_addr & 1 and arch.name() in ("arm", "arm_be", "arm_thumb"):
+        # `arm_thumb` is little-endian only — there is no big-endian
+        # Thumb preset.  For a BE-ARM entry with the interworking bit
+        # set we keep `arm_be` (best effort) but still strip the bit.
+        if arch.name() == "arm_be":
+            return arch, raw_addr & ~1
+        return SleighArch.arm_thumb(), raw_addr & ~1
+    return arch, raw_addr
+
+
 # ── Strider facade ────────────────────────────────────────────────────────
 
 
@@ -277,13 +306,6 @@ class Strider:
             # `or None` is a no-op here for the common case.
             if function_max_size is None:
                 function_max_size = sym_size
-            # ARM Thumb interworking: a Thumb function entry has its
-            # low bit set in the symbol table.  Strip it before
-            # handing the address to Sleigh, which expects a
-            # halfword-aligned address.
-            arch_name = self._arch.name()
-            if arch_name in ("arm_thumb", "arm", "arm_be") and (addr & 1):
-                addr &= ~1
         elif isinstance(function, int):
             addr = function
         else:
@@ -292,8 +314,14 @@ class Strider:
                 f"got {type(function).__name__}"
             )
 
+        # ARM Thumb interworking: a Thumb function entry (symbol or raw
+        # address) has its low bit set.  Switch to the Thumb Sleigh spec
+        # and strip the bit so the lift uses the correct decoder and a
+        # halfword-aligned address.  Non-ARM arches pass through verbatim.
+        arch, addr = _effective_arch_and_addr(self._arch, addr)
+
         result = _ext.run(
-            arch=self._arch,
+            arch=arch,
             cc=self._cc,
             mem=self._mem,
             entry=addr,
