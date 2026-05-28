@@ -8,7 +8,7 @@
 //!
 //! Coverage:
 //! - Non-empty output with the per-region label header.
-//! - IfCase edge labelling + dashed style on a conditional CFG.
+//! - Conditional-branch edge labelling (`if-true`/`if-false`) + dashed style.
 //! - Solid style on a back-edge (loop) unconditional edge.
 //! - Per-region label count matches `graph.node_count()`.
 //! - Per-insn line uses rsleigh's `InsnCtxFmt` (space-separated opcode
@@ -60,12 +60,12 @@ fn dot_output_for_conditional_function_contains_if_case_edges_and_dashed_style()
     let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg, &sleigh);
     assert!(
-        s.contains("IfCaseTrue") || s.contains("IfCaseFalse"),
-        "a conditional function's DOT output must label IfCase edges"
+        s.contains("if-true") || s.contains("if-false"),
+        "a conditional function's DOT output must label its branch edges"
     );
     assert!(
         s.contains("dashed"),
-        "IfCase edges must render with dashed style"
+        "conditional-branch edges must render with dashed style"
     );
 }
 

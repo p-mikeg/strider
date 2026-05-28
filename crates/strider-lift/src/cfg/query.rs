@@ -1,7 +1,7 @@
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
-use super::types::{Region, RegionEdgeKind};
+use super::types::{Region, RegionTerminator};
 use super::{Cfg, RegionId};
 use anyhow::anyhow;
 
@@ -58,48 +58,82 @@ pub struct IfRegionState {
 }
 
 impl Cfg {
-    /// Returns the sole successor of `region_id` whose edge weight is `kind`,
-    /// or `None` if no such edge exists.
+    /// Returns the sole outgoing successor of `region_id`, or `None` when the
+    /// region has no successor.
+    ///
+    /// Meaningful for `Fallthrough` / `Branch` regions, which have exactly one
+    /// outgoing edge.  A `CondBranch` (two successors) or `Switch` (many) is a
+    /// caller error here — use [`Cfg::region_if`] or the `Switch` terminator's
+    /// `targets` instead.
     ///
     /// # Errors
-    /// Returns an error when more than one outgoing edge of `kind` is
-    /// attached to `region_id`.
-    fn unique_outgoing(&self, region_id: RegionId, kind: RegionEdgeKind) -> Result<Option<NodeIndex>> {
+    /// Returns an error when more than one outgoing edge leaves `region_id`.
+    pub fn region_successor(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
         let mut found: Option<NodeIndex> = None;
         for edge in self.region_graph.edges_directed(region_id, petgraph::Outgoing) {
-            if *edge.weight() != kind {
-                continue;
-            }
             if found.is_some() {
-                return Err(anyhow!("region {region_id:?} has more than one outgoing edge of kind {kind:?}"));
+                return Err(anyhow!("region {region_id:?} has more than one outgoing edge"));
             }
             found = Some(edge.target());
         }
         Ok(found)
     }
 
-    /// Returns the unconditional successor of `region_id`, if any.
-    ///
-    /// This is the single successor reached on the
-    /// [`RegionEdgeKind::Unconditional`] edge — whether the region ended
-    /// with an explicit pcode `Branch` or fell through to the next region.
-    ///
-    /// # Errors
-    /// Returns an error when more than one `Unconditional` edge leaves
-    /// `region_id`.
-    pub fn region_successor(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
-        self.unique_outgoing(region_id, RegionEdgeKind::Unconditional)
-    }
-
     /// Returns both conditional-branch successors of `region_id`.
     ///
+    /// The region's [`RegionTerminator::CondBranch`] records the taken
+    /// successor's address in `true_target`.  This walks the (unweighted)
+    /// outgoing edges and reports the one whose target region **contains**
+    /// `true_target` as `if_true_region`, the other as `if_false_region`.
+    /// When both arms target the same region (a degenerate `if (c) goto L`
+    /// else `goto L`), both fields hold that region.  For a non-`CondBranch`
+    /// region, both fields are `None`.
+    ///
+    /// Containment (not start-address equality) is the right test: a region's
+    /// `start_addr` can sit *below* its first instruction when a branch target
+    /// lands in a zero-pcode-op hole and `split_region` rounds the start down,
+    /// so the branch's `true_target` may be that region's first instruction
+    /// rather than its `start_addr`.  [`Region::contains_addr`] handles both.
+    ///
     /// # Errors
-    /// Returns an error when more than one `IfCaseTrue` or `IfCaseFalse`
-    /// edge leaves `region_id`.
+    /// Returns an error when `region_id` or one of its edge targets is missing
+    /// from the graph (a construction bug).
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionState> {
+        let region = self
+            .region_graph
+            .node_weight(region_id)
+            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
+        let RegionTerminator::CondBranch { true_target } = &region.terminator else {
+            return Ok(IfRegionState {
+                if_true_region: None,
+                if_false_region: None,
+            });
+        };
+        let true_target = *true_target;
+        let mut if_true_region = None;
+        let mut if_false_region = None;
+        for edge in self.region_graph.edges_directed(region_id, petgraph::Outgoing) {
+            let target = edge.target();
+            let contains_taken = self
+                .region_graph
+                .node_weight(target)
+                .ok_or_else(|| {
+                    anyhow!("dangling edge target {target:?} from region {region_id:?}")
+                })?
+                .contains_addr(true_target);
+            // The first edge whose target contains `true_target` is the taken
+            // side; the remaining edge is the fall-through.  Guarding on
+            // `if_true_region.is_none()` keeps the degenerate both-arms-same-
+            // region case sane (the second edge falls to `if_false_region`).
+            if contains_taken && if_true_region.is_none() {
+                if_true_region = Some(target);
+            } else {
+                if_false_region = Some(target);
+            }
+        }
         Ok(IfRegionState {
-            if_true_region: self.unique_outgoing(region_id, RegionEdgeKind::IfCaseTrue)?,
-            if_false_region: self.unique_outgoing(region_id, RegionEdgeKind::IfCaseFalse)?,
+            if_true_region,
+            if_false_region,
         })
     }
 
@@ -276,19 +310,18 @@ mod tests {
         assert!(s.if_false_region.is_none());
     }
 
-    // ── DuplicateEdgeKind error ──────────────────────────────────────────
+    // ── region_successor: multiple-successor error ───────────────────────
 
     #[test]
-    fn duplicate_edge_kind_is_detected_by_region_successor() {
-        // Construct a malformed Cfg with two Branch edges from one node
-        // to distinct destinations.  region_successor (via unique_outgoing)
-        // must error with "more than one outgoing edge".
-        let mut graph: StableDiGraph<Region, RegionEdgeKind> = StableDiGraph::new();
+    fn multiple_successors_are_detected_by_region_successor() {
+        // A region with two outgoing edges is not a single-successor region;
+        // region_successor must error rather than silently pick one.
+        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
         let src = graph.add_node(make_region(&[(0x1000, 0)]));
         let dst1 = graph.add_node(make_region(&[(0x2000, 0)]));
         let dst2 = graph.add_node(make_region(&[(0x3000, 0)]));
-        graph.add_edge(src, dst1, RegionEdgeKind::Unconditional);
-        graph.add_edge(src, dst2, RegionEdgeKind::Unconditional);
+        graph.add_edge(src, dst1, ());
+        graph.add_edge(src, dst2, ());
 
         let cfg = Cfg {
             region_graph: graph,
@@ -303,14 +336,27 @@ mod tests {
         );
     }
 
+    // ── region_if: polarity resolved by true_target ──────────────────────
+
+    /// Helper: a `CondBranch` region whose taken successor is `true_target`.
+    fn make_cond_region(start_machine: u64, true_target: PcodeInsnAddr) -> Region {
+        let mut r = make_region(&[(start_machine, 0)]);
+        r.terminator = RegionTerminator::CondBranch { true_target };
+        r
+    }
+
     #[test]
-    fn duplicate_if_case_true_is_detected_by_region_if() {
-        let mut graph: StableDiGraph<Region, RegionEdgeKind> = StableDiGraph::new();
-        let src = graph.add_node(make_region(&[(0x1000, 0)]));
-        let dst1 = graph.add_node(make_region(&[(0x2000, 0)]));
-        let dst2 = graph.add_node(make_region(&[(0x3000, 0)]));
-        graph.add_edge(src, dst1, RegionEdgeKind::IfCaseTrue);
-        graph.add_edge(src, dst2, RegionEdgeKind::IfCaseTrue);
+    fn region_if_resolves_polarity_by_true_target() {
+        // Two distinct successors; the one whose region contains the
+        // terminator's true_target is the taken side regardless of edge
+        // insertion order.
+        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
+        let src = graph.add_node(make_cond_region(0x1000, addr(0x3000, 0)));
+        let fallthrough = graph.add_node(make_region(&[(0x2000, 0)]));
+        let taken = graph.add_node(make_region(&[(0x3000, 0)]));
+        // Insert the fall-through edge FIRST to prove order-independence.
+        graph.add_edge(src, fallthrough, ());
+        graph.add_edge(src, taken, ());
 
         let cfg = Cfg {
             region_graph: graph,
@@ -318,14 +364,61 @@ mod tests {
             start_addr_to_region_id: BTreeMap::new(),
         };
 
-        let err = cfg
-            .region_if(src)
-            .map(|_| ())
-            .expect_err("region_if must return DuplicateEdgeKind");
-        assert!(
-            err.to_string().contains("more than one outgoing edge"),
-            "got: {err}"
+        let s = cfg.region_if(src).unwrap();
+        assert_eq!(s.if_true_region, Some(taken), "taken side = true_target match");
+        assert_eq!(s.if_false_region, Some(fallthrough));
+    }
+
+    #[test]
+    fn region_if_matches_taken_successor_by_containment_not_start() {
+        // Regression: a region's `start_addr` can sit below its first
+        // instruction (zero-pcode-op hole + rounded `split_region`), so the
+        // branch's `true_target` may be an INTERIOR address of the taken
+        // successor rather than its `start_addr`.  region_if must match by
+        // containment.  Here the taken region spans [0x3000, 0x3010] and the
+        // branch targets the interior address 0x3008.
+        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
+        let src = graph.add_node(make_cond_region(0x1000, addr(0x3008, 0)));
+        let fallthrough = graph.add_node(make_region(&[(0x2000, 0)]));
+        let taken = graph.add_node(make_region(&[(0x3000, 0), (0x3010, 0)]));
+        graph.add_edge(src, fallthrough, ());
+        graph.add_edge(src, taken, ());
+
+        let cfg = Cfg {
+            region_graph: graph,
+            entry: src,
+            start_addr_to_region_id: BTreeMap::new(),
+        };
+
+        let s = cfg.region_if(src).unwrap();
+        assert_eq!(
+            s.if_true_region,
+            Some(taken),
+            "interior true_target must match the taken successor by containment"
         );
+        assert_eq!(s.if_false_region, Some(fallthrough));
+    }
+
+    #[test]
+    fn region_if_both_arms_same_region_returns_that_region_for_both() {
+        // Degenerate `if (c) goto L else goto L`: both unweighted edges point
+        // at one region.  region_if must report it for both sides, not drop
+        // the false side.
+        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
+        let src = graph.add_node(make_cond_region(0x1000, addr(0x2000, 0)));
+        let both = graph.add_node(make_region(&[(0x2000, 0)]));
+        graph.add_edge(src, both, ());
+        graph.add_edge(src, both, ());
+
+        let cfg = Cfg {
+            region_graph: graph,
+            entry: src,
+            start_addr_to_region_id: BTreeMap::new(),
+        };
+
+        let s = cfg.region_if(src).unwrap();
+        assert_eq!(s.if_true_region, Some(both));
+        assert_eq!(s.if_false_region, Some(both));
     }
 
     // ── region_id_at_start ───────────────────────────────────────────────

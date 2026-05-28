@@ -10,7 +10,8 @@
 //!   reader; built via [`Builder`]
 //! - [`Builder`] / [`OptionsBuilder`] — fluent constructors for a [`Cfg`]
 //! - [`RegionId`] — identifies a basic block within the CFG
-//! - [`RegionEdgeKind`] — `Fallthrough`, `Branch`, `IfCaseTrue`, `IfCaseFalse`
+//! - [`RegionTerminator`] — how a region ends (the single source of truth for
+//!   its control transfer; CFG edges are unweighted topology)
 //! - [`IfRegionState`] — tracks the resolved/unresolved state of an if-case
 
 mod builder;
@@ -31,7 +32,7 @@ pub use options::OptionsBuilder;
 
 pub use query::{IfRegionState, is_addr_tail_call};
 pub use types::{
-    MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, RegionInstruction, RegionTerminator,
+    MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
 };
 
 use types::RegionGraph;
@@ -41,12 +42,13 @@ use petgraph::graph::NodeIndex;
 /// A completed Control Flow Graph for a single function.
 ///
 /// Produced by [`Builder::build`].  The graph is a [`petgraph::stable_graph::StableDiGraph`]
-/// where each node is a [`Region`] (basic block) and each edge is a
-/// [`RegionEdgeKind`] (the type of control transfer).
+/// where each node is a [`Region`] (basic block) and edges are unweighted —
+/// the source region's [`RegionTerminator`] classifies the control transfer.
 #[derive(Debug)]
 pub struct Cfg {
-    /// The underlying directed graph.  Nodes are regions; edges are labeled
-    /// with [`RegionEdgeKind`].
+    /// The underlying directed graph.  Nodes are regions; edges are
+    /// unweighted topology (`()`), classified by the source
+    /// [`RegionTerminator`].
     ///
     /// **Read-only by convention.**  Direct mutation
     /// (`cfg.region_graph.remove_node(...)`) would desync
@@ -91,10 +93,9 @@ pub type RegionId = NodeIndex;
 /// `graphwalk::GraphRef` impl for the region graph.  Lets generic
 /// traversal helpers (preorder/postorder/reachability/dominance)
 /// work on a `Cfg` the same way they work on `strider_ir::Graph`.  Successors
-/// are the petgraph out-neighbors of `node` regardless of edge kind
-/// (Fallthrough / Branch / IfCaseTrue / IfCaseFalse); callers that
-/// need edge-kind filtering should walk `cfg.region_graph().edges(node)`
-/// directly.
+/// are the petgraph out-neighbors of `node` (edges are unweighted topology);
+/// callers that need to distinguish how a region exits should read the
+/// source region's [`RegionTerminator`] (e.g. via [`Cfg::region_if`]).
 impl graphwalk::GraphRef for Cfg {
     type NodeId = NodeIndex;
 

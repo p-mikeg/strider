@@ -12,12 +12,10 @@
 
 use rustc_hash::FxHashMap;
 
-use petgraph::visit::IntoEdgeReferences;
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
 use strider_lift::cfg::{
-    Builder, Cfg, OptionsBuilder, PcodeInsnAddr, RegionEdgeKind, RegionTerminator,
-    ResolvedTargets,
+    Builder, Cfg, OptionsBuilder, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
 };
 use strider_target::SleighArch;
 
@@ -73,12 +71,13 @@ fn back_jump_splits_region() {
         "expected at least 2 regions after back-jump split; got {}",
         cfg.region_graph.node_count()
     );
-    let branch_edges = cfg
-        .region_graph
-        .edge_references()
-        .filter(|e| *e.weight() == RegionEdgeKind::Unconditional)
-        .count();
-    assert!(branch_edges >= 1, "expected at least one Branch edge from the back-jump");
+    // The back-jump produces an edge from the branch region to the split
+    // second half (edges are unweighted; the `Branch` terminator classifies
+    // it).
+    assert!(
+        cfg.region_graph.edge_count() >= 1,
+        "expected at least one edge from the back-jump"
+    );
 }
 
 #[test]
@@ -140,10 +139,8 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
         "entry region must NOT be a TailCall when allow_code_before_start_addr is set"
     );
     assert!(
-        cfg.region_graph
-            .edge_references()
-            .any(|e| *e.weight() == RegionEdgeKind::Unconditional),
-        "expected at least one Branch edge since the below-start target is followed"
+        cfg.region_graph.edge_count() >= 1,
+        "expected at least one edge since the below-start target is followed"
     );
 }
 
@@ -157,7 +154,7 @@ fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
 
     assert!(
-        !matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::CondBranch),
+        !matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::CondBranch { .. }),
         "entry region must not retain CondBranch when one successor is OOB"
     );
 }

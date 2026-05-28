@@ -496,18 +496,13 @@ where
 }
 
 /// `link_region_edges` — third stage of [`Strider::analyze_cfg_with`]:
-/// wire the `Unconditional` region successors that no per-terminator
-/// handler wired.  `Fallthrough` and `Branch` regions have no such
-/// handler (`handle_branch` is a no-op), so the linker is their sole
-/// wiring path.  `Switch` regions are the exception: their per-target
-/// edges also carry the `Unconditional` kind, but `handle_switch`'s
-/// If-ladder already wires them — re-linking here would add the switch
-/// region's pre-If control as a spurious second predecessor to every
-/// target.  So the gate is on the *source region's terminator*, not the
-/// edge kind alone (the edge kind can't distinguish a plain branch's
-/// `Unconditional` edge from a switch dispatch's).  `IfCaseTrue` /
-/// `IfCaseFalse` edges are wired by `handle_cond_branch` (via `region_if`
-/// + `build_if`), not here.
+/// wire the region successors that no per-terminator handler wired.
+/// CFG edges are unweighted, so the gate is the *source region's
+/// terminator*: only `Fallthrough` / `Branch` regions are wired here
+/// (their successor has no dedicated handler — `handle_branch` is a
+/// no-op).  `CondBranch` regions are wired by `handle_cond_branch`
+/// (`region_if` + `build_if`) and `Switch` regions by `handle_switch`'s
+/// If-ladder; re-linking either here would double-add a predecessor.
 fn link_region_edges<R, F>(
     driver: &mut PerRegionDriver<'_, R>,
     cfg: &strider_lift::cfg::Cfg,
@@ -518,20 +513,9 @@ where
     F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
 {
     for edge_idx in cfg.region_graph().edge_indices() {
-        let Some(weight) = cfg.region_graph().edge_weight(edge_idx) else {
-            continue;
-        };
         let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
             continue;
         };
-        if *weight != strider_lift::cfg::RegionEdgeKind::Unconditional {
-            // `IfCaseTrue` / `IfCaseFalse` are wired by `handle_cond_branch`.
-            continue;
-        }
-        // A `Switch` region's `Unconditional` edges are wired by
-        // `handle_switch`'s If-ladder, not here; linking them again would
-        // double-add the predecessor.  Only `Fallthrough` / `Branch`
-        // sources (which have no per-terminator handler) are wired here.
         let src_terminator = &cfg
             .region_graph()
             .node_weight(src)

@@ -2,7 +2,7 @@ use petgraph::graph::NodeIndex;
 
 use super::Builder;
 use crate::cfg::types::{
-    MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, RegionInstruction, RegionTerminator,
+    MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
 };
 use anyhow::{anyhow, bail};
 
@@ -69,16 +69,17 @@ pub(super) struct RegionBuilder<'a, R: rsleigh::MemReader> {
     pub(super) start_addr: PcodeInsnAddr,
     /// Instructions accumulated so far.
     pub(super) insns: Vec<RegionInstruction>,
-    /// The edge from the predecessor region to this one, if any.
-    /// `None` only for the function entry region.
-    pub(super) parent_edge: Option<(NodeIndex, RegionEdgeKind)>,
+    /// The predecessor region this one will be wired to, if any.
+    /// `None` only for the function entry region.  Edges are unweighted;
+    /// the predecessor's terminator classifies the transfer.
+    pub(super) parent_edge: Option<NodeIndex>,
 }
 
 impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     pub(super) fn new(
         builder: &'a mut Builder<R>,
         start_addr: PcodeInsnAddr,
-        parent_edge: Option<(NodeIndex, RegionEdgeKind)>,
+        parent_edge: Option<NodeIndex>,
     ) -> Self {
         RegionBuilder {
             builder,
@@ -288,15 +289,10 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         let region = self.finish_current_region(terminator)?;
         if !is_tail_call {
             // Not a tail call — enqueue the target so the builder explores it
-            // next.  The edge is `Unconditional`: the IR lifter wires every
-            // unconditional successor through the region linker, so a real
-            // `b <target>` and clang's -O0 `b <next-instr>` fall-through idiom
-            // need no edge-level distinction here (the `Branch` terminator
-            // still records that this region ended with a branch opcode).
-            self.builder.work_queue.push((
-                Some((region, RegionEdgeKind::Unconditional)),
-                branch_target_addr,
-            ));
+            // next.  Edges are unweighted; the `Branch` terminator records
+            // that this region ended with a branch opcode, and the IR lifter
+            // wires the unconditional successor through the region linker.
+            self.builder.work_queue.push((Some(region), branch_target_addr));
         }
         Ok(ProcessInsnRes::FinishedProcessing)
     }
@@ -332,16 +328,15 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
 
         match (true_oob, false_oob) {
             (false, false) => {
-                // Both in-range — original CondBranch behaviour.
-                let region = self.finish_current_region(RegionTerminator::CondBranch)?;
-                self.builder.work_queue.push((
-                    Some((region, RegionEdgeKind::IfCaseTrue)),
-                    target_addr,
-                ));
-                self.builder.work_queue.push((
-                    Some((region, RegionEdgeKind::IfCaseFalse)),
-                    next_insn_addr,
-                ));
+                // Both in-range — original CondBranch behaviour.  Record the
+                // taken successor's address on the terminator; both outgoing
+                // edges are unweighted, and `region_if` recovers the polarity
+                // by matching each successor's start_addr against `true_target`.
+                let region = self.finish_current_region(RegionTerminator::CondBranch {
+                    true_target: target_addr,
+                })?;
+                self.builder.work_queue.push((Some(region), target_addr));
+                self.builder.work_queue.push((Some(region), next_insn_addr));
             }
             (true, true) => {
                 // Both successors leave the function — collapse to a
@@ -384,9 +379,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // preserved as a regular intra-function branch.
                 self.insns.pop();
                 let region = self.finish_current_region(RegionTerminator::Branch)?;
-                self.builder
-                    .work_queue
-                    .push((Some((region, RegionEdgeKind::Unconditional)), in_range));
+                self.builder.work_queue.push((Some(region), in_range));
             }
         }
         Ok(ProcessInsnRes::FinishedProcessing)
@@ -496,7 +489,6 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // nothing to validate.
                 self.finish_branch_or_tail_call(
                     target_addr,
-                    RegionEdgeKind::Unconditional,
                     self.is_branch_tail_call_nocheck(target_addr),
                 )?;
             }
@@ -530,9 +522,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 })?;
                 for target in targets {
                     let target_addr = PcodeInsnAddr::at_machine_start(target);
-                    self.builder
-                        .work_queue
-                        .push((Some((region, RegionEdgeKind::Unconditional)), target_addr));
+                    self.builder.work_queue.push((Some(region), target_addr));
                 }
             }
         }
@@ -550,22 +540,21 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             insns: std::mem::take(&mut self.insns),
             terminator,
         })?;
-        if let Some((parent_id, edge_kind)) = self.parent_edge {
-            self.builder.region_graph.add_edge(parent_id, region, edge_kind);
+        if let Some(parent_id) = self.parent_edge {
+            self.builder.region_graph.add_edge(parent_id, region, ());
         }
         Ok(region)
     }
 
     /// Either finishes the current region with `RegionTerminator::TailCall`
     /// (when `is_tail_call`) or with `RegionTerminator::Branch` plus an
-    /// outgoing `edge_kind` edge to `target_addr` enqueued for further
-    /// exploration.  Shared between the `Branch` opcode arm and
+    /// outgoing edge to `target_addr` enqueued for further exploration.
+    /// Shared between the `Branch` opcode arm and
     /// `process_branch_indirect`'s `Single` path — both classify a single
     /// jump target the same way (intra-function vs OOB).
     fn finish_branch_or_tail_call(
         &mut self,
         target_addr: PcodeInsnAddr,
-        edge_kind: RegionEdgeKind,
         is_tail_call: bool,
     ) -> Result<()> {
         if is_tail_call {
@@ -574,9 +563,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             })?;
         } else {
             let region = self.finish_current_region(RegionTerminator::Branch)?;
-            self.builder
-                .work_queue
-                .push((Some((region, edge_kind)), target_addr));
+            self.builder.work_queue.push((Some(region), target_addr));
         }
         Ok(())
     }
@@ -585,8 +572,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// the start of a known region.
     ///
     /// If so, the current region has fallen through into an already-explored
-    /// region: the current region is finalised and a
-    /// [`RegionEdgeKind::Unconditional`] edge is added to the existing region.
+    /// region: the current region is finalised with a `Fallthrough` terminator
+    /// and an (unweighted) edge is added to the existing region.
     /// Otherwise delegates to [`process_new_insn`](Self::process_new_insn).
     ///
     /// **Zero-pcode-op stretch case.**  When the outer `build` loop walks
@@ -610,17 +597,17 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         // fell through to it: finalise the current region and add a Fallthrough edge.
         if let Some(&existing_region_id) = self.builder.start_addr_to_region_id.get(&addr) {
             if self.insns.is_empty() {
-                if let Some((parent_id, edge_kind)) = self.parent_edge {
+                if let Some(parent_id) = self.parent_edge {
                     self.builder
                         .region_graph
-                        .add_edge(parent_id, existing_region_id, edge_kind);
+                        .add_edge(parent_id, existing_region_id, ());
                 }
                 return Ok(ProcessInsnRes::FinishedProcessing);
             }
             let region = self.finish_current_region(RegionTerminator::Fallthrough)?;
             self.builder
                 .region_graph
-                .add_edge(region, existing_region_id, RegionEdgeKind::Unconditional);
+                .add_edge(region, existing_region_id, ());
             return Ok(ProcessInsnRes::FinishedProcessing);
         }
         self.process_new_insn(insn, addr, lift_res)
@@ -1193,24 +1180,27 @@ mod tests {
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].terminator, RegionTerminator::CondBranch);
+        // The taken successor's address is recorded on the terminator.  `je +0`
+        // at 0x1000 targets 0x1002 — which is also the fall-through, so this is
+        // the degenerate both-arms-same-address case.
+        match regions[0].terminator {
+            RegionTerminator::CondBranch { true_target } => {
+                assert_eq!(true_target, addr_at(0x1002, 0));
+            }
+            ref other => panic!("expected CondBranch, got {other:?}"),
+        }
 
-        // Both true and false successors enqueued.
+        // Both successors enqueued, both wired (unweighted) to this region.
         assert_eq!(
             b.work_queue.len(),
             2,
             "CondBranch must enqueue both true and false targets"
         );
-        let mut kinds: Vec<RegionEdgeKind> = b
-            .work_queue
-            .iter()
-            .filter_map(|(parent, _)| parent.as_ref().map(|(_, k)| *k))
-            .collect();
-        kinds.sort_by_key(|k| format!("{k:?}"));
-        assert_eq!(
-            kinds,
-            vec![RegionEdgeKind::IfCaseFalse, RegionEdgeKind::IfCaseTrue]
-        );
+        let region_id = b.region_graph.node_indices().next().unwrap();
+        for (parent, target) in &b.work_queue {
+            assert_eq!(*parent, Some(region_id), "successor wired to the cond-branch region");
+            assert_eq!(*target, addr_at(0x1002, 0));
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@ use rustc_hash::FxHashMap;
 use petgraph::graph::NodeIndex;
 
 use crate::cfg::options::Options;
-use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, RegionGraph};
+use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
 use crate::cfg::Cfg;
 use anyhow::{anyhow, bail};
 
@@ -73,7 +73,7 @@ pub struct Builder<R: rsleigh::MemReader> {
     pub(super) start_addr_to_region_id: BTreeMap<PcodeInsnAddr, NodeIndex>,
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from. Treated as a LIFO stack (depth-first traversal).
-    pub(super) work_queue: Vec<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)>,
+    pub(super) work_queue: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
     /// Optional cache of `(machine_addr) → Arc<LiftRes>`.  When
     /// present, [`super::region_builder::RegionBuilder::lift_one_cached`]
     /// consults it before invoking Sleigh's decoder.  The cache must be
@@ -233,23 +233,23 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// - If no region contains `addr`, builds a new region via [`RegionBuilder`].
     fn explore(
         &mut self,
-        parent_region: Option<(NodeIndex, RegionEdgeKind)>,
+        parent_region: Option<NodeIndex>,
         addr: PcodeInsnAddr,
     ) -> Result<()> {
         let existing_region = self.find_region_containing_addr(addr);
         if let Some((region_id, region)) = existing_region {
             // This is the case that someone just referenced our region - add an edge between them.
-            let (parent_region_id, edge_kind) =
+            let parent_region_id =
                 parent_region.ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
             if region.start_addr == addr {
                 // The address lands on the start of an existing region — wire an edge.
-                self.region_graph.add_edge(parent_region_id, region_id, edge_kind);
+                self.region_graph.add_edge(parent_region_id, region_id, ());
             } else {
                 // The address lands inside an existing region — split it and
                 // wire the edge to the new "second half".
                 let second_region = self.split_region(region_id, addr)?;
                 self.region_graph
-                    .add_edge(parent_region_id, second_region, edge_kind);
+                    .add_edge(parent_region_id, second_region, ());
             }
         } else {
             RegionBuilder::new(self, addr, parent_region).build()?;
@@ -559,7 +559,6 @@ mod tests {
 
         let edges: Vec<_> = b.region_graph.edge_references().collect();
         assert_eq!(edges.len(), 1);
-        assert_eq!(*edges[0].weight(), RegionEdgeKind::Unconditional);
         assert_eq!(edges[0].target(), original);
     }
 
@@ -570,14 +569,13 @@ mod tests {
         let b_id = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
-        b.region_graph.add_edge(a, b_id, RegionEdgeKind::Unconditional);
+        b.region_graph.add_edge(a, b_id, ());
 
         b.split_region(b_id, addr(0x1004, 0)).unwrap();
 
         let first = b.start_addr_to_region_id[&addr(0x1000, 0)];
         let incoming: Vec<_> = b.region_graph.edges_directed(first, petgraph::Incoming).collect();
         assert_eq!(incoming.len(), 1);
-        assert_eq!(*incoming[0].weight(), RegionEdgeKind::Unconditional);
         assert_eq!(incoming[0].source(), a);
 
         // The original `a → b_id` edge was rewired to `a → first`, so the

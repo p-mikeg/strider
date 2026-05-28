@@ -1,14 +1,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Type-level tests for `MachineInsnAddr`, `PcodeInsnAddr`, `Region`,
-//! `RegionEdgeKind`, and `OptionsBuilder`.  Ported from the pre-rewrite
-//! `crates/cfg/tests/{addr_types,region,region_edge_kind,options}.rs`.
+//! and `OptionsBuilder`.  Ported from the pre-rewrite
+//! `crates/cfg/tests/{addr_types,region,options}.rs`.
 //!
 //! These tests exercise pure data-type behaviour (ordering, conversions,
 //! containment, distinctness of variants) and need no internal CFG state.
 
 use strider_lift::cfg::{
-    MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, Region, RegionEdgeKind, RegionInstruction,
+    MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, Region, RegionInstruction,
     RegionTerminator,
 };
 
@@ -150,22 +150,6 @@ fn contains_addr_returns_true_for_empty_region_at_start_addr() {
     };
     assert!(r.contains_addr(addr(0x1000, 0)));
     assert!(!r.contains_addr(addr(0x1000, 1)));
-}
-
-// ── RegionEdgeKind ───────────────────────────────────────────────────────
-
-#[test]
-fn region_edge_kind_variants_are_pairwise_distinct() {
-    let kinds = [
-        RegionEdgeKind::Unconditional,
-        RegionEdgeKind::IfCaseTrue,
-        RegionEdgeKind::IfCaseFalse,
-    ];
-    for i in 0..kinds.len() {
-        for j in (i + 1)..kinds.len() {
-            assert_ne!(kinds[i], kinds[j]);
-        }
-    }
 }
 
 // ── OptionsBuilder ───────────────────────────────────────────────────────

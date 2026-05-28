@@ -1,28 +1,5 @@
 use petgraph::stable_graph::StableDiGraph;
 
-/// Classifies the control-flow relationship between two CFG regions.
-///
-/// Every edge in the `RegionGraph` carries one of these three labels.
-/// The label determines which outgoing path is taken when execution leaves the
-/// source region.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RegionEdgeKind {
-    /// Unconditional successor: control always transfers from the source
-    /// region to the target.  Covers both sequential fall-through (the
-    /// source ends without a branch opcode) and an explicit pcode `Branch`
-    /// — the CFG draws the same edge for both, because the IR lifter links
-    /// every unconditional successor the same way (via the region linker).
-    /// The source [`Region::terminator`] still records which opcode (if
-    /// any) ended the region, for callers that care.
-    Unconditional,
-    /// Conditional branch — taken path: the source region ends with a pcode
-    /// `CondBranch` and the branch condition evaluated to *true*.
-    IfCaseTrue,
-    /// Conditional branch — not-taken path: the source region ends with a
-    /// pcode `CondBranch` and the branch condition evaluated to *false*.
-    IfCaseFalse,
-}
-
 /// A virtual address identifying a native machine instruction.
 ///
 /// This is a newtype wrapper around `u64` that prevents accidental mixing
@@ -83,9 +60,13 @@ pub struct RegionInstruction {
 /// Classifies how a [`Region`] ends.
 ///
 /// One terminator per region; the value is set when the region is
-/// finalised by [`crate::cfg::Builder`].  The variants line up with the
-/// outgoing edges in the `RegionGraph` but also record cases that have
-/// no outgoing edge (e.g. `Return`, `TailCall`).
+/// finalised by [`crate::cfg::Builder`].  The terminator is the single
+/// source of truth for a region's control transfer: CFG edges are
+/// unweighted (`StableDiGraph<Region, ()>`), so consumers that need to
+/// know *how* a region exits — and, for a `CondBranch`, *which*
+/// successor is the taken side — read the terminator, not the edge.
+/// Some variants have no outgoing edge at all (`Return`, `TailCall`,
+/// `NoReturn`, `UnresolvedIndirectBranch`).
 ///
 /// `Switch` is constructed by `cfg::builder::region_builder` when the
 /// indirect-branch resolver classifies a `BranchIndirect` as a
@@ -96,17 +77,30 @@ pub enum RegionTerminator {
     /// No terminator opcode; control falls into the next region.  This
     /// covers the case where decoding hits the start of an
     /// already-discovered region and the current region is closed out
-    /// with a [`RegionEdgeKind::Unconditional`] edge, as well as the
-    /// first half of a split region.
+    /// with its single outgoing edge, as well as the first half of a
+    /// split region.  The unconditional successor is the region's sole
+    /// outgoing edge.
     Fallthrough,
-    /// Direct unconditional branch, intra-function.  Successor lives on
-    /// the [`RegionEdgeKind::Unconditional`] edge (the same edge kind a
-    /// `Fallthrough` terminator uses — both are unconditional transfers).
+    /// Direct unconditional branch, intra-function.  Like `Fallthrough`,
+    /// the unconditional successor is the region's sole outgoing edge —
+    /// the distinction from `Fallthrough` is only that this region ended
+    /// with an explicit branch opcode.
     Branch,
-    /// Direct conditional branch.  Successors live on the
-    /// [`RegionEdgeKind::IfCaseTrue`] / [`RegionEdgeKind::IfCaseFalse`]
-    /// edges.
-    CondBranch,
+    /// Direct conditional branch.  The region has two outgoing edges; the
+    /// one whose target region *contains* `true_target` is the taken
+    /// (condition-true) side, the other is the fall-through.
+    CondBranch {
+        /// Address of the taken (condition-true) successor.  Stored as a
+        /// full [`PcodeInsnAddr`] — not just a machine address — because an
+        /// intra-machine-instruction `CBRANCH` can put the taken and
+        /// fall-through successors at the same machine address with
+        /// different pcode indices.  Consumers (`Cfg::region_if`,
+        /// `CfgDotDumper`) recover the polarity by finding which outgoing
+        /// edge's target region *contains* this address (not by matching
+        /// `start_addr`, which can sit below a region's first instruction
+        /// after a zero-pcode-op-hole `split_region`).
+        true_target: PcodeInsnAddr,
+    },
     /// `Return` opcode.  No outgoing edge.
     Return,
     /// Region terminates with no successor.  Emitted by
@@ -221,8 +215,10 @@ impl Region {
 
 /// The directed graph type used to represent the CFG.
 ///
-/// Nodes are [`Region`]s (basic blocks); edge weights are [`RegionEdgeKind`]
-/// values that describe the type of control transfer.  `StableDiGraph` is
-/// used so that `NodeIndex` values remain stable when regions are removed or
-/// re-wired (e.g. during `split_region`).
-pub(crate) type RegionGraph = StableDiGraph<Region, RegionEdgeKind>;
+/// Nodes are [`Region`]s (basic blocks); edges are unweighted (`()`) — they
+/// record only topology.  The kind of control transfer (and, for a
+/// conditional branch, which successor is taken) is read from the source
+/// region's [`RegionTerminator`].  `StableDiGraph` is used so that
+/// `NodeIndex` values remain stable when regions are removed or re-wired
+/// (e.g. during `split_region`).
+pub(crate) type RegionGraph = StableDiGraph<Region, ()>;

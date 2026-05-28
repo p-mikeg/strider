@@ -2,7 +2,7 @@ use dot::GraphDotDumper;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
-use super::types::RegionEdgeKind;
+use super::types::RegionTerminator;
 use super::Cfg;
 use anyhow::anyhow;
 
@@ -76,19 +76,41 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         // Add node
         out.node(&dot_id, &label, "box", &[]);
 
-        // Incoming edges
+        // Incoming edges.  Edges are unweighted; the label + style are
+        // derived from the SOURCE region's terminator.  For a `CondBranch`
+        // source, the taken side is the edge whose target (this node) starts
+        // at the terminator's `true_target`.
         for edge in self.cfg.region_graph.edges_directed(node_id, petgraph::Incoming) {
-            let src_id = edge.source().index().to_string();
-            let edge_label = format!("{:?}", edge.weight());
-            let edge_style = match edge.weight() {
-                RegionEdgeKind::Unconditional => "solid",
-                RegionEdgeKind::IfCaseFalse | RegionEdgeKind::IfCaseTrue => "dashed",
+            let src = edge.source();
+            let src_id = src.index().to_string();
+            let src_region = self
+                .cfg
+                .region_graph
+                .node_weight(src)
+                .ok_or_else(|| anyhow!("dangling edge source {src:?}"))?;
+            let (label, style) = match &src_region.terminator {
+                RegionTerminator::CondBranch { true_target } => {
+                    // The taken side is the successor that CONTAINS `true_target`
+                    // (start_addr can sit below the first instruction — see
+                    // `Cfg::region_if`).
+                    if node.contains_addr(*true_target) {
+                        ("if-true", "dashed")
+                    } else {
+                        ("if-false", "dashed")
+                    }
+                }
+                RegionTerminator::Switch { .. } => ("switch", "solid"),
+                RegionTerminator::Branch => ("branch", "solid"),
+                RegionTerminator::Fallthrough => ("fallthrough", "solid"),
+                // These terminators have no outgoing edge; an edge from one is
+                // a construction bug, but render it visibly rather than
+                // failing the whole dump.
+                RegionTerminator::Return
+                | RegionTerminator::NoReturn
+                | RegionTerminator::TailCall { .. }
+                | RegionTerminator::UnresolvedIndirectBranch { .. } => ("?", "solid"),
             };
-            out.edge(
-                &src_id,
-                &dot_id,
-                &[("label", edge_label.as_str()), ("style", edge_style)],
-            );
+            out.edge(&src_id, &dot_id, &[("label", label), ("style", style)]);
         }
 
         Ok(())
