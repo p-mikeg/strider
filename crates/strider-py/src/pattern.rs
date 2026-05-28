@@ -550,6 +550,9 @@ impl PyPartialMatch {
         Ok(self.bindings.get_node(cap).is_some())
     }
 
+    /// Look up a capture by key (Python `m[c]`).  Returns an unsigned int,
+    /// bool, or raw float bits depending on the bound node's type; returns
+    /// `None` when the capture is unbound or the proxy has expired.
     fn __getitem__(&self, py: Python<'_>, key: CaptureKeyOwned) -> PyResult<PyObject> {
         let cap = self.capture_from_key(&key)?;
         if let Some(Some(v)) = self.with_graph(|g| self.bindings.get_uint(cap, g)) {
@@ -566,6 +569,7 @@ impl PyPartialMatch {
         Ok(py.None())
     }
 
+    /// Whether `c` is bound in this partial match (Python `c in m`).
     fn __contains__(&self, key: CaptureKeyOwned) -> PyResult<bool> {
         self.has(key)
     }
@@ -1023,12 +1027,15 @@ impl PyFunctionArgPat {
 
 #[pymethods]
 impl PyFunctionArgPat {
+    /// Constrain the match to argument at ABI position `i` (0-based).
     fn index(slf: Py<Self>, py: Python<'_>, i: u32) -> Py<Self> {
         slf.borrow(py).index.replace(Some(i)); slf
     }
+    /// Constrain the match to an argument sourced from register varnode `vn`.
     fn source_register(slf: Py<Self>, py: Python<'_>, vn: crate::sleigh::PyVn) -> Py<Self> {
         slf.borrow(py).source.replace(Some(strider_ir::node::FunctionArgSource::Register(vn.inner))); slf
     }
+    /// Constrain the match to an argument sourced from the stack at `(space, offset)`.
     fn source_stack(slf: Py<Self>, py: Python<'_>, space: crate::sleigh::PyVnSpace, offset: i64) -> Py<Self> {
         slf.borrow(py).source.replace(Some(strider_ir::node::FunctionArgSource::Stack {
             space: space.inner,

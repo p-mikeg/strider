@@ -184,12 +184,14 @@ so the resolver-bearing dependency stays one-way.
       between inputs and outputs' use-lists.
     - `validate/graph_invariants.rs` — whole-graph rules:
       Entry/InitialMemory uniqueness, Region predecessor kinds,
-      phi-token ownership and per-predecessor arity, Call/Return CC-arity
-      (output / input slot counts vs the calling convention, honouring
-      per-`Call` clobber overrides), wide-const consistency (including a
-      dedicated check that `IntConstWide` declares a I256/I512 output
-      type), and the always-on asm-fingerprint check (every reachable
-      non-exempt node MUST carry ≥1 fingerprint).
+      phi-token ownership and per-predecessor arity, value-`Phi`
+      input-type consistency (every value input must carry the phi's
+      own output type), Call/Return CC-arity (output / input slot counts
+      vs the calling convention, honouring per-`Call` clobber overrides),
+      wide-const consistency (including a dedicated check that
+      `IntConstWide` declares a I256/I512 output type), and the always-on
+      asm-fingerprint check (every reachable non-exempt node MUST carry
+      ≥1 fingerprint).
     - Errors are aggregated into a `ValidationErrors` bundle rather than
       failing fast.
   - `function_dot` module — IR-specific Graphviz / HTML rendering on top
@@ -309,8 +311,11 @@ so the resolver-bearing dependency stays one-way.
     - `ConstantFold` — constant evaluation, identities (`x+0→x`,
       `x^x→0`), AND-mask merging, etc.
     - `KnownBits` — bit-level zeros / ones lattice propagation.
-    - `FlagCmpCanonicalize` — flag-tree → single `IntCmpOp` rewrite
-      (AArch64 NZCV-style chains).
+    - `FlagCmpCanonicalize` — flag-tree → single `IntCmpOp` rewrite.
+      Covers both the raw AArch64 NZCV-style chains and the
+      decomposed `(a≠b)∧¬(a<b)` / `(a=b)∨(a<b)` shapes that ARM/Thumb
+      (and post-`ConstantFold` trees) leave once the branch's inverted
+      sense is stripped, so every flag arch folds to a direct comparison.
     - `IfCondInversion` — `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}`.
     - `RedundantPhis` — eliminates `Phi` (tagged or anonymous) /
       `MemPhi` / `Region` with a single reachable predecessor.

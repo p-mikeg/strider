@@ -229,7 +229,7 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 |------|-------------|
 | `ConstantFold` | Constant arithmetic, comparisons, booleans, truncation, extension; algebraic identities. |
 | `KnownBits` | Bit-level zero/one propagation. Folds outputs whose every bit is determined to a constant. |
-| `FlagCmpCanonicalize` | Recognises CPU-flag-tree comparisons (AArch64 NZCV / x86 EFLAGS / Thumb) and rewrites them to high-level `IntCmpOp`. |
+| `FlagCmpCanonicalize` | Recognises CPU-flag-tree comparisons (AArch64 NZCV / x86 EFLAGS / ARM+Thumb) — both the raw flag trees and the decomposed shapes left after an inverted-sense branch is normalised — and rewrites them to high-level `IntCmpOp`. |
 | `IfCondInversion` | Canonicalises `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` so every `If` has a non-`BoolNeg` cond. |
 | `RedundantPhis` | Eliminates `Phi`/`MemPhi`/`Region` with a single reachable predecessor.  (The phi's optional source-varnode tag lives in `Graph::phi_var_tag`.) |
 | `DeadBranchElimination` | Removes `If` whose condition is constant; strips dead control edges. |

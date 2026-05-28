@@ -97,9 +97,8 @@ impl PySleigh {
 /// constraint (`load().space(...)`, `function_arg_stack(...)`, etc.)
 /// without having to thread a `Sleigh` through.
 ///
-/// Strider exposes the four standard Sleigh spaces; binaries that
-/// reference an exotic custom space can construct one via the
-/// `VnSpace.from_id(u32)` escape hatch.
+/// Strider exposes the four standard Sleigh spaces via the `ram()`,
+/// `register()`, `const_()`, and `unique()` classmethods.
 // `#[gen_stub_pyclass]` derives `PyStubType` for `PyVnSpace` so the
 // macro-emitted `.space(s: PyVnSpace)` signatures compile under
 // `#[gen_stub_pymethods]`.  The existing `#[pymethods]` block below is
