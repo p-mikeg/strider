@@ -286,10 +286,6 @@ where
     /// Per-iteration region index, rebuilt by `build_initial_iteration` /
     /// `rebuild` from the latest `RegionLiftHandles` snapshot.
     region_index: RegionIndex,
-    /// Cached link-register / stack-pointer varnodes (stable across
-    /// iterations).
-    lr_vn: Option<rsleigh::Vn>,
-    stack_vn: Option<rsleigh::Vn>,
     /// Decode cache shared across CFG rebuilds.  The Sleigh handle
     /// persists for the whole `run`, so this cache stays valid for
     /// every iteration; threaded into each fresh `strider_lift::cfg::Builder` so
@@ -320,8 +316,6 @@ where
     R: rsleigh::MemReader,
 {
     fn new(config: Config<'a, R>) -> Result<Self> {
-        let lr_vn = config.strider.calling_convention().link_register_vn;
-        let stack_vn = Some(config.strider.calling_convention().stack_vn);
         // Pre-resolve per-address CC overrides against the same Sleigh
         // register table the function-default CC was built against.
         let per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
@@ -357,8 +351,6 @@ where
             region_index: RegionIndex {
                 by_exit_control: rustc_hash::FxHashMap::default(),
             },
-            lr_vn,
-            stack_vn,
             decode_cache: DecodeCache::new(),
             vn_cache: rustc_hash::FxHashSet::default(),
             vn_cache_region_count: 0,
@@ -586,13 +578,14 @@ where
         // suffices for every anchor we classify.
         let view = crate::pattern::RewriteCtxView::from_built(function)?;
         let known = crate::opt::analyze_known_bits(view)?;
+        let cc = self.strider.calling_convention();
         for (addr, anchor_output) in &self.unresolved {
             let resolved_opt = classify_anchor(
                 view,
                 *anchor_output,
-                self.lr_vn,
+                cc.link_register_vn,
                 rom_ref,
-                self.stack_vn,
+                Some(cc.stack_vn),
                 &known,
             );
             let Some(resolved) = resolved_opt else {
