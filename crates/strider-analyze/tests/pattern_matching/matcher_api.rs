@@ -520,3 +520,88 @@ fn find_all_requirements_disagreement_on_shared_capture_yields_empty() {
     let req = mr.find_all_requirements(&[&p_8, &p_16]);
     assert!(req.is_empty());
 }
+
+// ── find_all_requirements: shared OffsetCapture cross-pattern join ────────────
+//
+// Within a single match, `bind_offset` already compares BOTH base and offset
+// (see bindings.rs `offset_bind_join_requires_matching_base_not_just_offset`).
+// These tests pin the SAME semantics across patterns in `find_all_requirements`:
+// a shared `OffsetCapture` must require the two accesses to land on the same
+// `(base, offset)` stack slot.
+
+/// Builds a graph with two RAM stores on the SAME base but DIFFERENT stack
+/// slots: `[base + 0x10] = 0` and `[base + 0x20] = 99`.  Both are stamped in
+/// `Function::stack_offset` with the shared base.  Returns the function.
+fn two_stack_stores_different_offsets() -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let base = t.u64(0x7000); // stand-in SP base, shared by both stores
+    let off10 = t.u64(0x10);
+    let off20 = t.u64(0x20);
+    let zero = t.u64(0);
+    let v99 = t.u64(99);
+    let addr10 = t.add(base, off10);
+    let addr20 = t.add(base, off20);
+    t.store_ram(addr10, zero);
+    t.store_ram(addr20, v99);
+    let mut function = t.ret_nothing();
+
+    // Stamp each store with its (shared base, distinct offset) slot.
+    let stores: Vec<NodeId> = function
+        .walk()
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Store(_)))
+        .collect();
+    assert_eq!(stores.len(), 2);
+    for &store_node in &stores {
+        let inputs = function.node_inputs(store_node);
+        let data_out = inputs[2];
+        if let NodeKind::IntConst(v) = function.kind_of_output(data_out) {
+            let offset = if *v == 0 { 0x10 } else { 0x20 };
+            function.set_stack_offset(store_node, base, offset);
+        }
+    }
+    function
+}
+
+/// A shared `OffsetCapture` across two patterns that match DIFFERENT stack
+/// slots must reject the join — the two accesses address different memory.
+#[test]
+fn find_all_requirements_rejects_shared_offset_on_different_slots() {
+    let function = two_stack_stores_different_offsets();
+    let mr = Matcher::try_new(&function).unwrap();
+
+    let oc = OffsetCapture::new();
+    // Pattern A only matches the `[base+0x10] = 0` store (data == 0).
+    let p_zero: Pat = store().offset_capture(oc).data(int_const(0)).into();
+    // Pattern B only matches the `[base+0x20] = 99` store (data == 99).
+    let p_99: Pat = store().offset_capture(oc).data(int_const(99)).into();
+
+    let req = mr.find_all_requirements(&[&p_zero, &p_99]);
+    assert!(
+        req.is_empty(),
+        "a shared OffsetCapture must NOT join accesses on different stack slots"
+    );
+}
+
+/// A shared `OffsetCapture` across two patterns that match the SAME stack slot
+/// must join.  Here both patterns match the single `[base+0x10] = 0` store.
+#[test]
+fn find_all_requirements_joins_shared_offset_on_same_slot() {
+    let function = two_stack_stores_different_offsets();
+    let mr = Matcher::try_new(&function).unwrap();
+
+    let oc = OffsetCapture::new();
+    // Both patterns match only the `[base+0x10] = 0` store, so the shared
+    // OffsetCapture binds to the same (base, 0x10) slot in each.
+    let p_a: Pat = store().offset_capture(oc).data(int_const(0)).into();
+    let p_b: Pat = store().offset_capture(oc).stack_offset(0x10).into();
+
+    let req = mr.find_all_requirements(&[&p_a, &p_b]);
+    assert_eq!(
+        req.len(),
+        1,
+        "a shared OffsetCapture on the SAME slot must join"
+    );
+    assert_eq!(req[0].len(), 2);
+    assert_eq!(req[0][0].captured_offset(oc), Some(0x10_i64));
+    assert_eq!(req[0][1].captured_offset(oc), Some(0x10_i64));
+}

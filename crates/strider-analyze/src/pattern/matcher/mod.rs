@@ -641,9 +641,15 @@ impl<'g> Matcher<'g> {
 }
 
 /// True when every capture in `m`'s bindings that also appears in any
-/// previously-collected match in `prefix` binds to the same
-/// [`crate::pattern::matcher::bindings::Binding`].  Helper for
+/// previously-collected match in `prefix` binds to the same value.  Helper for
 /// [`Matcher::find_all_requirements`].
+///
+/// Two journals must agree: the node-binding journal (a shared [`Capture`]
+/// must bind the same [`crate::pattern::matcher::bindings::Binding`]) AND the
+/// offset journal (a shared [`crate::pattern::OffsetCapture`] must bind the
+/// same `(base, offset)` stack slot).  The offset check mirrors the
+/// within-match `bind_offset` semantics — comparing BOTH base and offset — so
+/// a shared `OffsetCapture` cannot join two accesses on different stack slots.
 ///
 /// Captures local to `m` (not seen in `prefix`) impose no constraint —
 /// they are unique to this pattern and join-trivial.
@@ -652,6 +658,13 @@ fn prefix_agrees(prefix: &[Match], m: &Match) -> bool {
         for (cap, prev_binding) in prev.bindings.iter() {
             if let Some(m_binding) = m.bindings.get_binding(cap)
                 && prev_binding != m_binding
+            {
+                return false;
+            }
+        }
+        for (oc, prev_slot) in prev.bindings.offset_iter() {
+            if let Some(m_slot) = m.bindings.get_offset_binding(oc)
+                && prev_slot != m_slot
             {
                 return false;
             }

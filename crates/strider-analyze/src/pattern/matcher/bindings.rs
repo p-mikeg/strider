@@ -168,6 +168,31 @@ impl Bindings {
         Some(offset)
     }
 
+    /// Returns the full `(base, offset)` stack slot bound to `oc`, or `None`
+    /// if `oc` was not captured.  Unlike [`Self::get_offset`] this exposes the
+    /// base so the cross-pattern shared-`OffsetCapture` join in
+    /// [`crate::pattern::Matcher::find_all_requirements`] can require BOTH
+    /// base and offset to agree — matching the within-match `bind_offset`
+    /// semantics.
+    ///
+    /// O(1) via the `offset_index` overlay.
+    #[must_use]
+    pub(crate) fn get_offset_binding(&self, oc: OffsetCapture) -> Option<(NodeOutputId, i64)> {
+        let idx = *self.offset_index.get(&oc)?;
+        Some(self.offset_entries[idx].1)
+    }
+
+    /// Iterates over every `(OffsetCapture, (base, offset))` recorded by this
+    /// match.  Mirrors [`Self::iter`] for the offset journal; used by
+    /// [`crate::pattern::Matcher::find_all_requirements`] to compute
+    /// cross-pattern shared-offset agreement.  Order is the order offsets were
+    /// bound during matching.
+    pub(crate) fn offset_iter(
+        &self,
+    ) -> impl Iterator<Item = (OffsetCapture, (NodeOutputId, i64))> + '_ {
+        self.offset_entries.iter().map(|(oc, slot)| (*oc, *slot))
+    }
+
     /// Convenience: returns the value `NodeOutputId` bound to `c`, or
     /// `None` if `c` was not captured or the binding was control-flow.
     #[must_use]
