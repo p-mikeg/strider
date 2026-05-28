@@ -112,11 +112,13 @@ pub struct AnalyzeOptions<'a> {
 /// convention.  Create one `Strider` per architecture/ABI combination and
 /// reuse it to analyse multiple functions.
 ///
-/// `Clone` is cheap: every field is itself `Clone`/`Copy`.  The strider-py
-/// `run` path uses this to detach a `Strider` snapshot from a `PyRef` so
-/// it can release the GIL across `strider::run` (otherwise Python threads
-/// would be unable to make progress while a long lift / fixed-point loop
-/// runs).
+/// `Clone` copies the resolved calling convention and the cached
+/// `SleighRegs` table — the latter a register-name lookup table that isn't
+/// free to clone, but far cheaper than re-running the "expensive"
+/// `Sleigh::regs()` to rebuild it.  The strider-py `run` path uses this to
+/// detach a `Strider` snapshot from a `PyRef` so it can release the GIL
+/// across `strider::run` (otherwise Python threads would be unable to make
+/// progress while a long lift / fixed-point loop runs).
 #[derive(Clone)]
 pub struct Strider {
     pub(super) calling_convention: strider_target::BuiltCallingConvention,
