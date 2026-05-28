@@ -40,16 +40,32 @@ use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 #[pyclass(name = "RelocationStats", module = "strider", frozen)]
 #[derive(Clone)]
 pub struct PyRelocationStats {
+    /// Total relocations seen across every iterated relocation table.
     #[pyo3(get)]
     pub seen: usize,
+    /// Relocations the applier patched into the loaded regions.
     #[pyo3(get)]
     pub applied: usize,
+    /// Relocations skipped because the target symbol is legitimately
+    /// unresolvable at static-analysis time (undefined externs, weak
+    /// symbols referencing absent libraries).
     #[pyo3(get)]
     pub skipped_unresolved_target: usize,
+    /// Relocations skipped because their kind / size / encoding isn't
+    /// one the applier knows how to write (e.g. ARM Thumb-branch
+    /// encodings, platform-specific TLS variants).  See
+    /// `unsupported_r_types` for the raw `r_type` codes.
     #[pyo3(get)]
     pub skipped_unsupported_kind: usize,
+    /// Relocations whose site address didn't fall inside any loaded
+    /// region (e.g. `.data` / `.bss` relocations when only code and
+    /// read-only sections were loaded).
     #[pyo3(get)]
     pub skipped_no_region: usize,
+    /// Sorted, deduped raw ELF `r_type` codes the applier classified as
+    /// unsupported (each incremented `skipped_unsupported_kind`).  Pair
+    /// with the System V ABI per-arch relocation tables to identify each
+    /// code; empty when `skipped_unsupported_kind == 0`.
     #[pyo3(get)]
     pub unsupported_r_types: Vec<u32>,
 }

@@ -8,7 +8,16 @@ use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 
-create_exception!(strider.errors, StriderError, PyException);
+create_exception!(
+    strider.errors,
+    StriderError,
+    PyException,
+    "The single exception type raised by strider.  Every Rust error \
+     (lift failure, unresolved indirect branch, bad pattern, poisoned \
+     lock, …) lands here carrying an informative message (and a Rust \
+     backtrace under `RUST_BACKTRACE=1`).  The hierarchy is intentionally \
+     flat — there are no typed subclasses."
+);
 
 /// Convert an `anyhow::Error` into a `StriderError`.
 ///
