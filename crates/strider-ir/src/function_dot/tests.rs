@@ -561,13 +561,14 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     );
 }
 
-// ── stack_offsets addr-edge suppression ──────────────────────────────────
+// ── stack_offsets do not affect rendering ────────────────────────────────
 
-/// A `Store` whose `stack_offsets` entry is populated must NOT have an edge
-/// from the addr-producer to the Store node in the rendered DOT output.
-/// A `Store` without a `stack_offsets` entry MUST have an addr edge.
+/// A `Store`'s address subtree renders identically whether or not a
+/// `stack_offsets` entry is present — the side-table is for the optimizer /
+/// pattern layer, not the renderer.  The literal `base + K` address (and its
+/// edge) is always shown; there is no `[sp±K]` label substitution.
 #[test]
-fn store_addr_edge_suppressed_when_stack_offset_present() {
+fn store_addr_edge_present_regardless_of_stack_offset() {
     // Build: Entry → Region → Store(ram) → Return, with an addr IntConst.
     let mut f = Function::new();
 
@@ -624,34 +625,33 @@ fn store_addr_edge_suppressed_when_stack_offset_present() {
     // Count total edges — baseline for the with-offset comparison.
     let edge_count_no_offset = edge_lines(&dot_no_offset).len();
 
-    // ── Case 2: stack_offset present — addr edge must be suppressed ─────
+    // ── Case 2: stack_offset present — rendering is UNCHANGED ──────────
 
     f.set_stack_offset(store, addr_out, 0x10_i64);
 
     let dot_with_offset = render(&f, entry);
 
-    // The node label must contain the offset text.
+    // No `[sp+K]` label substitution — the offset lives in the IntConst node.
     assert!(
-        dot_with_offset.contains("[sp+16]"),
-        "Store label must show stack offset when stack_offset is set:\n{dot_with_offset}",
+        !dot_with_offset.contains("[sp+"),
+        "stack_offset must not add an [sp+K] label:\n{dot_with_offset}",
     );
 
-    // The addr const's value must NOT appear as an edge endpoint
-    // referencing the Store — i.e. the dot output has one fewer edge
-    // than the no-offset case (the addr edge was dropped).
+    // The addr edge is still present: the edge count is unchanged.
     let edge_count_with_offset = edge_lines(&dot_with_offset).len();
-    assert!(
-        edge_count_with_offset < edge_count_no_offset,
-        "stack-offset Store must have fewer edges than non-stack Store \
-         (addr edge suppressed): {edge_count_with_offset} vs {edge_count_no_offset}:\n\
+    assert_eq!(
+        edge_count_with_offset, edge_count_no_offset,
+        "stack_offset must not change rendering (addr edge still present): \
+         {edge_count_with_offset} vs {edge_count_no_offset}:\n\
          without offset:\n{dot_no_offset}\n\nwith offset:\n{dot_with_offset}",
     );
 }
 
-/// A `Load` whose `stack_offsets` entry is populated must NOT have an edge
-/// from the addr-producer to the Load node in the rendered DOT output.
+/// A `Load`'s address subtree renders identically whether or not a
+/// `stack_offsets` entry is present — the addr edge is always shown and
+/// there is no `[sp±K]` label substitution.
 #[test]
-fn load_addr_edge_suppressed_when_stack_offset_present() {
+fn load_addr_edge_present_regardless_of_stack_offset() {
     let mut f = Function::new();
 
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
@@ -683,20 +683,20 @@ fn load_addr_edge_suppressed_when_stack_offset_present() {
     let dot_no_offset = render(&f, entry);
     let edges_no_offset = edge_lines(&dot_no_offset).len();
 
-    // With stack offset: addr edge is suppressed.
+    // With stack offset: rendering is unchanged (addr edge still present).
     f.set_stack_offset(load, addr_out, -8_i64);
     let dot_with_offset = render(&f, entry);
 
     assert!(
-        dot_with_offset.contains("[sp-8]"),
-        "Load label must show negative stack offset:\n{dot_with_offset}",
+        !dot_with_offset.contains("[sp-"),
+        "stack_offset must not add an [sp-K] label:\n{dot_with_offset}",
     );
 
     let edges_with_offset = edge_lines(&dot_with_offset).len();
-    assert!(
-        edges_with_offset < edges_no_offset,
-        "stack-offset Load must have fewer edges than non-stack Load \
-         (addr edge suppressed): {edges_with_offset} vs {edges_no_offset}:\n\
+    assert_eq!(
+        edges_with_offset, edges_no_offset,
+        "stack_offset must not change rendering (addr edge still present): \
+         {edges_with_offset} vs {edges_no_offset}:\n\
          without offset:\n{dot_no_offset}\n\nwith offset:\n{dot_with_offset}",
     );
 }

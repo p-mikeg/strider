@@ -206,17 +206,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         out: &mut ::dot::DotEmitter,
         state: &mut FunctionDotDumperState,
     ) -> core::result::Result<(), std::io::Error> {
-        // Suppress the addr-input edge (slot 1) for Store and Load nodes whose
-        // stack_offset side-table entry is populated.  The node label already
-        // shows the offset (e.g. "[sp+0x10]"), so the edge to the SP-arithmetic
-        // chain is visual noise.  The IR edge is untouched — rendering only.
-        if idx == 1
-            && matches!(kind, NodeKind::Store(_) | NodeKind::Load(_))
-            && self.function.stack_offset(node).is_some()
-        {
-            return Ok(());
-        }
-
         let parent_id = self.function.node_for_output(parent_output);
         // Skip edges whose producer was filtered out by the active
         // node filter.  Constants are always re-emitted alongside

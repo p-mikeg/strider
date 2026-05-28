@@ -93,17 +93,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .map_or_else(String::new, |t| format!("{sep}{}", t.as_str()))
     }
 
-    /// Prefixes `base` with the SP-relative offset annotation (`[sp+K]` /
-    /// `[sp-K]`) recorded for `node` in the stack-offset side-table, or
-    /// returns `base` unchanged when the node has no recorded offset.
-    fn sp_prefixed(&self, node: NodeId, base: String) -> String {
-        match self.function.stack_offset(node) {
-            Some((_, k)) if k < 0 => format!("[sp-{}]\n{base}", -k),
-            Some((_, k)) => format!("[sp+{k}]\n{base}"),
-            None => base,
-        }
-    }
-
     pub(super) fn pretty_label(&self, node: NodeId) -> io::Result<String> {
         let kind = self.function.node_kind(node);
 
@@ -172,15 +161,13 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             NodeKind::Load(space) => {
                 let space = self.pretty_vnspace(*space);
                 let ty = self.out_type_suffix(node, " ");
-                let base = format!("Load{ty}\n← {space}");
-                self.sp_prefixed(node, base)
+                format!("Load{ty}\n← {space}")
             }
             NodeKind::Store(space) => {
                 let space = self.pretty_vnspace(*space);
                 // data is input 2; memory and addr are 0 and 1
                 let ty = self.input_type_suffix(node, 2, " ");
-                let base = format!("Store{ty}\n→ {space}");
-                self.sp_prefixed(node, base)
+                format!("Store{ty}\n→ {space}")
             }
             // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => {
