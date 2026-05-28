@@ -306,9 +306,6 @@ pub struct PositionalArgLayout {
     /// register slots (matching `arg_passing_regs`), followed by stack
     /// slots (matching `stack_arg_offsets`).
     pub(crate) entries: Vec<PositionalArg>,
-    /// Stack-pointer varnode used by the SP-relative recognisers.
-    /// Mirrors `BuiltCallingConvention::stack_vn`.
-    pub(crate) stack_vn: rsleigh::Vn,
 }
 
 impl PositionalArgLayout {
@@ -330,10 +327,7 @@ impl PositionalArgLayout {
                 offset,
             });
         }
-        Self {
-            entries,
-            stack_vn: cc.stack_vn,
-        }
+        Self { entries }
     }
 
     /// Iterates `(index, vn)` over the register-passed argument slots

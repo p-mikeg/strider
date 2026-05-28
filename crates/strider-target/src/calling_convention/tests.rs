@@ -820,7 +820,6 @@ fn positional_arg_layout_x86_64_systemv() {
     let cc = CallingConvention::x86_64_systemv().unwrap().build(&regs).unwrap();
     let layout = PositionalArgLayout::from_convention(&cc);
 
-    assert_eq!(layout.stack_vn, cc.stack_vn);
     // 6 reg args + 6 stack args = 12 entries.
     assert_eq!(layout.entries.len(), 12);
     assert_eq!(layout.first_stack_index(), 6);
