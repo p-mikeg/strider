@@ -10,7 +10,8 @@
 //! ARM/Thumb lift the branch with inverted sense (an outer `BoolNeg`), so by
 //! the time the pass runs ConstantFold has decomposed the sub-terms into
 //! direct comparisons — which the "decomposed-form" rules (10–13) recognise.
-//! This test pins that all three arches reach the same single-`IntCmpOp` form.
+//! x86 / x64 (EFLAGS) reach the canonical form directly.  This test pins that
+//! every flag-register arch ends at the same single-`IntCmpOp` shape.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
@@ -90,4 +91,14 @@ fn flag_cmp_canonicalizes_branches_arm() {
 #[test]
 fn flag_cmp_canonicalizes_branches_arm_thumb() {
     assert_branches_canonicalize(Arch::ArmThumb);
+}
+
+#[test]
+fn flag_cmp_canonicalizes_branches_x86() {
+    assert_branches_canonicalize(Arch::X86);
+}
+
+#[test]
+fn flag_cmp_canonicalizes_branches_x64() {
+    assert_branches_canonicalize(Arch::X64);
 }
