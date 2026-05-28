@@ -178,6 +178,63 @@ fn bool_unary_any_captures_variant() {
     assert_eq!(m.get_bool_unary_op(ov, &function), Some(op));
 }
 
+/// `bool_binary_any` must match **only** the `I1`-output op (its doc says "an
+/// `IntBinaryOp` at `I1`"); a structurally identical wide (64-bit) `And` shares
+/// the same `NodeKind` after the bool→I1 collapse but is NOT a boolean op and
+/// must be rejected.  Every `bool_binary_any` match must produce an `I1` value.
+#[test]
+fn bool_binary_any_rejects_wide_int_op() {
+    let mut t = Tb::empty();
+    // I1 `And` (boolean).
+    let bt = t.boolean(true);
+    let bf = t.boolean(false);
+    let bool_and = t.bool_bin(bt, bf, IntBinaryOp::And);
+    let bool_as_int = t.as_int(bool_and, NodeOutputType::I64);
+    // 64-bit `And` (wide integer) — same NodeKind discriminant + payload.
+    let w0 = t.u64(0xF0);
+    let w1 = t.u64(0x0F);
+    let wide_and = t.int_bin(w0, w1, IntBinaryOp::And);
+    let sum = t.add(bool_as_int, wide_and);
+    let function = t.ret_val(sum);
+
+    // `bool_binary_any` must match exactly one node — the I1 `And` — and that
+    // node's output must be the 1-bit boolean, never the 64-bit `And`.
+    let ob = Capture::new();
+    let hits = a::matches(&function, bool_binary_any(ob, any(), any()), 1);
+    let out = hits[0].output(ob).expect("matched value output");
+    assert_eq!(
+        function.output_kind(out).as_value().map(|ty| ty.bit_width()),
+        Some(1),
+        "bool_binary_any must match only the I1-output op, not a wide one",
+    );
+}
+
+/// `bool_unary_any` must likewise reject a wide (64-bit) unary op and match
+/// only the `I1`-output one.
+#[test]
+fn bool_unary_any_rejects_wide_int_op() {
+    let mut t = Tb::empty();
+    // I1 `BitNot` (logical NOT).
+    let bt = t.boolean(true);
+    let bool_not = t.bool_un(bt, IntUnaryOp::BitNot);
+    let bool_as_int = t.as_int(bool_not, NodeOutputType::I64);
+    // 64-bit `BitNot` (wide integer complement).
+    let w = t.u64(0xDEAD);
+    let wide_not = t.int_un(w, IntUnaryOp::BitNot);
+    let sum = t.add(bool_as_int, wide_not);
+    let function = t.ret_val(sum);
+
+    // `bool_unary_any` must match exactly one node — the I1 `BitNot`.
+    let ob = Capture::new();
+    let hits = a::matches(&function, bool_unary_any(ob, any()), 1);
+    let out = hits[0].output(ob).expect("matched value output");
+    assert_eq!(
+        function.output_kind(out).as_value().map(|ty| ty.bit_width()),
+        Some(1),
+        "bool_unary_any must match only the I1-output op, not a wide one",
+    );
+}
+
 // ── Float binary / unary / cmp ───────────────────────────────────────────────
 
 #[test]

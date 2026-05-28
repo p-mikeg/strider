@@ -23,6 +23,15 @@ use crate::pattern::var::Capture;
 // arbitrary variant of the op enum used only to build the
 // `KindSpec::variant(...)` discriminant — payload is ignored.
 //
+// `$output_guard` is a `Fn(&MatchCtx, NodeId) -> bool` consulted in
+// `post_match` *before* the node is bound.  The int / float families pass a
+// width-agnostic `|_, _| true` (they intentionally match any output width);
+// the `bool_*_any` families pass `output_is_i1`, since a boolean op is an
+// `IntBinaryOp` / `IntUnaryOp` whose output is `I1` — without it the bool
+// matchers would over-fire on a same-shaped wide integer op (e.g. a 64-bit
+// `And`) that shares the same `NodeKind` after the bool→I1 collapse.  (The
+// `cmp` arm needs no guard: a comparison's output is always `I1`.)
+//
 // The post_match closure binds the matched `NodeId` to the supplied
 // `Capture` so callers can recover the op variant via
 // `Match::get_*_op(capture, &graph)`.
@@ -34,7 +43,7 @@ use crate::pattern::var::Capture;
 macro_rules! impl_variant_any {
     // Binary-arity with a runtime commutativity decider.
     (binary, $fn_name:ident, $op_enum:ident, $sample_op:expr,
-     $build_ty:expr, $missing:literal, $doc:literal) => {
+     $build_ty:expr, $output_guard:expr, $missing:literal, $doc:literal) => {
         #[doc = $doc]
         pub fn $fn_name(c: Capture, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
@@ -59,7 +68,9 @@ macro_rules! impl_variant_any {
                 $build_ty,
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
-                if matches!(ctx.function.node_kind(node), NodeKind::$op_enum(_)) {
+                if matches!(ctx.function.node_kind(node), NodeKind::$op_enum(_))
+                    && $output_guard(ctx, node)
+                {
                     // Populate the value output too so callers can use
                     // both `Match::get_*_op(c, &graph)` (op-variant) AND
                     // typed extractors / `Match::output(c)` (value).
@@ -118,7 +129,7 @@ macro_rules! impl_variant_any {
     };
     // Unary-arity: one input.
     (unary, $fn_name:ident, $op_enum:ident, $sample_op:expr,
-     $build_ty:expr, $missing:literal, $doc:literal) => {
+     $build_ty:expr, $output_guard:expr, $missing:literal, $doc:literal) => {
         #[doc = $doc]
         pub fn $fn_name(c: Capture, operand: impl Into<Pat>) -> Pat {
             NodePat::matcher(
@@ -139,7 +150,9 @@ macro_rules! impl_variant_any {
                 $build_ty,
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
-                if matches!(ctx.function.node_kind(node), NodeKind::$op_enum(_)) {
+                if matches!(ctx.function.node_kind(node), NodeKind::$op_enum(_))
+                    && $output_guard(ctx, node)
+                {
                     // Populate the value output too so callers can use
                     // both `Match::get_*_op(c, &graph)` (op-variant) AND
                     // typed extractors / `Match::output(c)` (value).
@@ -156,19 +169,37 @@ macro_rules! impl_variant_any {
     };
 }
 
+/// Width-agnostic output guard: int / float `*_any` families match any output
+/// width, so they impose no extra constraint.
+fn any_output(_ctx: &crate::pattern::pat::traits::MatchCtx, _node: strider_ir::node::NodeId) -> bool {
+    true
+}
+
+/// `I1`-output guard for the `bool_*_any` families.  Booleans are the 1-bit
+/// integer `I1`, so a boolean op is an `IntBinaryOp` / `IntUnaryOp` whose
+/// value output is `I1`; a same-shaped wide integer op shares the same
+/// `NodeKind` and must be rejected.  Mirrors `bool_::require_i1_output`.
+fn output_is_i1(ctx: &crate::pattern::pat::traits::MatchCtx, node: strider_ir::node::NodeId) -> bool {
+    ctx.function
+        .node_outputs(node)
+        .iter()
+        .find_map(|&out| ctx.function.output_kind(out).as_value())
+        .is_some_and(|ty| ty.bit_width() == 1)
+}
+
 // Shorthands for each family's constant result type.  Booleans are 1-bit
 // (`I1`) integers in this IR.
 fn bool_ty() -> BuildTy { BuildTy::Fixed(strider_ir::node::NodeOutputType::I1) }
 
 impl_variant_any!(
     binary, int_binary_any, IntBinaryOp, strider_ir::IntBinaryOp::Add,
-    BuildTy::InheritRoot, "int_binary_any",
+    BuildTy::InheritRoot, any_output, "int_binary_any",
     "Matches **any** integer binary operation and binds the matched node to `c`.\n\nCommutative ops (`Add`, `Mul`, `And`, `Or`, `Xor`) will try both operand orderings automatically.  Recover the op via `Match::get_int_binary_op(c, &graph)`."
 );
 
 impl_variant_any!(
     unary, int_unary_any, IntUnaryOp, strider_ir::IntUnaryOp::BitNot,
-    BuildTy::InheritRoot, "int_unary_any",
+    BuildTy::InheritRoot, any_output, "int_unary_any",
     "Matches **any** integer unary operation and binds the matched node to `c`.\n\nRecover the op via `Match::get_int_unary_op(c, &graph)`."
 );
 
@@ -185,25 +216,25 @@ impl_variant_any!(
 // `get_bool_unary_op`, which inspect the same integer kinds.
 impl_variant_any!(
     binary, bool_binary_any, IntBinaryOp, strider_ir::IntBinaryOp::And,
-    bool_ty(), "bool_binary_any",
+    bool_ty(), output_is_i1, "bool_binary_any",
     "Matches **any** boolean binary operation (an `IntBinaryOp` at `I1`) and binds the matched node to `c`.\n\nCommutative ops (`And`, `Or`, `Xor`) try both operand orderings automatically.  Recover the op via `Match::get_bool_binary_op(c, &graph)`."
 );
 
 impl_variant_any!(
     unary, bool_unary_any, IntUnaryOp, strider_ir::IntUnaryOp::BitNot,
-    bool_ty(), "bool_unary_any",
+    bool_ty(), output_is_i1, "bool_unary_any",
     "Matches **any** boolean unary operation (an `IntUnaryOp` at `I1`) and binds the matched node to `c`.\n\nRecover the op via `Match::get_bool_unary_op(c, &graph)`."
 );
 
 impl_variant_any!(
     binary, float_binary_any, FloatBinaryOp, strider_ir::FloatBinaryOp::Add,
-    BuildTy::InheritRoot, "float_binary_any",
+    BuildTy::InheritRoot, any_output, "float_binary_any",
     "Matches **any** float binary operation and binds the matched node to `c`.\n\nCommutative ops (`Add`, `Mul`) try both operand orderings automatically.  Recover the op via `Match::get_float_binary_op(c, &graph)`."
 );
 
 impl_variant_any!(
     unary, float_unary_any, FloatUnaryOp, strider_ir::FloatUnaryOp::Neg,
-    BuildTy::InheritRoot, "float_unary_any",
+    BuildTy::InheritRoot, any_output, "float_unary_any",
     "Matches **any** float unary operation and binds the matched node to `c`.\n\nRecover the op via `Match::get_float_unary_op(c, &graph)`."
 );
 
