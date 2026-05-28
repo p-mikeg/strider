@@ -1104,7 +1104,6 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
 /// Build a minimal Function whose `cc_metadata` declares
 /// `ret_val_regs = [v1, v2]`.  Used by the cc-arity tests below.
 fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
-    use cranelift_entity::PrimaryMap;
     let mut f = Function::new();
     let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     stamp(&mut f, entry);
@@ -1114,12 +1113,11 @@ fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let mut variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn> = PrimaryMap::new();
-    variables.push(mk_vn(0x10));
-    variables.push(mk_vn(0x18));
+    let mut var_table = crate::graph::VarTable::default();
+    var_table.insert(mk_vn(0x10));
+    var_table.insert(mk_vn(0x18));
     f.cc_metadata = crate::graph::CcMetadata {
-        variables,
-        variable_to_id: rustc_hash::FxHashMap::default(),
+        var_table,
         call_clobbered: Vec::new(),
         ret_val_regs: vec![mk_vn(0x10), mk_vn(0x18)],
         call_other_clobbered: Vec::new(),
@@ -1165,7 +1163,6 @@ fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
 
 #[test]
 fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
-    use cranelift_entity::PrimaryMap;
     // Function with EMPTY CC defaults (no call_clobbered, no ret_val_regs)
     // but a Call carrying a non-empty per-Call clobber override.  The arity
     // check must still validate the override against the Call's output count
@@ -1175,8 +1172,7 @@ fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
     stamp(&mut f, entry);
     f.set_entry(entry);
     f.cc_metadata = crate::graph::CcMetadata {
-        variables: PrimaryMap::new(),
-        variable_to_id: rustc_hash::FxHashMap::default(),
+        var_table: crate::graph::VarTable::default(),
         call_clobbered: Vec::new(),
         ret_val_regs: Vec::new(),
         call_other_clobbered: Vec::new(),

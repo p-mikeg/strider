@@ -210,22 +210,10 @@ impl Function {
         &self.cc_metadata.call_other_clobbered
     }
 
-    /// Read the `VarId → Vn` map for tracked variables.
+    /// Iterate the function's tracked varnodes in `VarId` (insertion) order.
     #[inline]
-    #[must_use]
-    pub fn variables_map(
-        &self,
-    ) -> &cranelift_entity::PrimaryMap<crate::builder::VarId, rsleigh::Vn> {
-        &self.cc_metadata.variables
-    }
-
-    /// Read the reverse `Vn → VarId` map for tracked variables.
-    #[inline]
-    #[must_use]
-    pub fn variable_to_id(
-        &self,
-    ) -> &FxHashMap<rsleigh::Vn, crate::builder::VarId> {
-        &self.cc_metadata.variable_to_id
+    pub fn tracked_vns(&self) -> impl Iterator<Item = rsleigh::Vn> + '_ {
+        self.cc_metadata.var_table.vns().copied()
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
@@ -659,8 +647,6 @@ mod compact_tests {
     use super::Function;
     use crate::graph::CcMetadata;
     use crate::node::{NodeKind, NodeOutputKind};
-    use cranelift_entity::PrimaryMap;
-    use rustc_hash::FxHashMap;
 
     #[test]
     fn compact_remaps_entry_and_drops_zombies() {
@@ -675,8 +661,7 @@ mod compact_tests {
         );
         f.set_entry(entry);
         f.cc_metadata = CcMetadata {
-            variables: PrimaryMap::new(),
-            variable_to_id: FxHashMap::default(),
+            var_table: crate::graph::VarTable::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
@@ -707,8 +692,7 @@ mod compact_tests {
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
-            variables: PrimaryMap::new(),
-            variable_to_id: FxHashMap::default(),
+            var_table: crate::graph::VarTable::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
@@ -757,8 +741,7 @@ mod compact_tests {
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
-            variables: PrimaryMap::new(),
-            variable_to_id: FxHashMap::default(),
+            var_table: crate::graph::VarTable::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
@@ -804,8 +787,7 @@ mod compact_tests {
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
-            variables: PrimaryMap::new(),
-            variable_to_id: FxHashMap::default(),
+            var_table: crate::graph::VarTable::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
@@ -897,8 +879,7 @@ mod compact_tests {
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
-            variables: PrimaryMap::new(),
-            variable_to_id: FxHashMap::default(),
+            var_table: crate::graph::VarTable::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),

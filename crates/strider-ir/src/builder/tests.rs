@@ -1289,6 +1289,17 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
 // the bytes outside its range are unused — using the sub-register as
 // the arg-passing-var loses no information.
 
+/// Build a `VarTable` tracking exactly `vns`.  `upgrade_to_tracked_for`
+/// only reads the tracked varnodes, so the concrete `VarId`s don't matter
+/// here — insertion order is irrelevant to the cover / sub-register choice.
+fn var_table_of(vns: impl IntoIterator<Item = rsleigh::Vn>) -> crate::graph::VarTable {
+    let mut table = crate::graph::VarTable::default();
+    for vn in vns {
+        table.insert(vn);
+    }
+    table
+}
+
 /// A `Vn` already tracked must return itself unchanged.
 #[test]
 fn upgrade_to_tracked_returns_exact_match_when_vn_is_tracked() {
@@ -1297,8 +1308,7 @@ fn upgrade_to_tracked_returns_exact_match_when_vn_is_tracked() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let map: FxHashMap<rsleigh::Vn, VarId> =
-        [(rdi, VarId::from_u32(0))].into_iter().collect();
+    let map = var_table_of([rdi]);
     assert_eq!(upgrade_to_tracked_for(&map, rdi), Some(rdi));
 }
 
@@ -1318,8 +1328,7 @@ fn upgrade_to_tracked_returns_smallest_covering_tracked_when_vn_is_not_tracked()
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let map: FxHashMap<rsleigh::Vn, VarId> =
-        [(rdi, VarId::from_u32(0))].into_iter().collect();
+    let map = var_table_of([rdi]);
     assert_eq!(upgrade_to_tracked_for(&map, edi), Some(rdi));
 }
 
@@ -1341,8 +1350,7 @@ fn upgrade_to_tracked_returns_largest_contained_sub_when_no_cover_exists() {
         size: 4,
     };
     // Only EDI is tracked; ask for RDI.
-    let map: FxHashMap<rsleigh::Vn, VarId> =
-        [(edi, VarId::from_u32(0))].into_iter().collect();
+    let map = var_table_of([edi]);
     assert_eq!(
         upgrade_to_tracked_for(&map, rdi),
         Some(edi),
@@ -1365,8 +1373,7 @@ fn upgrade_to_tracked_returns_none_when_no_overlap() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let map: FxHashMap<rsleigh::Vn, VarId> =
-        [(unrelated, VarId::from_u32(0))].into_iter().collect();
+    let map = var_table_of([unrelated]);
     assert_eq!(upgrade_to_tracked_for(&map, rdi), None);
 }
 
@@ -1391,12 +1398,7 @@ fn upgrade_to_tracked_chooses_smallest_cover_when_multiple_covers_exist() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let map: FxHashMap<rsleigh::Vn, VarId> = [
-        (cover_4, VarId::from_u32(0)),
-        (cover_8, VarId::from_u32(1)),
-    ]
-    .into_iter()
-    .collect();
+    let map = var_table_of([cover_4, cover_8]);
     assert_eq!(upgrade_to_tracked_for(&map, target), Some(cover_4));
 }
 
@@ -1422,12 +1424,7 @@ fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 1,
     };
-    let map: FxHashMap<rsleigh::Vn, VarId> = [
-        (ecx, VarId::from_u32(0)),
-        (cl, VarId::from_u32(1)),
-    ]
-    .into_iter()
-    .collect();
+    let map = var_table_of([ecx, cl]);
     assert_eq!(
         upgrade_to_tracked_for(&map, rcx),
         Some(ecx),

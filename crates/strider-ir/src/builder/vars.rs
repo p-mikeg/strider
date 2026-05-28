@@ -18,8 +18,8 @@ impl FunctionBuilder {
     /// Returns `NoCurrentRegion` when no region is active. (Does
     /// not error when the variable is not tracked — that returns `Ok(None)`.)
     pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
-        if let Some(variable_id) = self.function.cc_metadata.variable_to_id.get(var) {
-            Ok(Some(self.read_variable_from_id(*variable_id)?))
+        if let Some(variable_id) = self.function.cc_metadata.var_table.id(var) {
+            Ok(Some(self.read_variable_from_id(variable_id)?))
         } else {
             Ok(None)
         }
@@ -35,11 +35,11 @@ impl FunctionBuilder {
     /// by the builder, or `NoCurrentRegion` when no region is
     /// active.
     pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<NodeOutputId> {
-        let &id = self
+        let id = self
             .function
             .cc_metadata
-            .variable_to_id
-            .get(variable)
+            .var_table
+            .id(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.read_variable_from_id(id)
     }
@@ -52,11 +52,11 @@ impl FunctionBuilder {
     /// by the builder, or `NoCurrentRegion` when no region is
     /// active.
     pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: NodeOutputId) -> Result<()> {
-        let var_id = *self
+        let var_id = self
             .function
             .cc_metadata
-            .variable_to_id
-            .get(variable)
+            .var_table
+            .id(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.write_variable_from_id(var_id, value)
     }
@@ -85,10 +85,10 @@ impl FunctionBuilder {
         self.link_memory_regions(region_id, entry_memory)?;
 
         // Create initial variables
-        let var_ids: Vec<_> = self.function.cc_metadata.variables.keys().collect();
+        let var_ids: Vec<_> = self.function.cc_metadata.var_table.ids().collect();
         let mut initial_variables = SecondaryMap::new();
         for var_id in var_ids {
-            let var = self.function.cc_metadata.variables[var_id];
+            let var = self.function.cc_metadata.var_table[var_id];
             let output_type = crate::node::NodeOutputType::int_for_byte_size(var.size)?;
             let out =
                 self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
@@ -130,10 +130,10 @@ impl FunctionBuilder {
         // automatic discovery via output_uses(cs_phi_out)).
         self.function_mut().add_node_input(memory_node, phi_token)?;
 
-        let var_ids: Vec<_> = self.function.cc_metadata.variables.keys().collect();
+        let var_ids: Vec<_> = self.function.cc_metadata.var_table.ids().collect();
         let mut variables = SecondaryMap::new();
         for var_id in var_ids {
-            let var = self.function.cc_metadata.variables[var_id];
+            let var = self.function.cc_metadata.var_table[var_id];
             variables[var_id] = self.build_control_phi(var, phi_token, &[])?;
         }
         self.create_region_helper(control_node, control, memory_node, memory, variables)

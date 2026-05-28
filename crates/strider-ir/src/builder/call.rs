@@ -139,7 +139,7 @@ impl FunctionBuilder {
                     .arg_passing_regs
                     .iter()
                     .copied()
-                    .filter(|v| cc_meta.variable_to_id.contains_key(v))
+                    .filter(|v| cc_meta.var_table.contains(v))
                     .collect();
                 // SP is a function-stable register; an override only
                 // sees it via the function-default's `stack_vn`.
@@ -155,8 +155,8 @@ impl FunctionBuilder {
                     size: 0,
                 });
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = cc_meta
-                    .variables
-                    .values()
+                    .var_table
+                    .vns()
                     .copied()
                     .filter(|v| cc.clobbers_override_var(v, function_sp))
                     .collect();

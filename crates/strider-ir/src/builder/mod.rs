@@ -29,7 +29,7 @@ fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
 }
 
 /// Maps a calling-convention varnode `vn` to a tracked variable in
-/// `variable_to_id`.  Returns the input verbatim if it's already tracked;
+/// `var_table`.  Returns the input verbatim if it's already tracked;
 /// otherwise tries two fallbacks in order:
 ///
 /// 1. **Cover** — the smallest tracked variable in the same space whose
@@ -49,10 +49,10 @@ fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
 /// Returns `None` for non-aliasable spaces (CONST, code) or when no
 /// tracked variable overlaps `vn` at all.
 fn upgrade_to_tracked_for(
-    variable_to_id: &FxHashMap<rsleigh::Vn, VarId>,
+    var_table: &crate::graph::VarTable,
     vn: rsleigh::Vn,
 ) -> Option<rsleigh::Vn> {
-    if variable_to_id.contains_key(&vn) {
+    if var_table.contains(&vn) {
         return Some(vn);
     }
     if !is_aliasable_space(vn.addr_space) {
@@ -61,8 +61,8 @@ fn upgrade_to_tracked_for(
     let vn_end = vn.addr_off + vn.size as u64;
 
     // Smallest tracked container that COVERS vn (existing behaviour).
-    if let Some(cover) = variable_to_id
-        .keys()
+    if let Some(cover) = var_table
+        .vns()
         .filter(|t| {
             t.addr_space == vn.addr_space
                 && t.addr_off <= vn.addr_off
@@ -81,8 +81,8 @@ fn upgrade_to_tracked_for(
     // size sub-registers exist (rare in practice — most sleigh specs
     // de-overlap during `new_raw`'s filter — but defensive against
     // FxHashMap's non-deterministic iteration order).
-    variable_to_id
-        .keys()
+    var_table
+        .vns()
         .filter(|t| {
             t.addr_space == vn.addr_space
                 && t.addr_off >= vn.addr_off
@@ -163,7 +163,7 @@ fn build_call_clobbered_list(
 /// the per-insn `lift_addr` attribution).
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
-    /// Calling-convention state (variables, variable_to_id,
+    /// Calling-convention state (the `var_table`,
     /// call_clobbered, ret_val_regs, no_memory_clobber, arg_passing_vars,
     /// stack_vn, ret_stack_pop) lives on `function.cc_metadata`.
     pub(crate) function: Function,
@@ -393,11 +393,9 @@ impl FunctionBuilder {
             ret_vars,
             &all_variables,
         );
-        let mut variables = PrimaryMap::new();
-        let mut variable_to_id = FxHashMap::default();
+        let mut var_table = crate::graph::VarTable::default();
         for variable in all_variables {
-            let var_id = variables.push(variable);
-            variable_to_id.insert(variable, var_id);
+            var_table.insert(variable);
         }
         // For arg-passing and ret-val regs that `dedup_overlapping_largest`
         // dropped (because the function uses a different-width view of the
@@ -420,11 +418,11 @@ impl FunctionBuilder {
         //    `call().arg(0, function_arg(0))` continue to match.
         let arg_passing_vars: Vec<_> = arg_passing_vars
             .iter()
-            .filter_map(|vn| upgrade_to_tracked_for(&variable_to_id, *vn))
+            .filter_map(|vn| upgrade_to_tracked_for(&var_table, *vn))
             .collect();
         let ret_val_regs: Vec<_> = ret_vars
             .iter()
-            .filter_map(|vn| upgrade_to_tracked_for(&variable_to_id, *vn))
+            .filter_map(|vn| upgrade_to_tracked_for(&var_table, *vn))
             .collect();
 
         // Pure-ABI facts (stack_vn / ret_stack_pop / no_memory_clobber /
@@ -456,8 +454,7 @@ impl FunctionBuilder {
         let mut function = Function::new();
         {
             let cc = function.cc_metadata_mut();
-            cc.variables = variables;
-            cc.variable_to_id = variable_to_id;
+            cc.var_table = var_table;
             cc.call_clobbered = call_clobbered;
             cc.ret_val_regs = ret_val_regs;
             cc.arg_passing_vars = arg_passing_vars;
@@ -525,7 +522,7 @@ impl FunctionBuilder {
 
     /// Returns an iterator over all tracked varnodes.
     pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
-        self.function.cc_metadata.variable_to_id.keys()
+        self.function.cc_metadata.var_table.vns()
     }
 
     /// Returns the largest tracked variable in the same fixed-offset
@@ -564,7 +561,7 @@ impl FunctionBuilder {
             // overflow `u64`.  Saturation is safe: a saturated
             // endpoint can only fail the containment test (it's the
             // weakest possible upper bound), never spuriously succeed.
-            let vars: Vec<rsleigh::Vn> = self.function.cc_metadata.variable_to_id.keys().copied().collect();
+            let vars: Vec<rsleigh::Vn> = self.function.cc_metadata.var_table.vns().copied().collect();
             let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
                 FxHashMap::with_capacity_and_hasher(vars.len(), Default::default());
 
@@ -638,7 +635,7 @@ impl FunctionBuilder {
     /// stores.
     #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
-        self.function.cc_metadata.variables.get(var_id).copied()
+        self.function.cc_metadata.var_table.vn(var_id)
     }
 
     /// Returns the calling convention's return-value registers, in ABI order.
@@ -668,8 +665,8 @@ impl FunctionBuilder {
         let call_other_clobbered: Vec<rsleigh::Vn> = self
             .function
             .cc_metadata
-            .variables
-            .values()
+            .var_table
+            .vns()
             .copied()
             .filter(|v| Some(*v) != stack_vn)
             .collect();

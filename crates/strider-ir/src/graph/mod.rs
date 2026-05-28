@@ -52,16 +52,70 @@ mod tests;
 /// `crate::Function::no_memory_clobber`).  The fields below are the
 /// per-function-effective lists, which differ from the raw ABI lists
 /// after dedup / `upgrade_to_tracked_for`.
+/// Bidirectional tracked-variable table: the forward `VarId → Vn` map and
+/// its `Vn → VarId` reverse index, kept consistent by construction.
+///
+/// The reverse index lets SSA reads / writes resolve a tracked varnode to
+/// its dense [`crate::builder::VarId`] in O(1); the forward map preserves
+/// insertion (`VarId`) order for the consumers that iterate slots in ABI
+/// order.  The single mutating entry point [`VarTable::insert`] writes both
+/// halves, so the two can never drift — the invariant the old separate
+/// `variables` / `variable_to_id` fields had to maintain by hand.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VarTable {
+    forward: PrimaryMap<crate::builder::VarId, rsleigh::Vn>,
+    reverse: rustc_hash::FxHashMap<rsleigh::Vn, crate::builder::VarId>,
+}
+
+impl VarTable {
+    /// Track `vn`, returning its [`crate::builder::VarId`].  Idempotent:
+    /// returns the existing id when `vn` is already tracked.
+    pub(crate) fn insert(&mut self, vn: rsleigh::Vn) -> crate::builder::VarId {
+        if let Some(&id) = self.reverse.get(&vn) {
+            return id;
+        }
+        let id = self.forward.push(vn);
+        self.reverse.insert(vn, id);
+        id
+    }
+
+    /// The varnode for `id`, or `None` when `id` is out of range.
+    pub(crate) fn vn(&self, id: crate::builder::VarId) -> Option<rsleigh::Vn> {
+        self.forward.get(id).copied()
+    }
+
+    /// The id for `vn`, or `None` when `vn` is not tracked.
+    pub(crate) fn id(&self, vn: &rsleigh::Vn) -> Option<crate::builder::VarId> {
+        self.reverse.get(vn).copied()
+    }
+
+    /// Whether `vn` is tracked.
+    pub(crate) fn contains(&self, vn: &rsleigh::Vn) -> bool {
+        self.reverse.contains_key(vn)
+    }
+
+    /// Iterate tracked varnodes in `VarId` (insertion) order.
+    pub(crate) fn vns(&self) -> impl Iterator<Item = &rsleigh::Vn> {
+        self.forward.values()
+    }
+
+    /// Iterate the tracked [`crate::builder::VarId`]s in order.
+    pub(crate) fn ids(&self) -> impl Iterator<Item = crate::builder::VarId> + '_ {
+        self.forward.keys()
+    }
+}
+
+impl std::ops::Index<crate::builder::VarId> for VarTable {
+    type Output = rsleigh::Vn;
+    fn index(&self, id: crate::builder::VarId) -> &rsleigh::Vn {
+        &self.forward[id]
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CcMetadata {
-    /// Map from [`crate::builder::VarId`] to the corresponding [`rsleigh::Vn`]
-    /// varnode.  Indexed by the same `VarId` keys the builder used.
-    pub(crate) variables: PrimaryMap<crate::builder::VarId, rsleigh::Vn>,
-    /// Reverse index of [`Self::variables`]: `Vn → VarId`.  Maintained
-    /// alongside `variables` (every insert into `variables` must also
-    /// insert here) so SSA reads / writes can resolve a tracked varnode
-    /// to its dense [`crate::builder::VarId`] in O(1).
-    pub(crate) variable_to_id: rustc_hash::FxHashMap<rsleigh::Vn, crate::builder::VarId>,
+    /// Bidirectional tracked-variable table (`VarId ↔ Vn`); see [`VarTable`].
+    pub(crate) var_table: VarTable,
     /// Ordered list of varnodes clobbered by every `Call` node.  The
     /// `i`-th clobbered output (slot `i + 2`) corresponds to
     /// `call_clobbered[i]`.

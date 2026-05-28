@@ -956,9 +956,7 @@ fn override_clobber_vars<'a>(
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
     let stack_vn = strider.calling_convention().stack_vn;
     function
-        .variables_map()
-        .values()
-        .copied()
+        .tracked_vns()
         .filter(move |v| cc.clobbers_override_var(v, stack_vn))
 }
 
