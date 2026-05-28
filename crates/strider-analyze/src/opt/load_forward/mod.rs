@@ -188,11 +188,15 @@ enum ResolveShape {
 /// table, disjointness uses the off-diagonal.
 #[derive(Clone, Copy, Debug)]
 enum AddrClass {
-    /// `decompose_sp` returned `Terminal { offset, .. }`.  Two
-    /// `SpRooted` addresses with equal offsets refer to the same byte
-    /// range; disjoint offsets are proven non-overlapping via
-    /// [`ranges_disjoint`].
-    SpRooted { offset: i64 },
+    /// `decompose_sp` returned `Terminal { base, offset }`.  Two
+    /// `SpRooted` addresses refer to the same byte range only when they
+    /// share the same `base` (the SP-derived terminal node) AND offset;
+    /// disjoint offsets on the SAME base are proven non-overlapping via
+    /// [`ranges_disjoint`].  Different bases — e.g. `InitialVar(sp)` vs an
+    /// alignment-masked `sp & -16` — differ by an unknown amount (the
+    /// caller-dependent `sp mod align`), so their offsets are in different
+    /// coordinate systems and are treated as may-alias.
+    SpRooted { base: NodeOutputId, offset: i64 },
     /// `NodeKind::IntConst(_)` address — a literal `.data`/`.rodata`/
     /// `.bss`/MMIO pointer.  Two `Constant` addresses with equal
     /// values refer to the same byte range; disjoint values are
@@ -215,7 +219,7 @@ fn classify_addr(
     memo: &mut SpExprMemo,
 ) -> AddrClass {
     match decompose_sp(function, addr, stack_vn, memo) {
-        Some(SpExpr::Terminal { offset, .. }) => AddrClass::SpRooted { offset },
+        Some(SpExpr::Terminal { base, offset }) => AddrClass::SpRooted { base, offset },
         Some(SpExpr::Phi { .. }) => AddrClass::Anchor { out: addr },
         None => {
             let node = function.node_for_output(addr);
@@ -270,9 +274,18 @@ fn alias_verdict(
 ) -> AliasVerdict {
     use AddrClass::*;
     match (load_class, store_class) {
-        // Diagonal: in-class equality + range-disjoint.
-        (SpRooted { offset: lo }, SpRooted { offset: so })
-        | (Constant { addr: lo }, Constant { addr: so }) => {
+        // Diagonal: in-class equality + range-disjoint.  Two SP-rooted
+        // addresses are only comparable when they share the same base node;
+        // different SP bases (initial SP vs an alignment-masked SP) differ by
+        // an unknown amount, so their offsets can't be related → may-alias.
+        (SpRooted { base: lb, offset: lo }, SpRooted { base: sb, offset: so }) => {
+            if lb == sb {
+                cmp_same_class_offsets(lo, load_size, so, store_size)
+            } else {
+                AliasVerdict::MayAlias
+            }
+        }
+        (Constant { addr: lo }, Constant { addr: so }) => {
             cmp_same_class_offsets(lo, load_size, so, store_size)
         }
         (Anchor { out: lout }, Anchor { out: sout }) => {

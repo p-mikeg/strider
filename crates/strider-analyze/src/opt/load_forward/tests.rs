@@ -116,6 +116,45 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     Ok(())
 }
 
+/// Soundness: a store rooted at `InitialVar(sp) + 8` and a load rooted at
+/// `(sp & -16) + 8` share the numeric offset 8 but have DIFFERENT SP bases.
+/// The aligned base differs from initial SP by `sp mod 16` (caller-dependent
+/// and unknown), so the two addresses are NOT the same memory.  LoadForward
+/// must therefore NOT forward the store's value to the load.  Before the
+/// base-aware fix it compared offset alone and wrongly forwarded.
+#[test]
+fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, NodeOutputType::I32)?;
+        // store at InitialVar(sp) + 8
+        let store_addr =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let data = b.build_int_const(0x11u64, NodeOutputType::I32)?;
+        b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+        // aligned base: `sp & 0xFFFFFFF0` (i.e. `and rsp, -16`), then + 8
+        let mask = b.build_int_const(0xFFFF_FFF0u64, NodeOutputType::I32)?;
+        let aligned =
+            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, NodeOutputType::I32)?;
+        let load_addr =
+            b.build_int_binary_operation(aligned, eight, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    pipeline.run_built(&mut fg)?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 1,
+        "load at (sp & -16) + 8 must NOT be forwarded from a store at sp + 8 — \
+         different SP bases are different memory",
+    );
+    Ok(())
+}
+
 /// A non-aliasing store at a different offset sits between the target
 /// store and the load.  The walker must step past it and still forward
 /// the `Store(sp+4)` value to the load.
