@@ -58,10 +58,12 @@ pub struct Bindings {
     /// O(1) `Capture → index-into-entries` overlay.  Kept in sync with
     /// `entries` on every push and on `restore`.
     index: rustc_hash::FxHashMap<Capture, usize>,
-    /// Parallel journal for `OffsetCapture → i64` bindings (SP-relative
-    /// offsets captured from `LoadPat::offset_capture` /
-    /// `StorePat::offset_capture`).
-    offset_entries: Vec<(OffsetCapture, i64)>,
+    /// Parallel journal for `OffsetCapture` bindings — the captured stack
+    /// slot `(base, offset)` from `LoadPat::offset_capture` /
+    /// `StorePat::offset_capture`.  The base is part of the binding so the
+    /// same-`OffsetCapture` join can't unify accesses at equal numeric
+    /// offset on different SP bases (entry SP vs an aligned SP).
+    offset_entries: Vec<(OffsetCapture, (NodeOutputId, i64))>,
     /// O(1) `OffsetCapture → index-into-offset_entries` overlay.
     offset_index: rustc_hash::FxHashMap<OffsetCapture, usize>,
 }
@@ -136,28 +138,34 @@ impl Bindings {
 
     // ── Offset-capture accessors ──────────────────────────────────────
 
-    /// Bind `oc` to the `i64` stack offset `value`.  Returns `true` on new
-    /// or idempotent (same value) bind, `false` on conflict (no mutation).
+    /// Bind `oc` to the stack slot `(base, offset)`.  Returns `true` on a
+    /// new or idempotent (same base AND offset) bind, `false` on conflict
+    /// (no mutation).  The base is compared too: the same `OffsetCapture`
+    /// reused across positions only unifies accesses on the SAME SP base —
+    /// equal numeric offsets on different bases (entry SP vs an aligned SP)
+    /// address different memory and must NOT join.
     ///
     /// O(1) via the `offset_index` overlay.
-    pub(crate) fn bind_offset(&mut self, oc: OffsetCapture, value: i64) -> bool {
+    pub(crate) fn bind_offset(&mut self, oc: OffsetCapture, base: NodeOutputId, offset: i64) -> bool {
         if let Some(&idx) = self.offset_index.get(&oc) {
-            return self.offset_entries[idx].1 == value;
+            return self.offset_entries[idx].1 == (base, offset);
         }
         let idx = self.offset_entries.len();
-        self.offset_entries.push((oc, value));
+        self.offset_entries.push((oc, (base, offset)));
         self.offset_index.insert(oc, idx);
         true
     }
 
-    /// Returns the `i64` offset bound to `oc`, or `None` if `oc` was not
-    /// captured in this match.
+    /// Returns the `i64` offset bound to `oc` (relative to its slot's base),
+    /// or `None` if `oc` was not captured in this match.  The base is an
+    /// internal join key (within one match `bind_offset` pins it consistent).
     ///
     /// O(1) via the `offset_index` overlay.
     #[must_use]
     pub fn get_offset(&self, oc: OffsetCapture) -> Option<i64> {
         let idx = *self.offset_index.get(&oc)?;
-        Some(self.offset_entries[idx].1)
+        let (_base, offset) = self.offset_entries[idx].1;
+        Some(offset)
     }
 
     /// Convenience: returns the value `NodeOutputId` bound to `c`, or
@@ -423,6 +431,43 @@ mod tests {
         // Conflict preserves original.
         assert!(!bindings.bind_capture(v, bb));
         assert_eq!(bindings.get(v), Some(a));
+    }
+
+    #[test]
+    fn offset_bind_join_requires_matching_base_not_just_offset() {
+        // Harvest two distinct NodeOutputIds to stand in for two distinct SP
+        // bases (e.g. InitialVar(sp) vs an aligned `sp & -16`).
+        let mut a_out = None;
+        let mut b_out = None;
+        let _function = make_empty_fn(|b| {
+            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
+            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
+            a_out = Some(av);
+            b_out = Some(bv);
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, NodeOutputType::I64)
+        })
+        .expect("build graph");
+        let base_a = a_out.unwrap();
+        let base_b = b_out.unwrap();
+
+        let mut bindings = Bindings::default();
+        let oc = OffsetCapture::new();
+
+        // First bind: slot (base_a, 8).
+        assert!(bindings.bind_offset(oc, base_a, 8));
+        assert_eq!(bindings.get_offset(oc), Some(8));
+        // Idempotent: same (base, offset) re-binds fine.
+        assert!(bindings.bind_offset(oc, base_a, 8));
+
+        // Same numeric offset, DIFFERENT base: must conflict — they address
+        // different memory.  An offset-only join (the pre-fix behavior) would
+        // have wrongly unified them.
+        assert!(
+            !bindings.bind_offset(oc, base_b, 8),
+            "equal offset on a different SP base must NOT unify"
+        );
+        // Same base, different offset: also a conflict.
+        assert!(!bindings.bind_offset(oc, base_a, 16));
     }
 
     #[test]

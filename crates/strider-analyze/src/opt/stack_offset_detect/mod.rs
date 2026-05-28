@@ -1,10 +1,12 @@
-//! `StackOffsetDetect` — stamps `Function::stack_offsets` with the
-//! concrete SP-relative offset for every Store / Load whose address
-//! decomposes to a single `sp + K` terminal.
+//! `StackOffsetDetect` — stamps `Function::stack_offsets` with the stack
+//! slot `(base, K)` for every Store / Load whose address decomposes to a
+//! single `base + K` terminal, where `base` is the SP-derived terminal node
+//! (`InitialVar(sp)` or an alignment-masked `sp & mask`).
 //!
-//! `function.stack_offset(node)` returns `Some(K)` for every Store /
-//! Load whose address is unambiguously `sp + K`, and `None` for
-//! everything else (Phi-of-offsets, non-SP-rooted addresses).
+//! `function.stack_offset(node)` returns `Some((base, K))` for every Store /
+//! Load whose address is unambiguously `base + K`, and `None` for everything
+//! else (Phi-of-offsets, non-SP-rooted addresses).  The offset `K` is only
+//! comparable against another access sharing the same `base`.
 
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};

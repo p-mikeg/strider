@@ -37,12 +37,14 @@ aligned base, store→reload at same offset still forwards (no regression).
 Files: `strider-ir` (`Function::stack_offsets` + accessors + compact remap),
 `strider-analyze` (`StackOffsetDetect`, `call_stack_args`), dot renderer.
 
-- `stack_offsets: SecondaryMap<NodeId, Option<(NodeId, i64)>>` — value is
-  `(base_node, offset)`. `stack_offset(id) -> Option<(NodeId, i64)>`;
-  `set_stack_offset(id, base, offset)`.
-- **compact** must remap the value's `base` NodeId through the same
-  `NodeIdRemap` that remaps the keys (the base node survives compaction as an
-  input to live Load/Store).
+- `stack_offsets: SecondaryMap<NodeId, Option<(NodeOutputId, i64)>>` — value
+  is `(base, offset)` where `base` is the SP-derived terminal *output*
+  (matching `decompose_sp`'s `Terminal.base`). `stack_offset(id) ->
+  Option<(NodeOutputId, i64)>`; `set_stack_offset(id, base, offset)`.
+- **compact** must remap the value's `base` `NodeOutputId` via
+  `NodeIdRemap::output_old_to_new` (un-gated from test-only) alongside the
+  key remap — the base output survives compaction as a data input to the
+  live Load/Store.
 - `StackOffsetDetect`: stamp `(base_node, offset)` for any SP base (drop the
   `InitialVar(sp)`-only filter).
 - `call_stack_args`: compare `(base, offset)` (only match stores on the
