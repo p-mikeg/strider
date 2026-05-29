@@ -8,10 +8,12 @@
 
 use std::sync::Arc;
 
-use strider_ir::node::NodeKind;
+use strider_ir::node::{NodeId, NodeKind};
 
+use crate::pattern::matcher::Bindings;
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat};
+use crate::pattern::pat::traits::MatchCtx;
 use crate::pattern::var::OffsetCapture;
 
 // ── StackOffsetFilter ─────────────────────────────────────────────────────────
@@ -35,6 +37,59 @@ impl StackOffsetFilter {
     }
 }
 
+// ── StackAccessSpec ─────────────────────────────────────────────────────────────
+
+/// SP-relative match state shared verbatim by `LoadPat` and `StorePat`.
+///
+/// Both builders expose the same `stack_offset` / `stack_offset_any` /
+/// `stack_only` / `offset_capture` knobs and run the same base+offset
+/// post-match fragment against `Function::stack_offset`.  Hoisting that
+/// state and its check here keeps the binding logic in one place; the
+/// memory builders differ only in input-slot indices and Store's extra
+/// `data` / `next_mem`.
+#[derive(Clone, Default)]
+struct StackAccessSpec {
+    stack_offset_filter: Option<StackOffsetFilter>,
+    /// When `true`, rejects matches where `Function::stack_offset` is `None`.
+    stack_only: bool,
+    /// When `Some(oc)`, records the matched node's stack offset in the
+    /// match's offset-capture map keyed by `oc`.  Implies `stack_only`:
+    /// a non-stack access cannot bind an offset.
+    offset_capture: Option<OffsetCapture>,
+}
+
+impl StackAccessSpec {
+    /// True when any SP-relative constraint is set, so the caller must
+    /// install a post-match closure that runs [`Self::check`].
+    fn needs_post(&self) -> bool {
+        self.stack_offset_filter.is_some() || self.stack_only || self.offset_capture.is_some()
+    }
+
+    /// Run the shared base+offset post-match fragment: look up
+    /// `Function::stack_offset` (failing the match when absent and any
+    /// SP-relative constraint is active), apply the offset filter, and
+    /// bind the captured offset.  Returns `false` to reject the match.
+    fn check(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
+        let do_stack_only = self.stack_only || self.offset_capture.is_some();
+        if do_stack_only || self.stack_offset_filter.is_some() {
+            let Some((base, offset)) = ctx.function.stack_offset(node) else {
+                return false;
+            };
+            if let Some(ref f) = self.stack_offset_filter
+                && !f.matches(offset)
+            {
+                return false;
+            }
+            if let Some(oc) = self.offset_capture
+                && !b.bind_offset(oc, base, offset)
+            {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 // ── LoadPat ───────────────────────────────────────────────────────────────────
 
 /// Builder for `Load` node patterns.  Created by [`crate::pattern::pat::load`].
@@ -48,13 +103,7 @@ pub struct LoadPat {
     addr: Option<Pat>,
     mem_in: Option<Pat>,
     bit_width: Option<u32>,
-    stack_offset_filter: Option<StackOffsetFilter>,
-    /// When `true`, rejects matches where `Function::stack_offset` is `None`.
-    stack_only: bool,
-    /// When `Some(oc)`, records the matched node's stack offset in the
-    /// match's offset-capture map keyed by `oc`.  Implies `stack_only`:
-    /// a non-stack Load cannot bind an offset.
-    offset_capture: Option<OffsetCapture>,
+    stack: StackAccessSpec,
 }
 
 impl LoadPat {
@@ -64,9 +113,7 @@ impl LoadPat {
             addr: None,
             mem_in: None,
             bit_width: None,
-            stack_offset_filter: None,
-            stack_only: false,
-            offset_capture: None,
+            stack: StackAccessSpec::default(),
         }
     }
     /// Restrict the match to loads in address space `s`.
@@ -103,14 +150,14 @@ impl LoadPat {
     /// (the side-table is populated by that pass).
     #[must_use]
     pub fn stack_offset(mut self, k: i64) -> Self {
-        self.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
+        self.stack.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
         self
     }
     /// Restrict the match to loads whose address decomposes to `sp + k`
     /// for some `k` in `ks`.  Reads `Function::stack_offset` in O(1).
     #[must_use]
     pub fn stack_offset_any(mut self, ks: impl Into<Vec<i64>>) -> Self {
-        self.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
+        self.stack.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
         self
     }
     /// Reject matches where `Function::stack_offset(node)` is `None`.
@@ -120,7 +167,7 @@ impl LoadPat {
     /// or `.offset_capture(c)` to further restrict or capture the offset.
     #[must_use]
     pub fn stack_only(mut self) -> Self {
-        self.stack_only = true;
+        self.stack.stack_only = true;
         self
     }
     /// Capture the matched load's SP-relative offset into `c`.  At query
@@ -132,14 +179,14 @@ impl LoadPat {
     /// Requires that `StackOffsetDetect` has run before the matcher is invoked.
     #[must_use]
     pub fn offset_capture(mut self, c: OffsetCapture) -> Self {
-        self.offset_capture = Some(c);
+        self.stack.offset_capture = Some(c);
         self
     }
 }
 
 impl From<LoadPat> for Pat {
     fn from(b: LoadPat) -> Pat {
-        let LoadPat { space, addr, mem_in, bit_width, stack_offset_filter, stack_only, offset_capture } = b;
+        let LoadPat { space, addr, mem_in, bit_width, stack } = b;
         // Load inputs = [mem(0), addr(1)]; outputs = [value(0)] (single output).
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
         if let Some(p) = mem_in {
@@ -157,17 +204,12 @@ impl From<LoadPat> for Pat {
         };
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
-        // Combined post-match closure: bit_width, stack_offset, stack_only,
-        // and offset_capture checks.  `with_post_match` replaces the existing
-        // closure (single slot), so all checks must live in one callback.
-        let needs_post = bit_width.is_some()
-            || stack_offset_filter.is_some()
-            || stack_only
-            || offset_capture.is_some();
-        if needs_post {
+        // Combined post-match closure: bit_width plus the shared SP-relative
+        // checks (stack_offset / stack_only / offset_capture).
+        // `with_post_match` replaces the existing closure (single slot), so
+        // all checks must live in one callback.
+        if bit_width.is_some() || stack.needs_post() {
             let want_width = bit_width;
-            let off_filter = stack_offset_filter;
-            let do_stack_only = stack_only || offset_capture.is_some();
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(want) = want_width {
                     let outs = ctx.function.node_outputs(node);
@@ -181,22 +223,7 @@ impl From<LoadPat> for Pat {
                         return false;
                     }
                 }
-                if do_stack_only || off_filter.is_some() {
-                    let Some((base, offset)) = ctx.function.stack_offset(node) else {
-                        return false;
-                    };
-                    if let Some(ref f) = off_filter
-                        && !f.matches(offset)
-                    {
-                        return false;
-                    }
-                    if let Some(oc) = offset_capture
-                        && !b.bind_offset(oc, base, offset)
-                    {
-                        return false;
-                    }
-                }
-                true
+                stack.check(ctx, node, b)
             }));
         }
 
@@ -214,12 +241,7 @@ pub struct StorePat {
     mem_in: Option<Pat>,
     next_mem: Option<Pat>,
     bit_width: Option<u32>,
-    stack_offset_filter: Option<StackOffsetFilter>,
-    /// When `true`, rejects matches where `Function::stack_offset` is `None`.
-    stack_only: bool,
-    /// When `Some(oc)`, records the matched node's stack offset in the
-    /// match's offset-capture map keyed by `oc`.  Implies `stack_only`.
-    offset_capture: Option<OffsetCapture>,
+    stack: StackAccessSpec,
 }
 
 impl StorePat {
@@ -231,9 +253,7 @@ impl StorePat {
             mem_in: None,
             next_mem: None,
             bit_width: None,
-            stack_offset_filter: None,
-            stack_only: false,
-            offset_capture: None,
+            stack: StackAccessSpec::default(),
         }
     }
     /// Restrict the match to stores in address space `s`.
@@ -281,14 +301,14 @@ impl StorePat {
     /// (the side-table is populated by that pass).
     #[must_use]
     pub fn stack_offset(mut self, k: i64) -> Self {
-        self.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
+        self.stack.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
         self
     }
     /// Restrict the match to stores whose address decomposes to `sp + k`
     /// for some `k` in `ks`.  Reads `Function::stack_offset` in O(1).
     #[must_use]
     pub fn stack_offset_any(mut self, ks: impl Into<Vec<i64>>) -> Self {
-        self.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
+        self.stack.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
         self
     }
     /// Reject matches where `Function::stack_offset(node)` is `None`.
@@ -298,7 +318,7 @@ impl StorePat {
     /// or `.offset_capture(c)` to further restrict or capture the offset.
     #[must_use]
     pub fn stack_only(mut self) -> Self {
-        self.stack_only = true;
+        self.stack.stack_only = true;
         self
     }
     /// Capture the matched store's SP-relative offset into `c`.  At query
@@ -310,7 +330,7 @@ impl StorePat {
     /// Requires that `StackOffsetDetect` has run before the matcher is invoked.
     #[must_use]
     pub fn offset_capture(mut self, c: OffsetCapture) -> Self {
-        self.offset_capture = Some(c);
+        self.stack.offset_capture = Some(c);
         self
     }
 }
@@ -324,9 +344,7 @@ impl From<StorePat> for Pat {
             mem_in,
             next_mem,
             bit_width,
-            stack_offset_filter,
-            stack_only,
-            offset_capture,
+            stack,
         } = b;
         // Store inputs = [mem(0), addr(1), data(2)]; outputs = [mem(0)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
@@ -348,20 +366,13 @@ impl From<StorePat> for Pat {
         };
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
-        // Combined post-match closure: bit_width, next_mem, stack_offset,
-        // stack_only, and offset_capture checks.  `with_post_match`
-        // replaces the existing closure (single slot), so all checks must
-        // live in one callback.
-        let needs_post = bit_width.is_some()
-            || next_mem.is_some()
-            || stack_offset_filter.is_some()
-            || stack_only
-            || offset_capture.is_some();
-        if needs_post {
+        // Combined post-match closure: bit_width, next_mem, plus the shared
+        // SP-relative checks (stack_offset / stack_only / offset_capture).
+        // `with_post_match` replaces the existing closure (single slot), so
+        // all checks must live in one callback.
+        if bit_width.is_some() || next_mem.is_some() || stack.needs_post() {
             let want_width = bit_width;
             let next_mem_pat = next_mem;
-            let off_filter = stack_offset_filter;
-            let do_stack_only = stack_only || offset_capture.is_some();
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(w) = want_width {
                     // Store's data input is at `inputs[2]`; its producer's
@@ -382,22 +393,7 @@ impl From<StorePat> for Pat {
                 {
                     return false;
                 }
-                if do_stack_only || off_filter.is_some() {
-                    let Some((base, offset)) = ctx.function.stack_offset(node) else {
-                        return false;
-                    };
-                    if let Some(ref f) = off_filter
-                        && !f.matches(offset)
-                    {
-                        return false;
-                    }
-                    if let Some(oc) = offset_capture
-                        && !b.bind_offset(oc, base, offset)
-                    {
-                        return false;
-                    }
-                }
-                true
+                stack.check(ctx, node, b)
             }));
         }
 
