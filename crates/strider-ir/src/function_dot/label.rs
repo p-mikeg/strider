@@ -124,7 +124,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 format!("const {v:#x}{ty}")
             }
             NodeKind::IntConstWide(id) => {
-                // I256 / I512 payload interned in `Graph::wide_consts`.
+                // I256 / I512 payload interned in `Graph::wide_const_interner`.
                 // Render the actual value (limbs are little-endian, so walk
                 // high→low) rather than the Debug form of the interning id.
                 // A dangling id (malformed graph) labels rather than panics.

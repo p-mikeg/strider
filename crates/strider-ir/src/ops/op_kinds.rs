@@ -7,7 +7,7 @@ pub enum ExtendOp {
     SignExtend,
 }
 
-/// Comparison operations that produce a `Bool` from two integer operands.
+/// Comparison operations that produce an `I1` from two integer operands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntCmpOp {
     /// Unsigned equality: `l == r`.
@@ -121,7 +121,7 @@ pub enum FloatUnaryOp {
     Round,
 }
 
-/// Comparison operations that produce a `Bool` from two floating-point operands.
+/// Comparison operations that produce an `I1` from two floating-point operands.
 ///
 /// `NotEqual` and `LessEqual` are not primitives: pcode-lift lowers them
 /// at lift time:

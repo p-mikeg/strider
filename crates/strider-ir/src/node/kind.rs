@@ -90,13 +90,13 @@ pub enum NodeKind {
 
     // ── Integer constants and operations ──────────────────────────────────────
     /// A compile-time integer constant of value `u128`.  Covers
-    /// `Bool`/`I8`/`I16`/`I32`/`I64`/`I80`/`I128`.  Wider integer types
+    /// `I1`/`I8`/`I16`/`I32`/`I64`/`I80`/`I128`.  Wider integer types
     /// (`I256`/`I512`) use [`Self::IntConstWide`] which references
-    /// `Graph::wide_consts` off-side.
+    /// `Graph::wide_const_interner` off-side.
     IntConst(u128),
     /// A compile-time integer constant whose value doesn't fit in
     /// `u128` — `I256` or `I512`.  The actual byte payload lives in
-    /// `Graph::wide_consts` and this node carries a
+    /// `Graph::wide_const_interner` and this node carries a
     /// `crate::wide_const::WideConstId` index.
     ///
     /// Interning makes structural equality work: two `IntConstWide(id)`

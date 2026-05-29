@@ -3,12 +3,13 @@
 //! data-in), returning the old→new id translation table so external
 //! callers can fix up any ids they hold.
 //!
-//! The four `NodeId`-keyed side tables (`call_other_names`,
-//! `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`) live
+//! The six `NodeId`-keyed side tables (`call_other_names`,
+//! `asm_fingerprints`, `call_clobbered_overrides`, `phi_var_tag`,
+//! `call_stack_arg_offsets_overrides`, `stack_offsets`) live
 //! on [`crate::Function`], not on `Graph`.
 //! `Graph::retain_reachable` only compacts the structural arena;
 //! [`crate::Function::compact`] applies the returned [`NodeIdRemap`] to
-//! all four overlay tables via [`SideTableRemap::remap_node_keyed`].
+//! all six overlay tables via [`SideTableRemap::remap_node_keyed`].
 
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
 

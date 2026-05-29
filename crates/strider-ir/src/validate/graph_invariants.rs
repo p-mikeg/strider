@@ -318,7 +318,7 @@ fn wide_const_expected_bytes(
 }
 
 /// Graph invariant: verify every reachable `IntConstWide(id)` node
-/// references a live entry in `Graph::wide_consts` and that the stored
+/// references a live entry in `Graph::wide_const_interner` and that the stored
 /// value's byte size matches the node's declared output type.
 ///
 /// Emits [`ValidationError::DanglingWideConstId`] when the id is not

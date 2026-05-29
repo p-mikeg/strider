@@ -3,7 +3,7 @@
 //! [`crate::node::NodeKind::IntConst`] inlines values up to 128 bits in
 //! its payload word.  The wider integer types (`I256` for AVX-2 ymm
 //! registers, `I512` for AVX-512 zmm) don't fit; they live in
-//! `Graph::wide_consts` and are referenced from the IR via
+//! `Graph::wide_const_interner` and are referenced from the IR via
 //! [`crate::node::NodeKind::IntConstWide`] carrying a [`WideConstId`].
 //!
 //! ## Interning contract
@@ -20,7 +20,7 @@
 use cranelift_entity::entity_impl;
 
 /// Dense, typed identifier for a wide-integer constant value stored in
-/// `Graph::wide_consts`.
+/// `Graph::wide_const_interner`.
 ///
 /// Allocated by `crate::Graph::intern_wide_const`; opaque to
 /// callers — use [`crate::Graph::wide_const`] to look up the value.

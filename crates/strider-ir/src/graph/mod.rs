@@ -101,8 +101,9 @@ pub struct CcMetadata {
 ///
 /// `Graph` is the pure structural arena: nodes, edges, wide-const interning,
 /// the dedup cache, and the generation counter.  Per-function overlay state
-/// (asm fingerprints, phi var tags, stack-phi offsets, call-other names, and
-/// call-clobbered overrides) lives on [`crate::Function`].
+/// (the six `NodeId`-keyed side tables: asm fingerprints, phi var tags,
+/// stack offsets, call-other names, call-clobbered overrides, and
+/// call-stack-arg-offset overrides) lives on [`crate::Function`].
 #[derive(Clone)]
 pub struct Graph {
     /// Dense map from [`NodeId`] to [`Node`] metadata.
