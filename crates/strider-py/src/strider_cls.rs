@@ -65,13 +65,18 @@ impl PyStrider {
     /// for that.
     fn analyze_cfg(&self, py: Python<'_>, cfg: Py<PyCfg>) -> PyResult<PyAnalyzeOutcome> {
         let cfg_borrow = cfg.borrow(py);
+        let sleigh_borrow = cfg_borrow.sleigh.borrow(py);
+        let sleigh = sleigh_borrow.inner.as_ref().ok_or_else(|| {
+            into_strider_err(anyhow::anyhow!("Sleigh is in use; cannot analyze CFG"))
+        })?;
         let outcome = self
             .inner
-            .analyze_cfg(&cfg_borrow.inner, &cfg_borrow.sleigh)
+            .analyze_cfg(&cfg_borrow.inner, sleigh)
             .map_err(into_strider_err)?;
         let unresolved_branch_count = outcome.unresolved_branches.len();
         let region_count = outcome.region_count();
         let function = outcome.function;
+        drop(sleigh_borrow);
         drop(cfg_borrow);
         let py_function = Py::new(py, PyFunction::new(function, cfg))?;
         Ok(PyAnalyzeOutcome {

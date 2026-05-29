@@ -138,9 +138,15 @@ impl PyFunction {
         op: DotOp<'_>,
     ) -> PyResult<DotResult> {
         let cfg_borrow = self.cfg.borrow(py);
+        let sleigh_borrow = cfg_borrow.sleigh.borrow(py);
+        let sleigh = sleigh_borrow.inner.as_ref().ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "Sleigh is in use; cannot render function"
+            ))
+        })?;
         self.with_read(|function| {
             let dumper = function
-                .dot_dumper(&cfg_borrow.sleigh)
+                .dot_dumper(sleigh)
                 .map_err(crate::errors::into_strider_err)?;
             let d = dot::GraphDot::new(dumper, dot_style_for(style));
             match op {

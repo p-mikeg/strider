@@ -49,13 +49,24 @@ def test_cfg_html_str_returns_html(x86_memory_elf):
     assert "<html" in html.lower() or "svg" in html.lower()
 
 
-def test_build_cfg_consumes_sleigh(x86_memory_elf):
-    """Once build_cfg runs, the same PySleigh cannot be reused."""
-    import pytest as _pytest
+def test_build_cfg_leaves_sleigh_reusable(x86_memory_elf):
+    """build_cfg puts the inner Sleigh back into the caller's wrapper, so
+    the same PySleigh object stays usable afterwards and the first Cfg
+    can still render via the shared handle."""
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
-    _ = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
-    with _pytest.raises(strider.errors.StriderError):
-        strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+
+    cfg1 = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+
+    # Reusing the SAME sleigh object used to raise
+    # StriderError("Sleigh already in use"); it must now succeed.
+    cfg2 = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    assert cfg2 is not None
+
+    # The first Cfg must still render even after the Sleigh was reused
+    # (both Cfgs borrow the same shared handle).
+    html1 = cfg1.html_str()
+    assert isinstance(html1, str)
+    assert len(html1) > 0

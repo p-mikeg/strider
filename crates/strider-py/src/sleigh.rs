@@ -40,6 +40,14 @@ impl PySleigh {
         self.inner.take()
     }
 
+    /// Put an inner Sleigh back into the wrapper (the inverse of
+    /// `take_inner`).  `build_cfg` uses this to return the Sleigh the
+    /// cfg builder handed back, so the caller's wrapper is usable again
+    /// after the build instead of staying "in use".
+    pub(crate) fn put_inner(&mut self, sleigh: rsleigh::Sleigh<AnyMemReader>) {
+        self.inner = Some(sleigh);
+    }
+
     /// Internal constructor (mirrors `#[new]`).  Lets the run-style
     /// helpers in `run.rs` build a PySleigh without going through
     /// PyO3's argument-conversion path.

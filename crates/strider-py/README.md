@@ -132,10 +132,9 @@ mem = strider.load_elf("fixtures/out/x86/memory.elf").memory_map()
 
 sleigh = strider.Sleigh(arch, mem)
 # `Strider` here is the LOW-LEVEL lift-driver (distinct from the
-# high-level `Program` returned by `strider.load`).  Build it before
-# `build_cfg`, which consumes the Sleigh (see the note below).
+# high-level `Program` returned by `strider.load`).
 s = strider.Strider(arch, sleigh, cc)
-cfg = strider.build_cfg(sleigh, entry=0x401000)  # consumes Sleigh
+cfg = strider.build_cfg(sleigh, entry=0x401000)
 graph = s.analyze_cfg(cfg).function
 
 pipe = s.build_optimizer_pipeline()
@@ -143,17 +142,12 @@ pipe.add(strider.opt.LoadReadOnly(mem))
 graph.optimize(pipe)
 ```
 
-> **Note:** `build_cfg(sleigh, …)` *consumes* the inner `rsleigh::Sleigh`
-> handle.  The Python `Sleigh` wrapper holds it inside an `Option`, and
-> after `build_cfg` returns the wrapper is left empty — any subsequent
-> use of that same Python `Sleigh` object (e.g. handing it to
-> `Strider.analyze_cfg`, `opt.LoadForward`,
-> or another `build_cfg` call) will raise.  Construct any consumers
-> that need it (`Strider`, the stack passes) *before* the `build_cfg`
-> call as the snippet above shows, or rebuild a fresh handle via
-> `strider.Sleigh(arch, mem)` for downstream use.  The convenience
-> `strider.run(...)` entry hides this detail by owning the Sleigh
-> internally.
+> **Note:** `build_cfg(sleigh, …)` borrows the inner `rsleigh::Sleigh`
+> while it builds, then puts it back into the same Python `Sleigh`
+> wrapper before returning — so the `Sleigh` object stays usable
+> afterwards.  You can build another CFG, a `Strider`, or any other
+> consumer from the same handle in any order, and the returned `Cfg`
+> keeps rendering (it borrows the Sleigh through the shared wrapper).
 
 ## Custom optimizer pipeline
 
