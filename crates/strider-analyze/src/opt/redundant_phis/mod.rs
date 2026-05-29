@@ -25,12 +25,12 @@ fn try_detach_dead_inputs(
     }
 }
 
-/// Handles the `NodeKind::Region` arm of [`remove_phis`]: collapses a
+/// Handles the `NodeKind::Region` arm of [`try_simplify_phi_like`]: collapses a
 /// single-predecessor `Region` by replacing its control output with the lone
 /// live input and absorbing its asm-fingerprint into that predecessor's node.
 ///
-/// Separated from `remove_phis` to keep the outer match readable.
-fn try_remove_region_phi(
+/// Separated from `try_simplify_phi_like` to keep the outer match readable.
+fn try_collapse_single_pred_region(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     node_id: NodeId,
     reachable: &strider_ir::walk::NodeIdSet,
@@ -65,7 +65,7 @@ fn try_remove_region_phi(
 
 /// Attempts to simplify the phi-like node `node_id` given the set of
 /// CFG-reachable nodes.  Returns `Changed` if any transformation was applied.
-fn remove_phis(
+fn try_simplify_phi_like(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     node_id: NodeId,
     reachable: &strider_ir::walk::NodeIdSet,
@@ -144,7 +144,7 @@ fn remove_phis(
                     let ctrl_inputs2 = ctx.node_inputs(region_id);
                     let Some(j) = ctrl_inputs2.into_iter().position(|c| c == unique_ctrl)
                     else {
-                        bail!("unique control edge not found in control-state inputs");
+                        bail!("unique control edge not found in Region inputs");
                     };
                     // Same transient-arity defense as the loop above —
                     // bail typed instead of panicking on `[j + 1]`.
@@ -186,7 +186,7 @@ fn remove_phis(
                 Ok(try_detach_dead_inputs(ctx, node_id))
             }
         }
-        NodeKind::Region => try_remove_region_phi(ctx, node_id, reachable),
+        NodeKind::Region => try_collapse_single_pred_region(ctx, node_id, reachable),
         _ => Ok(OptimizationResult::NoChange),
     }
 }
@@ -209,7 +209,7 @@ impl Optimizer for RedundantPhis {
         let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
         let reachable = strider_ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());
         let mut res = OptimizationResult::NoChange;
-        // Only phi-like nodes can be simplified by `remove_phis`, so don't
+        // Only phi-like nodes can be simplified by `try_simplify_phi_like`, so don't
         // walk every node — pre-filter on the kinds we care about.
         let candidates: Vec<NodeId> = ctx
             .walk()
@@ -221,7 +221,7 @@ impl Optimizer for RedundantPhis {
             })
             .collect();
         for node_id in candidates {
-            res |= remove_phis(&mut ctx, node_id, &reachable)?;
+            res |= try_simplify_phi_like(&mut ctx, node_id, &reachable)?;
         }
         // Detaching unreachable zombies is bookkeeping, not progress: an
         // unreachable node cannot be a consumer of a reachable producer, so

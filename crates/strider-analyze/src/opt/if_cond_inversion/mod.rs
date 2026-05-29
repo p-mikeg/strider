@@ -118,8 +118,8 @@ fn invert(function: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     // it, which is fine.
     let cond_input_id = function.node_input_id_at(if_node, 1)?;
     let cond_out = function.input_output_id(cond_input_id);
-    let bool_neg_node = function.node_for_output(cond_out);
-    let [inner] = function.node_inputs_exact::<1>(bool_neg_node)?;
+    let bit_not_node = function.node_for_output(cond_out);
+    let [inner] = function.node_inputs_exact::<1>(bit_not_node)?;
     // Count BitNot's consumers BEFORE redirecting: if we are the only
     // user, BitNot becomes dead after the redirect and its
     // contributing-asm history needs to be absorbed by the inner-cond
@@ -130,11 +130,11 @@ fn invert(function: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
     // (false positives violate the contract that a fingerprint names
     // the asm insns whose lifting or rewrite contributed to that
     // node's value).
-    let bool_neg_uses_before = function.output_uses(cond_out).count();
+    let bit_not_uses_before = function.output_uses(cond_out).count();
     function.update_input(cond_input_id, inner);
-    if bool_neg_uses_before == 1 {
+    if bit_not_uses_before == 1 {
         let inner_node = function.node_for_output(inner);
-        function.extend_asm_fingerprint_from(inner_node, bool_neg_node);
+        function.extend_asm_fingerprint_from(inner_node, bit_not_node);
     }
 
     // Swap consumers between output[0] (true) and output[1] (false).

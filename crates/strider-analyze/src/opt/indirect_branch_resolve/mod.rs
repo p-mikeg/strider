@@ -98,7 +98,7 @@ pub struct AnchorCallingContext {
 /// [`NodeKind::Return`]).  Public so strider's orchestrator can reuse
 /// the same lookup for its own bookkeeping.
 #[must_use]
-pub fn find_placeholder_return_for_anchor(
+pub fn find_indirect_branch_placeholder(
     graph: &Graph,
     anchor_output: NodeOutputId,
 ) -> Option<NodeId> {

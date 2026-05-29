@@ -314,7 +314,7 @@ mod tests {
         ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[])).expect("apply");
         // Placeholder is detached: its inputs are gone, and its kind
         // remains IndirectBranch (the orchestrator filters by kind
-        // via find_placeholder_return_for_anchor, so leaving the kind
+        // via find_indirect_branch_placeholder, so leaving the kind
         // as IndirectBranch is fine — what matters is detachment so
         // it's no longer reachable via the use-list walk).
         assert_eq!(ctx.node_inputs(placeholder).len(), 0);

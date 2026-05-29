@@ -176,7 +176,7 @@ fn apply_link_register_emits_fresh_return_and_detaches_placeholder() {
     function.with_rewrite_ctx(|ctx| apply_link_register(ctx, return_id, &[])).expect("apply");
     // Placeholder is detached: zero inputs.  Kind remains
     // IndirectBranch (the orchestrator filters by kind via
-    // find_placeholder_return_for_anchor, but the anchor's use-list
+    // find_indirect_branch_placeholder, but the anchor's use-list
     // no longer points at it, so it's effectively retired).
     assert_eq!(function.node_inputs(return_id).len(), 0,
         "detached placeholder must have zero inputs");

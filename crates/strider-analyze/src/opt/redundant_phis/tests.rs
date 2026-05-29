@@ -351,7 +351,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     // phi owned by that Region — the VarPhi gets its own output (the
     // loop-back self-ref the test exercises), and any MemPhi gets
     // *its* own output (so the graph keeps the per-predecessor arity
-    // invariant `remove_phis` relies on).
+    // invariant `try_simplify_phi_like` relies on).
     let region_outputs = fg.node_outputs(region_node);
     let cs_ctrl_out = region_outputs[0];
     let region_phi_out = region_outputs[1];

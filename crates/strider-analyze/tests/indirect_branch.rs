@@ -86,7 +86,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // expression and leave the Load detached).  Walk every
         // reachable IndirectBranch node and use its current slot 2 as
         // the live anchor for classification.  This mirrors what the
-        // orchestrator's `find_placeholder_return_for_anchor` does
+        // orchestrator's `find_indirect_branch_placeholder` does
         // for each per-iteration classify — but here we just consume
         // the surviving placeholder on the post-optimizer graph.
         let mut live_anchors: Vec<strider_ir::node::NodeOutputId> = Vec::new();

@@ -72,7 +72,7 @@ pub use indirect_branch_resolve::{
     classify_jump_table,
     classify_stack_array,
 };
-pub(crate) use indirect_branch_resolve::{AnchorCallingContext, find_placeholder_return_for_anchor};
+pub(crate) use indirect_branch_resolve::{AnchorCallingContext, find_indirect_branch_placeholder};
 pub use known_bits::{KnownBits, analyze as analyze_known_bits};
 pub(crate) use known_bits::KnownBitsMap;
 pub use load_readonly::LoadReadOnly;
