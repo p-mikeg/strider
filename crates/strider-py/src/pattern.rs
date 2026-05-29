@@ -371,7 +371,7 @@ thread_local! {
 }
 
 /// Drain the thread-local pending-control-flow slot, if any.  Called
-/// from the outer `find_all` / `find_all_requirements` / `run`
+/// from the outer `find_all` / `find_joined` / `run`
 /// boundaries to surface a saved `KeyboardInterrupt` / `SystemExit`
 /// after the matcher walk completes.
 pub(crate) fn take_pending_control_flow() -> Option<PyErr> {

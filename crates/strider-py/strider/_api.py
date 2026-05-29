@@ -500,11 +500,11 @@ class Analysis:
         `ignore_casts_mask`, `ignore_regions`)."""
         return self._result.function.find_one(pattern, **matcher_options)
 
-    def find_all_requirements(self, patterns, **matcher_options) -> list:
-        """Run multiple patterns and intersect their matches on
-        shared `Capture` objects.  See
-        `Function.find_all_requirements` for the full contract."""
-        return self._result.function.find_all_requirements(
+    def find_joined(self, patterns, **matcher_options) -> list:
+        """Run multiple patterns and return matched sets joined on
+        shared `Capture`s — a cross-pattern join.  See
+        `Function.find_joined` for the full contract."""
+        return self._result.function.find_joined(
             patterns, **matcher_options
         )
 

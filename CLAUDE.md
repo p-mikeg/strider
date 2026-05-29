@@ -342,7 +342,7 @@ so the resolver-bearing dependency stays one-way.
       rather than rolling their own matching.
   - `pattern` module — pattern DSL (`Pat` / `Capture` / `Matcher` /
     `Match` and fluent builders).  Cross-pattern joins on shared
-    captures via `Matcher::find_all_requirements`.
+    captures via `Matcher::find_joined`.
   - `strider` module — `Strider`, `AnalyzeOptions`, `AnalyzeOutcome`,
     `RegionLiftHandles`, and `PerRegionDriver` (the per-region driver
     that converts a `Cfg` into the IR graph region by region).
@@ -428,7 +428,7 @@ so the resolver-bearing dependency stays one-way.
   `OptimizerPipeline`, plus `strider.run(arch, cc, mem, entry, ...)`.  `strider.opt` exposes
   per-pass classes; `strider.pattern` is a full mirror of the Rust
   pattern crate.  Cross-pattern joins on shared captures via
-  `Graph.find_all_requirements([pat1, pat2, …])`.  Asm-fingerprint
+  `Graph.find_joined([pat1, pat2, …])`.  Asm-fingerprint
   accessor: `match.asm_fingerprint(c) -> list[int]`.  Every Rust error
   (including an unresolved indirect branch) lands in Python as a single
   `strider.errors.StriderError` exception carrying an informative

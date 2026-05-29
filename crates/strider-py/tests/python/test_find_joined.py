@@ -1,4 +1,4 @@
-"""Tests for `Function.find_all_requirements` — multi-pattern queries that
+"""Tests for `Function.find_joined` — multi-pattern queries that
 intersect on shared `Capture` objects.
 
 The Rust matcher's algorithm is covered exhaustively in
@@ -30,17 +30,17 @@ def _switch_graph():
     ).function
 
 
-def test_find_all_requirements_empty_pats_yields_empty():
+def test_find_joined_empty_pats_yields_empty():
     g = _switch_graph()
-    assert g.find_all_requirements([]) == []
+    assert g.find_joined([]) == []
 
 
-def test_find_all_requirements_single_pattern_equivalent_to_find_all():
+def test_find_joined_single_pattern_equivalent_to_find_all():
     # With one pattern there is no cross-pattern join — each result
     # is a one-element tuple wrapping the corresponding find_all hit.
     g = _switch_graph()
     direct = g.find_all(call())
-    req = g.find_all_requirements([call()])
+    req = g.find_joined([call()])
     assert len(req) == len(direct)
     for tup, m in zip(req, direct):
         assert len(tup) == 1
@@ -53,17 +53,17 @@ def test_find_all_requirements_single_pattern_equivalent_to_find_all():
         assert m is not None
 
 
-def test_find_all_requirements_no_matches_for_a_pattern_yields_empty():
+def test_find_joined_no_matches_for_a_pattern_yields_empty():
     # A pattern that cannot match the graph (clearly impossible
     # IntConst literal) makes the join empty regardless of other
     # patterns.
     g = _switch_graph()
     impossible = int_const(0xDEAD_BEEF_CAFE_BABE)
-    req = g.find_all_requirements([call(), impossible])
+    req = g.find_joined([call(), impossible])
     assert req == []
 
 
-def test_find_all_requirements_intersects_on_shared_capture():
+def test_find_joined_intersects_on_shared_capture():
     # Headline use case: two patterns share the `target` capture.
     # Pat1 captures the call's target.  Pat2 binds the same capture
     # against `any_int_const`, requiring the shared node to be an
@@ -76,7 +76,7 @@ def test_find_all_requirements_intersects_on_shared_capture():
     pat_call = call().target(var(target))
     pat_const = any_int_const(target)
 
-    req = g.find_all_requirements([pat_call, pat_const])
+    req = g.find_joined([pat_call, pat_const])
     # The call to `f` must appear in the joined results: pat_call
     # binds `target` to f's IntConst output; pat_const matches that
     # same IntConst node.
@@ -100,7 +100,7 @@ def test_find_all_requirements_intersects_on_shared_capture():
     assert saw_f, f"none of the joined matches captured the call to f ({f_addr:#x})"
 
 
-def test_find_all_requirements_disagreement_yields_empty():
+def test_find_joined_disagreement_yields_empty():
     # Negative: bind the same capture to two patterns whose match
     # nodes are disjoint by construction.  `call()` matches a Call
     # node; `int_const(K)` only matches IntConst nodes — there is no
@@ -110,5 +110,5 @@ def test_find_all_requirements_disagreement_yields_empty():
     shared = Capture()
     pat_call = call().capture(shared)        # binds shared → Call NodeId
     pat_const = int_const(0).capture(shared) # binds shared → IntConst NodeId
-    req = g.find_all_requirements([pat_call, pat_const])
+    req = g.find_joined([pat_call, pat_const])
     assert req == []

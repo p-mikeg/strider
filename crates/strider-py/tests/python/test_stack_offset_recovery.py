@@ -94,7 +94,7 @@ def test_store_stack_only_rejects_non_stack_stores():
 # ── End-to-end: ni_vp-style field-offset recovery ─────────────────────────
 
 
-def test_field_offset_recovery_via_find_all_requirements():
+def test_field_offset_recovery_via_find_joined():
     """Mirror the motivating recovery: capture the call's arg-passing
     offset and a follow-up load's offset against a shared frame base,
     compute their difference.
@@ -107,7 +107,7 @@ def test_field_offset_recovery_via_find_all_requirements():
 
     With `-fomit-frame-pointer` (the default at -O2 for x86 cdecl
     here), the frame base is ESP, not EBP — so the shared anchor for
-    `find_all_requirements` is `InitialVar(ESP)`.  Both `&local`
+    `find_joined` is `InitialVar(ESP)`.  Both `&local`
     (the call arg) and `local` (the return-value load) are at the
     same ESP offset, so the recovered field offset is 0.
     """
@@ -124,7 +124,7 @@ def test_field_offset_recovery_via_find_all_requirements():
     # call here was a silent no-op (now raises PatternError).  Both
     # operand orderings of `Add(InitialVar(ESP), IntConst)` are matched
     # automatically — the captures still bind to the IntConst leg.
-    results = g.find_all_requirements([
+    results = g.find_joined([
         # call(at=external_take_ptr).arg(0, lea esp+K1)
         call().target(strider.pattern.int_const(take_ptr))
             .arg(0, add(initial_var_for(esp), any_int_const(k_call))),

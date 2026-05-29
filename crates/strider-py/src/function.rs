@@ -93,7 +93,7 @@ impl PyFunction {
             TryLockError::WouldBlock => anyhow::anyhow!(
                 "Function mutation rejected: the function is currently borrowed for read \
                  (typically because this call is from inside a `.when()` predicate \
-                 invoked by `find_all`/`find_all_requirements`).  Mutating the function \
+                 invoked by `find_all`/`find_joined`).  Mutating the function \
                  from within a pattern predicate is not supported — collect matches \
                  first and mutate after `find_all` returns."
             ),
@@ -521,7 +521,7 @@ impl PyFunction {
     /// `ignore_casts_mask`, `ignore_regions`) apply uniformly to every
     /// pattern, mirroring `find_all`.
     #[pyo3(signature = (pats, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
-    fn find_all_requirements(
+    fn find_joined(
         slf: Py<Self>,
         py: Python<'_>,
         pats: Vec<crate::pattern::PatLike<'_>>,
@@ -531,7 +531,7 @@ impl PyFunction {
     ) -> PyResult<Vec<Vec<crate::matcher::PyMatch>>> {
         if ignore_casts && ignore_casts_mask.is_some() {
             return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "find_all_requirements: pass either ignore_casts=True or ignore_casts_mask=...; not both"
+                "find_joined: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
         let mut owned: Vec<strider_analyze::pattern::Pat> = Vec::with_capacity(pats.len());
@@ -551,7 +551,7 @@ impl PyFunction {
         if ignore_regions {
             matcher = matcher.ignore_regions();
         }
-        let raw = matcher.find_all_requirements(&pat_refs);
+        let raw = matcher.find_joined(&pat_refs);
         let generation = function_guard.generation();
         drop(function_guard);
         drop(function_borrow);

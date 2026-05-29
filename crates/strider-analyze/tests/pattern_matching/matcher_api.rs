@@ -416,22 +416,55 @@ fn find_all_multi_mixed_concrete_and_wildcard() {
     assert_eq!(roots(&multi[1]), roots(&m.find_all(&p_wild)));
 }
 
-// ── find_all_requirements: shared-capture cross-pattern intersection ──────────
+// ── find_first: short-circuiting single-match query ──────────────────────────
 
 #[test]
-fn find_all_requirements_empty_input() {
+fn find_first_concrete_kind_equals_find_all_first() {
+    let function = shapes::add_nested_3(2, 3, 5);
+    let m = Matcher::try_new(&function).unwrap();
+    let p: Pat = add(any(), any()).into();
+    let all = m.find_all(&p);
+    assert!(!all.is_empty(), "fixture has Add nodes");
+    let first = m.find_first(&p).expect("at least one Add matches");
+    assert_eq!(first.root(), all[0].root());
+}
+
+#[test]
+fn find_first_wildcard_equals_find_all_first() {
+    let function = shapes::add_consts(1, 2);
+    let m = Matcher::try_new(&function).unwrap();
+    let p: Pat = any();
+    let all = m.find_all(&p);
+    assert!(!all.is_empty());
+    let first = m.find_first(&p).expect("wildcard matches some node");
+    assert_eq!(first.root(), all[0].root());
+}
+
+#[test]
+fn find_first_no_match_returns_none() {
+    let function = shapes::add_consts(5, 3);
+    let m = Matcher::try_new(&function).unwrap();
+    // No Load node in an arithmetic-only graph.
+    assert!(m.find_first(&load().into()).is_none());
+    assert!(m.find_first(&call().into()).is_none());
+}
+
+// ── find_joined: shared-capture cross-pattern intersection ──────────
+
+#[test]
+fn find_joined_empty_input() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::try_new(&function).unwrap();
-    let results = m.find_all_requirements(&[]);
+    let results = m.find_joined(&[]);
     assert!(results.is_empty());
 }
 
 #[test]
-fn find_all_requirements_single_pattern_equivalent_to_find_all() {
+fn find_joined_single_pattern_equivalent_to_find_all() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::try_new(&function).unwrap();
     let p: Pat = add(any(), any()).into();
-    let req = m.find_all_requirements(&[&p]);
+    let req = m.find_joined(&[&p]);
     let direct = m.find_all(&p);
     assert_eq!(req.len(), direct.len());
     for (mr, dr) in req.iter().zip(direct.iter()) {
@@ -441,17 +474,17 @@ fn find_all_requirements_single_pattern_equivalent_to_find_all() {
 }
 
 #[test]
-fn find_all_requirements_no_matches_for_a_pattern_yields_empty() {
+fn find_joined_no_matches_for_a_pattern_yields_empty() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::try_new(&function).unwrap();
     let p_add: Pat = add(any(), any()).into();
     let p_call: Pat = call().into();
-    let req = m.find_all_requirements(&[&p_add, &p_call]);
+    let req = m.find_joined(&[&p_add, &p_call]);
     assert!(req.is_empty());
 }
 
 #[test]
-fn find_all_requirements_intersects_on_shared_capture_node_id() {
+fn find_joined_intersects_on_shared_capture_node_id() {
     let mut t = Tb::empty();
     let a = t.u64(0xAAAA);
     let b = t.u64(0xBBBB);
@@ -480,7 +513,7 @@ fn find_all_requirements_intersects_on_shared_capture_node_id() {
         .data(int_const(99))
         .into();
 
-    let req = mr.find_all_requirements(&[&p_zero, &p_99]);
+    let req = mr.find_joined(&[&p_zero, &p_99]);
     assert_eq!(req.len(), 1);
     let inner = &req[0];
     assert_eq!(inner.len(), 2);
@@ -494,7 +527,7 @@ fn find_all_requirements_intersects_on_shared_capture_node_id() {
 }
 
 #[test]
-fn find_all_requirements_disagreement_on_shared_capture_yields_empty() {
+fn find_joined_disagreement_on_shared_capture_yields_empty() {
     let mut t = Tb::empty();
     let a = t.u64(0xAAAA);
     let b = t.u64(0xBBBB);
@@ -517,15 +550,15 @@ fn find_all_requirements_disagreement_on_shared_capture_yields_empty() {
         .addr(add(var(shared), int_const(16u64)).ordered())
         .data(int_const(0))
         .into();
-    let req = mr.find_all_requirements(&[&p_8, &p_16]);
+    let req = mr.find_joined(&[&p_8, &p_16]);
     assert!(req.is_empty());
 }
 
-// ── find_all_requirements: shared OffsetCapture cross-pattern join ────────────
+// ── find_joined: shared OffsetCapture cross-pattern join ────────────
 //
 // Within a single match, `bind_offset` already compares BOTH base and offset
 // (see bindings.rs `offset_bind_join_requires_matching_base_not_just_offset`).
-// These tests pin the SAME semantics across patterns in `find_all_requirements`:
+// These tests pin the SAME semantics across patterns in `find_joined`:
 // a shared `OffsetCapture` must require the two accesses to land on the same
 // `(base, offset)` stack slot.
 
@@ -565,7 +598,7 @@ fn two_stack_stores_different_offsets() -> strider_ir::Function {
 /// A shared `OffsetCapture` across two patterns that match DIFFERENT stack
 /// slots must reject the join — the two accesses address different memory.
 #[test]
-fn find_all_requirements_rejects_shared_offset_on_different_slots() {
+fn find_joined_rejects_shared_offset_on_different_slots() {
     let function = two_stack_stores_different_offsets();
     let mr = Matcher::try_new(&function).unwrap();
 
@@ -575,7 +608,7 @@ fn find_all_requirements_rejects_shared_offset_on_different_slots() {
     // Pattern B only matches the `[base+0x20] = 99` store (data == 99).
     let p_99: Pat = store().offset_capture(oc).data(int_const(99)).into();
 
-    let req = mr.find_all_requirements(&[&p_zero, &p_99]);
+    let req = mr.find_joined(&[&p_zero, &p_99]);
     assert!(
         req.is_empty(),
         "a shared OffsetCapture must NOT join accesses on different stack slots"
@@ -585,7 +618,7 @@ fn find_all_requirements_rejects_shared_offset_on_different_slots() {
 /// A shared `OffsetCapture` across two patterns that match the SAME stack slot
 /// must join.  Here both patterns match the single `[base+0x10] = 0` store.
 #[test]
-fn find_all_requirements_joins_shared_offset_on_same_slot() {
+fn find_joined_joins_shared_offset_on_same_slot() {
     let function = two_stack_stores_different_offsets();
     let mr = Matcher::try_new(&function).unwrap();
 
@@ -595,7 +628,7 @@ fn find_all_requirements_joins_shared_offset_on_same_slot() {
     let p_a: Pat = store().offset_capture(oc).data(int_const(0)).into();
     let p_b: Pat = store().offset_capture(oc).stack_offset(0x10).into();
 
-    let req = mr.find_all_requirements(&[&p_a, &p_b]);
+    let req = mr.find_joined(&[&p_a, &p_b]);
     assert_eq!(
         req.len(),
         1,

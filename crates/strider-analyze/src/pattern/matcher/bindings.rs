@@ -171,7 +171,7 @@ impl Bindings {
     /// Returns the full `(base, offset)` stack slot bound to `oc`, or `None`
     /// if `oc` was not captured.  Unlike [`Self::get_offset`] this exposes the
     /// base so the cross-pattern shared-`OffsetCapture` join in
-    /// [`crate::pattern::Matcher::find_all_requirements`] can require BOTH
+    /// [`crate::pattern::Matcher::find_joined`] can require BOTH
     /// base and offset to agree — matching the within-match `bind_offset`
     /// semantics.
     ///
@@ -184,7 +184,7 @@ impl Bindings {
 
     /// Iterates over every `(OffsetCapture, (base, offset))` recorded by this
     /// match.  Mirrors [`Self::iter`] for the offset journal; used by
-    /// [`crate::pattern::Matcher::find_all_requirements`] to compute
+    /// [`crate::pattern::Matcher::find_joined`] to compute
     /// cross-pattern shared-offset agreement.  Order is the order offsets were
     /// bound during matching.
     pub(crate) fn offset_iter(
@@ -216,7 +216,7 @@ impl Bindings {
     }
 
     /// Iterates over every `(Capture, Binding)` recorded by this match.
-    /// Used by [`crate::pattern::Matcher::find_all_requirements`] to compute cross-pattern
+    /// Used by [`crate::pattern::Matcher::find_joined`] to compute cross-pattern
     /// shared-capture agreement.  Order is the order bindings were
     /// appended during matching (preorder of the pattern tree).
     pub(crate) fn iter(&self) -> impl Iterator<Item = (Capture, Binding)> + '_ {

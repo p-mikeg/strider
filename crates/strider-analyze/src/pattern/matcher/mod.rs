@@ -416,7 +416,7 @@ impl<'g> Matcher<'g> {
     ///         .into(),
     /// ];
     /// let pat_refs: Vec<&Pat> = pats.iter().collect();
-    /// for tup in matcher.find_all_requirements(&pat_refs) {
+    /// for tup in matcher.find_joined(&pat_refs) {
     ///     let k1 = tup[0].get_uint(k_call, graph)?;
     ///     let k2 = tup[1].get_uint(k_load, graph)?;
     ///     let _ni_vp_offset = (k2 as i64) - (k1 as i64); // recovered field offset
@@ -429,7 +429,7 @@ impl<'g> Matcher<'g> {
     /// `LoadForward`, the field read is folded away and this
     /// query returns nothing.  Add a `store(...)` arm to the pattern
     /// set when the field is being *written* rather than *read*.
-    pub fn find_all_requirements(&self, pats: &[&Pat]) -> Vec<Vec<Match>> {
+    pub fn find_joined(&self, pats: &[&Pat]) -> Vec<Vec<Match>> {
         if pats.is_empty() {
             return Vec::new();
         }
@@ -678,7 +678,7 @@ impl<'g> Matcher<'g> {
 
 /// True when every capture in `m`'s bindings that also appears in any
 /// previously-collected match in `prefix` binds to the same value.  Helper for
-/// [`Matcher::find_all_requirements`].
+/// [`Matcher::find_joined`].
 ///
 /// Two journals must agree: the node-binding journal (a shared [`Capture`]
 /// must bind the same [`crate::pattern::matcher::bindings::Binding`]) AND the

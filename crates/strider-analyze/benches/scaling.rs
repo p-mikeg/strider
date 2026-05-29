@@ -338,7 +338,7 @@ mod synthetic {
 
     /// Build a function with `n` distinct `IntConst` nodes added
     /// together.  Used to bench pattern-matcher cross-product joins
-    /// (`find_all_requirements`) with shared captures.
+    /// (`find_joined`) with shared captures.
     pub fn build_many_int_consts(n: usize) -> strider_ir::Function {
         let mut b = FunctionBuilder::empty().unwrap();
         let region = b.create_region().unwrap();
@@ -405,10 +405,10 @@ fn bench_wide_jump_table(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_find_all_requirements_shared_capture(c: &mut Criterion) {
+fn bench_find_joined_shared_capture(c: &mut Criterion) {
     use strider_analyze::pattern::{Capture, Matcher, add, any_int_const, var};
 
-    let mut group = c.benchmark_group("synthetic/find_all_requirements_shared");
+    let mut group = c.benchmark_group("synthetic/find_joined_shared");
     for n in [100usize, 500, 1_000] {
         let fg = synthetic::build_many_int_consts(n);
         // Two patterns that share a capture `x`:
@@ -424,7 +424,7 @@ fn bench_find_all_requirements_shared_capture(c: &mut Criterion) {
             bnch.iter(|| {
                 let m = Matcher::try_new(&fg).expect("bench fixture is built");
                 let pat_refs: Vec<&strider_analyze::pattern::Pat> = vec![&pat1, &pat2];
-                let result = m.find_all_requirements(&pat_refs);
+                let result = m.find_joined(&pat_refs);
                 black_box(result);
             });
         });
@@ -438,6 +438,6 @@ criterion_group!(
     bench_stack_store_chain,
     bench_diamond_cfg,
     bench_wide_jump_table,
-    bench_find_all_requirements_shared_capture,
+    bench_find_joined_shared_capture,
 );
 criterion_main!(benches);

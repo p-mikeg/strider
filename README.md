@@ -126,7 +126,7 @@ from strider.pattern import (
 # Field-offset recovery: vn_open(&nd, ...); script_vp = nd.ni_vp;
 rbp = sleigh.reg("RBP")
 k_call, k_load = Capture(), Capture()
-for tup in g.find_all_requirements([
+for tup in g.find_joined([
     call().target(int_const(VN_OPEN))
         .arg(0, add(initial_var_for(rbp), any_int_const(k_call))),
     load().addr(add(initial_var_for(rbp), any_int_const(k_load))),

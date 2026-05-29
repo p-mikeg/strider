@@ -261,7 +261,7 @@ for h in hits:
     print(h.uint(c) if h.uint(c) is not None else h.vn(c))
 ```
 
-Walk-through flags on `find_all` / `find_all_requirements`:
+Walk-through flags on `find_all` / `find_joined`:
 
 ```python
 # Skip intervening cast nodes (all kinds):
@@ -277,10 +277,10 @@ graph.find_all(pat, ignore_regions=True)
 Multi-pattern join on shared captures:
 
 ```python
-hits = graph.find_all_requirements([pat_a, pat_b, pat_c])
+hits = graph.find_joined([pat_a, pat_b, pat_c])
 ```
 
-Walk-through flags also apply to `find_all_requirements`; all flags apply uniformly to all patterns.
+Walk-through flags also apply to `find_joined`; all flags apply uniformly to all patterns.
 
 ## Worked examples
 

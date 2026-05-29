@@ -333,15 +333,17 @@ class Function:
         """Return the first `Match` for `pat`, or `None` if it does not
         match anywhere.  One-shot convenience over `find_all`."""
         ...
-    def find_all_requirements(
+    def find_joined(
         self,
         pats: List[Any],  # list[strider.pattern.PatLike]
         ignore_casts: bool = ...,
         ignore_regions: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
     ) -> List[List[Match]]:
-        """Run multiple patterns and intersect their matches on shared
-        `Capture` objects; one inner list per joined match."""
+        """Run multiple patterns and return matched sets joined on shared
+        `Capture`s — a cross-pattern join.  Each result is a tuple with
+        one `Match` per input pattern (in input order) where every
+        `Capture` shared between patterns binds to the same node."""
         ...
     def rewrite(self, find: Any, replace: Any) -> int: ...
     def rewrite_all(self, pairs: List[Tuple[Any, Any]]) -> int: ...
@@ -509,7 +511,7 @@ class Analysis:
     def find_one(
         self, pattern: Any, **matcher_options: Any
     ) -> Optional[Match]: ...
-    def find_all_requirements(
+    def find_joined(
         self, patterns: List[Any], **matcher_options: Any
     ) -> List[List[Match]]: ...
     def fingerprint(self, node: Any) -> List[int]: ...
