@@ -419,25 +419,32 @@ def run(
     per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
 ) -> RunResult: ...
 
-def disassemble(
+def pcode_at(
     arch: SleighArch,
     mem: MemoryMap,
     addr: int,
     count: int = ...,
 ) -> List[Tuple[int, str]]:
-    """Disassemble `count` machine instructions from `addr` over `mem`,
-    returning `(insn_addr, text)` tuples in address order.  Builds one
-    Sleigh and decodes sequentially.  Raises `StriderError` on failure."""
+    """Lift the p-code of `count` machine instructions from `addr` over
+    `mem`, returning `(insn_addr, text)` tuples in address order.  `text`
+    is the instruction's p-code ops joined with `"; "` (empty for ops
+    like `endbr64` that lift to no p-code).  rsleigh is a p-code lifter —
+    this is the lifted semantics, NOT native assembly mnemonics.  Builds
+    one Sleigh and decodes sequentially.  Raises `StriderError` on
+    failure."""
     ...
 
-def disassemble_addrs(
+def pcode_at_addrs(
     arch: SleighArch,
     mem: MemoryMap,
     addrs: List[int],
 ) -> List[Tuple[int, str]]:
-    """Disassemble a set of (possibly non-sequential) machine addresses,
-    one instruction each, returning `(addr, text)` tuples in the order
-    of `addrs`.  Builds the Sleigh only once."""
+    """Lift the p-code of a set of (possibly non-sequential) machine
+    addresses, one instruction each, returning `(addr, text)` tuples in
+    the order of `addrs`.  `text` is the instruction's p-code ops joined
+    with `"; "` (empty for ops like `endbr64` that lift to no p-code).
+    rsleigh is a p-code lifter — this is the lifted semantics, NOT native
+    assembly mnemonics.  Builds the Sleigh only once."""
     ...
 
 # ── High-level facade (strider._api) ─────────────────────────────────────
@@ -457,9 +464,13 @@ class Program:
     def entry_point(self) -> int: ...
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None: ...
-    def disasm(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
-        """Disassemble `count` machine instructions from `addr`,
-        returning `(insn_addr, text)` tuples in address order."""
+    def pcode(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
+        """Lift the p-code of `count` machine instructions from `addr`,
+        returning `(insn_addr, text)` tuples in address order.  `text` is
+        the instruction's p-code ops joined with `"; "` (empty for ops
+        like `endbr64` that lift to no p-code).  rsleigh is a p-code
+        lifter — this is the lifted semantics, NOT native assembly
+        mnemonics."""
         ...
     def analyze(
         self,
@@ -489,9 +500,12 @@ class Analysis:
         self, patterns: List[Any], **matcher_options: Any
     ) -> List[List[Match]]: ...
     def fingerprint(self, node: Any) -> List[int]: ...
-    def fingerprint_text(self, node: Any) -> List[Tuple[int, str]]:
+    def fingerprint_pcode(self, node: Any) -> List[Tuple[int, str]]:
         """The node's asm-fingerprint as `(addr, text)` pairs sorted by
-        address; `[]` for structural nodes with no fingerprint."""
+        address, `text` being the lifted p-code (empty for ops like
+        `endbr64` that lift to no p-code); `[]` for structural nodes with
+        no fingerprint.  rsleigh is a p-code lifter — this is the lifted
+        semantics, NOT native assembly mnemonics."""
         ...
     def dump_html(self, path: str, style: Optional[str] = ...) -> None: ...
     def dump_dot(self, path: str) -> None: ...

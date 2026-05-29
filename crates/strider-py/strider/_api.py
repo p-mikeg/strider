@@ -318,15 +318,17 @@ class Program:
         earlier-loaded ELF wins on symbol-name collisions."""
         self._elf.add_elf(path, apply_relocations)
 
-    # ── Disassembly ──────────────────────────────────────────────────
+    # ── P-code ───────────────────────────────────────────────────────
 
-    def disasm(self, addr: int, count: int = 1) -> list[tuple[int, str]]:
-        """Disassemble `count` machine instructions starting at `addr`,
-        returning a list of `(insn_addr, text)` tuples in address order.
+    def pcode(self, addr: int, count: int = 1) -> list[tuple[int, str]]:
+        """Lift the p-code of `count` machine instructions starting at
+        `addr`, returning a list of `(insn_addr, text)` tuples in
+        address order.
 
-        `text` is the lifted pcode for each machine instruction (the
-        Sleigh `Insn`s joined with `"; "`) — the same value-producing
-        decode the analysis pipeline runs, rendered for human reading.
+        `text` is the lifted p-code for each machine instruction (the
+        instruction's p-code ops joined with `"; "`, empty for ops like
+        `endbr64` that lift to no p-code).  rsleigh is a p-code lifter —
+        this is the lifted semantics, NOT native assembly mnemonics.
 
         ARM Thumb interworking is honoured: a Thumb pointer (`addr & 1`)
         is decoded with the Thumb Sleigh spec and a halfword-aligned
@@ -335,7 +337,7 @@ class Program:
         Raises `StriderError` when `addr` is unmapped or a lift fails.
         """
         arch, addr = _effective_arch_and_addr(self._arch, addr)
-        return _ext.disassemble(arch, self._elf.memory_map(), addr, count)
+        return _ext.pcode_at(arch, self._elf.memory_map(), addr, count)
 
     # ── Lift a function ──────────────────────────────────────────────
 
@@ -433,9 +435,9 @@ class Analysis:
         self._entry = entry
         self._name = name
         # The arch the lift actually used (Thumb-resolved for ARM
-        # interworking entries).  `fingerprint_text` decodes the
+        # interworking entries).  `fingerprint_pcode` lifts the
         # fingerprint addresses through this so a Thumb function's
-        # provenance disassembles with the Thumb Sleigh spec.  Defaults
+        # provenance is lifted with the Thumb Sleigh spec.  Defaults
         # to the program's arch for callers constructing an Analysis
         # directly.
         self._effective_arch = (
@@ -538,15 +540,18 @@ class Analysis:
         node_id = self._coerce_node_id(node)
         return self._result.function.asm_fingerprint(node_id)
 
-    def fingerprint_text(self, node) -> list[tuple[int, str]]:
+    def fingerprint_pcode(self, node) -> list[tuple[int, str]]:
         """Return the asm-fingerprint of `node` as `(addr, text)` pairs,
-        sorted by address — the disassembly companion to `fingerprint`.
+        sorted by address — the p-code companion to `fingerprint`.
 
         Resolves the node's fingerprint addresses (see `fingerprint`),
-        then disassembles each through a single shared Sleigh build,
-        so the audit trail reads as instruction text without leaving
-        strider for objdump.  `text` is the lifted pcode for that
-        machine instruction (the Sleigh `Insn`s joined with `"; "`).
+        then lifts each through a single shared Sleigh build, so the
+        audit trail reads as the lifted semantics without leaving
+        strider.  `text` is the lifted p-code for that machine
+        instruction (the instruction's p-code ops joined with `"; "`,
+        empty for ops like `endbr64` that lift to no p-code).  rsleigh
+        is a p-code lifter — this is the lifted semantics, NOT native
+        assembly mnemonics.
 
         `node` can be a raw `u32` id, a `Match`, or a `Node` handle.
 
@@ -557,7 +562,7 @@ class Analysis:
         if not addrs:
             return []
         mem = self._program._elf.memory_map()
-        pairs = _ext.disassemble_addrs(self._effective_arch, mem, addrs)
+        pairs = _ext.pcode_at_addrs(self._effective_arch, mem, addrs)
         return sorted(pairs, key=lambda p: p[0])
 
     # ── Visualisation ────────────────────────────────────────────────

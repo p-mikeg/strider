@@ -1,13 +1,14 @@
-"""Tests for the disassembly provenance surface.
+"""Tests for the p-code provenance surface.
 
-Covers `Program.disasm(addr, count)`, the `strider.disassemble` /
-`strider.disassemble_addrs` `#[pyfunction]`s, and the
-`Analysis.fingerprint_text(node)` audit-trail companion to
+Covers `Program.pcode(addr, count)`, the `strider.pcode_at` /
+`strider.pcode_at_addrs` `#[pyfunction]`s, and the
+`Analysis.fingerprint_pcode(node)` audit-trail companion to
 `Analysis.fingerprint`.
 
 These close the "audit trail" loop: a matched value node's fingerprint
-(machine-instruction *addresses*) can be rendered to instruction text
-without leaving strider for objdump.
+(machine-instruction *addresses*) can be lifted to p-code text without
+leaving strider.  rsleigh is a p-code lifter — the returned text is the
+lifted semantics, NOT native assembly mnemonics.
 
 Each test skips cleanly when the required fixture isn't built.
 """
@@ -25,15 +26,15 @@ def _load_memory():
     return strider.load(str(elf))
 
 
-# ── Program.disasm ──────────────────────────────────────────────────────
+# ── Program.pcode ───────────────────────────────────────────────────────
 
 
-def test_disasm_returns_count_tuples_in_order():
-    """`prog.disasm(entry, count=3)` returns exactly three
+def test_pcode_returns_count_tuples_in_order():
+    """`prog.pcode(entry, count=3)` returns exactly three
     `(int, str)` tuples in strictly-increasing address order."""
     prog = _load_memory()
     entry = prog.symbol("array_sum")
-    out = prog.disasm(entry, count=3)
+    out = prog.pcode(entry, count=3)
     assert isinstance(out, list)
     assert len(out) == 3
     for addr, text in out:
@@ -47,69 +48,69 @@ def test_disasm_returns_count_tuples_in_order():
     assert len(set(addrs)) == 3, "addresses must be distinct"
 
 
-def test_disasm_text_is_non_empty_for_pcode_instructions():
-    """Instructions that lift to pcode carry non-empty text.
+def test_pcode_text_is_non_empty_for_pcode_instructions():
+    """Instructions that lift to p-code carry non-empty text.
 
     The very first instruction of `array_sum` is `endbr64`, a CET
-    NOP-like op that lifts to *zero* pcode ops (empty text) — that
+    NOP-like op that lifts to *zero* p-code ops (empty text) — that
     entry still exists and advances by its byte length.  Every
-    subsequent instruction here lifts to real pcode, so its text is
+    subsequent instruction here lifts to real p-code, so its text is
     non-empty.
     """
     prog = _load_memory()
     entry = prog.symbol("array_sum")
-    out = prog.disasm(entry, count=3)
-    # At least the 2nd and 3rd instructions (test / je) lift to pcode.
+    out = prog.pcode(entry, count=3)
+    # At least the 2nd and 3rd instructions (test / je) lift to p-code.
     assert out[1][1].strip(), f"empty text for {out[1][0]:#x}"
     assert out[2][1].strip(), f"empty text for {out[2][0]:#x}"
 
 
-def test_disasm_default_count_is_one():
-    """`disasm(addr)` with no count returns a single instruction."""
+def test_pcode_default_count_is_one():
+    """`pcode(addr)` with no count returns a single instruction."""
     prog = _load_memory()
     entry = prog.symbol("array_sum")
-    out = prog.disasm(entry)
+    out = prog.pcode(entry)
     assert len(out) == 1
     assert out[0][0] == entry
 
 
-# ── strider.disassemble / strider.disassemble_addrs ─────────────────────
+# ── strider.pcode_at / strider.pcode_at_addrs ───────────────────────────
 
 
-def test_disassemble_pyfunction_matches_program_disasm():
-    """The low-level `strider.disassemble(arch, mem, addr, count)`
-    pyfunction produces the same result as `Program.disasm` for a
+def test_pcode_at_pyfunction_matches_program_pcode():
+    """The low-level `strider.pcode_at(arch, mem, addr, count)`
+    pyfunction produces the same result as `Program.pcode` for a
     non-interworking arch."""
     prog = _load_memory()
     entry = prog.symbol("array_sum")
     mem = prog._elf.memory_map()
-    low = strider.disassemble(prog.arch, mem, entry, 3)
-    high = prog.disasm(entry, count=3)
+    low = strider.pcode_at(prog.arch, mem, entry, 3)
+    high = prog.pcode(entry, count=3)
     assert low == high
 
 
-def test_disassemble_addrs_decodes_a_set_once():
-    """`strider.disassemble_addrs` decodes a set of (non-sequential)
+def test_pcode_at_addrs_decodes_a_set_once():
+    """`strider.pcode_at_addrs` lifts a set of (non-sequential)
     addresses, one instruction each, in argument order."""
     prog = _load_memory()
     entry = prog.symbol("array_sum")
-    seq = prog.disasm(entry, count=3)
+    seq = prog.pcode(entry, count=3)
     # Feed the addresses back in reverse — the result must preserve the
     # *argument* order, and each entry must match the sequential decode.
     addrs = [a for a, _ in seq][::-1]
     mem = prog._elf.memory_map()
-    out = strider.disassemble_addrs(prog.arch, mem, addrs)
+    out = strider.pcode_at_addrs(prog.arch, mem, addrs)
     assert [a for a, _ in out] == addrs
     by_addr = dict(seq)
     for a, t in out:
         assert t == by_addr[a]
 
 
-# ── Analysis.fingerprint_text ────────────────────────────────────────────
+# ── Analysis.fingerprint_pcode ───────────────────────────────────────────
 
 
-def test_fingerprint_text_renders_a_matched_node():
-    """For a matched value node, `fingerprint_text(match)` returns
+def test_fingerprint_pcode_renders_a_matched_node():
+    """For a matched value node, `fingerprint_pcode(match)` returns
     `(addr, text)` pairs whose addresses equal `fingerprint(match)`
     and whose texts are non-empty, sorted by address."""
     prog = _load_memory()
@@ -123,22 +124,22 @@ def test_fingerprint_text_renders_a_matched_node():
     fp = a.fingerprint(m)
     assert fp, "matched Add node must carry a non-empty fingerprint"
 
-    ft = a.fingerprint_text(m)
-    assert isinstance(ft, list)
+    fpc = a.fingerprint_pcode(m)
+    assert isinstance(fpc, list)
     # Addresses (sorted) equal the fingerprint addresses.
-    assert [addr for addr, _ in ft] == sorted(fp)
+    assert [addr for addr, _ in fpc] == sorted(fp)
     # Sorted by address.
-    assert [addr for addr, _ in ft] == sorted(addr for addr, _ in ft)
+    assert [addr for addr, _ in fpc] == sorted(addr for addr, _ in fpc)
     # An Add node lifts from a real arithmetic instruction, so its
-    # disassembly text is non-empty.
-    for addr, text in ft:
+    # p-code text is non-empty.
+    for addr, text in fpc:
         assert isinstance(addr, int)
         assert isinstance(text, str)
-        assert text.strip(), f"empty disassembly text for {addr:#x}"
+        assert text.strip(), f"empty p-code text for {addr:#x}"
 
 
-def test_fingerprint_text_accepts_root_id_and_node():
-    """`fingerprint_text` accepts a raw id, a Match, and a Node handle
+def test_fingerprint_pcode_accepts_root_id_and_node():
+    """`fingerprint_pcode` accepts a raw id, a Match, and a Node handle
     interchangeably (mirrors `fingerprint`'s coercion)."""
     prog = _load_memory()
     a = prog.analyze("array_sum")
@@ -147,13 +148,13 @@ def test_fingerprint_text_accepts_root_id_and_node():
     )
     assert matches
     m = matches[0]
-    via_match = a.fingerprint_text(m)
-    via_id = a.fingerprint_text(m.root)
-    via_node = a.fingerprint_text(a.function.node(m.root))
+    via_match = a.fingerprint_pcode(m)
+    via_id = a.fingerprint_pcode(m.root)
+    via_node = a.fingerprint_pcode(a.function.node(m.root))
     assert via_match == via_id == via_node
 
 
-def test_fingerprint_text_empty_for_structural_node():
+def test_fingerprint_pcode_empty_for_structural_node():
     """A structural node (no fingerprint, e.g. Entry) yields `[]`."""
     prog = _load_memory()
     a = prog.analyze("array_sum")
@@ -164,4 +165,4 @@ def test_fingerprint_text_empty_for_structural_node():
             struct_id = nid
             break
     assert struct_id is not None, "expected at least one structural node"
-    assert a.fingerprint_text(struct_id) == []
+    assert a.fingerprint_pcode(struct_id) == []

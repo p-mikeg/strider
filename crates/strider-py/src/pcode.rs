@@ -1,18 +1,20 @@
-//! `strider.disassemble` / `strider.disassemble_addrs` — turn machine
-//! addresses back into human-readable instruction text.
+//! `strider.pcode_at` / `strider.pcode_at_addrs` — lift machine
+//! addresses to their p-code semantics.
 //!
 //! These close the "audit trail" loop: `Analysis.fingerprint(node)`
 //! hands back the machine-instruction *addresses* that explain a
-//! matched value; these functions decode those addresses so the user
-//! never has to leave strider for objdump.
+//! matched value; these functions lift those addresses to p-code so the
+//! user can read the semantics that produced a match without leaving
+//! strider.  rsleigh is a p-code lifter — the returned `text` is the
+//! lifted semantics, NOT native assembly mnemonics.
 //!
 //! Both build exactly ONE `rsleigh::Sleigh` from the arch + the
-//! `MemoryMap`'s `Send + Sync` reader snapshot, then decode through it:
-//! `disassemble` walks `count` instructions sequentially from a start
+//! `MemoryMap`'s `Send + Sync` reader snapshot, then lift through it:
+//! `pcode_at` walks `count` instructions sequentially from a start
 //! address (advancing by each instruction's machine byte length —
 //! Sleigh's `lift_one` is `&mut self` and carries context-register
 //! state, so sequential decoding within one run is required), while
-//! `disassemble_addrs` decodes a SET of (possibly non-sequential)
+//! `pcode_at_addrs` lifts a SET of (possibly non-sequential)
 //! addresses, one instruction each, reusing the single Sleigh.
 
 use pyo3::prelude::*;
@@ -32,13 +34,13 @@ fn build_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))
 }
 
-/// Decode the single machine instruction at `addr` through `sleigh`,
+/// Lift the single machine instruction at `addr` through `sleigh`,
 /// returning `(text, machine_insn_len)`.
 ///
-/// The text is the lifted instruction's pcode rendered via each
+/// The text is the instruction's lifted p-code rendered via each
 /// `rsleigh::Insn`'s `Display` impl, joined with `"; "`.  A machine
-/// instruction that lifts to zero pcode ops (e.g. a NOP on some Sleigh
-/// specs) yields an empty text but still advances by its byte length.
+/// instruction that lifts to zero p-code ops (e.g. `endbr64`) yields an
+/// empty text but still advances by its byte length.
 fn lift_one_text(
     sleigh: &mut rsleigh::Sleigh<PyMemoryMapReader>,
     addr: u64,
@@ -55,19 +57,22 @@ fn lift_one_text(
     Ok((text, lift.machine_insn_len))
 }
 
-/// Disassemble `count` machine instructions starting at `addr`,
+/// Lift the p-code of `count` machine instructions starting at `addr`,
 /// returning a list of `(insn_addr, text)` tuples in address order.
 ///
 /// Builds one `Sleigh` for `arch` over `mem` and decodes
 /// sequentially, advancing by each instruction's machine byte length.
-/// `text` is the lifted pcode for that instruction (one or more
-/// `rsleigh::Insn`s rendered via `Display`, joined with `"; "`).
+/// `text` is the instruction's lifted p-code ops (one or more
+/// `rsleigh::Insn`s rendered via `Display`, joined with `"; "`, empty
+/// for ops like `endbr64` that lift to no p-code).  rsleigh is a p-code
+/// lifter — this is the lifted semantics, NOT native assembly
+/// mnemonics.
 ///
 /// Raises `StriderError` on a Sleigh-construction or lift failure
 /// (e.g. `addr` is unmapped or a zero-length instruction would loop).
 #[pyfunction]
 #[pyo3(signature = (arch, mem, addr, count = 1))]
-pub fn disassemble(
+pub fn pcode_at(
     arch: &PySleighArch,
     mem: &PyMemoryMap,
     addr: u64,
@@ -94,18 +99,21 @@ pub fn disassemble(
     Ok(out)
 }
 
-/// Disassemble a SET of (possibly non-sequential) machine addresses,
-/// one instruction each, returning a list of `(addr, text)` tuples in
-/// the order of `addrs`.
+/// Lift the p-code of a SET of (possibly non-sequential) machine
+/// addresses, one instruction each, returning a list of `(addr, text)`
+/// tuples in the order of `addrs`.
 ///
-/// Builds the `Sleigh` only ONCE and decodes one machine instruction
+/// Builds the `Sleigh` only ONCE and lifts one machine instruction
 /// per supplied address — this is the path
-/// `Analysis.fingerprint_text` uses to render a node's fingerprint
+/// `Analysis.fingerprint_pcode` uses to render a node's fingerprint
 /// addresses without paying the Sleigh-construction cost per address.
+/// `text` is the lifted p-code (empty for ops like `endbr64` that lift
+/// to no p-code).  rsleigh is a p-code lifter — this is the lifted
+/// semantics, NOT native assembly mnemonics.
 ///
 /// Raises `StriderError` on a Sleigh-construction or lift failure.
 #[pyfunction]
-pub fn disassemble_addrs(
+pub fn pcode_at_addrs(
     arch: &PySleighArch,
     mem: &PyMemoryMap,
     addrs: Vec<u64>,
@@ -120,7 +128,7 @@ pub fn disassemble_addrs(
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(disassemble, m)?)?;
-    m.add_function(wrap_pyfunction!(disassemble_addrs, m)?)?;
+    m.add_function(wrap_pyfunction!(pcode_at, m)?)?;
+    m.add_function(wrap_pyfunction!(pcode_at_addrs, m)?)?;
     Ok(())
 }
