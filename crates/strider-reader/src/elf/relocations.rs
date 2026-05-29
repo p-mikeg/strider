@@ -186,6 +186,26 @@ pub fn apply_elf_relocations(
             continue;
         }
 
+        // Defined-symbol MIPS `R_MIPS_REL32` — `S + A` semantics.  The
+        // undefined / index-0 case is handled by `image_relative_reloc`
+        // above (addend-only, since `S = 0`); a REL32 against a defined
+        // symbol carries a `RelocationTarget::Symbol(_)` and needs the
+        // symbol's address.  `object` reports REL32 as
+        // `RelocationKind::Unknown`, so the general `match reloc.kind()`
+        // below would mis-bucket it as unsupported — resolve it here
+        // (4-byte field on both MIPS32 and MIPS64).  Pass
+        // `non_symbol_is_malformed = true`: the `Symbol`-target gate in
+        // `mips_rel32_symbol_reloc_size` guarantees the target is a
+        // `Symbol`, so this only ever takes the resolve-or-skip arms.
+        if let Some(size_bytes) = mips_rel32_symbol_reloc_size(&reloc, obj.architecture()) {
+            let Some(target_addr) = resolve_symbol_target(obj, &reloc, true, &mut stats) else {
+                continue;
+            };
+            let value = target_addr.wrapping_add(reloc.addend() as u64);
+            locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
+            continue;
+        }
+
         // Resolve the target.  Per `Object::dynamic_relocations`'s
         // doc-comment, symbol indices here reference the dynamic
         // symbol table — `obj.symbol_by_index` looks at `.symtab`
@@ -606,8 +626,15 @@ fn image_relative_reloc(
         }
         // MIPS REL32 — closest analogue to RELATIVE on MIPS.
         // `R_MIPS_REL32` (type 3) writes `S + A` (symbol value plus
-        // addend); for an undefined symbol with index 0 it reduces to
-        // image-relative.  MIPS does not define a separate IRELATIVE.
+        // addend).  For an **undefined / index-0 (STN_UNDEF)** symbol
+        // `S` is 0, so the relocation reduces to image-relative (addend
+        // only) — that's the case this arm handles.  A REL32 against a
+        // **defined** symbol carries a non-null `r_sym`, which `object`
+        // surfaces as `RelocationTarget::Symbol(_)`; those need the
+        // symbol's address and are routed through
+        // `mips_rel32_symbol_reloc_size` + `resolve_symbol_target` in
+        // the main loop instead — so this arm bails (returns `None`) on
+        // a `Symbol` target.  MIPS does not define a separate IRELATIVE.
         //
         // **Field width is 4 bytes on both MIPS32 and MIPS64.**  The
         // "REL32" suffix is the relocation field size, not the address
@@ -616,7 +643,8 @@ fn image_relative_reloc(
         // Writing 8 bytes here on MIPS64 corrupts the four bytes
         // immediately following the relocation site.
         A::Mips | A::Mips64
-            if r_type == object::elf::R_MIPS_REL32 =>
+            if r_type == object::elf::R_MIPS_REL32
+                && !matches!(reloc.target(), RelocationTarget::Symbol(_)) =>
         {
             4
         }
@@ -701,6 +729,37 @@ fn got_or_plt_slot_reloc_size(
             Some(8)
         }
         _ => None,
+    }
+}
+
+/// Detects a **defined-symbol** `R_MIPS_REL32` — the symbol-targeted
+/// half of the REL32 family.  REL32 has `S + A` semantics; the
+/// undefined / index-0 (STN_UNDEF) case (where `S = 0`, so the value is
+/// addend-only) is handled by [`image_relative_reloc`], while a REL32
+/// against a *defined* symbol — which `object` surfaces as
+/// `RelocationTarget::Symbol(_)` — needs the symbol's address and is
+/// routed here.  Common in MIPS shared objects for GOT / function-
+/// pointer slots; without this the slot reads `addend` (usually 0)
+/// instead of `symbol + addend`.
+///
+/// Returns `Some(4)` (the REL32 field width, fixed at 4 bytes on both
+/// MIPS32 and MIPS64 — see [`image_relative_reloc`]) when matched; the
+/// caller resolves the symbol value and computes `target_addr + addend`.
+fn mips_rel32_symbol_reloc_size(
+    reloc: &object::Relocation,
+    arch: object::Architecture,
+) -> Option<usize> {
+    let RelocationFlags::Elf { r_type } = reloc.flags() else {
+        return None;
+    };
+    use object::Architecture as A;
+    if matches!(arch, A::Mips | A::Mips64)
+        && r_type == object::elf::R_MIPS_REL32
+        && matches!(reloc.target(), RelocationTarget::Symbol(_))
+    {
+        Some(4)
+    } else {
+        None
     }
 }
 

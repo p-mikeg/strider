@@ -12,6 +12,216 @@ use object::Endianness;
 use object::elf;
 use object::write::elf::{FileHeader, ProgramHeader, SectionHeader, Writer};
 
+/// One defined-symbol `R_MIPS_REL32` fixture: a big-endian MIPS32 ELF
+/// whose `.data.rel.ro` slot at `slot_addr` carries a `REL` relocation
+/// of type `R_MIPS_REL32` pointing at a defined symbol `target` located
+/// at `sym_addr`.  Built by hand via the low-level `Writer` (the
+/// high-level `object::write::Object` API can't place a section at a
+/// chosen `sh_addr`, and its dynamic-symbol layout is opaque).
+///
+/// Returns the ELF bytes plus the two addresses the test asserts on.
+pub struct Mips32Rel32Fixture {
+    pub bytes: Vec<u8>,
+    /// Virtual address of the 4-byte relocation site (in `.data.rel.ro`).
+    pub slot_addr: u64,
+    /// Virtual address (`st_value`) of the defined target symbol.
+    pub sym_addr: u64,
+}
+
+/// Builds a defined-symbol [`Mips32Rel32Fixture`] (the REL32 points at
+/// the defined `func` symbol).  See [`build_mips32be_rel32_elf_with`].
+pub fn build_mips32be_rel32_elf() -> Mips32Rel32Fixture {
+    build_mips32be_rel32_elf_with(/* defined_symbol */ true)
+}
+
+/// Builds [`Mips32Rel32Fixture`].  Layout:
+/// - `.text`     — one dummy instruction word at `0x1000` (the symbol
+///   `func` is defined here, `st_value = sym_addr`).
+/// - `.data.rel.ro` — one 4-byte slot at `slot_addr`, initial value 0.
+/// - `.dynsym`   — null symbol + one defined `func` symbol.
+/// - `.dynstr`   — string table for `.dynsym`.
+/// - `.rel.dyn`  — one `Elf32_Rel { r_offset = slot_addr,
+///   r_info = (sym_index << 8) | R_MIPS_REL32 }`, `sh_link = .dynsym`.
+///
+/// When `defined_symbol` is `true` the reloc's `r_sym` is symbol 1
+/// (the defined `func`); `object` reports a `RelocationTarget::Symbol`.
+/// When `false`, `r_sym` is 0 (STN_UNDEF) — `object` reports
+/// `RelocationTarget::Absolute`, exercising the addend-only path.
+///
+/// `object::dynamic_relocations()` iterates `SHT_REL` sections whose
+/// `sh_link` is the `SHT_DYNSYM` section, so wiring `sh_link`
+/// correctly is what makes the reloc visible.
+pub fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture {
+    let endian = Endianness::Big;
+    let sym_addr: u64 = 0x1000; // `.text` / `func`
+    let slot_addr: u64 = 0x2000; // `.data.rel.ro` slot
+
+    let text = vec![0u8, 0, 0, 0]; // one dummy MIPS word
+    let slot = vec![0u8, 0, 0, 0]; // REL site, starts zeroed
+
+    // `.dynstr`: index 0 is the empty string; "func" follows.
+    let mut dynstr = vec![0u8];
+    let func_name_off = dynstr.len() as u32;
+    dynstr.extend_from_slice(b"func\0");
+
+    // `.dynsym`: symbol 0 is the reserved null entry; symbol 1 is the
+    // defined `func` (st_value = sym_addr, st_shndx = .text index).
+    // Elf32_Sym is 16 bytes: name(4) value(4) size(4) info(1) other(1) shndx(2).
+    let sym_index: u32 = 1;
+    let text_shndx: u16 = 1; // `.text` is section index 1 (see below)
+    let mut dynsym = vec![0u8; 16]; // null symbol
+    let mut func_sym = Vec::with_capacity(16);
+    func_sym.extend_from_slice(&func_name_off.to_be_bytes()); // st_name
+    func_sym.extend_from_slice(&(sym_addr as u32).to_be_bytes()); // st_value
+    func_sym.extend_from_slice(&0u32.to_be_bytes()); // st_size
+    // st_info: STB_GLOBAL << 4 | STT_FUNC
+    func_sym.push((elf::STB_GLOBAL << 4) | elf::STT_FUNC);
+    func_sym.push(0); // st_other
+    func_sym.extend_from_slice(&text_shndx.to_be_bytes()); // st_shndx
+    dynsym.extend_from_slice(&func_sym);
+
+    // `.rel.dyn`: one Elf32_Rel (8 bytes): r_offset(4) r_info(4).
+    // r_info = (sym << 8) | type for ELF32.  `sym = 0` (STN_UNDEF) makes
+    // `object` report a `RelocationTarget::Absolute` (addend-only path);
+    // `sym = 1` makes it a `RelocationTarget::Symbol` (the `S + A` path).
+    let r_sym = if defined_symbol { sym_index } else { 0 };
+    let r_info: u32 = (r_sym << 8) | u32::from(elf::R_MIPS_REL32 as u8);
+    let mut reldyn = Vec::with_capacity(8);
+    reldyn.extend_from_slice(&(slot_addr as u32).to_be_bytes());
+    reldyn.extend_from_slice(&r_info.to_be_bytes());
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(endian, /* is_64 */ false, &mut buf);
+
+        // Section index layout (must match `text_shndx` and dynsym link):
+        //   0 = null, 1 = .text, 2 = .data.rel.ro, 3 = .dynsym,
+        //   4 = .dynstr, 5 = .rel.dyn, 6 = .shstrtab.
+        let _null = w.reserve_null_section_index();
+        let text_name = w.add_section_name(b".text");
+        let text_idx = w.reserve_section_index();
+        let slot_name = w.add_section_name(b".data.rel.ro");
+        let _slot_idx = w.reserve_section_index();
+        let dynsym_name = w.add_section_name(b".dynsym");
+        let dynsym_idx = w.reserve_section_index();
+        let dynstr_name = w.add_section_name(b".dynstr");
+        let dynstr_idx = w.reserve_section_index();
+        let reldyn_name = w.add_section_name(b".rel.dyn");
+        let _reldyn_idx = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        assert_eq!(text_idx.0, u32::from(text_shndx));
+        assert_eq!(dynsym_idx.0, 3);
+
+        // Reserve layout: file header, then each section's bytes, then
+        // shstrtab, then section headers.
+        w.reserve_file_header();
+        // Reserve every block at align 1 so the reserved offsets match
+        // the positions `w.write` lands at (no implicit padding the
+        // plain `write` calls below wouldn't reproduce).  File-offset
+        // alignment is irrelevant for the in-memory addresses the
+        // applier patches.
+        let text_off = w.reserve(text.len(), 1);
+        let slot_off = w.reserve(slot.len(), 1);
+        let dynsym_off = w.reserve(dynsym.len(), 1);
+        let dynstr_off = w.reserve(dynstr.len(), 1);
+        let reldyn_off = w.reserve(reldyn.len(), 1);
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        // ET_DYN: shared object, the shape `apply_elf_relocations`
+        // targets.
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_DYN,
+            e_machine: elf::EM_MIPS,
+            e_entry: sym_addr,
+            e_flags: 0,
+        })
+        .expect("write file header");
+
+        w.write(&text);
+        w.write(&slot);
+        w.write(&dynsym);
+        w.write(&dynstr);
+        w.write(&reldyn);
+        w.write_shstrtab();
+
+        w.write_null_section_header();
+        // 1: .text (SHF_ALLOC | SHF_EXECINSTR).
+        w.write_section_header(&SectionHeader {
+            name: Some(text_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
+            sh_addr: sym_addr,
+            sh_offset: text_off as u64,
+            sh_size: text.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 4,
+            sh_entsize: 0,
+        });
+        // 2: .data.rel.ro (SHF_ALLOC | SHF_WRITE) — the relocation site.
+        w.write_section_header(&SectionHeader {
+            name: Some(slot_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_WRITE),
+            sh_addr: slot_addr,
+            sh_offset: slot_off as u64,
+            sh_size: slot.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 4,
+            sh_entsize: 0,
+        });
+        // 3: .dynsym (SHT_DYNSYM); sh_link = .dynstr, sh_info = index of
+        // first non-local symbol (1, since symbol 0 is the null entry).
+        w.write_section_header(&SectionHeader {
+            name: Some(dynsym_name),
+            sh_type: elf::SHT_DYNSYM,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: dynsym_off as u64,
+            sh_size: dynsym.len() as u64,
+            sh_link: dynstr_idx.0,
+            sh_info: 1,
+            sh_addralign: 4,
+            sh_entsize: 16,
+        });
+        // 4: .dynstr (SHT_STRTAB).
+        w.write_section_header(&SectionHeader {
+            name: Some(dynstr_name),
+            sh_type: elf::SHT_STRTAB,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: dynstr_off as u64,
+            sh_size: dynstr.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        // 5: .rel.dyn (SHT_REL); sh_link = .dynsym so
+        // `dynamic_relocations()` picks it up.
+        w.write_section_header(&SectionHeader {
+            name: Some(reldyn_name),
+            sh_type: elf::SHT_REL,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: reldyn_off as u64,
+            sh_size: reldyn.len() as u64,
+            sh_link: dynsym_idx.0,
+            sh_info: 0,
+            sh_addralign: 4,
+            sh_entsize: 8,
+        });
+        w.write_shstrtab_section_header();
+    }
+
+    Mips32Rel32Fixture { bytes: buf, slot_addr, sym_addr }
+}
+
 /// Builds a minimal 64-bit little-endian x86-64 ELF with a single
 /// `.text` section of `bytes` placed at virtual address `addr`.
 ///

@@ -11,6 +11,72 @@
 use object::{Object, ObjectSymbol};
 use std::path::PathBuf;
 
+#[path = "common/mod.rs"]
+mod common;
+
+/// Read 4 bytes (big-endian) from `regions` at virtual address `addr`.
+fn read_u32_be(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u32> {
+    for r in regions {
+        if r.contains(addr) && addr + 4 <= r.end_addr() {
+            let off = (addr - r.start_addr()) as usize;
+            let bytes = &r.data()[off..off + 4];
+            return Some(u32::from_be_bytes(bytes.try_into().unwrap()));
+        }
+    }
+    None
+}
+
+#[test]
+fn apply_elf_relocations_defined_mips_rel32_writes_symbol_value() {
+    // A defined-symbol `R_MIPS_REL32` has `S + A` semantics (symbol
+    // value plus addend), not addend-only — the addend-only reduction
+    // is correct *only* for the undefined / index-0 (STN_UNDEF) case.
+    // The `.data.rel.ro` slot here points at the defined `func` symbol
+    // (st_value = sym_addr); after relocation the slot must read
+    // `sym_addr`, not 0.  The fixture is a `REL` (implicit-addend)
+    // section so A = 0, isolating the symbol-value contribution.
+    let fx = common::elf_fixture::build_mips32be_rel32_elf();
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
+
+    // Load every allocatable file-backed section so `.data.rel.ro`
+    // (the relocation site) has a region to patch.
+    let mut regions =
+        strider_reader::elf::elf_get_allocatable_file_backed_sections_as_mem_regions(&obj)
+            .expect("regions");
+    let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
+
+    assert_eq!(stats.applied, 1, "the one REL32 must be applied; stats = {stats:?}");
+    assert_eq!(
+        read_u32_be(&regions, fx.slot_addr),
+        Some(fx.sym_addr as u32),
+        "defined-symbol REL32 must write S + A (= sym_addr), not addend-only (0); stats = {stats:?}"
+    );
+}
+
+#[test]
+fn apply_elf_relocations_undefined_mips_rel32_stays_addend_only() {
+    // The undefined / index-0 (STN_UNDEF) REL32 case must remain
+    // addend-only: `S = 0`, the `REL` section's addend is 0, so the
+    // slot reads 0 after relocation.  `object` reports the index-0
+    // reloc as `RelocationTarget::Absolute`, which routes through
+    // `image_relative_reloc` (addend-only) — this pins that the
+    // defined-symbol fix did not perturb the undefined path.
+    let fx = common::elf_fixture::build_mips32be_rel32_elf_with(false);
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
+
+    let mut regions =
+        strider_reader::elf::elf_get_allocatable_file_backed_sections_as_mem_regions(&obj)
+            .expect("regions");
+    let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
+
+    assert_eq!(stats.applied, 1, "the one REL32 must be applied; stats = {stats:?}");
+    assert_eq!(
+        read_u32_be(&regions, fx.slot_addr),
+        Some(0),
+        "undefined-symbol REL32 stays addend-only (0); stats = {stats:?}"
+    );
+}
+
 fn fixture_path(arch: &str, case: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out")
