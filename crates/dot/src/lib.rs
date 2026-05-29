@@ -77,9 +77,9 @@ pub struct DotStyle {
 }
 
 impl DotStyle {
-    /// Returns a dark-background theme suitable for modern editors / terminals.
-    #[must_use]
-    pub fn dark() -> Self {
+    /// Builds the dark theme with a caller-chosen node `fontname`, the single
+    /// attribute that differs between [`Self::dark`] and [`Self::dark_cfg`].
+    fn dark_with_font(fontname: &'static str) -> Self {
         Self {
             graph: vec![
                 ("rankdir", "TB"),
@@ -92,7 +92,7 @@ impl DotStyle {
                 ("fillcolor", "\"#2d2d2d\""),
                 ("color", "\"#888888\""),
                 ("fontcolor", "white"),
-                ("fontname", "monospace"),
+                ("fontname", fontname),
                 ("margin", "0.2"),
             ],
             edge: vec![
@@ -103,17 +103,20 @@ impl DotStyle {
         }
     }
 
-    /// Like [`Self::dark`] but with CFG-appropriate node typography: replaces the
-    /// generic `monospace` font with `Courier`, whose character-width metrics
-    /// are bundled into the Graphviz/viz.js layout engine. Without this swap,
-    /// multiline labels overflow their node boxes in WASM-rendered HTML.
+    /// Returns a dark-background theme suitable for modern editors / terminals.
+    #[must_use]
+    pub fn dark() -> Self {
+        Self::dark_with_font("monospace")
+    }
+
+    /// Like [`Self::dark`] but with CFG-appropriate node typography: uses
+    /// `Courier`, whose character-width metrics are bundled into the
+    /// Graphviz/viz.js layout engine, instead of the generic `monospace`.
+    /// Without this swap, multiline labels overflow their node boxes in
+    /// WASM-rendered HTML.
     #[must_use]
     pub fn dark_cfg() -> Self {
-        let mut s = Self::dark();
-        if let Some(e) = s.node.iter_mut().find(|(k, _)| *k == "fontname") {
-            e.1 = "Courier";
-        }
-        s
+        Self::dark_with_font("Courier")
     }
 
     /// Returns an empty theme (no default attributes).
@@ -344,12 +347,23 @@ pub struct GraphDot<G: GraphDotDumper> {
 
 impl<G: GraphDotDumper> GraphDot<G> {
     /// Creates a new `GraphDot` with the given dumper and visual style.
+    ///
+    /// The emitted digraph is named `"G"` by default; use
+    /// [`Self::with_name`] to override it.
     pub fn new(dumper: G, style: DotStyle) -> Self {
         Self {
             dumper,
             style,
             name: "G".to_string(),
         }
+    }
+
+    /// Sets the name of the emitted `digraph`. The name is escaped and
+    /// double-quoted by [`DotEmitter::new`], so any string is accepted.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
     }
 
     fn build_dot(&self) -> anyhow::Result<String> {
