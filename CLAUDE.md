@@ -398,11 +398,14 @@ so the resolver-bearing dependency stays one-way.
   `strider-analyze::pattern`; the macro's job is to spare you a
   byte-for-byte duplicate on the Python side.  Most pattern builders have
   macro-emitted mirrors (including the binary-op mirrors `PyIntBinaryPat`
-  / `PyFloatBinaryPat`, driven via the macro's `constructor_args`).
-  `PyFunctionArgPat` (an enum-dispatch source whose shape doesn't fit the
-  field-based model) stays a hand-written `#[pyclass]`, and `bool_binary`
-  is a plain function (a boolean AND/OR/XOR is `IntBinaryOp` at `I1`, so
-  it needs no dedicated builder).
+  / `PyFloatBinaryPat` / `PyBoolBinaryPat`, driven via the macro's
+  `constructor_args`).  `bool_binary` returns a chainable `BoolBinaryPat`
+  (the macro mirror of the Rust `BoolBinaryOpPat`), symmetric with
+  `int_binary` / `float_binary` — a boolean op is still an `IntBinaryOp`
+  at `I1`, and the bool builder keeps an `I1`-output guard so it never
+  matches a same-shaped wide integer op.  `PyFunctionArgPat` (an
+  enum-dispatch source whose shape doesn't fit the field-based model)
+  stays a hand-written `#[pyclass]`.
 
 - **`strider-ir-test-utils`** — `RegisterSet` (fluent builder over
   `FunctionBuilder::new_raw`), `make_empty_fn`, `make_fn_with_var`,
@@ -508,10 +511,14 @@ truth for every node's input/output shape.  Node kinds, grouped:
   adding a field on the Python side updates the generated mirror
   automatically — the Rust builder must still be updated by hand.
 - Most builders have macro-emitted PyO3 mirrors (the binary-op mirrors
-  `PyIntBinaryPat` / `PyFloatBinaryPat` are emitted via the macro's
-  `constructor_args`); `PyFunctionArgPat` (enum-dispatch source) stays
-  hand-written, and `bool_binary` is now a plain function returning a
-  `Pat` (a boolean AND/OR/XOR is just `IntBinaryOp` at `I1`).
+  `PyIntBinaryPat` / `PyFloatBinaryPat` / `PyBoolBinaryPat` are emitted
+  via the macro's `constructor_args`); `PyFunctionArgPat` (enum-dispatch
+  source) stays hand-written.  `bool_binary` returns a chainable
+  `BoolBinaryPat` (macro mirror of the Rust `BoolBinaryOpPat`),
+  symmetric with `int_binary` / `float_binary` — a boolean AND/OR/XOR is
+  still `IntBinaryOp` at `I1`, and the bool builder pins the output to
+  `I1` (with an `I1`-output post-match guard) so it never matches a
+  same-shaped wide integer op.
 - **Querying booleans by width** (booleans are `I1`, not a distinct type):
   `value_of_width(n)` / `bool_value()` filter by *output* width (width 1 =
   "produces a bool", including comparisons); `inputs_of_width(n, inner)` /

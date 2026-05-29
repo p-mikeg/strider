@@ -114,6 +114,54 @@ fn bool_and_or_xor_commute() {
     a::matches(&g_xor, bool_xor(bool_const(false), bool_const(true)), 1);
 }
 
+// ── `bool_binary` / `bool_and` are chainable (`.ordered()` pins operand slots) ─
+
+#[test]
+fn bool_binary_ordered_rejects_swap() {
+    // Build `and(true, false)` at I1.  Default `bool_binary` matches
+    // commutatively; `.ordered()` pins the operand slots so the swapped
+    // operand order must fail while the canonical order still matches.
+    let function = shapes::bool_bin(true, false, IntBinaryOp::And);
+    // Canonical (operand 0 = true, operand 1 = false) matches either way.
+    a::matches(&function, bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false)), 1);
+    // Without `.ordered()`, the swapped order still matches (commutative).
+    a::matches(&function, bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true)), 1);
+    // With `.ordered()`, the swapped order must NOT match…
+    a::none(&function, bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true)).ordered());
+    // …but the canonical order still does.
+    a::matches(&function, bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false)).ordered(), 1);
+}
+
+#[test]
+fn bool_and_ordered_rejects_swap() {
+    let function = shapes::bool_bin(true, false, IntBinaryOp::And);
+    a::none(&function, bool_and(bool_const(false), bool_const(true)).ordered());
+    a::matches(&function, bool_and(bool_const(true), bool_const(false)).ordered(), 1);
+}
+
+/// The chainable `bool_binary` builder must keep the `I1` output guard:
+/// `.ordered()` (or the bare builder) must NOT match a same-shaped wide
+/// `And` even when the operand order lines up.
+#[test]
+fn bool_binary_ordered_requires_i1_output() {
+    use strider_ir::node::NodeOutputType;
+    use strider_ir_test_utils::RegisterSet;
+
+    let mut b = RegisterSet::new()
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
+    let x = b.build_int_const(0xFFu64, NodeOutputType::I64).expect("x");
+    let one = b.build_int_const(1u64, NodeOutputType::I64).expect("one");
+    let wide_and = b
+        .build_int_binary_operation(x, one, IntBinaryOp::And, NodeOutputType::I64)
+        .expect("wide and");
+    b.build_return(Some(wide_and), &[]).expect("ret");
+    let function = b.build().expect("build");
+
+    a::none(&function, bool_binary(IntBinaryOp::And, any(), any()));
+    a::none(&function, bool_binary(IntBinaryOp::And, any(), any()).ordered());
+}
+
 // ── Float commutativity ──────────────────────────────────────────────────────
 
 #[test]

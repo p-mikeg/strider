@@ -80,6 +80,7 @@ EXPECTED_PATTERN = {
     "PartialMatch",
     "IntBinaryPat",
     "FloatBinaryPat",
+    "BoolBinaryPat",
     # Builder types (one per matchable kind).
     "CallPat", "CallOtherPat",
     "FunctionArgPat",

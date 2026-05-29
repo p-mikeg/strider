@@ -155,7 +155,7 @@ fn bool_ctors_require_i1_output() {
 
     let m = Matcher::try_new(&function).unwrap();
     assert_eq!(
-        m.find_all(&bool_and(any(), any())).len(),
+        m.find_all(&bool_and(any(), any()).into()).len(),
         0,
         "bool_and is boolean-specific and must not match a 64-bit And"
     );

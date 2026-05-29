@@ -17,12 +17,15 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{IntBinaryOp, IntUnaryOp};
 
 use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, PostMatchFn, NodePat};
-use crate::pattern::pat::Pat;
+use crate::pattern::pat::{BoolBinaryOpPat, Pat};
 
 /// Post-match guard restricting a match to a node whose value output is the
 /// 1-bit boolean `I1`.  Without it the `bool_*` matchers would also accept a
 /// same-shaped wide integer op (e.g. a 64-bit `And`), since after the bool→I1
 /// collapse a boolean op and a wide integer op share the same `NodeKind`.
+///
+/// (The binary-op constructors carry an equivalent guard inside
+/// [`BoolBinaryOpPat`]; this copy serves the unary constructors.)
 fn require_i1_output() -> PostMatchFn {
     Arc::new(|ctx, node, _bindings| {
         ctx.function
@@ -33,43 +36,32 @@ fn require_i1_output() -> PostMatchFn {
     })
 }
 
-/// Build an `I1`-typed integer binary-op pattern.  Commutative ops
-/// (`And` / `Or` / `Xor`) try both operand orderings automatically.
-fn i1_binary(op: IntBinaryOp, lhs: Pat, rhs: Pat) -> Pat {
-    let kind = NodeKind::IntBinaryOp(op);
-    let inputs = if kind.is_commutative() {
-        InputsSpec::fixed_commutative(lhs, rhs)
-    } else {
-        InputsSpec::fixed_ordered(vec![lhs, rhs])
-    };
-    NodePat::matcher(KindSpec::Exact(kind), inputs)
-        .with_post_match(require_i1_output())
-        .with_build_exact(kind, BuildTy::Fixed(NodeOutputType::I1))
-        .into_pat()
-}
-
 /// Matches a boolean binary operation with the given `op`.
 ///
 /// `op` is an [`IntBinaryOp`] (booleans are `I1` integers); use `And`, `Or`,
-/// or `Xor`.  Commutative ops try both orderings automatically.  The result
-/// node is typed `I1`.
-pub fn bool_binary(op: IntBinaryOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    i1_binary(op, lhs.into(), rhs.into())
+/// or `Xor`.  Commutative ops try both orderings automatically; call
+/// `.ordered()` on the returned `BoolBinaryOpPat` to disable this.  The
+/// result node is typed `I1`.
+pub fn bool_binary(op: IntBinaryOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> BoolBinaryOpPat {
+    BoolBinaryOpPat::new(op, lhs.into(), rhs.into())
 }
 
-/// Matches a boolean AND node (`IntBinaryOp::And` at `I1`).  Commutative.
-pub fn bool_and(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    i1_binary(IntBinaryOp::And, lhs.into(), rhs.into())
+/// Matches a boolean AND node (`IntBinaryOp::And` at `I1`).  Commutative;
+/// call `.ordered()` to pin operand order.
+pub fn bool_and(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> BoolBinaryOpPat {
+    BoolBinaryOpPat::new(IntBinaryOp::And, lhs.into(), rhs.into())
 }
 
-/// Matches a boolean OR node (`IntBinaryOp::Or` at `I1`).  Commutative.
-pub fn bool_or(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    i1_binary(IntBinaryOp::Or, lhs.into(), rhs.into())
+/// Matches a boolean OR node (`IntBinaryOp::Or` at `I1`).  Commutative;
+/// call `.ordered()` to pin operand order.
+pub fn bool_or(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> BoolBinaryOpPat {
+    BoolBinaryOpPat::new(IntBinaryOp::Or, lhs.into(), rhs.into())
 }
 
-/// Matches a boolean XOR node (`IntBinaryOp::Xor` at `I1`).  Commutative.
-pub fn bool_xor(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    i1_binary(IntBinaryOp::Xor, lhs.into(), rhs.into())
+/// Matches a boolean XOR node (`IntBinaryOp::Xor` at `I1`).  Commutative;
+/// call `.ordered()` to pin operand order.
+pub fn bool_xor(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> BoolBinaryOpPat {
+    BoolBinaryOpPat::new(IntBinaryOp::Xor, lhs.into(), rhs.into())
 }
 
 /// Matches a boolean unary operation with the given `op` (an [`IntUnaryOp`]

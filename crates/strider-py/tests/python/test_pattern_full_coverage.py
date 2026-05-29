@@ -225,13 +225,53 @@ def test_float_binary_into_pat_returns_pat():
     assert isinstance(p, Pat)
 
 
-def test_bool_binary_returns_pat():
+def test_bool_binary_returns_chainable_builder():
     # Booleans are the 1-bit integer I1, so bool_binary builds an
-    # IntBinaryOp at I1 and returns a finalised Pat directly (the old
-    # BoolBinaryPat builder no longer exists).
+    # IntBinaryOp at I1.  It returns a chainable BoolBinaryPat builder
+    # (symmetric with int_binary / float_binary), not a finalised Pat.
+    from strider.pattern import bool_binary, BoolBinaryPat
+    b = bool_binary("And", "x", "y")
+    assert isinstance(b, BoolBinaryPat)
+    assert isinstance(b.into_pat(), Pat)
+
+
+def test_bool_binary_ordered_chain_returns_pat():
+    # `.ordered()` is the terminal that disables commutative matching and
+    # finalises to a Pat — exactly as for int_binary(...).ordered().
     from strider.pattern import bool_binary
-    p = bool_binary("And", "x", "y")
+    p = bool_binary("And", "x", "y").ordered()
     assert isinstance(p, Pat)
+
+
+def test_bool_binary_into_pat_returns_pat():
+    from strider.pattern import bool_binary, BoolBinaryPat
+    builder = bool_binary("Or", "x", "y")
+    assert isinstance(builder, BoolBinaryPat)
+    assert isinstance(builder.into_pat(), Pat)
+
+
+def test_bool_binary_capture_chains_to_pat():
+    # `.capture(c)` returns the same builder; `.into_pat()` finalises.
+    from strider.pattern import bool_binary, BoolBinaryPat
+    c = Capture()
+    b = bool_binary("And", "x", "y").capture(c)
+    assert isinstance(b, BoolBinaryPat)
+    assert isinstance(b.into_pat(), Pat)
+
+
+def test_bool_binary_usable_as_subpattern():
+    # The bare (non-.ordered()) builder must be accepted directly as a
+    # sub-pattern (PatLike) — e.g. nested inside another bool op — so
+    # callers don't have to call .into_pat() manually.
+    from strider.pattern import bool_binary, bool_not
+    p = bool_not(bool_binary("And", "x", "y"))
+    assert isinstance(p, Pat)
+
+
+def test_bool_binary_invalid_op_raises():
+    from strider.pattern import bool_binary
+    with pytest.raises(strider.errors.StriderError):
+        bool_binary("NopeOp", "x", "y")
 
 
 def test_int_binary_capture_chains_to_pat():

@@ -12,8 +12,9 @@ pub(crate) mod node_pat;
 pub(crate) mod any;
 pub(crate) mod guards;
 pub use builders::{
-    CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
-    IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StorePat, ValuePhiPat,
+    BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat,
+    IfPat, IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StorePat,
+    ValuePhiPat,
 };
 // `BinaryOpPat<Op>` underlies the three aliases above; not re-exported
 // directly because the crate-private `BinaryOpKind` bound has no

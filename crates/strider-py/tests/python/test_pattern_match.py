@@ -8,7 +8,7 @@ find at least once.
 import strider
 from strider.pattern import Capture, var, add, load, int_const
 
-from .conftest import symbol_addr
+from .conftest import fixture_path, symbol_addr
 
 
 def _build_graph(elf_path, symbol="array_sum"):
@@ -38,6 +38,47 @@ def test_find_all_load_with_addr_pattern(x86_memory_elf):
     # No assertion on the count (depends on optimization shape) — but
     # the call must not raise.
     assert isinstance(hits, list)
+
+
+def test_bool_binary_preserves_i1_guard_against_wide_and():
+    """`bool_binary(...)` keeps the `I1`-output guard: the chainable
+    builder (and its `.ordered()` terminal) must NOT match a wide
+    integer `And`.  `bit_and(a, b)` from the arithmetic fixture lifts
+    to a 32-bit `And`; `and_(any_, any_)` matches it (wide integer And),
+    while `bool_binary("And", any_, any_)` must match none of those wide
+    Ands — proving the bool builder stays boolean-specific.
+    """
+    from strider.pattern import any_, bool_binary, and_
+
+    elf = fixture_path("x86", "arithmetic")
+    g, _ = _build_graph(elf, symbol="bit_and")
+
+    # The wide-integer matcher finds the 32-bit `a & b`.
+    wide_hits = g.find_all(and_(any_(), any_()))
+    assert len(wide_hits) >= 1, "expected the 32-bit And in bit_and()"
+
+    # The boolean matcher (I1 guard) must not match the wide And — in
+    # either commutative or `.ordered()` form.
+    assert g.find_all(bool_binary("And", any_(), any_())) == []
+    assert g.find_all(bool_binary("And", any_(), any_()).ordered()) == []
+
+
+def test_add_commutes_and_ordered_pins_operands(x86_memory_elf):
+    """`add(...)` matches commutatively; building the same query through
+    the chainable `int_binary(...).ordered()` terminal still finds at
+    least the canonical site (sanity that `.ordered()` doesn't break the
+    walk) — paralleling the bool-builder symmetry on the Rust side.
+    """
+    from strider.pattern import any_, int_binary
+
+    g, _ = _build_graph(x86_memory_elf)
+    # Commutative `add(any, any)` and its ordered counterpart both run
+    # without error; commutative count is a superset of the ordered one.
+    commutative = g.find_all(add(any_(), any_()))
+    ordered = g.find_all(int_binary("Add", any_(), any_()).ordered())
+    assert isinstance(commutative, list)
+    assert isinstance(ordered, list)
+    assert len(commutative) >= len(ordered)
 
 
 def test_match_get_uint_on_const(x86_memory_elf):

@@ -291,6 +291,7 @@ pub enum PatLike<'py> {
     FunctionArgPat(Bound<'py, PyFunctionArgPat>),
     IntBinaryPat(Bound<'py, PyIntBinaryPat>),
     FloatBinaryPat(Bound<'py, PyFloatBinaryPat>),
+    BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
 }
 
 // Manual `PyStubType` impl so `pyo3-stub-gen`'s proc-macros translate
@@ -341,6 +342,7 @@ impl PatLike<'_> {
             PatLike::FunctionArgPat(b) => Ok(b.borrow().finalise()),
             PatLike::IntBinaryPat(b) => Ok(b.borrow().finalise()),
             PatLike::FloatBinaryPat(b) => Ok(b.borrow().finalise()),
+            PatLike::BoolBinaryPat(b) => Ok(b.borrow().finalise()),
         }
     }
 }
@@ -1855,6 +1857,29 @@ pub struct FloatBinaryPatDef {
     ordered: Option<bool>,
 }
 
+/// Typed builder for a boolean binary-op pattern.  Booleans are 1-bit
+/// integers (`I1`) in this IR, so this builds an `IntBinaryOp`
+/// (`And` / `Or` / `Xor`) whose output is `I1` and carries an
+/// `I1`-output post-match guard (so it never matches a same-shaped wide
+/// integer op).  Symmetric with `int_binary` / `float_binary`: chain
+/// `.ordered()` to disable commutative matching.
+#[strider_pattern(
+    rust_name = "PyBoolBinaryPat",
+    py_name = "BoolBinaryPat",
+    py_module = "strider.pattern",
+    base_builder = "bool_binary",
+    node_phrase = "bool-binary node",
+    constructor_args = "op: strider_ir::IntBinaryOp, lhs: strider_analyze::pattern::Pat, rhs: strider_analyze::pattern::Pat",
+)]
+pub struct BoolBinaryPatDef {
+    /// Force the pattern to match operands in the stated order only.
+    /// By default, commutative variants of the op family also try the
+    /// reversed operand order.  Terminal — finalises to a [`Pat`] and
+    /// does NOT chain (return type is `Pat`, not `BoolBinaryPat`).
+    #[field(terminal)]
+    ordered: Option<bool>,
+}
+
 /// Build an `IntBinaryOp` pattern for the named `op` (e.g. `"Add"`,
 /// `"And"`, `"ShiftLeft"` / `"shl"`).  Returns an `IntBinaryPat` so you
 /// can chain `.ordered()` to disable commutative matching.  `Sub` is
@@ -1872,15 +1897,17 @@ pub fn int_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyIntBin
 /// Build a boolean binary pattern for the named `op` (`"And"`, `"Or"`,
 /// `"Xor"`).  Booleans are 1-bit integers, so this matches the
 /// corresponding `IntBinaryOp` at `I1` (commutative — both orderings).
-/// Raises `StriderError` on an unknown op name.
+/// Returns a `BoolBinaryPat` so you can chain `.ordered()` to disable
+/// commutative matching, symmetric with `int_binary` / `float_binary`.
+/// The `I1`-output constraint is preserved regardless.  Raises
+/// `StriderError` on an unknown op name.
 #[pyfunction]
-pub fn bool_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
-    let op = parse_bool_binary_op(op)?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::bool_binary(
-        op,
+pub fn bool_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyBoolBinaryPat> {
+    Ok(PyBoolBinaryPat::new(
+        parse_bool_binary_op(op)?,
         l.into_pat()?,
         r.into_pat()?,
-    )))
+    ))
 }
 
 /// Build a `FloatBinaryOp` pattern for the named `op` (`"Add"`, `"Mul"`,
@@ -1989,6 +2016,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPartialMatch>()?;
     m.add_class::<PyIntBinaryPat>()?;
     m.add_class::<PyFloatBinaryPat>()?;
+    m.add_class::<PyBoolBinaryPat>()?;
     m.add_class::<PyCallPat>()?;
     m.add_class::<PyCallOtherPat>()?;
     m.add_class::<PyRetPat>()?;

@@ -105,6 +105,7 @@ pub fn float_le(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
         cmp_pat(FloatCmpOp::Less, lhs_p.clone(), rhs_p.clone()),
         cmp_pat(FloatCmpOp::Equal, lhs_p, rhs_p),
     )
+    .into()
 }
 
 /// Matches an `IntToFloat` value-conversion node.

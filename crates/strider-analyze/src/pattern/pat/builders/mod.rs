@@ -31,7 +31,7 @@ mod ret;
 mod unary_op;
 pub(crate) mod consumer_match;
 
-pub use binary_op::{BinaryOpPat, FloatBinaryOpPat, IntBinaryOpPat};
+pub use binary_op::{BinaryOpPat, BoolBinaryOpPat, FloatBinaryOpPat, IntBinaryOpPat};
 pub use branch::IfPat;
 pub use call::{CallOtherPat, CallPat};
 pub(crate) use cmp_op::cmp_pat;

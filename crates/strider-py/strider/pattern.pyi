@@ -85,6 +85,7 @@ PatLike = Union[
     "FunctionArgPat",
     "IntBinaryPat",
     "FloatBinaryPat",
+    "BoolBinaryPat",
 ]
 
 # ── Typed family-dispatcher builder types ──────────────────────────────
@@ -103,6 +104,19 @@ class FloatBinaryPat:
     """Builder for a float binary-op pattern (returned by
     `float_binary`).  `.ordered()` is terminal — it finalises to a
     `Pat`; the other finalisers also return `Pat`."""
+    def ordered(self) -> Pat: ...
+    def capture(self, c: Capture) -> Pat: ...
+    def cap(self, name: str) -> Pat: ...
+    def when(self, f: Callable[[PartialMatch], bool]) -> Pat: ...
+    def into_pat(self) -> Pat: ...
+
+class BoolBinaryPat:
+    """Builder for a boolean binary-op pattern (returned by
+    `bool_binary`).  Booleans are the 1-bit integer `I1`, so this builds
+    an `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1` with an `I1`-output
+    guard (it never matches a same-shaped wide integer op).  `.ordered()`
+    is terminal — it finalises to a `Pat`; the other finalisers also
+    return `Pat`."""
     def ordered(self) -> Pat: ...
     def capture(self, c: Capture) -> Pat: ...
     def cap(self, name: str) -> Pat: ...
@@ -409,10 +423,12 @@ def if_(cond: PatLike = ...) -> IfPat: ...
 # ── Typed family dispatchers ─────────────────────────────────────────
 
 def int_binary(op: str, l: PatLike, r: PatLike) -> IntBinaryPat: ...
-def bool_binary(op: str, l: PatLike, r: PatLike) -> Pat:
+def bool_binary(op: str, l: PatLike, r: PatLike) -> BoolBinaryPat:
     """Boolean binary pattern (`"And"` / `"Or"` / `"Xor"`).  Booleans
-    are 1-bit ints, so this is `IntBinaryOp` at `I1` (commutative).
-    Returns a finalised `Pat`."""
+    are 1-bit ints, so this is `IntBinaryOp` at `I1` (commutative,
+    `I1`-output guarded).  Returns a chainable `BoolBinaryPat` — call
+    `.ordered()` to disable commutative matching (symmetric with
+    `int_binary` / `float_binary`)."""
 def float_binary(op: str, l: PatLike, r: PatLike) -> FloatBinaryPat: ...
 
 # ── Variant-agnostic ─────────────────────────────────────────────────
