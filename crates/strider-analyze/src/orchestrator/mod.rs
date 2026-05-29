@@ -757,9 +757,9 @@ fn apply_in_place_edit(
             // default when no override is in play) suppress the spliced
             // Call's memory clobber so LoadReadOnly / LoadForward
             // chains stay intact across the tail call.
-            let no_memory_clobber = override_cc.map_or_else(
-                || strider.calling_convention().no_memory_clobber,
-                |cc| cc.no_memory_clobber,
+            let preserves_memory = override_cc.map_or_else(
+                || strider.calling_convention().preserves_memory,
+                |cc| cc.preserves_memory,
             );
             let new_return = function.with_rewrite_ctx(|rctx| {
                 apply_tail_call(
@@ -769,7 +769,7 @@ fn apply_in_place_edit(
                     &ctx.arg_passing_outputs,
                     &ctx.clobbered_kinds,
                     &ctx.ret_val_outputs,
-                    no_memory_clobber,
+                    preserves_memory,
                 )
             })?;
             // When an override was used, record the per-Call clobber

@@ -81,7 +81,7 @@ pub struct CallingConvention {
     /// [`Self::x86_64_all_preserving`] and analogous "transparent hook"
     /// presets (e.g. Linux-kernel `__fentry__` / `mcount` callbacks that
     /// preserve all caller state).
-    no_memory_clobber: bool,
+    preserves_memory: bool,
 }
 
 /// A calling convention whose register names have been resolved to concrete
@@ -122,7 +122,7 @@ pub struct BuiltCallingConvention {
     /// hooks like `__fentry__` / `mcount`).  Consumed by the IR builder's
     /// `build_call_with_cc` to suppress the Call's Memory output so
     /// `LoadReadOnly` / `LoadForward` can forward across the call.
-    pub no_memory_clobber: bool,
+    pub preserves_memory: bool,
 }
 
 impl BuiltCallingConvention {
@@ -157,7 +157,7 @@ impl BuiltCallingConvention {
         stack_arg_offsets: Vec<i64>,
         ret_stack_pop: i64,
         link_register_vn: Option<rsleigh::Vn>,
-        no_memory_clobber: bool,
+        preserves_memory: bool,
     ) -> std::result::Result<Self, anyhow::Error> {
         // Disjointness: arg-passing must not overlap callee-saved.
         for vn in &arg_passing_regs {
@@ -235,7 +235,7 @@ impl BuiltCallingConvention {
             stack_arg_offsets,
             ret_stack_pop,
             link_register_vn,
-            no_memory_clobber,
+            preserves_memory,
         })
     }
 
@@ -429,7 +429,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // x86-64 `call` pushes the return address on the stack; there
             // is no architectural link register.
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -459,7 +459,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // The defining property of "all-preserving": memory is also
             // preserved.  build_call_with_cc skips the Memory output so
             // LoadReadOnly / LoadForward forward across the call.
-            no_memory_clobber: true,
+            preserves_memory: true,
         },
     },
 
@@ -492,7 +492,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // AArch64's `lr` is an alias for `x30`; Sleigh's aarch64
             // register table only registers `x30`.
             link_register_reg_name: Some("x30"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -524,7 +524,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // ARM's `bl` writes the return address to `lr` (= `r14`);
             // Sleigh registers it under the lowercase `lr` name.
             link_register_reg_name: Some("lr"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -559,7 +559,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // MIPS `jal`/`jalr` writes the return address to `$ra` (`$31`);
             // Sleigh's mips32 register table uses lowercase `ra`.
             link_register_reg_name: Some("ra"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -586,7 +586,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ret_stack_pop: 0,
             // Same as O32: the return address lives in `$ra`.
             link_register_reg_name: Some("ra"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -616,7 +616,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // PowerPC `bl` writes the return address to the `LR` SPR;
             // Sleigh's PPC register table uses uppercase `LR`.
             link_register_reg_name: Some("LR"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -660,7 +660,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ret_stack_pop: 0,
             // Same as 32-bit PPC SysV: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -694,7 +694,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ret_stack_pop: 0,
             // Same as ELFv1: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -731,7 +731,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // x86 `call` pushes the return address on the stack; there is
             // no architectural link register.
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -762,7 +762,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
             ret_stack_pop: 4,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -783,7 +783,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[8, 16, 24, 32, 40, 48],
             ret_stack_pop: 8,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -801,7 +801,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[0, 8, 16, 24],
             ret_stack_pop: 0,
             link_register_reg_name: Some("x30"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -817,7 +817,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
             ret_stack_pop: 0,
             link_register_reg_name: Some("lr"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -833,7 +833,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[16, 20, 24, 28],
             ret_stack_pop: 0,
             link_register_reg_name: Some("ra"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -849,7 +849,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[0, 8, 16, 24],
             ret_stack_pop: 0,
             link_register_reg_name: Some("ra"),
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -877,7 +877,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -896,7 +896,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -916,7 +916,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -936,7 +936,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -953,7 +953,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 
@@ -970,7 +970,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         },
     },
 ];
@@ -1030,10 +1030,10 @@ macro_rules! cc_factory {
 impl CallingConvention {
     /// Returns `true` if calls under this convention preserve memory
     /// across the call (i.e. the IR's Call node should NOT advance the
-    /// memory chain).  See the `Self::no_memory_clobber` field docs.
+    /// memory chain).  See the `Self::preserves_memory` field docs.
     #[must_use]
-    pub fn no_memory_clobber(&self) -> bool {
-        self.no_memory_clobber
+    pub fn preserves_memory(&self) -> bool {
+        self.preserves_memory
     }
 
     cc_factory!(x86_64_systemv, "Returns the x86-64 System V ABI calling convention.");
@@ -1098,7 +1098,7 @@ impl CallingConvention {
             self.stack_arg_offsets.to_vec(),
             self.ret_stack_pop,
             link_register_vn,
-            self.no_memory_clobber,
+            self.preserves_memory,
         )
     }
 }

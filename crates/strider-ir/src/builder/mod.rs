@@ -168,7 +168,7 @@ fn build_call_clobbered_list(
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
     /// Calling-convention state (the `var_table`,
-    /// call_clobbered, ret_val_regs, no_memory_clobber, arg_passing_vars,
+    /// call_clobbered, ret_val_regs, preserves_memory, arg_passing_vars,
     /// stack_vn, ret_stack_pop) lives on `function.cc_metadata`.
     pub(crate) function: Function,
     /// The single `Memory` output of the `InitialMemory` node.
@@ -348,7 +348,7 @@ impl FunctionBuilder {
             Some(cc.stack_vn),
             cc.ret_stack_pop,
         )?;
-        // Embed the full CC so accessors (`no_memory_clobber`,
+        // Embed the full CC so accessors (`preserves_memory`,
         // `stack_vn`, `ret_stack_pop`, `link_register_vn`, ...)
         // can delegate without duplicating these scalars on
         // `CcMetadata`.  Must happen before any read of cc_metadata's
@@ -429,7 +429,7 @@ impl FunctionBuilder {
             .filter_map(|vn| upgrade_to_tracked_for(&var_table, *vn))
             .collect();
 
-        // Pure-ABI facts (stack_vn / ret_stack_pop / no_memory_clobber /
+        // Pure-ABI facts (stack_vn / ret_stack_pop / preserves_memory /
         // link_register_vn) are surfaced through `CcMetadata::cc`.  When
         // `new_raw` is handed a `stack_vn = Some(sp)`, synthesise a
         // minimal `BuiltCallingConvention` carrying just that SP and the

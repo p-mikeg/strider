@@ -480,7 +480,7 @@ fn build_returns_error_for_unknown_register_name() {
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
             link_register_reg_name: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         };
         let result = cc.build(&regs);
         let err = result.expect_err("expected UnknownRegName error");
@@ -506,7 +506,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
         stack_arg_offsets: &[],
         ret_stack_pop: 0,
         link_register_reg_name: None,
-        no_memory_clobber: false,
+        preserves_memory: false,
     };
     assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
 }
@@ -726,7 +726,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         stack_arg_offsets: &[],
         ret_stack_pop: 0,
         link_register_reg_name: None,
-        no_memory_clobber: false,
+        preserves_memory: false,
     };
     let result = cc.build(&regs);
     let err = result.expect_err("expected UnknownRegName error");
@@ -737,23 +737,23 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
     );
 }
 
-// ── no_memory_clobber field ──────────────────────────────────────────────────
+// ── preserves_memory field ──────────────────────────────────────────────────
 
 #[test]
-fn x86_64_all_preserving_has_no_memory_clobber_true() {
+fn x86_64_all_preserving_has_preserves_memory_true() {
     // The "all-preserving" CC (used for __fentry__ / mcount-style hooks)
     // promises zero observable side-effects.  The Call's memory output must
     // be suppressible at IR-build time so LoadReadOnly / LoadForward
     // can forward across these calls.
     assert!(
-        CallingConvention::x86_64_all_preserving().unwrap().no_memory_clobber(),
-        "x86_64_all_preserving must declare no_memory_clobber = true"
+        CallingConvention::x86_64_all_preserving().unwrap().preserves_memory(),
+        "x86_64_all_preserving must declare preserves_memory = true"
     );
 }
 
 #[test]
-fn standard_presets_have_no_memory_clobber_false() {
-    // Every standard preset must keep the default no_memory_clobber = false
+fn standard_presets_have_preserves_memory_false() {
+    // Every standard preset must keep the default preserves_memory = false
     // so its Call nodes correctly clobber memory.  Only x86_64_all_preserving
     // opts out.
     let presets: &[(&str, CallingConvention)] = &[
@@ -769,8 +769,8 @@ fn standard_presets_have_no_memory_clobber_false() {
     ];
     for (name, cc) in presets {
         assert!(
-            !cc.no_memory_clobber(),
-            "{name}: standard presets must have no_memory_clobber = false"
+            !cc.preserves_memory(),
+            "{name}: standard presets must have preserves_memory = false"
         );
     }
 }

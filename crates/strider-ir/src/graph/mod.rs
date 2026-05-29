@@ -52,12 +52,12 @@ pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, r
 /// CallOther clobber slot.
 ///
 /// Pure ABI declarations (the stack pointer varnode, `ret_stack_pop`,
-/// `no_memory_clobber`, link register, etc.) live on the embedded
+/// `preserves_memory`, link register, etc.) live on the embedded
 /// `Self::cc` copy rather than being mirrored here — they are read
 /// through `cc.as_ref().map(...)` and surfaced by the
 /// [`crate::Function`] accessors (`crate::Function::stack_vn` /
 /// `crate::Function::ret_stack_pop` /
-/// `crate::Function::no_memory_clobber`).  The fields below are the
+/// `crate::Function::preserves_memory`).  The fields below are the
 /// per-function-effective lists, which differ from the raw ABI lists
 /// after dedup / `upgrade_to_tracked_for`.
 #[derive(Clone, Debug, Default)]
@@ -87,7 +87,7 @@ pub struct CcMetadata {
     /// without a real CC.
     ///
     /// Reads of pure ABI facts (`stack_vn`, `ret_stack_pop`,
-    /// `no_memory_clobber`, `link_register_vn`) delegate here rather
+    /// `preserves_memory`, `link_register_vn`) delegate here rather
     /// than duplicating those scalars on this struct.
     pub(crate) cc: Option<strider_target::BuiltCallingConvention>,
 }

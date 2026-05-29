@@ -122,7 +122,7 @@ so the resolver-bearing dependency stays one-way.
     - **Scalars on `Graph`:** `entry: Option<NodeId>` and
       `cc_metadata: Option<CcMetadata>` (the latter carries the
       variable map, call-clobbered list, ret-val regs, call-other
-      clobbered list, and `no_memory_clobber` flag).  Both populated
+      clobbered list, and `preserves_memory` flag).  Both populated
       by `FunctionBuilder::build`.
     - **`EntityInterner`:** `wide_const_interner`
       (`WideConstId → WideConstStorage`, value-deduped; consulted by

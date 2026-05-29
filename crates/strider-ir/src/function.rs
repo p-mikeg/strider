@@ -180,13 +180,13 @@ impl Function {
         &self.cc_metadata.ret_val_regs
     }
 
-    /// Function-default `no_memory_clobber` flag.  Delegates to the
+    /// Function-default `preserves_memory` flag.  Delegates to the
     /// embedded calling convention; defaults to `false` for synthetic
     /// functions built without one.
     #[inline]
     #[must_use]
-    pub(crate) fn no_memory_clobber(&self) -> bool {
-        self.cc_metadata.cc.as_ref().is_some_and(|c| c.no_memory_clobber)
+    pub(crate) fn preserves_memory(&self) -> bool {
+        self.cc_metadata.cc.as_ref().is_some_and(|c| c.preserves_memory)
     }
 
     /// Calling convention's stack-pointer varnode, or `None` for

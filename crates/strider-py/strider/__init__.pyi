@@ -109,7 +109,7 @@ class CallingConvention:
         stack_arg_offsets: list[int],
         ret_stack_pop: int,
         link_register: Optional[str] = ...,
-        no_memory_clobber: bool = ...,
+        preserves_memory: bool = ...,
     ) -> CallingConvention: ...
     def name(self) -> str: ...
 

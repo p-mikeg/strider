@@ -149,13 +149,13 @@ pub fn apply_link_register(
 /// well-typed); a real ABI-aware caller passes the placeholder's
 /// pre-edit ABI register values.
 ///
-/// `no_memory_clobber = true` suppresses the Call's memory output so
+/// `preserves_memory = true` suppresses the Call's memory output so
 /// the new Return wires the *pre-Call* memory edge directly — required
 /// for `__fentry__`-style tracing pre-ambles and any other ABI that
 /// guarantees no memory side-effects through the call (e.g. the
 /// `x86_64_all_preserving` preset).  Mirrors the semantics of
 /// `FunctionBuilder::build_call_with_cc` when its CC carries
-/// `no_memory_clobber`.
+/// `preserves_memory`.
 ///
 /// # Errors
 ///
@@ -170,7 +170,7 @@ pub fn apply_tail_call(
     arg_passing_outputs: &[NodeOutputId],
     clobbered_kinds: &[NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
-    no_memory_clobber: bool,
+    preserves_memory: bool,
 ) -> Result<NodeId> {
     // Defensive: arg-passing and ret-val outputs must reference ABI
     // register values produced upstream of the placeholder, never the
@@ -247,12 +247,12 @@ pub fn apply_tail_call(
     // output dangling and wire the pre-Call memory edge into the new
     // Return directly, so LoadReadOnly / LoadForward chains stay
     // intact across the spliced tail call.  Mirrors
-    // `FunctionBuilder::build_call_with_cc`'s `no_memory_clobber` branch
+    // `FunctionBuilder::build_call_with_cc`'s `preserves_memory` branch
     // (`builder/call.rs` — same Call output shape; only the
     // region-memory advance differs).
     let call_outs: Vec<_> = function.node_outputs(call).to_vec();
     let call_ctrl_out = call_outs[0];
-    let mem_for_return = if no_memory_clobber {
+    let mem_for_return = if preserves_memory {
         memory_in
     } else {
         call_outs[1]

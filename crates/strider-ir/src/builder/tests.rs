@@ -1860,7 +1860,7 @@ mod build_call_with_cc {
             stack_arg_offsets: vec![],
             ret_stack_pop: 0,
             link_register_vn: None,
-            no_memory_clobber: false,
+            preserves_memory: false,
         };
 
         let addr = b

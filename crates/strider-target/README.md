@@ -28,7 +28,7 @@ names the same types.
   `syscall_number_reg_name` that marks Linux syscall conventions.
   Userland presets: `x86_cdecl`, `x86_64_systemv`,
   `x86_64_all_preserving` (zero-side-effect hooks like `__fentry__` /
-  `mcount`; sets `no_memory_clobber: true` so `Call` nodes don't
+  `mcount`; sets `preserves_memory: true` so `Call` nodes don't
   advance the memory chain), `aarch64_aapcs64`, `arm_aapcs`,
   `mips_o32`, `mips_n64`, `powerpc_sysv32`, `powerpc64_elf_v1`,
   `powerpc64_elf_v2`.  Linux kernel internal variants:

@@ -110,7 +110,7 @@ impl PyCallingConvention {
     ///         (typically 4/8 on stack-push ISAs, 0 on link-register ISAs).
     ///     link_register: Optional register name of the link register
     ///         (ARM/AArch64/MIPS/PowerPC); pass `None` on x86/x86_64.
-    ///     no_memory_clobber: `True` for transparent hooks
+    ///     preserves_memory: `True` for transparent hooks
     ///         (`__fentry__`/`mcount`-style) that preserve memory.
     #[classmethod]
     #[pyo3(signature = (
@@ -123,7 +123,7 @@ impl PyCallingConvention {
         stack_arg_offsets,
         ret_stack_pop,
         link_register=None,
-        no_memory_clobber=false,
+        preserves_memory=false,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn custom(
@@ -138,7 +138,7 @@ impl PyCallingConvention {
         stack_arg_offsets: Vec<i64>,
         ret_stack_pop: i64,
         link_register: Option<String>,
-        no_memory_clobber: bool,
+        preserves_memory: bool,
     ) -> PyResult<Self> {
         let sleigh_borrow = sleigh.borrow(py);
         let regs = sleigh_borrow.regs.clone();
@@ -168,7 +168,7 @@ impl PyCallingConvention {
             stack_arg_offsets,
             ret_stack_pop,
             lr_vn,
-            no_memory_clobber,
+            preserves_memory,
         )
         .map_err(|e| crate::errors::into_strider_err(e.into()))?;
         Ok(Self {

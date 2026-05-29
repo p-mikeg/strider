@@ -50,7 +50,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         vec![],                          // stack_arg_offsets
         0,                               // ret_stack_pop
         None,                            // link_register_vn
-        false,                           // no_memory_clobber
+        false,                           // preserves_memory
     )
     .unwrap();
     let addr = b

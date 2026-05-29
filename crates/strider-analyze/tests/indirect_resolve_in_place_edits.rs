@@ -378,9 +378,9 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
 }
 
 #[test]
-fn apply_tail_call_with_no_memory_clobber_wires_pre_call_memory_into_return() {
-    // Pin the `no_memory_clobber = true` shape: mirrors the natural
-    // lifter (`FunctionBuilder::build_call_with_cc`'s `no_memory_clobber`
+fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
+    // Pin the `preserves_memory = true` shape: mirrors the natural
+    // lifter (`FunctionBuilder::build_call_with_cc`'s `preserves_memory`
     // branch).  The Call still emits `[Control, Memory(None), ...]`
     // (Call's `expected_signature` requires Memory), but the Memory
     // output is left dangling and the new Return wires the *pre-Call*
@@ -403,10 +403,10 @@ fn apply_tail_call_with_no_memory_clobber_wires_pre_call_memory_into_return() {
                 /* arg_passing_outputs */ &[],
                 /* clobbered_kinds     */ &[],
                 /* ret_val_outputs     */ &[],
-                /* no_memory_clobber   */ true,
+                /* preserves_memory   */ true,
             )
         })
-        .expect("apply_tail_call(no_memory_clobber=true)");
+        .expect("apply_tail_call(preserves_memory=true)");
     // The Return's memory input must be the pre-Call memory edge, NOT
     // the Call's Memory output.  This is the load-bearing behavior.
     let new_mem_in = function.nth_input(new_return, 1).expect("Return mem input");
@@ -423,14 +423,14 @@ fn apply_tail_call_with_no_memory_clobber_wires_pre_call_memory_into_return() {
     let mem_use_count = function.output_uses(call_outputs[1]).count();
     assert_eq!(
         mem_use_count, 0,
-        "no_memory_clobber: Call's Memory output must be dangling (0 uses)"
+        "preserves_memory: Call's Memory output must be dangling (0 uses)"
     );
     // Full validate skipped — editor-isolation test, see note above.
 }
 
 #[test]
-fn apply_tail_call_without_no_memory_clobber_threads_call_memory_into_return() {
-    // Inverse pin: when no_memory_clobber=false, the Return must wire
+fn apply_tail_call_without_preserves_memory_threads_call_memory_into_return() {
+    // Inverse pin: when preserves_memory=false, the Return must wire
     // the *Call's* Memory output (not the pre-Call mem), so downstream
     // memory dependencies see the Call as a memory barrier.
     let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
@@ -440,7 +440,7 @@ fn apply_tail_call_without_no_memory_clobber_threads_call_memory_into_return() {
         .with_rewrite_ctx(|ctx| {
             apply_tail_call(ctx, return_id, 0xbabe, &[], &[], &[], false)
         })
-        .expect("apply_tail_call(no_memory_clobber=false)");
+        .expect("apply_tail_call(preserves_memory=false)");
     let new_mem_in = function.nth_input(new_return, 1).expect("ret mem");
     assert_ne!(
         new_mem_in, placeholder_mem_in,

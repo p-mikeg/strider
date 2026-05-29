@@ -51,7 +51,7 @@ def test_custom_cc_matches_x86_64_systemv_for_equivalent_input():
         stack_arg_offsets=[],
         ret_stack_pop=8,
         link_register=None,
-        no_memory_clobber=False,
+        preserves_memory=False,
     )
     assert custom_cc.name() == "custom"
 
@@ -77,7 +77,7 @@ def test_custom_cc_rejects_unknown_register_name():
             stack_arg_offsets=[],
             ret_stack_pop=8,
             link_register=None,
-            no_memory_clobber=False,
+            preserves_memory=False,
         )
 
 
@@ -102,12 +102,12 @@ def test_custom_cc_rejects_invariant_violation_lr_not_in_callee_saved():
             stack_arg_offsets=[],
             ret_stack_pop=0,
             link_register="x30",
-            no_memory_clobber=False,
+            preserves_memory=False,
         )
 
 
-def test_custom_cc_no_memory_clobber_preserves_memory_chain():
-    """A custom CC with `no_memory_clobber=True` must produce a
+def test_custom_cc_preserves_memory_chain():
+    """A custom CC with `preserves_memory=True` must produce a
     Strider that suppresses memory clobber on its Calls — mirrors
     `x86_64_all_preserving` behaviour but reachable via the custom
     builder."""
@@ -127,7 +127,7 @@ def test_custom_cc_no_memory_clobber_preserves_memory_chain():
         stack_arg_offsets=[],
         ret_stack_pop=8,
         link_register=None,
-        no_memory_clobber=True,
+        preserves_memory=True,
     )
     # Must build the Strider without error.
     fn = strider.run(arch=arch, cc=custom_cc, mem=mem, entry=entry)

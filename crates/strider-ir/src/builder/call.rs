@@ -14,7 +14,7 @@ struct CallAbiSelection {
     arg_vars: SmallVec<[rsleigh::Vn; 4]>,
     clobber_vars: SmallVec<[rsleigh::Vn; 4]>,
     ret_stack_pop: i64,
-    no_memory_clobber: bool,
+    preserves_memory: bool,
 }
 
 /// The result of [`FunctionBuilder::read_call_value_inputs`]: arg
@@ -76,7 +76,7 @@ impl FunctionBuilder {
             arg_vars,
             clobber_vars,
             ret_stack_pop,
-            no_memory_clobber,
+            preserves_memory,
         } = self.select_call_abi(override_cc);
 
         // Read every arg + clobber variable and verify the
@@ -93,7 +93,7 @@ impl FunctionBuilder {
         let sp_pre_call = self.snapshot_pre_call_sp(ret_stack_pop)?;
 
         // Create the Call node, advance ctrl (+memory unless
-        // no_memory_clobber), write per-clobber variables, and stamp
+        // preserves_memory), write per-clobber variables, and stamp
         // the per-call override on the side-table.
         let call = self.emit_call_node(
             call_address,
@@ -101,7 +101,7 @@ impl FunctionBuilder {
             clobbered_kinds,
             &clobber_vars,
             override_cc.is_some(),
-            no_memory_clobber,
+            preserves_memory,
         )?;
 
         // Apply the post-call SP adjust on stack-push ISAs.
@@ -122,17 +122,17 @@ impl FunctionBuilder {
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> CallAbiSelection {
         let cc_meta = &self.function.cc_metadata;
-        let function_default_no_memory_clobber = self.function.no_memory_clobber();
+        let function_default_preserves_memory = self.function.preserves_memory();
         let function_default_ret_stack_pop = self.function.ret_stack_pop();
         let function_stack_vn = self.function.stack_vn();
-        let no_memory_clobber =
-            override_cc.map_or(function_default_no_memory_clobber, |cc| cc.no_memory_clobber);
+        let preserves_memory =
+            override_cc.map_or(function_default_preserves_memory, |cc| cc.preserves_memory);
         match override_cc {
             None => CallAbiSelection {
                 arg_vars: cc_meta.arg_passing_vars.iter().copied().collect(),
                 clobber_vars: cc_meta.call_clobbered.iter().copied().collect(),
                 ret_stack_pop: function_default_ret_stack_pop,
-                no_memory_clobber,
+                preserves_memory,
             },
             Some(cc) => {
                 let arg_vars: SmallVec<[rsleigh::Vn; 4]> = cc
@@ -164,7 +164,7 @@ impl FunctionBuilder {
                     arg_vars,
                     clobber_vars,
                     ret_stack_pop: cc.ret_stack_pop,
-                    no_memory_clobber,
+                    preserves_memory,
                 }
             }
         }
@@ -228,7 +228,7 @@ impl FunctionBuilder {
     }
 
     /// `emit_call_node` helper: create the Call node, advance the
-    /// region's control (+memory unless `no_memory_clobber`) edges,
+    /// region's control (+memory unless `preserves_memory`) edges,
     /// write each clobber variable, and stamp the per-call override
     /// clobber list on the graph side-table when this Call carries
     /// one.
@@ -239,7 +239,7 @@ impl FunctionBuilder {
         clobbered_kinds: SmallVec<[NodeOutputKind; 4]>,
         clobber_vars: &[rsleigh::Vn],
         is_override: bool,
-        no_memory_clobber: bool,
+        preserves_memory: bool,
     ) -> Result<NodeId> {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
@@ -247,7 +247,7 @@ impl FunctionBuilder {
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
         // The Call node's signature always includes a Memory output
         // (validator local-typing enforces `[Control, Memory,
-        // *clobbers]`).  When the CC declares `no_memory_clobber`, we
+        // *clobbers]`).  When the CC declares `preserves_memory`, we
         // keep the Memory output but leave it dangling — the region's
         // memory chain is NOT advanced, so subsequent loads see the
         // pre-call memory edge.  LoadReadOnly / LoadForward can
@@ -259,7 +259,7 @@ impl FunctionBuilder {
         let call_outputs: Vec<_> = self.function().node_outputs(call).to_vec();
 
         self.advance_cur_region_ctrl(call_outputs[0])?;
-        if !no_memory_clobber {
+        if !preserves_memory {
             self.advance_cur_region_memory(call_outputs[1])?;
         }
         for (variable, new_val) in core::iter::zip(clobber_vars, call_outputs.iter().skip(2)) {
