@@ -649,6 +649,28 @@ pub type StackStoredValueMemo =
 /// See the module-level "Public helper for the indirect-branch
 /// classifier" notes for the soundness rules.
 ///
+/// # Permissiveness (do not rely on this for cross-base disjointness)
+///
+/// This is a deliberately permissive stack-slot lookup written for the
+/// indirect-branch stack-array classifier, and it is *more* permissive
+/// than the shared `crate::opt::sp_expr::walk` step:
+///
+/// - **Walks past non-SP-rooted stores unconditionally.**  When the
+///   store's address does not decompose to an SP expression (the `None`
+///   arm), it skips the store and continues down `inputs[0]`, with no
+///   `AliasMode` gate and accepting opaque pointer addresses — assuming
+///   stack and non-stack memory are disjoint.  The shared
+///   `step_through_store` gates the same skip behind
+///   `AliasMode::AssumeStackConstDisjoint` *and* requires a literal
+///   `IntConst` address; this helper does neither.
+/// - **Keys slots by offset only, not by base.**  The
+///   `SpExpr::Terminal { base: _, offset: k }` arm matches on `k == offset`
+///   alone and ignores the SP `base`, so two distinct SP-relative bases
+///   that share an offset are treated as the same slot.
+///
+/// Both are sound for the single-frame jump-table-array use this helper
+/// serves, but callers MUST NOT rely on it for cross-base disjointness.
+///
 /// # Parameters
 ///
 /// - `graph` — the IR graph to walk (read-only).

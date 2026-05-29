@@ -83,6 +83,19 @@ impl Graph {
 
     /// Creates (or retrieves) a `FloatConst(bits)` node of float type `ty`.
     ///
+    /// # Dedup precondition (zero high bits)
+    ///
+    /// Unlike [`Self::make_int_const`] — which masks `val` to the type's bit
+    /// width so semantically-equal constants share one dedup-cache entry —
+    /// this function does **not** mask `bits` to the float width.  The
+    /// dedup key is the raw `(FloatConst(bits), ty)` pair, so two `F32`
+    /// constants with identical low-32 bits but differing high-32 bits would
+    /// fail to dedup.  Callers must therefore zero the unused high bits for a
+    /// narrow float (e.g. clear bits 32..64 for an `F32`).  In practice this
+    /// holds: the bit-cast builders route an `F32` payload through an `I32`
+    /// `IntConst` first, which carries zero high bits, so every `F32`
+    /// `FloatConst` reaches here already zero-extended.
+    ///
     /// # Errors
     ///
     /// Returns an error when `ty` is not a float type, or when the
