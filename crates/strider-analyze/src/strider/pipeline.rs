@@ -216,6 +216,19 @@ impl Strider {
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::default_pipeline();
+        self.add_sp_loop_passes(&mut p);
+        self.add_call_stack_arg_collect_post(&mut p);
+        self.add_function_arg_detect_post(&mut p);
+        p
+    }
+
+    /// Adds the SP-aware fixed-point-loop passes shared by the full and
+    /// stable pipelines: [`crate::opt::StackOffsetDetect`] (stamps each
+    /// SP-relative Store / Load's concrete offset) followed by
+    /// [`crate::opt::LoadForward`] (forwards stack-tagged stores to
+    /// later same-offset loads).  Both are constructed from the
+    /// convention with the Strider's `alias_mode`.
+    fn add_sp_loop_passes(&self, p: &mut crate::opt::OptimizerPipeline) {
         p.add(crate::opt::StackOffsetDetect::from_convention(
             &self.calling_convention,
         ));
@@ -223,15 +236,26 @@ impl Strider {
             crate::opt::LoadForward::from_convention(&self.calling_convention, &self.arch)
                 .alias_mode(self.alias_mode),
         );
+    }
+
+    /// Adds the [`crate::opt::CallStackArgCollect`] post-pass (wires
+    /// positional stack args into `Call` nodes), shared by the full and
+    /// destructive pipelines.
+    fn add_call_stack_arg_collect_post(&self, p: &mut crate::opt::OptimizerPipeline) {
         p.add_post_pass(
             crate::opt::CallStackArgCollect::from_convention(&self.calling_convention)
                 .alias_mode(self.alias_mode),
         );
+    }
+
+    /// Adds the [`crate::opt::FunctionArgDetect`] post-pass (registers
+    /// register- and stack-passed argument carriers in the side-table),
+    /// shared by the full and stable pipelines.
+    fn add_function_arg_detect_post(&self, p: &mut crate::opt::OptimizerPipeline) {
         p.add_post_pass(
             crate::opt::FunctionArgDetect::from_convention(&self.calling_convention)
                 .alias_mode(self.alias_mode),
         );
-        p
     }
 
     /// Builds the **stable** optimizer pipeline used by intermediate
@@ -249,17 +273,8 @@ impl Strider {
     #[must_use]
     pub fn build_stable_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::stable_default_pipeline();
-        p.add(crate::opt::StackOffsetDetect::from_convention(
-            &self.calling_convention,
-        ));
-        p.add(
-            crate::opt::LoadForward::from_convention(&self.calling_convention, &self.arch)
-                .alias_mode(self.alias_mode),
-        );
-        p.add_post_pass(
-            crate::opt::FunctionArgDetect::from_convention(&self.calling_convention)
-                .alias_mode(self.alias_mode),
-        );
+        self.add_sp_loop_passes(&mut p);
+        self.add_function_arg_detect_post(&mut p);
         p
     }
 
@@ -274,10 +289,7 @@ impl Strider {
     #[must_use]
     pub fn build_destructive_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::destructive_default_pipeline();
-        p.add_post_pass(
-            crate::opt::CallStackArgCollect::from_convention(&self.calling_convention)
-                .alias_mode(self.alias_mode),
-        );
+        self.add_call_stack_arg_collect_post(&mut p);
         p
     }
 
