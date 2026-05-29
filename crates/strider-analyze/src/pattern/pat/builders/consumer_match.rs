@@ -5,7 +5,7 @@
 use strider_ir::node::NodeId;
 
 use crate::pattern::matcher::Bindings;
-use crate::pattern::matcher::consumer::next_control_node;
+use crate::pattern::matcher::consumer::next_unique_consumer;
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::match_consumer_node;
 use crate::pattern::pat::traits::MatchCtx;
@@ -15,9 +15,8 @@ use crate::pattern::pat::traits::MatchCtx;
 /// multiple consumers (deterministic no-match), or if `pat` doesn't
 /// match the consumer node.
 ///
-/// Despite its name, [`next_control_node`] is generic — it returns
-/// the unique consumer of any output kind.  We reuse it for control
-/// AND memory walks.
+/// [`next_unique_consumer`] is generic — it returns the unique consumer
+/// of any output kind.  We reuse it for control AND memory walks.
 pub(crate) fn match_unique_output_consumer(
     ctx: &MatchCtx,
     node: NodeId,
@@ -29,7 +28,7 @@ pub(crate) fn match_unique_output_consumer(
     let Some(&out) = outputs.get(output_index) else {
         return false;
     };
-    let Some(consumer) = next_control_node(ctx.matcher, out) else {
+    let Some(consumer) = next_unique_consumer(ctx.matcher, out) else {
         return false;
     };
     match_consumer_node(ctx, consumer, pat, b)

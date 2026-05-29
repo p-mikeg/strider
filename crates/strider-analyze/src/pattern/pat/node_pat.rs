@@ -33,13 +33,13 @@ use crate::pattern::matcher::Bindings;
 use crate::pattern::matcher::consumer;
 use crate::pattern::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 
-/// Node-level check closure used by [`NodePat::post_match`].
+/// Post-match hook closure used by [`NodePat::post_match`].
 ///
 /// Post-match runs after the kind spec has already accepted the candidate
 /// and all input / output / consumer constraints have passed — it is the
 /// place for bindings that depend on payload data (e.g. the `*_any`
 /// op-variant capture binding the matched node's `NodeId`).
-pub(crate) type NodeKindCheck =
+pub(crate) type PostMatchFn =
     Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool + Send + Sync>;
 
 /// Kind-level constraint carried by every [`NodePat`].
@@ -202,7 +202,7 @@ pub(crate) struct NodePat {
     /// retry).  This is the designated binding site for payload-dependent
     /// captures (op-variant Vars, typed-constant Vars), since it executes
     /// once bindings from sub-matches are already in place.
-    pub(crate) post_match: Option<NodeKindCheck>,
+    pub(crate) post_match: Option<PostMatchFn>,
 }
 
 pub(crate) enum InputsSpec {
@@ -376,7 +376,7 @@ impl NodePat {
         self
     }
 
-    pub(crate) fn with_post_match(mut self, pm: NodeKindCheck) -> Self {
+    pub(crate) fn with_post_match(mut self, pm: PostMatchFn) -> Self {
         self.post_match = Some(pm);
         self
     }
@@ -554,7 +554,7 @@ pub(crate) fn match_consumer_node(
         }) else {
             return false;
         };
-        let Some(next) = consumer::next_control_node(ctx.matcher, ctrl_out) else {
+        let Some(next) = consumer::next_unique_consumer(ctx.matcher, ctrl_out) else {
             return false;
         };
         cur = next;

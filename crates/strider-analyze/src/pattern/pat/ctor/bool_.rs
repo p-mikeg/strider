@@ -16,14 +16,14 @@ use std::sync::Arc;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{IntBinaryOp, IntUnaryOp};
 
-use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodeKindCheck, NodePat};
+use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, PostMatchFn, NodePat};
 use crate::pattern::pat::Pat;
 
 /// Post-match guard restricting a match to a node whose value output is the
 /// 1-bit boolean `I1`.  Without it the `bool_*` matchers would also accept a
 /// same-shaped wide integer op (e.g. a 64-bit `And`), since after the bool→I1
 /// collapse a boolean op and a wide integer op share the same `NodeKind`.
-fn require_i1_output() -> NodeKindCheck {
+fn require_i1_output() -> PostMatchFn {
     Arc::new(|ctx, node, _bindings| {
         ctx.function
             .node_outputs(node)

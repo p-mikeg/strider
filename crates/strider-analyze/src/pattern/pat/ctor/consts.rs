@@ -15,13 +15,13 @@ use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
 use crate::pattern::error::Result;
 use crate::pattern::pat::Pat;
-use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodeKindCheck, NodePat};
+use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, PostMatchFn, NodePat};
 use crate::pattern::pat::traits::BuildCtx;
 
 /// Match-only-false post_match shared by every `*_const_with_fn` — these
 /// patterns are build-only; landing one on an LHS is a silent no-match
 /// rather than a panic.
-fn never_match() -> NodeKindCheck {
+fn never_match() -> PostMatchFn {
     Arc::new(|_ctx, _node, _b| false)
 }
 
