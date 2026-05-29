@@ -1108,6 +1108,32 @@ fn edge_set_of(
     edges
 }
 
+/// Renders `function` filtered to `members` as a dark-themed HTML
+/// viewer at `path`.  Shared tail of [`dump_per_region`] and
+/// [`dump_neighborhood`]: build a `FunctionDotDumper` limited to
+/// `members`, then dump it via `dot::GraphDot`.  `ctx` prefixes the
+/// write-failure error message (the caller's function name).
+///
+/// # Errors
+///
+/// Returns an error if [`strider_ir::Function::dot_dumper`] fails (graph
+/// not built) or if the HTML write to `path` fails.
+fn render_filtered_html<R>(
+    function: &strider_ir::Function,
+    sleigh: &rsleigh::Sleigh<R>,
+    members: strider_ir::walk::NodeIdSet,
+    path: &std::path::Path,
+    ctx: &str,
+) -> Result<()>
+where
+    R: rsleigh::MemReader,
+{
+    let dumper = function.dot_dumper(sleigh)?.with_node_filter(members);
+    ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
+        .dump_as_html(path)
+        .map_err(|e| anyhow!("{ctx}: write {} failed: {e}", path.display()))
+}
+
 /// Renders one HTML viewer per region into `out_dir`.
 ///
 /// `exit_controls` names each region by the `NodeOutputId` that its
@@ -1165,12 +1191,11 @@ where
         ));
     }
     for (idx, exit_control) in exit_controls.into_iter().enumerate() {
-        let membership = strider_ir::walk::region_membership_from_exit(function, exit_control);
         // Construct a fresh dumper per region via the public
         // `Graph::dot_dumper` + `with_node_filter` chain.  The dumper
         // borrows from `function` / `sleigh`, so we can't reuse one across
         // iterations (each `with_node_filter` consumes the value).
-        let dumper = function.dot_dumper(sleigh)?.with_node_filter(membership);
+        let membership = strider_ir::walk::region_membership_from_exit(function, exit_control);
 
         let producer = function.node_for_output(exit_control);
         // Include `idx` unconditionally: two regions whose producers
@@ -1181,11 +1206,7 @@ where
             .first()
             .map_or_else(|| "nofp".to_string(), |a| format!("{a:016x}"));
         let path = out_dir.join(format!("region_{idx}_{addr_part}.html"));
-        ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
-            .dump_as_html(&path)
-            .map_err(|e| {
-                anyhow!("dump_per_region: write {} failed: {e}", path.display())
-            })?;
+        render_filtered_html(function, sleigh, membership, &path, "dump_per_region")?;
     }
     Ok(())
 }
@@ -1224,12 +1245,7 @@ where
         ));
     }
     let visible = strider_ir::walk::collect_neighborhood(function, anchor, depth);
-    let dumper = function.dot_dumper(sleigh)?.with_node_filter(visible);
-    ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
-        .dump_as_html(out_path)
-        .map_err(|e| {
-            anyhow!("dump_neighborhood: write {} failed: {e}", out_path.display())
-        })
+    render_filtered_html(function, sleigh, visible, out_path, "dump_neighborhood")
 }
 
 #[cfg(test)]
