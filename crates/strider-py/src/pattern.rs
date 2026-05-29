@@ -382,7 +382,7 @@ pub(crate) fn take_pending_control_flow() -> Option<PyErr> {
 /// Returns true iff a PyErr is stashed.  Used by the
 /// `PyReadOnlyMemoryAdapter::read` short-circuit so subsequent
 /// `read` calls bail out cleanly without invoking Python.
-pub(crate) fn take_pending_control_flow_peek() -> bool {
+pub(crate) fn peek_pending_control_flow() -> bool {
     PENDING_CONTROL_FLOW.with(|cell| {
         let t = cell.take();
         let pending = t.is_some();
@@ -394,7 +394,7 @@ pub(crate) fn take_pending_control_flow_peek() -> bool {
 /// Stash a control-flow PyErr in the pending cell, unconditionally
 /// overwriting any existing stash.  In practice "the first error wins"
 /// because the sole caller (`PyReadOnlyMemoryAdapter::read`) checks
-/// `take_pending_control_flow_peek` and bails before invoking the
+/// `peek_pending_control_flow` and bails before invoking the
 /// callback again, so this is only reached once per walk.
 pub(crate) fn stash_pending_control_flow(e: PyErr) {
     PENDING_CONTROL_FLOW.with(|cell| cell.set(Some(e)));
