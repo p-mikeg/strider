@@ -171,7 +171,7 @@ so the resolver-bearing dependency stays one-way.
     `float_for_byte_size(n)` map a varnode byte size to a type (byte size
     1 → `I8`, never `I1`); there is no `TryFrom<u32>`.  Wide types
     (`I256` / `I512`) are stored via `IntConstWide(WideConstId)` interned
-    in `Graph::wide_consts`; `IntConst(u128)` rejects them.
+    in `Graph::wide_const_interner`; `IntConst(u128)` rejects them.
   - `walk::walk_graph(graph, entry)` (`pub(crate)`) — preorder
     traversal that follows both backward-data and forward-control
     edges.  Used by the validator and several internal passes; not
