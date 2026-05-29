@@ -412,13 +412,20 @@ so the resolver-bearing dependency stays one-way.
   satisfy the always-on asm-fingerprint check without manual stamping.
 
 - **`strider-py`** — Python bindings (PyO3 + maturin + abi3-py39).
-  High-level API: `strider.load(path).analyze(fn).find(pattern)`,
-  auto-detects arch from ELF `e_machine`, with
-  `Analysis.fingerprint(node) -> list[int]` as the proof-of-correctness
+  High-level API: `strider.load(path) -> Program` (auto-detects
+  arch/CC from the ELF `e_machine`; override via
+  `arch=`/`cc=`/`apply_relocations=`).  `Program` is the loaded binary
+  as one object — `symbol` / `symbol_size` / `symbols` / `entry_point` /
+  `read` / `functions` + `analyze(fn) -> Analysis` (code + ROM readers
+  wired internally); `Analysis.find(pattern)` queries the IR and
+  `Analysis.fingerprint(node) -> list[int]` is the proof-of-correctness
   helper.  Low-level API mirrors the Rust surface: `SleighArch`,
-  `CallingConvention`, `MemoryMap`, `MemReader`, `ReadOnlyMemory`,
-  `Sleigh`, `build_cfg`, `Strider`, `Graph`, `OptimizerPipeline`, plus
-  `strider.run(arch, cc, mem, entry, ...)`.  `strider.opt` exposes
+  `CallingConvention`, `MemoryMap` (a RAW-region reader for non-ELF /
+  custom sources — ELF parse + symbols live on the internal `_LoadedElf`
+  that `Program` wraps, built by `strider.load_elf(path)`), `MemReader`,
+  `ReadOnlyMemory`, `Sleigh`, `build_cfg`, `Strider` (the low-level
+  lift-driver, distinct from the high-level `Program`), `Graph`,
+  `OptimizerPipeline`, plus `strider.run(arch, cc, mem, entry, ...)`.  `strider.opt` exposes
   per-pass classes; `strider.pattern` is a full mirror of the Rust
   pattern crate.  Cross-pattern joins on shared captures via
   `Graph.find_all_requirements([pat1, pat2, …])`.  Asm-fingerprint

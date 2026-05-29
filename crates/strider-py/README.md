@@ -93,10 +93,11 @@ down to the building blocks documented below.
 import strider
 from strider.pattern import Capture, var, add, load
 
-# 1. Load a binary into a MemoryMap (caches the parsed ELF for symbol
-#    lookups — no pyelftools dance needed).
-mem = strider.MemoryMap()
-mem.add_region_from_elf("fixtures/out/x86/memory.elf")
+# 1. Parse the ELF (sections + symbols + relocations).  `load_elf`
+#    returns a `_LoadedElf`; `.memory_map()` is the raw reader you hand
+#    to `run()`, and `.symbol(name)` resolves symbols.
+elf = strider.load_elf("fixtures/out/x86/memory.elf")
+mem = elf.memory_map()
 
 # 2. Run the full pipeline (CFG → IR → optimize, including the
 #    indirect-branch fixed-point loop) in one call.
@@ -105,7 +106,7 @@ result = strider.run(
     cc=strider.CallingConvention.x86_cdecl(),
     mem=mem,
     rom=mem,
-    entry=mem.symbol("array_sum"),     # or any address int
+    entry=elf.symbol("array_sum"),     # or any address int
     allow_code_before_start_addr=True,
 )
 
@@ -127,11 +128,13 @@ The convenience `strider.run` wraps these explicit steps:
 ```python
 arch = strider.SleighArch.x86()
 cc = strider.CallingConvention.x86_cdecl()
-mem = strider.MemoryMap()
-mem.add_region_from_elf("fixtures/out/x86/memory.elf")
+mem = strider.load_elf("fixtures/out/x86/memory.elf").memory_map()
 
 sleigh = strider.Sleigh(arch, mem)
-s = strider.Strider(arch, sleigh, cc)            # before build_cfg
+# `Strider` here is the LOW-LEVEL lift-driver (distinct from the
+# high-level `Program` returned by `strider.load`).  Build it before
+# `build_cfg`, which consumes the Sleigh (see the note below).
+s = strider.Strider(arch, sleigh, cc)
 cfg = strider.build_cfg(sleigh, entry=0x401000)  # consumes Sleigh
 graph = s.analyze_cfg(cfg).function
 

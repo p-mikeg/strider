@@ -67,44 +67,40 @@ The wheel is `abi3` (Python 3.9+). A pip-based legacy install path is documented
 
 ```python
 import strider
-from strider.pattern import Capture, var, add, load, call, int_const
+from strider.pattern import Capture, var, add, load
 
-# 1. Load a binary into a MemoryMap.  apply_elf_relocations is
-#    autoload-by-default — it lazily extends with .got.plt etc.
-mem = strider.MemoryMap()
-mem.add_region_from_elf("fixtures/out/x86/memory.elf")
-mem.apply_elf_relocations("fixtures/out/x86/memory.elf")
+# 1. Load an ELF.  `strider.load` returns a `Program`: one object that
+#    is the loaded binary — arch + calling convention auto-detected,
+#    code + ROM readers wired internally, symbols/entry-point ready.
+prog = strider.load("fixtures/out/x86/memory.elf")
+#    (kernel / syscall / custom-ABI: pass arch=… / cc=… / apply_relocations=True)
 
-# 2. Run the full pipeline in one call.
-#    `function_max_size` bounds the lifter to [entry, entry+N) — set
-#    it on stripped binaries where the function boundary is unknown.
-result = strider.run(
-    arch=strider.SleighArch.x86(),
-    cc=strider.CallingConvention.x86_cdecl(),
-    mem=mem, rom=mem,
-    entry=mem.symbol("array_sum"),
-    function_max_size=None,        # or e.g. 0x200
-    allow_code_before_start_addr=True,
-)
+# 2. Lift + optimize one function (symbol name or address) → an `Analysis`.
+#    Pass `function_max_size=N` to bound the lift to [entry, entry+N) on
+#    stripped binaries; the symbol's recorded size is used by default.
+a = prog.analyze("array_sum", allow_code_before_start_addr=True)
 
-# 3. Query the optimized graph.  `result.function` is the lifted IR.
+# 3. Query the optimized IR.
 ptr, off = Capture(), Capture()
-for hit in result.function.find_all(
-    load(addr=add(var(ptr), var(off))),
-    ignore_casts=True,
-):
+for hit in a.find(load(addr=add(var(ptr), var(off))), ignore_casts=True):
     print(f"load at {hit.uint(ptr)} + {hit.uint(off):#x}")
 
 # 4. Visualise.
-result.cfg.to_html("cfg.html")
-result.function.to_html("graph.html")
+a.dump_html("graph.html")   # the IR graph
+a.cfg.to_html("cfg.html")   # the control-flow graph
 ```
+
+`prog` also exposes `prog.symbol(name)`, `prog.symbol_size(name)`,
+`prog.symbols()`, `prog.entry_point()`, `prog.read(addr, size)`, and
+`prog.functions()`.  For non-ELF / firmware / custom data sources, build a
+low-level `strider.MemoryMap` (raw byte regions) and use `strider.run(...)`
+directly.
 
 ---
 
 ## Pattern features
 
-The pattern crate covers every IR node kind the lifter emits.  Below are the highest-leverage features when querying a real graph.  In the snippets below `g` is the lifted IR queried — i.e. the `result.function` from the quickstart.
+The pattern crate covers every IR node kind the lifter emits.  Below are the highest-leverage features when querying a real graph.  In the snippets below `g` is the lifted IR queried — i.e. `g = a.function` from the quickstart's `Analysis`.
 
 ### Set-membership target queries
 
@@ -142,7 +138,7 @@ for tup in g.find_all_requirements([
 ### Stack-offset recovery
 
 Capture an SP-relative `Store` and read its compile-time offset (`g` is
-the `result.function` from the quickstart):
+`a.function` from the quickstart):
 
 ```python
 from strider.pattern import OffsetCapture, store
@@ -259,7 +255,7 @@ A few common surprises when a pattern that "should obviously match" returns no h
 
 6. **Width mismatch / signedness.**  `int_const(42)` matches a constant whose value equals 42 at the node's own width, so a `42` lifted as `IntConst(42 : U32)` and one lifted as `IntConst(42 : U64)` both match.  The subtlety is *signed* values: a negative constant narrowed to U32 (e.g. `-50` as `0xFFFFFFCE`) is a different bit pattern from its 64-bit sign-extension, so `int_const(-50)` won't match the narrowed form.  Use `signed_int_const(-50)`, which matches the value sign-correctly at whatever width the node carries.
 
-When stuck, dump the IR (`result.graph.to_html("graph.html")` and open in a browser) and walk forward from `entry` looking for the shape you expected.
+When stuck, dump the IR (`a.dump_html("graph.html")` and open in a browser) and walk forward from `entry` looking for the shape you expected.
 
 ---
 
