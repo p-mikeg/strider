@@ -44,7 +44,7 @@ fn collect_sections_as_mem_regions(
     Ok(out)
 }
 
-fn section_is_code_or_readonly(sec: &object::read::Section<'_, '_>) -> bool {
+fn section_is_exec_or_readonly(sec: &object::read::Section<'_, '_>) -> bool {
     let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
         return false;
     };
@@ -72,7 +72,7 @@ fn section_is_code_or_readonly(sec: &object::read::Section<'_, '_>) -> bool {
 pub fn elf_get_code_and_readonly_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
-    collect_sections_as_mem_regions(obj, section_is_code_or_readonly)
+    collect_sections_as_mem_regions(obj, section_is_exec_or_readonly)
 }
 
 /// Returns every allocatable file-backed section as a [`MemRegion`].
