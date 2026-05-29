@@ -9,7 +9,10 @@
 //! on [`crate::Function`], not on `Graph`.
 //! `Graph::retain_reachable` only compacts the structural arena;
 //! [`crate::Function::compact`] applies the returned [`NodeIdRemap`] to
-//! all six overlay tables via [`SideTableRemap::remap_node_keyed`].
+//! the five key-only tables via [`SideTableRemap::remap_node_keyed`],
+//! plus a dedicated key+value remap for `stack_offsets` (the only one
+//! whose value also carries a `NodeOutputId` base that must be
+//! translated).
 
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
 
