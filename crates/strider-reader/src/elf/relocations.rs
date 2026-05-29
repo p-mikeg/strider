@@ -177,7 +177,7 @@ pub fn apply_elf_relocations(
             // Need the target symbol for these (no symbol → skip).
             // The GOT/PLT path classifies non-Symbol targets as
             // `malformed_target` (consistent with the bad-symbol-
-            // index bucket); pass `non_symbol_is_malformed = true`.
+            // index bucket); pass `require_symbol_target = true`.
             let Some(target_addr) = resolve_symbol_target(obj, &reloc, true, &mut stats) else {
                 continue;
             };
@@ -194,7 +194,7 @@ pub fn apply_elf_relocations(
         // `RelocationKind::Unknown`, so the general `match reloc.kind()`
         // below would mis-bucket it as unsupported — resolve it here
         // (4-byte field on both MIPS32 and MIPS64).  Pass
-        // `non_symbol_is_malformed = true`: the `Symbol`-target gate in
+        // `require_symbol_target = true`: the `Symbol`-target gate in
         // `mips_rel32_symbol_reloc_size` guarantees the target is a
         // `Symbol`, so this only ever takes the resolve-or-skip arms.
         if let Some(size_bytes) = mips_rel32_symbol_reloc_size(&reloc, obj.architecture()) {
@@ -214,7 +214,7 @@ pub fn apply_elf_relocations(
         // fall back to the static `.symtab` only if the dynamic
         // table is absent (ET_REL files).  The general path also
         // handles `RelocationTarget::Section` (the GOT/PLT path
-        // doesn't see those); pass `non_symbol_is_malformed = false`
+        // doesn't see those); pass `require_symbol_target = false`
         // so `Absolute` and unknown future variants bucket as
         // `skipped_unsupported_kind` via `record_unsupported`.
         let target_addr = match reloc.target() {
@@ -563,18 +563,18 @@ fn find_loadable_section_containing<'data, 'a>(
 /// - Returns `None` and increments `skipped_malformed_target` when
 ///   the symbol index doesn't resolve at all (malformed ELF), or
 ///   when the relocation target is not a `Symbol` and
-///   `non_symbol_is_malformed` is `true` (GOT/PLT path).
+///   `require_symbol_target` is `true` (GOT/PLT path).
 /// - Returns `None` and increments `skipped_unresolved_target` when
 ///   the symbol resolves cleanly but is the legitimate weak / undef
 ///   case (`address == 0 && is_undefined`).
 /// - Returns `None` and calls `record_unsupported` when the target
-///   isn't a `Symbol` and `non_symbol_is_malformed` is `false` (the
+///   isn't a `Symbol` and `require_symbol_target` is `false` (the
 ///   general path).
 /// - Otherwise returns `Some(address)`.
 fn resolve_symbol_target(
     obj: &object::File<'_>,
     reloc: &object::Relocation,
-    non_symbol_is_malformed: bool,
+    require_symbol_target: bool,
     stats: &mut RelocationStats,
 ) -> Option<u64> {
     match reloc.target() {
@@ -603,7 +603,7 @@ fn resolve_symbol_target(
             }
             Some(addr)
         }
-        _ if non_symbol_is_malformed => {
+        _ if require_symbol_target => {
             // Non-Symbol relocation target (e.g. SectionIndex
             // we don't model) — bucket as malformed-from-our-
             // perspective rather than as a legitimate weak-extern.
