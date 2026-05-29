@@ -28,13 +28,18 @@ use crate::pcode_lift::ValueLifter;
 ///   80-bit extended-precision width via `(1u128 << 80) - 1`.
 /// * 16 bytes — wider sub-register writes through 16-byte SIMD container
 ///   registers (XMM0 on x86_64, q0 on aarch64).
-/// * 32 / 64 bytes — AVX-2 `ymm` / AVX-512 `zmm` registers.  Returns
-///   `u128::MAX` (a degraded mask).  This is sound for the direct
-///   container read/write path which doesn't actually consult the
-///   mask — `read_reg_vn`/`write_reg_vn` early-out when `reg` equals
-///   its own container.  Sub-register aliasing *within* a wide
-///   container (e.g. `xmm0` slice of `ymm0`) is not yet supported and
-///   surfaces as a typed error from `read_reg_vn` / `write_reg_vn`.
+/// * 32 / 64 bytes — AVX-2 `ymm` / AVX-512 `zmm` registers: **fail
+///   closed**.  A 256-/512-bit mask has no `u128` representation, so
+///   `vn_mask` returns an error rather than a silently-truncated
+///   `u128::MAX`.  These widths are still valid *containers*
+///   (`find_largest_fitting_register` accepts them); a full-width access
+///   takes the direct container read/write path which never consults the
+///   mask (`read_reg_vn`/`write_reg_vn` early-out when `reg` equals its
+///   own container), and a sub-register slice *within* a >16-byte
+///   container is rejected in `enter_sub_register` before any mask is
+///   computed.  So `vn_mask` is only ever called for ≤16-byte registers
+///   in production, and erroring here makes a wrong degraded mask
+///   impossible by construction instead of relying solely on that guard.
 pub(crate) fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
     match reg.size {
         1 => Ok(u128::from(u8::MAX)),
@@ -42,7 +47,13 @@ pub(crate) fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
         4 => Ok(u128::from(u32::MAX)),
         8 => Ok(u128::from(u64::MAX)),
         10 => Ok((1u128 << 80) - 1),
-        16 | 32 | 64 => Ok(u128::MAX),
+        16 => Ok(u128::MAX),
+        32 | 64 => Err(anyhow!(
+            "register size {} bytes (>16) has no representable u128 mask; \
+             wide ymm/zmm registers are accessed full-width via the direct \
+             container path, never by masking",
+            reg.size,
+        )),
         _ => Err(anyhow!("unsupported register size {} bytes", reg.size)),
     }
 }
@@ -741,18 +752,29 @@ mod wide_register_tests {
         Vn { addr_space: VnSpace::REGISTER, addr_off: off, size }
     }
 
+    // A 256-/512-bit mask has no `u128` representation, so `vn_mask` fails
+    // closed for ymm/zmm rather than handing back a silently-truncated
+    // `u128::MAX`.  These widths are still valid *containers*
+    // (`find_largest_fitting_register` accepts them); a full-width access
+    // takes the direct container path (which never consults the mask) and a
+    // sub-register slice of a >16-byte container is rejected in
+    // `enter_sub_register` before any mask is computed.
     #[test]
-    fn vn_mask_accepts_32_bytes_for_avx2_ymm() {
+    fn vn_mask_rejects_32_bytes_ymm_no_representable_mask() {
         let ymm = reg(0x1000, 32);
-        let mask = vn_mask(&ymm).expect("AVX-2 ymm width must be supported");
-        assert_eq!(mask, u128::MAX, "wide containers return the degraded u128::MAX mask");
+        assert!(
+            vn_mask(&ymm).is_err(),
+            "a 256-bit ymm mask cannot be represented in u128 — must fail closed"
+        );
     }
 
     #[test]
-    fn vn_mask_accepts_64_bytes_for_avx512_zmm() {
+    fn vn_mask_rejects_64_bytes_zmm_no_representable_mask() {
         let zmm = reg(0x1000, 64);
-        let mask = vn_mask(&zmm).expect("AVX-512 zmm width must be supported");
-        assert_eq!(mask, u128::MAX);
+        assert!(
+            vn_mask(&zmm).is_err(),
+            "a 512-bit zmm mask cannot be represented in u128 — must fail closed"
+        );
     }
 
     #[test]
