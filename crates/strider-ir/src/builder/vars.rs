@@ -111,7 +111,7 @@ impl FunctionBuilder {
     /// Returns `WrongOutputCount` if the freshly created
     /// `Region` or `MemPhi` does not have its expected output shape
     /// (this would indicate a graph-construction bug, not a user error).
-    /// Other variants from `build_control_phi` propagate.
+    /// Other variants from `build_vn_phi` propagate.
     pub fn create_region(&mut self) -> Result<RegionId> {
         let memory_node = self.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
         let [memory] = self.function().node_outputs_exact(memory_node)?;
@@ -134,7 +134,7 @@ impl FunctionBuilder {
         let mut variables = SecondaryMap::new();
         for var_id in var_ids {
             let var = self.function.cc_metadata.var_table[var_id];
-            variables[var_id] = self.build_control_phi(var, phi_token, &[])?;
+            variables[var_id] = self.build_vn_phi(var, phi_token, &[])?;
         }
         self.create_region_helper(control_node, control, memory_node, memory, variables)
     }

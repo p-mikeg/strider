@@ -128,12 +128,12 @@ pub fn region_predecessors(
 ) -> impl Iterator<Item = NodeOutputId> + '_ {
     use crate::node::NodeKind;
     let producer = graph.node_for_output(out);
-    let is_cs = matches!(graph.node_kind(producer), NodeKind::Region);
+    let is_region = matches!(graph.node_kind(producer), NodeKind::Region);
     let inputs = graph.node_inputs(producer);
     // `Inputs` is Copy, so we move it into the iterator chain and let
     // `take(0)` produce an empty stream for non-Region producers
     // without branching on an `Either` variant.
-    let take = if is_cs { inputs.len() } else { 0 };
+    let take = if is_region { inputs.len() } else { 0 };
     inputs.into_iter().take(take)
 }
 
