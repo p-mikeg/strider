@@ -27,15 +27,24 @@ from __future__ import annotations
 
 import os
 import struct
-from typing import Iterator, Optional, Union
+from typing import Callable, Iterator, Optional, Union
 
 from . import strider as _ext  # the PyO3 cdylib re-exported here
 from .strider import (
     CallingConvention,
     Function,
     MemoryMap,
+    OptimizerPipeline,
     SleighArch,
 )
+
+
+# Sentinel distinguishing "argument not passed" from an explicit `None`.
+# `None` is a meaningful value for `rom` / `function_max_size` /
+# `per_address_ccs`, so the per-call overrides on `Analyzer.analyze`
+# cannot use `None` as their default — they use `_UNSET` and fall back to
+# the frozen default only when the caller left the argument untouched.
+_UNSET = object()
 
 
 # ── ELF header parsing ────────────────────────────────────────────────────
@@ -339,6 +348,50 @@ class Program:
         arch, addr = _effective_arch_and_addr(self._arch, addr)
         return _ext.pcode_at(arch, self._elf.memory_map(), addr, count)
 
+    # ── Configure-once analysis handle ───────────────────────────────
+
+    def analyzer(
+        self,
+        *,
+        allow_code_before_start_addr: bool = False,
+        function_max_size: Optional[int] = None,
+        rom: Optional[object] = None,
+        compact: bool = True,
+        per_address_ccs: Optional[dict] = None,
+        pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = None,
+    ) -> "Analyzer":
+        """Build a frozen `Analyzer` over this Program's loaded ELF.
+
+        The returned handle bundles the arch + cc + code reader + symbol
+        source once; `analyzer.analyze(target)` then needs only the
+        target function (a symbol name or address), and any frozen option
+        can be overridden for a single call.  Useful for analysing many
+        functions with one shared setup:
+
+        ```python
+        azr = prog.analyzer()
+        for fn in prog.functions():
+            a = azr.analyze(fn)
+        ```
+
+        The frozen-option keywords mirror `analyze(...)` plus the extra
+        knobs (`compact`, `per_address_ccs`, `pipeline_factory`) that
+        `Program.analyze` does not expose directly.
+        """
+        return Analyzer(
+            arch=self._arch,
+            cc=self._cc,
+            mem=self._elf.memory_map(),
+            rom=rom,
+            allow_code_before_start_addr=allow_code_before_start_addr,
+            function_max_size=function_max_size,
+            compact=compact,
+            per_address_ccs=per_address_ccs,
+            pipeline_factory=pipeline_factory,
+            _elf=self._elf,
+            _program=self,
+        )
+
     # ── Lift a function ──────────────────────────────────────────────
 
     def analyze(
@@ -368,46 +421,16 @@ class Program:
         * `rom` — the read-only memory image for `LoadReadOnly`
           constant folding.  Defaults to this Program's loaded regions,
           matching the typical "the ELF's `.rodata` is the rom" case.
+
+        For analysing many functions with one shared setup, build an
+        `Analyzer` once via `Program.analyzer(...)` and call its
+        `analyze(target)` per function instead.
         """
-        mem = self._elf.memory_map()
-        if isinstance(function, str):
-            addr, sym_size = self._elf.symbol_addr_and_size(function)
-            # Honour the symbol's recorded size when the caller didn't
-            # provide an explicit bound.  `function_max_size=0` is
-            # rejected by `strider.run`, and zero-size symbols
-            # surface as `None` from `symbol_addr_and_size`, so the
-            # `or None` is a no-op here for the common case.
-            if function_max_size is None:
-                function_max_size = sym_size
-        elif isinstance(function, int):
-            addr = function
-        else:
-            raise TypeError(
-                f"`function` must be a symbol name (str) or address (int), "
-                f"got {type(function).__name__}"
-            )
-
-        # ARM Thumb interworking: a Thumb function entry (symbol or raw
-        # address) has its low bit set.  Switch to the Thumb Sleigh spec
-        # and strip the bit so the lift uses the correct decoder and a
-        # halfword-aligned address.  Non-ARM arches pass through verbatim.
-        arch, addr = _effective_arch_and_addr(self._arch, addr)
-
-        result = _ext.run(
-            arch=arch,
-            cc=self._cc,
-            mem=mem,
-            entry=addr,
-            rom=rom if rom is not None else mem,
-            allow_code_before_start_addr=allow_code_before_start_addr,
+        return self.analyzer().analyze(
+            function,
             function_max_size=function_max_size,
-        )
-        return Analysis(
-            result=result,
-            program=self,
-            entry=addr,
-            name=(function if isinstance(function, str) else None),
-            effective_arch=arch,
+            allow_code_before_start_addr=allow_code_before_start_addr,
+            rom=rom,
         )
 
 
@@ -420,15 +443,23 @@ class Analysis:
     queries and provenance lookup.
     """
 
-    __slots__ = ("_result", "_program", "_entry", "_name", "_effective_arch")
+    __slots__ = (
+        "_result",
+        "_program",
+        "_entry",
+        "_name",
+        "_effective_arch",
+        "_mem",
+    )
 
     def __init__(
         self,
         result,  # strider.RunResult
-        program: Program,
+        program: Optional[Program],
         entry: int,
         name: Optional[str] = None,
         effective_arch: Optional[SleighArch] = None,
+        mem: Optional[object] = None,
     ) -> None:
         self._result = result
         self._program = program
@@ -439,10 +470,21 @@ class Analysis:
         # fingerprint addresses through this so a Thumb function's
         # provenance is lifted with the Thumb Sleigh spec.  Defaults
         # to the program's arch for callers constructing an Analysis
-        # directly.
-        self._effective_arch = (
-            effective_arch if effective_arch is not None else program._arch
-        )
+        # directly; for a standalone (program=None) analysis the caller
+        # MUST supply `effective_arch`.
+        if effective_arch is not None:
+            self._effective_arch = effective_arch
+        elif program is not None:
+            self._effective_arch = program._arch
+        else:
+            raise ValueError(
+                "Analysis(program=None) requires an explicit effective_arch"
+            )
+        # The code reader to lift fingerprint addresses through when this
+        # Analysis is not backed by a Program (the standalone `Analyzer`
+        # path).  When `program` is set we read its loaded ELF regions
+        # instead, preserving the existing Program-backed behaviour.
+        self._mem = mem
 
     # ── Properties ──────────────────────────────────────────────────
 
@@ -569,7 +611,18 @@ class Analysis:
         addrs = self.fingerprint(node)
         if not addrs:
             return []
-        mem = self._program._elf.memory_map()
+        # Prefer the Program's loaded regions (the ELF-backed path).
+        # For a standalone analysis (program=None) fall back to the code
+        # reader the Analyzer handed us at construction.
+        if self._program is not None:
+            mem = self._program._elf.memory_map()
+        elif self._mem is not None:
+            mem = self._mem
+        else:
+            raise ValueError(
+                "fingerprint_pcode: no memory source (neither a backing "
+                "Program nor a code reader was supplied to this Analysis)"
+            )
         pairs = _ext.pcode_at_addrs(self._effective_arch, mem, addrs)
         return sorted(pairs, key=lambda p: p[0])
 
@@ -583,3 +636,299 @@ class Analysis:
     def dump_dot(self, path: str) -> None:
         """Dump the IR graph as a raw .dot file at `path`."""
         self._result.function.to_dot(path)
+
+
+# ── Analyzer ────────────────────────────────────────────────────────────────
+
+
+class Analyzer:
+    """A frozen, configure-once analysis handle.
+
+    Bundles the target description (arch + calling convention), the code
+    reader, and a set of option defaults once; then `analyze(target)`
+    needs only the target function (a symbol name or absolute address).
+    Any frozen option can be overridden for a single call.
+
+    Build one from a loaded ELF (`prog.analyzer(...)`) for symbol-name
+    resolution, or standalone for a raw firmware blob / custom source:
+
+    ```python
+    # ELF-backed:
+    azr = prog.analyzer()
+    for fn in prog.functions():
+        a = azr.analyze(fn)
+
+    # Standalone (no ELF symbol table):
+    azr = strider.analyzer(arch, cc, mem, symbols={"reset": 0x8000})
+    a = azr.analyze("reset")           # via the symbols dict
+    a = azr.analyze(0x8000)            # or by address
+    ```
+
+    The handle is frozen — its fields are set once in `__init__` and
+    there are no public setters.  `pipeline_factory` (when supplied) is
+    called fresh for every `analyze()` to sidestep the drain-on-use
+    problem (a single `OptimizerPipeline` cannot be reused across calls).
+    """
+
+    __slots__ = (
+        "_arch",
+        "_cc",
+        "_mem",
+        "_rom",
+        "_allow_code_before_start_addr",
+        "_function_max_size",
+        "_compact",
+        "_per_address_ccs",
+        "_pipeline_factory",
+        "_elf",
+        "_symbols",
+        "_program",
+    )
+
+    def __init__(
+        self,
+        arch: SleighArch,
+        cc: CallingConvention,
+        mem: object,  # MemoryMap | MemReader
+        *,
+        rom: Optional[object] = None,
+        allow_code_before_start_addr: bool = False,
+        function_max_size: Optional[int] = None,
+        compact: bool = True,
+        per_address_ccs: Optional[dict] = None,
+        pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = None,
+        _elf: Optional[object] = None,
+        _symbols: Optional[dict] = None,
+        _program: Optional[Program] = None,
+    ) -> None:
+        self._arch = arch
+        self._cc = cc
+        self._mem = mem
+        # Frozen option defaults.
+        self._rom = rom
+        self._allow_code_before_start_addr = allow_code_before_start_addr
+        self._function_max_size = function_max_size
+        self._compact = compact
+        self._per_address_ccs = per_address_ccs
+        self._pipeline_factory = pipeline_factory
+        # Symbol sources for name resolution.  An ELF-backed analyzer
+        # carries the loaded ELF (`symbol_addr_and_size` + the symbol's
+        # recorded size); a standalone analyzer carries an optional
+        # `symbols` dict (name → address).  Exactly one is used per
+        # `analyze(name)`; an analyzer with neither rejects name targets
+        # with a clear error.
+        self._elf = _elf
+        self._symbols = _symbols
+        # When this analyzer was built from a `Program`, the resulting
+        # `Analysis` is backed by it (so `fingerprint_pcode` uses the
+        # ELF regions, matching `Program.analyze`).  Standalone
+        # analyzers leave this `None`.
+        self._program = _program
+
+    # ── Introspection ───────────────────────────────────────────────
+
+    @property
+    def arch(self) -> SleighArch:
+        """The target architecture (`SleighArch`)."""
+        return self._arch
+
+    @property
+    def cc(self) -> CallingConvention:
+        """The default calling convention (`CallingConvention`)."""
+        return self._cc
+
+    def __repr__(self) -> str:
+        has_symbols = self._elf is not None or self._symbols is not None
+        return (
+            f"Analyzer(arch={self._arch.name()}, cc={self._cc.name()}, "
+            f"symbols={has_symbols})"
+        )
+
+    # ── Target resolution ───────────────────────────────────────────
+
+    def _resolve_target(
+        self, function: Union[str, int], function_max_size: Optional[int]
+    ) -> tuple[int, Optional[str], Optional[int]]:
+        """Resolve a target to `(addr, name, function_max_size)`.
+
+        Mirrors `Program.analyze`'s symbol handling: a name is resolved
+        via the ELF (with its recorded size defaulting the bound when no
+        explicit bound is given) or via the standalone `symbols` dict;
+        an int passes through as an address.  Raises a clear error for a
+        name target with no symbol source, or for a wrong-typed target.
+        """
+        if isinstance(function, str):
+            if self._elf is not None:
+                addr, sym_size = self._elf.symbol_addr_and_size(function)
+                # Honour the symbol's recorded size when the caller
+                # didn't provide an explicit bound (matching
+                # `Program.analyze`; zero-size symbols surface as `None`).
+                if function_max_size is None:
+                    function_max_size = sym_size
+            elif self._symbols is not None:
+                if function not in self._symbols:
+                    raise ValueError(
+                        f"unknown symbol {function!r}; this analyzer's "
+                        f"`symbols` dict has no entry for it"
+                    )
+                addr = self._symbols[function]
+            else:
+                raise ValueError(
+                    f"cannot resolve symbol name {function!r}: this analyzer "
+                    f"has no symbol source.  Pass an int address instead, or "
+                    f"build the analyzer from a Program (prog.analyzer(...)) "
+                    f"or with a symbols={{...}} dict."
+                )
+            name: Optional[str] = function
+        elif isinstance(function, int):
+            addr = function
+            name = None
+        else:
+            raise TypeError(
+                f"`function` must be a symbol name (str) or address (int), "
+                f"got {type(function).__name__}"
+            )
+        return addr, name, function_max_size
+
+    # ── P-code ───────────────────────────────────────────────────────
+
+    def pcode(self, addr: int, count: int = 1) -> list[tuple[int, str]]:
+        """Lift the p-code of `count` machine instructions starting at
+        `addr` over this analyzer's memory + effective arch.
+
+        Parity with `Program.pcode`: ARM Thumb interworking is honoured
+        (a Thumb pointer `addr & 1` is decoded with the Thumb Sleigh spec
+        and a halfword-aligned address).  Raises `StriderError` when
+        `addr` is unmapped or a lift fails.
+        """
+        arch, addr = _effective_arch_and_addr(self._arch, addr)
+        return _ext.pcode_at(arch, self._mem, addr, count)
+
+    # ── Analyse a function ───────────────────────────────────────────
+
+    def analyze(
+        self,
+        function: Union[str, int],
+        *,
+        function_max_size=_UNSET,
+        allow_code_before_start_addr=_UNSET,
+        rom=_UNSET,
+        compact=_UNSET,
+        per_address_ccs=_UNSET,
+        pipeline=_UNSET,
+    ) -> "Analysis":
+        """Lift the function at `function` (symbol name or address) into
+        an `Analysis`, using this analyzer's frozen configuration.
+
+        `function` is the only required argument.  Each keyword, when
+        passed, OVERRIDES the frozen default for this one call (the
+        `_UNSET` sentinel distinguishes "not passed" from an explicit
+        `None`, since `None` is meaningful for `rom` /
+        `function_max_size` / `per_address_ccs`).  `pipeline` (a one-off
+        `OptimizerPipeline`) overrides the frozen `pipeline_factory` for
+        this call only.
+        """
+        # Per-call override resolution: a value other than `_UNSET` wins
+        # over the frozen default.
+        allow_before = (
+            self._allow_code_before_start_addr
+            if allow_code_before_start_addr is _UNSET
+            else allow_code_before_start_addr
+        )
+        eff_rom = self._rom if rom is _UNSET else rom
+        eff_compact = self._compact if compact is _UNSET else compact
+        eff_per_address_ccs = (
+            self._per_address_ccs
+            if per_address_ccs is _UNSET
+            else per_address_ccs
+        )
+        eff_max_size = (
+            self._function_max_size
+            if function_max_size is _UNSET
+            else function_max_size
+        )
+
+        addr, name, eff_max_size = self._resolve_target(function, eff_max_size)
+
+        # ARM Thumb interworking: switch to the Thumb Sleigh spec and
+        # strip the low bit for an interworking entry; non-ARM arches
+        # pass through verbatim.
+        arch, addr = _effective_arch_and_addr(self._arch, addr)
+
+        # The pipeline is drained on use, so a single instance can't be
+        # reused across calls.  A per-call `pipeline=` wins; otherwise
+        # the frozen `pipeline_factory` is invoked FRESH per call.
+        if pipeline is not _UNSET:
+            eff_pipeline = pipeline
+        elif self._pipeline_factory is not None:
+            eff_pipeline = self._pipeline_factory()
+        else:
+            eff_pipeline = None
+
+        result = _ext.run(
+            arch=arch,
+            cc=self._cc,
+            mem=self._mem,
+            entry=addr,
+            rom=eff_rom if eff_rom is not None else self._mem,
+            pipeline=eff_pipeline,
+            allow_code_before_start_addr=allow_before,
+            function_max_size=eff_max_size,
+            compact=eff_compact,
+            per_address_ccs=eff_per_address_ccs,
+        )
+        return Analysis(
+            result=result,
+            program=self._program,
+            entry=addr,
+            name=name,
+            effective_arch=arch,
+            mem=self._mem,
+        )
+
+
+def analyzer(
+    arch: SleighArch,
+    cc: CallingConvention,
+    mem: object,  # MemoryMap | MemReader
+    *,
+    rom: Optional[object] = None,
+    symbols: Optional[dict] = None,
+    allow_code_before_start_addr: bool = False,
+    function_max_size: Optional[int] = None,
+    compact: bool = True,
+    per_address_ccs: Optional[dict] = None,
+    pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = None,
+) -> Analyzer:
+    """Build a standalone `Analyzer` over a raw code reader.
+
+    The non-ELF / firmware-blob counterpart to `Program.analyzer(...)`:
+    there is no ELF symbol source, but an optional `symbols` dict (name →
+    address) enables `analyze("name")`.  Without it, only address targets
+    work — a name target raises a clear error pointing the user at an int
+    address or a `symbols=` dict.
+
+    ```python
+    mem = strider.MemoryMap()
+    mem.add_region(0x8000, firmware_bytes)
+    azr = strider.analyzer(
+        strider.SleighArch.arm_thumb(),
+        strider.CallingConvention.arm_aapcs(),
+        mem,
+        symbols={"reset": 0x8000},
+    )
+    a = azr.analyze("reset")
+    ```
+    """
+    return Analyzer(
+        arch=arch,
+        cc=cc,
+        mem=mem,
+        rom=rom,
+        allow_code_before_start_addr=allow_code_before_start_addr,
+        function_max_size=function_max_size,
+        compact=compact,
+        per_address_ccs=per_address_ccs,
+        pipeline_factory=pipeline_factory,
+        _symbols=symbols,
+    )

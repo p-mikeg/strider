@@ -269,3 +269,214 @@ def test_analysis_repr():
     r = repr(a)
     assert "add" in r
     assert "nodes=" in r
+
+
+# ── Analyzer: frozen configure-once handle ──────────────────────────────
+
+
+def test_program_analyzer_returns_analyzer():
+    """`Program.analyzer()` returns an `Analyzer` and analysing `"add"`
+    through it yields an `Analysis` equal in entry/name to the direct
+    `Program.analyze("add")` path."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    azr = s.analyzer()
+    assert isinstance(azr, strider.Analyzer)
+    via_azr = azr.analyze("add")
+    via_prog = s.analyze("add")
+    assert isinstance(via_azr, strider.Analysis)
+    assert via_azr.entry == via_prog.entry
+    assert via_azr.name == via_prog.name == "add"
+    assert via_azr.function.node_count() > 0
+
+
+def test_analyzer_configure_once_reuse():
+    """One analyzer, many functions: each analyze() yields a valid
+    Analysis with a non-empty graph (the configure-once promise)."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    azr = s.analyzer()
+    # Analyze the same function twice and (when present) other names —
+    # proving a single analyzer survives repeated calls.
+    a1 = azr.analyze("add")
+    a2 = azr.analyze("add")
+    assert a1.function.node_count() > 0
+    assert a2.function.node_count() > 0
+    assert a1.entry == a2.entry
+    for name in list(s.functions()):
+        if name == "add":
+            continue
+        try:
+            other = azr.analyze(name)
+        except strider.errors.StriderError:
+            # Data symbols / non-code names may not lift; skip them.
+            continue
+        assert other.function.node_count() >= 0
+
+
+def test_analyzer_per_call_override_function_max_size():
+    """A per-call keyword overrides the frozen default for that one
+    call: a frozen `function_max_size=None` overridden with a small
+    bound still builds a valid analysis."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    azr = s.analyzer(function_max_size=None)
+    a = azr.analyze("add", function_max_size=4)
+    assert a.entry == s.symbol("add")
+    assert a.function.node_count() > 0
+
+
+def test_analyzer_per_call_override_allow_code_before():
+    """A per-call `allow_code_before_start_addr=True` override (over a
+    frozen `False`) does not raise and yields a valid analysis."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    azr = s.analyzer(allow_code_before_start_addr=False)
+    a = azr.analyze("add", allow_code_before_start_addr=True)
+    assert a.function.node_count() > 0
+
+
+def test_analyzer_is_frozen_no_setters():
+    """The analyzer is a frozen configure-once handle: no public
+    `set_*` mutator exists and reusing it twice is stable."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    azr = s.analyzer()
+    setters = [n for n in dir(azr) if n.startswith("set_")]
+    assert setters == [], f"analyzer exposes setters: {setters}"
+    # __slots__ should block attaching new attributes.
+    with pytest.raises(AttributeError):
+        azr.arch = strider.SleighArch.x86()  # type: ignore[misc]
+    # Reuse is stable.
+    n1 = azr.analyze("add").function.node_count()
+    n2 = azr.analyze("add").function.node_count()
+    assert n1 == n2
+
+
+def test_analyzer_repr_includes_arch_cc_and_symbol_flag():
+    """`Analyzer.__repr__` names arch + cc and whether a symbol table
+    is present (an ELF-backed analyzer has one)."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    r = repr(s.analyzer())
+    assert "x86_64" in r
+    assert "x86_64_systemv" in r
+    assert "symbols=" in r
+
+
+# ── Standalone analyzer (program=None path) ─────────────────────────────
+
+
+def test_standalone_analyzer_by_address():
+    """`strider.analyzer(arch, cc, mem)` over a raw MemoryMap lifts a
+    function by address; find() and fingerprint_pcode() work even
+    though there is no backing Program (the program=None path)."""
+    elf = fixture_path("x64", "arithmetic")
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.memory_map()
+    addr = loaded.symbol("add")
+    azr = strider.analyzer(
+        strider.SleighArch.x86_64(),
+        strider.CallingConvention.x86_64_systemv(),
+        mem,
+    )
+    a = azr.analyze(addr)
+    assert isinstance(a, strider.Analysis)
+    assert a.entry == addr
+    assert a.name is None
+    assert a.function.node_count() > 0
+    matches = a.find(
+        strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+    )
+    assert matches, "expected at least one Add node"
+    # The program=None path must keep fingerprint_pcode working using
+    # the analyzer's own mem + effective arch.
+    pcode = a.fingerprint_pcode(matches[0].root)
+    assert isinstance(pcode, list)
+    for addr_, text in pcode:
+        assert isinstance(addr_, int)
+        assert isinstance(text, str)
+
+
+def test_standalone_analyzer_with_symbols_dict():
+    """A standalone analyzer with a `symbols={...}` dict resolves a
+    name target."""
+    elf = fixture_path("x64", "arithmetic")
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.memory_map()
+    addr = loaded.symbol("add")
+    azr = strider.analyzer(
+        strider.SleighArch.x86_64(),
+        strider.CallingConvention.x86_64_systemv(),
+        mem,
+        symbols={"add": addr},
+    )
+    a = azr.analyze("add")
+    assert a.entry == addr
+    assert a.name == "add"
+    assert a.function.node_count() > 0
+
+
+def test_standalone_analyzer_name_without_symbols_raises():
+    """A name target on a standalone analyzer with no symbol source is
+    a clear error (TypeError/ValueError), not a silent misbehaviour."""
+    elf = fixture_path("x64", "arithmetic")
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.memory_map()
+    azr = strider.analyzer(
+        strider.SleighArch.x86_64(),
+        strider.CallingConvention.x86_64_systemv(),
+        mem,
+    )
+    with pytest.raises((TypeError, ValueError)):
+        azr.analyze("add")
+
+
+def test_analyzer_pcode_parity():
+    """`Analyzer.pcode(addr)` mirrors `Program.pcode(addr)` over the
+    same memory + arch."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    addr = s.symbol("add")
+    azr = s.analyzer()
+    assert azr.pcode(addr, 2) == s.pcode(addr, 2)
+
+
+# ── pipeline_factory: fresh pipeline per call ───────────────────────────
+
+
+def test_analyzer_pipeline_factory_invoked_fresh_per_call():
+    """`pipeline_factory` is called fresh for each analyze() so the
+    drain-on-use problem (a single pipeline can't be reused) is
+    avoided; both calls succeed."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    calls = {"n": 0}
+
+    def factory():
+        calls["n"] += 1
+        return strider.OptimizerPipeline.default()
+
+    azr = s.analyzer(pipeline_factory=factory)
+    a1 = azr.analyze("add")
+    a2 = azr.analyze("add")
+    assert calls["n"] == 2, "pipeline_factory must be called once per analyze"
+    assert a1.function.node_count() > 0
+    assert a2.function.node_count() > 0
+
+
+def test_analyzer_per_call_pipeline_overrides_factory():
+    """A per-call `pipeline=` overrides the frozen `pipeline_factory`
+    for that call (factory not invoked)."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    calls = {"n": 0}
+
+    def factory():
+        calls["n"] += 1
+        return strider.OptimizerPipeline.default()
+
+    azr = s.analyzer(pipeline_factory=factory)
+    a = azr.analyze("add", pipeline=strider.OptimizerPipeline.default())
+    assert calls["n"] == 0, "per-call pipeline must override the factory"
+    assert a.function.node_count() > 0

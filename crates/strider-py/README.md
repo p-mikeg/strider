@@ -82,6 +82,35 @@ for name in s.functions():
         print(name, hex(s.symbol(name)))
 ```
 
+### Analyze many functions with one setup
+
+When you analyse many functions sharing one configuration (arch + cc +
+memory + options), build a frozen `Analyzer` once and pass only the
+target per call.  Any frozen option can be overridden for a single call:
+
+```python
+azr = s.analyzer()                     # configure once
+for name in s.functions():
+    a = azr.analyze(name)              # only the target per call
+# Per-call override of a frozen default:
+a = azr.analyze("array_sum", function_max_size=64)
+```
+
+For a raw firmware blob / non-ELF source, build a standalone analyzer
+over a `MemoryMap` (an optional `symbols=` dict enables name targets):
+
+```python
+mem = strider.MemoryMap()
+mem.add_region(0x8000, firmware_bytes)
+azr = strider.analyzer(
+    strider.SleighArch.arm_thumb(),
+    strider.CallingConvention.arm_aapcs(),
+    mem,
+    symbols={"reset": 0x8000},
+)
+a = azr.analyze("reset")               # or azr.analyze(0x8000)
+```
+
 For workflows that need granular control — explicit calling
 conventions (Linux kernel / syscall / custom), callback-style memory
 readers, custom optimizer pipelines, per-address CC overrides — drop

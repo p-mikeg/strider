@@ -422,7 +422,16 @@ so the resolver-bearing dependency stays one-way.
   `read` / `functions` + `analyze(fn) -> Analysis` (code + ROM readers
   wired internally); `Analysis.find(pattern)` queries the IR and
   `Analysis.fingerprint(node) -> list[int]` is the proof-of-correctness
-  helper.  Low-level API mirrors the Rust surface: `SleighArch`,
+  helper.  `Analyzer` is the frozen configure-once handle for analysing
+  many functions with one shared setup: `Program.analyzer(...)`
+  (ELF-backed, symbol names resolve) or the top-level
+  `strider.analyzer(arch, cc, mem, ...)` (standalone / firmware, optional
+  `symbols=` dict); `.analyze(target, **override)` takes only the target
+  per call and any frozen option can be overridden for one call (a
+  `pipeline_factory` is invoked fresh per call to sidestep the
+  drain-on-use of a single `OptimizerPipeline`).  `Program.analyze`
+  delegates to a one-shot `Analyzer` so there is a single `_ext.run` call
+  site.  Low-level API mirrors the Rust surface: `SleighArch`,
   `CallingConvention`, `MemoryMap` (a RAW-region reader for non-ELF /
   custom sources — ELF parse + symbols live on the internal `_LoadedElf`
   that `Program` wraps, built by `strider.load_elf(path)`), `MemReader`,

@@ -96,6 +96,23 @@ a.cfg.to_html("cfg.html")   # the control-flow graph
 low-level `strider.MemoryMap` (raw byte regions) and use `strider.run(...)`
 directly.
 
+### Analyze many functions with one setup
+
+To analyse many functions sharing one configuration (arch + cc + memory
++ options), build a frozen `Analyzer` once and pass only the target per
+call — any frozen option can be overridden for a single call:
+
+```python
+azr = prog.analyzer()                  # configure once
+for fn in prog.functions():
+    a = azr.analyze(fn)                # only the target per call
+
+# Standalone (non-ELF / firmware) form over a raw MemoryMap; an
+# optional symbols={…} dict enables name targets:
+azr = strider.analyzer(arch, cc, mem, symbols={"reset": 0x8000})
+a = azr.analyze("reset")               # or azr.analyze(0x8000)
+```
+
 ---
 
 ## Pattern features

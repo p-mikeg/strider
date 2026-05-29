@@ -32,4 +32,10 @@ __version__ = _ext.__version__
 # cc)` and consumed by the orchestrator).  The high-level handle is now
 # the distinctly-named `Program`, so the two no longer collide.
 from . import _api as _api  # noqa: E402,F401
-from ._api import Analysis, Program, load  # noqa: E402,F401
+from ._api import (  # noqa: E402,F401
+    Analysis,
+    Analyzer,
+    Program,
+    analyzer,
+    load,
+)

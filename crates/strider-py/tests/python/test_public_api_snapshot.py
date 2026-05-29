@@ -25,6 +25,7 @@ def _public(mod):
 
 EXPECTED_TOP = {
     "Analysis",
+    "Analyzer",
     "AnalyzeOutcome",
     "CallingConvention",
     "Cfg",
@@ -43,6 +44,7 @@ EXPECTED_TOP = {
     "StriderError",
     "Vn",
     "VnSpace",
+    "analyzer",
     "build_cfg",
     "load",
     "load_elf",

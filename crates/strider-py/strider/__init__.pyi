@@ -492,6 +492,56 @@ class Program:
         allow_code_before_start_addr: bool = ...,
         rom: Optional[Any] = ...,
     ) -> Analysis: ...
+    def analyzer(
+        self,
+        *,
+        allow_code_before_start_addr: bool = ...,
+        function_max_size: Optional[int] = ...,
+        rom: Optional[Any] = ...,  # MemoryMap | ReadOnlyMemory subclass
+        compact: bool = ...,
+        per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
+        pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = ...,
+    ) -> Analyzer:
+        """Build a frozen, configure-once `Analyzer` over this Program —
+        bundles the arch + cc + code reader + ELF symbol source once so
+        `analyzer.analyze(target)` needs only the target function."""
+        ...
+
+class Analyzer:
+    """A frozen configure-once analysis handle.  Bundles the arch +
+    calling convention + code reader + a set of option defaults once;
+    `analyze(target)` then needs only the target function (symbol name or
+    address), and any frozen option can be overridden per call.
+
+    Build one from a loaded ELF (`prog.analyzer(...)`) for symbol-name
+    resolution, or standalone (`strider.analyzer(arch, cc, mem, ...)`)
+    for a raw firmware blob / custom source."""
+    @property
+    def arch(self) -> SleighArch: ...
+    @property
+    def cc(self) -> CallingConvention: ...
+    def pcode(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
+        """Lift the p-code of `count` machine instructions from `addr`
+        over this analyzer's memory + effective arch (parity with
+        `Program.pcode`)."""
+        ...
+    def analyze(
+        self,
+        function: Any,  # str | int
+        *,
+        function_max_size: Any = ...,  # int | None override
+        allow_code_before_start_addr: Any = ...,  # bool override
+        rom: Any = ...,  # MemoryMap | ReadOnlyMemory | None override
+        compact: Any = ...,  # bool override
+        per_address_ccs: Any = ...,  # dict | None override
+        pipeline: Any = ...,  # OptimizerPipeline override (one-off)
+    ) -> Analysis:
+        """Lift `function` (symbol name or address) into an `Analysis`
+        using this analyzer's frozen config.  Each keyword, when passed,
+        overrides the frozen default for this one call; `pipeline`
+        overrides the frozen `pipeline_factory` for that call."""
+        ...
+    def __repr__(self) -> str: ...
 
 class Analysis:
     """Wrapper around a `RunResult` — the lifted, optimized IR graph for
@@ -535,6 +585,25 @@ def load(
     """Load an ELF binary and return a `Program` with the arch + calling
     convention auto-picked from the ELF header (override via `arch=` /
     `cc=` for kernel / syscall / custom-ABI workflows)."""
+    ...
+
+def analyzer(
+    arch: SleighArch,
+    cc: CallingConvention,
+    mem: Any,  # MemoryMap | MemReader subclass
+    *,
+    rom: Optional[Any] = ...,  # MemoryMap | ReadOnlyMemory subclass
+    symbols: Optional[dict[str, int]] = ...,
+    allow_code_before_start_addr: bool = ...,
+    function_max_size: Optional[int] = ...,
+    compact: bool = ...,
+    per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
+    pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = ...,
+) -> Analyzer:
+    """Build a standalone (non-ELF / firmware) `Analyzer` over a raw code
+    reader.  No ELF symbol source; an optional `symbols` dict (name →
+    address) enables `analyze("name")`, otherwise only address targets
+    work."""
     ...
 
 # ── Subpackages ────────────────────────────────────────────────────────
