@@ -192,7 +192,7 @@ fn options_builder_both_set_produces_distinct_options() {
 // ── RegionTerminator: Switch + UnresolvedIndirectBranch shape ────────────
 
 #[test]
-fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
+fn switch_variant_round_trips_target_vn_and_targets() {
     let target_vn = rsleigh::Vn {
         addr_off: 0x20,
         addr_space: rsleigh::VnSpace::REGISTER,
@@ -202,7 +202,6 @@ fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
     let term = RegionTerminator::Switch {
         target_vn,
         targets: targets.clone(),
-        target_value: None,
     };
     let cloned = term.clone();
     assert_eq!(term, cloned, "Clone + Eq round-trip");
@@ -210,11 +209,9 @@ fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
         RegionTerminator::Switch {
             target_vn: tvn,
             targets: tts,
-            target_value,
         } => {
             assert_eq!(tvn, target_vn);
             assert_eq!(tts, targets);
-            assert!(target_value.is_none());
         }
         other => panic!("clone changed variant: {other:?}"),
     }

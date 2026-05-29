@@ -518,7 +518,6 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 let region = self.finish_current_region(RegionTerminator::Switch {
                     target_vn,
                     targets: targets.clone(),
-                    target_value: None,
                 })?;
                 for target in targets {
                     let target_addr = PcodeInsnAddr::at_machine_start(target);

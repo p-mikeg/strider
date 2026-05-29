@@ -125,14 +125,6 @@ pub enum RegionTerminator {
     /// `target_vn` at the region exit and emits an If-ladder of
     /// `IntCmpOp::Equal + If` against each `targets[i]`, chained
     /// through the false-branch.
-    ///
-    /// `target_value` is an OPTIONAL pinned `NodeOutputId` for the
-    /// dispatch value.  When `Some`, strider's `handle_switch` uses
-    /// it directly instead of re-reading `target_vn`, pinning the
-    /// soundness contract that the comparison value is the SAME
-    /// value the IR-level indirect-branch resolver classified.  The cfg builder always sets this to
-    /// `None`; it is plumbing for an incremental-rebuild round that
-    /// preserves the previous iteration's IR.
     Switch {
         /// The dispatch varnode — the `BranchIndirect`'s
         /// `inputs[0]`.  Strider reads this at the region exit to
@@ -140,12 +132,6 @@ pub enum RegionTerminator {
         target_vn: rsleigh::Vn,
         /// Statically-known dispatch targets.
         targets: Vec<u64>,
-        /// OPTIONAL pinned `NodeOutputId` for the dispatch value.
-        /// `None` from the cfg builder; populated by the
-        /// orchestrator's known-targets feedback path when
-        /// available.  When `Some`, strider uses it directly
-        /// instead of re-reading `target_vn`.
-        target_value: Option<strider_ir::Value>,
     },
     /// `BranchIndirect` whose target the cfg-time mini-graph resolver
     /// (the installed `IndirectResolverFn`, canonical implementation:

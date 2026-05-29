@@ -475,12 +475,11 @@ where
                 Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
                     driver.handle_unresolved_indirect_branch(&target_vn, addr)?;
                 }
-                Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
+                Some(SpecialTerm::Switch(target_vn, targets)) => {
                     driver.handle_switch(
                         cfg_rid,
                         &target_vn,
                         &targets,
-                        target_value,
                         ir_region_of,
                     )?;
                 }
@@ -603,7 +602,7 @@ enum SpecialTerm {
     },
     /// Resolved jump table: lifts to an If-ladder dispatching `idx`
     /// against `targets`.  Skip the trailing `BranchIndirect`.
-    Switch(rsleigh::Vn, Vec<u64>, Option<strider_ir::Value>),
+    Switch(rsleigh::Vn, Vec<u64>),
     /// Direct branch to an out-of-function target (`fn_max_size`
     /// bound exceeded, or sub-`start_addr` with
     /// `allow_code_before_start_addr=false`).  Lifts to
@@ -624,12 +623,7 @@ impl SpecialTerm {
             strider_lift::cfg::RegionTerminator::Switch {
                 target_vn,
                 targets,
-                target_value,
-            } => Some(SpecialTerm::Switch(
-                *target_vn,
-                targets.clone(),
-                *target_value,
-            )),
+            } => Some(SpecialTerm::Switch(*target_vn, targets.clone())),
             strider_lift::cfg::RegionTerminator::TailCall { target } => Some(SpecialTerm::TailCall(*target)),
             _ => None,
         }

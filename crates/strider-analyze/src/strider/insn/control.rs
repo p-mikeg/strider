@@ -143,7 +143,6 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         region_id: strider_lift::cfg::RegionId,
         target_vn: &rsleigh::Vn,
         targets: &[u64],
-        target_value: Option<strider_ir::Value>,
         region_lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
     ) -> Result<()> {
         if targets.is_empty() {
@@ -165,14 +164,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             let ir_region = region_lookup(cfg_region)?;
             targets_and_regions.push((target, ir_region));
         }
-        // Prefer the orchestrator's pinned NodeOutputId when available
-        // — the dispatch must compare the SAME value the IR-level indirect-branch resolver classified.
-        // Falls back to a fresh `read_vn` when the cfg builder didn't
-        // populate `target_value`.
-        let idx = match target_value {
-            Some(v) => v,
-            None => self.read_vn(target_vn)?,
-        };
+        // Read the dispatch value at the region exit — the comparison
+        // value for the If-ladder.
+        let idx = self.read_vn(target_vn)?;
         build_switch_if_ladder(&mut self.builder, idx, &targets_and_regions, region_id)
     }
 
