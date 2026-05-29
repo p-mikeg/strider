@@ -656,8 +656,8 @@ fn bound_from_if_condition_signed_less_with_known_nonneg_idx_accepts() {
 #[test]
 fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     // `idx <= 4` (taken-true) → bound = 5.  pcode-lift lowers
-    // `IntLessEqual a, b` to `BoolNeg(IntLess(b, a))`, so the canonical
-    // shape of "idx <= 4" in this IR is `BoolNeg(IntLess(IntConst(4), idx))`.
+    // `IntLessEqual a, b` to `BitNot(IntLess(b, a))`, so the canonical
+    // shape of "idx <= 4" in this IR is `BitNot(IntLess(IntConst(4), idx))`.
     // Build that shape directly here — the bound walker recognises it
     // and returns `4 + 1 = 5`.
     let mut builder = FunctionBuilder::empty().unwrap();
@@ -667,7 +667,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::I32).unwrap();
-    // BoolNeg(IntLess(n, idx)) — operand order is (n, idx) per the
+    // BitNot(IntLess(n, idx)) — operand order is (n, idx) per the
     // lift-time swap, mirroring `strider_lift::pcode_lift::handle_int_less_equal`.
     let inner = builder
         .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::I32)

@@ -297,7 +297,7 @@ pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize,
     "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
      `IntCmpOp`.");
 pure_pass_class!("IfCondInversion" => PyIfCondInversion,
-    "Rewrites `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}` so patterns match the \
+    "Rewrites `If(BitNot(C)){A}{B}` → `If(C){B}{A}` so patterns match the \
      canonical, un-negated condition shape.");
 
 // ── CC/arch-aware passes ──────────────────────────────────────────────────

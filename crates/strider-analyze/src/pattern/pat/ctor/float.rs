@@ -83,7 +83,7 @@ decl_pat_cmp_ops!(float_cmp, FloatCmpOp, Pat, [
 /// Matches a float not-equal comparison `lhs != rhs`.
 ///
 /// `FloatCmpOp::NotEqual` is not a primitive; pcode-lift lowers
-/// `FloatNotEqual(a, b)` at lift time to `BoolNeg(FloatEqual(a, b))`.
+/// `FloatNotEqual(a, b)` at lift time to `BitNot(FloatEqual(a, b))` at `I1`.
 /// This constructor produces the lowered shape directly.
 pub fn float_ne(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     use crate::pattern::pat::ctor::bool_::bool_not;
@@ -96,7 +96,7 @@ pub fn float_ne(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
 /// `FloatLessEqual(a, b)` at lift time to
 /// `Or(FloatLess(a, b), FloatEqual(a, b))` — NaN-aware (cannot use
 /// the operand-swap-and-negate trick because IEEE 754 `<=` is false
-/// on NaN, while `BoolNeg(Less(b, a))` would be true).
+/// on NaN, while `BitNot(Less(b, a))` would be true).
 pub fn float_le(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     use crate::pattern::pat::ctor::bool_::bool_or;
     let lhs_p: Pat = lhs.into();

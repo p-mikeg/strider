@@ -47,7 +47,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed());
 
-    // After: cond is the inner CastToBool (the BoolNeg's input was the
+    // After: cond is the inner CastToBool (the BitNot's input was the
     // CastToBool of the register read).  No `BoolUnaryOp::Neg` remains
     // on the If's cond input.
     assert!(!matches!(
@@ -72,7 +72,7 @@ fn idempotent_after_one_application() -> Result<()> {
 #[test]
 fn double_neg_collapses_after_constant_fold() -> Result<()> {
     // Build `if (!!cond) { ... }`.  After ConstantFold's
-    // `BoolNeg(BoolNeg(x)) → x` rule, the cond is bare `cond`; after
+    // `BitNot(BitNot(x)) → x` rule (at `I1`), the cond is bare `cond`; after
     // IfCondInversion (running on the same fixed-point loop in real
     // pipelines) the If is canonical with no swap.  Pin the
     // even-parity-no-swap invariant.
@@ -93,7 +93,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
         let entry = fg.entry().unwrap();
         changed = ConstantFold.optimize(&mut fg, entry)?.changed();
     }
-    // After ConstantFold the cond is no longer `BoolNeg`, so
+    // After ConstantFold the cond is no longer `BitNot`, so
     // IfCondInversion must NOT fire.  Even-parity → no branch swap.
     let entry = fg.entry().unwrap();
     let r = IfCondInversion.optimize(&mut fg, entry)?;
@@ -107,7 +107,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
 #[test]
 fn swap_consumers_preserves_value_semantics() -> Result<()> {
     // The pass must swap the consumers of the two `If` control outputs
-    // alongside dropping the `BoolNeg`.  Pin this by recording the
+    // alongside dropping the `BitNot`.  Pin this by recording the
     // `Region` consumer of each output before the pass and
     // verifying they are now consumed in the swapped slots.
     let (mut fg, if_node) = build_if_with_neg_cond()?;
@@ -147,11 +147,11 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
 }
 
 /// Regression: when the `If`'s
-/// `BoolNeg(cond)` becomes dead after the rewrite (no other consumers
-/// of the `BoolNeg` exist), its asm-fingerprint must be absorbed into
+/// `BitNot(cond)` becomes dead after the rewrite (no other consumers
+/// of the `BitNot` exist), its asm-fingerprint must be absorbed into
 /// the surviving inner-cond node so the contributing-asm history is
 /// preserved.  Without the fix, the inner cond would carry only its
-/// own lift_addr; the BoolNeg's address would be silently dropped.
+/// own lift_addr; the BitNot's address would be silently dropped.
 #[test]
 fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x2000, 1);
@@ -159,7 +159,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
             // Stamp distinct lift_addrs on the cond producer and the
-            // BoolNeg so we can observe absorption.
+            // BitNot so we can observe absorption.
             b.set_lift_addr(Some(0x500));
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
@@ -170,7 +170,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
             Ok((neg_cond, ()))
         })?;
 
-    // Capture the BoolNeg's NodeId BEFORE optimisation; after the rewrite
+    // Capture the BitNot's NodeId BEFORE optimisation; after the rewrite
     // it becomes dead but stays in the arena.
     let bool_neg_node = fg
         .all_node_ids()
@@ -181,7 +181,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed());
 
-    // The BoolNeg's fingerprint MUST have been absorbed into the
+    // The BitNot's fingerprint MUST have been absorbed into the
     // inner-cond node (the new If cond input's producer).
     let if_node = find_unique_if(&fg);
     let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)?;
@@ -199,8 +199,8 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 }
 
 /// Pins **which** node receives the absorbed fingerprint: the producer
-/// of the BoolNeg's *input* (i.e. the new cond input's producer), not
-/// the `If` node, not the BoolNeg itself, and not any unrelated reachable
+/// of the BitNot's *input* (i.e. the new cond input's producer), not
+/// the `If` node, not the BitNot itself, and not any unrelated reachable
 /// node.  Guards against a buggy implementation that absorbs into the
 /// wrong neighbour (e.g. unioning into `if_node` instead of the inner
 /// cond, which would lose the contributing-asm history when the If gets
@@ -208,8 +208,8 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 #[test]
 fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x3000, 1);
-    // Distinct addresses on the cond producer (0x800), the BoolNeg
-    // (0x804), and the If (0x808) so we can prove the BoolNeg's
+    // Distinct addresses on the cond producer (0x800), the BitNot
+    // (0x804), and the If (0x808) so we can prove the BitNot's
     // address lands on exactly one of the three.
     let (mut fg, _if_node, ()) = RegisterSet::new()
         .tracked(cond_vn)
@@ -224,7 +224,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
             Ok((neg_cond, ()))
         })?;
 
-    // Identify pre-pass: the BoolNeg, the If, and the BoolNeg's input
+    // Identify pre-pass: the BitNot, the If, and the BitNot's input
     // producer (the "inner cond producer" that should receive the
     // absorbed fingerprint).
     let bool_neg_node = fg
@@ -235,7 +235,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
     let inner_producer_pre = fg.node_for_output(bool_neg_input);
 
-    // 0x804 (the BoolNeg's address) must be present on BoolNeg pre-pass,
+    // 0x804 (the BitNot's address) must be present on BitNot pre-pass,
     // absent on inner_producer_pre, and absent on if_node_pre.  Sanity-check
     // the fixture before running the pass.
     assert!(fg.asm_fingerprint(bool_neg_node).contains(&0x804));
@@ -246,7 +246,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed());
 
-    // After the pass, BoolNeg's address (0x804) must land on exactly the
+    // After the pass, BitNot's address (0x804) must land on exactly the
     // inner producer — NOT on the If, and NOT on any sibling reachable
     // node that wasn't an ancestor of the cond input.
     assert!(
@@ -259,7 +259,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     );
 
     // After absorption, the inner producer's fingerprint should contain
-    // BOTH its own original address AND the BoolNeg's.
+    // BOTH its own original address AND the BitNot's.
     let inner_fp = fg.asm_fingerprint(inner_producer_pre);
     assert!(
         inner_fp.contains(&0x804),
@@ -268,19 +268,19 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     Ok(())
 }
 
-/// Regression: when the `BoolNeg(cond)` feeding the `If` has OTHER live
-/// consumers, the inversion MUST NOT absorb the BoolNeg's fingerprint
-/// into the inner-cond producer.  The BoolNeg still produces a live
+/// Regression: when the `BitNot(cond)` feeding the `If` has OTHER live
+/// consumers, the inversion MUST NOT absorb the BitNot's fingerprint
+/// into the inner-cond producer.  The BitNot still produces a live
 /// value for its remaining consumers (their fingerprints attribute via
-/// the BoolNeg as before), so adding BoolNeg's addresses to the inner
+/// the BitNot as before), so adding BitNot's addresses to the inner
 /// cond would create FALSE-POSITIVE attribution — the inner cond does
-/// NOT compute the BoolNeg's value, the BoolNeg does.
+/// NOT compute the BitNot's value, the BitNot does.
 #[test]
 fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Result<()> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x4000, 1);
     // Build `if (!cond) { … }` AND a second consumer of the same
-    // `!cond` value (a chained `BoolNeg(BoolNeg(cond))` left
-    // unreachable but still referencing the first BoolNeg's output
+    // `!cond` value (a chained `BitNot(BitNot(cond))` left
+    // unreachable but still referencing the first BitNot's output
     // — its use-list counts).
     let (mut fg, _if_node, second_neg_node) = RegisterSet::new()
         .tracked(cond_vn)
@@ -300,7 +300,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
             Ok((neg_cond, second_neg_node))
         })?;
 
-    // Locate the first BoolNeg (the one IfCondInversion will redirect
+    // Locate the first BitNot (the one IfCondInversion will redirect
     // around) and its inner cond producer pre-pass.
     let bool_neg_node = fg
         .all_node_ids()
@@ -312,8 +312,8 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
     let inner_producer_pre = fg.node_for_output(bool_neg_input);
 
-    // Sanity-check the fixture: BoolNeg has 2 uses (the If and the
-    // chained second BoolNeg), and inner_producer_pre does NOT carry
+    // Sanity-check the fixture: BitNot has 2 uses (the If and the
+    // chained second BitNot), and inner_producer_pre does NOT carry
     // 0x904 yet.
     let bool_neg_outs = fg.node_outputs(bool_neg_node).to_vec();
     assert_eq!(
@@ -327,16 +327,16 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed(), "pass must still fire — the If's cond is BoolNeg(…)");
 
-    // The headline assertion: the first BoolNeg's address (0x904) must
+    // The headline assertion: the first BitNot's address (0x904) must
     // NOT have been absorbed into the inner cond producer.  The
-    // BoolNeg is still live (consumed by second_neg_node), so the
-    // attribution must stay on the BoolNeg itself.
+    // BitNot is still live (consumed by second_neg_node), so the
+    // attribution must stay on the BitNot itself.
     assert!(
         !fg.asm_fingerprint(inner_producer_pre).contains(&0x904),
         "BoolNeg's address 0x904 must NOT leak into inner_producer when BoolNeg has \
          remaining consumers (BoolNeg is still live; would be false-positive attribution)"
     );
-    // Inversely: the BoolNeg's own fingerprint must still carry 0x904.
+    // Inversely: the BitNot's own fingerprint must still carry 0x904.
     assert!(
         fg.asm_fingerprint(bool_neg_node).contains(&0x904),
         "BoolNeg's own fingerprint must still carry its address"

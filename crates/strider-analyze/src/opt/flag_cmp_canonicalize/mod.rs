@@ -10,7 +10,7 @@
 //! diff = Add(a, Neg(b))           // post-canonical IntSub
 //! ZR   = Equal(diff, 0)           // Z flag
 //! NG   = IntSless(diff, 0)        // N flag
-//! CY   = BoolNeg(IntLess(a, b))   // C flag (post lower of IntLessEqual)
+//! CY   = BitNot(IntLess(a, b))    // C flag, at I1 (post lower of IntLessEqual)
 //! OV   = IntSborrow(a, b)         // V flag
 //! ```
 //!
@@ -18,15 +18,15 @@
 //! these flags.  Of those:
 //!
 //! * `EQ`/`NE`   — bare `ZR` (and its negation).
-//! * `CS/CC`     — bare `CY` / `BoolNeg(CY)` — already in `(a, b)` form;
-//!   `ConstantFold` collapses `BoolNeg(BoolNeg(IntLess(a, b))) → IntLess(a, b)`.
-//! * `MI/PL`     — bare `NG` / `BoolNeg(NG)`.  `NG` is `Sless(a-b, 0)`,
+//! * `CS/CC`     — bare `CY` / `BitNot(CY)` — already in `(a, b)` form;
+//!   `ConstantFold` collapses `BitNot(BitNot(IntLess(a, b))) → IntLess(a, b)`.
+//! * `MI/PL`     — bare `NG` / `BitNot(NG)`.  `NG` is `Sless(a-b, 0)`,
 //!   which is *not* the same as `Sless(a, b)` due to subtraction overflow.
 //!   Left untouched.
-//! * `VS/VC`     — bare `OV` / `BoolNeg(OV)` — already in `(a, b)` form.
-//! * `HI/LS`     — `BoolAnd(CY, BoolNeg(ZR))` / its De Morgan dual.
+//! * `VS/VC`     — bare `OV` / `BitNot(OV)` — already in `(a, b)` form.
+//! * `HI/LS`     — `BoolAnd(CY, BitNot(ZR))` / its De Morgan dual.
 //! * `GE/LT`     — `Equal(NG, OV)` / its negation.
-//! * `GT/LE`     — `BoolAnd(BoolNeg(ZR), Equal(NG, OV))` / its De Morgan dual.
+//! * `GT/LE`     — `BoolAnd(BitNot(ZR), Equal(NG, OV))` / its De Morgan dual.
 //!
 //! This pass owns the `ZR`-leaf simplification and the seven flag-tree
 //! shapes (`EQ` / `HI` / `LS` / `LT` / `GE` / `GT` / `LE`).  After this
@@ -37,9 +37,9 @@
 //!
 //! ## Pipeline placement
 //!
-//! Run after `ConstantFold` (so `BoolNeg(BoolNeg(x)) → x` collapses
+//! Run after `ConstantFold` (so `BitNot(BitNot(x)) → x` at `I1` collapses
 //! before we look for the canonical shape) and before `IfCondInversion`
-//! (so the cond it sees has only one possible BoolNeg-wrapping layer).
+//! (so the cond it sees has only one possible BitNot-wrapping layer).
 //!
 //! ## Asm-fingerprint preservation
 //!
@@ -142,7 +142,7 @@ fn build_rules() -> Vec<BoxedRule> {
             int_eq(add(var(r1_a), neg(var(r1_b))), int_const(0)),
             int_eq(var(r1_a), var(r1_b)),
         )),
-        // 2. HI:  BoolAnd(BoolNeg(IntLess(a, b)), BoolNeg(Equal(diff, 0))) → IntLess(b, a)
+        // 2. HI:  BoolAnd(BitNot(IntLess(a, b)), BitNot(Equal(diff, 0))) → IntLess(b, a)
         boxed_rule(rewrite_rule(
             bool_and(
                 bool_not(int_lt(var(r2_a), var(r2_b))),
@@ -150,9 +150,9 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             int_lt(var(r2_b), var(r2_a)),
         )),
-        // 3. LS:  BoolOr(IntLess(a, b), Equal(diff, 0)) → BoolNeg(IntLess(b, a))
-        //    Assumes ConstantFold has cancelled the `BoolNeg(BoolNeg(IntLess(a, b)))`
-        //    chain that `BoolNeg(CY)` produces.
+        // 3. LS:  BoolOr(IntLess(a, b), Equal(diff, 0)) → BitNot(IntLess(b, a))
+        //    Assumes ConstantFold has cancelled the `BitNot(BitNot(IntLess(a, b)))`
+        //    chain that `BitNot(CY)` produces.
         boxed_rule(rewrite_rule(
             bool_or(
                 int_lt(var(r3_a), var(r3_b)),
@@ -160,7 +160,7 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             bool_not(int_lt(var(r3_b), var(r3_a))),
         )),
-        // 4. LT:  BoolNeg(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))) → IntSless(a, b)
+        // 4. LT:  BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))) → IntSless(a, b)
         boxed_rule(rewrite_rule(
             bool_not(int_eq(
                 zero_extend(int_slt(add(var(r4_a), neg(var(r4_b))), int_const(0))),
@@ -168,7 +168,7 @@ fn build_rules() -> Vec<BoxedRule> {
             )),
             int_slt(var(r4_a), var(r4_b)),
         )),
-        // 5. GE:  Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))) → BoolNeg(IntSless(a, b))
+        // 5. GE:  Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))) → BitNot(IntSless(a, b))
         boxed_rule(rewrite_rule(
             int_eq(
                 zero_extend(int_slt(add(var(r5_a), neg(var(r5_b))), int_const(0))),
@@ -176,7 +176,7 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             bool_not(int_slt(var(r5_a), var(r5_b))),
         )),
-        // 6. GT:  BoolAnd(BoolNeg(Equal(diff, 0)),
+        // 6. GT:  BoolAnd(BitNot(Equal(diff, 0)),
         //                 Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))))
         //         → IntSless(b, a)
         boxed_rule(rewrite_rule(
@@ -190,8 +190,8 @@ fn build_rules() -> Vec<BoxedRule> {
             int_slt(var(r6_b), var(r6_a)),
         )),
         // 7. LE:  BoolOr(Equal(diff, 0),
-        //                BoolNeg(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))))
-        //         → BoolNeg(IntSless(b, a))
+        //                BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))))
+        //         → BitNot(IntSless(b, a))
         boxed_rule(rewrite_rule(
             bool_or(
                 int_eq(add(var(r7_a), neg(var(r7_b))), int_const(0)),
@@ -202,9 +202,9 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             bool_not(int_slt(var(r7_b), var(r7_a))),
         )),
-        // 8. Thumb "false" flag test:  IntEqual(ZeroExtend(b), 0)  →  BoolNeg(b)
+        // 8. Thumb "false" flag test:  IntEqual(ZeroExtend(b), 0)  →  BitNot(b)
         //    Lifted by Thumb BNE / BCC / BPL / BVC, where the cond is
-        //    `IntEqual(flag, 0)` rather than `BoolNeg(flag)` directly.
+        //    `IntEqual(flag, 0)` rather than `BitNot(flag)` directly.
         //    Only sound when `b` is the 1-bit flag itself: `zext(b) == 0`
         //    equals `!b` only for an `I1` `b`.  Without the guard a chained
         //    zero-extend (e.g. `I1 → I8 → I32`) would bind `b` to the wider
@@ -217,9 +217,9 @@ fn build_rules() -> Vec<BoxedRule> {
             }),
             bool_not(var(r8_b)),
         )),
-        // 9. Thumb "true" flag test:  BoolNeg(IntEqual(ZeroExtend(b), 0))  →  b
+        // 9. Thumb "true" flag test:  BitNot(IntEqual(ZeroExtend(b), 0))  →  b
         //    Lifted by Thumb BEQ / BCS / BMI / BVS — the lift-time
-        //    canonicalisation `IntNotEqual(b, 0) → BoolNeg(IntEqual(b, 0))`
+        //    canonicalisation `IntNotEqual(b, 0) → BitNot(IntEqual(b, 0))`
         //    plus our cast-to-int coercion gives this shape.  Same `I1`
         //    guard as rule 8: replacing the test with `b` only preserves
         //    booleanness when `b` is the 1-bit flag.
@@ -235,16 +235,16 @@ fn build_rules() -> Vec<BoxedRule> {
         //
         // Rules 2/3/6/7 match the *raw* flag tree (with `Equal(diff, 0)` and
         // `Equal(zext(Sless), zext(Sborrow))`).  When the branch is lifted with
-        // inverted sense (ARM/Thumb wrap the tree in an outer `BoolNeg`), this
-        // pass can't fire until `IfCondInversion` strips that `BoolNeg`, and by
+        // inverted sense (ARM/Thumb wrap the tree in an outer `BitNot`), this
+        // pass can't fire until `IfCondInversion` strips that `BitNot`, and by
         // then ConstantFold rule 1 (`Equal(a-b,0) → Equal(a,b)`) and rule 5
-        // (`Equal(zext N, zext V) → BoolNeg(Sless(a,b))`) have already
+        // (`Equal(zext N, zext V) → BitNot(Sless(a,b))`) have already
         // decomposed the sub-terms into direct comparisons on `(a, b)`.  These
         // four rules canonicalise that decomposed form.  They are sound
         // arch-independent identities, so they are harmless where the raw
         // rules already fired (the decomposed shape simply never appears).
         //
-        // 10. GT (signed):  And(BoolNeg(Equal(a,b)), BoolNeg(Sless(a,b))) → Sless(b,a)
+        // 10. GT (signed):  And(BitNot(Equal(a,b)), BitNot(Sless(a,b))) → Sless(b,a)
         //     (a≠b) ∧ ¬(a<b)  ≡  a>b  ≡  b<a
         boxed_rule(rewrite_rule(
             bool_and(
@@ -253,7 +253,7 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             int_slt(var(r10_b), var(r10_a)),
         )),
-        // 11. LE (signed):  Or(Equal(a,b), Sless(a,b)) → BoolNeg(Sless(b,a))
+        // 11. LE (signed):  Or(Equal(a,b), Sless(a,b)) → BitNot(Sless(b,a))
         //     (a=b) ∨ (a<b)  ≡  a≤b  ≡  ¬(b<a)
         boxed_rule(rewrite_rule(
             bool_or(
@@ -262,7 +262,7 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             bool_not(int_slt(var(r11_b), var(r11_a))),
         )),
-        // 12. HI (unsigned):  And(BoolNeg(Equal(a,b)), BoolNeg(Less(a,b))) → Less(b,a)
+        // 12. HI (unsigned):  And(BitNot(Equal(a,b)), BitNot(Less(a,b))) → Less(b,a)
         boxed_rule(rewrite_rule(
             bool_and(
                 bool_not(int_eq(var(r12_a), var(r12_b))),
@@ -270,7 +270,7 @@ fn build_rules() -> Vec<BoxedRule> {
             ),
             int_lt(var(r12_b), var(r12_a)),
         )),
-        // 13. LS (unsigned):  Or(Equal(a,b), Less(a,b)) → BoolNeg(Less(b,a))
+        // 13. LS (unsigned):  Or(Equal(a,b), Less(a,b)) → BitNot(Less(b,a))
         boxed_rule(rewrite_rule(
             bool_or(
                 int_eq(var(r13_a), var(r13_b)),

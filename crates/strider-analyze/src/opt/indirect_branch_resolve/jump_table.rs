@@ -626,9 +626,9 @@ fn walk_control_for_if_bound_iter(
 ///   * `idx <= N` (lowered)  false → `idx > N`     → no upper bound.
 ///
 /// `IntCmpOp::LessEqual` and `SlessEqual` are not primitives in this
-/// IR — pcode-lift lowers them at lift time to `BoolNeg(Less(N, idx))`
+/// IR — pcode-lift lowers them at lift time to `BitNot(Less(N, idx))` at `I1`
 /// (resp. `Sless`).  This walker therefore tries two shapes:
-///   1. `BoolNeg(IntLess(IntConst(N), idx))` → bound is `N + 1`.
+///   1. `BitNot(IntLess(IntConst(N), idx))` → bound is `N + 1`.
 ///   2. `IntCmp(idx, IntConst(N))` with strict-less op → bound is `N`.
 ///
 /// We only return Some on the true-side variants; the false side
@@ -658,9 +658,9 @@ fn bound_from_if_condition(
     let graph = ctx.graph_ref();
     let cmp_node = graph.node_for_output(cond_out);
 
-    // Shape 1 (lowered <=): BoolNeg(IntLess(IntConst(N), idx))  or its
+    // Shape 1 (lowered <=): BitNot(IntLess(IntConst(N), idx))  or its
     // Sless analogue.  The original `IntLessEqual a, b` opcode lifts
-    // with operand-swap to `BoolNeg(Less(b, a))`; here `a` is `idx`
+    // with operand-swap to `BitNot(Less(b, a))`; here `a` is `idx`
     // and `b` is `IntConst(N)`, so after swap the `IntConst(N)` is on
     // the LHS of the inner Less.  `int_cmp_any` is non-commutative for
     // Less/Sless, so this orientation is the only one that matches.

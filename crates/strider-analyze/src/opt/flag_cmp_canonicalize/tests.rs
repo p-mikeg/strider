@@ -31,7 +31,7 @@ fn build_cmp_flags(
 
     let zr = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, NodeOutputType::I32)?;
     let ng = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Sless, NodeOutputType::I32)?;
-    // CY = BoolNeg(IntLess(a, b))  — post lift-time canonicalisation of IntLessEqual(b, a).
+    // CY = BitNot(IntLess(a, b))  — post lift-time canonicalisation of IntLessEqual(b, a).
     // A logical NOT is `IntUnaryOp::BitNot` at I1 (booleans are 1-bit ints).
     let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
     let cy = fb.build_int_unary_operation(alt, IntUnaryOp::BitNot, NodeOutputType::I1)?;
@@ -108,10 +108,10 @@ fn assert_if_cond_is_intcmp(
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
-/// Asserts the If's cond is `BoolNeg(IntCmpOp(op, lhs, rhs))`.  Used for
+/// Asserts the If's cond is `BitNot(IntCmpOp(op, lhs, rhs))` at `I1`.  Used for
 /// the cond shapes whose post-rewrite canonical form is a negated cmp;
 /// `IfCondInversion` (in the full pipeline, not in this test) is the
-/// pass that finally swaps the If's branches and strips the BoolNeg.
+/// pass that finally swaps the If's branches and strips the BitNot.
 fn assert_if_cond_is_neg_intcmp(
     graph: &Graph,
     if_node: NodeId,
@@ -158,7 +158,7 @@ fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
 
 #[test]
 fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
-    // AArch64 `b.ne` cond is `BoolNeg(ZR)` = `BoolNeg(Equal(Add(a, Neg(b)), 0))`.
+    // AArch64 `b.ne` cond is `BitNot(ZR)` = `BitNot(Equal(Add(a, Neg(b)), 0))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| {
         fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)
     })?;
@@ -173,7 +173,7 @@ fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
 
 #[test]
 fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
-    // AArch64 `b.hi` cond is `BoolAnd(CY, BoolNeg(ZR))`.  After ZR is
+    // AArch64 `b.hi` cond is `BoolAnd(CY, BitNot(ZR))`.  After ZR is
     // simplified to `Equal(a, b)` and the BoolAnd rule fires, the cond
     // is `IntLess(b, a)` (= `a > b unsigned`).
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
@@ -218,17 +218,17 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
 
 #[test]
 fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
-    // AArch64 `b.ls` cond is `BoolOr(BoolNeg(CY), ZR)`.  After CY's
-    // canonical form (`BoolNeg(IntLess(a, b))`) cancels the BoolNeg via
-    // ConstantFold (`BoolNeg(BoolNeg(x)) → x`), the inner OR becomes
+    // AArch64 `b.ls` cond is `BoolOr(BitNot(CY), ZR)`.  After CY's
+    // canonical form (`BitNot(IntLess(a, b))`) cancels the BitNot via
+    // ConstantFold (`BitNot(BitNot(x)) → x` at I1), the inner OR becomes
     // `BoolOr(IntLess(a, b), Equal(a, b))` and our rule rewrites it to
-    // `BoolNeg(IntLess(b, a))`.
+    // `BitNot(IntLess(b, a))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
         let neg_cy = fb.build_int_unary_operation(cy, IntUnaryOp::BitNot, NodeOutputType::I1)?;
         fb.build_int_binary_operation(neg_cy, zr, IntBinaryOp::Or, NodeOutputType::I1)
     })?;
 
-    // Run ConstantFold first to collapse `BoolNeg(BoolNeg(IntLess(a, b))) → IntLess(a, b)`.
+    // Run ConstantFold first to collapse `BitNot(BitNot(IntLess(a, b))) → IntLess(a, b)` at I1.
     let entry = fg.entry().unwrap();
     crate::opt::ConstantFold.optimize(&mut fg, entry)?;
     let entry = fg.entry().unwrap();
@@ -241,7 +241,7 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
-    // AArch64 `b.lt` cond is `BoolNeg(Equal(NG, OV))`.  Real lift passes
+    // AArch64 `b.lt` cond is `BitNot(Equal(NG, OV))`.  Real lift passes
     // `insn.inputs[0].size` (1 byte for the flag varnodes) as the operand
     // width to `build_int_cmp_operation`, so the IR has
     // `Equal(CastToInt(NG, I8), CastToInt(OV, I8))`.  The fixture matches.
@@ -279,7 +279,7 @@ fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
 
 #[test]
 fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
-    // AArch64 `b.gt` cond is `BoolAnd(BoolNeg(ZR), Equal(NG, OV))`.
+    // AArch64 `b.gt` cond is `BoolAnd(BitNot(ZR), Equal(NG, OV))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
         let neg_zr = fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)?;
         let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
@@ -298,7 +298,7 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
-    // AArch64 `b.le` cond is `BoolOr(ZR, BoolNeg(Equal(NG, OV)))`.
+    // AArch64 `b.le` cond is `BoolOr(ZR, BitNot(Equal(NG, OV)))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
         let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
         let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
@@ -319,8 +319,8 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
-    // Region = bare CY = `BoolNeg(IntLess(a, b))`.  Already in `(a, b)` form;
-    // `IfCondInversion` (a separate pass) handles the outer BoolNeg.
+    // Region = bare CY = `BitNot(IntLess(a, b))`.  Already in `(a, b)` form;
+    // `IfCondInversion` (a separate pass) handles the outer BitNot.
     let (mut fg, if_node, _a, _b) =
         build_if_with_flag_cond(|_fb, _zr, _ng, cy, _ov| Ok(cy))?;
 
@@ -359,12 +359,12 @@ fn flag_cmp_mi_is_left_alone_as_int_sless_diff() -> Result<()> {
 #[test]
 fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     // ARM Thumb's `B.EQ` lifts as `IntNotEqual(ZR, 0:1)`.  Lift-time
-    // canonicalisation lowers that to `BoolNeg(IntEqual(CastToInt(ZR), 0))`.
+    // canonicalisation lowers that to `BitNot(IntEqual(CastToInt(ZR), 0))`.
     // After two pass iterations (rule 9 strips the bool-neg-eq-zero, then
     // rule 1 simplifies ZR's `Equal(diff, 0)`), the cond is `Equal(a, b)`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| {
         // Mimic `IntNotEqual(ZR, 0:1)` post-canonicalisation:
-        //   BoolNeg(IntEqual(CastToInt(ZR, I8), 0:I8))
+        //   BitNot(IntEqual(CastToInt(ZR, I8), 0:I8))
         let zero = fb.build_int_const(0u64, NodeOutputType::I8)?;
         let zr = fb.convert_to_int_if_needed(zr, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, NodeOutputType::I8)?;
@@ -372,7 +372,7 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     })?;
 
     // Run my pass twice (or run it once via the pipeline's fixed-point loop).
-    // Two iterations let rule 9 fire on the outer BoolNeg(IntEqual(CastToInt(ZR), 0))
+    // Two iterations let rule 9 fire on the outer BitNot(IntEqual(CastToInt(ZR), 0))
     // first, then rule 1 simplify the inner Equal(diff, 0).
     let entry = fg.entry().unwrap();
     let _ = FlagCmpCanonicalize.optimize(&mut fg, entry)?;
@@ -450,7 +450,7 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
-    // (a == b) || (a < b)  ≡  a <= b  ≡  !(b < a)  →  BoolNeg(Sless(b, a))
+    // (a == b) || (a < b)  ≡  a <= b  ≡  !(b < a)  →  BitNot(Sless(b, a))
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
         let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
         let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, NodeOutputType::I32)?;
@@ -482,7 +482,7 @@ fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
-    // unsigned: (a == b) || (a < b)  →  BoolNeg(Less(b, a))
+    // unsigned: (a == b) || (a < b)  →  BitNot(Less(b, a))
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
         let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
         let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;

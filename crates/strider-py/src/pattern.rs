@@ -1177,10 +1177,10 @@ binary!(xor, into, "Pattern: `IntBinaryOp::Xor` (`a ^ b`).  Commutative.");
 binary!(int_eq, into, "Pattern: `IntCmpOp::Equal` (`a == b`).  Commutative.");
 binary!(int_lt, into, "Pattern: `IntCmpOp::Less` (unsigned `a < b`).");
 binary!(int_le, into, "Pattern: unsigned `a <= b`.  The IR has no LessEqual \
-    op; this matches the lifter-canonical `BoolNeg(IntLess(b, a))` shape.");
+    op; this matches the lifter-canonical `BitNot(IntLess(b, a))` shape (at `I1`).");
 binary!(int_slt, into, "Pattern: `IntCmpOp::Sless` (signed `a < b`).");
 binary!(int_sle, into, "Pattern: signed `a <= b`.  Matches the \
-    lifter-canonical `BoolNeg(Sless(b, a))` shape.");
+    lifter-canonical `BitNot(Sless(b, a))` shape (at `I1`).");
 binary!(int_carry, into,
     "Pattern: `IntCmpOp::Carry` (unsigned add carry-out).  Commutative.");
 binary!(int_scarry, into,
@@ -1193,7 +1193,7 @@ binary!(int_sborrow, into,
 /// "SlessEqual" / "sle", "Carry", "Scarry", "Sborrow".  Pair with
 /// `var(c)` / `int_const(K)` operands when you need a specific
 /// shape.  Note: there is no `IntNotEqual` variant — the lifter
-/// lowers `p-code INT_NOTEQUAL` to `BoolNeg(IntEqual)`, so to match
+/// lowers `p-code INT_NOTEQUAL` to `BitNot(IntEqual)` at `I1`, so to match
 /// `a != b` use `bool_not(int_cmp("Equal", a, b))`.
 #[pyfunction]
 pub fn int_cmp(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
@@ -1235,7 +1235,7 @@ fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
     // `LessEqual` / `SlessEqual` are deliberately absent: the IR has no
     // such primitives.  Python callers wanting `a <= b` must use
     // `pattern.int_le(a, b)` (or `pattern.int_sle` for signed), which
-    // construct the lowered `BoolNeg(IntLess(b, a))` shape.
+    // construct the lowered `BitNot(IntLess(b, a))` shape (at `I1`).
     static TABLE: &[(&str, strider_ir::IntCmpOp)] = &[
         ("Equal", Equal),
         ("Less", Less),
@@ -1304,7 +1304,7 @@ unary!(float_floor, "Pattern: `FloatUnaryOp::Floor` (`floor(x)`).");
 unary!(float_round, "Pattern: `FloatUnaryOp::Round` (`round(x)`).");
 
 /// Pattern: `x` is NaN.  Matches the lifter-canonical IEEE 754
-/// self-inequality `BoolNeg(FloatEqual(x, x))` (the shape Sleigh's
+/// self-inequality `BitNot(FloatEqual(x, x))` at `I1` (the shape Sleigh's
 /// `FLOAT_NAN` lowers to, and what `x != x` produces).
 //
 // `float_is_nan(x)` is implemented as the IEEE 754 self-inequality
@@ -1325,7 +1325,7 @@ pub fn float_is_nan(operand: PatLike<'_>) -> PyResult<PyPat> {
 
 binary!(float_eq, "Pattern: `FloatCmpOp::Equal` (`a == b`).  Commutative.");
 binary!(float_ne, "Pattern: float `a != b`.  No NotEqual op; matches the \
-    lifter-canonical `BoolNeg(FloatEqual(a, b))` shape.");
+    lifter-canonical `BitNot(FloatEqual(a, b))` shape (at `I1`).");
 binary!(float_lt, "Pattern: `FloatCmpOp::Less` (`a < b`).");
 binary!(float_le, "Pattern: float `a <= b`.  No LessEqual op; matches the \
     lifter-canonical `Or(FloatLess(a, b), FloatEqual(a, b))` (NaN-aware) shape.");

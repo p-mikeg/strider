@@ -75,7 +75,7 @@
 //! automatically try both operand orderings.  Symmetric integer comparisons
 //! (`int_eq`, `int_carry`, `int_scarry`) and `float_eq` likewise retry with
 //! swapped operands.  `float_ne` is **not** primitive: the lifter lowers
-//! `FLOAT_NOTEQUAL(a, b)` to `BoolNeg(FloatEqual(a, b))`, and the inner
+//! `FLOAT_NOTEQUAL(a, b)` to `BitNot(FloatEqual(a, b))` at `I1`, and the inner
 //! `FloatEqual` is what's auto-commutative — `float_ne` inherits the
 //! commutativity through that lowering.  Variant-agnostic
 //! constructors (`int_binary_any`, `bool_binary_any`, `float_binary_any`,

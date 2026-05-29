@@ -135,7 +135,7 @@ pub(crate) fn lift<R: rsleigh::MemReader>(
         Opcode::FloatNotEqual => lifter.handle_float_not_equal(insn)?,
         Opcode::FloatLessEqual => lifter.handle_float_less_equal(insn)?,
         // FloatNan: tests whether input is NaN (unary, → bool).  Lowered to
-        // BoolNeg(FloatEqual(x, x)) since IEEE 754 guarantees NaN != NaN.
+        // BitNot(FloatEqual(x, x)) at I1 since IEEE 754 guarantees NaN != NaN.
         Opcode::FloatNan => lifter.handle_float_nan(insn)?,
         // ── Float / integer conversions ───────────────────────────────────
         Opcode::FloatInt2Float => lifter.handle_float_int_to_float(insn)?,

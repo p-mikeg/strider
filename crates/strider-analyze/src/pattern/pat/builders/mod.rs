@@ -8,7 +8,7 @@
 //! `RetPat`) use `InputsSpec::Indexed`.  `IfPat` is the exception — it
 //! uses a custom `Pattern` impl so it can navigate the `If` node's two
 //! control outputs to their respective branch consumers.  The
-//! compiler-inverted layout (`If(BoolNeg(C)){B}{A}`) is canonicalised
+//! compiler-inverted layout (`If(BitNot(C)){B}{A}`) is canonicalised
 //! upstream by the `opt::IfCondInversion` pass, so `IfPat` matches the
 //! direct layout only.
 //!

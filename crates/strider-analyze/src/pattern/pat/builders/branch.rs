@@ -6,11 +6,11 @@
 //!  - true_branch matches consumer of output 0;
 //!  - false_branch matches consumer of output 1.
 //!
-//! The compiler-inverted layout (`If(BoolNeg(C)){B}{A}` for source-level
+//! The compiler-inverted layout (`If(BitNot(C)){B}{A}` for source-level
 //! `if (c) A else B`) is handled upstream of pattern matching by the
 //! `opt::IfCondInversion` canonicalisation pass: it eagerly rewrites
-//! every `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` (and collapses double
-//! negations via the existing `BoolNeg(BoolNeg(x)) → x` ConstantFold rule
+//! every `If(BitNot(C)){A}{B}` into `If(C){B}{A}` (and collapses double
+//! negations via the existing `BitNot(BitNot(x)) → x` (at `I1`) ConstantFold rule
 //! that runs first).  By the time `Matcher` walks the graph, every `If`
 //! is in canonical direct layout, and the symmetric two-layout matching
 //! that lived here is unnecessary.  Use [`crate::pattern::pat::IntoPat::capture`]

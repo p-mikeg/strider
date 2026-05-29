@@ -573,7 +573,7 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     //   - `BAnd/BOr/BXor(IntConst, IntConst)`     → integer rule 1
     //     (`IntBinaryOp(op)(IntConst, IntConst)`).
     //   - `BAnd(false, _) → false`                → `x & 0 → 0`.
-    //   - `BitNot(IntConst) → !v` at `I1` (BoolNeg) → integer rule 2
+    //   - `BitNot(IntConst) → !v` at `I1` (logical not) → integer rule 2
     //     (`IntUnaryOp(op)(IntConst)`, with `BitNot` masked to `I1`).
     //   - `x ^ true → !x`                         → `x ^ all_ones → ~x`.
     // Only the rules with no integer analogue are re-expressed here at

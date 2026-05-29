@@ -22,8 +22,8 @@ pub enum IntCmpOp {
     /// separate `Borrow` variant.
     ///
     /// `LessEqual` and `SlessEqual` are not separate variants: the
-    /// pcode-lift dispatch lowers them at lift time to `BoolNeg(Less(b, a))`
-    /// and `BoolNeg(Sless(b, a))` respectively.  Patterns and passes see
+    /// pcode-lift dispatch lowers them at lift time to `BitNot(Less(b, a))`
+    /// and `BitNot(Sless(b, a))` at `I1` respectively.  Patterns and passes see
     /// the lowered shape directly.
     Less,
     /// Unsigned carry: the addition `l + r` overflows the type's width.
@@ -126,10 +126,10 @@ pub enum FloatUnaryOp {
 /// `NotEqual` and `LessEqual` are not primitives: pcode-lift lowers them
 /// at lift time:
 ///
-/// - `FloatNotEqual(a, b)` → `BoolNeg(FloatEqual(a, b))` (sound under
+/// - `FloatNotEqual(a, b)` → `BitNot(FloatEqual(a, b))` at `I1` (sound under
 ///   IEEE 754: `Equal` is false on NaN, so `!Equal` is true).
 /// - `FloatLessEqual(a, b)` → `Or(FloatLess(a, b), FloatEqual(a, b))`
-///   (NaN-aware: cannot use `BoolNeg(Less(b, a))` because that would
+///   (NaN-aware: cannot use `BitNot(Less(b, a))` because that would
 ///   return true for NaN, while IEEE `<=` returns false).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatCmpOp {

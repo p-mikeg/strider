@@ -94,7 +94,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         Ok((lhs, rhs))
     }
 
-    /// Builds the `BoolNeg(FloatEqual(lhs, rhs))` shape shared by
+    /// Builds the `BitNot(FloatEqual(lhs, rhs))` (at `I1`) shape shared by
     /// `FloatNan` and `FloatNotEqual` and writes it to `out_vn`.
     ///
     /// Both operands are cast to a common float type
@@ -123,8 +123,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         // `is_nan(x)` ≡ `x != x` (IEEE 754: NaN ≠ NaN).  Since
         // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
-        // lift to `BoolNeg(FloatEqual)`), build the lowered shape
-        // directly: `BoolNeg(FloatEqual(input, input))`.
+        // lift to `BitNot(FloatEqual)` at `I1`), build the lowered shape
+        // directly: `BitNot(FloatEqual(input, input))` at `I1`.
         self.build_float_eq_negated(input, input, out_vn)
     }
 
@@ -147,11 +147,11 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         self.write_float_to_vn(out_vn, result)
     }
 
-    /// Lowers `FloatNotEqual(a, b)` to `BoolNeg(FloatEqual(a, b))`.
+    /// Lowers `FloatNotEqual(a, b)` to `BitNot(FloatEqual(a, b))` at `I1`.
     ///
     /// Sound under IEEE 754: `Equal` is false when either operand is
     /// NaN, so `!Equal` is true (matching the correct `NotEqual` for
-    /// NaN inputs).  Mirrors the `IntNotEqual → BoolNeg(IntEqual)`
+    /// NaN inputs).  Mirrors the `IntNotEqual → BitNot(IntEqual)`
     /// precedent.
     pub(super) fn handle_float_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
@@ -163,7 +163,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Lowers `FloatLessEqual(a, b)` to `Or(FloatLess(a, b), FloatEqual(a, b))`.
     ///
     /// IEEE 754 requires NaN-aware semantics: `a <= b` returns false
-    /// when either operand is NaN, while `BoolNeg(Less(b, a))` would
+    /// when either operand is NaN, while `BitNot(Less(b, a))` would
     /// return true for NaN inputs.  The two-cmp disjunction
     /// (`a < b ∨ a == b`) preserves the correct false-on-NaN result
     /// because both `Less` and `Equal` return false on NaN, so the

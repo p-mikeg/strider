@@ -6,9 +6,9 @@
 //! `IntEqual`, `IntLess`, `IntSless`, `IntCarry`, `IntScarry`,
 //! `IntSborrow`, and three lowered-at-lift forms:
 //!
-//! - `IntNotEqual` → `BoolNeg(IntEqual)`
-//! - `IntLessEqual(a, b)` → `BoolNeg(IntLess(b, a))`
-//! - `IntSlessEqual(a, b)` → `BoolNeg(IntSless(b, a))`
+//! - `IntNotEqual` → `BitNot(IntEqual)` at `I1`
+//! - `IntLessEqual(a, b)` → `BitNot(IntLess(b, a))` at `I1`
+//! - `IntSlessEqual(a, b)` → `BitNot(IntSless(b, a))` at `I1`
 //!
 //! These three lowerings shrink `IntCmpOp` to its primitive predicates;
 //! patterns and passes see one canonical shape per predicate instead of
@@ -161,7 +161,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     /// Shared lowering for the three negated integer comparisons
     /// (`IntNotEqual`, `IntLessEqual`, `IntSlessEqual`).  Each lowers to
-    /// `BoolNeg(IntCmpOp(...))` — one `IntCmpOp` wrapped in an
+    /// `BitNot(IntCmpOp(...))` at `I1` — one `IntCmpOp` wrapped in an
     /// `IntUnaryOp::BitNot` at `I1` — keeping the cmp-op enum free of the
     /// `NotEqual` / `LessEqual` / `SlessEqual` variants.
     ///
@@ -197,10 +197,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         self.write_vn(out_vn, negated)
     }
 
-    /// Lowers `IntNotEqual(a, b)` to `BoolNeg(IntEqual(a, b))`.
+    /// Lowers `IntNotEqual(a, b)` to `BitNot(IntEqual(a, b))` at `I1`.
     ///
     /// Matches strider's pre-existing canonical form (one IntCmpOp + one
-    /// `IntUnaryOp::BitNot` at `I1` — the BoolNeg shape — instead of an
+    /// `IntUnaryOp::BitNot` at `I1` — the 1-bit `BitNot` shape — instead of an
     /// IntCmpOp::NotEqual variant, keeping the cmp-op enum smaller).  The
     /// cmp's operand width is the *input* width, NOT the output width: the
     /// output is a 1-bit `I1`, the inputs may be any integer width.
@@ -208,20 +208,20 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         self.lower_cmp_negated(insn, IntCmpOp::Equal, false)
     }
 
-    /// Lowers `IntLessEqual(a, b)` to `BoolNeg(IntLess(b, a))`.
+    /// Lowers `IntLessEqual(a, b)` to `BitNot(IntLess(b, a))` at `I1`.
     ///
     /// Operand swap + boolean-negate: `a <= b` iff not(`b < a`).  Removes
     /// the redundant `IntCmpOp::LessEqual` variant — patterns and passes
-    /// see one canonical shape (`Less` plus an optional `BoolNeg`) instead
+    /// see one canonical shape (`Less` plus an optional `BitNot`) instead
     /// of two.
     pub(super) fn handle_int_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         self.lower_cmp_negated(insn, IntCmpOp::Less, true)
     }
 
-    /// Lowers `IntSlessEqual(a, b)` to `BoolNeg(IntSless(b, a))`.
+    /// Lowers `IntSlessEqual(a, b)` to `BitNot(IntSless(b, a))` at `I1`.
     ///
     /// Signed analogue of [`Self::handle_int_less_equal`].  Same operand
-    /// swap, same `BoolNeg` wrap, but with `IntCmpOp::Sless` for signed
+    /// swap, same `BitNot` wrap, but with `IntCmpOp::Sless` for signed
     /// comparison.
     pub(super) fn handle_int_sless_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         self.lower_cmp_negated(insn, IntCmpOp::Sless, true)

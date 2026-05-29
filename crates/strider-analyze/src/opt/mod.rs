@@ -17,7 +17,7 @@
 //! | [`ConstantFold`] | Constant evaluation, comparisons, and algebraic identities (`x+0→x`, `x^x→0`, AND-mask merging, …) |
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
 //! | [`FlagCmpCanonicalize`] | Flag-tree → single `IntCmpOp` rewrite (AArch64 NZCV-style flag chains) |
-//! | [`IfCondInversion`] | `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}` |
+//! | [`IfCondInversion`] | `If(BitNot(C)){A}{B}` → `If(C){B}{A}` |
 //! | [`RedundantPhis`] | Eliminates `Phi` / `MemPhi` / `Region` with a single reachable predecessor |
 //! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
 //!
@@ -112,11 +112,11 @@ pub use call_stack_args::CallStackArgCollect;
 /// 2. [`KnownBits`] — annotation-driven; recomputes from current phi
 ///    inputs on each run.
 /// 3. [`FlagCmpCanonicalize`] — flag-tree → single `IntCmpOp`
-///    rewrite; runs after `ConstantFold` so `BoolNeg(BoolNeg(_))`
+///    rewrite; runs after `ConstantFold` so `BitNot(BitNot(_))` at `I1`
 ///    has collapsed first.
-/// 4. [`IfCondInversion`] — canonicalises `If(BoolNeg(C))` into
+/// 4. [`IfCondInversion`] — canonicalises `If(BitNot(C))` into
 ///    `If(C)` with branches swapped; runs after `FlagCmpCanonicalize`
-///    so the cond it sees is at most one `BoolNeg`-deep.
+///    so the cond it sees is at most one `BitNot`-deep.
 #[must_use]
 pub fn stable_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
@@ -127,12 +127,12 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
     p.add(KnownBits);
     // FlagCmpCanonicalize: rewrites flag-tree If conds (AArch64 NZCV-style)
     // into single IntCmpOp shapes against the original `(a, b)`.  Runs
-    // before IfCondInversion so the BoolNeg-wrapped outputs of the LS / GE / LE
+    // before IfCondInversion so the BitNot-wrapped outputs of the LS / GE / LE
     // rules get swapped to direct shape next.
     p.add(FlagCmpCanonicalize);
-    // IfCondInversion: canonicalises `If(BoolNeg(C))` into `If(C)` with
+    // IfCondInversion: canonicalises `If(BitNot(C))` into `If(C)` with
     // branches swapped.  Runs after ConstantFold so the
-    // `BoolNeg(BoolNeg(x)) → x` rule has collapsed double negations
+    // `BitNot(BitNot(x)) → x` rule (at `I1`) has collapsed double negations
     // first, and so any constant-cond `If` (an `IntConst` typed `I1`) has
     // already had its cond simplified (we don't want to swap branches under
     // a constant cond, because `DeadBranchElimination` would then strip the
@@ -186,7 +186,7 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 1. [`ConstantFold`] — constant evaluation and algebraic identities
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
 /// 3. [`FlagCmpCanonicalize`] — flag-tree → single `IntCmpOp` rewrite
-/// 4. [`IfCondInversion`] — `If(BoolNeg(C)) → If(C)` with branches swapped
+/// 4. [`IfCondInversion`] — `If(BitNot(C)) → If(C)` with branches swapped
 /// 5. [`RedundantPhis`] — `Phi` / `MemPhi` / `Region` elimination
 /// 6. [`DeadBranchElimination`] — `If(const)` branch pruning
 #[must_use]
