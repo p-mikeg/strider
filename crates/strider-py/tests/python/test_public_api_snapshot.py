@@ -35,7 +35,6 @@ EXPECTED_TOP = {
     "OptimizerPipeline",
     "Program",
     "ReadOnlyMemory",
-    "RelocationStats",
     "RunResult",
     "Sleigh",
     "SleighArch",

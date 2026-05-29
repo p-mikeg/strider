@@ -24,83 +24,6 @@ use pyo3::types::PyBytes;
 use crate::errors::into_strider_err;
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 
-// ── PyRelocationStats — return type for apply_elf_relocations ────────────
-
-/// Counts from a single `apply_elf_relocations` run.  Mirrors the
-/// fields of `strider_reader::elf::RelocationStats` one-to-one.  Useful for
-/// post-load diagnostics: a binary that reports `applied = 0` but
-/// `seen > 0` is signalling that every relocation kind it carries is
-/// unsupported (or every target is undefined / outside the loaded
-/// region set).
-///
-/// `unsupported_r_types` lists the raw ELF `r_type` codes the applier
-/// classified as unsupported.  Use it to self-diagnose what's
-/// missing on a specific binary — pair with the System V ABI
-/// per-arch relocation tables to identify each code.
-#[pyclass(name = "RelocationStats", module = "strider", frozen)]
-#[derive(Clone)]
-pub struct PyRelocationStats {
-    /// Total relocations seen across every iterated relocation table.
-    #[pyo3(get)]
-    pub seen: usize,
-    /// Relocations the applier patched into the loaded regions.
-    #[pyo3(get)]
-    pub applied: usize,
-    /// Relocations skipped because the target symbol is legitimately
-    /// unresolvable at static-analysis time (undefined externs, weak
-    /// symbols referencing absent libraries).
-    #[pyo3(get)]
-    pub skipped_unresolved_target: usize,
-    /// Relocations skipped because their kind / size / encoding isn't
-    /// one the applier knows how to write (e.g. ARM Thumb-branch
-    /// encodings, platform-specific TLS variants).  See
-    /// `unsupported_r_types` for the raw `r_type` codes.
-    #[pyo3(get)]
-    pub skipped_unsupported_kind: usize,
-    /// Relocations whose site address didn't fall inside any loaded
-    /// region (e.g. `.data` / `.bss` relocations when only code and
-    /// read-only sections were loaded).
-    #[pyo3(get)]
-    pub skipped_no_region: usize,
-    /// Sorted, deduped raw ELF `r_type` codes the applier classified as
-    /// unsupported (each incremented `skipped_unsupported_kind`).  Pair
-    /// with the System V ABI per-arch relocation tables to identify each
-    /// code; empty when `skipped_unsupported_kind == 0`.
-    #[pyo3(get)]
-    pub unsupported_r_types: Vec<u32>,
-}
-
-#[pymethods]
-impl PyRelocationStats {
-    /// Human-readable summary of the relocation counts.
-    fn __repr__(&self) -> String {
-        format!(
-            "RelocationStats(seen={}, applied={}, skipped_unresolved_target={}, \
-             skipped_unsupported_kind={}, skipped_no_region={}, \
-             unsupported_r_types={:?})",
-            self.seen,
-            self.applied,
-            self.skipped_unresolved_target,
-            self.skipped_unsupported_kind,
-            self.skipped_no_region,
-            self.unsupported_r_types,
-        )
-    }
-}
-
-impl From<strider_reader::elf::RelocationStats> for PyRelocationStats {
-    fn from(s: strider_reader::elf::RelocationStats) -> Self {
-        Self {
-            seen: s.seen,
-            applied: s.applied,
-            skipped_unresolved_target: s.skipped_unresolved_target,
-            skipped_unsupported_kind: s.skipped_unsupported_kind,
-            skipped_no_region: s.skipped_no_region,
-            unsupported_r_types: s.unsupported_r_types,
-        }
-    }
-}
-
 // ── PyMemoryMap (data-only fast path) ────────────────────────────────────
 
 /// Plain-data inner state shared by every clone of a `PyMemoryMap`.
@@ -796,7 +719,6 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLoadedElf>()?;
     m.add_class::<PyMemReader>()?;
     m.add_class::<PyReadOnlyMemory>()?;
-    m.add_class::<PyRelocationStats>()?;
     m.add_function(wrap_pyfunction!(load_elf, m)?)?;
     Ok(())
 }

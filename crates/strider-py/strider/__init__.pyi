@@ -150,14 +150,6 @@ def load_elf(path: str, apply_relocations: bool = ...) -> _LoadedElf:
     wraps).  Prefer `strider.load(path)` for the high-level surface."""
     ...
 
-class RelocationStats:
-    seen: int
-    applied: int
-    skipped_unresolved_target: int
-    skipped_unsupported_kind: int
-    skipped_no_region: int
-    unsupported_r_types: List[int]
-
 class MemReader:
     """Subclass and override `read(addr, size) -> Optional[bytes]` to
     feed the analysis pipeline from a Python data source.  Each `read`
