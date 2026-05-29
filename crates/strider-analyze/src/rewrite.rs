@@ -68,11 +68,11 @@ pub struct GraphRewriter<'a> {
 }
 
 impl<'a> GraphRewriter<'a> {
-    /// Wraps a built [`strider_ir::Graph`].
+    /// Wraps a built [`strider_ir::Function`].
     ///
     /// # Errors
     ///
-    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// Returns an error if the function has not been built (i.e. `entry`
     /// is `None`).
     pub fn try_wrap_built(built: &'a mut strider_ir::Function) -> Result<Self> {
         let entry = built.entry().ok_or_else(|| {

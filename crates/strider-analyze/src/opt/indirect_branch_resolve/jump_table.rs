@@ -100,7 +100,7 @@ pub fn classify_jump_table(
 
     // Sort + dedup so the resulting Multiple is canonical (matches
     // the orchestrator's edge-set comparison protocol — see the
-    // ValuePhi arm in classify.rs for the same rationale).
+    // anonymous `Phi` arm in classify.rs for the same rationale).
     let mut targets = targets;
     targets.sort_unstable();
     targets.dedup();
@@ -703,7 +703,7 @@ fn bound_from_if_condition(
     // single-input phis, which patterns can't express directly:
     // intermediate orchestrator iterations omit RedundantPhis, so
     // the dispatch region's read of `idx` is wrapped in a
-    // single-input VarPhi distinct from the `If`'s direct read.
+    // single-input `Phi` distinct from the `If`'s direct read.
     let lhs = m.output(idx_var)?;
     if !same_value(graph, lhs, idx_output) {
         return None;
@@ -760,7 +760,7 @@ fn is_sign_bit_known_zero(
 ///
 /// Two `NodeOutputId`s match when:
 ///   * They refer to the same output (the trivial case).
-///   * One is the OUTPUT of a single-input `VarPhi` / `ValuePhi`
+///   * One is the OUTPUT of a single-input unit `Phi` (tagged or anonymous)
 ///     whose only value input is the other.  This covers the common
 ///     pattern where the entry region's `If(idx < N)` reads idx
 ///     directly while the dispatch region's `Load[..idx*stride..]`
@@ -772,7 +772,7 @@ fn is_sign_bit_known_zero(
 /// We follow the chain transitively so deeper phi nests collapse
 /// the same way.  A visited set protects against cycles (back-edges
 /// of unsimplified loops); on cycle, we return false rather than
-/// looping — same conservative direction as `walk_control_for_if_bound`.
+/// looping — same conservative direction as `walk_control_for_if_bound_iter`.
 fn same_value(graph: &Graph, a: NodeOutputId, b: NodeOutputId) -> bool {
     // Bidirectionally chase trivial phis: see if either side reduces
     // to the other.  Cap depth to avoid pathological chains.

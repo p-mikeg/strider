@@ -2,8 +2,8 @@
 //! machinery lives in [`crate::opt::sp_expr`].
 //!
 //! `CallStackArgCollect` — post-pass that walks the memory chain leading
-//! into each `Call` node, collects positional `StackStore` data outputs, and
-//! appends them as additional Call inputs.
+//! into each `Call` node, collects positional stack-tagged `Store` data
+//! outputs, and appends them as additional Call inputs.
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
@@ -14,13 +14,13 @@ use crate::opt::sp_expr::{SpExprMemo, decompose_sp};
 #[cfg(test)]
 mod tests;
 
-/// Walks memory backward from `mem`, collecting `StackStore` data outputs as
-/// positional call arguments by matching each store's offset against the
-/// convention's slot table.
+/// Walks memory backward from `mem`, collecting stack-tagged `Store` data
+/// outputs as positional call arguments by matching each store's offset
+/// against the convention's slot table.
 ///
 /// Two safety rules govern collection:
 ///
-/// **Set membership.** Each chain `StackStore`'s `offset - anchor` must be
+/// **Set membership.** Each chain stack-tagged `Store`'s `offset - anchor` must be
 /// in the convention's `stack_arg_offsets` set.  An offset outside the set
 /// terminates the walk — that's the local/saved-register guard.  This rule
 /// assumes a frame's local-variable region and its outgoing-args region
@@ -69,7 +69,7 @@ mod tests;
 ///     and SysV) — args are stored at fixed positive offsets from the
 ///     post-prologue SP, then the `call` instruction's implicit ret-addr
 ///     push lands at SP-4 (or SP-8) and Sleigh lifts that push as a
-///     `Store`/`StackStore` node feeding the Call's memory input.  The
+///     (stack-tagged) `Store` node feeding the Call's memory input.  The
 ///     ret-addr push is the chain head, anchor `rel == 0` is not in
 ///     `stack_arg_offsets` (which starts at +4 / +8), and the
 ///     `is_first_store` exception lets the walker skip the OOW
@@ -90,7 +90,7 @@ mod tests;
 /// volatile global writes (`volatile int g = …;` barriers commonly
 /// inserted by gcc/clang at `-O2`) interleaved between the actual
 /// stack-arg pushes.  Any SP-rooted `Store` (whether in-arg-range or
-/// not) and any `StackStorePhi` is treated conservatively as
+/// not) and any `MemPhi` is treated conservatively as
 /// chain-terminating.
 ///
 /// Returns the *dense prefix* of filled slots: indices `0..k` where every
@@ -193,8 +193,8 @@ fn collect_stack_args_in_chain_order(
                     }
                 }
             }
-            // `MemPhi` (control-flow join), `StackStorePhi`, and any
-            // other non-Store memory producer terminate the chain.
+            // `MemPhi` (control-flow join) and any other non-Store
+            // memory producer terminate the chain.
             _ => return dense_prefix(slots),
         };
         match anchor_space {
@@ -328,8 +328,8 @@ fn try_collect_stack_args(
     Ok(OptimizationResult::Changed)
 }
 
-/// Walks backward from each `Call`'s memory input through `StackStore` nodes
-/// to reconstruct stack-passed arguments and appends them as extra `Call`
+/// Walks backward from each `Call`'s memory input through stack-tagged `Store`
+/// nodes to reconstruct stack-passed arguments and appends them as extra `Call`
 /// inputs in positional order.  Intended to run *once*, as an
 /// [`OptimizerPipeline::add_post_pass`][crate::opt::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.

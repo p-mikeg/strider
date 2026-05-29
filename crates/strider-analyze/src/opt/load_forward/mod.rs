@@ -117,7 +117,7 @@ fn try_forward_load(
     let load_size = load_ty.byte_size() as i64;
     // Two-phase walk: probe is read-only and decides whether forwarding
     // can succeed; only on full success does realize commit fresh nodes
-    // (Truncate / ShiftRight / ValuePhi) to the graph. This prevents
+    // (Truncate / ShiftRight / anonymous Phi) to the graph. This prevents
     // partial walks that fail downstream from leaving orphan nodes in
     // the arena.
     let mut visited: entity_utils::DenseEntitySet<NodeOutputId> = entity_utils::DenseEntitySet::new();
@@ -139,8 +139,8 @@ fn try_forward_load(
 
     // Absorb the rewritten Load's asm-fingerprint into the forwarded
     // producer.  `realize` may have returned an existing-attributed node
-    // (when the value comes straight from a StackStore's data slot) or
-    // freshly synthesised one (Truncate / ShiftRight / ValuePhi).  When
+    // (when the value comes straight from a stack-tagged Store's data slot) or
+    // freshly synthesised one (Truncate / ShiftRight / anonymous Phi).  When
     // `realize` synthesises multi-node chains (BE narrow path emits
     // `Truncate(ShiftRight(...))`), each intermediate node carries the
     // attribution via `create_node_attributed(..., &[load])` inside
@@ -160,7 +160,7 @@ fn try_forward_load(
 /// the only function that creates fresh IR nodes for forwarding).  Splitting
 /// the walk this way prevents a partial probe — one that succeeds for some
 /// MemPhi predecessors and fails for others — from leaking orphan nodes
-/// (`Truncate`, `ShiftRight`, `ValuePhi`) into the graph arena.
+/// (`Truncate`, `ShiftRight`, anonymous `Phi`) into the graph arena.
 enum ResolveShape {
     /// The forwarded value is an existing graph output and no new IR is
     /// needed.
@@ -174,8 +174,8 @@ enum ResolveShape {
     },
     /// MemPhi resolution.  `realize` recursively materializes each
     /// predecessor first; if every predecessor materializes to the same
-    /// `NodeOutputId` it returns that one without creating a `ValuePhi`,
-    /// otherwise it creates a `ValuePhi { phi_token, vals... }`.
+    /// `NodeOutputId` it returns that one without creating a `Phi`,
+    /// otherwise it creates an anonymous `Phi { phi_token, vals... }`.
     Phi {
         phi_token: NodeOutputId,
         preds: Vec<ResolveShape>,
@@ -456,10 +456,10 @@ fn probe(
 }
 
 /// Materializes a [`ResolveShape`] into a concrete `NodeOutputId`,
-/// creating any new IR nodes (`Truncate`, `ShiftRight`, `ValuePhi`) only
+/// creating any new IR nodes (`Truncate`, `ShiftRight`, anonymous `Phi`) only
 /// once the entire shape is known.  The dedup of identical predecessor
 /// values for `Phi` happens here as well: if every realized predecessor
-/// shares the same output id, no `ValuePhi` is created.
+/// shares the same output id, no `Phi` is created.
 ///
 /// `Result<_, _>` is needed only because `make_int_const` can fail when
 /// the IR rejects the requested constant; structurally the realization
@@ -560,7 +560,7 @@ fn realize_with_depth(
                 resolved.push(realize_with_depth(ctx, p, load_ty, endianness, load, depth + 1)?);
             }
             // Dedup: if all per-predecessor results coincide, skip the
-            // ValuePhi — returning the common value keeps the graph
+            // anonymous Phi — returning the common value keeps the graph
             // smaller and exposes it to later passes more cleanly.
             // `windows(2).all` is vacuously true for len < 2, but `probe`
             // already rejects MemPhi with fewer than 2 mem predecessors,
@@ -586,32 +586,32 @@ fn realize_with_depth(
 // ── Public helper for the indirect-branch classifier ──────
 //
 // `try_forward_load` rewrites the load by bottoming-out the memory chain at
-// a `StackStore` and re-using its data slot.  When the load address has a
-// concrete SP-relative offset, that's straightforward.  But the 
+// a stack-tagged `Store` and re-using its data slot.  When the load address has a
+// concrete SP-relative offset, that's straightforward.  But the
 // computed-goto-via-stack-array shape has a *symbolic* offset
 // (`sp + base + idx*stride`) — the per-i target lives at offset
 // `base + i*stride` for i in [0, N), bounded by KnownBits.
 //
 // The indirect-branch classifier needs to enumerate per-i values without rewriting
 // the load (no IR primitive expresses "value depends on idx" without a
-// `Region` for ValuePhi to bind to).  This helper exposes the
-// `StackStore`-chain walk as a pub function: given a memory chain root
+// `Region` for an anonymous `Phi` to bind to).  This helper exposes the
+// stack-tagged-`Store`-chain walk as a pub function: given a memory chain root
 // and a concrete offset, return the `NodeOutputId` of the value stored
 // there (or `None` when the chain has no matching store, has an aliasing
 // intermediate, or terminates at `InitialMemory`).
 //
-// SOUNDNESS — same algorithm as [`probe`]'s `StackStore` / `Store`
+// SOUNDNESS — same algorithm as [`probe`]'s stack-tagged / raw `Store`
 // arms, restricted to the no-MemPhi case (the classifier asks one
 // concrete offset at a time):
-//   * `StackStore { offset == requested }` with matching value type:
+//   * stack-tagged `Store { offset == requested }` with matching value type:
 //     return the stored `data` output.  This is sound because no later
 //     write can have aliased the slot — we walked here from the load's
 //     memory input through strictly-earlier stores, and the offset
 //     equality check is exact (StackOffsetDetect tagged it).
-//   * `StackStore` at a different offset: skip iff the byte ranges are
+//   * stack-tagged `Store` at a different offset: skip iff the byte ranges are
 //     provably disjoint (`ranges_disjoint`); recurse on the prior
 //     memory.
-//   * `Store(_)` (raw, non-StackStore): probe its address.  If it's
+//   * `Store(_)` (raw, untagged): probe its address.  If it's
 //     not SP-rooted (`decompose_sp` returns `None`), it cannot alias
 //     a stack slot; recurse.  If it IS SP-rooted (`Terminal`), recurse
 //     iff disjoint.  `SpExpr::Phi` (SP through a phi) is conservatively
@@ -621,12 +621,12 @@ fn realize_with_depth(
 //     region (the prologue stores and the dispatch load live in the
 //     same region) and the classifier asks one offset at a time, so
 //     the "all preds agree" reasoning the existing `probe` does for
-//     ValuePhi synthesis is unnecessary here.  Future extension:
+//     anonymous-`Phi` synthesis is unnecessary here.  Future extension:
 //     handle MemPhi by recursing into preds and requiring all to
 //     return the same `NodeOutputId`.
 //   * `InitialMemory` / anything else: return `None`.
 //
-// Type strictness: the helper returns `None` if the StackStore's value
+// Type strictness: the helper returns `None` if the stack-tagged Store's value
 // type doesn't equal `value_type` exactly.  Narrow-load-from-wider-store
 // (which `probe` handles via `ResolveShape::Narrow`) is intentionally
 // NOT implemented here — the classifier only consumes IntConst targets,
@@ -698,7 +698,7 @@ pub(crate) fn find_stack_stored_value_at_offset(
     walk_memo: &mut StackStoredValueMemo,
 ) -> Option<NodeOutputId> {
     // Iterative form (was recursive; deep prologues blew the stack).
-    // Walks the memory-chain backward via StackStore.inputs[0] or
+    // Walks the memory-chain backward via the Store's inputs[0] or
     // Store-passthrough's prev_mem.  Stack-safe at any chain depth.
     //
     // Visited stack records every `mem` node we passed through so we

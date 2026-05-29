@@ -21,8 +21,8 @@
 //!   whose memory input is reachable backward from a shadowing store — the
 //!   walk is a DFS through memory predecessors that treats `MemPhi` as a
 //!   fork where every predecessor must be non-disqualifying.  Disqualifying
-//!   nodes: `StackStore { offset: K }`, `StackStorePhi` whose per-predecessor
-//!   offsets contain `K`, and un-decomposed `Store` (may alias —
+//!   nodes: a stack-tagged `Store { offset: K }`, a `MemPhi` whose
+//!   per-predecessor offsets contain `K`, and un-decomposed `Store` (may alias —
 //!   conservative).  Non-disqualifying: `InitialMemory`, `Call`,
 //!   `CallOther`, and stores at other offsets.  After
 //!   filtering, emit only those indices that form a gap-free prefix starting

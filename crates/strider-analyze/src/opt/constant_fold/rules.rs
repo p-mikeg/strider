@@ -289,9 +289,13 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-/// Bitcast identity rules:
+/// Bitcast, extend/truncate round-trip, and truncate-folding rules:
 /// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
 /// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
+/// - `Truncate(ZeroExtend(x)) → x` / `Truncate(SignExtend(x)) → x` (width-matched)
+/// - narrow-mul-through-sext: `Truncate(Mul(SignExt(a), SignExt(b))) → Mul(a, b)`
+/// - drop-high-half of a register-merge `Or` under a truncate
+/// - drop a redundant low-bits AND mask under a truncate
 static BITCAST_EXTEND_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> =
     LazyLock::new(build_bitcast_extend_rules);
 
@@ -378,7 +382,7 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-/// Single-operand algebraic identities for integer binary operations.
+/// Algebraic identities for integer binary operations.
 ///
 /// Rules ported from hand-written arms:
 /// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
