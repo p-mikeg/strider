@@ -110,18 +110,20 @@ where
     pub per_address_ccs_unbuilt: FxHashMap<u64, strider_target::CallingConvention>,
 }
 
-/// Per-iteration index built from a lift's [`RegionLiftHandles`]
-/// snapshot.  Maps a region's exit-control `NodeOutputId` to the
-/// region's exit `vn_to_value` table — what
+/// A single region's exit `vn_to_value` table: maps each exit varnode
+/// (`rsleigh::Vn`) to the `NodeOutputId` producing its value — what
 /// [`crate::opt::AnchorCallingContext::for_anchor`] needs to thread
 /// ABI varnodes through an in-place edit.
 ///
 /// Owned by value (each `RegionLiftHandles` is consumed once, by
-/// `from_handles`, via `into_iter`).  Keyed by `NodeOutputId` which
-/// impls `EntityRef`, so `FxHashMap` (not `std::HashMap`'s SipHash) is
-/// the appropriate entity-keyed map per CLAUDE.md.
+/// `from_handles`, via `into_iter`).
 type ExitVnToValue = rustc_hash::FxHashMap<rsleigh::Vn, NodeOutputId>;
 
+/// Per-iteration index built from a lift's [`RegionLiftHandles`]
+/// snapshot.  Maps a region's exit-control `NodeOutputId` to that
+/// region's [`ExitVnToValue`] table.  Keyed by `NodeOutputId` which
+/// impls `EntityRef`, so `FxHashMap` (not `std::HashMap`'s SipHash) is
+/// the appropriate entity-keyed map per CLAUDE.md.
 struct RegionIndex {
     by_exit_control: rustc_hash::FxHashMap<NodeOutputId, ExitVnToValue>,
 }
@@ -136,7 +138,7 @@ impl RegionIndex {
         Self { by_exit_control }
     }
 
-    fn region_for_placeholder(
+    fn exit_vars_for_placeholder(
         &self,
         graph: &strider_ir::Graph,
         placeholder: NodeId,
@@ -297,7 +299,7 @@ impl VnCache {
     /// the cache is empty and every region is scanned.  Region splits leave
     /// the cache slightly conservative (an over-tracked vn allocates one
     /// extra `InitialVar` and never miscompiles).
-    fn scan_new(&mut self, cfg: &Cfg) -> Vec<rsleigh::Vn> {
+    fn scan_new_regions(&mut self, cfg: &Cfg) -> Vec<rsleigh::Vn> {
         for region in cfg.regions().skip(self.region_count) {
             for wrapped in region.insns.iter() {
                 for vn in wrapped.insn.all_vns() {
@@ -449,7 +451,7 @@ where
     ///
     /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
     /// IR lift via [`Strider::analyze_cfg_with`], harvests the post-lift
-    /// varnode delta via [`VnCache::scan_new`], and finishes with the stable
+    /// accumulated varnode set via [`VnCache::scan_new_regions`], and finishes with the stable
     /// optimiser pipeline.  The named helpers carry the per-step
     /// commentary.
     #[allow(clippy::type_complexity)]
@@ -476,7 +478,7 @@ where
             &self.decode_cache,
         )?;
 
-        let all_vns = self.vn_cache.scan_new(&cfg);
+        let all_vns = self.vn_cache.scan_new_regions(&cfg);
 
         let AnalyzeOutcome {
             mut function,
@@ -631,7 +633,7 @@ where
                 continue;
             };
             let placeholder_return =
-                crate::opt::find_placeholder_return_for_anchor(function.graph(), *anchor_output);
+                crate::opt::find_indirect_branch_placeholder(function.graph(), *anchor_output);
             let can_inplace = match (&resolved, placeholder_return) {
                 (ResolvedTargets::LinkRegister, Some(_)) => true,
                 (ResolvedTargets::Single(target), Some(_)) => is_tail_call(
@@ -696,7 +698,7 @@ where
         Ok(unresolved
             .into_iter()
             .filter(|(_, anchor)| {
-                crate::opt::find_placeholder_return_for_anchor(self.function.graph(), *anchor).is_some()
+                crate::opt::find_indirect_branch_placeholder(self.function.graph(), *anchor).is_some()
             })
             .collect())
     }
@@ -854,7 +856,7 @@ impl crate::opt::AnchorCallingContext {
         // function-default.
         let cc: &strider_target::BuiltCallingConvention = override_cc
             .unwrap_or_else(|| strider.calling_convention());
-        let region = region_index.region_for_placeholder(function, placeholder);
+        let region = region_index.exit_vars_for_placeholder(function, placeholder);
         let mut ctx = Self::default();
 
         // Each `read_or_init_var` call is O(1) against the function's

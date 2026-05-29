@@ -484,7 +484,7 @@ where
         driver.builder.set_lift_addr(term_addr);
         let term_res = (|| -> Result<()> {
             match special_terminator {
-                Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
+                Some(SpecialTerm::UnresolvedIndirect { target_vn, addr }) => {
                     driver.handle_unresolved_indirect_branch(&target_vn, addr)?;
                 }
                 Some(SpecialTerm::Switch(target_vn, targets)) => {
@@ -608,7 +608,7 @@ enum SpecialTerm {
     /// `Call`/`Return` (link-register / tail-call shapes) or replaces
     /// the region terminator on CFG rebuild (jump-table shape).  Skip
     /// the trailing `BranchIndirect` p-code insn.
-    PendingIndirect {
+    UnresolvedIndirect {
         target_vn: rsleigh::Vn,
         addr: strider_lift::cfg::PcodeInsnAddr,
     },
@@ -627,7 +627,7 @@ impl SpecialTerm {
     fn from_terminator(t: &strider_lift::cfg::RegionTerminator) -> Option<Self> {
         match t {
             strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
-                Some(SpecialTerm::PendingIndirect {
+                Some(SpecialTerm::UnresolvedIndirect {
                     target_vn: *target_vn,
                     addr: *addr,
                 })
@@ -643,7 +643,7 @@ impl SpecialTerm {
 
     /// Returns true when the per-region per-insn loop should skip
     /// `opcode` because the post-loop dispatcher will lift it via a
-    /// dedicated handler.  `PendingIndirect`/`Switch` skip
+    /// dedicated handler.  `UnresolvedIndirect`/`Switch` skip
     /// `BranchIndirect`; `TailCall` skips `Branch` (the standard
     /// direct-tail-call case), `CondBranch` (the
     /// `strider_lift::cfg::RegionBuilder` collapse path for a
@@ -667,7 +667,7 @@ impl SpecialTerm {
     /// terminator, never an inner pcode op.
     fn skips_opcode(&self, opcode: rsleigh::Opcode) -> bool {
         match self {
-            SpecialTerm::PendingIndirect { .. } | SpecialTerm::Switch(..) => {
+            SpecialTerm::UnresolvedIndirect { .. } | SpecialTerm::Switch(..) => {
                 opcode == rsleigh::Opcode::BranchIndirect
             }
             SpecialTerm::TailCall(..) => matches!(

@@ -40,8 +40,8 @@ use super::super::PerRegionDriver;
 /// - `targets_and_regions.len() == 1` — emits a plain
 ///   `build_branch(target_0)` with no comparison.
 ///
-/// `caller_region` appears in the empty-targets error for diagnostics
-/// only.
+/// `dispatch_region` (the region terminated by the Switch) appears in
+/// the empty-targets error for diagnostics only.
 ///
 /// # Errors
 ///
@@ -53,11 +53,11 @@ pub(crate) fn build_switch_if_ladder(
     builder: &mut strider_ir::FunctionBuilder,
     idx: strider_ir::Value,
     targets_and_regions: &[(u64, strider_ir::RegionId)],
-    caller_region: strider_lift::cfg::RegionId,
+    dispatch_region: strider_lift::cfg::RegionId,
 ) -> Result<()> {
     let n = targets_and_regions.len();
     if n == 0 {
-        bail!("switch terminator at region {caller_region:?} has no targets");
+        bail!("switch terminator at region {dispatch_region:?} has no targets");
     }
     if n == 1 {
         // Single target — degenerate ladder is just an unconditional
@@ -201,6 +201,11 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
     /// Lowers a p-code `Return` into the IR's calling-convention-aware return
     /// node, emitting the convention's `ret_val_regs` in ABI order.
+    ///
+    /// Also handles the `BranchIndirect` link-register-return case (e.g. ARM
+    /// `bx lr`): the dispatcher routes both `Opcode::Return` and
+    /// `Opcode::BranchIndirect` here, since both emit a CC `Return` (tail
+    /// calls / jump tables are split off earlier into dedicated terminators).
     ///
     /// The p-code `Return` op carries a single fabricated input (typically the
     /// popped return address on stack-push ISAs).  That value is *not* an ABI
