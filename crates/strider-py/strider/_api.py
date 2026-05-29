@@ -7,10 +7,16 @@ This module adds the three-line convenience workflow:
 
 ```python
 import strider
-s = strider.load("path/to/file.elf")     # → Strider
-a = s.analyze("function_name")            # → Analysis
-matches = a.find(strider.pattern.call())  # → list[Match]
+prog = strider.load("path/to/file.elf")   # → Program
+a = prog.analyze("function_name")          # → Analysis
+matches = a.find(strider.pattern.call())   # → list[Match]
 ```
+
+`strider.load(path)` returns a `Program` — one object that *is* the
+loaded ELF.  It wires the code + ROM readers internally and exposes
+symbols, sizes, the entry point, raw reads, and `analyze()`.
+`MemoryMap` drops back to a low-level reader of raw byte regions for
+non-ELF / custom-source / firmware-blob cases.
 
 Arch detection is done by reading the first 20 bytes of the ELF
 header (magic + EI_CLASS + EI_DATA + e_machine).  No pyelftools
@@ -84,8 +90,8 @@ def _arch_and_cc_for_elf(
 
     For ARM the choice between `arm` and `arm_thumb` is driven by
     the low bit of the entry-point address (Thumb interworking
-    convention).  Callers that want a different default can
-    instantiate `Strider(...)` directly.
+    convention).  Callers that want a different default can pass an
+    explicit `arch=` / `cc=` to `strider.load(...)`.
     """
     em = header.e_machine
     le = header.is_little_endian
@@ -128,7 +134,7 @@ def _arch_and_cc_for_elf(
         return arch, CallingConvention.powerpc64_elf_v2()
     raise ValueError(
         f"unsupported ELF e_machine={em}; pass an explicit SleighArch + "
-        f"CallingConvention to strider.Strider(...) instead"
+        f"CallingConvention via strider.load(path, arch=..., cc=...) instead"
     )
 
 
@@ -161,61 +167,87 @@ def _effective_arch_and_addr(
     return arch, raw_addr
 
 
-# ── Strider facade ────────────────────────────────────────────────────────
+# ── Program facade ──────────────────────────────────────────────────────────
 
 
-def load(path: str) -> "Strider":
-    """Load an ELF binary and return a `Strider` instance with the
-    arch and userland calling convention auto-picked from the ELF
-    header.
+def load(
+    path: str,
+    *,
+    arch: Optional[SleighArch] = None,
+    cc: Optional[CallingConvention] = None,
+    apply_relocations: bool = False,
+) -> "Program":
+    """Load an ELF binary and return a `Program` — one object that *is*
+    the loaded binary, with the arch and userland calling convention
+    auto-picked from the ELF header.
 
-    For non-userland workflows (Linux kernel, syscall stubs,
-    embedded firmware with a custom CC) construct `Strider`
-    directly with explicit `arch=` / `cc=` arguments.
+    For non-userland workflows (Linux kernel, syscall stubs, embedded
+    firmware with a custom CC) pass an explicit `arch=` / `cc=`, e.g.:
+
+    ```python
+    prog = strider.load(
+        "vmlinux",
+        apply_relocations=True,
+        cc=strider.CallingConvention.x86_64_linux_kernel(),
+    )
+    ```
+
+    `apply_relocations` widens the loaded section set (`.data.rel.ro`,
+    `.got`, …) and patches every understood relocation in-place — set
+    it for ET_DYN binaries (kernels, PIE userland) whose `.text` or
+    function-pointer tables ship with unresolved relocations.
 
     Raises:
       * `FileNotFoundError` — path does not exist.
-      * `ValueError` — file is not an ELF or the e_machine is
-        not one of the supported architectures.
+      * `ValueError` — file is not an ELF or the e_machine is not one
+        of the supported architectures (only when `arch`/`cc` aren't
+        both supplied).
     """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     header = _ElfHeader(path)
-    arch, cc = _arch_and_cc_for_elf(header)
-    mem = MemoryMap()
-    mem.add_region_from_elf(path)
-    return Strider(mem=mem, arch=arch, cc=cc, _elf_path=path, _header=header)
+    # Auto-detect the arch/cc the header implies, but let any explicit
+    # argument win.  Only fall into the (possibly raising) detector when
+    # at least one of arch/cc is missing.
+    if arch is None or cc is None:
+        det_arch, det_cc = _arch_and_cc_for_elf(header)
+        arch = arch if arch is not None else det_arch
+        cc = cc if cc is not None else det_cc
+    elf = _ext.load_elf(path, apply_relocations)
+    return Program(elf=elf, arch=arch, cc=cc, _elf_path=path, _header=header)
 
 
-class Strider:
-    """High-level handle bundling a memory map + arch + calling
-    convention.  Use `Strider.analyze(name_or_addr)` to lift a single
-    function into an `Analysis`.
+class Program:
+    """The loaded ELF binary: one object that wires the code + ROM
+    readers internally and exposes symbols, sizes, the entry point,
+    raw reads, and `analyze()`.
 
-    Constructed via `strider.load(path)` for the auto-detected
-    common case, or directly for explicit control:
+    Constructed via `strider.load(path)` — for the auto-detected
+    common case, or with explicit `arch=` / `cc=` for kernel / syscall
+    / custom-ABI workflows:
 
     ```python
-    arch = strider.SleighArch.x86_64()
-    cc = strider.CallingConvention.x86_64_linux_kernel()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf("vmlinux", apply_relocations=True)
-    s = strider.Strider(mem=mem, arch=arch, cc=cc)
+    prog = strider.load(
+        "vmlinux",
+        apply_relocations=True,
+        cc=strider.CallingConvention.x86_64_linux_kernel(),
+    )
+    a = prog.analyze("schedule")
     ```
     """
 
-    __slots__ = ("_mem", "_arch", "_cc", "_elf_path", "_header")
+    __slots__ = ("_elf", "_arch", "_cc", "_elf_path", "_header")
 
     def __init__(
         self,
-        mem: MemoryMap,
+        elf: object,  # strider._LoadedElf
         arch: SleighArch,
         cc: CallingConvention,
         *,
         _elf_path: Optional[str] = None,
         _header: Optional[_ElfHeader] = None,
     ) -> None:
-        self._mem = mem
+        self._elf = elf
         self._arch = arch
         self._cc = cc
         self._elf_path = _elf_path
@@ -224,14 +256,8 @@ class Strider:
     # ── Properties for introspection / advanced use ─────────────────
 
     @property
-    def mem(self) -> MemoryMap:
-        """The underlying MemoryMap (for region inspection / extra
-        ELF loads / relocation application)."""
-        return self._mem
-
-    @property
     def arch(self) -> SleighArch:
-        """The target architecture (`SleighArch`) this loader uses."""
+        """The target architecture (`SleighArch`) this program uses."""
         return self._arch
 
     @property
@@ -242,15 +268,14 @@ class Strider:
 
     def __repr__(self) -> str:
         path = self._elf_path or "<no path>"
-        return f"Strider(elf={path!r}, arch={self._arch.name()}, cc={self._cc.name()})"
+        return f"Program(elf={path!r}, arch={self._arch.name()}, cc={self._cc.name()})"
 
-    # ── Symbol lookup ───────────────────────────────────────────────
+    # ── Symbol lookup / raw reads (delegate to the loaded ELF) ───────
 
     def functions(self) -> Iterator[str]:
         """Yield every function/data symbol name from every ELF loaded
-        into this Strider's MemoryMap.  Symbols with empty names or
-        zero addresses (synthetic linker entries) are skipped — same
-        contract as `MemoryMap.symbols()`.
+        into this Program.  Symbols with empty names or zero addresses
+        (synthetic linker entries) are skipped.
 
         The first-loaded ELF wins on name collisions.
         """
@@ -258,14 +283,40 @@ class Strider:
         # stable across Python versions for dicts created from a
         # HashMap, but the names themselves are correct.  Sort for
         # determinism.
-        for name in sorted(self._mem.symbols().keys()):
+        for name in sorted(self._elf.symbols().keys()):
             yield name
 
     def symbol(self, name: str) -> int:
-        """Resolve a symbol name to its address.  Thin pass-through
-        to `MemoryMap.symbol(name)` — raises `StriderError` when
-        the name isn't defined in any loaded ELF."""
-        return self._mem.symbol(name)
+        """Resolve a symbol name to its address.  Raises `StriderError`
+        when the name isn't defined in any loaded ELF."""
+        return self._elf.symbol(name)
+
+    def symbol_size(self, name: str) -> Optional[int]:
+        """The ELF-recorded size in bytes of `name` (`st_size`), or
+        `None` when the symbol exists but its size is recorded as 0.
+        Raises `StriderError` when the symbol isn't defined."""
+        return self._elf.symbol_size(name)
+
+    def symbols(self) -> dict:
+        """All function/data symbols as a `dict[str, int]` (name →
+        address).  The first-loaded ELF wins on name collisions."""
+        return self._elf.symbols()
+
+    def entry_point(self) -> int:
+        """The ELF entry-point address (`e_entry`) of the first loaded
+        ELF."""
+        return self._elf.entry_point()
+
+    def read(self, addr: int, size: int) -> Optional[bytes]:
+        """Read up to `size` raw bytes at `addr` from the loaded
+        regions, or `None` when `addr` is unmapped."""
+        return self._elf.read(addr, size)
+
+    def add_elf(self, path: str, *, apply_relocations: bool = False) -> None:
+        """Merge another ELF (e.g. a shared library) into this Program:
+        extends the loaded regions and the symbol set.  The
+        earlier-loaded ELF wins on symbol-name collisions."""
+        self._elf.add_elf(path, apply_relocations)
 
     # ── Lift a function ──────────────────────────────────────────────
 
@@ -294,11 +345,12 @@ class Strider:
           backward branches below `entry`.  Required for trampolines
           / cold-jumps that reach a label before the prologue.
         * `rom` — the read-only memory image for `LoadReadOnly`
-          constant folding.  Defaults to this Strider's MemoryMap,
+          constant folding.  Defaults to this Program's loaded regions,
           matching the typical "the ELF's `.rodata` is the rom" case.
         """
+        mem = self._elf.memory_map()
         if isinstance(function, str):
-            addr, sym_size = self._mem.symbol_addr_and_size(function)
+            addr, sym_size = self._elf.symbol_addr_and_size(function)
             # Honour the symbol's recorded size when the caller didn't
             # provide an explicit bound.  `function_max_size=0` is
             # rejected by `strider.run`, and zero-size symbols
@@ -323,13 +375,13 @@ class Strider:
         result = _ext.run(
             arch=arch,
             cc=self._cc,
-            mem=self._mem,
+            mem=mem,
             entry=addr,
-            rom=rom if rom is not None else self._mem,
+            rom=rom if rom is not None else mem,
             allow_code_before_start_addr=allow_code_before_start_addr,
             function_max_size=function_max_size,
         )
-        return Analysis(result=result, strider=self, entry=addr, name=(function if isinstance(function, str) else None))
+        return Analysis(result=result, program=self, entry=addr, name=(function if isinstance(function, str) else None))
 
 
 # ── Analysis ──────────────────────────────────────────────────────────────
@@ -341,17 +393,17 @@ class Analysis:
     queries and provenance lookup.
     """
 
-    __slots__ = ("_result", "_strider", "_entry", "_name")
+    __slots__ = ("_result", "_program", "_entry", "_name")
 
     def __init__(
         self,
         result,  # strider.RunResult
-        strider: Strider,
+        program: Program,
         entry: int,
         name: Optional[str] = None,
     ) -> None:
         self._result = result
-        self._strider = strider
+        self._program = program
         self._entry = entry
         self._name = name
 

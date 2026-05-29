@@ -24,6 +24,7 @@ def _public(mod):
 
 
 EXPECTED_TOP = {
+    "Analysis",
     "AnalyzeOutcome",
     "CallingConvention",
     "Cfg",
@@ -32,6 +33,7 @@ EXPECTED_TOP = {
     "MemoryMap",
     "MemReader",
     "OptimizerPipeline",
+    "Program",
     "ReadOnlyMemory",
     "RelocationStats",
     "RunResult",
@@ -42,10 +44,12 @@ EXPECTED_TOP = {
     "Vn",
     "VnSpace",
     "build_cfg",
+    "load",
+    "load_elf",
+    "run",
     "errors",
     "opt",
     "pattern",
-    "run",
     "strider",
 }
 
