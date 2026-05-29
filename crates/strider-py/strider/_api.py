@@ -318,6 +318,25 @@ class Program:
         earlier-loaded ELF wins on symbol-name collisions."""
         self._elf.add_elf(path, apply_relocations)
 
+    # ── Disassembly ──────────────────────────────────────────────────
+
+    def disasm(self, addr: int, count: int = 1) -> list[tuple[int, str]]:
+        """Disassemble `count` machine instructions starting at `addr`,
+        returning a list of `(insn_addr, text)` tuples in address order.
+
+        `text` is the lifted pcode for each machine instruction (the
+        Sleigh `Insn`s joined with `"; "`) — the same value-producing
+        decode the analysis pipeline runs, rendered for human reading.
+
+        ARM Thumb interworking is honoured: a Thumb pointer (`addr & 1`)
+        is decoded with the Thumb Sleigh spec and a halfword-aligned
+        address, matching `analyze(...)`.
+
+        Raises `StriderError` when `addr` is unmapped or a lift fails.
+        """
+        arch, addr = _effective_arch_and_addr(self._arch, addr)
+        return _ext.disassemble(arch, self._elf.memory_map(), addr, count)
+
     # ── Lift a function ──────────────────────────────────────────────
 
     def analyze(
@@ -381,7 +400,13 @@ class Program:
             allow_code_before_start_addr=allow_code_before_start_addr,
             function_max_size=function_max_size,
         )
-        return Analysis(result=result, program=self, entry=addr, name=(function if isinstance(function, str) else None))
+        return Analysis(
+            result=result,
+            program=self,
+            entry=addr,
+            name=(function if isinstance(function, str) else None),
+            effective_arch=arch,
+        )
 
 
 # ── Analysis ──────────────────────────────────────────────────────────────
@@ -393,7 +418,7 @@ class Analysis:
     queries and provenance lookup.
     """
 
-    __slots__ = ("_result", "_program", "_entry", "_name")
+    __slots__ = ("_result", "_program", "_entry", "_name", "_effective_arch")
 
     def __init__(
         self,
@@ -401,11 +426,21 @@ class Analysis:
         program: Program,
         entry: int,
         name: Optional[str] = None,
+        effective_arch: Optional[SleighArch] = None,
     ) -> None:
         self._result = result
         self._program = program
         self._entry = entry
         self._name = name
+        # The arch the lift actually used (Thumb-resolved for ARM
+        # interworking entries).  `fingerprint_text` decodes the
+        # fingerprint addresses through this so a Thumb function's
+        # provenance disassembles with the Thumb Sleigh spec.  Defaults
+        # to the program's arch for callers constructing an Analysis
+        # directly.
+        self._effective_arch = (
+            effective_arch if effective_arch is not None else program._arch
+        )
 
     # ── Properties ──────────────────────────────────────────────────
 
@@ -465,31 +500,65 @@ class Analysis:
 
     # ── Provenance ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _coerce_node_id(node) -> int:
+        """Coerce a node argument to a raw `u32` node id.
+
+        Accepts a raw `int` id (e.g. `match.root`), a `Match` (its
+        `.root` is used), or a `Node` handle (its `.id` is used).
+        Raises `TypeError` for anything else.
+        """
+        if isinstance(node, int):
+            return node
+        if hasattr(node, "root"):
+            # PyMatch.root is a property returning u32.
+            return node.root
+        if hasattr(node, "id"):
+            # PyNode.id is a property returning the raw u32 arena index.
+            return node.id
+        raise TypeError(
+            f"expected int, Match, or Node, got {type(node).__name__}"
+        )
+
     def fingerprint(self, node) -> list[int]:
         """Return the asm-fingerprint of the given node — a
         sorted-deduplicated list of source machine-instruction
         addresses whose lifting (or subsequent rewrite) contributed
         to that node's value.
 
-        `node` can be either:
+        `node` can be:
         * A raw `u32` node id (e.g. `match.root`).
         * A `Match` object — the match's root is used.
+        * A `Node` handle — its `.id` is used.
 
         Returns an empty list for "structural" node kinds
         (Entry, InitialMemory, phis, Region, FunctionArg).
         See `ir::Graph::asm_fingerprint` for the full contract.
         """
-        if isinstance(node, int):
-            node_id = node
-        elif hasattr(node, "root"):
-            # PyMatch.root is a property returning u32.
-            node_id = node.root
-        else:
-            raise TypeError(
-                f"fingerprint(node): expected int or Match, got "
-                f"{type(node).__name__}"
-            )
+        node_id = self._coerce_node_id(node)
         return self._result.function.asm_fingerprint(node_id)
+
+    def fingerprint_text(self, node) -> list[tuple[int, str]]:
+        """Return the asm-fingerprint of `node` as `(addr, text)` pairs,
+        sorted by address — the disassembly companion to `fingerprint`.
+
+        Resolves the node's fingerprint addresses (see `fingerprint`),
+        then disassembles each through a single shared Sleigh build,
+        so the audit trail reads as instruction text without leaving
+        strider for objdump.  `text` is the lifted pcode for that
+        machine instruction (the Sleigh `Insn`s joined with `"; "`).
+
+        `node` can be a raw `u32` id, a `Match`, or a `Node` handle.
+
+        Returns `[]` for "structural" nodes that carry no fingerprint
+        (Entry, InitialMemory, phis, Region, FunctionArg).
+        """
+        addrs = self.fingerprint(node)
+        if not addrs:
+            return []
+        mem = self._program._elf.memory_map()
+        pairs = _ext.disassemble_addrs(self._effective_arch, mem, addrs)
+        return sorted(pairs, key=lambda p: p[0])
 
     # ── Visualisation ────────────────────────────────────────────────
 

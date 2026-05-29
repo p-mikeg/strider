@@ -33,6 +33,7 @@ use pyo3::prelude::*;
 mod arch;
 mod cc;
 mod cfg;
+mod disasm;
 mod dot;
 mod errors;
 mod function;
@@ -100,6 +101,7 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     strider_cls::register(py, m)?;
     opt::register(py, m)?;
     run::register(py, m)?;
+    disasm::register(py, m)?;
     pattern::register(py, m)?;
     matcher::register(py, m)?;
     Ok(())

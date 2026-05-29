@@ -44,6 +44,8 @@ EXPECTED_TOP = {
     "Vn",
     "VnSpace",
     "build_cfg",
+    "disassemble",
+    "disassemble_addrs",
     "load",
     "load_elf",
     "run",

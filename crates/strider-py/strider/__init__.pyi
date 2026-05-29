@@ -419,6 +419,27 @@ def run(
     per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
 ) -> RunResult: ...
 
+def disassemble(
+    arch: SleighArch,
+    mem: MemoryMap,
+    addr: int,
+    count: int = ...,
+) -> List[Tuple[int, str]]:
+    """Disassemble `count` machine instructions from `addr` over `mem`,
+    returning `(insn_addr, text)` tuples in address order.  Builds one
+    Sleigh and decodes sequentially.  Raises `StriderError` on failure."""
+    ...
+
+def disassemble_addrs(
+    arch: SleighArch,
+    mem: MemoryMap,
+    addrs: List[int],
+) -> List[Tuple[int, str]]:
+    """Disassemble a set of (possibly non-sequential) machine addresses,
+    one instruction each, returning `(addr, text)` tuples in the order
+    of `addrs`.  Builds the Sleigh only once."""
+    ...
+
 # ── High-level facade (strider._api) ─────────────────────────────────────
 
 class Program:
@@ -436,6 +457,10 @@ class Program:
     def entry_point(self) -> int: ...
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None: ...
+    def disasm(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
+        """Disassemble `count` machine instructions from `addr`,
+        returning `(insn_addr, text)` tuples in address order."""
+        ...
     def analyze(
         self,
         function: Any,  # str | int
@@ -464,6 +489,10 @@ class Analysis:
         self, patterns: List[Any], **matcher_options: Any
     ) -> List[List[Match]]: ...
     def fingerprint(self, node: Any) -> List[int]: ...
+    def fingerprint_text(self, node: Any) -> List[Tuple[int, str]]:
+        """The node's asm-fingerprint as `(addr, text)` pairs sorted by
+        address; `[]` for structural nodes with no fingerprint."""
+        ...
     def dump_html(self, path: str, style: Optional[str] = ...) -> None: ...
     def dump_dot(self, path: str) -> None: ...
 
