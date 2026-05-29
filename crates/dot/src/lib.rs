@@ -1,4 +1,5 @@
-//! Graphviz `.dot` and interactive `.html` rendering for Strider graphs.
+//! Graphviz `.dot` and interactive `.html` rendering for any graph type
+//! that implements [`GraphDotDumper`] (this crate is domain-agnostic).
 //!
 //! Implement [`GraphDotDumper`] for a graph type to obtain `.dot` and `.html`
 //! output via [`GraphDot`].
@@ -42,7 +43,7 @@ pub trait GraphDotDumper {
     // Bound is `Debug + Display + Send + Sync + 'static`, NOT
     // `std::error::Error + Send + Sync + 'static`, so impls can pick
     // `type Error = anyhow::Error` (anyhow's `Error` does not
-    // implement `std::error::Error`, by design).  `build_dot` wraps
+    // implement `std::error::Error`, by design).  `render_dot_string` wraps
     // any returned error via `anyhow::anyhow!("dot dump error: {e}")`,
     // which only needs `Display`.
     type Error: Debug + std::fmt::Display + Send + Sync + 'static;
@@ -366,7 +367,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
         self
     }
 
-    fn build_dot(&self) -> anyhow::Result<String> {
+    fn render_dot_string(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
         for node in self.dumper.iter_nodes() {
@@ -384,7 +385,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Forwards any `Self::Error` returned by the underlying
     /// [`GraphDotDumper::dump_as_dot`] for any node.
     pub fn as_dot(&self) -> anyhow::Result<String> {
-        self.build_dot()
+        self.render_dot_string()
     }
 
     /// Produces an interactive HTML page that renders the DOT source
