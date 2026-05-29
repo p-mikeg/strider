@@ -219,9 +219,11 @@ The `_` and `any_` strings are reserved wildcards (they convert to
   `float_eq`, `float_ne`, `float_lt`, `float_le`.
 * **Conversions / bitcasts:** `int_to_float`, `float_to_int`,
   `float_to_float`, `int_bits_to_float`, `float_bits_to_int`.
-* **Casts / widths:** `cast_to_int`, `cast_to_bool`,
-  `cast_to_float`, `truncate`, `popcount`, `lzcount`,
-  `zero_extend`, `sign_extend`, `extend(op_str, x)`.
+* **Casts / widths:** `truncate`, `popcount`, `lzcount`,
+  `zero_extend`, `sign_extend`, `extend(op_str, x)`.  (There are no
+  `cast_to_*` builders: booleans are the integer `I1`, an int→float
+  cast is `int_bits_to_float`, and a float reprecision is
+  `float_to_float` — see the conversions list above.)
 * **Memory & control:** `load`, `store` (use
   `store().offset_capture(c)` / `.stack_only()` for SP-relative stores),
   `call`, `call_other`, `ret`, `if_`, `phi`, `mem_phi`, `value_phi`,
@@ -234,9 +236,10 @@ The `_` and `any_` strings are reserved wildcards (they convert to
   `bool_bin_any`, `bool_un_any`, `float_bin_any`, `float_un_any`,
   `float_cmp_any` — bind the matched op variant to a Capture.
 
-`float_is_nan(x)` desugars to `BoolNeg(FloatEqual(x, x))` — the same
-shape the pcode lifter emits for Sleigh's `FLOAT_NAN` op, so it matches
-both that lifted shape and any explicit `x != x` written in the source.
+`float_is_nan(x)` desugars to `BitNot(FloatEqual(x, x))` at `I1` — the
+same shape the pcode lifter emits for Sleigh's `FLOAT_NAN` op (logical
+NOT is the 1-bit `IntUnaryOp::BitNot`), so it matches both that lifted
+shape and any explicit `x != x` written in the source.
 No dedicated `FloatIsNan` IR node is needed.
 
 ## Match accessors

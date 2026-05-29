@@ -82,29 +82,28 @@ Strider crates:
 ### Crate Dependency Flow
 
 ```
-                strider-ir
-                   ↑
-        ┌──────────┼─────────────┐
-        │          │             │
-  strider-target  strider-reader │
-        ↑          ↑             │
-        └────┬─────┘             │
-             │                   │
-        strider-lift             │
-             ↑                   │
-      strider-analyze ───────────┘
-             ↑
-        strider-py
+Dependency edges (X → Y means "X depends on Y"); every crate also
+depends on the external `rsleigh`.
 
-  strider-pattern-macros (proc-macro; consumed by strider-py to emit
-    Py*Pat mirrors of the hand-written Rust Pat builders)
+  strider-target   → (leaf — only `rsleigh`)
+  strider-ir       → strider-target, dot, entity-utils, graphwalk
+  strider-reader   → strider-ir, strider-target
+  strider-lift     → strider-ir, strider-target, dot, graphwalk
+  strider-analyze  → strider-ir, strider-lift, strider-target, dot, entity-utils
+  strider-py       → strider-analyze, strider-lift, strider-reader, strider-ir,
+                     strider-target, strider-pattern-macros, dot
 
-  strider-ir-test-utils (dev-dep; depends on strider-ir)
-
-  rsleigh (external path dep at ../rsleigh — Sleigh / GHIDRA p-code lifter)
+  strider-pattern-macros — proc-macro (no strider deps); consumed by strider-py
+    to emit Py*Pat mirrors of the hand-written Rust Pat builders.
+  strider-ir-test-utils  — dev-dep; depends on strider-ir.
+  rsleigh — external path dep at ../rsleigh (Sleigh / GHIDRA p-code lifter).
 ```
 
-All edges point upward; there are no back-edges.  `strider-lift` calls
+`strider-target` is the foundational leaf (pure descriptions, no IR /
+Sleigh deps); `strider-reader` depends on it for the `Endianness` enum
+consumed by `ReadOnlyMemory::read`.  The graph is a DAG rooted at
+`strider-py` with `strider-target` at the bottom — there are no
+back-edges.  `strider-lift` calls
 back into `strider-analyze`'s indirect-branch resolver through the
 `strider_lift::cfg::IndirectResolverFn` callback type (an `Arc<dyn Fn>`
 alias) — the resolver function lives in `strider-analyze` and is
@@ -151,7 +150,8 @@ so the resolver-bearing dependency stays one-way.
   - `ReadOnlyMemory` trait — `read(&self, addr: u64, size: usize) ->
     Option<u64>`; returns up to 8 bytes as a target-endian-decoded
     `u64` (impl byte-swaps per arch endianness — e.g.
-    `ElfFileMemReader` consults `is_little_endian`), or `None` for
+    `ElfFileMemReader` decodes via the `strider_target::Endianness`
+    SSoT, `Endianness::read_u64`), or `None` for
     unmapped addresses / sizes > 8.  Blanket impls for `Arc<T>` and
     `Box<T>`.  Defined here (not in `strider-reader`) so optimiser
     passes can depend on the trait without back-edging through the
@@ -316,7 +316,8 @@ so the resolver-bearing dependency stays one-way.
       decomposed `(a≠b)∧¬(a<b)` / `(a=b)∨(a<b)` shapes that ARM/Thumb
       (and post-`ConstantFold` trees) leave once the branch's inverted
       sense is stripped, so every flag arch folds to a direct comparison.
-    - `IfCondInversion` — `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}`.
+    - `IfCondInversion` — `If(BitNot(C)){A}{B}` → `If(C){B}{A}` (the
+      1-bit `BitNot` is logical NOT).
     - `RedundantPhis` — eliminates `Phi` (tagged or anonymous) /
       `MemPhi` / `Region` with a single reachable predecessor.
     - `DeadBranchElimination` — removes `If(const)` branches and strips
