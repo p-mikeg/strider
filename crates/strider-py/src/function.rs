@@ -230,30 +230,13 @@ impl PyFunction {
         self.with_read_value(|function| function.all_node_ids().count())
     }
 
-    /// Returns the count of `Region` join nodes reachable from
-    /// entry.  Despite its name and historical docstring, this method
-    /// is **not** a true loop-header detector: the previous
-    /// implementation ran a per-predecessor forward-CFG DFS looking for
-    /// a back-edge, but because the predecessor's direct Control edge
-    /// into the join node is itself "a Control output whose consumer is
-    /// the join node", the inner DFS returned `true` on its very first
-    /// iteration for every reachable `Region`.  The observable
-    /// behaviour is therefore equivalent to "count reachable
-    /// `Region` nodes", which is what the existing test suite
-    /// (`count_loops(g) >= 1` on `early_return`, `clamp`, etc.) depends
-    /// on — those fixtures have no actual back-edge after `-O2`
-    /// loop-rotation, yet the assertion holds because the count is
-    /// driven by join arity, not loop topology.
-    ///
-    /// Preserve that contract while collapsing the
-    /// O(|Region| x |graph|) cost — and the per-call
-    /// `HashSet<NodeId>` allocation — into a single linear pre-order
-    /// sweep using the IR's own kind-filtered walker.  The walker's
-    /// visited-set is already a `DenseEntitySet<NodeId>` (see
-    /// [`strider_ir::walk::PreOrder`]), so this satisfies the
-    /// "use entity-set bookkeeping" memory directive by routing
-    /// through the canonical IR traversal helper.
-    fn count_loop_headers(&self) -> PyResult<usize> {
+    /// Returns the count of `Region` (control-flow join) nodes
+    /// reachable from entry.  This is a single linear pre-order sweep
+    /// using the IR's own kind-filtered walker, whose visited-set is a
+    /// `DenseEntitySet<NodeId>` (see [`strider_ir::walk::PreOrder`]),
+    /// so it satisfies the "use entity-set bookkeeping" memory
+    /// directive by routing through the canonical IR traversal helper.
+    fn count_regions(&self) -> PyResult<usize> {
         use strider_ir::node::NodeKind;
         self.with_read_value(|function| {
             function

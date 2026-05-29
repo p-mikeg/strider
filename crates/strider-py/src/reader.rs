@@ -179,7 +179,7 @@ impl PyMemoryMap {
     /// symbol whose name matches `name`, returning its result.  Raises
     /// `StriderError` when no loaded ELF defines the name.  Centralises
     /// the iterate-and-match loop plus the not-found error string
-    /// shared by `symbol`, `symbol_size`, and `function_max_size`.
+    /// shared by `symbol`, `symbol_size`, and `symbol_addr_and_size`.
     fn find_symbol<R>(
         &self,
         name: &str,
@@ -392,8 +392,10 @@ impl PyMemoryMap {
     /// `(symbol(name), symbol_size(name))` pair — returns
     /// `(addr, size)` so callers don't need two lookups.  `size` is
     /// `None` when the ELF doesn't record one (zero `st_size`).
-    /// Raises `StriderError` when the symbol is undefined.
-    fn function_max_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
+    /// Raises `StriderError` when the symbol is undefined.  The `size`
+    /// half is exactly what `strider.run`'s `function_max_size=`
+    /// keyword expects.
+    fn symbol_addr_and_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
         self.find_symbol(name, |sym| {
             let size = sym.size();
             (sym.address(), if size == 0 { None } else { Some(size) })
@@ -565,7 +567,7 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             // exception set" guard on the next invocation.  The outer
             // `strider.run` boundary will drain the cell + surface the
             // saved PyErr.
-            if crate::pattern::take_pending_control_flow_peek() {
+            if crate::pattern::peek_pending_control_flow() {
                 return None;
             }
             // Surface Python exceptions on stderr instead of silently

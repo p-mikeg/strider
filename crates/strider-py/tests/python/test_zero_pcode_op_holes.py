@@ -54,7 +54,7 @@ def _lift(kernel: pathlib.Path, symbol: str, *, arch_name: str):
     if symbol not in syms:
         pytest.skip(f"{kernel}: symbol {symbol!r} not found")
     entry = syms[symbol]
-    addr, size = mem.function_max_size(symbol)
+    addr, size = mem.symbol_addr_and_size(symbol)
 
     if arch_name == "aarch64":
         sleigh_arch = strider.SleighArch.aarch64()

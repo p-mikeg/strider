@@ -20,7 +20,7 @@ class IfCondInversion:
 class RedundantPhis:
     def __init__(self) -> None: ...
 
-class DeadBranchElim:
+class DeadBranchElimination:
     def __init__(self) -> None: ...
 
 # CC/arch-aware passes.

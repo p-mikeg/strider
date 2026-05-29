@@ -298,11 +298,11 @@ class Strider:
           matching the typical "the ELF's `.rodata` is the rom" case.
         """
         if isinstance(function, str):
-            addr, sym_size = self._mem.function_max_size(function)
+            addr, sym_size = self._mem.symbol_addr_and_size(function)
             # Honour the symbol's recorded size when the caller didn't
             # provide an explicit bound.  `function_max_size=0` is
             # rejected by `strider.run`, and zero-size symbols
-            # surface as `None` from `function_max_size`, so the
+            # surface as `None` from `symbol_addr_and_size`, so the
             # `or None` is a no-op here for the common case.
             if function_max_size is None:
                 function_max_size = sym_size

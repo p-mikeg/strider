@@ -55,7 +55,7 @@ def test_bounded_lift_vmspace_exitfree_amd64_13():
     kernel = _require_kernel()
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(kernel), apply_relocations=True)
-    addr, size = mem.function_max_size("vmspace_exitfree")
+    addr, size = mem.symbol_addr_and_size("vmspace_exitfree")
     assert size is not None, "vmspace_exitfree must have a recorded st_size"
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()

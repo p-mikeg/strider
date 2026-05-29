@@ -290,7 +290,7 @@ pure_pass_class!("KnownBits" => PyKnownBits,
 pure_pass_class!("RedundantPhis" => PyRedundantPhis,
     "Eliminates `Phi` / `MemPhi` / `Region` nodes with a single reachable \
      predecessor (destructive).");
-pure_pass_class!("DeadBranchElim" => PyDeadBranchElim,
+pure_pass_class!("DeadBranchElimination" => PyDeadBranchElimination,
     "Removes `If(const)` branches and strips the resulting dead control \
      edges (destructive).");
 pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize,
@@ -437,7 +437,7 @@ pub enum PyOptPass<'py> {
     ConstantFold(PyConstantFold),
     KnownBits(PyKnownBits),
     RedundantPhis(PyRedundantPhis),
-    DeadBranchElim(PyDeadBranchElim),
+    DeadBranchElimination(PyDeadBranchElimination),
     FlagCmpCanonicalize(PyFlagCmpCanonicalize),
     IfCondInversion(PyIfCondInversion),
     LoadForward(Bound<'py, PyLoadForward>),
@@ -453,7 +453,7 @@ impl PyOptPass<'_> {
             PyOptPass::ConstantFold(_) => Box::new(strider_analyze::opt::ConstantFold),
             PyOptPass::KnownBits(_) => Box::new(strider_analyze::opt::KnownBits),
             PyOptPass::RedundantPhis(_) => Box::new(strider_analyze::opt::RedundantPhis),
-            PyOptPass::DeadBranchElim(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
+            PyOptPass::DeadBranchElimination(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
             PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize),
             PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion),
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
@@ -473,7 +473,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyConstantFold>()?;
     m.add_class::<PyKnownBits>()?;
     m.add_class::<PyRedundantPhis>()?;
-    m.add_class::<PyDeadBranchElim>()?;
+    m.add_class::<PyDeadBranchElimination>()?;
     m.add_class::<PyFlagCmpCanonicalize>()?;
     m.add_class::<PyIfCondInversion>()?;
     m.add_class::<PyLoadForward>()?;

@@ -1,4 +1,4 @@
-"""Tests for `MemoryMap.symbol_size` + `MemoryMap.function_max_size`.
+"""Tests for `MemoryMap.symbol_size` + `MemoryMap.symbol_addr_and_size`.
 
 The ELF symbol table records each function's size in `st_size`.
 Strider users typically need that value for `function_max_size=`
@@ -36,22 +36,22 @@ def test_symbol_size_raises_on_unknown_symbol():
         mem.symbol_size("definitely_not_a_symbol")
 
 
-def test_function_max_size_returns_addr_and_size():
+def test_symbol_addr_and_size_returns_addr_and_size():
     elf = fixture_path("x64", "elf_relocs")
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(elf))
-    addr, size = mem.function_max_size("helper_a")
+    addr, size = mem.symbol_addr_and_size("helper_a")
     assert addr == mem.symbol("helper_a")
     assert size == mem.symbol_size("helper_a")
 
 
-def test_function_max_size_threads_into_strider_run():
+def test_symbol_addr_and_size_threads_into_strider_run():
     """End-to-end: derive `function_max_size` from the ELF, pass it
     into `strider.run`, confirm the analyser respects the bound."""
     elf = fixture_path("x64", "switch")
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(elf))
-    addr, size = mem.function_max_size("dispatch_value")
+    addr, size = mem.symbol_addr_and_size("dispatch_value")
     assert size is not None
     result = strider.run(
         arch=strider.SleighArch.x86_64(),

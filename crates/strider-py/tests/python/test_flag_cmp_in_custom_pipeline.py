@@ -70,7 +70,7 @@ def _build_user_pipeline_with_fcc(sl, sleigh, cc, mem):
     pipe.add(opt.FlagCmpCanonicalize())
     pipe.add(opt.IfCondInversion())
     pipe.add(opt.RedundantPhis())
-    pipe.add(opt.DeadBranchElim())
+    pipe.add(opt.DeadBranchElimination())
     pipe.add(opt.LoadReadOnly(mem))
     pipe.add(opt.LoadForward(sl, cc, sleigh))
     pipe.add_post(opt.FunctionArgDetect(sl, cc))
@@ -98,7 +98,7 @@ def test_thread_group_empty_pattern_matches_under_custom_pipeline_with_fcc():
     sl = strider.Sleigh(sleigh, mem)
 
     per_addr = {syms["__fentry__"]: strider.CallingConvention.x86_64_all_preserving()}
-    _entry, max_size = mem.function_max_size("exit_signals")
+    _entry, max_size = mem.symbol_addr_and_size("exit_signals")
     pipe = _build_user_pipeline_with_fcc(sl, sleigh, cc, mem)
 
     res = strider.run(

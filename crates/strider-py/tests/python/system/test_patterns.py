@@ -13,7 +13,7 @@ from strider.pattern import any_, var, Capture
 from ._helpers import (
     analyze,
     count_int_binop,
-    count_loops,
+    count_regions,
     count_pat,
     has_constant,
 )
@@ -63,7 +63,7 @@ def test_loop_with_invariant_load(arch_id, fixtures_dir):
     g = analyze(arch_id, "patterns", "loop_with_invariant_load", fixtures_dir=fixtures_dir)
     hits = g.find_all(pat.load())
     assert len(hits) >= 1, "expected ≥1 Load match"
-    assert count_loops(g) >= 1, "loop must remain"
+    assert count_regions(g) >= 1, "loop must remain"
 
 
 def test_recursive_with_accumulator(arch_id, fixtures_dir):

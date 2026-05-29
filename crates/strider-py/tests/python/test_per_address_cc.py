@@ -85,7 +85,7 @@ def _build_default_equivalent_pipeline(sleigh, sl, cc, mem):
     pipe.add(opt.ConstantFold())
     pipe.add(opt.KnownBits())
     pipe.add(opt.RedundantPhis())
-    pipe.add(opt.DeadBranchElim())
+    pipe.add(opt.DeadBranchElimination())
     pipe.add(opt.LoadReadOnly(mem))
     pipe.add(opt.LoadForward(sl, cc, sleigh))
     pipe.add_post(opt.FunctionArgDetect(sl, cc))

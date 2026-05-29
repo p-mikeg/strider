@@ -56,7 +56,7 @@ EXPECTED_ERRORS = {
 EXPECTED_OPT = {
     "CallStackArgCollect",
     "ConstantFold",
-    "DeadBranchElim",
+    "DeadBranchElimination",
     "FlagCmpCanonicalize",
     "FunctionArgDetect",
     "IfCondInversion",

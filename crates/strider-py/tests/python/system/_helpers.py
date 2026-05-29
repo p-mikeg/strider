@@ -201,11 +201,12 @@ def count_stores(g) -> int:
     return count_pat(g, pat.store())
 
 
-def count_loops(g) -> int:
-    # Counts CFG loop headers (Regions with a back-edge predecessor).
-    # Robust to RedundantPhis collapsing loop-invariant tracked variables —
-    # a real loop with no surviving VarPhi at its header still counts.
-    return g.count_loop_headers()
+def count_regions(g) -> int:
+    # Counts reachable `Region` (control-flow join) nodes.  Used by the
+    # control/pattern suites to assert that a loop's join survives
+    # optimisation: a real loop with no surviving VarPhi at its header
+    # still leaves a Region behind, so the count stays >= 1.
+    return g.count_regions()
 
 
 def count_int_consts(g) -> int:

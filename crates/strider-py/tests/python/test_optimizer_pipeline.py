@@ -43,7 +43,7 @@ def test_add_pure_pass():
     pipe.add(strider.opt.ConstantFold())
     pipe.add(strider.opt.KnownBits())
     pipe.add(strider.opt.RedundantPhis())
-    pipe.add(strider.opt.DeadBranchElim())
+    pipe.add(strider.opt.DeadBranchElimination())
     assert pipe.pass_count() == 4
 
 
