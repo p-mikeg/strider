@@ -48,12 +48,12 @@ fn next_pcode_addr(
 ///
 /// Created internally by `Builder::explore`; not part of the public API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum ProcessInsnRes {
+pub(crate) enum InsnOutcome {
     /// The instruction terminated the current region (branch, return, or
     /// fall-through into an already-existing region).
-    FinishedProcessing,
+    RegionClosed,
     /// The instruction did not terminate the region; decoding continues.
-    DidntFinishProcessing,
+    Continue,
 }
 
 /// Builds a single [`Region`] by decoding pcode instructions one at a time.
@@ -235,14 +235,14 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     ///
     /// Appends the instruction to the current region, then dispatches on the
     /// opcode to a per-opcode helper.  Anything not listed below returns
-    /// [`ProcessInsnRes::DidntFinishProcessing`] so the outer decode loop
+    /// [`InsnOutcome::Continue`] so the outer decode loop
     /// keeps lifting.
     fn process_new_insn(
         &mut self,
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
-    ) -> Result<ProcessInsnRes> {
+    ) -> Result<InsnOutcome> {
         self.insns.push(RegionInstruction {
             addr,
             insn: insn.clone(),
@@ -253,11 +253,11 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             rsleigh::Opcode::CondBranch => self.process_cond_branch(insn, addr, lift_res),
             rsleigh::Opcode::Return => {
                 self.finish_current_region(RegionTerminator::Return)?;
-                Ok(ProcessInsnRes::FinishedProcessing)
+                Ok(InsnOutcome::RegionClosed)
             }
             rsleigh::Opcode::BranchIndirect => self.process_branch_indirect(insn, addr),
             rsleigh::Opcode::CallOther => self.process_call_other(insn),
-            _ => Ok(ProcessInsnRes::DidntFinishProcessing),
+            _ => Ok(InsnOutcome::Continue),
         }
     }
 
@@ -269,7 +269,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
-    ) -> Result<ProcessInsnRes> {
+    ) -> Result<InsnOutcome> {
         let target_var = *insn
             .inputs
             .first()
@@ -294,7 +294,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             // wires the unconditional successor through the region linker.
             self.builder.work_queue.push((Some(region), branch_target_addr));
         }
-        Ok(ProcessInsnRes::FinishedProcessing)
+        Ok(InsnOutcome::RegionClosed)
     }
 
     /// Handles a `CondBranch` opcode: decode the taken/not-taken successors,
@@ -306,7 +306,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
-    ) -> Result<ProcessInsnRes> {
+    ) -> Result<InsnOutcome> {
         let target_var = *insn
             .inputs
             .first()
@@ -382,25 +382,25 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 self.builder.work_queue.push((Some(region), in_range));
             }
         }
-        Ok(ProcessInsnRes::FinishedProcessing)
+        Ok(InsnOutcome::RegionClosed)
     }
 
     /// Handles a `CallOther` opcode: resolve the user-op id from the
     /// CONST input at position 0, classify via the target ABI table, and
     /// finalise the region with `NoReturn` for the noreturn family.
     /// Unexpected input shapes and all other classifications fall through
-    /// to today's behaviour ([`ProcessInsnRes::DidntFinishProcessing`]) —
+    /// to today's behaviour ([`InsnOutcome::Continue`]) —
     /// the IR layer's strict-on-emission check will surface any real
     /// problem with full context.
-    fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<ProcessInsnRes> {
+    fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<InsnOutcome> {
         let Some(id_vn) = insn.inputs.first() else {
-            return Ok(ProcessInsnRes::DidntFinishProcessing);
+            return Ok(InsnOutcome::Continue);
         };
         if id_vn.addr_space != rsleigh::VnSpace::CONST {
-            return Ok(ProcessInsnRes::DidntFinishProcessing);
+            return Ok(InsnOutcome::Continue);
         }
         let Ok(id_u32) = u32::try_from(id_vn.addr_off) else {
-            return Ok(ProcessInsnRes::DidntFinishProcessing);
+            return Ok(InsnOutcome::Continue);
         };
         let name = self.builder.sleigh.user_op_name(id_u32);
         let preset = self.builder.arch.preset();
@@ -410,9 +410,9 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             // process_new_insn prologue push; finish_current_region
             // carries it.  Trailing BranchIndirect is never decoded.
             self.finish_current_region(RegionTerminator::NoReturn)?;
-            return Ok(ProcessInsnRes::FinishedProcessing);
+            return Ok(InsnOutcome::RegionClosed);
         }
-        Ok(ProcessInsnRes::DidntFinishProcessing)
+        Ok(InsnOutcome::Continue)
     }
 
     /// Handles a `BranchIndirect` opcode by classifying its target via
@@ -438,7 +438,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         &mut self,
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
-    ) -> Result<ProcessInsnRes> {
+    ) -> Result<InsnOutcome> {
         let target_vn = *insn
             .inputs
             .first()
@@ -476,7 +476,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             self.finish_current_region(
                 RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
             )?;
-            return Ok(ProcessInsnRes::FinishedProcessing);
+            return Ok(InsnOutcome::RegionClosed);
         };
         match resolved {
             super::ResolvedTargets::LinkRegister => {
@@ -504,7 +504,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     self.finish_current_region(
                         RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
                     )?;
-                    return Ok(ProcessInsnRes::FinishedProcessing);
+                    return Ok(InsnOutcome::RegionClosed);
                 }
                 let any_out_of_range = targets.iter().any(|t| {
                     self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
@@ -513,7 +513,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     self.finish_current_region(
                         RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
                     )?;
-                    return Ok(ProcessInsnRes::FinishedProcessing);
+                    return Ok(InsnOutcome::RegionClosed);
                 }
                 let region = self.finish_current_region(RegionTerminator::Switch {
                     target_vn,
@@ -525,7 +525,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 }
             }
         }
-        Ok(ProcessInsnRes::FinishedProcessing)
+        Ok(InsnOutcome::RegionClosed)
     }
 
     /// Finalises the region that has been accumulating instructions.
@@ -591,7 +591,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
-    ) -> Result<ProcessInsnRes> {
+    ) -> Result<InsnOutcome> {
         // If `addr` is the start of an already-explored region, the current region
         // fell through to it: finalise the current region and add a Fallthrough edge.
         if let Some(&existing_region_id) = self.builder.start_addr_to_region_id.get(&addr) {
@@ -601,13 +601,13 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         .region_graph
                         .add_edge(parent_id, existing_region_id, ());
                 }
-                return Ok(ProcessInsnRes::FinishedProcessing);
+                return Ok(InsnOutcome::RegionClosed);
             }
             let region = self.finish_current_region(RegionTerminator::Fallthrough)?;
             self.builder
                 .region_graph
                 .add_edge(region, existing_region_id, ());
-            return Ok(ProcessInsnRes::FinishedProcessing);
+            return Ok(InsnOutcome::RegionClosed);
         }
         self.process_new_insn(insn, addr, lift_res)
     }
@@ -643,7 +643,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             for (i, insn) in lift_res.insns.iter().enumerate().skip(start_pcode_idx) {
                 cur_addr.insn_index = i as u64;
                 let res = self.process_insn(insn, cur_addr, &lift_res)?;
-                if matches!(res, ProcessInsnRes::FinishedProcessing) {
+                if matches!(res, InsnOutcome::RegionClosed) {
                     return Ok(());
                 }
             }
@@ -1116,7 +1116,7 @@ mod tests {
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb.process_new_insn(&first, addr_at(base, 0), &lift).unwrap();
-        assert_eq!(res, ProcessInsnRes::DidntFinishProcessing);
+        assert_eq!(res, InsnOutcome::Continue);
         assert_eq!(rb.insns.len(), 1);
     }
 
@@ -1130,7 +1130,7 @@ mod tests {
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb.process_new_insn(&ret_insn, addr_at(base, pos), &lift).unwrap();
-        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+        assert_eq!(res, InsnOutcome::RegionClosed);
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
@@ -1152,7 +1152,7 @@ mod tests {
         let res = rb
             .process_new_insn(&indirect, addr_at(base, pos), &lift)
             .expect("unresolvable BranchIndirect must defer, not error");
-        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+        assert_eq!(res, InsnOutcome::RegionClosed);
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
@@ -1175,7 +1175,7 @@ mod tests {
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb.process_new_insn(&cbr, addr_at(base, pos), &lift).unwrap();
-        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+        assert_eq!(res, InsnOutcome::RegionClosed);
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
@@ -1213,7 +1213,7 @@ mod tests {
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb.process_new_insn(&branch, addr_at(base, pos), &lift).unwrap();
-        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+        assert_eq!(res, InsnOutcome::RegionClosed);
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
@@ -1232,7 +1232,7 @@ mod tests {
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb.process_new_insn(&branch, addr_at(base, pos), &lift).unwrap();
-        assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+        assert_eq!(res, InsnOutcome::RegionClosed);
 
         assert_eq!(
             b.work_queue.len(),
