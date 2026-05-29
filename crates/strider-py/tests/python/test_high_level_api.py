@@ -1,8 +1,8 @@
 """Tests for the high-level Python API facade.
 
-Covers `strider.load(path)`, `Strider.analyze(name)`,
+Covers `strider.load(path)`, `Program.analyze(name)`,
 `Analysis.find(pat)`, `Analysis.fingerprint(node)`, and the
-`Strider.functions()` iterator.  Each test skips cleanly when the
+`Program.functions()` iterator.  Each test skips cleanly when the
 required fixture isn't built so a fresh checkout doesn't fail.
 """
 
@@ -59,8 +59,8 @@ def test_effective_arch_non_arm_odd_addr_unchanged():
 # ── Basic load + analyze + find ────────────────────────────────────────
 
 
-def test_load_returns_strider():
-    """`strider.load(path)` returns a Strider with the auto-picked
+def test_load_returns_program():
+    """`strider.load(path)` returns a Program with the auto-picked
     arch + cc.  The arch name should match what `file(1)` reports
     for the fixture."""
     elf = fixture_path("x64", "arithmetic")
@@ -101,7 +101,7 @@ def test_load_non_elf_raises(tmp_path):
 
 def test_functions_iterator_lists_add():
     """The `add` symbol is defined in every arithmetic.elf fixture
-    (added by the test harness Makefile).  `Strider.functions()`
+    (added by the test harness Makefile).  `Program.functions()`
     should yield it."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load(str(elf))
@@ -110,7 +110,7 @@ def test_functions_iterator_lists_add():
 
 
 def test_analyze_by_name_returns_analysis():
-    """`Strider.analyze(symbol_name)` returns an Analysis with a
+    """`Program.analyze(symbol_name)` returns an Analysis with a
     non-empty IR graph."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load(str(elf))
@@ -122,7 +122,7 @@ def test_analyze_by_name_returns_analysis():
 
 
 def test_analyze_by_address_returns_analysis():
-    """`Strider.analyze(<int>)` also works."""
+    """`Program.analyze(<int>)` also works."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load(str(elf))
     addr = s.symbol("add")
@@ -210,7 +210,7 @@ def test_fingerprint_rejects_bad_type():
 
 
 def test_strider_repr():
-    """`Strider.__repr__` includes the arch + cc names."""
+    """`Program.__repr__` includes the arch + cc names."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load(str(elf))
     r = repr(s)

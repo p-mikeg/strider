@@ -618,9 +618,9 @@ impl rsleigh::MemReader for PyMemoryMapReader {
 /// big-endian targets (MIPS-BE / PowerPC-BE / AArch64-BE) get correct
 /// `LoadReadOnly` constants.  Endianness is captured by
 /// `PyMemoryMap::reader_view` at the moment the view is minted (the
-/// surface `PyMemoryMap` is auto-set by `add_region_from_elf`, or set
-/// explicitly via `set_endianness`); defaults to little for
-/// raw-bytes-only construction.
+/// surface `PyMemoryMap`'s endianness is auto-set by `load_elf` from the
+/// ELF header, or set explicitly via `set_endianness`); defaults to
+/// little for raw-bytes-only construction.
 impl ReadOnlyMemory for PyMemoryMapReader {
     fn read(&self, addr: u64, size: usize) -> Option<u64> {
         if size == 0 || size > 8 {
