@@ -263,7 +263,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
 
     /// Handles a `Branch` opcode: decode the target, classify as tail-call
     /// vs intra-function branch, finalise the region, and enqueue the
-    /// successor (on an `Unconditional` edge) when it's not a tail call.
+    /// successor (via a plain unweighted `()` edge) when it's not a tail call.
     fn process_branch(
         &mut self,
         insn: &rsleigh::Insn,
