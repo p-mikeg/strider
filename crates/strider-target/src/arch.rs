@@ -9,12 +9,14 @@ pub enum Endianness {
 
 impl Endianness {
     /// Decodes a 64-bit unsigned integer from `bytes` according to this
-    /// byte order.  Used by ELF relocation appliers, the strider-py
-    /// `ReadOnlyMemory` adapter, and any other consumer that needs to
-    /// interpret raw bytes as a multi-byte word.  Consolidates the
-    /// `if le { from_le_bytes } else { from_be_bytes }` branching that
-    /// was duplicated across `strider_reader::elf` and
-    /// `strider-py::strider_reader::PyMemoryMap`.
+    /// byte order.  This is the single source of truth for the
+    /// `if le { from_le_bytes } else { from_be_bytes }` branch, used by
+    /// the `ReadOnlyMemory` read path in both
+    /// `strider_reader::elf::ElfFileMemReader` and
+    /// `strider-py`'s `PyMemoryMapReader` (each positions the N-byte
+    /// payload in an 8-byte buffer at the endianness-appropriate end,
+    /// then delegates the final decode here).  Callers that need to read
+    /// a sub-`u64` word follow that buffer-positioning convention.
     #[must_use]
     pub fn read_u64(self, bytes: [u8; 8]) -> u64 {
         match self {

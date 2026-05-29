@@ -18,7 +18,7 @@ use super::sections::elf_get_code_and_readonly_sections_as_mem_regions;
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     lookup: MemRegionsLookupTable,
-    is_little_endian: bool,
+    endianness: strider_target::Endianness,
 }
 
 impl ElfFileMemReader {
@@ -36,9 +36,13 @@ impl ElfFileMemReader {
     /// section's `address() + data.len()` would exceed `u64::MAX`.
     pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
         let regions = elf_get_code_and_readonly_sections_as_mem_regions(obj)?;
+        let endianness = match obj.endianness() {
+            object::Endianness::Little => strider_target::Endianness::Little,
+            object::Endianness::Big => strider_target::Endianness::Big,
+        };
         Ok(Self {
             lookup: MemRegionsLookupTable::new(regions),
-            is_little_endian: matches!(obj.endianness(), object::Endianness::Little),
+            endianness,
         })
     }
 
@@ -83,22 +87,21 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
             return None;
         }
         // Place the read bytes at the endianness-appropriate end of an 8-byte
-        // buffer so the final from_{le,be}_bytes produces the same numeric
-        // value for an N-byte load as the target machine would.
-        let is_little = self.is_little_endian;
+        // buffer so `Endianness::read_u64` produces the same numeric value for
+        // an N-byte load as the target machine would.  LE: bytes go in the low
+        // slots.  BE: bytes go in the high slots so the widened word reads as a
+        // big-endian N-byte value.  The byte-order branch itself lives once in
+        // `Endianness::read_u64` (the SSoT), mirrored by
+        // `strider-py`'s `PyMemoryMapReader`.
+        use strider_target::Endianness;
         let mut buf = [0u8; 8];
-        let slot = if is_little {
-            &mut buf[..size]
-        } else {
-            &mut buf[8 - size..]
+        let slot = match self.endianness {
+            Endianness::Little => &mut buf[..size],
+            Endianness::Big => &mut buf[8 - size..],
         };
         if self.lookup.read(addr, slot)? != size {
             return None;
         }
-        Some(if is_little {
-            u64::from_le_bytes(buf)
-        } else {
-            u64::from_be_bytes(buf)
-        })
+        Some(self.endianness.read_u64(buf))
     }
 }
