@@ -285,6 +285,78 @@ pub fn apply_elf_relocations(
     Ok(stats)
 }
 
+/// A sorted `[start, end)` interval index for O(log n) address-coverage
+/// queries during the relocation extender's pass 1.
+///
+/// Replaces the per-site `regions.iter().chain(staged.iter())
+/// .any(|r| r.contains(addr))` linear scan (quadratic in
+/// sites × regions) used to decide whether a relocation site already
+/// has a backing region.  Intervals are kept sorted by `start`
+/// alongside a prefix-maximum of `end`, so [`covers`](Self::covers) is
+/// a binary search plus one array read.
+///
+/// [`covers`](Self::covers) reproduces the exact `.any(contains)`
+/// predicate, *including* the overlap case: a site is covered iff some
+/// interval with `start <= addr` also has `end > addr`, i.e. the
+/// maximum `end` among all `start <= addr` intervals exceeds `addr`.
+/// The prefix-max array answers that in O(1) after the O(log n)
+/// position search.
+struct CoverageIndex {
+    /// `(start, end)` intervals, sorted by `start`.
+    intervals: Vec<(u64, u64)>,
+    /// `max_end[i]` is the maximum `end` over `intervals[0..=i]`.  Lets
+    /// `covers` answer "any `start <= addr` interval reaches past
+    /// `addr`?" without scanning every candidate.  Empty when there are
+    /// no intervals.
+    max_end: Vec<u64>,
+}
+
+impl CoverageIndex {
+    /// Seeds the index from a region iterator (one interval per region).
+    fn from_regions<'a, I>(regions: I) -> Self
+    where
+        I: IntoIterator<Item = &'a MemRegion>,
+    {
+        let mut intervals: Vec<(u64, u64)> =
+            regions.into_iter().map(|r| (r.start_addr(), r.end_addr())).collect();
+        intervals.sort_unstable_by_key(|&(start, _)| start);
+        let mut this = Self { intervals, max_end: Vec::new() };
+        this.rebuild_max_end();
+        this
+    }
+
+    /// Recomputes the prefix-max-of-`end` array from `intervals`.
+    fn rebuild_max_end(&mut self) {
+        self.max_end.clear();
+        self.max_end.reserve(self.intervals.len());
+        let mut running = 0u64;
+        for &(_, end) in &self.intervals {
+            running = running.max(end);
+            self.max_end.push(running);
+        }
+    }
+
+    /// Inserts `[start, end)`, preserving the sort by `start`.  Called
+    /// once per staged section (a small count), so the O(n) prefix-max
+    /// rebuild it triggers is cheap relative to the per-site queries.
+    fn insert(&mut self, start: u64, end: u64) {
+        let pos = self.intervals.partition_point(|&(s, _)| s <= start);
+        self.intervals.insert(pos, (start, end));
+        self.rebuild_max_end();
+    }
+
+    /// Returns `true` iff some interval satisfies `start <= addr < end`
+    /// — the exact `.any(|r| r.contains(addr))` predicate.
+    fn covers(&self, addr: u64) -> bool {
+        // `upper` = count of intervals with `start <= addr`; those are
+        // the only ones that could contain `addr`.  Among them the one
+        // reaching furthest is `max_end[upper - 1]`; the site is covered
+        // iff that maximum end is strictly past `addr`.
+        let upper = self.intervals.partition_point(|&(start, _)| start <= addr);
+        upper > 0 && self.max_end[upper - 1] > addr
+    }
+}
+
 /// Shared body of [`apply_elf_relocations`] and
 /// [`apply_elf_relocations_autoload`]: walks the dynamic relocation
 /// table once to find sites not yet covered by any region, queries
@@ -334,16 +406,23 @@ where
     // to materialise the owning region for each, and stage them.  We
     // never mutate `regions` here so an extender error mid-pass leaves
     // it untouched.
+    //
+    // Coverage is queried through a `CoverageIndex` (a sorted
+    // `[start, end)` interval list) seeded from `regions` and grown as
+    // sections are staged.  This replaces the per-site
+    // `regions.iter().chain(staged.iter()).any(contains)` linear scan
+    // (O(sites × regions), quadratic on binaries with many dynamic
+    // relocs and many staged sections) with an O(sites · log regions)
+    // query.  Behaviour is identical: `covers` matches the exact
+    // `.any(contains)` predicate, including the overlap case.
+    let mut coverage = CoverageIndex::from_regions(regions.iter());
     let mut staged: Vec<MemRegion> = Vec::new();
     for (site_addr, _reloc) in dyn_relocs {
-        let already_covered = regions
-            .iter()
-            .chain(staged.iter())
-            .any(|r| r.contains(site_addr));
-        if already_covered {
+        if coverage.covers(site_addr) {
             continue;
         }
         if let Some(region) = extender(site_addr, obj)? {
+            coverage.insert(region.start_addr(), region.end_addr());
             staged.push(region);
         }
     }
@@ -843,5 +922,84 @@ fn write_at(bytes: &mut [u8], off: usize, value: u64, size_bytes: usize, endian_
         for i in 0..size_bytes {
             bytes[off + i] = v_bytes[size_bytes - 1 - i];
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod coverage_index_tests {
+    use super::CoverageIndex;
+    use crate::MemRegion;
+
+    fn region(start: u64, len: usize) -> MemRegion {
+        MemRegion::new(start, vec![0u8; len]).unwrap()
+    }
+
+    /// The naive predicate the index replaces: scan every interval for
+    /// `start <= addr < end`.
+    fn naive_covers(intervals: &[(u64, u64)], addr: u64) -> bool {
+        intervals.iter().any(|&(start, end)| addr >= start && addr < end)
+    }
+
+    #[test]
+    fn covers_matches_naive_predicate_disjoint_overlapping_and_empty() {
+        // Disjoint, overlapping, adjacent, and zero-length intervals all
+        // in one index; `covers` must agree with the naive `.any` scan
+        // at every probed address.
+        let regions = [
+            region(0x1000, 0x100), // [0x1000, 0x1100)
+            region(0x1100, 0x10),  // adjacent to the previous
+            region(0x2000, 0x200), // [0x2000, 0x2200)
+            region(0x2100, 0x300), // overlaps the previous: [0x2100, 0x2400)
+            region(0x3000, 0),     // zero-length: covers nothing
+        ];
+        let intervals: Vec<(u64, u64)> =
+            regions.iter().map(|r| (r.start_addr(), r.end_addr())).collect();
+        let idx = CoverageIndex::from_regions(regions.iter());
+
+        // Probe boundaries, interiors, gaps, and the zero-length point.
+        for addr in [
+            0u64, 0xfff, 0x1000, 0x10ff, 0x1100, 0x110f, 0x1110, 0x1fff, 0x2000, 0x21ff, 0x2200,
+            0x23ff, 0x2400, 0x2fff, 0x3000, 0x3001, u64::MAX,
+        ] {
+            assert_eq!(
+                idx.covers(addr),
+                naive_covers(&intervals, addr),
+                "covers disagrees with naive scan at {addr:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn insert_keeps_covers_correct_and_sorted() {
+        // Mimics pass 1: start from one seed region, then stage more out
+        // of start order; `covers` must reflect every inserted interval.
+        let mut idx = CoverageIndex::from_regions([region(0x2000, 0x100)].iter());
+        assert!(idx.covers(0x2050));
+        assert!(!idx.covers(0x1050));
+        assert!(!idx.covers(0x3050));
+
+        idx.insert(0x3000, 0x3100); // ends-exclusive [0x3000, 0x3100)
+        idx.insert(0x1000, 0x1100); // inserted before the seed
+
+        assert!(idx.covers(0x1050));
+        assert!(idx.covers(0x2050));
+        assert!(idx.covers(0x3050));
+        assert!(!idx.covers(0x10ff + 1)); // 0x1100 is exclusive end
+        assert!(!idx.covers(0x3100)); // exclusive end of staged interval
+
+        // Intervals stay sorted by start after the out-of-order inserts.
+        let starts: Vec<u64> = idx.intervals.iter().map(|&(s, _)| s).collect();
+        let mut sorted = starts.clone();
+        sorted.sort_unstable();
+        assert_eq!(starts, sorted, "intervals must remain sorted by start");
+    }
+
+    #[test]
+    fn empty_index_covers_nothing() {
+        let idx = CoverageIndex::from_regions(std::iter::empty());
+        assert!(!idx.covers(0));
+        assert!(!idx.covers(0x1000));
+        assert!(!idx.covers(u64::MAX));
     }
 }
