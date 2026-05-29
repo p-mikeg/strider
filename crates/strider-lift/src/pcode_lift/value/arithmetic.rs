@@ -159,14 +159,24 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         self.write_vn(out_vn, out)
     }
 
-    /// Lowers `IntNotEqual(a, b)` to `BoolNeg(IntEqual(a, b))`.
+    /// Shared lowering for the three negated integer comparisons
+    /// (`IntNotEqual`, `IntLessEqual`, `IntSlessEqual`).  Each lowers to
+    /// `BoolNeg(IntCmpOp(...))` — one `IntCmpOp` wrapped in an
+    /// `IntUnaryOp::BitNot` at `I1` — keeping the cmp-op enum free of the
+    /// `NotEqual` / `LessEqual` / `SlessEqual` variants.
     ///
-    /// Matches strider's pre-existing canonical form (one IntCmpOp + one
-    /// `IntUnaryOp::BitNot` at `I1` — the BoolNeg shape — instead of an
-    /// IntCmpOp::NotEqual variant, keeping the cmp-op enum smaller).  The
-    /// cmp's operand width is the *input* width, NOT the output width: the
-    /// output is a 1-bit `I1`, the inputs may be any integer width.
-    pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+    /// All three require equal input widths and perform the comparison at
+    /// the *input* width (the output is a 1-bit `I1`).  They differ only in
+    /// the [`IntCmpOp`] predicate and whether the operands are swapped:
+    /// `NotEqual` uses `Equal` without a swap; `LessEqual(a, b)` /
+    /// `SlessEqual(a, b)` use `Less` / `Sless` with the operands swapped
+    /// (`a <= b` iff `not(b < a)`).
+    fn lower_cmp_negated(
+        &mut self,
+        insn: &rsleigh::Insn,
+        op: IntCmpOp,
+        swap_operands: bool,
+    ) -> Result<()> {
         require_equal_input_widths(
             crate::pcode_lift::nth_input_or_err(insn, 0)?,
             crate::pcode_lift::nth_input_or_err(insn, 1)?,
@@ -177,13 +187,25 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
         let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
         let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
-        let eq = self
+        let (cmp_lhs, cmp_rhs) = if swap_operands { (rhs, lhs) } else { (lhs, rhs) };
+        let cmp = self
             .builder
-            .build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, cmp_width)?;
-        let neq = self
+            .build_int_cmp_operation(cmp_lhs, cmp_rhs, op, cmp_width)?;
+        let negated = self
             .builder
-            .build_int_unary_operation(eq, IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
-        self.write_vn(out_vn, neq)
+            .build_int_unary_operation(cmp, IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
+        self.write_vn(out_vn, negated)
+    }
+
+    /// Lowers `IntNotEqual(a, b)` to `BoolNeg(IntEqual(a, b))`.
+    ///
+    /// Matches strider's pre-existing canonical form (one IntCmpOp + one
+    /// `IntUnaryOp::BitNot` at `I1` — the BoolNeg shape — instead of an
+    /// IntCmpOp::NotEqual variant, keeping the cmp-op enum smaller).  The
+    /// cmp's operand width is the *input* width, NOT the output width: the
+    /// output is a 1-bit `I1`, the inputs may be any integer width.
+    pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        self.lower_cmp_negated(insn, IntCmpOp::Equal, false)
     }
 
     /// Lowers `IntLessEqual(a, b)` to `BoolNeg(IntLess(b, a))`.
@@ -193,23 +215,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// see one canonical shape (`Less` plus an optional `BoolNeg`) instead
     /// of two.
     pub(super) fn handle_int_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        require_equal_input_widths(
-            crate::pcode_lift::nth_input_or_err(insn, 0)?,
-            crate::pcode_lift::nth_input_or_err(insn, 1)?,
-        )?;
-        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
-        let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
-        let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
-        let lt = self
-            .builder
-            .build_int_cmp_operation(rhs, lhs, IntCmpOp::Less, cmp_width)?;
-        let le = self
-            .builder
-            .build_int_unary_operation(lt, IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
-        self.write_vn(out_vn, le)
+        self.lower_cmp_negated(insn, IntCmpOp::Less, true)
     }
 
     /// Lowers `IntSlessEqual(a, b)` to `BoolNeg(IntSless(b, a))`.
@@ -218,23 +224,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// swap, same `BoolNeg` wrap, but with `IntCmpOp::Sless` for signed
     /// comparison.
     pub(super) fn handle_int_sless_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        require_equal_input_widths(
-            crate::pcode_lift::nth_input_or_err(insn, 0)?,
-            crate::pcode_lift::nth_input_or_err(insn, 1)?,
-        )?;
-        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
-        let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
-        let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
-        let lt = self
-            .builder
-            .build_int_cmp_operation(rhs, lhs, IntCmpOp::Sless, cmp_width)?;
-        let le = self
-            .builder
-            .build_int_unary_operation(lt, IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
-        self.write_vn(out_vn, le)
+        self.lower_cmp_negated(insn, IntCmpOp::Sless, true)
     }
 
     /// Lowers `IntSub(a, b)` to `IntAdd(a, IntUnaryOp::Neg(b))`.

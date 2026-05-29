@@ -94,6 +94,30 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         Ok((lhs, rhs))
     }
 
+    /// Builds the `BoolNeg(FloatEqual(lhs, rhs))` shape shared by
+    /// `FloatNan` and `FloatNotEqual` and writes it to `out_vn`.
+    ///
+    /// Both operands are cast to a common float type
+    /// (via [`Self::cast_float_cmp_operands`]), compared with
+    /// `FloatCmpOp::Equal`, then negated with `IntUnaryOp::BitNot` at `I1`.
+    /// Sound under IEEE 754: `Equal` is false when either operand is NaN,
+    /// so the negation is true (matching `NotEqual` / `is_nan`).
+    fn build_float_eq_negated(
+        &mut self,
+        lhs: strider_ir::Value,
+        rhs: strider_ir::Value,
+        out_vn: &rsleigh::Vn,
+    ) -> Result<()> {
+        let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
+        let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
+        let result = self.builder.build_int_unary_operation(
+            eq,
+            strider_ir::IntUnaryOp::BitNot,
+            strider_ir::ValueType::I1,
+        )?;
+        self.write_vn(out_vn, result)
+    }
+
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
@@ -101,12 +125,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
         // lift to `BoolNeg(FloatEqual)`), build the lowered shape
         // directly: `BoolNeg(FloatEqual(input, input))`.
-        let (input, _) = self.cast_float_cmp_operands(input, input)?;
-        let eq = self
-            .builder
-            .build_float_cmp_op(input, input, FloatCmpOp::Equal)?;
-        let result = self.builder.build_int_unary_operation(eq, strider_ir::IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
-        self.write_vn(out_vn, result)
+        self.build_float_eq_negated(input, input, out_vn)
     }
 
     /// Lowers `FloatSub(a, b)` to `FloatAdd(a, FloatUnaryOp::Neg(b))`.
@@ -138,10 +157,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
-        let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.builder.build_int_unary_operation(eq, strider_ir::IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
-        self.write_vn(out_vn, result)
+        self.build_float_eq_negated(lhs, rhs, out_vn)
     }
 
     /// Lowers `FloatLessEqual(a, b)` to `Or(FloatLess(a, b), FloatEqual(a, b))`.
