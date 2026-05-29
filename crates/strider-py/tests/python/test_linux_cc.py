@@ -31,8 +31,7 @@ def _build_strider(arch_factory, cc_factory, fixture_arch_id: str, fixture_case:
     elf = fixture_path(fixture_arch_id, fixture_case)
     arch = arch_factory()
     cc = cc_factory()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
+    mem = strider.load_elf(str(elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
     return strider.Strider(arch, sleigh, cc)
 

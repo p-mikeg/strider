@@ -37,20 +37,20 @@ def _stack_graph():
     elf = fixture_path("x86", "stack")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
-    addr = mem.symbol("escape_via_ptr")
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.memory_map()
+    addr = loaded.symbol("escape_via_ptr")
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         allow_code_before_start_addr=True,
-    ).function, mem
+    ).function, mem, loaded
 
 
 # ── StorePat.offset_capture / Match.captured_offset accessors ─────────────
 
 
 def test_match_captured_offset_returns_offset_for_stack_store():
-    g, _ = _stack_graph()
+    g, _, _ = _stack_graph()
     c = OffsetCapture()
     hits = g.find_all(store().offset_capture(c))
     assert len(hits) >= 1, "escape_via_ptr should produce ≥1 stack Store"
@@ -62,7 +62,7 @@ def test_match_captured_offset_returns_offset_for_stack_store():
 
 
 def test_match_captured_offset_unbound_capture_returns_none():
-    g, _ = _stack_graph()
+    g, _, _ = _stack_graph()
     bound = OffsetCapture()
     unbound = OffsetCapture()
     hits = g.find_all(store().offset_capture(bound))
@@ -71,7 +71,7 @@ def test_match_captured_offset_unbound_capture_returns_none():
 
 
 def test_store_stack_only_matches_only_stack_stores():
-    g, _ = _stack_graph()
+    g, _, _ = _stack_graph()
     # stack_only() restricts to stores whose offset is known to the
     # SP-expr analysis — the same stores that offset_capture matches.
     hits_stack = g.find_all(store().stack_only())
@@ -82,7 +82,7 @@ def test_store_stack_only_matches_only_stack_stores():
 
 
 def test_store_stack_only_rejects_non_stack_stores():
-    g, _ = _stack_graph()
+    g, _, _ = _stack_graph()
     # Unconstrained store() matches everything including non-stack stores.
     all_stores = g.find_all(store())
     stack_stores = g.find_all(store().stack_only())
@@ -111,12 +111,12 @@ def test_field_offset_recovery_via_find_all_requirements():
     (the call arg) and `local` (the return-value load) are at the
     same ESP offset, so the recovered field offset is 0.
     """
-    g, mem = _stack_graph()
+    g, mem, loaded = _stack_graph()
     arch = strider.SleighArch.x86()
     sleigh = strider.Sleigh(arch, mem)
     esp = sleigh.reg("ESP")
 
-    take_ptr = mem.symbol("external_take_ptr")
+    take_ptr = loaded.symbol("external_take_ptr")
     k_call = Capture()
     k_load = Capture()
 

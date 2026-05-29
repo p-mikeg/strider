@@ -54,8 +54,7 @@ def test_mem_reader_subclass_default_raises():
 
 
 def test_callback_reader_lifts_array_sum(x86_memory_elf):
-    inner = MemoryMap()
-    inner.add_region_from_elf(str(x86_memory_elf))
+    inner = strider.load_elf(str(x86_memory_elf)).memory_map()
     reader = make_counting_reader(inner)
     addr = symbol_addr(x86_memory_elf, "array_sum")
 
@@ -81,8 +80,7 @@ def test_run_via_callback_reader(x86_memory_elf):
     the orchestrator's indirect-branch fixed-point loop and produce
     an optimised graph.
     """
-    inner = MemoryMap()
-    inner.add_region_from_elf(str(x86_memory_elf))
+    inner = strider.load_elf(str(x86_memory_elf)).memory_map()
     reader = make_counting_reader(inner)
     addr = symbol_addr(x86_memory_elf, "array_sum")
 
@@ -144,8 +142,7 @@ def test_run_with_callback_rom_doesnt_crash(x86_memory_elf):
     """Plug a callback ROM into `strider.run` — even if no loads
     actually fold, the pipeline must not crash.
     """
-    inner = MemoryMap()
-    inner.add_region_from_elf(str(x86_memory_elf))
+    inner = strider.load_elf(str(x86_memory_elf)).memory_map()
     addr = symbol_addr(x86_memory_elf, "array_sum")
     rom = ConstReadOnlyMemory()
 

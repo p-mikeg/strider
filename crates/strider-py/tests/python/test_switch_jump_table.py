@@ -30,9 +30,9 @@ from strider.pattern import Capture, var, add, call, int_const, load
 def _run(elf_path):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf_path))
-    addr = mem.symbol("dispatch_value")
+    loaded = strider.load_elf(str(elf_path))
+    mem = loaded.memory_map()
+    addr = loaded.symbol("dispatch_value")
     return strider.run(
         arch=arch,
         cc=cc,

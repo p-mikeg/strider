@@ -86,10 +86,9 @@ def test_thread_group_empty_pattern_matches_under_custom_pipeline_with_fcc():
     """
     vmlinux = _vmlinux()
 
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(vmlinux))
-    mem.apply_elf_relocations(str(vmlinux))
-    syms = mem.symbols()
+    loaded = strider.load_elf(str(vmlinux), apply_relocations=True)
+    mem = loaded.memory_map()
+    syms = loaded.symbols()
     if "exit_signals" not in syms or "__fentry__" not in syms:
         pytest.skip("vmlinux missing required symbols (exit_signals/__fentry__)")
 
@@ -98,7 +97,7 @@ def test_thread_group_empty_pattern_matches_under_custom_pipeline_with_fcc():
     sl = strider.Sleigh(sleigh, mem)
 
     per_addr = {syms["__fentry__"]: strider.CallingConvention.x86_64_all_preserving()}
-    _entry, max_size = mem.symbol_addr_and_size("exit_signals")
+    _entry, max_size = loaded.symbol_addr_and_size("exit_signals")
     pipe = _build_user_pipeline_with_fcc(sl, sleigh, cc, mem)
 
     res = strider.run(

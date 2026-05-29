@@ -18,47 +18,36 @@ import pathlib
 import strider
 from strider.pattern import add, load
 
-# 1. Build a MemoryMap from the ELF and look up a symbol address.
-#    `add_region_from_elf` pulls the SHF_ALLOC sections (code + .rodata)
-#    into a fast Rust-side region table AND caches the parsed ELF for
-#    later `symbol()` / `symbols()` / `entry_point()` queries — no
-#    pyelftools dance required.
+# 1. Load the ELF. `strider.load(path)` returns a `Program` — one
+#    object that *is* the loaded binary. It auto-detects the arch +
+#    calling convention from the ELF header, wires the code + ROM
+#    readers internally, and answers `symbol()` / `symbols()` /
+#    `entry_point()` queries — no pyelftools dance required.
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
-mem = strider.MemoryMap()
-mem.add_region_from_elf(str(FIXTURE))
-
-addr = mem.symbol("array_sum")
+prog = strider.load(str(FIXTURE))
+addr = prog.symbol("array_sum")
 print(f"array_sum @ {addr:#x}")
 
-# 3. Run the full pipeline. This wraps:
+# 2. Analyze a function. `Program.analyze(name_or_addr)` wraps:
 #       Sleigh build → CFG build → IR lift → optimization
 #       → indirect-branch fixed-point loop → final IR
-#    in one call, returning the CFG, the lifted Function, and the Sleigh
-#    handle that produced them.
-result = strider.run(
-    arch=strider.SleighArch.x86(),
-    cc=strider.CallingConvention.x86_cdecl(),
-    mem=mem,
-    rom=mem,                         # same MemoryMap serves both roles
-    entry=addr,
-    allow_code_before_start_addr=True,
-)
+#    in one call, returning an `Analysis` over the lifted Function.
+a = prog.analyze("array_sum", allow_code_before_start_addr=True)
+print(f"lifted {a}")
 
-print(f"lifted {result.function}, {result.cfg}")
-
-# 4. Query the optimized graph.
+# 3. Query the optimized graph.
 #    The pattern says "any load" — the simplest possible query, returns
 #    every memory-load site in the function. Restrict it by composing
 #    inside `addr=...` (e.g. `load(addr=add(var(base), var(off)))`) once
 #    you know the shape you're hunting for.
-hits = result.function.find_all(load(), ignore_casts=True)
+hits = a.find(load(), ignore_casts=True)
 print(f"found {len(hits)} memory-load sites in array_sum")
 
 # A more specific pattern: loads whose address is a symbolic base plus
 # a captured offset value. String captures are auto-interned per pattern.
-narrow = result.function.find_all(
+narrow = a.find(
     load(addr=add("base", "off")),
     ignore_casts=True,
 )
@@ -67,8 +56,8 @@ for hit in narrow:
     off_val = hit.uint("off")
     print(f"  offset = {off_val if off_val is not None else '<symbolic>'}")
 
-# 5. Visualize. Open the HTMLs in any browser to see the rendered
+# 4. Visualize. Open the HTMLs in any browser to see the rendered
 #    graphviz output. `dark` and `dark_cfg` are the built-in styles.
-result.cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
-result.function.to_html("/tmp/quickstart-graph.html", style="dark")
+a.cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
+a.dump_html("/tmp/quickstart-graph.html", style="dark")
 print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")

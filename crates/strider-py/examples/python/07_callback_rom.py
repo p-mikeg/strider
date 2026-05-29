@@ -50,9 +50,9 @@ class CallbackRom(strider.ReadOnlyMemory):
 
 # Use the real ELF for the code (sleigh fetch needs disassembly bytes),
 # but layer a Python-served ROM on top to demonstrate the callback path.
-mem = strider.MemoryMap()
-mem.add_region_from_elf(str(FIXTURE))
-addr = mem.symbol("array_sum")
+elf = strider.load_elf(str(FIXTURE))
+mem = elf.memory_map()
+addr = elf.symbol("array_sum")
 
 # A 16-byte read-only blob the callback "owns". The address is well
 # above the fixture's mapped regions so it doesn't overlap the real

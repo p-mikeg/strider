@@ -1,4 +1,4 @@
-"""Tests for `MemoryMap.symbol_size` + `MemoryMap.symbol_addr_and_size`.
+"""Tests for `_LoadedElf.symbol_size` + `_LoadedElf.symbol_addr_and_size`.
 
 The ELF symbol table records each function's size in `st_size`.
 Strider users typically need that value for `function_max_size=`
@@ -18,64 +18,43 @@ from .conftest import fixture_path
 
 
 def test_symbol_size_returns_known_function_size():
-    elf = fixture_path("x64", "elf_relocs")
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
-    # `helper_a` is a 4-byte function in the ELF (`add eax, 100; ret`
-    # = ~8 bytes — we accept anything > 0 to stay tolerant of
-    # toolchain-version layout differences).
-    size = mem.symbol_size("helper_a")
+    elf = strider.load_elf(str(fixture_path("x64", "elf_relocs")))
+    # `helper_a` is a small function in the ELF; we accept anything > 0
+    # to stay tolerant of toolchain-version layout differences.
+    size = elf.symbol_size("helper_a")
     assert size is not None and size > 0
 
 
 def test_symbol_size_raises_on_unknown_symbol():
-    elf = fixture_path("x64", "elf_relocs")
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
+    elf = strider.load_elf(str(fixture_path("x64", "elf_relocs")))
     with pytest.raises(strider.errors.StriderError):
-        mem.symbol_size("definitely_not_a_symbol")
+        elf.symbol_size("definitely_not_a_symbol")
 
 
 def test_symbol_addr_and_size_returns_addr_and_size():
-    elf = fixture_path("x64", "elf_relocs")
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
-    addr, size = mem.symbol_addr_and_size("helper_a")
-    assert addr == mem.symbol("helper_a")
-    assert size == mem.symbol_size("helper_a")
+    elf = strider.load_elf(str(fixture_path("x64", "elf_relocs")))
+    addr, size = elf.symbol_addr_and_size("helper_a")
+    assert addr == elf.symbol("helper_a")
+    assert size == elf.symbol_size("helper_a")
 
 
-def test_symbol_addr_and_size_threads_into_strider_run():
-    """End-to-end: derive `function_max_size` from the ELF, pass it
-    into `strider.run`, confirm the analyser respects the bound."""
-    elf = fixture_path("x64", "switch")
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
-    addr, size = mem.symbol_addr_and_size("dispatch_value")
-    assert size is not None
-    result = strider.run(
-        arch=strider.SleighArch.x86_64(),
-        cc=strider.CallingConvention.x86_64_systemv(),
-        mem=mem,
-        rom=mem,
-        entry=addr,
-        function_max_size=size,
-        allow_code_before_start_addr=True,
-    )
-    assert result.function.node_count() > 0
+def test_symbol_size_threads_into_program_analyze():
+    """End-to-end: `Program.analyze` derives `function_max_size` from
+    the ELF's `st_size` automatically and the analyser respects it."""
+    prog = strider.load(str(fixture_path("x64", "switch")))
+    a = prog.analyze("dispatch_value", allow_code_before_start_addr=True)
+    assert a.function.node_count() > 0
 
 
 def test_symbol_size_returns_none_for_zero_st_size():
     """ELF symbols with `st_size == 0` (typical for stripped binaries
     or stub functions) come back as `None` — not 0 — so callers
     can branch with `if size is not None`."""
-    elf = fixture_path("x86", "control")
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
+    elf = strider.load_elf(str(fixture_path("x86", "control")))
     # Walk every symbol; if any has size 0 the helper must report None.
     saw_none = False
-    for name in mem.symbols():
-        size = mem.symbol_size(name)
+    for name in elf.symbols():
+        size = elf.symbol_size(name)
         if size is None:
             saw_none = True
             break

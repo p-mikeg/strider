@@ -26,9 +26,9 @@ from strider.pattern import Capture, add, int_const, load, var
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
-mem = strider.MemoryMap()
-mem.add_region_from_elf(str(FIXTURE))
-addr = mem.symbol("array_sum")
+elf = strider.load_elf(str(FIXTURE))
+mem = elf.memory_map()
+addr = elf.symbol("array_sum")
 result = strider.run(
     arch=strider.SleighArch.x86(),
     cc=strider.CallingConvention.x86_cdecl(),

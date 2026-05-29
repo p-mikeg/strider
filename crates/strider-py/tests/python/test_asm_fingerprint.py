@@ -18,9 +18,9 @@ def _arithmetic_add_graph():
     elf = fixture_path("x86", "arithmetic")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
-    addr = mem.symbol("add")
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.memory_map()
+    addr = loaded.symbol("add")
     return strider.run(
         arch=arch,
         cc=cc,

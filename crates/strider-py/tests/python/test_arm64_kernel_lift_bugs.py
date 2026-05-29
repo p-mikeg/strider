@@ -57,9 +57,9 @@ def _kernel_path(version: str) -> pathlib.Path:
 
 
 def _bounded_lift(kernel: pathlib.Path, symbol: str):
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(kernel), apply_relocations=True)
-    addr, size = mem.symbol_addr_and_size(symbol)
+    loaded = strider.load_elf(str(kernel), apply_relocations=True)
+    mem = loaded.memory_map()
+    addr, size = loaded.symbol_addr_and_size(symbol)
     if size is None:
         pytest.fail(f"{symbol} has no recorded st_size in {kernel}")
     arch = strider.SleighArch.aarch64()

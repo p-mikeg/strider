@@ -6,8 +6,7 @@ from .conftest import symbol_addr
 def test_build_cfg_for_array_sum(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(x86_memory_elf))
+    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     assert cfg is not None
@@ -16,8 +15,7 @@ def test_build_cfg_for_array_sum(x86_memory_elf):
 def test_cfg_to_html_writes_nonempty_file(x86_memory_elf, tmp_path):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(x86_memory_elf))
+    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
 
@@ -30,8 +28,7 @@ def test_cfg_to_html_writes_nonempty_file(x86_memory_elf, tmp_path):
 def test_cfg_to_dot_writes_nonempty_file(x86_memory_elf, tmp_path):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(x86_memory_elf))
+    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
 
@@ -44,8 +41,7 @@ def test_cfg_to_dot_writes_nonempty_file(x86_memory_elf, tmp_path):
 def test_cfg_html_str_returns_html(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(x86_memory_elf))
+    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     html = cfg.html_str()
@@ -58,8 +54,7 @@ def test_build_cfg_consumes_sleigh(x86_memory_elf):
     import pytest as _pytest
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(x86_memory_elf))
+    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
     _ = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     with _pytest.raises(strider.errors.StriderError):

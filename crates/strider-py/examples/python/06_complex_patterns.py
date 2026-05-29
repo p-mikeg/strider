@@ -34,17 +34,8 @@ from strider.pattern import (
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
-mem = strider.MemoryMap()
-mem.add_region_from_elf(str(FIXTURE))
-addr = mem.symbol("array_sum")
-result = strider.run(
-    arch=strider.SleighArch.x86(),
-    cc=strider.CallingConvention.x86_cdecl(),
-    mem=mem,
-    rom=mem,
-    entry=addr,
-    allow_code_before_start_addr=True,
-)
+prog = strider.load(str(FIXTURE))
+result = prog.analyze("array_sum", allow_code_before_start_addr=True)
 function = result.function
 
 

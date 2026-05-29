@@ -111,25 +111,23 @@ pub(crate) struct PyMemoryMapInner {
     pub(crate) regions: Vec<MemRegion>,
     /// Lazily-rebuilt lookup table; cleared on every `add_region`.
     pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
-    /// Loaded ELF objects, in `add_region_from_elf` insertion order.
-    /// Kept around so `symbol(name)` / `symbols()` can resolve names
-    /// without forcing the user to re-parse the file via pyelftools.
-    /// `object::File<'static>` borrows from a leaked byte slice (see
-    /// `strider_reader::load_elf`), so storing it here is sound.
-    pub(crate) elfs: Vec<object::File<'static>>,
     /// Byte order used by `ReadOnlyMemory::read` when assembling
     /// multi-byte words from the underlying buffer.  Defaults to
-    /// [`strider_target::Endianness::Little`]; auto-set from the ELF
-    /// header in `add_region_from_elf`, or set explicitly via
-    /// [`PyMemoryMap::set_endianness`].
+    /// [`strider_target::Endianness::Little`]; set from the ELF header
+    /// by `load_elf` (which builds the inner map for a `_LoadedElf`),
+    /// or explicitly via [`PyMemoryMap::set_endianness`].
     pub(crate) endianness: strider_target::Endianness,
 }
 
-/// Owned-data memory map. Implements `rsleigh::MemReader` and
-/// `strider_reader::ReadOnlyMemory` indirectly through the
-/// internal `PyMemoryMapReader` view (`MemInput::into_arc` /
-/// `MemInput::into_any` mint the view on demand). Cheap to clone:
-/// the inner data is held behind one `Rc<RefCell<...>>`.
+/// Owned-data raw-region memory map.  Implements `rsleigh::MemReader`
+/// and `strider_reader::ReadOnlyMemory` indirectly through the internal
+/// `PyMemoryMapReader` view (`MemInput::into_arc` / `MemInput::into_any`
+/// mint the view on demand).  Cheap to clone: the inner data is held
+/// behind one `Rc<RefCell<...>>`.
+///
+/// This is the low-level reader for non-ELF / firmware / custom-source
+/// cases.  For an ELF, prefer `strider.load(path)` (→ `Program`), which
+/// builds one of these from the ELF sections and adds symbol lookups.
 ///
 /// `unsendable`: a `PyMemoryMap` is only ever touched from the Python
 /// thread that holds the GIL.  Downstream consumers that need a
@@ -174,44 +172,21 @@ impl PyMemoryMap {
         let endianness = self.inner.borrow().endianness;
         PyMemoryMapReader { table, endianness }
     }
-
-    /// Walk the loaded ELFs in insertion order and run `f` on the first
-    /// symbol whose name matches `name`, returning its result.  Raises
-    /// `StriderError` when no loaded ELF defines the name.  Centralises
-    /// the iterate-and-match loop plus the not-found error string
-    /// shared by `symbol`, `symbol_size`, and `symbol_addr_and_size`.
-    fn find_symbol<R>(
-        &self,
-        name: &str,
-        f: impl FnOnce(&object::Symbol<'_, '_>) -> R,
-    ) -> PyResult<R> {
-        let inner = self.inner.borrow();
-        for obj in inner.elfs.iter() {
-            if let Some(sym) = obj.symbol_by_name(name) {
-                return Ok(f(&sym));
-            }
-        }
-        Err(into_strider_err(anyhow::anyhow!(
-            "symbol {name:?} not found in any ELF loaded into this MemoryMap \
-             ({} loaded)",
-            inner.elfs.len()
-        )))
-    }
 }
 
 #[pymethods]
 impl PyMemoryMap {
-    /// Create an empty memory map.  Add data with `add_region` /
-    /// `add_region_from_elf`.
+    /// Create an empty memory map.  Add raw byte regions with
+    /// `add_region`.
     #[new]
     fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(PyMemoryMapInner {
                 regions: Vec::new(),
                 table: None,
-                elfs: Vec::new(),
-                // Default to LE; overridden by add_region_from_elf or
-                // set_endianness once the user supplies a real arch.
+                // Default to LE; override via set_endianness for a
+                // big-endian raw-bytes target (load_elf sets it from
+                // the header for the ELF-backed path).
                 endianness: strider_target::Endianness::Little,
             })),
         }
@@ -220,9 +195,9 @@ impl PyMemoryMap {
     /// Set the byte order used by `ReadOnlyMemory::read` when reading
     /// multi-byte words.  Use `"little"` or `"big"` (case-insensitive).
     ///
-    /// Auto-set by `add_region_from_elf` from the ELF header; explicit
-    /// calls are useful only when constructing a MemoryMap from raw
-    /// bytes for a big-endian target.
+    /// Useful when constructing a MemoryMap from raw bytes for a
+    /// big-endian target.  The ELF-backed path (`strider.load`) sets
+    /// this from the ELF header automatically.
     ///
     /// # Errors
     /// Raises `StriderError` for unrecognised endianness strings.
@@ -273,164 +248,6 @@ impl PyMemoryMap {
             }
             None => Ok(None),
         }
-    }
-
-    /// Convenience: load every executable section and every non-writable
-    /// section with file-backed data from an ELF file at `path` and add
-    /// them as regions.  Mirrors `strider_reader::ElfFileMemReader::from_path`'s
-    /// region selection.
-    ///
-    /// `apply_relocations` defaults to `False`.  Set it to `True` for
-    /// ET_DYN binaries (FreeBSD kernels, PIE userland) whose `.text`
-    /// or function-pointer tables ship with unresolved relocations
-    /// (`call rel32` placeholders, `R_*_RELATIVE` entries):
-    /// `strider_reader::elf::apply_elf_relocations` runs over the loaded
-    /// regions in-place after the section copy and patches every
-    /// relocation it understands.  See the function's doc-comment
-    /// for the supported kinds.
-    #[pyo3(signature = (path, apply_relocations=false))]
-    fn add_region_from_elf(&self, path: &str, apply_relocations: bool) -> PyResult<()> {
-        let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        // Auto-set the byte order from the ELF header so subsequent
-        // ReadOnlyMemory::read calls assemble multi-byte words in the
-        // right order (big-endian targets like MIPS-BE / PowerPC-BE
-        // would otherwise byte-swap their LoadReadOnly constants).
-        let elf_endian = match object::Object::endianness(&obj) {
-            object::Endianness::Little => strider_target::Endianness::Little,
-            object::Endianness::Big => strider_target::Endianness::Big,
-        };
-        // When apply_relocations=True we widen the section coverage
-        // to include `.data.rel.ro`, `.got`, …  Without the widening
-        // a `R_*_RELATIVE` relocation against a writable-but-
-        // relocated table has nowhere to land (the applier reports
-        // skipped_no_region) and the analysis sees zeros where the
-        // function pointers should be.
-        let regions = if apply_relocations {
-            let (regions, _stats) =
-                strider_reader::elf::elf_load_with_relocations(&obj).map_err(into_strider_err)?;
-            regions
-        } else {
-            strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
-                .map_err(into_strider_err)?
-        };
-        let mut inner = self.inner.borrow_mut();
-        inner.endianness = elf_endian;
-        inner.regions.extend(regions);
-        inner.table = None;
-        // Cache the ELF for subsequent symbol() / symbols() / entry_point() calls.
-        inner.elfs.push(obj);
-        Ok(())
-    }
-
-    /// Apply the ELF at `path`'s dynamic relocations to the regions
-    /// already loaded into this MemoryMap.  Returns the
-    /// `RelocationStats` breakdown so callers can sanity-check the
-    /// outcome.
-    ///
-    /// **Auto-loads missing site sections.**  When a relocation
-    /// site falls outside every region currently in the MemoryMap,
-    /// the supplied ELF's containing section is appended on the
-    /// fly and the relocation is then applied to it.  This is what
-    /// makes the common pattern
-    ///
-    /// ```python
-    /// mem.add_region_from_elf(path)              # code + rodata
-    /// mem.apply_elf_relocations(path)            # autoloads .got.plt etc.
-    /// ```
-    ///
-    /// produce the same patched-region set as the bundled
-    /// `add_region_from_elf(path, apply_relocations=True)` form,
-    /// instead of silently reporting `applied = 0` with every
-    /// reloc counted under `skipped_no_region`.  See
-    /// `crates/strider-reader/src/elf/relocations.rs::apply_elf_relocations_autoload`
-    /// for the lazy-load contract (file-backed `SHF_ALLOC`
-    /// sections only — `SHT_NOBITS` like `.bss` is never
-    /// autoloaded).
-    fn apply_elf_relocations(&self, path: &str) -> PyResult<PyRelocationStats> {
-        let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        let mut inner = self.inner.borrow_mut();
-        let stats = strider_reader::elf::apply_elf_relocations_autoload(&mut inner.regions, &obj)
-            .map_err(into_strider_err)?;
-        // Invalidate the lookup table — both the autoload step
-        // (which appends new regions) and the in-place patches
-        // require a rebuild before the next read.
-        inner.table = None;
-        Ok(stats.into())
-    }
-
-    /// Look up the address of a function/data symbol across every ELF
-    /// loaded into this MemoryMap via `add_region_from_elf`.  Returns
-    /// the first match in load order; raises `StriderError` when no
-    /// loaded ELF defines the name.
-    fn symbol(&self, name: &str) -> PyResult<u64> {
-        self.find_symbol(name, |sym| sym.address())
-    }
-
-    /// Return the ELF-recorded size in bytes of the symbol named
-    /// `name` (`st_size` for an ELF symbol).  Returns `None` when
-    /// the symbol exists but its size is recorded as 0 (typical for
-    /// data symbols in stripped binaries, or for stub functions).
-    /// Raises `StriderError` when the symbol isn't defined in any
-    /// loaded ELF.
-    ///
-    /// Pair with `symbol(name)` to derive a `function_max_size`
-    /// argument for `strider.run` / `strider.build_cfg`:
-    ///
-    /// ```python
-    /// addr = mem.symbol("sys_thr_self")
-    /// size = mem.symbol_size("sys_thr_self")
-    /// strider.run(..., entry=addr, function_max_size=size)
-    /// ```
-    fn symbol_size(&self, name: &str) -> PyResult<Option<u64>> {
-        self.find_symbol(name, |sym| {
-            let size = sym.size();
-            if size == 0 { None } else { Some(size) }
-        })
-    }
-
-    /// Convenience shortcut for the common
-    /// `(symbol(name), symbol_size(name))` pair — returns
-    /// `(addr, size)` so callers don't need two lookups.  `size` is
-    /// `None` when the ELF doesn't record one (zero `st_size`).
-    /// Raises `StriderError` when the symbol is undefined.  The `size`
-    /// half is exactly what `strider.run`'s `function_max_size=`
-    /// keyword expects.
-    fn symbol_addr_and_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
-        self.find_symbol(name, |sym| {
-            let size = sym.size();
-            (sym.address(), if size == 0 { None } else { Some(size) })
-        })
-    }
-
-    /// All function/data symbols across every loaded ELF as a
-    /// `dict[str, int]`.  Symbols with empty names or zero addresses
-    /// (typical for synthetic linker entries) are skipped.  When two
-    /// ELFs define the same name, the earlier-loaded one wins.
-    fn symbols(&self) -> HashMap<String, u64> {
-        let inner = self.inner.borrow();
-        let mut out: HashMap<String, u64> = HashMap::new();
-        for obj in inner.elfs.iter() {
-            for sym in obj.symbols() {
-                let Ok(name) = sym.name() else { continue };
-                if name.is_empty() || sym.address() == 0 {
-                    continue;
-                }
-                out.entry(name.to_string()).or_insert(sym.address());
-            }
-        }
-        out
-    }
-
-    /// ELF entry-point address from the first loaded ELF.  Raises
-    /// `StriderError` when no ELF has been loaded yet.
-    fn entry_point(&self) -> PyResult<u64> {
-        let inner = self.inner.borrow();
-        let first = inner.elfs.first().ok_or_else(|| {
-            into_strider_err(anyhow::anyhow!(
-                "no ELF loaded into this MemoryMap; call add_region_from_elf first"
-            ))
-        })?;
-        Ok(first.entry())
     }
 }
 
@@ -572,7 +389,7 @@ impl PyLoadedElf {
     fn entry_point(&self) -> u64 {
         // `load_elf` always pushes at least one ELF before handing back
         // a `_LoadedElf`, so `first()` is always `Some`.
-        self.elfs.first().map(|o| o.entry()).unwrap_or(0)
+        self.elfs.first().map_or(0, |o| o.entry())
     }
 
     /// Read up to `size` raw bytes starting at `addr` from the loaded

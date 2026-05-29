@@ -47,14 +47,13 @@ def _kernel_path(arch: str, version: str) -> pathlib.Path:
 
 
 def _lift(kernel: pathlib.Path, symbol: str, *, arch_name: str):
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(kernel))
-    mem.apply_elf_relocations(str(kernel))
-    syms = mem.symbols()
+    loaded = strider.load_elf(str(kernel), apply_relocations=True)
+    mem = loaded.memory_map()
+    syms = loaded.symbols()
     if symbol not in syms:
         pytest.skip(f"{kernel}: symbol {symbol!r} not found")
     entry = syms[symbol]
-    addr, size = mem.symbol_addr_and_size(symbol)
+    addr, size = loaded.symbol_addr_and_size(symbol)
 
     if arch_name == "aarch64":
         sleigh_arch = strider.SleighArch.aarch64()

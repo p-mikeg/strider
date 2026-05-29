@@ -35,19 +35,17 @@ def test_reader_error_on_overflowing_region_addr():
 
 
 def test_reader_error_on_missing_elf_path():
-    """`add_region_from_elf("/nonexistent")` must raise."""
-    mem = strider.MemoryMap()
+    """`load_elf("/nonexistent")` must raise."""
     with pytest.raises(errors.StriderError):
-        mem.add_region_from_elf("/nonexistent/path/to/some.elf")
+        strider.load_elf("/nonexistent/path/to/some.elf")
 
 
-def test_reader_error_on_unknown_symbol():
-    """`MemoryMap.symbol("...")` for a name not in any loaded ELF must
-    raise (no-ELF-loaded case still returns a typed error, not
-    KeyError or panic)."""
-    mem = strider.MemoryMap()
+def test_reader_error_on_unknown_symbol(x86_memory_elf):
+    """`_LoadedElf.symbol("...")` for a name not in any loaded ELF must
+    raise a typed error, not KeyError or panic."""
+    elf = strider.load_elf(str(x86_memory_elf))
     with pytest.raises(errors.StriderError):
-        mem.symbol("definitely_not_a_real_symbol_xyz")
+        elf.symbol("definitely_not_a_real_symbol_xyz")
 
 
 # ── PatternError category ──────────────────────────────────────────────────

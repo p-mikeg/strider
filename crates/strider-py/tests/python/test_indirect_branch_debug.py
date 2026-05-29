@@ -27,9 +27,9 @@ def test_run_resolves_indirect_branch_x86():
     elf = _x86_indirect_branch_elf()
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
-    addr = mem.symbol("indirect_branch_resolved")
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.memory_map()
+    addr = loaded.symbol("indirect_branch_resolved")
     result = strider.run(
         arch=arch,
         cc=cc,

@@ -7,8 +7,7 @@ def test_run_returns_run_result(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(x86_memory_elf))
+    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     result = strider.run(
         arch=arch,
         cc=cc,
@@ -27,8 +26,7 @@ def test_run_with_custom_pipeline(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(x86_memory_elf))
+    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
     result = strider.run(

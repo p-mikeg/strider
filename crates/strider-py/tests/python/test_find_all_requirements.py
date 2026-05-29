@@ -21,9 +21,9 @@ def _switch_graph():
     elf = fixture_path("x86", "switch")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
-    addr = mem.symbol("dispatch_value")
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.memory_map()
+    addr = loaded.symbol("dispatch_value")
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
         allow_code_before_start_addr=True,
@@ -69,9 +69,7 @@ def test_find_all_requirements_intersects_on_shared_capture():
     # against `any_int_const`, requiring the shared node to be an
     # IntConst.  Both must agree on the node id.
     elf = fixture_path("x86", "switch")
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
-    f_addr = mem.symbol("f")
+    f_addr = strider.load_elf(str(elf)).symbol("f")
     g = _switch_graph()
 
     target = Capture()

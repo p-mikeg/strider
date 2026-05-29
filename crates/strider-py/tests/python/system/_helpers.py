@@ -88,10 +88,10 @@ def analyze(
     elf = fixtures_dir / arch_id / f"{case}.elf"
     if not elf.exists():
         pytest.skip(f"fixture missing: {elf}")
-    mem = strider.MemoryMap()
-    mem.add_region_from_elf(str(elf))
+    loaded = strider.load_elf(str(elf))
+    mem = loaded.memory_map()
     try:
-        addr = mem.symbol(fn_name)
+        addr = loaded.symbol(fn_name)
     except Exception:
         pytest.skip(f"symbol {fn_name!r} not present in {elf}")
     if spec.thumb_mask:
