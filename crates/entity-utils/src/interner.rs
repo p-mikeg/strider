@@ -98,6 +98,13 @@ impl<K: EntityRef, V: Clone + Eq + Hash> Default for EntityInterner<K, V> {
 
 impl<K: EntityRef, V: Clone + Eq + Hash> Index<K> for EntityInterner<K, V> {
     type Output = V;
+
+    /// # Panics
+    ///
+    /// Panics if `key` was not produced by this interner (i.e. it is out of
+    /// range for the forward map). Prefer the non-panicking
+    /// [`EntityInterner::get`] when the key's provenance is uncertain.
+    #[track_caller]
     fn index(&self, key: K) -> &V {
         &self.forward[key]
     }

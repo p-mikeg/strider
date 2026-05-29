@@ -36,12 +36,19 @@ impl<E: EntityRef> DenseEntitySet<E> {
     }
 
     /// Returns the number of entities currently in the set.
+    ///
+    /// Runs in O(max_index / 64) — it sums the population counts of the
+    /// backing words rather than reading a cached length, so this is not
+    /// O(1).
     #[must_use]
     pub fn len(&self) -> usize {
         self.bitset.len()
     }
 
     /// Returns `true` if the set contains no entities.
+    ///
+    /// Runs in O(max_index / 64) for the same reason as
+    /// [`DenseEntitySet::len`].
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bitset.is_empty()
@@ -71,7 +78,11 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.remove(entity.index());
     }
 
-    /// Returns an iterator over all entities currently in the set.
+    /// Returns an iterator over all entities currently in the set, in
+    /// ascending entity-index order.
+    ///
+    /// Iterating fully runs in O(max_index / 64 + len): it scans the backing
+    /// words (skipping empty ones) and yields one entity per set bit.
     #[must_use]
     pub fn iter(&self) -> Iter<'_, E> {
         Iter::<E> {

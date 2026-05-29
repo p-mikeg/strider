@@ -184,9 +184,9 @@ impl<N: Copy> Default for PreOrderContext<N> {
 /// Each node is yielded exactly once, before its successors.
 pub struct PreOrder<G: GraphRef, V> {
     /// The graph being walked.
-    pub(crate) graph: G,
+    graph: G,
     /// Tracks which nodes have already been visited.
-    pub(crate) visited: V,
+    visited: V,
     ctx: PreOrderContext<G::NodeId>,
 }
 
@@ -323,9 +323,9 @@ impl<N: Copy> Default for PostOrderContext<N> {
 /// Each node is yielded exactly once, after all of its successors.
 pub struct PostOrder<G: GraphRef, V> {
     /// The graph being walked.
-    pub(crate) graph: G,
+    graph: G,
     /// Tracks which nodes have already been visited.
-    pub(crate) visited: V,
+    visited: V,
     ctx: PostOrderContext<G::NodeId>,
 }
 
@@ -346,6 +346,16 @@ impl<G: GraphRef, V: VisitTracker<G::NodeId>> PostOrder<G, V> {
     /// [`PostOrderContext::next_event`] for details.
     pub fn next_event(&mut self) -> Option<(WalkPhase, G::NodeId)> {
         self.ctx.next_event(&self.graph, &mut self.visited)
+    }
+
+    /// Consumes the walk and returns the visited-set tracker.
+    ///
+    /// Typically called after `for_each` / iterator drain to recover the
+    /// set of nodes the walk reached without re-collecting yielded ids.
+    /// Mirrors [`PreOrder::into_visited`].
+    #[must_use]
+    pub fn into_visited(self) -> V {
+        self.visited
     }
 }
 
