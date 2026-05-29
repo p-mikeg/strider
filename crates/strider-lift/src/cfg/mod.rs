@@ -12,7 +12,8 @@
 //! - [`RegionId`] — identifies a basic block within the CFG
 //! - [`RegionTerminator`] — how a region ends (the single source of truth for
 //!   its control transfer; CFG edges are unweighted topology)
-//! - [`IfRegionState`] — tracks the resolved/unresolved state of an if-case
+//! - [`IfRegionSuccessors`] — the true / false successor regions of a
+//!   conditional-branch region
 
 mod builder;
 mod decode_cache;
@@ -30,7 +31,7 @@ pub use builder::{IndirectResolverFn, ResolvedTargets};
 pub use decode_cache::DecodeCache;
 pub use options::OptionsBuilder;
 
-pub use query::{IfRegionState, is_addr_tail_call};
+pub use query::{IfRegionSuccessors, is_addr_tail_call};
 pub use types::{
     MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
 };

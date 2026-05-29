@@ -50,7 +50,7 @@ pub fn is_addr_tail_call(
 /// The two successors of a conditional-branch region.
 ///
 /// Returned by [`Cfg::region_if`].
-pub struct IfRegionState {
+pub struct IfRegionSuccessors {
     /// Region reached when the branch condition is *true*, if present.
     pub if_true_region: Option<NodeIndex>,
     /// Region reached when the branch condition is *false* (fall-through), if present.
@@ -98,13 +98,13 @@ impl Cfg {
     /// # Errors
     /// Returns an error when `region_id` or one of its edge targets is missing
     /// from the graph (a construction bug).
-    pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionState> {
+    pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionSuccessors> {
         let region = self
             .region_graph
             .node_weight(region_id)
             .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
         let RegionTerminator::CondBranch { true_target } = &region.terminator else {
-            return Ok(IfRegionState {
+            return Ok(IfRegionSuccessors {
                 if_true_region: None,
                 if_false_region: None,
             });
@@ -131,7 +131,7 @@ impl Cfg {
                 if_false_region = Some(target);
             }
         }
-        Ok(IfRegionState {
+        Ok(IfRegionSuccessors {
             if_true_region,
             if_false_region,
         })
