@@ -124,9 +124,11 @@ so the resolver-bearing dependency stays one-way.
       variable map, call-clobbered list, ret-val regs, call-other
       clobbered list, and `no_memory_clobber` flag).  Both populated
       by `FunctionBuilder::build`.
-    - **`PrimaryMap`:** `wide_consts` (`WideConstId → WideConstStorage`,
-      consulted by `IntConstWide(WideConstId)` nodes for I256 / I512
-      payloads that don't fit in the regular `IntConst(u128)`).
+    - **`EntityInterner`:** `wide_const_interner`
+      (`WideConstId → WideConstStorage`, value-deduped; consulted by
+      `IntConstWide(WideConstId)` nodes for I256 / I512 payloads that
+      don't fit in the regular `IntConst(u128)`).  Accessors:
+      `wide_const(id)` / `wide_const_opt(id)` / `intern_wide_const(value)`.
     - **Side-table registry on `Function`:** the `NodeId`-keyed
       `SecondaryMap` side-tables `stack_offsets` (SP-relative offset
       metadata for Store/Load populated by `StackOffsetDetect`),
@@ -136,7 +138,7 @@ so the resolver-bearing dependency stays one-way.
       index-keyed `arg_index_to_nodes` (`FxHashMap<u32, Vec<NodeId>>`,
       populated by `FunctionArgDetect`).  All are remapped by
       `Function::compact`.  `Graph` itself only holds structural state
-      (nodes, edges, dedup cache, `wide_consts`); per-function overlay
+      (nodes, edges, dedup cache, `wide_const_interner`); per-function overlay
       state lives on `Function`.
   - `FunctionBuilder` — builds the IR with SSA-like variable tracking.
     Variables map `rsleigh::Vn` → `VarId`.  Each region gets a
@@ -463,7 +465,7 @@ truth for every node's input/output shape.  Node kinds, grouped:
   `NodeId`; the underlying node kind stays `Store(VnSpace)` /
   `Load(VnSpace)`.
 - **Integer (incl. booleans):** `IntConst(u128)`, `IntConstWide(WideConstId)`
-  (I256 / I512, interned in `Graph::wide_consts`), `IntUnaryOp` (`BitNot`
+  (I256 / I512, interned in `Graph::wide_const_interner`), `IntUnaryOp` (`BitNot`
   for `~x`, `Neg` for `-x`), `IntBinaryOp` (`And` / `Or` / `Xor` /
   `Add` / `Mul` / shifts / …; no `Sub`; lifter lowers to
   `Add(_, Neg(_))`), `IntCmpOp` (`Equal`, `Less`, `Sless`, `Carry`,
