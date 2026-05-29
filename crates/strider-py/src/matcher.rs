@@ -268,6 +268,36 @@ impl PyMatch {
         self.assert_generation(&function)?;
         Ok(self.inner.asm_fingerprint(cap, &function).to_vec())
     }
+
+    /// Returns a `Node` handle on the node bound to `key` (a `Capture`
+    /// or string capture-name), or `None` when `key` is unbound in this
+    /// match.
+    ///
+    /// The returned `Node` is a discoverable entry point into the IR
+    /// graph: walk its `inputs()`, read its `kind()`, pull out constant
+    /// values, etc.  Unlike `Match.root` (which always returns the raw
+    /// top-level `u32` id), this resolves an explicit capture binding.
+    fn node(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::node::PyNode>> {
+        let cap = key.resolve()?;
+        // Re-borrow the function to validate the generation hasn't drifted
+        // before handing out a node id that may point at a stale arena.
+        {
+            let function = self.function.borrow(py);
+            let function = function.read_inner().map_err(into_strider_err)?;
+            self.assert_generation(&function)?;
+        }
+        match self.inner.node(cap) {
+            Some(nid) => {
+                let pynode = crate::node::PyNode::new(
+                    py,
+                    self.function.clone_ref(py),
+                    nid.as_u32(),
+                )?;
+                Ok(Some(pynode))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 // ── Op-variant name helper ──────────────────────────────────────────────

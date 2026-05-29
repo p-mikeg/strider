@@ -39,6 +39,7 @@ mod function;
 #[macro_use]
 mod macros;
 mod matcher;
+mod node;
 mod opt;
 mod pattern;
 mod reader;
@@ -95,6 +96,7 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     sleigh::register(py, m)?;
     cfg::register(py, m)?;
     function::register(py, m)?;
+    node::register(py, m)?;
     strider_cls::register(py, m)?;
     opt::register(py, m)?;
     run::register(py, m)?;

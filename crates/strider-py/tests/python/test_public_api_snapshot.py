@@ -32,6 +32,7 @@ EXPECTED_TOP = {
     "Match",
     "MemoryMap",
     "MemReader",
+    "Node",
     "OptimizerPipeline",
     "Program",
     "ReadOnlyMemory",
