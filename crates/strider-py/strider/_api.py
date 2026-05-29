@@ -584,7 +584,7 @@ class Analysis:
         * A `Node` handle — its `.id` is used.
 
         Returns an empty list for "structural" node kinds
-        (Entry, InitialMemory, phis, Region, FunctionArg).
+        (Entry, InitialMemory, InitialVar, Region, and phis).
         See `ir::Graph::asm_fingerprint` for the full contract.
         """
         node_id = self._coerce_node_id(node)
@@ -606,7 +606,7 @@ class Analysis:
         `node` can be a raw `u32` id, a `Match`, or a `Node` handle.
 
         Returns `[]` for "structural" nodes that carry no fingerprint
-        (Entry, InitialMemory, phis, Region, FunctionArg).
+        (Entry, InitialMemory, InitialVar, Region, and phis).
         """
         addrs = self.fingerprint(node)
         if not addrs:

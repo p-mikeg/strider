@@ -326,6 +326,24 @@ def test_analyzer_per_call_override_function_max_size():
     assert a.function.node_count() > 0
 
 
+def test_analyzer_explicit_none_overrides_frozen_bound():
+    """An explicit `function_max_size=None` is honored as an override
+    distinct from leaving the keyword unset — the crux of the `_UNSET`
+    sentinel.  With a frozen tiny bound and an address target (so the
+    symbol-size default doesn't mask it), the unset call stays bounded
+    while the explicit-`None` call lifts the whole function."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    addr = s.symbol("add")
+    azr = s.analyzer(function_max_size=4)  # frozen tiny bound
+    bounded = azr.analyze(addr)  # keyword unset -> frozen bound (4)
+    full = azr.analyze(addr, function_max_size=None)  # explicit None -> unbounded
+    assert full.function.node_count() > bounded.function.node_count(), (
+        "explicit function_max_size=None did not override the frozen bound "
+        "(the _UNSET sentinel is not distinguishing None from unset)"
+    )
+
+
 def test_analyzer_per_call_override_allow_code_before():
     """A per-call `allow_code_before_start_addr=True` override (over a
     frozen `False`) does not raise and yields a valid analysis."""
