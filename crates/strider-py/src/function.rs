@@ -444,6 +444,58 @@ impl PyFunction {
         Ok(out)
     }
 
+    /// Find the first site where `pat` matches, or `None` if nothing
+    /// matches.  A one-shot convenience over `find_all` for the common
+    /// `hits = find_all(p); hits[0] if hits else None` idiom — it
+    /// short-circuits on the first match in the Rust matcher rather than
+    /// collecting every hit.
+    ///
+    /// `pat` and the matcher options (`ignore_casts`,
+    /// `ignore_casts_mask`, `ignore_regions`) mirror `find_all`.  The
+    /// returned `Match` is the same as `find_all`'s first element.
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
+    fn find_one(
+        slf: Py<Self>,
+        py: Python<'_>,
+        pat: crate::pattern::PatLike<'_>,
+        ignore_casts: bool,
+        ignore_regions: bool,
+        ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+    ) -> PyResult<Option<crate::matcher::PyMatch>> {
+        if ignore_casts && ignore_casts_mask.is_some() {
+            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "find_one: pass either ignore_casts=True or ignore_casts_mask=...; not both"
+            )));
+        }
+        let pat = pat.into_pat()?;
+        let function_borrow = slf.borrow(py);
+        let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
+        let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
+            .map_err(crate::errors::into_strider_err)?;
+        if ignore_casts {
+            matcher = matcher.ignore_casts();
+        } else if let Some(m) = ignore_casts_mask {
+            matcher = matcher.ignore_casts_mask(m.inner);
+        }
+        if ignore_regions {
+            matcher = matcher.ignore_regions();
+        }
+        let raw = matcher.find_first(&pat);
+        let generation = function_guard.generation();
+        drop(function_guard);
+        drop(function_borrow);
+        // Same propagation as `find_all` — pending control-flow
+        // exceptions from `.when()` predicates surface here.
+        if let Some(err) = crate::pattern::take_pending_control_flow() {
+            return Err(err);
+        }
+        Ok(raw.map(|m| crate::matcher::PyMatch {
+            inner: m,
+            function: slf.clone_ref(py),
+            generation,
+        }))
+    }
+
     /// Run multiple patterns and intersect their matches on shared
     /// `Capture` objects.  Returns one tuple per joined match — each
     /// tuple holds one `Match` per input pattern (in input order),

@@ -224,6 +224,42 @@ impl<'g> Matcher<'g> {
         hits
     }
 
+    /// Finds the first node in the graph where `pat` matches and returns
+    /// its [`Match`], or `None` when nothing matches.
+    ///
+    /// Identical candidate-selection strategy to [`Self::find_all`]
+    /// (kind-index bucket for a concrete root, cached preorder for a
+    /// wildcard), but short-circuits on the first successful match
+    /// instead of collecting every hit.  "First" is in the same
+    /// preorder `find_all` produces, so `find_first(p)` equals
+    /// `find_all(p).into_iter().next()`.
+    pub fn find_first(&self, pat: &Pat) -> Option<Match> {
+        let kind = pat.as_dyn().kind_spec();
+        let mut bindings = Bindings::default();
+
+        let try_nodes = |nodes: &[NodeId], bindings: &mut Bindings| -> Option<Match> {
+            for &node in nodes {
+                let mark = bindings.mark();
+                if self.match_node_id(node, pat, bindings) {
+                    return Some(Match {
+                        root: node,
+                        bindings: bindings.clone(),
+                    });
+                }
+                bindings.restore(mark);
+            }
+            None
+        };
+
+        match kind.discriminant() {
+            Some(d) => self
+                .kind_index()
+                .get(&d)
+                .and_then(|nodes| try_nodes(nodes, &mut bindings)),
+            None => try_nodes(self.walk_cached(), &mut bindings),
+        }
+    }
+
     /// Run several patterns over the graph in a single pass.  Returns
     /// one `Vec<Match>` per input pattern, in input order.
     ///

@@ -159,6 +159,49 @@ def test_find_against_pattern_returns_list():
     assert len(matches) >= 1, "expected at least one Add node in add(a,b)"
 
 
+def test_find_one_returns_match_when_present():
+    """`Analysis.find_one(pat)` returns the first `Match` when the
+    pattern matches at least once, equal to `find(pat)[0]`."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    a = s.analyze("add")
+    pat = strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+    matches = a.find(pat)
+    assert matches, "fixture has no Add nodes — investigate"
+    one = a.find_one(pat)
+    assert one is not None
+    assert isinstance(one, strider.Match)
+    # `find_one` is the first `find_all` hit (same preorder).
+    assert one.root == matches[0].root
+
+
+def test_find_one_returns_none_when_absent():
+    """`Analysis.find_one(pat)` returns `None` when the pattern has no
+    match anywhere in the graph."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    a = s.analyze("add")
+    # An impossible IntConst literal that cannot occur in `add(a, b)`.
+    impossible = strider.pattern.int_const(0xDEAD_BEEF_CAFE_BABE)
+    assert a.find(impossible) == []
+    assert a.find_one(impossible) is None
+
+
+def test_function_find_one_matches_find_all_first():
+    """`Function.find_one(pat)` mirrors `find_all(pat)[0]` (or `None`)."""
+    elf = fixture_path("x64", "arithmetic")
+    s = strider.load(str(elf))
+    g = s.analyze("add").function
+    pat = strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
+    all_hits = g.find_all(pat)
+    one = g.find_one(pat)
+    assert all_hits, "fixture has no Add nodes — investigate"
+    assert one is not None
+    assert one.root == all_hits[0].root
+    # Negative: an unmatched pattern yields None.
+    assert g.find_one(strider.pattern.int_const(0xDEAD_BEEF_CAFE_BABE)) is None
+
+
 def test_fingerprint_returns_machine_addresses():
     """Every matched value node should carry a non-empty
     asm-fingerprint (asm-fingerprints are always-on per G3)."""

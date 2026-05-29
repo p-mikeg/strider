@@ -323,6 +323,16 @@ class Function:
         ignore_regions: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
     ) -> List[Match]: ...
+    def find_one(
+        self,
+        pat: Any,  # strider.pattern.PatLike
+        ignore_casts: bool = ...,
+        ignore_regions: bool = ...,
+        ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
+    ) -> Optional[Match]:
+        """Return the first `Match` for `pat`, or `None` if it does not
+        match anywhere.  One-shot convenience over `find_all`."""
+        ...
     def find_all_requirements(
         self,
         pats: List[Any],  # list[strider.pattern.PatLike]
@@ -496,6 +506,9 @@ class Analysis:
     @property
     def name(self) -> Optional[str]: ...
     def find(self, pattern: Any, **matcher_options: Any) -> List[Match]: ...
+    def find_one(
+        self, pattern: Any, **matcher_options: Any
+    ) -> Optional[Match]: ...
     def find_all_requirements(
         self, patterns: List[Any], **matcher_options: Any
     ) -> List[List[Match]]: ...

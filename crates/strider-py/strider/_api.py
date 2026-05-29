@@ -492,6 +492,14 @@ class Analysis:
         `ignore_regions`)."""
         return self._result.function.find_all(pattern, **matcher_options)
 
+    def find_one(self, pattern, **matcher_options):
+        """Run a pattern and return the first `Match`, or `None` if it
+        does not match anywhere.  A one-shot convenience for the
+        `hits = a.find(pat); hits[0] if hits else None` idiom.
+        Forwards every kwarg to `Function.find_one` (`ignore_casts`,
+        `ignore_casts_mask`, `ignore_regions`)."""
+        return self._result.function.find_one(pattern, **matcher_options)
+
     def find_all_requirements(self, patterns, **matcher_options) -> list:
         """Run multiple patterns and intersect their matches on
         shared `Capture` objects.  See
