@@ -425,8 +425,8 @@ so the resolver-bearing dependency stays one-way.
   helper.  `Analyzer` is the frozen configure-once handle for analysing
   many functions with one shared setup: `Program.analyzer(...)`
   (ELF-backed, symbol names resolve) or the top-level
-  `strider.analyzer(arch, cc, mem, ...)` (standalone / firmware, optional
-  `symbols=` dict); `.analyze(target, **override)` takes only the target
+  `strider.analyzer(arch, cc, mem, ...)` (standalone / firmware,
+  address targets only); `.analyze(target, **override)` takes only the target
   per call and any frozen option can be overridden for one call (a
   `pipeline_factory` is invoked fresh per call to sidestep the
   drain-on-use of a single `OptimizerPipeline`).  `Program.analyze`

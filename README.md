@@ -107,10 +107,10 @@ azr = prog.analyzer()                  # configure once
 for fn in prog.functions():
     a = azr.analyze(fn)                # only the target per call
 
-# Standalone (non-ELF / firmware) form over a raw MemoryMap; an
-# optional symbols={…} dict enables name targets:
-azr = strider.analyzer(arch, cc, mem, symbols={"reset": 0x8000})
-a = azr.analyze("reset")               # or azr.analyze(0x8000)
+# Standalone (non-ELF / firmware) form over a raw MemoryMap
+# (address targets only — no ELF symbol table):
+azr = strider.analyzer(arch, cc, mem)
+a = azr.analyze(0x8000)
 ```
 
 ---

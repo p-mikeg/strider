@@ -416,28 +416,9 @@ def test_standalone_analyzer_by_address():
         assert isinstance(text, str)
 
 
-def test_standalone_analyzer_with_symbols_dict():
-    """A standalone analyzer with a `symbols={...}` dict resolves a
-    name target."""
-    elf = fixture_path("x64", "arithmetic")
-    loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
-    addr = loaded.symbol("add")
-    azr = strider.analyzer(
-        strider.SleighArch.x86_64(),
-        strider.CallingConvention.x86_64_systemv(),
-        mem,
-        symbols={"add": addr},
-    )
-    a = azr.analyze("add")
-    assert a.entry == addr
-    assert a.name == "add"
-    assert a.function.node_count() > 0
-
-
-def test_standalone_analyzer_name_without_symbols_raises():
-    """A name target on a standalone analyzer with no symbol source is
-    a clear error (TypeError/ValueError), not a silent misbehaviour."""
+def test_standalone_analyzer_rejects_name_targets():
+    """A standalone analyzer (no ELF) accepts only address targets; a
+    name target raises a clear `ValueError` rather than misbehaving."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
     mem = loaded.memory_map()

@@ -593,7 +593,6 @@ def analyzer(
     mem: Any,  # MemoryMap | MemReader subclass
     *,
     rom: Optional[Any] = ...,  # MemoryMap | ReadOnlyMemory subclass
-    symbols: Optional[dict[str, int]] = ...,
     allow_code_before_start_addr: bool = ...,
     function_max_size: Optional[int] = ...,
     compact: bool = ...,
@@ -601,9 +600,8 @@ def analyzer(
     pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = ...,
 ) -> Analyzer:
     """Build a standalone (non-ELF / firmware) `Analyzer` over a raw code
-    reader.  No ELF symbol source; an optional `symbols` dict (name →
-    address) enables `analyze("name")`, otherwise only address targets
-    work."""
+    reader.  No ELF symbol source — only address targets are accepted;
+    a name target raises a clear error."""
     ...
 
 # ── Subpackages ────────────────────────────────────────────────────────

@@ -97,7 +97,8 @@ a = azr.analyze("array_sum", function_max_size=64)
 ```
 
 For a raw firmware blob / non-ELF source, build a standalone analyzer
-over a `MemoryMap` (an optional `symbols=` dict enables name targets):
+over a `MemoryMap` (address targets only — there's no ELF symbol
+table; do the name → address lookup at the call site if you have one):
 
 ```python
 mem = strider.MemoryMap()
@@ -106,9 +107,8 @@ azr = strider.analyzer(
     strider.SleighArch.arm_thumb(),
     strider.CallingConvention.arm_aapcs(),
     mem,
-    symbols={"reset": 0x8000},
 )
-a = azr.analyze("reset")               # or azr.analyze(0x8000)
+a = azr.analyze(0x8000)
 ```
 
 For workflows that need granular control — explicit calling

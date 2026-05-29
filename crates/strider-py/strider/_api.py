@@ -649,8 +649,9 @@ class Analyzer:
     needs only the target function (a symbol name or absolute address).
     Any frozen option can be overridden for a single call.
 
-    Build one from a loaded ELF (`prog.analyzer(...)`) for symbol-name
-    resolution, or standalone for a raw firmware blob / custom source:
+    Build one from a loaded ELF (`prog.analyzer(...)`) — which keeps
+    symbol-name resolution via the ELF — or standalone for a raw
+    firmware blob / custom source (address targets only):
 
     ```python
     # ELF-backed:
@@ -658,10 +659,9 @@ class Analyzer:
     for fn in prog.functions():
         a = azr.analyze(fn)
 
-    # Standalone (no ELF symbol table):
-    azr = strider.analyzer(arch, cc, mem, symbols={"reset": 0x8000})
-    a = azr.analyze("reset")           # via the symbols dict
-    a = azr.analyze(0x8000)            # or by address
+    # Standalone (no symbol table — addresses only):
+    azr = strider.analyzer(arch, cc, mem)
+    a = azr.analyze(0x8000)
     ```
 
     The handle is frozen — its fields are set once in `__init__` and
@@ -681,7 +681,6 @@ class Analyzer:
         "_per_address_ccs",
         "_pipeline_factory",
         "_elf",
-        "_symbols",
         "_program",
     )
 
@@ -698,7 +697,6 @@ class Analyzer:
         per_address_ccs: Optional[dict] = None,
         pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = None,
         _elf: Optional[object] = None,
-        _symbols: Optional[dict] = None,
         _program: Optional[Program] = None,
     ) -> None:
         self._arch = arch
@@ -711,14 +709,11 @@ class Analyzer:
         self._compact = compact
         self._per_address_ccs = per_address_ccs
         self._pipeline_factory = pipeline_factory
-        # Symbol sources for name resolution.  An ELF-backed analyzer
-        # carries the loaded ELF (`symbol_addr_and_size` + the symbol's
-        # recorded size); a standalone analyzer carries an optional
-        # `symbols` dict (name → address).  Exactly one is used per
-        # `analyze(name)`; an analyzer with neither rejects name targets
-        # with a clear error.
+        # ELF symbol source for `analyze(name)`.  ELF-backed analyzers
+        # carry the loaded ELF (`symbol_addr_and_size` + the symbol's
+        # recorded size); standalone analyzers leave this `None` and
+        # reject name targets with a clear error.
         self._elf = _elf
-        self._symbols = _symbols
         # When this analyzer was built from a `Program`, the resulting
         # `Analysis` is backed by it (so `fingerprint_pcode` uses the
         # ELF regions, matching `Program.analyze`).  Standalone
@@ -738,10 +733,9 @@ class Analyzer:
         return self._cc
 
     def __repr__(self) -> str:
-        has_symbols = self._elf is not None or self._symbols is not None
         return (
             f"Analyzer(arch={self._arch.name()}, cc={self._cc.name()}, "
-            f"symbols={has_symbols})"
+            f"symbols={self._elf is not None})"
         )
 
     # ── Target resolution ───────────────────────────────────────────
@@ -753,32 +747,24 @@ class Analyzer:
 
         Mirrors `Program.analyze`'s symbol handling: a name is resolved
         via the ELF (with its recorded size defaulting the bound when no
-        explicit bound is given) or via the standalone `symbols` dict;
-        an int passes through as an address.  Raises a clear error for a
-        name target with no symbol source, or for a wrong-typed target.
+        explicit bound is given); an int passes through as an address.
+        Raises a clear error for a name target on a standalone analyzer
+        (no ELF symbol source), or for a wrong-typed target.
         """
         if isinstance(function, str):
-            if self._elf is not None:
-                addr, sym_size = self._elf.symbol_addr_and_size(function)
-                # Honour the symbol's recorded size when the caller
-                # didn't provide an explicit bound (matching
-                # `Program.analyze`; zero-size symbols surface as `None`).
-                if function_max_size is None:
-                    function_max_size = sym_size
-            elif self._symbols is not None:
-                if function not in self._symbols:
-                    raise ValueError(
-                        f"unknown symbol {function!r}; this analyzer's "
-                        f"`symbols` dict has no entry for it"
-                    )
-                addr = self._symbols[function]
-            else:
+            if self._elf is None:
                 raise ValueError(
                     f"cannot resolve symbol name {function!r}: this analyzer "
-                    f"has no symbol source.  Pass an int address instead, or "
-                    f"build the analyzer from a Program (prog.analyzer(...)) "
-                    f"or with a symbols={{...}} dict."
+                    f"has no ELF symbol source.  Pass an int address instead, "
+                    f"or build the analyzer from a Program "
+                    f"(prog.analyzer(...))."
                 )
+            addr, sym_size = self._elf.symbol_addr_and_size(function)
+            # Honour the symbol's recorded size when the caller didn't
+            # provide an explicit bound (matching `Program.analyze`;
+            # zero-size symbols surface as `None`).
+            if function_max_size is None:
+                function_max_size = sym_size
             name: Optional[str] = function
         elif isinstance(function, int):
             addr = function
@@ -893,7 +879,6 @@ def analyzer(
     mem: object,  # MemoryMap | MemReader
     *,
     rom: Optional[object] = None,
-    symbols: Optional[dict] = None,
     allow_code_before_start_addr: bool = False,
     function_max_size: Optional[int] = None,
     compact: bool = True,
@@ -903,10 +888,9 @@ def analyzer(
     """Build a standalone `Analyzer` over a raw code reader.
 
     The non-ELF / firmware-blob counterpart to `Program.analyzer(...)`:
-    there is no ELF symbol source, but an optional `symbols` dict (name →
-    address) enables `analyze("name")`.  Without it, only address targets
-    work — a name target raises a clear error pointing the user at an int
-    address or a `symbols=` dict.
+    there is no ELF symbol source, so only address targets are accepted
+    — a name target raises a clear error.  If you have a name → address
+    map, do the lookup at the call site.
 
     ```python
     mem = strider.MemoryMap()
@@ -915,9 +899,8 @@ def analyzer(
         strider.SleighArch.arm_thumb(),
         strider.CallingConvention.arm_aapcs(),
         mem,
-        symbols={"reset": 0x8000},
     )
-    a = azr.analyze("reset")
+    a = azr.analyze(0x8000)
     ```
     """
     return Analyzer(
@@ -930,5 +913,4 @@ def analyzer(
         compact=compact,
         per_address_ccs=per_address_ccs,
         pipeline_factory=pipeline_factory,
-        _symbols=symbols,
     )
