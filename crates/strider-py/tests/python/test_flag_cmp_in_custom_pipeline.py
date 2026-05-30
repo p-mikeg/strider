@@ -2,33 +2,29 @@
 `FlagCmpCanonicalize` must canonicalise the same flag-cmp shapes the
 default pipeline does.
 
-The original bug surfaced on Linux x86_64's
-``exit_signals(struct task_struct *tsk)``, whose body opens with a
-``thread_group_empty(tsk)`` macro that lifts (after the lifter's
-flag-tree expansion of ``cmp [rdi+1408], rdi``) to::
+The canonical bug shape is `list_empty(head)`: `head->next == &head`
+compiles on x86_64 (`-O2`) to a `cmp QWORD PTR [rdi+K], rdi+K`
+(mem vs reg+K), which Sleigh expands to a flag-tree the lifter
+normalises to::
 
-    Equal(Add(LOAD(rdi+1408), Neg(Add(rdi, 1408))), 0)
+    Equal(Add(LOAD(rdi+K), Neg(Add(rdi, K))), 0)
 
-The Rust `opt::default_pipeline()` runs `FlagCmpCanonicalize` which
-rewrites this to::
+`opt::FlagCmpCanonicalize` rewrites this to::
 
-    Equal(LOAD(rdi+1408), Add(rdi, 1408))
+    Equal(LOAD(rdi+K), Add(rdi, K))
 
 — the canonical shape pattern queries match on
-(``int_eq(load(<base>+K), add(<base>, K))``).  `FlagCmpCanonicalize`
+(``int_eq(load(<base>+K), add(<base>, K))``).  ``FlagCmpCanonicalize``
 was not exposed to Python, so a custom pipeline that omitted it left
 the flag-tree shape in the IR and pattern queries failed silently.
 
-This test is bound to a specific kernel build (the Debian
-``4.19.0-amd64`` vmlinux that ships in `bsdfinder`'s kernel cache); the
-case skips cleanly when the binary is missing.
+This test uses the in-repo fixture `fixtures/cases/list_empty.c` —
+`is_thread_group_empty(task*)` — which has the exact ``head->next ==
+&head`` shape at struct offset 64 (4 bytes `pid` + 60 bytes pad =
+64).  See the C file for the layout.
 """
 
 from __future__ import annotations
-
-import pathlib
-
-import pytest
 
 import strider
 from strider import opt
@@ -41,29 +37,12 @@ from strider.pattern import (
     load,
 )
 
-
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
-_VMLINUX = (
-    _REPO_ROOT
-    / ".."
-    / "bsdfinder"
-    / "kernels"
-    / "linux"
-    / "x86_64"
-    / "4.19.0-amd64"
-    / "vmlinux"
-)
-
-
-def _vmlinux() -> pathlib.Path:
-    if not _VMLINUX.exists():
-        pytest.skip(f"linux kernel fixture missing: {_VMLINUX}")
-    return _VMLINUX.resolve()
+from .conftest import fixture_path
 
 
 def _build_user_pipeline_with_fcc(sl, sleigh, cc, mem):
-    """The bsdfinder pipeline (`bsdfinder/offset.py::ResolveCtx._build_pipeline`)
-    plus `FlagCmpCanonicalize`."""
+    """A bsdfinder-style custom pipeline that bolts
+    ``FlagCmpCanonicalize`` on top of the user's chosen passes."""
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(opt.ConstantFold())
     pipe.add(opt.KnownBits())
@@ -78,26 +57,19 @@ def _build_user_pipeline_with_fcc(sl, sleigh, cc, mem):
     return pipe
 
 
-def test_thread_group_empty_pattern_matches_under_custom_pipeline_with_fcc():
+def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
     """With `FlagCmpCanonicalize` in the custom pipeline, the
-    `list_empty(head)` shape that ``thread_group_empty(tsk)`` lifts to
-    must be matchable as `int_eq(load(<base>+K), add(<base>, K))` —
-    the same way the orchestrator's default-pipeline path matches it.
-    """
-    vmlinux = _vmlinux()
-
-    loaded = strider.load_elf(str(vmlinux), apply_relocations=True)
+    `head->next == &head` shape must be matchable as
+    `int_eq(load(<base>+K), add(<base>, K))` — the same way the
+    orchestrator's default-pipeline path matches it."""
+    elf = fixture_path("x64", "list_empty")
+    loaded = strider.load_elf(str(elf))
     mem = loaded.memory_map()
-    syms = loaded.symbols()
-    if "exit_signals" not in syms or "__fentry__" not in syms:
-        pytest.skip("vmlinux missing required symbols (exit_signals/__fentry__)")
-
     sleigh = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     sl = strider.Sleigh(sleigh, mem)
 
-    per_addr = {syms["__fentry__"]: strider.CallingConvention.x86_64_all_preserving()}
-    _entry, max_size = loaded.symbol_addr_and_size("exit_signals")
+    entry, max_size = loaded.symbol_addr_and_size("is_thread_group_empty")
     pipe = _build_user_pipeline_with_fcc(sl, sleigh, cc, mem)
 
     res = strider.run(
@@ -105,9 +77,7 @@ def test_thread_group_empty_pattern_matches_under_custom_pipeline_with_fcc():
         cc=cc,
         mem=mem,
         rom=mem,
-        entry=syms["exit_signals"],
-        allow_code_before_start_addr=True,
-        per_address_ccs=per_addr,
+        entry=entry,
         function_max_size=max_size,
         pipeline=pipe,
     )
@@ -119,8 +89,9 @@ def test_thread_group_empty_pattern_matches_under_custom_pipeline_with_fcc():
     )
     hits = list(res.function.find_all(pat, ignore_casts=True))
     offsets = sorted({h.uint(o) for h in hits if h.uint(o) is not None})
-    # Linux 4.19 x86_64 puts `task_struct.thread_group` at offset 1408.
-    assert 1408 in offsets, (
-        f"expected thread_group test at offset 1408 to canonicalise; "
+    # `offsetof(struct task, head)` in the C fixture: int (4) + char[60]
+    # (60) = 64.  GCC at -O2 emits exactly `cmp [rdi+0x40], rdi+0x40`.
+    assert 64 in offsets, (
+        f"expected list_empty test at offset 64 to canonicalise; "
         f"got hits at {offsets}"
     )
