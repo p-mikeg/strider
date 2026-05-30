@@ -19,7 +19,7 @@ OUTDIR := out
 ARCHES := x86 x86_kernel x64 aarch64 aarch64be arm arm_be arm_thumb \
           mips32le mips32be mips64le mips64be \
           ppc32be ppc32le ppc64be ppc64le
-CASES  := $(notdir $(basename $(wildcard cases/*.c)))
+CASES  := $(notdir $(basename $(wildcard cases/*.c) $(wildcard cases/*.S)))
 
 # Common warning-flag set: every fixture must compile clean.
 # -fno-optimize-sibling-calls: keep recursive / wrapper calls visible as
@@ -70,6 +70,21 @@ $(OUTDIR)/$(ARCH)/%.elf: cases/%.c | $(OUTDIR)/$(ARCH)
 		$(CC) $(CFLAGS_BASE) $(COMMON_CFLAGS) -shared -fPIC -nostdlib $< -o $@ && echo "  Built $@ (shared)"; \
 	else \
 		$(CC) $(CFLAGS) $(COMMON_CFLAGS) $< -o $@ && echo "  Built $@"; \
+	fi
+
+# Hand-written assembly cases (`cases/*.S`).  An `.S` source is built
+# with `-nostdlib -static` so it needs no libc and produces a
+# freestanding ELF; the arch's `CFLAGS` are still applied for `-m32`
+# / `-march=...` style targeting.  An `.S` file is typically arch-
+# specific (instructions only assemble for one ISA); for non-matching
+# arches the assembler errors out, the build fails for that single
+# case, and tests skip cleanly because the fixture won't exist.
+$(OUTDIR)/$(ARCH)/%.elf: cases/%.S | $(OUTDIR)/$(ARCH)
+	@if [ "$(CC)" = "false" ]; then \
+		echo "WARNING: compiler for '$(ARCH)' not found; skipping $@"; \
+	else \
+		$(CC) $(CFLAGS) -nostdlib -static $< -o $@ 2>/dev/null && echo "  Built $@ (asm)" \
+			|| echo "  Skipped $@ (asm doesn't build for $(ARCH))"; \
 	fi
 
 else

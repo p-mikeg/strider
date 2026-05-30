@@ -20,57 +20,27 @@ this:
    exact-match ``position`` lookup said no.  Fix: round down to the
    largest insn whose address is ≤ the requested split address.
 
-The kernels live under ``../bsdfinder/kernels/linux``.  Each test
-falls back to a skip when the kernel image is absent.
+The two regression shapes live in the in-repo aarch64 fixture
+``fixtures/cases/zero_pcode_holes.S`` — ``nop_fallthrough`` for bug 1
+and ``autiasp_split`` for bug 2.  Each test skips cleanly when the
+fixture wasn't built (no aarch64 toolchain in a contributor's env).
 """
 
 from __future__ import annotations
 
 import pathlib
 
-import pytest
-
 import strider
 
-
-def _kernel_path(arch: str, version: str) -> pathlib.Path:
-    # Search upward for a sibling ``bsdfinder`` directory.  Works both
-    # from the main checkout (where the workspace root sits next to
-    # ``../bsdfinder``) and from a git worktree under
-    # ``.claude/worktrees/<branch>/`` (where the same sibling is
-    # several levels up).
-    for parent in pathlib.Path(__file__).resolve().parents:
-        candidate = parent.parent / "bsdfinder" / "kernels" / "linux" / arch / version / "vmlinux"
-        if candidate.exists():
-            return candidate
-    pytest.skip(f"bsdfinder kernel missing: linux/{arch}/{version}/vmlinux")
+from .conftest import fixture_path
 
 
-def _lift(kernel: pathlib.Path, symbol: str, *, arch_name: str):
-    loaded = strider.load_elf(str(kernel), apply_relocations=True)
+def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
+    loaded = strider.load_elf(str(elf_path))
     mem = loaded.memory_map()
-    syms = loaded.symbols()
-    if symbol not in syms:
-        pytest.skip(f"{kernel}: symbol {symbol!r} not found")
-    entry = syms[symbol]
-    addr, size = loaded.symbol_addr_and_size(symbol)
-
-    if arch_name == "aarch64":
-        sleigh_arch = strider.SleighArch.aarch64()
-        cc = strider.CallingConvention.aarch64_aapcs64()
-    elif arch_name == "x86_64":
-        sleigh_arch = strider.SleighArch.x86_64()
-        cc = strider.CallingConvention.x86_64_systemv()
-    else:
-        raise AssertionError(f"unsupported arch: {arch_name}")
-
-    per_addr = {}
-    if arch_name == "x86_64":
-        ap = strider.CallingConvention.x86_64_all_preserving()
-        for stub in ("__fentry__", "mcount"):
-            if stub in syms:
-                per_addr[syms[stub]] = ap
-
+    entry, size = loaded.symbol_addr_and_size(symbol)
+    sleigh_arch = strider.SleighArch.aarch64()
+    cc = strider.CallingConvention.aarch64_aapcs64()
     return strider.run(
         arch=sleigh_arch,
         cc=cc,
@@ -79,36 +49,31 @@ def _lift(kernel: pathlib.Path, symbol: str, *, arch_name: str):
         entry=entry,
         function_max_size=size,
         allow_code_before_start_addr=True,
-        per_address_ccs=per_addr,
     )
 
 
 # ── Bug 1: empty-insns fall-through across zero-pcode-op stretches ────────────
 
 
-def test_aarch64_4_19_wait_consider_task_lifts_cleanly():
-    """``wait_consider_task`` on aarch64 4.19 contains a literal ``nop``
-    that falls through into an explored region's start.  Pre-fix this
-    tripped ``add_region``'s non-empty invariant with
-    ``"region at PcodeInsnAddr ... has no instructions"``.
-    """
-    kernel = _kernel_path("aarch64", "4.19.0-arm64")
-    result = _lift(kernel, "wait_consider_task", arch_name="aarch64")
+def test_aarch64_nop_fallthrough_lifts_cleanly():
+    """``nop_fallthrough`` is a hand-written aarch64 stub whose
+    fall-through path crosses a literal ``nop`` (zero pcode ops) into
+    an already-explored region's start.  Pre-fix this tripped
+    ``add_region``'s non-empty invariant with
+    ``"region at PcodeInsnAddr ... has no instructions"``."""
+    elf = fixture_path("aarch64", "zero_pcode_holes")
+    result = _lift_aarch64(elf, "nop_fallthrough")
     assert result.function.node_count() > 0
 
 
-# ── Bug 3: split-into-zero-pcode-op-hole ──────────────────────────────────────
+# ── Bug 2: split-into-zero-pcode-op-hole ──────────────────────────────────────
 
 
-@pytest.mark.parametrize("version", ["5.10.0-arm64", "6.1.0-arm64"])
-def test_aarch64_task_active_pid_ns_lifts_cleanly(version: str):
-    """``task_active_pid_ns`` on aarch64 5.10 and 6.1 ends with
-    ``autiasp; ret``.  ``autiasp`` lifts to zero pcode ops, so a
-    preceding ``cbz`` that branches to its address forces a region
-    split into a hole that no recorded insn occupies.  Pre-fix this
-    raised ``"split address ... not found in region NodeIndex(N)'s
-    instruction list"``.
-    """
-    kernel = _kernel_path("aarch64", version)
-    result = _lift(kernel, "task_active_pid_ns", arch_name="aarch64")
+def test_aarch64_autiasp_split_lifts_cleanly():
+    """``autiasp_split``'s ``cbz`` branches to the address of an
+    ``autiasp`` (zero pcode ops) sitting inside an already-built
+    region.  Pre-fix this raised ``"split address ... not found in
+    region NodeIndex(N)'s instruction list"``."""
+    elf = fixture_path("aarch64", "zero_pcode_holes")
+    result = _lift_aarch64(elf, "autiasp_split")
     assert result.function.node_count() > 0
