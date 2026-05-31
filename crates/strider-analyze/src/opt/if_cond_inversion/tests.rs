@@ -73,8 +73,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
         .node_for_output(fg.node_inputs_exact::<2>(if_node)?[1]);
     assert!(is_i1_xor_with_one(&fg, cond_node_pre));
 
-    let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(&mut fg, entry)?;
+    let r = IfCondInversion.optimize(&mut fg)?;
     assert!(r.changed());
 
     // After: cond is the inner producer (the read variable's I1 cast).
@@ -90,11 +89,9 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
 #[test]
 fn idempotent_after_one_application() -> Result<()> {
     let (mut fg, _if_node) = build_if_with_neg_cond()?;
-    let entry = fg.entry().unwrap();
-    let first = IfCondInversion.optimize(&mut fg, entry)?;
+    let first = IfCondInversion.optimize(&mut fg)?;
     assert!(first.changed());
-    let entry = fg.entry().unwrap();
-    let second = IfCondInversion.optimize(&mut fg, entry)?;
+    let second = IfCondInversion.optimize(&mut fg)?;
     assert!(!second.changed(), "second pass must be a no-op");
     Ok(())
 }
@@ -121,14 +118,12 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     // ConstantFold first: collapses `!!x → x`.
     let mut changed = true;
     while changed {
-        let entry = fg.entry().unwrap();
-        changed = ConstantFold.optimize(&mut fg, entry)?.changed();
+        changed = ConstantFold.optimize(&mut fg)?.changed();
     }
     // After ConstantFold the cond is no longer an `Xor(_, 1)` (logical
     // NOT), so IfCondInversion must NOT fire.  Even-parity → no branch
     // swap.
-    let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(&mut fg, entry)?;
+    let r = IfCondInversion.optimize(&mut fg)?;
     assert!(
         !r.changed(),
         "IfCondInversion must be a no-op after !!x simplification — even parity preserves direct layout"
@@ -158,8 +153,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
         "pre-pass consumers must be distinct Region nodes"
     );
 
-    let entry = fg.entry().unwrap();
-    IfCondInversion.optimize(&mut fg, entry)?;
+    IfCondInversion.optimize(&mut fg)?;
 
     let [out0_post, out1_post] = fg.node_outputs_exact::<2>(if_node)?;
     let post_true_consumer = consumer_of(&fg, out0_post);
@@ -208,8 +202,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
         .find(|&n| is_i1_xor_with_one(&fg, n))
         .expect("I1 Xor(_, 1) (logical NOT) present pre-pass");
 
-    let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(&mut fg, entry)?;
+    let r = IfCondInversion.optimize(&mut fg)?;
     assert!(r.changed());
 
     // The BitNot's fingerprint MUST have been absorbed into the
@@ -278,8 +271,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     assert!(!fg.asm_fingerprint(inner_producer_pre).contains(&0x804));
     assert!(!fg.asm_fingerprint(if_node_pre).contains(&0x804));
 
-    let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(&mut fg, entry)?;
+    let r = IfCondInversion.optimize(&mut fg)?;
     assert!(r.changed());
 
     // After the pass, the Xor's address (0x804) must land on exactly
@@ -359,8 +351,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     );
     assert!(!fg.asm_fingerprint(inner_producer_pre).contains(&0x904));
 
-    let entry = fg.entry().unwrap();
-    let r = IfCondInversion.optimize(&mut fg, entry)?;
+    let r = IfCondInversion.optimize(&mut fg)?;
     assert!(r.changed(), "pass must still fire — the If's cond is Xor(_, 1)(…)");
 
     // The headline assertion: the first Xor-with-1's address (0x904)

@@ -360,13 +360,8 @@ fn run_with_custom_pipeline(
     {
         let py_function_borrow = py_function.borrow(py);
         let mut function = py_function_borrow.write_inner().map_err(into_strider_err)?;
-        let entry = function.entry().ok_or_else(|| {
-            into_strider_err(anyhow::anyhow!(
-                "strider.run: function has not been built (entry is None)"
-            ))
-        })?;
         actual_pipeline
-            .run(&mut function, entry)
+            .run(&mut function)
             .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
         if compact {
             function.compact().map_err(into_strider_err)?;

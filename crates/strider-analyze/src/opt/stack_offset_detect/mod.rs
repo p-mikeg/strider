@@ -45,7 +45,6 @@ impl Optimizer for StackOffsetDetect {
     fn optimize(
         &self,
         function: &mut Function,
-        _entry: NodeId,
     ) -> Result<OptimizationResult> {
         let mut memo = SpExprMemo::default();
         let mut to_stamp: Vec<(NodeId, NodeOutputId, i64)> = Vec::new();

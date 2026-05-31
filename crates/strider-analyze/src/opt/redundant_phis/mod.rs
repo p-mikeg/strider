@@ -204,9 +204,8 @@ impl Optimizer for RedundantPhis {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
-        entry: NodeId,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         let reachable = strider_ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `try_simplify_phi_like`, so don't

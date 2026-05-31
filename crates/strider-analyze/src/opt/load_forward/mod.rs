@@ -79,9 +79,8 @@ impl Optimizer for LoadForward {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
-        entry: strider_ir::node::NodeId,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;

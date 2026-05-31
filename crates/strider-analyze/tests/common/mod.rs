@@ -352,7 +352,7 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let mut function = outcome.function;
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
-    p.run_built(&mut function)
+    p.run(&mut function)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     function
 }

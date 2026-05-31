@@ -616,8 +616,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        let entry = fg.entry().unwrap();
-        p.run(&mut fg, entry).unwrap();
+        p.run(&mut fg).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -660,8 +659,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        let entry = fg.entry().unwrap();
-        p.run(&mut fg, entry).unwrap();
+        p.run(&mut fg).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -714,8 +712,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        let entry = fg.entry().unwrap();
-        p.run(&mut fg, entry).unwrap();
+        p.run(&mut fg).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -1076,8 +1073,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        let entry = fg.entry().unwrap();
-        p.run(&mut fg, entry).unwrap();
+        p.run(&mut fg).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))

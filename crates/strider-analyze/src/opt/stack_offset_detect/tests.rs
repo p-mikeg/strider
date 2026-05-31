@@ -16,8 +16,7 @@ use crate::opt::pipeline::{OptimizationResult, Optimizer};
 
 fn run(function: &mut Function, sp: rsleigh::Vn) -> OptimizationResult {
     let pass = StackOffsetDetect::new(sp);
-    let entry = function.entry().unwrap();
-    pass.optimize(function, entry).expect("must not error")
+    pass.optimize(function).expect("must not error")
 }
 
 /// `store [sp-4] = 0x42; load [sp-4]; return loaded`.

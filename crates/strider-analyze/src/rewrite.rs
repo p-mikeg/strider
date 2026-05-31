@@ -59,12 +59,13 @@ use strider_ir::node::NodeId;
 pub struct GraphRewriter<'a> {
     /// The function to rewrite.  `crate::pattern::rewrite_rule`'s
     /// closure expects `&mut RewriteCtx<'_>`, so [`Self::apply_rule`]
-    /// builds a fresh `RewriteCtx::new(&mut *self.function, self.entry)`
-    /// per call — same shape as `crate::opt::with_rewrite_ctx`.
+    /// builds a fresh `RewriteCtx::try_for_built(&mut *self.function)`
+    /// per call — same shape as `crate::opt::with_rewrite_ctx`.  The
+    /// wrapped function is required to be in its built form (i.e.
+    /// `function.entry()` is `Some(_)`), which is checked at
+    /// construction time by [`Self::try_wrap_built`]; subsequent
+    /// [`Self::entry`] calls derive the entry node infallibly.
     function: &'a mut strider_ir::Function,
-    /// The function's entry [`NodeId`] — needed by the validator's
-    /// reachable-set walk and by [`crate::opt::OptimizerPipeline::run`].
-    entry: NodeId,
 }
 
 impl<'a> GraphRewriter<'a> {
@@ -75,13 +76,13 @@ impl<'a> GraphRewriter<'a> {
     /// Returns an error if the function has not been built (i.e. `entry`
     /// is `None`).
     pub fn try_wrap_built(built: &'a mut strider_ir::Function) -> Result<Self> {
-        let entry = built.entry().ok_or_else(|| {
+        // Validate the post-build invariant up front so subsequent
+        // [`Self::entry`] / [`Self::apply_rule`] calls can derive the
+        // entry node infallibly via `function.entry().expect(...)`.
+        let _entry = built.entry().ok_or_else(|| {
             anyhow::anyhow!("GraphRewriter::try_wrap_built: entry node is not set")
         })?;
-        Ok(Self {
-            function: built,
-            entry,
-        })
+        Ok(Self { function: built })
     }
 
     /// Walks every reachable node in the graph and invokes `rule` once
@@ -92,11 +93,11 @@ impl<'a> GraphRewriter<'a> {
     /// hands back —
     /// `Fn(&mut crate::pattern::RewriteCtx<'_>, NodeId) -> crate::pattern::Result<bool>`.
     /// Each candidate root gets a freshly-constructed
-    /// `RewriteCtx::new(&mut *self.function, self.entry)` so the closure
+    /// `RewriteCtx::try_for_built(&mut *self.function)` so the closure
     /// has the input shape the `pattern` crate's rewrite engine was
-    /// designed for.  `RewriteCtx` exposes only `graph` and `entry`;
-    /// `crate::pattern::rewrite_rule` only touches those two fields,
-    /// verified by inspection of its implementation.
+    /// designed for.  `RewriteCtx` exposes `function` and a derived
+    /// `entry()` accessor; `crate::pattern::rewrite_rule` only touches
+    /// those, verified by inspection of its implementation.
     ///
     /// CORRECTNESS — reachable-set walk:
     /// We pre-collect the candidate node ids before invoking the rule
@@ -137,9 +138,10 @@ impl<'a> GraphRewriter<'a> {
         let mut applied: usize = 0;
         // Pre-collect candidate roots before mutating; the walk's
         // iterator borrows the graph immutably.
-        let candidates: Vec<NodeId> = self.function.walk_from(self.entry).collect();
+        let entry = self.entry();
+        let candidates: Vec<NodeId> = self.function.walk_from(entry).collect();
         for node in candidates {
-            let mut ctx = crate::pattern::RewriteCtx::new(&mut *self.function, self.entry);
+            let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut *self.function)?;
             // `cranelift_entity::PrimaryMap` doesn't reuse keys, so
             // every id from the pre-collected preorder is still a
             // valid arena slot — even if the node was detached by an
@@ -185,9 +187,17 @@ impl<'a> GraphRewriter<'a> {
     /// The function's entry [`NodeId`].  Stable for the lifetime of
     /// the wrapped function; pair with [`Self::function_mut`] when feeding a
     /// pipeline.
+    ///
+    /// The `expect()` cannot panic in practice: [`Self::try_wrap_built`]
+    /// validates the post-build invariant (`function.entry().is_some()`)
+    /// at construction time, and `Function::entry` is monotonic — once
+    /// set it never reverts to `None`.
     #[must_use]
+    #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
-        self.entry
+        self.function
+            .entry()
+            .expect("GraphRewriter wraps a built Function with an entry node (try_wrap_built invariant)")
     }
 }
 

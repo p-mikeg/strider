@@ -393,9 +393,8 @@ impl Optimizer for CallStackArgCollect {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
-        entry: NodeId,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         let calls: Vec<NodeId> = ctx
             .walk()
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))

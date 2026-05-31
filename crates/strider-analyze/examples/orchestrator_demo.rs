@@ -51,10 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut pipeline = strider.build_optimizer_pipeline();
     pipeline.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom)));
-    let entry = function
-        .entry()
-        .ok_or("orchestrator_demo: built function missing entry")?;
-    pipeline.run(&mut function, entry)?;
+    pipeline.run(&mut function)?;
     println!("dumping opt IR graph...");
 
     let dot = dot::GraphDot::new(function.dot_dumper(&sleigh)?, dot::DotStyle::dark());

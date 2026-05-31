@@ -21,8 +21,7 @@ use strider_ir_test_utils::RegisterSet;
 /// `Phi(Some(vn))` output (with `InitialVar(vn)` as its sole input),
 /// which sits between the matcher's input descent and the InitialVar.
 fn collapse_phis(function: &mut Function) {
-    let entry = function.entry().expect("entry");
-    RedundantPhis.optimize(function, entry).expect("RedundantPhis");
+    RedundantPhis.optimize(function).expect("RedundantPhis");
 }
 
 // ── Fixture builder ─────────────────────────────────────────────────────────

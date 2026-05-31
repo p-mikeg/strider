@@ -278,9 +278,8 @@ impl Optimizer for DeadBranchElimination {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
-        entry: NodeId,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         // DBE only fires on `If` nodes; pre-filter via `seeded_kind` for
         // symmetry with the other peephole-style passes (ConstantFold,
         // IfCondInversion, LoadReadOnly).  Chained constant-branch

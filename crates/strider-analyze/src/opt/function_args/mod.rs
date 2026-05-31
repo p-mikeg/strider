@@ -103,9 +103,8 @@ impl Optimizer for FunctionArgDetect {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
-        entry: NodeId,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         // `layout.register_args()` yields slots in ABI order, with
         // canonical positional indices stamped at layout-construction
         // time.  `layout.first_stack_index()` replaces the local

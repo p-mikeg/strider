@@ -83,7 +83,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -109,7 +109,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
@@ -144,7 +144,7 @@ fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -181,7 +181,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -211,7 +211,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -237,7 +237,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
@@ -271,7 +271,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -304,7 +304,7 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test_permissive(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -346,7 +346,7 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test_permissive(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert!(
@@ -380,7 +380,7 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -415,7 +415,7 @@ fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     // Exactly one Load should remain: the `p = Load(IntConst(0x100))`
     // address-producer.  The Load(p) we wanted to forward must be gone.
@@ -458,7 +458,7 @@ fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<(
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     // The matching Load(p) we wanted to forward must remain, alongside
     // the two address-producer Loads.
@@ -504,7 +504,7 @@ fn bail_on_call_between() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -570,7 +570,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     // through the pass — otherwise both arms would collapse and there'd
     // be no MemPhi to synthesize a ValuePhi from.
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -646,7 +646,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -723,7 +723,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load must be forwarded");
@@ -763,7 +763,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
     pipeline.add(LoadForward::new(sp, Endianness::Little));
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -808,7 +808,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -853,7 +853,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     })?;
 
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
@@ -901,7 +901,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
     pipeline.add(LoadForward::new(sp, Endianness::Big));
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -998,8 +998,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     let mut prep = OptimizerPipeline::new();
     prep.add(ConstantFold);
     prep.add(RedundantPhis);
-    let entry = fg.entry().unwrap();
-    prep.run(&mut fg, entry)?;
+    prep.run(&mut fg)?;
 
     let total_truncate_before = fg
         .all_node_ids()
@@ -1014,8 +1013,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // Run LoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    let entry = fg.entry().unwrap();
-    LoadForward::new(sp, Endianness::Little).optimize(&mut fg, entry)?;
+    LoadForward::new(sp, Endianness::Little).optimize(&mut fg)?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
@@ -1076,7 +1074,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     // Reach the surviving Load and use its memory-input as the chain root.
     let load = fg
@@ -1129,7 +1127,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let load = fg
         .all_node_ids()
@@ -1187,7 +1185,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let load = fg
         .all_node_ids()
@@ -1234,7 +1232,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let load = fg
         .all_node_ids()
@@ -1281,7 +1279,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let load = fg
         .all_node_ids()
@@ -1337,7 +1335,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     let load = fg
         .all_node_ids()
@@ -1400,8 +1398,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
     pipeline.add(StackOffsetDetect::new(sp));
     pipeline.add(LoadForward::new(sp, Endianness::Little));
 
-    let entry = fg.entry().unwrap();
-    pipeline.run(&mut fg, entry)?;
+    pipeline.run(&mut fg)?;
 
     // The Load must NOT be forwarded — LOCK is a full-clobber barrier.
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));

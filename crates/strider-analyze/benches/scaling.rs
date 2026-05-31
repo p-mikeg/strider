@@ -99,8 +99,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));
-    let entry = function.entry().unwrap();
-    p.run(&mut function, entry).expect("optimizer pipeline");
+    p.run(&mut function).expect("optimizer pipeline");
     function
 }
 
@@ -189,8 +188,7 @@ mod synthetic {
         // forward-pass cost from the fold-pass cost.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
-        let entry = fg.entry().unwrap();
-        p.run(&mut fg, entry).unwrap();
+        p.run(&mut fg).unwrap();
         fg
     }
 
@@ -256,8 +254,7 @@ mod synthetic {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(RedundantPhis);
-        let entry = fg.entry().unwrap();
-        p.run(&mut fg, entry).unwrap();
+        p.run(&mut fg).unwrap();
         fg
     }
 
@@ -331,8 +328,7 @@ mod synthetic {
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
-        let entry = fg.entry().unwrap();
-        p.run(&mut fg, entry).unwrap();
+        p.run(&mut fg).unwrap();
         fg
     }
 
@@ -368,8 +364,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
                     let pass = LoadForward::new(sp, strider_target::Endianness::Little);
-                    let entry = fg.entry().unwrap();
-                    let _ = pass.optimize(&mut fg, entry);
+                    let _ = pass.optimize(&mut fg);
                     black_box(fg);
                 },
                 BatchSize::LargeInput,

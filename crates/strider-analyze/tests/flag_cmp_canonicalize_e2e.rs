@@ -40,8 +40,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let mut function = outcome.function;
 
     let p = strider.build_optimizer_pipeline();
-    let entry = function.entry().unwrap();
-    p.run(&mut function, entry).expect("optimizer pipeline");
+    p.run(&mut function).expect("optimizer pipeline");
     function
 }
 

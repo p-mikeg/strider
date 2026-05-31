@@ -49,8 +49,7 @@ fn constant_fold_add_consts_preserves_fingerprints() {
         Ok(add)
     })
     .unwrap();
-    let entry = fg.entry().expect("entry");
-    assert!(ConstantFold.optimize(&mut fg, entry).unwrap().changed());
+    assert!(ConstantFold.optimize(&mut fg).unwrap().changed());
     // The surviving node feeds the Return; find it.
     let const7 =
         find(&fg, |k| matches!(k, NodeKind::IntConst(7))).expect("IntConst(7)");
@@ -77,8 +76,7 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
         Ok(xor)
     })
     .unwrap();
-    let entry = fg.entry().expect("entry");
-    assert!(ConstantFold.optimize(&mut fg, entry).unwrap().changed());
+    assert!(ConstantFold.optimize(&mut fg).unwrap().changed());
     // Result is IntConst(0); its fingerprint must include 0x204 (the
     // Xor's address — absorbed via after_replace).
     let const0 =
@@ -120,9 +118,8 @@ fn known_bits_fold_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let entry = fg.entry().expect("entry");
-    let _ = ConstantFold.optimize(&mut fg, entry);
-    let _ = KnownBits.optimize(&mut fg, entry);
+    let _ = ConstantFold.optimize(&mut fg);
+    let _ = KnownBits.optimize(&mut fg);
     // The eventual return value should be an IntConst with at least one
     // of the rewritten addresses absorbed into it.
     let ret = fg
@@ -170,8 +167,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let entry = fg.entry().expect("entry");
-    let _ = ConstantFold.optimize(&mut fg, entry).unwrap();
+    let _ = ConstantFold.optimize(&mut fg).unwrap();
     // Whatever value reaches the Return must carry the outer-And's
     // address — that's the canonical "rewrite root".
     let ret = fg

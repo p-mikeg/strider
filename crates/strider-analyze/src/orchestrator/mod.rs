@@ -684,10 +684,7 @@ where
         let region_index = RegionIndex::from_handles(region_handles);
 
         let pipeline = lift_driver.build_stable_optimizer_pipeline();
-        let entry = function.entry().ok_or_else(|| {
-            anyhow::anyhow!("seat: entry node is not set")
-        })?;
-        pipeline.run(&mut function, entry)?;
+        pipeline.run(&mut function)?;
 
         Ok((function, unresolved, region_index))
     }
@@ -745,10 +742,7 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.config.lift_driver.build_stable_optimizer_pipeline();
-        let entry = self.function.entry().ok_or_else(|| {
-            anyhow::anyhow!("run_stable_only: entry node is not set")
-        })?;
-        pipeline.run(&mut self.function, entry)?;
+        pipeline.run(&mut self.function)?;
         Ok(())
     }
 
@@ -775,10 +769,7 @@ where
     fn finalize(mut self) -> Result<strider_ir::Function> {
         let pipeline = self.config.lift_driver.build_destructive_optimizer_pipeline();
         let compact = self.config.compact;
-        let entry = self.function.entry().ok_or_else(|| {
-            anyhow::anyhow!("finalize: graph has not been built (entry is None)")
-        })?;
-        pipeline.run(&mut self.function, entry)?;
+        pipeline.run(&mut self.function)?;
         if compact {
             self.function.compact()?;
         }

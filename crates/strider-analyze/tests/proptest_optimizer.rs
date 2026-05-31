@@ -342,7 +342,7 @@ proptest! {
         let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg);
 
         let pipeline: OptimizerPipeline = default_pipeline();
-        let run_res = pipeline.run_built(&mut fg);
+        let run_res = pipeline.run(&mut fg);
         prop_assert!(
             run_res.is_ok(),
             "default_pipeline should not error on strategy-generated graph: {:?}",

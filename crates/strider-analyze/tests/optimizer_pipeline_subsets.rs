@@ -35,11 +35,9 @@ fn stable_subset_is_idempotent_on_optimised_graph() {
     // OptimizerPipeline::run cannot change anything if the first
     // already converged.
     let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
-    let entry = function.entry().unwrap();
-    stable_default_pipeline().run(&mut function, entry).expect("run 1");
+    stable_default_pipeline().run(&mut function).expect("run 1");
     let snapshot_node_count = function.all_node_ids().count();
-    let entry = function.entry().unwrap();
-    stable_default_pipeline().run(&mut function, entry).expect("run 2");
+    stable_default_pipeline().run(&mut function).expect("run 2");
     let after_node_count = function.all_node_ids().count();
     assert_eq!(
         snapshot_node_count, after_node_count,
@@ -55,13 +53,10 @@ fn stable_then_destructive_equals_full_default_pipeline_node_count() {
     // the orchestrator relies on at fixed point.
     let (mut g_full, _) = build_initial_var_target_scenario_x86_64();
     let (mut g_split, _) = build_initial_var_target_scenario_x86_64();
-    let entry = g_full.entry().unwrap();
-    strider_analyze::opt::default_pipeline().run(&mut g_full, entry).expect("full");
-    let entry = g_split.entry().unwrap();
-    stable_default_pipeline().run(&mut g_split, entry).expect("stable");
-    let entry = g_split.entry().unwrap();
+    strider_analyze::opt::default_pipeline().run(&mut g_full).expect("full");
+    stable_default_pipeline().run(&mut g_split).expect("stable");
     destructive_default_pipeline()
-        .run(&mut g_split, entry)
+        .run(&mut g_split)
         .expect("destructive");
     let full_count = g_full.all_node_ids().count();
     let split_count = g_split.all_node_ids().count();
@@ -74,12 +69,10 @@ fn destructive_subset_reduces_or_preserves_node_count() {
     // already optimised must NOT INCREASE the node count — every
     // pass in the destructive subset is a node-removal pass.
     let (mut function, _) = build_initial_var_target_scenario_x86_64();
-    let entry = function.entry().unwrap();
-    stable_default_pipeline().run(&mut function, entry).expect("stable");
+    stable_default_pipeline().run(&mut function).expect("stable");
     let before = function.all_node_ids().count();
-    let entry = function.entry().unwrap();
     destructive_default_pipeline()
-        .run(&mut function, entry)
+        .run(&mut function)
         .expect("destructive");
     let after = function.all_node_ids().count();
     assert!(
@@ -107,8 +100,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
                 || matches!(function.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
         })
         .count();
-    let entry = function.entry().unwrap();
-    stable_default_pipeline().run(&mut function, entry).expect("stable");
+    stable_default_pipeline().run(&mut function).expect("stable");
     let phi_count_after = function
         .walk()
         .filter(|&nid| {

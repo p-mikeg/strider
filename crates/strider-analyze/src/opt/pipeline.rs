@@ -78,14 +78,14 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// A single IR optimization pass.
 ///
 /// Implement this trait to add a new pass.  The pass receives the
-/// function and its `entry` [`strider_ir::node::NodeId`],
-/// applies whatever transformations it can in one sweep, and returns
-/// [`OptimizationResult::Changed`] if anything was modified (causing
-/// the pipeline to run another iteration) or
+/// `function` (whose entry [`strider_ir::node::NodeId`] is reachable
+/// via `function.entry()`), applies whatever transformations it can in
+/// one sweep, and returns [`OptimizationResult::Changed`] if anything
+/// was modified (causing the pipeline to run another iteration) or
 /// [`OptimizationResult::NoChange`] if the graph is already in normal
 /// form for this pass.
 ///
-/// # Why `(&mut Function, NodeId)` and not `&mut crate::pattern::RewriteCtx<'_>`
+/// # Why `&mut Function` and not `&mut crate::pattern::RewriteCtx<'_>`
 ///
 /// `RewriteCtx<'_>` carries a lifetime parameter, which prevents it
 /// appearing as the receiver type of a trait object
@@ -98,28 +98,32 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// # use strider_analyze::opt::{OptimizationResult, Optimizer};
 /// # use strider_analyze::pattern::RewriteCtx;
 /// # use strider_ir::Function;
-/// # use strider_ir::node::NodeId;
 /// #[derive(Clone)]
 /// struct MyPass;
 /// impl Optimizer for MyPass {
 ///     fn optimize(
 ///         &self,
 ///         function: &mut Function,
-///         entry: NodeId,
 ///     ) -> anyhow::Result<OptimizationResult> {
-///         let _ctx = RewriteCtx::new(function, entry);
+///         let _ctx = RewriteCtx::try_for_built(function)?;
 ///         // ... pass body operating on `_ctx` ...
 ///         Ok(OptimizationResult::NoChange)
 ///     }
 /// }
 /// ```
 ///
-/// `entry` is the function's entry [`strider_ir::node::NodeId`] —
-/// needed because several passes walk the reachable-node set
-/// (`function.preorder(entry)`) or use it directly
-/// (`strider_ir::walk::cfg_reachable(function, entry)`).
+/// Passes that need the entry [`strider_ir::node::NodeId`] directly
+/// (for `function.preorder(entry)` or
+/// `strider_ir::walk::cfg_reachable(function, entry)`) derive it from
+/// `function.entry().expect("Optimizer::optimize: function must be built")`
+/// — the pipeline only ever runs over a built function, so the entry
+/// is guaranteed to be `Some(_)`.
 pub trait Optimizer: OptimizerClone + Send + Sync {
-    /// Run one sweep of this pass over the IR `function`, anchored at `entry`.
+    /// Run one sweep of this pass over the IR `function`.
+    ///
+    /// The function is guaranteed to be in its built form (i.e.
+    /// `function.entry()` is `Some(_)`); passes that need the entry
+    /// derive it via `function.entry().expect(...)`.
     ///
     /// # Errors
     ///
@@ -129,7 +133,6 @@ pub trait Optimizer: OptimizerClone + Send + Sync {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
-        entry: strider_ir::node::NodeId,
     ) -> crate::opt::Result<OptimizationResult>;
 
     /// Symbolic name of this pass.  Defaults to
@@ -229,27 +232,31 @@ impl OptimizerPipeline {
     /// Runs all registered passes in a fixed-point loop until convergence,
     /// then runs each post-pass exactly once in registration order.
     ///
+    /// `function` must be in its built form (i.e. `function.entry()` is
+    /// `Some(_)`); each pass derives the entry [`strider_ir::node::NodeId`]
+    /// internally as needed, and the final validation step requires it.
+    ///
     /// Returns `Ok(())` when no pass changed the graph in a full iteration
     /// and all post-passes completed without error.  Propagates the first
     /// error returned by any pass.
     ///
     /// # Errors
     ///
-    /// Returns the first `anyhow::Error` reported by any pass.  If every
-    /// pass and post-pass succeeds, the graph is then re-validated and any
-    /// validation error is returned.  When a post-pass returns `Err`, the
-    /// final validation step is skipped — the pass error wins.
+    /// Returns an error if `function.entry()` is `None` (graph not built).
+    /// Otherwise, returns the first `anyhow::Error` reported by any pass.
+    /// If every pass and post-pass succeeds, the graph is then re-validated
+    /// and any validation error is returned.  When a post-pass returns
+    /// `Err`, the final validation step is skipped — the pass error wins.
     pub fn run(
         &self,
         function: &mut strider_ir::Function,
-        entry: strider_ir::node::NodeId,
     ) -> crate::opt::Result<()> {
         const MAX_ITERS: u32 = 1024;
         let mut iters: u32 = 0;
         loop {
             let mut changed = false;
             for opt in &self.passes {
-                if opt.optimize(function, entry)?.changed() {
+                if opt.optimize(function)?.changed() {
                     changed = true;
                 }
             }
@@ -262,29 +269,15 @@ impl OptimizerPipeline {
             }
         }
         for opt in &self.post_passes {
-            opt.optimize(function, entry)?;
+            opt.optimize(function)?;
         }
-        strider_ir::validate::validate(function, entry)?;
-        Ok(())
-    }
-
-    /// Convenience wrapper around [`Self::run`] for graphs already in
-    /// their built form (i.e. `entry` is populated).  Collapses the
-    /// idiomatic
-    /// `let entry = graph.entry().unwrap(); pipeline.run(graph, entry)`
-    /// two-liner into a single call.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `graph.entry()` is `None` (the graph has
-    /// not been built), or any error [`Self::run`] would propagate.
-    pub fn run_built(&self, function: &mut strider_ir::Function) -> crate::opt::Result<()> {
         let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!(
-                "OptimizerPipeline::run_built: entry node is not set"
+                "OptimizerPipeline::run: function must be built (entry is None)"
             )
         })?;
-        self.run(function, entry)
+        strider_ir::validate::validate(function, entry)?;
+        Ok(())
     }
 }
 
@@ -321,9 +314,8 @@ mod tests {
     fn pipeline_run_validates_final_graph_on_clean_input() -> crate::opt::Result<()> {
         let mut function = one_const_fn(3);
         let pipeline = crate::opt::default_pipeline();
-        let entry = function.entry().unwrap();
         let before = function.walk().count();
-        pipeline.run(&mut function, entry)?;
+        pipeline.run(&mut function)?;
         let after = function.walk().count();
         // The default pipeline on an already-folded constant cannot fold
         // further; the reachable-count is stable.  This pins that
@@ -346,18 +338,16 @@ mod tests {
             fn optimize(
                 &self,
                 _function: &mut strider_ir::Function,
-                _entry: strider_ir::node::NodeId,
             ) -> crate::opt::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)
             }
         }
 
         let mut function = one_const_fn(0);
-        let entry = function.entry().unwrap();
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(&mut function, entry)
+            .run(&mut function)
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -371,8 +361,7 @@ mod tests {
     #[test]
     fn run_validates_after_default_pipeline() -> crate::opt::Result<()> {
         let mut function = one_const_fn(0);
-        let entry = function.entry().unwrap();
-        crate::opt::default_pipeline().run(&mut function, entry)?;
+        crate::opt::default_pipeline().run(&mut function)?;
         Ok(())
     }
 
@@ -397,12 +386,11 @@ mod tests {
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
         let mut function = b.build()?;
-        let entry = function.entry().unwrap();
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
-        p.run(&mut function, entry)?;
+        p.run(&mut function)?;
         Ok(())
     }
 
@@ -439,7 +427,6 @@ mod tests {
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut function = b.build()?;
-        let entry = function.entry().unwrap();
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
@@ -447,7 +434,7 @@ mod tests {
         p.add(RedundantPhis);
         p.add(DeadBranchElimination);
         p.add(LoadForward::new(sp, Endianness::Little));
-        p.run(&mut function, entry)?;
+        p.run(&mut function)?;
 
         let ret = function
             .all_node_ids()
@@ -499,7 +486,6 @@ mod tests {
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
         let mut function = b.build()?;
-        let entry = function.entry().unwrap();
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
@@ -508,7 +494,7 @@ mod tests {
         p.add(DeadBranchElimination);
         p.add(LoadForward::new(sp, Endianness::Little));
         p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
-        p.run(&mut function, entry)?;
+        p.run(&mut function)?;
 
         let call = function
             .all_node_ids()
@@ -542,8 +528,7 @@ mod tests {
             }
             Ok(acc)
         })?;
-        let entry = function.entry().unwrap();
-        crate::opt::default_pipeline().run(&mut function, entry)?;
+        crate::opt::default_pipeline().run(&mut function)?;
         // After fixed point, the 50-deep chain has folded to a single
         // `IntConst(50)`; the reachable set is small.
         assert!(

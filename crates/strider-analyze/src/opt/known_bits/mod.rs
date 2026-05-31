@@ -434,9 +434,8 @@ impl Optimizer for KnownBits {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
-        entry: NodeId,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::new(function, entry);
+        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).

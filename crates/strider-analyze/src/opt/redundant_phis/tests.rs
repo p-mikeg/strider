@@ -54,7 +54,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::opt::Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = cf_rp_pipeline();
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
@@ -96,8 +96,7 @@ fn mem_phi_single_pred_eliminated() -> crate::opt::Result<()> {
     b.set_lift_addr(None);
 
     let mut fg = b.build()?;
-    let entry = fg.entry().unwrap();
-    RedundantPhis.optimize(&mut fg, entry)?;
+    RedundantPhis.optimize(&mut fg)?;
 
     // Surviving (reachable) MemPhis with at most 1+1 inputs (token + 1 value)
     // must be 0.  `count_reachable` only filters by `NodeKind`, so the
@@ -129,9 +128,8 @@ fn region_single_pred_collapses() -> crate::opt::Result<()> {
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
-    let entry = fg.entry().unwrap();
     assert!(
-        RedundantPhis.optimize(&mut fg, entry)?.changed(),
+        RedundantPhis.optimize(&mut fg)?.changed(),
         "single-pred Region must be simplified"
     );
     Ok(())
@@ -165,7 +163,7 @@ fn unreachable_store_inputs_detached() -> crate::opt::Result<()> {
     pipeline.add(crate::opt::ConstantFold);
     pipeline.add(crate::opt::DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    pipeline.run_built(&mut fg)?;
+    pipeline.run(&mut fg)?;
     // Validation runs at the end of `pipeline.run`, so reaching here means
     // the unreachable store didn't leave an invalid graph.
     Ok(())
@@ -199,10 +197,8 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
     // Settle the graph by running RedundantPhis to fixed point first.  After
     // this, any further RedundantPhis invocation on the unmodified graph
     // returns NoChange; that's our baseline.
-    let entry = fg.entry().unwrap();
-    while RedundantPhis.optimize(&mut fg, entry)?.changed() {}
-    let entry = fg.entry().unwrap();
-    let baseline = RedundantPhis.optimize(&mut fg, entry)?;
+    while RedundantPhis.optimize(&mut fg)?.changed() {}
+    let baseline = RedundantPhis.optimize(&mut fg)?;
     assert_eq!(
         baseline,
         OptimizationResult::NoChange,
@@ -221,8 +217,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::opt::Result<()>
         [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
 
-    let entry = fg.entry().unwrap();
-    let res = RedundantPhis.optimize(&mut fg, entry)?;
+    let res = RedundantPhis.optimize(&mut fg)?;
     assert_eq!(
         res,
         OptimizationResult::NoChange,
@@ -285,8 +280,7 @@ fn transient_arity_mismatch_surfaces_as_error_not_panic() -> crate::opt::Result<
         "VarPhi has only token + 1 value after deliberate surgery"
     );
 
-    let entry = fg.entry().unwrap();
-    let result = RedundantPhis.optimize(&mut fg, entry);
+    let result = RedundantPhis.optimize(&mut fg);
     let err = result.expect_err(
         "RedundantPhis must surface transient phi-arity violation as a typed Err, not panic"
     );
@@ -372,8 +366,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::opt::Result<()> {
     );
 
     // Run the pass under test.
-    let entry = fg.entry().unwrap();
-    RedundantPhis.optimize(&mut fg, entry)?;
+    RedundantPhis.optimize(&mut fg)?;
 
     // After collapse, the Return's value input must reference the
     // initial entry value, *not* the phi's output.  `replace_all_uses`

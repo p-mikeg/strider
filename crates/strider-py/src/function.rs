@@ -344,13 +344,8 @@ impl PyFunction {
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let entry = function.entry().ok_or_else(|| {
-            crate::errors::into_strider_err(anyhow::anyhow!(
-                "Function.optimize: function has not been built (entry is None)"
-            ))
-        })?;
         real_pipeline
-            .run(&mut function, entry)
+            .run(&mut function)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -366,12 +361,7 @@ impl PyFunction {
             pipe.add(strider_analyze::opt::DeadBranchElimination);
         }
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let entry = function.entry().ok_or_else(|| {
-            crate::errors::into_strider_err(anyhow::anyhow!(
-                "Function.reoptimize: function has not been built (entry is None)"
-            ))
-        })?;
-        pipe.run(&mut function, entry).map_err(|e| {
+        pipe.run(&mut function).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }

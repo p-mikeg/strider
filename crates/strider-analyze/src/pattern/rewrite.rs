@@ -52,7 +52,7 @@ pub fn rewrite_rule(
         // 1. Match LHS.  Keep the matcher borrow in a tight scope so we can
         //    mutate `ctx.function` afterwards.
         let bindings = {
-            let matcher = Matcher::for_function(ctx.function, ctx.entry);
+            let matcher = Matcher::for_function(ctx.function, ctx.entry());
             match matcher.match_at(node, &lhs) {
                 Some(m) => m.bindings_clone(),
                 None => return Ok(false),
@@ -142,61 +142,57 @@ pub fn rewrite_rule(
     }
 }
 
-/// Rewrite context: a borrowed `&mut Graph` together with the
-/// function's `entry: NodeId`.  Used by `rewrite_rule` and the
-/// destructive optimizer passes.
+/// Rewrite context: a borrowed `&mut Function`.  Used by `rewrite_rule`
+/// and the destructive optimizer passes.
 ///
 /// Replaces the prior "wrap into a dummy `Graph`" trick —
 /// pure-rewrite paths (constant fold, known-bits, flag-cmp
-/// canonicalisation, etc.) only ever consult graph + entry, never the
-/// CC-bearing fields of `Graph`.
+/// canonicalisation, etc.) only ever consult function + entry, never the
+/// CC-bearing fields of `Function`.
 ///
-/// **Field visibility note.**  Both fields are `pub(crate)`; external
+/// The function's entry [`NodeId`] is derived on demand via
+/// [`Self::entry`] from `Function::entry()`; the wrapped function is
+/// required to be in its built form (i.e. `function.entry()` is
+/// `Some(_)`), which is checked at construction time by
+/// [`Self::try_for_built`].
+///
+/// **Field visibility note.**  `function` is `pub(crate)`; external
 /// opt-pass code reaches `Graph` via the
 /// [`Deref`](std::ops::Deref) / [`DerefMut`](std::ops::DerefMut) impls
-/// (targeting `Graph`) for method calls, and uses [`Self::graph_ref`]
-/// / [`Self::graph_mut`] when an explicit `&Graph` / `&mut Graph` is
-/// needed for a free function or trait method.  This prevents
-/// struct-literal rebinding at distance — the field could previously be
-/// aimed at a different function than `entry` belongs to, silently
-/// corrupting subsequent walks.
+/// (targeting `Function`) for method calls, and uses
+/// [`Self::graph_ref`] / [`Self::graph_mut`] when an explicit
+/// `&Graph` / `&mut Graph` is needed for a free function or trait method.
 pub struct RewriteCtx<'g> {
     pub(crate) function: &'g mut Function,
-    pub(crate) entry: NodeId,
 }
 
-/// Read-only `(&Function, NodeId)` view used by opt's read-only public
-/// API.  `Copy` and cheap to pass.  Constructible from `&RewriteCtx`
-/// (via `as_view`) or `&Function` (via `from_built`).
+/// Read-only `&Function` view used by opt's read-only public API.
+/// `Copy` and cheap to pass.  Constructible from `&RewriteCtx` (via
+/// `as_view`) or `&Function` (via `from_built`).  The entry
+/// [`NodeId`] is derived on demand via [`Self::entry`].
 #[derive(Clone, Copy)]
 pub struct RewriteCtxView<'g> {
     pub(crate) function: &'g Function,
-    pub(crate) entry: NodeId,
 }
 
 impl<'g> RewriteCtx<'g> {
-    /// Constructs a `RewriteCtx` from a `(function, entry)` pair —
-    /// the rewrite-only path used by `opt::with_rewrite_ctx`,
-    /// `strider::rewrite::GraphRewriter::apply_rule`, and similar.
-    pub fn new(function: &'g mut Function, entry: NodeId) -> Self {
-        Self { function, entry }
-    }
-
     /// Constructs a `RewriteCtx` borrowing from a [`Function`]'s built
     /// form (i.e. `entry` is populated).
     ///
     /// # Errors
     ///
     /// Returns an error if the function has not been built (i.e. `entry`
-    /// is `None`).  Use [`Self::new`] when you already have an explicit
-    /// `(function, entry)` pair.
+    /// is `None`).
     pub fn try_for_built(function: &'g mut strider_ir::Function) -> anyhow::Result<Self> {
-        let entry = function.entry().ok_or_else(|| {
+        // Validate the post-build invariant up front so subsequent
+        // [`Self::entry`] calls can derive the entry node infallibly
+        // via `function.entry().expect(...)`.
+        let _entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!(
                 "RewriteCtx::try_for_built: entry node is not set"
             )
         })?;
-        Ok(Self { function, entry })
+        Ok(Self { function })
     }
 
     /// pre-order graph walk starting at [`Self::entry`].  Mirrors
@@ -205,7 +201,7 @@ impl<'g> RewriteCtx<'g> {
     /// `Graph` directly.
     #[must_use]
     pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
-        self.function.walk_from(self.entry)
+        self.function.walk_from(self.entry())
     }
 
     /// kind-filtered pre-order walk.  Mirrors
@@ -230,20 +226,30 @@ impl<'g> RewriteCtx<'g> {
         self.function
     }
 
-    /// Function-entry `NodeId` anchor.
+    /// Function-entry `NodeId` anchor.  Derived from
+    /// `Function::entry()`; the `try_for_built` constructor enforces
+    /// the post-build invariant.
+    ///
+    /// The `expect()` cannot panic in practice: [`Self::try_for_built`]
+    /// validates the post-build invariant (`function.entry().is_some()`)
+    /// at construction time, and `Function::entry` is monotonic — once
+    /// set it never reverts to `None`.
     #[must_use]
+    #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
-        self.entry
+        self.function
+            .entry()
+            .expect("RewriteCtx wraps a built Function with an entry node (try_for_built invariant)")
     }
 
-    /// Lightweight read-only `(graph, entry)` view.  Used by the
+    /// Lightweight read-only `&Function` view.  Used by the
     /// public read-only opt API (`analyze_known_bits`,
     /// `classify_anchor`) so callers that hold either `&mut RewriteCtx`,
-    /// `&Graph`, or a raw `(&Graph, NodeId)` pair can all
-    /// pass the same `RewriteCtxView<'_>`.
+    /// `&Graph`, or a `&Function` can all pass the same
+    /// `RewriteCtxView<'_>`.
     #[must_use]
     pub fn as_view(&self) -> RewriteCtxView<'_> {
-        RewriteCtxView { function: self.function, entry: self.entry }
+        RewriteCtxView { function: self.function }
     }
 
     /// Mutable access to the wrapped structural [`Graph`].
@@ -261,7 +267,7 @@ impl<'g> RewriteCtx<'g> {
     /// pairing so call sites don't have to spell out both fields.
     #[must_use]
     pub fn matcher(&self) -> Matcher<'_> {
-        Matcher::for_function(self.function, self.entry)
+        Matcher::for_function(self.function, self.entry())
     }
 }
 
@@ -272,7 +278,7 @@ impl<'g> RewriteCtxView<'g> {
     /// `Graph` directly.
     #[must_use]
     pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
-        self.function.walk_from(self.entry)
+        self.function.walk_from(self.entry())
     }
 
     /// kind-filtered pre-order walk.  Mirrors
@@ -297,10 +303,20 @@ impl<'g> RewriteCtxView<'g> {
         self.function
     }
 
-    /// Function-entry `NodeId` anchor.
+    /// Function-entry `NodeId` anchor.  Derived from
+    /// `Function::entry()`; the `from_built` constructor enforces
+    /// the post-build invariant.
+    ///
+    /// The `expect()` cannot panic in practice: [`Self::from_built`]
+    /// validates the post-build invariant (`function.entry().is_some()`)
+    /// at construction time, and `Function::entry` is monotonic — once
+    /// set it never reverts to `None`.
     #[must_use]
+    #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
-        self.entry
+        self.function
+            .entry()
+            .expect("RewriteCtxView wraps a built Function with an entry node (from_built invariant)")
     }
 
     /// Build a [`Matcher`] anchored at this view's `(graph, entry)`.
@@ -308,21 +324,24 @@ impl<'g> RewriteCtxView<'g> {
     /// pairing so call sites don't have to spell out both fields.
     #[must_use]
     pub fn matcher(&self) -> Matcher<'g> {
-        Matcher::for_function(self.function, self.entry)
+        Matcher::for_function(self.function, self.entry())
     }
 
-    /// Borrows a built [`strider_ir::Graph`] as a shared
+    /// Borrows a built [`strider_ir::Function`] as a shared
     /// rewrite-context view.
     ///
     /// # Errors
     ///
-    /// Returns an error if the graph has not been built (i.e. `entry`
+    /// Returns an error if the function has not been built (i.e. `entry`
     /// is `None`).
     pub fn from_built(function: &'g strider_ir::Function) -> anyhow::Result<Self> {
-        let entry = function.entry().ok_or_else(|| {
+        // Validate the post-build invariant up front so subsequent
+        // [`Self::entry`] calls can derive the entry node infallibly
+        // via `function.entry().expect(...)`.
+        let _entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!("RewriteCtxView::from_built: entry node is not set")
         })?;
-        Ok(Self { function, entry })
+        Ok(Self { function })
     }
 }
 

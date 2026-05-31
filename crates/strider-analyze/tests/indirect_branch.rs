@@ -61,8 +61,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // pipeline regression on the placeholder code-path is caught.
         let mut p = ana.build_optimizer_pipeline();
         p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
-        let entry = function.entry().unwrap();
-        p.run(&mut function, entry)
+        p.run(&mut function)
             .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
         return;
     }
@@ -72,8 +71,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     // pre-classify pass.
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt.clone()));
-    let entry = function.entry().unwrap();
-    p.run(&mut function, entry)
+    p.run(&mut function)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn;

@@ -159,9 +159,8 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     );
 
     let pipeline = strider.build_optimizer_pipeline();
-    let entry = function.entry().unwrap();
     pipeline
-        .run(&mut function, entry)
+        .run(&mut function)
         .expect("optimizer pipeline");
 
     let if_count_post = common::count_ifs(&function);

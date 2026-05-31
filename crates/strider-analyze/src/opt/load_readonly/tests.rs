@@ -19,8 +19,7 @@ fn load_from_rom_const_addr() -> Result<()> {
         let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
     })?;
-    let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg, entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(42));
     Ok(())
 }
@@ -31,8 +30,7 @@ fn load_non_rom_addr_no_change() -> Result<()> {
         let addr = b.build_int_const(0xDEADu64, NodeOutputType::I64)?;
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
     })?;
-    let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg, entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg)?.changed());
     // Load node should still be present.
     assert!(
         fg.all_node_ids()
@@ -53,8 +51,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
     })?;
     // addr is an Add node, not a const → LoadReadOnly must not fire.
-    let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg, entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg)?.changed());
     Ok(())
 }
 
@@ -71,8 +68,7 @@ fn load_oversize_read_no_change() -> Result<()> {
         // Request 8 bytes — limited ROM returns None.
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
     })?;
-    let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly::new(std::sync::Arc::new(rom)).optimize(&mut fg, entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(rom)).optimize(&mut fg)?.changed());
     Ok(())
 }
 
@@ -86,8 +82,7 @@ fn load_other_space_no_change() -> Result<()> {
         let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
         b.build_load(addr, rsleigh::VnSpace::REGISTER, NodeOutputType::I64)
     })?;
-    let entry = fg.entry().unwrap();
-    assert!(!LoadReadOnly::new(std::sync::Arc::new(rom)).optimize(&mut fg, entry)?.changed());
+    assert!(!LoadReadOnly::new(std::sync::Arc::new(rom)).optimize(&mut fg)?.changed());
     Ok(())
 }
 
@@ -99,8 +94,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
         let addr = b.build_int_const(0x2000u64, NodeOutputType::I64)?;
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I8)
     })?;
-    let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg, entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
     Ok(())
 }
@@ -115,8 +109,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
         let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
         b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, NodeOutputType::I64)
     })?;
-    let entry = fg.entry().unwrap();
-    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg, entry)?.changed());
+    assert!(LoadReadOnly::new(std::sync::Arc::new(test_rom())).optimize(&mut fg)?.changed());
     // Both loads must have folded out of the reachable subgraph.
     let remaining_loads =
         fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -159,9 +152,8 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
-    let entry = fg.entry().unwrap();
 
-    let split_result = StackOffsetDetect::new(sp).optimize(&mut fg, entry)?;
+    let split_result = StackOffsetDetect::new(sp).optimize(&mut fg)?;
     assert!(
         split_result.changed(),
         "StackOffsetDetect must stamp the stack-store offset"
@@ -174,7 +166,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
 
     // LoadReadOnly folds the constant-address Load to IntConst(42).
     let rom = std::sync::Arc::new(test_rom());
-    let fold_result = LoadReadOnly::new(rom).optimize(&mut fg, entry)?;
+    let fold_result = LoadReadOnly::new(rom).optimize(&mut fg)?;
     assert!(fold_result.changed(), "LoadReadOnly must fold the ROM Load");
 
     // No Load nodes remain after folding.

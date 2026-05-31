@@ -116,9 +116,8 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let v = t.load_ram(addr, NodeOutputType::I64);
     let mut function = t.ret_val(v);
 
-    let entry = function.entry().expect("entry");
     FunctionArgDetect::new(vec![], sp, vec![4])
-        .optimize(&mut function, entry)
+        .optimize(&mut function)
         .expect("FunctionArgDetect");
     function
 }
