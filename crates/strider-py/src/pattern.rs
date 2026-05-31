@@ -1450,9 +1450,8 @@ pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<P
 
 /// Typed builder for `Call` node patterns.  Wraps `strider_analyze::pattern::CallPat`
 /// so callers can chain `.at(addr)`, `.target(p)`, `.arg(idx, p)`,
-/// `.ret_output(idx, p)`, plus the universal capture / predicate /
-/// finaliser methods (`.capture(c)` / `.cap(name)` / `.when(f)` /
-/// `.into_pat()`).
+/// plus the universal capture / predicate / finaliser methods
+/// (`.capture(c)` / `.cap(name)` / `.when(f)` / `.into_pat()`).
 ///
 /// Returned by [`call`] (the free function).  Because [`PyCallPat`]
 /// is a variant of [`PatLike`], an un-finalised builder can be
@@ -1478,13 +1477,6 @@ pub struct CallPatDef {
     /// onto the arg slot.
     #[field(multi, accepts = "Pat", arg = "idx")]
     arg: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
-
-    /// Capture the Call's return-value output at ABI position `idx`
-    /// — e.g. `.ret_output(0, var(c))` binds `c` to the
-    /// `NodeOutputId` of the calling convention's first return
-    /// register.  See `strider_analyze::pattern::CallPat::ret_output` for details.
-    #[field(multi, accepts = "Pat", arg = "idx")]
-    ret_output: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
 }
 
 // `at` / `at_any` are special transformations on the same `target`
@@ -1562,21 +1554,14 @@ pub struct CallOtherPatDef {
     /// args followed by ABI implicit reads.
     #[field(multi, accepts = "Pat", arg = "idx")]
     arg: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
-
-    /// Constrain raw `outputs[idx]` of the matched CallOther.
-    /// `idx=0` is ctrl, `idx=1` is mem, `idx=2` is the pcode-explicit
-    /// value (when present), `idx>=2+has_value` are ABI clobbers.
-    #[field(multi, accepts = "Pat", arg = "idx")]
-    ret: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
 }
 
-// `ctrl` / `mem` / `ctrl_out` / `mem_out` are convenience aliases that
-// delegate to `arg(0/1, p)` / `ret(0/1, p)`.
-// They drive the inner Mutex directly here rather than reusing the
-// emitted `arg` / `ret` methods, because `multiple-pymethods` can't
-// borrow `PyRef<Self>` recursively in a single chain.
-// `#[gen_stub_pymethods]` on the secondary block so the four aliases
-// appear in the generated `.pyi`.
+// `ctrl` / `mem` are convenience aliases that delegate to
+// `arg(0, p)` / `arg(1, p)`.  They drive the inner Mutex directly
+// here rather than reusing the emitted `arg` method, because
+// `multiple-pymethods` can't borrow `PyRef<Self>` recursively in a
+// single chain.  `#[gen_stub_pymethods]` on the secondary block so
+// the aliases appear in the generated `.pyi`.
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyCallOtherPat {
@@ -1599,29 +1584,6 @@ impl PyCallOtherPat {
         let pat = p.into_pat()?;
         slf.with_inner(|inner| {
             inner.arg.get_or_insert_with(Vec::new).push((1, pat));
-        });
-        Ok(slf)
-    }
-    /// Convenience: match `outputs[0]` (control output).
-    fn ctrl_out<'py>(
-        slf: PyRef<'py, Self>,
-        p: PatLike<'py>,
-    ) -> PyResult<PyRef<'py, Self>> {
-        let pat = p.into_pat()?;
-        slf.with_inner(|inner| {
-            inner.ret.get_or_insert_with(Vec::new).push((0, pat));
-        });
-        Ok(slf)
-    }
-    /// Convenience: match `outputs[1]` (memory output; dangles when
-    /// the ABI's `mem_clobbers` set is empty).
-    fn mem_out<'py>(
-        slf: PyRef<'py, Self>,
-        p: PatLike<'py>,
-    ) -> PyResult<PyRef<'py, Self>> {
-        let pat = p.into_pat()?;
-        slf.with_inner(|inner| {
-            inner.ret.get_or_insert_with(Vec::new).push((1, pat));
         });
         Ok(slf)
     }

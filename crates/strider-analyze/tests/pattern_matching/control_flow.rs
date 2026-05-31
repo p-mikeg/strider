@@ -129,29 +129,6 @@ fn call_multiple_args() {
     );
 }
 
-/// Call that produces a return value in `ret_reg`; the returned value is
-/// piped into the function's own Return.
-fn graph_call_then_return_ret_reg() -> (strider_ir::Function, rsleigh::Vn) {
-    let ret = reg_vn(0, 8);
-    let mut t = Tb::raw(vec![ret], &[], &[], &[ret], None, 0);
-    t.call_at(0xCAFE);
-    let function = t.ret_regs(&[ret]);
-    (function, ret)
-}
-
-#[test]
-fn call_ret_output_capture() {
-    let (g, _ret) = graph_call_then_return_ret_reg();
-    let v = Capture::new();
-    let m = a::unique(&g, call().at(0xCAFE).ret_output(0, var(v)));
-    let out = m.output(v).expect("ret_output capture");
-    // The captured output is a Call output slot.
-    assert!(matches!(
-        g.kind_of_output(out),
-        strider_ir::node::NodeKind::Call
-    ));
-}
-
 // ── Return ────────────────────────────────────────────────────────────────────
 
 #[test]

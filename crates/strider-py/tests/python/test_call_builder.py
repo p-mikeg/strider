@@ -11,9 +11,8 @@ Those properties give us a real graph to exercise every builder
 method that strider-py now exposes.
 
 Mirrors `crates/pattern/src/pat/builders/call.rs::CallPat` —
-`.at(addr)`, `.target(pat)`, `.arg(idx, pat)`, `.ret_output(idx, pat)`,
-plus the universal `.capture(c)` / `.cap(name)` / `.when(f)` /
-`.into_pat()`.
+`.at(addr)`, `.target(pat)`, `.arg(idx, pat)`, plus the universal
+`.capture(c)` / `.cap(name)` / `.when(f)` / `.into_pat()`.
 """
 
 from __future__ import annotations
@@ -45,7 +44,7 @@ def _switch_graph():
 def test_call_returns_builder_chainable():
     # `.at()` / `.arg()` return the SAME builder (chain).  The test
     # validates the chain stays valid; semantics are exercised below.
-    b = call().at(0x1000).arg(0, int_const(8)).ret_output(0, var(Capture()))
+    b = call().at(0x1000).arg(0, int_const(8))
     assert b is not None
     p = b.into_pat()
     assert isinstance(p, Pat)
@@ -195,13 +194,3 @@ def test_call_target_capture_round_trips():
     assert seen_f, f"no Call's target captured to f's address ({f_addr:#x})"
 
 
-def test_call_chained_with_ret_output_capture():
-    # `.ret_output(0, var(c))` binds c to the value-output of the call's
-    # first return-value slot.  The capture isn't required to match a
-    # specific shape (var(c) is a wildcard); we just assert the chain
-    # finalises to a valid Pat and find_all returns ≥0 matches.
-    g = _switch_graph()
-    c = Capture()
-    p = call().ret_output(0, var(c))
-    hits = g.find_all(p)
-    assert isinstance(hits, list)

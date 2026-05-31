@@ -1,6 +1,7 @@
 //! `CallPat`, `CallOtherPat` — call-site builders. Inputs are sparse-indexed
-//! over `[ctrl, mem, target/args…]`; `CallPat` additionally supports output
-//! constraints on ret-value slots.
+//! over `[ctrl, mem, target/args…]`.  Patterns query only via inputs; to
+//! reach a Call's return value, query from the consumer-side input that
+//! reads it.
 //!
 //! Use [`crate::pattern::pat::IntoPat::capture`] to bind the matched call node id.
 
@@ -17,12 +18,11 @@ use crate::pattern::pat::{Pat, int_const, int_const_any_of};
 pub struct CallPat {
     target: Option<Pat>,
     args: Vec<(usize, Pat)>,
-    ret_outputs: Vec<(usize, Pat)>,
 }
 
 impl CallPat {
     pub(crate) fn new() -> Self {
-        Self { target: None, args: Vec::new(), ret_outputs: Vec::new() }
+        Self { target: None, args: Vec::new() }
     }
     /// Constrain the call target with an arbitrary pattern.
     pub fn target(mut self, p: impl Into<Pat>) -> Self {
@@ -32,18 +32,6 @@ impl CallPat {
     /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
     pub fn arg(mut self, idx: usize, p: impl Into<Pat>) -> Self {
         self.args.push((idx, p.into()));
-        self
-    }
-    /// Capture or constrain the Call's return-value output at ABI position
-    /// `idx` — e.g. `.ret_output(0, var(c))` binds `c` to the
-    /// `NodeOutputId` of the calling convention's first return register
-    /// (`rax` on x86_64, `x0` on AArch64).  The inner pattern should be
-    /// `var(c)` or `any()`; richer patterns are matched against the
-    /// value output but will typically fail because the Call itself
-    /// produces the value.  If the ret reg at `idx` is callee-saved,
-    /// it does not appear as a Call output and the match fails.
-    pub fn ret_output(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.ret_outputs.push((idx, p.into()));
         self
     }
     /// Constrain the call target to the literal address `addr`.
@@ -68,7 +56,7 @@ impl CallPat {
 
 impl From<CallPat> for Pat {
     fn from(b: CallPat) -> Pat {
-        let CallPat { target, args, ret_outputs } = b;
+        let CallPat { target, args } = b;
         // Call inputs: [ctrl(0), mem(1), target(2), arg0(3), arg1(4), ...].
         let mut indexed_inputs: Vec<(usize, Pat)> = Vec::new();
         if let Some(tgt) = target {
@@ -77,11 +65,7 @@ impl From<CallPat> for Pat {
         for (i, p) in args {
             indexed_inputs.push((3 + i, p));
         }
-        // Call outputs: [ctrl(0), mem(1), retval0(2), retval1(3), ...].
-        let outputs: Vec<(usize, Pat)> =
-            ret_outputs.into_iter().map(|(i, p)| (2 + i, p)).collect();
         NodePat::matcher(KindSpec::Exact(NodeKind::Call), InputsSpec::Indexed(indexed_inputs))
-            .with_outputs(outputs)
             .into_pat()
     }
 }
@@ -90,9 +74,7 @@ impl From<CallPat> for Pat {
 
 /// Builder for `CallOther` node patterns.  Created by [`crate::pattern::pat::call_other`].
 ///
-/// Slot conventions (precise-ABI lifting):
-///
-/// **Inputs** — addressed by [`Self::arg`] using the raw `inputs[i]` index:
+/// Slot conventions (precise-ABI lifting) — inputs only:
 ///   * `arg(0, p)` → control predecessor
 ///   * `arg(1, p)` → memory predecessor
 ///   * `arg(2 + k, p)` → pcode-explicit arg `k` (matches Sleigh's
@@ -100,21 +82,12 @@ impl From<CallPat> for Pat {
 ///   * `arg(2 + N + k, p)` → implicit-read `k` (matches
 ///     `abi.implicit_reads[k]`; depends on the matched node's ABI)
 ///
-/// **Outputs** — addressed by [`Self::ret`] using the raw `outputs[i]`
-/// index:
-///   * `ret(0, p)` → control output
-///   * `ret(1, p)` → memory output (dangles when `abi.mem_clobbers` is empty)
-///   * `ret(2, p)` → pcode-explicit value output (when present)
-///   * `ret(2 + has_value + k, p)` → clobber output `k`
-///     (matches `abi.implicit_writes[k]`)
-///
-/// Convenience aliases for the well-known slots:
-/// [`Self::ctrl`], [`Self::mem`], [`Self::ctrl_out`], [`Self::mem_out`].
+/// Convenience aliases for the well-known input slots:
+/// [`Self::ctrl`], [`Self::mem`].
 pub struct CallOtherPat {
     user_op_id: Option<u64>,
     name: Option<String>,
     inputs: Vec<(usize, Pat)>,
-    outputs: Vec<(usize, Pat)>,
 }
 
 impl CallOtherPat {
@@ -123,7 +96,6 @@ impl CallOtherPat {
             user_op_id: None,
             name: None,
             inputs: Vec::new(),
-            outputs: Vec::new(),
         }
     }
 
@@ -153,14 +125,6 @@ impl CallOtherPat {
         self
     }
 
-    /// Constrain `outputs[idx]` of the matched CallOther.  See the
-    /// type-level docs for the slot layout (ctrl / mem / value? /
-    /// clobbers).
-    pub fn ret(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.outputs.push((idx, p.into()));
-        self
-    }
-
     /// Convenience: match the control input (``inputs[0]``).
     pub fn ctrl(self, p: impl Into<Pat>) -> Self {
         self.arg(0, p)
@@ -170,17 +134,6 @@ impl CallOtherPat {
     pub fn mem(self, p: impl Into<Pat>) -> Self {
         self.arg(1, p)
     }
-
-    /// Convenience: match the control output (``outputs[0]``).
-    pub fn ctrl_out(self, p: impl Into<Pat>) -> Self {
-        self.ret(0, p)
-    }
-
-    /// Convenience: match the memory output (``outputs[1]``).  Dangles
-    /// (no consumers) when the ABI's `mem_clobbers` set is empty.
-    pub fn mem_out(self, p: impl Into<Pat>) -> Self {
-        self.ret(1, p)
-    }
 }
 
 impl From<CallOtherPat> for Pat {
@@ -189,7 +142,6 @@ impl From<CallOtherPat> for Pat {
             user_op_id,
             name,
             inputs,
-            outputs,
         } = b;
         let exemplar = NodeKind::CallOther { user_op_id: 0 };
         let kind = match user_op_id {
@@ -198,8 +150,7 @@ impl From<CallOtherPat> for Pat {
                 matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == expected)
             }),
         };
-        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(inputs))
-            .with_outputs(outputs);
+        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(inputs));
         if let Some(want) = name {
             pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
                 ctx.function

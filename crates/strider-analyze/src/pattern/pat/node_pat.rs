@@ -12,10 +12,6 @@
 //!   `Indexed` covers sparse positional matching for memory ops (`Load` /
 //!   `Store`), `Phi`, and the control
 //!   patterns (`Call`, `CallOther`, `Return`, `If`).
-//! * [`NodePat::outputs`] — sparse positional sub-pattern constraints on
-//!   specific output slots (used by `Call` for return-value captures and
-//!   `CallOther` for clobber-output captures).  Empty means "no output
-//!   constraints" — the matcher's iteration is a no-op.
 //! * [`NodePat::post_match`] — the one place bindings can be installed
 //!   during the match pipeline (op-variant captures, typed-const captures,
 //!   side-table lookups).
@@ -170,9 +166,12 @@ pub(crate) struct BuildSpec {
 }
 
 /// A generic node-level pattern. Covers every pattern shape: "check node
-/// kind, match inputs in some arrangement, optionally constrain outputs,
-/// optionally bind output/node captures".  Buildable patterns
-/// additionally populate [`NodePat::build`].
+/// kind, match inputs in some arrangement, optionally bind output/node
+/// captures".  Buildable patterns additionally populate [`NodePat::build`].
+///
+/// Patterns query only via inputs; an output of one node is by
+/// construction the input of its consumer, so any constraint on a value
+/// is expressible from the consuming node's side.
 ///
 /// Kind-phase purity: the [`KindSpec::VariantWith`] closure is
 /// payload-only (`&NodeKind -> bool`) and can therefore never touch
@@ -192,13 +191,7 @@ pub(crate) struct NodePat {
     pub(crate) build: Option<BuildSpec>,
     /// How to match the node's inputs.
     pub(crate) inputs: InputsSpec,
-    /// Sparse positional constraints on the node's outputs.  Empty means
-    /// "no output constraints"; non-empty entries match each listed
-    /// `(slot_idx, sub_pattern)` pair against the node's output at that
-    /// slot.  Used by `CallPat::ret_output` and `CallOtherPat::ret` to
-    /// capture / constrain specific return-value / clobber outputs.
-    pub(crate) outputs: Vec<(usize, crate::pattern::pat::Pat)>,
-    /// Runs AFTER inputs/outputs match (and after each commutative
+    /// Runs AFTER inputs match (and after each commutative
     /// retry).  This is the designated binding site for payload-dependent
     /// captures (op-variant Vars, typed-constant Vars), since it executes
     /// once bindings from sub-matches are already in place.
@@ -331,7 +324,6 @@ impl NodePat {
             kind,
             build: None,
             inputs,
-            outputs: Vec::new(),
             post_match: None,
         }
     }
@@ -349,11 +341,6 @@ impl NodePat {
     /// at the same call.
     pub(crate) fn with_build_fn(mut self, f: NodeKindBuilder, ty: BuildTy) -> Self {
         self.build = Some(BuildSpec { kind: BuildKind::Fn(f), ty });
-        self
-    }
-
-    pub(crate) fn with_outputs(mut self, outputs: Vec<(usize, crate::pattern::pat::Pat)>) -> Self {
-        self.outputs = outputs;
         self
     }
 
@@ -450,20 +437,7 @@ fn try_once(
         }
     }
 
-    // (b) outputs — sparse positional constraints, lazily fetched.
-    if !pat.outputs.is_empty() {
-        let outputs = ctx.function.node_outputs(node);
-        for (i, p) in &pat.outputs {
-            let Some(&out) = outputs.get(*i) else {
-                return false;
-            };
-            if !match_one(ctx, out, p, b) {
-                return false;
-            }
-        }
-    }
-
-    // (c) post_match (op-var binding for *Any patterns)
+    // (b) post_match (op-var binding for *Any patterns)
     if let Some(pm) = &pat.post_match
         && !pm(ctx, node, b)
     {

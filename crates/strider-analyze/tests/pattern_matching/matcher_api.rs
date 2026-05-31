@@ -198,18 +198,6 @@ fn get_vn_on_non_mapped_producer_returns_none() {
 }
 
 #[test]
-fn get_vn_on_call_ret_output_returns_ret_reg() {
-    let ret = super::support::reg_vn(0, 8);
-    let mut t = Tb::raw(vec![ret], &[], &[], &[ret], None, 0);
-    t.call_at(0xCAFE);
-    let function = t.ret_regs(&[ret]);
-
-    let v = Capture::new();
-    let m = a::unique(&function, call().at(0xCAFE).ret_output(0, var(v)));
-    assert_eq!(m.get_vn(v, &function), Some(ret));
-}
-
-#[test]
 fn get_vn_on_unbound_var_returns_none() {
     let function = shapes::add_consts(5, 3);
     let m = a::first(&function, int_const(5));
