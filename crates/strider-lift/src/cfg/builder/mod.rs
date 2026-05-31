@@ -179,19 +179,19 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     ///
     /// # Errors
     /// Returns an error when `region.insns` is empty AND `region.terminator`
-    /// is not [`super::types::RegionTerminator::Branch`].  Empty regions
-    /// terminating with `Branch` are explicitly allowed: they arise from
-    /// the single-instruction CondBranch-with-OOB-successor case, where
-    /// popping the trailing CondBranch leaves no body but the in-range
-    /// edge must still be preserved.  The IR-layer per-region driver
-    /// iterates `region.insns` (a no-op for empty insns) and handles the
-    /// terminator separately.
+    /// is not [`super::types::RegionTerminator::Unconditional`].  Empty
+    /// regions terminating with `Unconditional` are explicitly allowed:
+    /// they arise from the single-instruction CondBranch-with-OOB-successor
+    /// case, where popping the trailing CondBranch leaves no body but the
+    /// in-range edge must still be preserved.  The IR-layer per-region
+    /// driver iterates `region.insns` (a no-op for empty insns) and handles
+    /// the terminator separately.
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
         if region.insns.is_empty()
-            && !matches!(region.terminator, super::types::RegionTerminator::Branch)
+            && !matches!(region.terminator, super::types::RegionTerminator::Unconditional)
         {
             bail!(
-                "region at {:?} has no instructions and terminator is {:?} (only Branch is permitted for empty regions)",
+                "region at {:?} has no instructions and terminator is {:?} (only Unconditional is permitted for empty regions)",
                 region.start_addr, region.terminator,
             );
         }
@@ -369,7 +369,7 @@ mod tests {
         Region {
             start_addr: start,
             insns,
-            terminator: RegionTerminator::Fallthrough,
+            terminator: RegionTerminator::Unconditional,
         }
     }
 
@@ -402,16 +402,33 @@ mod tests {
     }
 
     #[test]
-    fn add_region_empty_region_returns_error() {
+    fn add_region_empty_region_with_non_unconditional_returns_error() {
+        // Empty regions are allowed ONLY with `Unconditional` (the
+        // single-instruction CondBranch-with-OOB-successor fold).  Any
+        // other terminator on an empty region is a construction bug.
         let mut sleigh = make_sleigh();
         let mut b = make_builder(0x1000, &mut sleigh);
         let empty = Region {
             start_addr: addr(0x1000, 0),
             insns: Vec::new(),
-            terminator: RegionTerminator::Fallthrough,
+            terminator: RegionTerminator::Return,
         };
         let err = b.add_region(empty).unwrap_err();
         assert!(err.to_string().contains("has no instructions"), "got: {err}");
+    }
+
+    #[test]
+    fn add_region_empty_unconditional_is_allowed() {
+        // The OOB-CondBranch fold produces an empty region with
+        // `Unconditional`; `add_region` must accept it.
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
+        let empty = Region {
+            start_addr: addr(0x1000, 0),
+            insns: Vec::new(),
+            terminator: RegionTerminator::Unconditional,
+        };
+        b.add_region(empty).expect("empty Unconditional region is allowed");
     }
 
     #[test]

@@ -100,8 +100,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
                     }
                 }
                 RegionTerminator::Switch { .. } => ("switch", "solid"),
-                RegionTerminator::Branch => ("branch", "solid"),
-                RegionTerminator::Fallthrough => ("fallthrough", "solid"),
+                RegionTerminator::Unconditional => ("unconditional", "solid"),
                 // These terminators have no outgoing edge; an edge from one is
                 // a construction bug, but render it visibly rather than
                 // failing the whole dump.

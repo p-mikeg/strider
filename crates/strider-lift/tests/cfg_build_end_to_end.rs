@@ -79,7 +79,7 @@ fn back_jump_splits_region() {
 }
 
 #[test]
-fn split_first_half_becomes_fallthrough_second_half_branch() {
+fn split_both_halves_unconditional() {
     // Same back-jump fixture, with stricter assertions on per-half
     // terminators.  Ported from pre-rewrite region_terminator.rs.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
@@ -97,8 +97,8 @@ fn split_first_half_becomes_fallthrough_second_half_branch() {
     let first_half = first_half.expect("first half (0x1000) region");
     let second_half = second_half.expect("second half (0x1002) region");
 
-    assert_eq!(first_half.terminator, RegionTerminator::Fallthrough);
-    assert_eq!(second_half.terminator, RegionTerminator::Branch);
+    assert_eq!(first_half.terminator, RegionTerminator::Unconditional);
+    assert_eq!(second_half.terminator, RegionTerminator::Unconditional);
 }
 
 // ── fn_max_size / tail-call classification ───────────────────────────────

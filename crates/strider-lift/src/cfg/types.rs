@@ -74,18 +74,13 @@ pub struct RegionInstruction {
 /// doc on [`RegionTerminator::Switch`] for the construction contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionTerminator {
-    /// No terminator opcode; control falls into the next region.  This
-    /// covers the case where decoding hits the start of an
-    /// already-discovered region and the current region is closed out
-    /// with its single outgoing edge, as well as the first half of a
-    /// split region.  The unconditional successor is the region's sole
-    /// outgoing edge.
-    Fallthrough,
-    /// Direct unconditional branch, intra-function.  Like `Fallthrough`,
-    /// the unconditional successor is the region's sole outgoing edge —
-    /// the distinction from `Fallthrough` is only that this region ended
-    /// with an explicit branch opcode.
-    Branch,
+    /// Region ends without a conditional; the sole outgoing edge is the
+    /// unconditional successor.  Constructed in three cases that the
+    /// IR-level consumer (`link_region_edges`) treats identically:
+    /// decoding fell into an already-discovered region, the region is
+    /// the first half of a split, or the region closed on an explicit
+    /// `Branch` opcode.
+    Unconditional,
     /// Direct conditional branch.  The region has two outgoing edges; the
     /// one whose target region *contains* `true_target` is the taken
     /// (condition-true) side, the other is the fall-through.
@@ -173,9 +168,9 @@ pub struct Region {
     /// Address of the first pcode instruction in this region.
     pub start_addr: PcodeInsnAddr,
     /// All pcode instructions, in program order.  Empty only when the
-    /// terminator is `Branch` and arose from the single-instruction
-    /// CondBranch-with-OOB-successor fold (see `add_region` in the cfg
-    /// builder).  Otherwise non-empty.
+    /// terminator is `Unconditional` and arose from the
+    /// single-instruction CondBranch-with-OOB-successor fold (see
+    /// `add_region` in the cfg builder).  Otherwise non-empty.
     pub insns: Vec<RegionInstruction>,
     /// How this region ends — see [`RegionTerminator`].
     pub terminator: RegionTerminator,
@@ -185,7 +180,7 @@ impl Region {
     /// Returns `true` when `addr` lies within the instruction range of this
     /// region, i.e. `start_addr <= addr <= last_insn.addr`.
     ///
-    /// Empty regions (only valid for `Branch`-terminated post-fold cases —
+    /// Empty regions (only valid for `Unconditional`-terminated post-fold cases —
     /// see [`Region::insns`]) own exactly their `start_addr`.  Returning
     /// `false` for empty regions previously made `find_region_containing_addr`
     /// miss the start-address query, letting the work queue build a duplicate

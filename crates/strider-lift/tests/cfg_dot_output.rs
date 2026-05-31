@@ -75,7 +75,7 @@ fn dot_output_for_loop_contains_solid_unconditional_edges() {
     // `xor eax, eax; xor eax, eax; jmp -4` — a 2-region body whose
     // second half branches back to itself (a back-edge loop).  Same
     // byte sequence as `cfg_build_end_to_end.rs`'s
-    // `split_first_half_becomes_fallthrough_second_half_branch`.
+    // `split_both_halves_unconditional`.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
     let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg, &sleigh);

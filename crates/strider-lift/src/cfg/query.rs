@@ -61,7 +61,7 @@ impl Cfg {
     /// Returns the sole outgoing successor of `region_id`, or `None` when the
     /// region has no successor.
     ///
-    /// Meaningful for `Fallthrough` / `Branch` regions, which have exactly one
+    /// Meaningful for `Unconditional` regions, which have exactly one
     /// outgoing edge.  A `CondBranch` (two successors) or `Switch` (many) is a
     /// caller error here — use [`Cfg::region_if`] or the `Switch` terminator's
     /// `targets` instead.
@@ -235,7 +235,7 @@ mod tests {
         Region {
             start_addr: start,
             insns,
-            terminator: crate::cfg::RegionTerminator::Fallthrough,
+            terminator: crate::cfg::RegionTerminator::Unconditional,
         }
     }
 

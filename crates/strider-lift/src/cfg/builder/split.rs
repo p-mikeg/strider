@@ -23,7 +23,7 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
     /// The following fixups ARE performed manually:
     /// 1. Incoming edges (parents) are rewired to the first region.
     /// 2. An (unweighted) edge is added from first → second; the first half's
-    ///    `Fallthrough` terminator classifies the transfer.
+    ///    `Unconditional` terminator classifies the transfer.
     /// 3. The `start_addr_to_region_id` map is updated for both halves.
     ///
     /// Returns `region_id` (the second region) on success, or `region_id`
@@ -70,7 +70,7 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
             return Ok(region_id);
         }
         // No-op when `addr` lands at/past the last insn — the second
-        // region would be empty + retain the original (non-Branch)
+        // region would be empty + retain the original (non-Unconditional)
         // terminator, which `add_region` correctly rejects but
         // `split_region` mutates in place rather than going through
         // it.  Returning the original id is the right "split is a
@@ -98,7 +98,7 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         let first_region = self.add_region(Region {
             start_addr: first_region_start_addr,
             insns: first_region_insns,
-            terminator: RegionTerminator::Fallthrough,
+            terminator: RegionTerminator::Unconditional,
         })?;
 
         // second region inherits all parents of the original region

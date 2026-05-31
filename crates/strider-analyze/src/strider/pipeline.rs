@@ -511,7 +511,7 @@ where
 /// `link_region_edges` — third stage of [`Strider::analyze_cfg_with`]:
 /// wire the region successors that no per-terminator handler wired.
 /// CFG edges are unweighted, so the gate is the *source region's
-/// terminator*: only `Fallthrough` / `Branch` regions are wired here
+/// terminator*: only `Unconditional` regions are wired here
 /// (their successor has no dedicated handler — `handle_branch` is a
 /// no-op).  `CondBranch` regions are wired by `handle_cond_branch`
 /// (`region_if` + `build_if`) and `Switch` regions by `handle_switch`'s
@@ -536,8 +536,7 @@ where
             .terminator;
         if matches!(
             src_terminator,
-            strider_lift::cfg::RegionTerminator::Fallthrough
-                | strider_lift::cfg::RegionTerminator::Branch
+            strider_lift::cfg::RegionTerminator::Unconditional
         ) {
             driver
                 .builder

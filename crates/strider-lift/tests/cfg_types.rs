@@ -42,7 +42,7 @@ fn make_region(addrs: &[(u64, u64)]) -> Region {
     Region {
         start_addr: start,
         insns,
-        terminator: RegionTerminator::Fallthrough,
+        terminator: RegionTerminator::Unconditional,
     }
 }
 
@@ -146,7 +146,7 @@ fn contains_addr_returns_true_for_empty_region_at_start_addr() {
     let r = Region {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),
-        terminator: RegionTerminator::Branch,
+        terminator: RegionTerminator::Unconditional,
     };
     assert!(r.contains_addr(addr(0x1000, 0)));
     assert!(!r.contains_addr(addr(0x1000, 1)));

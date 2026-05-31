@@ -286,14 +286,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 target: branch_target_addr.machine_addr.addr,
             }
         } else {
-            RegionTerminator::Branch
+            RegionTerminator::Unconditional
         };
         let region = self.finish_current_region(terminator)?;
         if !is_tail_call {
             // Not a tail call — enqueue the target so the builder explores it
-            // next.  Edges are unweighted; the `Branch` terminator records
-            // that this region ended with a branch opcode, and the IR lifter
-            // wires the unconditional successor through the region linker.
+            // next.  Edges are unweighted; the `Unconditional` terminator
+            // records that this region ended with a branch opcode, and the
+            // IR lifter wires the unconditional successor through the
+            // region linker.
             self.builder.work_queue.push((Some(region), branch_target_addr));
         }
         Ok(InsnOutcome::RegionClosed)
@@ -357,13 +358,13 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // so the IR's per-region loop does not re-route it
                 // through `handle_cond_branch` (which would fail
                 // looking up the missing OOB edge), and emit
-                // `RegionTerminator::Branch` to the in-range
+                // `RegionTerminator::Unconditional` to the in-range
                 // successor.  The conditional is lost, but the
                 // lift completes.  The in-range successor is
                 // preserved as a regular intra-function branch
-                // via `add_region`'s relaxed empty-Branch
+                // via `add_region`'s relaxed empty-Unconditional
                 // invariant — `add_region` accepts empty regions
-                // terminated with Branch (the degenerate
+                // terminated with Unconditional (the degenerate
                 // single-instruction case is sound by the same
                 // path).
                 let in_range = if true_oob { next_insn_addr } else { target_addr };
@@ -373,14 +374,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // fail looking up the missing OOB edge).  Even
                 // when this leaves the region empty
                 // (single-instruction case), `add_region` now
-                // accepts empty regions terminated with Branch.
-                // The IR-layer per-region driver iterates
-                // `region.insns` (a no-op for empty insns) and
-                // handles the Branch terminator + outgoing edge
-                // separately, so the in-range successor is
-                // preserved as a regular intra-function branch.
+                // accepts empty regions terminated with
+                // Unconditional.  The IR-layer per-region driver
+                // iterates `region.insns` (a no-op for empty
+                // insns) and handles the Unconditional terminator
+                // + outgoing edge separately, so the in-range
+                // successor is preserved as a regular
+                // intra-function branch.
                 self.insns.pop();
-                let region = self.finish_current_region(RegionTerminator::Branch)?;
+                let region = self.finish_current_region(RegionTerminator::Unconditional)?;
                 self.builder.work_queue.push((Some(region), in_range));
             }
         }
@@ -421,12 +423,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// the mini-graph resolver (or a cached `known_targets` entry from
     /// the strider orchestrator's IR-level indirect-branch resolver feedback path) and finalising
     /// the region with the matching terminator:
-    /// - `Single(K)` inside the function range → `Branch` to K
+    /// - `Single(K)` inside the function range → `Unconditional` to K
     ///   (enqueue successor for exploration).
     /// - `Single(K)` outside the function range → `TailCall { target:
     ///   K }` (no successor edge).
     /// - `LinkRegister` → `Return` (no successor edge).
-    /// - `Multiple` → `Switch` (one `Branch` edge per target).  If
+    /// - `Multiple` → `Switch` (one `Unconditional` edge per target).  If
     ///   any target is OOB, defer the whole site via
     ///   `UnresolvedIndirectBranch` — Switch has no per-target
     ///   tail-call escape, and encoding mixed in-range / tail-call
@@ -548,7 +550,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Either finishes the current region with `RegionTerminator::TailCall`
-    /// (when `is_tail_call`) or with `RegionTerminator::Branch` plus an
+    /// (when `is_tail_call`) or with `RegionTerminator::Unconditional` plus an
     /// outgoing edge to `target_addr` enqueued for further exploration.
     /// Shared between the `Branch` opcode arm and
     /// `process_branch_indirect`'s `Single` path — both classify a single
@@ -563,7 +565,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 target: target_addr.machine_addr.addr,
             })?;
         } else {
-            let region = self.finish_current_region(RegionTerminator::Branch)?;
+            let region = self.finish_current_region(RegionTerminator::Unconditional)?;
             self.builder.work_queue.push((Some(region), target_addr));
         }
         Ok(())
@@ -605,7 +607,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 }
                 return Ok(InsnOutcome::RegionClosed);
             }
-            let region = self.finish_current_region(RegionTerminator::Fallthrough)?;
+            let region = self.finish_current_region(RegionTerminator::Unconditional)?;
             self.builder
                 .region_graph
                 .add_edge(region, existing_region_id, ());
@@ -1252,7 +1254,7 @@ mod tests {
 
         let regions: Vec<&Region> = b.region_graph.node_weights().collect();
         assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].terminator, RegionTerminator::Branch);
+        assert_eq!(regions[0].terminator, RegionTerminator::Unconditional);
     }
 
     #[test]

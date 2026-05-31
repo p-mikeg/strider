@@ -8,7 +8,7 @@
 //! the per-insn loop processed the trailing `Opcode::Branch` through
 //! the generic `handle_branch` path, which errors with
 //! "invalid region index N" because a TailCall region has no
-//! Branch / Fallthrough edge.
+//! Unconditional edge.
 //!
 //! This test pins the fix.  Synthetic x86_64 function:
 //!
