@@ -67,7 +67,6 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
         NodeKind::IntConst(_) => "IntConst",
         NodeKind::IntConstWide(_) => "IntConstWide",
         NodeKind::IntUnaryOp(op) => match op {
-            IntUnaryOp::BitNot => "IntUnaryOp(BitNot)",
             IntUnaryOp::Neg => "IntUnaryOp(Neg)",
         },
         NodeKind::IntBinaryOp(op) => match op {

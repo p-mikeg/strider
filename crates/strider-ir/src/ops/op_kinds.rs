@@ -22,9 +22,9 @@ pub enum IntCmpOp {
     /// separate `Borrow` variant.
     ///
     /// `LessEqual` and `SlessEqual` are not separate variants: the
-    /// pcode-lift dispatch lowers them at lift time to `BitNot(Less(b, a))`
-    /// and `BitNot(Sless(b, a))` at `I1` respectively.  Patterns and passes see
-    /// the lowered shape directly.
+    /// pcode-lift dispatch lowers them at lift time to
+    /// `Xor(Less(b, a), IntConst(1)):I1` and `Xor(Sless(b, a), IntConst(1)):I1`
+    /// respectively.  Patterns and passes see the lowered shape directly.
     Less,
     /// Unsigned carry: the addition `l + r` overflows the type's width.
     Carry,
@@ -68,21 +68,18 @@ pub enum IntBinaryOp {
     Mul,
 }
 
-/// Unary arithmetic and bitwise operations on integer values.
+/// Unary arithmetic operations on integer values.
 ///
 /// **Naming note:** rsleigh's Sleigh-derived opcode names use the opposite
 /// convention from conventional Rust nomenclature.  Sleigh's `IntNeg`
-/// opcode is *bitwise* complement (`~x`); Sleigh's `Int2Comp` is
-/// two's-complement negation (`-x`).  The IR variant names follow the
-/// conventional meaning, not Sleigh's: `BitNot` is `~x` and `Neg` is
-/// `-x`.  See the `pcode_lift` crate's dispatch site for the rsleigh →
-/// IR mapping.  (`pcode_lift` is a separate crate, not under
-/// `crate::*` — the older `[`crate::pcode_lift`]` doc-link was broken.)
+/// opcode is *bitwise* complement (`~x`) and Sleigh's `Int2Comp` is
+/// two's-complement negation (`-x`).  The IR's `Neg` follows the
+/// conventional meaning (`-x`, from rsleigh's `Int2Comp`); bitwise
+/// complement is no longer a dedicated unary op — it is lowered at lift
+/// time to `Xor(x, all_ones)` (since `x ^ all_ones ≡ ~x`).  See the
+/// `pcode_lift` crate's dispatch site for the rsleigh → IR mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntUnaryOp {
-    /// Bitwise complement: `~x` (every bit flipped).  Lifted from
-    /// rsleigh's `IntNeg` opcode despite the name mismatch.
-    BitNot,
     /// Two's-complement negation: `-x` (`!x + 1`).  Lifted from rsleigh's
     /// `Int2Comp` opcode.
     Neg,
@@ -126,10 +123,10 @@ pub enum FloatUnaryOp {
 /// `NotEqual` and `LessEqual` are not primitives: pcode-lift lowers them
 /// at lift time:
 ///
-/// - `FloatNotEqual(a, b)` → `BitNot(FloatEqual(a, b))` at `I1` (sound under
-///   IEEE 754: `Equal` is false on NaN, so `!Equal` is true).
+/// - `FloatNotEqual(a, b)` → `Xor(FloatEqual(a, b), IntConst(1)):I1` (sound
+///   under IEEE 754: `Equal` is false on NaN, so the I1 xor with 1 is true).
 /// - `FloatLessEqual(a, b)` → `Or(FloatLess(a, b), FloatEqual(a, b))`
-///   (NaN-aware: cannot use `BitNot(Less(b, a))` because that would
+///   (NaN-aware: cannot use `Xor(Less(b, a), 1)` because that would
 ///   return true for NaN, while IEEE `<=` returns false).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatCmpOp {

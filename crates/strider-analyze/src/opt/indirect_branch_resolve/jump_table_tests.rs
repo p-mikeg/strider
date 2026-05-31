@@ -667,13 +667,16 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let idx = builder.build_int_const(0u64, NodeOutputType::I32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::I32).unwrap();
-    // BitNot(IntLess(n, idx)) — operand order is (n, idx) per the
-    // lift-time swap, mirroring `strider_lift::pcode_lift::handle_int_less_equal`.
+    // `Xor(IntLess(n, idx), IntConst(1)):I1` — operand order is (n, idx)
+    // per the lift-time swap, mirroring
+    // `strider_lift::pcode_lift::handle_int_less_equal`.  the former BitNot unary-op
+    // was removed in favour of `Xor(_, all_ones)`; at `I1` that is `Xor(_, 1)`.
     let inner = builder
         .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::I32)
         .unwrap();
+    let one = builder.build_all_ones_const(NodeOutputType::I1).unwrap();
     let cmp = builder
-        .build_int_unary_operation(inner, strider_ir::IntUnaryOp::BitNot, NodeOutputType::I1)
+        .build_int_binary_operation(inner, one, strider_ir::IntBinaryOp::Xor, NodeOutputType::I1)
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     builder.set_lift_addr(None);

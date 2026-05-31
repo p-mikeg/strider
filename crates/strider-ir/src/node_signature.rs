@@ -620,7 +620,7 @@ mod tests {
             NodeKind::Load(space),
             NodeKind::Store(space),
             NodeKind::IntConst(0),
-            NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+            NodeKind::IntUnaryOp(IntUnaryOp::Neg),
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             NodeKind::IntCmpOp(IntCmpOp::Equal),
             NodeKind::Truncate,

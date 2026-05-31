@@ -1256,8 +1256,11 @@ fn parse_int_cmp_op(name: &str) -> PyResult<strider_ir::IntCmpOp> {
 
 // `pattern.neg(x)` matches two's-complement negation (`-x`).
 unary!(neg, "Pattern: `IntUnaryOp::Neg` — two's-complement negation (`-x`).");
-// `pattern.bit_not(x)` matches bitwise complement (`~x`).
-unary!(bit_not, "Pattern: `IntUnaryOp::BitNot` — bitwise complement (`~x`).");
+// `pattern.bit_not(x)` matches bitwise complement (`~x`).  the former BitNot unary-op
+// was removed in favour of `Xor(x, all_ones)`; the constructor produces that
+// shape directly so `~x` at any width is captured by a single pattern.
+unary!(bit_not, "Pattern: bitwise complement (`~x`) — matches the canonical \
+    `Xor(x, IntConst(all_ones)):ty` shape.");
 // `pattern.not_(x)` is the keyword-collision-renamed alias for
 // `bit_not` — the Rust pattern crate keeps `not` since it's not a Rust
 // keyword, but `not` is a Python keyword so the Python surface uses
@@ -1277,8 +1280,10 @@ binary!(bool_xor, into,
 
 // ── Bool unary ops ───────────────────────────────────────────────────────
 
-/// Pattern: `IntUnaryOp::BitNot` at `I1` — boolean negation (`!x`).  The
-/// canonical shape for `a != b` is `bool_not(int_cmp("Equal", a, b))`.
+/// Pattern: boolean negation (`!x`) — matches the canonical
+/// `Xor(x, IntConst(1)):I1` shape since the former BitNot unary-op was removed
+/// in favour of `Xor(_, all_ones)`.  The canonical shape for `a != b` is
+/// `bool_not(int_cmp("Equal", a, b))`.
 #[pyfunction]
 pub fn bool_not(operand: PatLike<'_>) -> PyResult<PyPat> {
     let op = operand.into_pat()?;
@@ -1932,7 +1937,7 @@ pub fn float_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyFloa
 // ── Variant-agnostic constructors ────────────────────────────────────────
 //
 // Mapped to Python names: `int_bin_any`, `int_un_any`, `int_cmp_any`,
-// `bool_bin_any`, `bool_un_any`, `float_bin_any`, `float_un_any`,
+// `bool_bin_any`, `float_bin_any`, `float_un_any`,
 // `float_cmp_any`.  Each takes a `Capture` for the matched op variant
 // — recover the op via `Match.*_op(capture)` once those accessors land.
 /// Match any `IntBinaryOp` over `(l, r)` and bind the op variant to `c`.
@@ -1971,14 +1976,11 @@ pub fn bool_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> 
     Ok(PyPat::from_pat(strider_analyze::pattern::bool_binary_any(c.inner, lp, rp)))
 }
 
-/// Match any boolean unary op (an `IntUnaryOp` — `BitNot` — at `I1`) over
-/// `operand` and bind the op variant to `c`.
-/// Recover via `Match.bool_unary_op(c)`.
-#[pyfunction]
-pub fn bool_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<PyPat> {
-    let p = operand.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::bool_unary_any(c.inner, p)))
-}
+// Note: there is no `bool_un_any` constructor.  A boolean logical NOT
+// is `Xor(x, IntConst(1)):I1` since the former BitNot unary-op was removed in
+// favour of `Xor(_, all_ones)`.  Use `bool_bin_any(c, operand, bool_const(true))`
+// to match any boolean unary shape (a bool_binary_any whose RHS is the
+// I1 all-ones constant).
 
 /// Match any `FloatBinaryOp` over `(l, r)` and bind the op variant to `c`.
 /// Recover via `Match.float_binary_op(c)`.
@@ -2136,7 +2138,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(int_un_any);
     add_fn!(int_cmp_any);
     add_fn!(bool_bin_any);
-    add_fn!(bool_un_any);
     add_fn!(float_bin_any);
     add_fn!(float_un_any);
     add_fn!(float_cmp_any);

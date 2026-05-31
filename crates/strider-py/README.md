@@ -259,14 +259,17 @@ The `_` and `any_` strings are reserved wildcards (they convert to
   return builder objects that chain `.ordered()` / `.capture(c)` /
   `.cap("name")` / `.when(f)` / `.into_pat()`.
 * **Variant-agnostic:** `int_bin_any`, `int_un_any`, `int_cmp_any`,
-  `bool_bin_any`, `bool_un_any`, `float_bin_any`, `float_un_any`,
-  `float_cmp_any` — bind the matched op variant to a Capture.
+  `bool_bin_any`, `float_bin_any`, `float_un_any`, `float_cmp_any` —
+  bind the matched op variant to a Capture.  (`bool_un_any` was removed
+  alongside the former BitNot unary-op; a 1-bit logical NOT is
+  `Xor(_, IntConst(1)):I1`, matched via `bool_bin_any`.)
 
-`float_is_nan(x)` desugars to `BitNot(FloatEqual(x, x))` at `I1` — the
-same shape the pcode lifter emits for Sleigh's `FLOAT_NAN` op (logical
-NOT is the 1-bit `IntUnaryOp::BitNot`), so it matches both that lifted
-shape and any explicit `x != x` written in the source.
-No dedicated `FloatIsNan` IR node is needed.
+`float_is_nan(x)` desugars to `Xor(FloatEqual(x, x), IntConst(1)):I1` —
+the same shape the pcode lifter emits for Sleigh's `FLOAT_NAN` op (the
+1-bit logical NOT is `Xor(_, IntConst(1))` since the former BitNot
+unary-op was removed), so it matches both that lifted shape and any
+explicit `x != x` written in the source.  No dedicated `FloatIsNan`
+IR node is needed.
 
 ## Match accessors
 

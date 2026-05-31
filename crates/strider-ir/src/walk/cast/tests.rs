@@ -189,7 +189,7 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
         NodeKind::IntConst(0),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntBinaryOp(IntBinaryOp::Mul),
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
         NodeKind::FloatToFloat,
         NodeKind::FloatToInt,

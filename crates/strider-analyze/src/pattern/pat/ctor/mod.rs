@@ -13,7 +13,7 @@ mod control;
 mod float;
 mod int;
 mod variant_agnostic;
-mod wildcards;
+pub(crate) mod wildcards;
 
 pub use bool_::*;
 pub use casts::*;

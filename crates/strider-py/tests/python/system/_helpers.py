@@ -168,8 +168,11 @@ def count_int_binop(g, op: str) -> int:
 
 
 def count_int_unop(g, op: str) -> int:
-    # Variant names match `ir::IntUnaryOp` exactly: `Neg` is two's-complement
-    # negation (`-x`); `BitNot` is bitwise complement (`~x`).
+    # Variant names: `Neg` is two's-complement negation (`-x`, the only
+    # remaining `IntUnaryOp` variant).  `"BitNot"` is accepted for
+    # backwards compatibility — bitwise complement (`~x`) is now
+    # `Xor(_, IntConst(all_ones))` (the former BitNot unary-op was
+    # removed in favour of the Xor shape), matched via `pat.bit_not`.
     if op == "Neg":
         return count_pat(g, pat.neg(any_()))
     if op == "BitNot":

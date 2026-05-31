@@ -7,34 +7,14 @@
 //! Booleans are 1-bit integers (`I1`) in this IR: there is no separate
 //! `BoolBinaryOp` / `BoolUnaryOp` node kind.  A boolean AND / OR / XOR is an
 //! [`IntBinaryOp`](strider_ir::IntBinaryOp) (`And` / `Or` / `Xor`) whose output
-//! is `I1`, and a logical NOT is an [`IntUnaryOp`](strider_ir::IntUnaryOp)
-//! `BitNot` at `I1` (`~0 & 1 == 1`, `~1 & 1 == 0`).  These constructors keep
-//! their historical `bool_*` names but build/match the integer shapes at `I1`.
+//! is `I1`, and a logical NOT is an [`IntBinaryOp::Xor`] with the I1 all-ones
+//! constant `IntConst(1)` (since the former BitNot unary-op was removed in favour
+//! of `Xor(x, all_ones)`).  These constructors keep their historical `bool_*`
+//! names but build/match the integer shapes at `I1`.
 
-use std::sync::Arc;
+use strider_ir::IntBinaryOp;
 
-use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::{IntBinaryOp, IntUnaryOp};
-
-use crate::pattern::pat::node_pat::{BuildTy, InputsSpec, KindSpec, PostMatchFn, NodePat};
 use crate::pattern::pat::{BoolBinaryOpPat, Pat};
-
-/// Post-match guard restricting a match to a node whose value output is the
-/// 1-bit boolean `I1`.  Without it the `bool_*` matchers would also accept a
-/// same-shaped wide integer op (e.g. a 64-bit `And`), since after the bool→I1
-/// collapse a boolean op and a wide integer op share the same `NodeKind`.
-///
-/// (The binary-op constructors carry an equivalent guard inside
-/// [`BoolBinaryOpPat`]; this copy serves the unary constructors.)
-fn require_i1_output() -> PostMatchFn {
-    Arc::new(|ctx, node, _bindings| {
-        ctx.function
-            .node_outputs(node)
-            .iter()
-            .find_map(|&out| ctx.function.output_kind(out).as_value())
-            .is_some_and(|ty| ty.bit_width() == 1)
-    })
-}
 
 /// Matches a boolean binary operation with the given `op`.
 ///
@@ -64,18 +44,10 @@ pub fn bool_xor(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> BoolBinaryOpPat {
     BoolBinaryOpPat::new(IntBinaryOp::Xor, lhs.into(), rhs.into())
 }
 
-/// Matches a boolean unary operation with the given `op` (an [`IntUnaryOp`]
-/// at `I1`).
-pub fn bool_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
-    let kind = NodeKind::IntUnaryOp(op);
-    NodePat::matcher(KindSpec::Exact(kind), InputsSpec::fixed_ordered(vec![operand.into()]))
-        .with_post_match(require_i1_output())
-        .with_build_exact(kind, BuildTy::Fixed(NodeOutputType::I1))
-        .into_pat()
-}
-
-/// Matches a boolean NOT node (`IntUnaryOp::BitNot` at `I1`, i.e. a 1-bit
-/// complement — a logical NOT).
+/// Matches a boolean NOT node — a 1-bit `Xor(x, IntConst(1)):I1` (logical
+/// NOT of an `I1` value).  the former BitNot unary-op was removed in favour of
+/// `Xor(x, all_ones)`; at `I1` the all-ones constant is `IntConst(1)`.
 pub fn bool_not(operand: impl Into<Pat>) -> Pat {
-    bool_unary(IntUnaryOp::BitNot, operand)
+    use crate::pattern::pat::ctor::wildcards::int_const_all_ones;
+    BoolBinaryOpPat::new(IntBinaryOp::Xor, operand.into(), int_const_all_ones()).into()
 }

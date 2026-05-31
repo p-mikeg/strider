@@ -52,7 +52,7 @@ pub fn int_le_lowered_5_3() -> Function {
     let r = t.u64(3);
     // `5 <= 3`  →  `!(3 < 5)`  →  Less(rhs=3, lhs=5).
     let lt = t.int_cmp(r, l, IntCmpOp::Less);
-    let neg = t.bool_un(lt, IntUnaryOp::BitNot);
+    let neg = t.bool_not(lt);
     let cast = t.as_int(neg, NodeOutputType::I64);
     t.ret_val(cast)
 }
@@ -63,7 +63,7 @@ pub fn int_sle_lowered_5_3() -> Function {
     let l = t.u64(5);
     let r = t.u64(3);
     let lt = t.int_cmp(r, l, IntCmpOp::Sless);
-    let neg = t.bool_un(lt, IntUnaryOp::BitNot);
+    let neg = t.bool_not(lt);
     let cast = t.as_int(neg, NodeOutputType::I64);
     t.ret_val(cast)
 }
@@ -179,7 +179,7 @@ pub fn if_cmp_then_return_inverted(c: u64) -> Function {
     let c_node = t.u64(c);
     let one = t.u64(1);
     let inner = t.int_cmp(c_node, one, IntCmpOp::Equal);
-    let cond = t.bool_un(inner, IntUnaryOp::BitNot);
+    let cond = t.bool_not(inner);
     t.build_if(cond, true_r, false_r);
     t.finish()
 }

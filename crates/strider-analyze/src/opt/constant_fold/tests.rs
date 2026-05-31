@@ -734,18 +734,20 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
 
 // ── boolean folding ───────────────────────────────────────────────────────
 
-// Booleans are 1-bit (`I1`) integers: a boolean NOT is `IntUnaryOp::BitNot`
-// at I1, AND/OR/XOR are `IntBinaryOp` at I1, and a boolean const is an
-// `IntConst(0|1)` typed I1.  These folds now flow through the generic
-// integer const-fold / identity rules at I1.
+// Booleans are 1-bit (`I1`) integers: a boolean NOT is now
+// `Xor(x, IntConst(1)):I1` (since the former BitNot unary-op was removed in
+// favour of `Xor(_, all_ones)`), AND/OR/XOR are `IntBinaryOp` at I1, and a
+// boolean const is an `IntConst(0|1)` typed I1.  These folds now flow
+// through the generic integer const-fold / identity rules at I1.
 
 #[test]
 fn fold_bool_neg_const() -> Result<()> {
-    // `!true` = `BitNot(IntConst(1):I1)` folds to `IntConst(0):I1`
-    // (`~1 & 1 == 0`) via the integer unary const-fold rule.
+    // `!true` = `Xor(IntConst(1):I1, IntConst(1):I1)` folds to
+    // `IntConst(0):I1` via the integer binary const-fold rule.
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
-        b.build_int_unary_operation(t, IntUnaryOp::BitNot, NodeOutputType::I1)
+        let one = b.build_all_ones_const(NodeOutputType::I1)?;
+        b.build_int_binary_operation(t, one, IntBinaryOp::Xor, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
@@ -768,11 +770,11 @@ fn fold_bool_and_consts() -> Result<()> {
     Ok(())
 }
 
-// `xor b true` rewrites to `not b` (`x ^ all_ones → ~x`; at I1 `true` is the
-// all-ones value), so downstream IfPat-style symmetric matching keys off a
-// single canonical shape (`IntUnaryOp::BitNot` at I1).  `b` must be
-// non-const, otherwise the const-fold rule fires first and the result is
-// just an `IntConst`.
+// `xor b true` is the canonical logical-NOT shape post-the former BitNot unary-op
+// removal — building it directly already yields `~b`, so no rewrite is
+// needed.  Pin that the const-fold pipeline leaves the Xor in place (no
+// `x ^ all_ones → ~x` rewrite anymore — that canonicalisation collapsed
+// into the lift-time shape) when `b` is non-const.
 #[test]
 fn fold_bool_xor_true_to_not() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
@@ -784,8 +786,10 @@ fn fold_bool_xor_true_to_not() -> Result<()> {
         b.build_int_binary_operation(cmp, t, IntBinaryOp::Xor, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntUnaryOp(IntUnaryOp::BitNot));
+    // The const-fold pipeline may or may not "change" — the Xor shape
+    // is already canonical for logical-NOT.  Assert the final shape.
+    let _ = ConstantFold.optimize(&mut fg, entry)?;
+    assert_eq!(return_kind(&fg)?, NodeKind::IntBinaryOp(IntBinaryOp::Xor));
     Ok(())
 }
 
@@ -801,8 +805,8 @@ fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
         b.build_int_binary_operation(t, cmp, IntBinaryOp::Xor, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
-    assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntUnaryOp(IntUnaryOp::BitNot));
+    let _ = ConstantFold.optimize(&mut fg, entry)?;
+    assert_eq!(return_kind(&fg)?, NodeKind::IntBinaryOp(IntBinaryOp::Xor));
     Ok(())
 }
 
@@ -852,8 +856,8 @@ fn fold_bool_or_true_to_true() -> Result<()> {
 fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
     let vn = reg_vn(0x1000, 4); // 4-byte var → I32
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        // Non-const I32 value, then `| 0xFFFF_FFFF`.
-        let x32 = b.build_int_unary_operation(x, IntUnaryOp::BitNot, NodeOutputType::I32)?;
+        // Non-const I32 value via `Neg` (two's-complement negate), then `| 0xFFFF_FFFF`.
+        let x32 = b.build_int_unary_operation(x, IntUnaryOp::Neg, NodeOutputType::I32)?;
         let all_ones = b.build_int_const(0xFFFF_FFFFu64, NodeOutputType::I32).unwrap();
         b.build_int_binary_operation(x32, all_ones, IntBinaryOp::Or, NodeOutputType::I32)
     })?;
@@ -864,15 +868,19 @@ fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
     Ok(())
 }
 
-// `!!x → x` for non-const x (double-`BitNot` at I1).
+// `!!x → x` for non-const x — at I1 each logical NOT is
+// `Xor(_, IntConst(1)):I1`, so this builds `Xor(Xor(cmp, 1), 1)` which
+// the `bool_not(bool_not(x)) → x` rule (or the xor reassoc rules)
+// collapses back to the cmp.
 #[test]
 fn fold_bool_double_not_to_x() -> Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let c5 = b.build_int_const(5u64, NodeOutputType::I64).unwrap();
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::I64)?;
-        let n1 = b.build_int_unary_operation(cmp, IntUnaryOp::BitNot, NodeOutputType::I1)?;
-        b.build_int_unary_operation(n1, IntUnaryOp::BitNot, NodeOutputType::I1)
+        let one = b.build_all_ones_const(NodeOutputType::I1)?;
+        let n1 = b.build_int_binary_operation(cmp, one, IntBinaryOp::Xor, NodeOutputType::I1)?;
+        b.build_int_binary_operation(n1, one, IntBinaryOp::Xor, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
@@ -1724,30 +1732,29 @@ fn eval_int_cmp_carry_unmasked_u8() {
     );
 }
 
-// ── IntUnaryOp::{BitNot, Neg} constant-fold semantics ──────────────────
+// ── Bitwise-complement and two's-complement constant-fold semantics ────
 //
-// `BitNot` is bitwise complement (`~x`); `Neg` is two's-complement
-// negation (`-x`).  Note that rsleigh's opcode `IntNeg` lifts to
-// `IntUnaryOp::BitNot` (rsleigh's name comes from the older Sleigh
-// convention where `IntNeg` is bit-flip).  The MVN-based ARM
-// `if_returns_const` lowering produces `IntUnaryOp::BitNot(IntConst(49))`
-// which must fold to `~49 = -50`, not to `wrapping_neg(49) = -49`.
+// Bitwise complement (`~x`) is `Xor(x, all_ones)` — the canonical IR
+// shape since the former BitNot unary-op was removed.  `Neg` is two's-complement
+// negation (`-x`).  The MVN-based ARM `if_returns_const` lowering
+// produces `Xor(IntConst(49), IntConst(all_ones))` which must fold to
+// `~49 = -50`, not to `wrapping_neg(49) = -49`.
 
-/// `IntUnaryOp::BitNot` of `IntConst(49)` at I32 must fold to `~49`
+/// `Xor(IntConst(49), IntConst(all_ones))` at I32 must fold to `~49`
 /// (= 0xFFFF_FFCE = 4_294_967_246) — bitwise NOT, NOT two's complement.
 #[test]
 fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(49u64, NodeOutputType::I32).unwrap();
-        b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::I32)
+        let one = b.build_all_ones_const(NodeOutputType::I32)?;
+        b.build_int_binary_operation(c, one, IntBinaryOp::Xor, NodeOutputType::I32)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
     assert_eq!(
         return_kind(&fg)?,
         NodeKind::IntConst(0xFFFF_FFCE),
-        "IntUnaryOp::BitNot(49) must fold to bitwise NOT (=~49=0xFFFFFFCE), \
-         not two's complement (=0xFFFFFFCF=-49)"
+        "Xor(49, ~0) at I32 must fold to bitwise NOT (=~49=0xFFFFFFCE)"
     );
     Ok(())
 }
@@ -1771,29 +1778,25 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
     Ok(())
 }
 
-/// Round-trip at I8: `Neg(Neg(0xAA)) = 0xAA` (bitwise NOT is its own
-/// inverse).  Pre-fix the fold computed `wrapping_neg(wrapping_neg(0xAA))
-/// = 0xAA` too — coincidentally correct only because two's complement
-/// is also its own inverse.  This test pins the *value* at the
-/// intermediate step.
+/// At I8: `Xor(0xAA, 0xFF)` must fold to `~0xAA = 0x55` (bitwise NOT).
 #[test]
 fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0xAAu64, NodeOutputType::I8).unwrap();
-        b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::I8)
+        let one = b.build_all_ones_const(NodeOutputType::I8)?;
+        b.build_int_binary_operation(c, one, IntBinaryOp::Xor, NodeOutputType::I8)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
     assert_eq!(
         return_kind(&fg)?,
         NodeKind::IntConst(0x55),
-        "Neg(0xAA) at I8 must be ~0xAA = 0x55 (bitwise NOT)"
+        "Xor(0xAA, 0xFF) at I8 must be ~0xAA = 0x55 (bitwise NOT)"
     );
     Ok(())
 }
 
-/// Two's complement of 0 is 0 — even with the swap, this case is
-/// invariant.  Included as a sanity check for the I64 path.
+/// Two's complement of 0 is 0 — sanity check for the I64 path.
 #[test]
 fn fold_int_unary_not_zero_is_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1806,22 +1809,20 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
     Ok(())
 }
 
-/// Bitwise NOT of 0 is all-ones at the type width.  Pre-fix's swap
-/// would have computed `wrapping_neg(0) = 0` here — distinguishing
-/// the two operations cleanly.
+/// Bitwise NOT of 0 is all-ones at the type width — `Xor(0, ~0) = ~0`.
 #[test]
 fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0u64, NodeOutputType::I32).unwrap();
-        b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::I32)
+        let one = b.build_all_ones_const(NodeOutputType::I32)?;
+        b.build_int_binary_operation(c, one, IntBinaryOp::Xor, NodeOutputType::I32)
     })?;
     let entry = fg.entry().unwrap();
     assert!(ConstantFold.optimize(&mut fg, entry)?.changed());
     assert_eq!(
         return_kind(&fg)?,
         NodeKind::IntConst(0xFFFF_FFFF),
-        "Neg(0) at I32 must be ~0 = 0xFFFFFFFF (bitwise NOT); pre-fix \
-         swapped fold would have produced wrapping_neg(0) = 0"
+        "Xor(0, ~0) at I32 must be 0xFFFFFFFF (bitwise NOT of 0)"
     );
     Ok(())
 }

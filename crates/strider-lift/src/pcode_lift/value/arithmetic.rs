@@ -6,13 +6,15 @@
 //! `IntEqual`, `IntLess`, `IntSless`, `IntCarry`, `IntScarry`,
 //! `IntSborrow`, and three lowered-at-lift forms:
 //!
-//! - `IntNotEqual` → `BitNot(IntEqual)` at `I1`
-//! - `IntLessEqual(a, b)` → `BitNot(IntLess(b, a))` at `I1`
-//! - `IntSlessEqual(a, b)` → `BitNot(IntSless(b, a))` at `I1`
+//! - `IntNotEqual` → `Xor(IntEqual(a, b), IntConst(1)):I1`
+//! - `IntLessEqual(a, b)` → `Xor(IntLess(b, a), IntConst(1)):I1`
+//! - `IntSlessEqual(a, b)` → `Xor(IntSless(b, a), IntConst(1)):I1`
 //!
 //! These three lowerings shrink `IntCmpOp` to its primitive predicates;
 //! patterns and passes see one canonical shape per predicate instead of
-//! redundant operand-swap-inverse pairs.
+//! redundant operand-swap-inverse pairs.  Logical negation of an `I1`
+//! value is `Xor(_, IntConst(1))` since the former BitNot unary-op was removed
+//! in favour of `Xor(_, all_ones)` everywhere.
 //!
 //! Cast / slice / extract / popcount / lzcount / piece / insert / ptr_*
 //! handlers live in [`super::cast`] (they manipulate bit positions
@@ -77,6 +79,33 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
         let out = self.builder.build_int_unary_operation(input, op, out_ty)?;
+        self.write_vn(out_vn, out)
+    }
+
+    /// Translates a p-code `IntNeg` (Sleigh's bitwise complement `~x`) into
+    /// an IR `Xor(x, all_ones)` node and writes the result to the output
+    /// varnode.
+    ///
+    /// the former BitNot unary-op was removed in favour of the canonical
+    /// `Xor(x, all_ones)` shape, so the lifter materialises the all-ones
+    /// constant of the operand's width and emits the xor inline.  This
+    /// works for every supported width: narrow widths (≤ I128) use a regular
+    /// `IntConst(bit_mask)`, while wide widths (I256 / I512 — produced by
+    /// AVX-2 / AVX-512 SIMD register-wide `IntNeg`) use an `IntConstWide`
+    /// with `WideConstStorage::all_ones`.
+    pub(super) fn handle_int_neg_as_xor(
+        &mut self,
+        insn: &rsleigh::Insn,
+    ) -> Result<()> {
+        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        require_equal_input_output_width(crate::pcode_lift::nth_input_or_err(insn, 0)?, out_vn)?;
+        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
+        let all_ones = self.builder.build_all_ones_const(out_ty)?;
+        let out = self
+            .builder
+            .build_int_binary_operation(input, all_ones, IntBinaryOp::Xor, out_ty)?;
         self.write_vn(out_vn, out)
     }
 
@@ -161,9 +190,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
     /// Shared lowering for the three negated integer comparisons
     /// (`IntNotEqual`, `IntLessEqual`, `IntSlessEqual`).  Each lowers to
-    /// `BitNot(IntCmpOp(...))` at `I1` — one `IntCmpOp` wrapped in an
-    /// `IntUnaryOp::BitNot` at `I1` — keeping the cmp-op enum free of the
-    /// `NotEqual` / `LessEqual` / `SlessEqual` variants.
+    /// `Xor(IntCmpOp(...), IntConst(1)):I1` — one `IntCmpOp` xor'd with the
+    /// I1 all-ones constant — keeping the cmp-op enum free of the
+    /// `NotEqual` / `LessEqual` / `SlessEqual` variants.  (the former BitNot unary-op
+    /// was removed in favour of `Xor(x, all_ones)`.)
     ///
     /// All three require equal input widths and perform the comparison at
     /// the *input* width (the output is a 1-bit `I1`).  They differ only in
@@ -191,16 +221,17 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let cmp = self
             .builder
             .build_int_cmp_operation(cmp_lhs, cmp_rhs, op, cmp_width)?;
+        let one = self.builder.build_all_ones_const(strider_ir::ValueType::I1)?;
         let negated = self
             .builder
-            .build_int_unary_operation(cmp, IntUnaryOp::BitNot, strider_ir::ValueType::I1)?;
+            .build_int_binary_operation(cmp, one, IntBinaryOp::Xor, strider_ir::ValueType::I1)?;
         self.write_vn(out_vn, negated)
     }
 
-    /// Lowers `IntNotEqual(a, b)` to `BitNot(IntEqual(a, b))` at `I1`.
+    /// Lowers `IntNotEqual(a, b)` to `Xor(IntEqual(a, b), IntConst(1)):I1`.
     ///
-    /// Matches strider's pre-existing canonical form (one IntCmpOp + one
-    /// `IntUnaryOp::BitNot` at `I1` — the 1-bit `BitNot` shape — instead of an
+    /// Matches strider's canonical form (one IntCmpOp + one I1 Xor with the
+    /// all-ones I1 constant — i.e. a 1-bit complement — instead of an
     /// IntCmpOp::NotEqual variant, keeping the cmp-op enum smaller).  The
     /// cmp's operand width is the *input* width, NOT the output width: the
     /// output is a 1-bit `I1`, the inputs may be any integer width.
@@ -208,20 +239,20 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         self.lower_cmp_negated(insn, IntCmpOp::Equal, false)
     }
 
-    /// Lowers `IntLessEqual(a, b)` to `BitNot(IntLess(b, a))` at `I1`.
+    /// Lowers `IntLessEqual(a, b)` to `Xor(IntLess(b, a), IntConst(1)):I1`.
     ///
     /// Operand swap + boolean-negate: `a <= b` iff not(`b < a`).  Removes
     /// the redundant `IntCmpOp::LessEqual` variant — patterns and passes
-    /// see one canonical shape (`Less` plus an optional `BitNot`) instead
-    /// of two.
+    /// see one canonical shape (`Less` plus an optional I1 Xor with 1)
+    /// instead of two.
     pub(super) fn handle_int_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         self.lower_cmp_negated(insn, IntCmpOp::Less, true)
     }
 
-    /// Lowers `IntSlessEqual(a, b)` to `BitNot(IntSless(b, a))` at `I1`.
+    /// Lowers `IntSlessEqual(a, b)` to `Xor(IntSless(b, a), IntConst(1)):I1`.
     ///
     /// Signed analogue of [`Self::handle_int_less_equal`].  Same operand
-    /// swap, same `BitNot` wrap, but with `IntCmpOp::Sless` for signed
+    /// swap, same I1 Xor with 1, but with `IntCmpOp::Sless` for signed
     /// comparison.
     pub(super) fn handle_int_sless_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         self.lower_cmp_negated(insn, IntCmpOp::Sless, true)

@@ -109,9 +109,15 @@ fn has_xor(function: &strider_ir::Function) {
     assert!(count_int_binop(function, IntBinaryOp::Xor) >= 1, "expected ≥1 Xor");
 }
 
-// Bitwise complement (~a).  Sleigh's `IntNeg` opcode lifts to `IntUnaryOp::BitNot`.
+// Bitwise complement (~a).  Sleigh's `IntNeg` opcode lifts to
+// `Xor(a, IntConst(all_ones))` (since the former BitNot unary-op was removed
+// in favour of the Xor shape).  Match the canonical Xor-with-all-ones
+// shape via the pattern matcher.
 fn has_not(function: &strider_ir::Function) {
-    assert!(count_int_unop(function, IntUnaryOp::BitNot) >= 1, "expected ≥1 BitNot (bitwise complement)");
+    use strider_analyze::pattern::{Matcher, bit_not, any, Pat};
+    let pat: Pat = bit_not(any());
+    let count = Matcher::try_new(function).expect("matcher").find_all(&pat).len();
+    assert!(count >= 1, "expected ≥1 bit_not (bitwise complement Xor-with-all-ones)");
 }
 
 fn has_shl(function: &strider_ir::Function) {

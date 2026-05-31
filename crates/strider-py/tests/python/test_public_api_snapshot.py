@@ -127,9 +127,11 @@ EXPECTED_PATTERN = {
     "call", "call_other", "ret", "if_",
     # Typed family dispatchers.
     "int_binary", "bool_binary", "float_binary",
-    # Variant-agnostic.
+    # Variant-agnostic.  `bool_un_any` was removed alongside
+    # `IntUnaryOp::BitNot` — a 1-bit logical NOT is `Xor(_, IntConst(1))`,
+    # matched via `bool_bin_any` with an all-ones-I1 operand.
     "int_bin_any", "int_un_any", "int_cmp_any",
-    "bool_bin_any", "bool_un_any",
+    "bool_bin_any",
     "float_bin_any", "float_un_any", "float_cmp_any",
 }
 

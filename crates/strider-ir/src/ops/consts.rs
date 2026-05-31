@@ -81,6 +81,51 @@ impl Graph {
     }
 
 
+    /// Creates (or retrieves) an integer constant whose value is the
+    /// all-ones bit pattern of integer type `ty` — `(2^bit_width) - 1`.
+    ///
+    /// For widths ≤ 128 bits the result is an [`crate::node::NodeKind::IntConst`]
+    /// node carrying `ty.bit_mask_u128()` (which is `u128::MAX` for I128 and
+    /// the appropriate narrower mask for smaller widths).  For `I256` /
+    /// `I512` the result is an [`crate::node::NodeKind::IntConstWide`] node
+    /// pointing at a [`crate::wide_const::WideConstStorage::all_ones`] entry
+    /// interned in `Graph::wide_const_interner`.
+    ///
+    /// Used by the pcode lifter to materialise the second operand of
+    /// `Xor(x, all_ones)` — the canonical IR form of bitwise complement
+    /// (`~x`) after the the former BitNot unary-op variant was deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ty` is not an integer type.
+    pub fn make_all_ones_const(
+        &mut self,
+        ty: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        if !ty.is_integer() {
+            return Err(anyhow!(
+                "make_all_ones_const called with non-integer type {ty:?}"
+            ));
+        }
+        match ty {
+            NodeOutputType::I256 | NodeOutputType::I512 => {
+                let storage = crate::wide_const::WideConstStorage::all_ones(ty.byte_size())
+                    .ok_or_else(|| anyhow!(
+                        "make_all_ones_const: WideConstStorage::all_ones rejected byte size {}",
+                        ty.byte_size()
+                    ))?;
+                let id = self.intern_wide_const(storage);
+                let node = self.create_node(
+                    NodeKind::IntConstWide(id),
+                    [],
+                    [NodeOutputKind::OutputType(ty)],
+                );
+                Ok(self.node_outputs_exact::<1>(node)?[0])
+            }
+            _ => self.make_int_const(ty.bit_mask_u128(), ty),
+        }
+    }
+
     /// Creates (or retrieves) a `FloatConst(bits)` node of float type `ty`.
     ///
     /// # Dedup precondition (zero high bits)

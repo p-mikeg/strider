@@ -177,8 +177,7 @@ pub use pat::{
 
 #[rustfmt::skip]
 pub use pat::{
-    bool_and, bool_binary, bool_binary_any, bool_not, bool_or, bool_unary,
-    bool_unary_any, bool_xor,
+    bool_and, bool_binary, bool_binary_any, bool_not, bool_or, bool_xor,
 };
 
 // ── Float ops ────────────────────────────────────────────────────────────────

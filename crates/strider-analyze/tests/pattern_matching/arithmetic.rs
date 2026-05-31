@@ -83,9 +83,18 @@ fn sub_matches_lowered_shape() {
 
 // ── Integer unary ops ─────────────────────────────────────────────────────────
 
+/// Helper: build `return(bit_not(IntConst(v))):I64` where bitwise complement
+/// is the canonical `Xor(IntConst(v), IntConst(all_ones))` shape.
+fn int_bit_not_5() -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let v = t.u64(5);
+    let nv = t.bit_not_at(v, strider_ir::node::NodeOutputType::I64);
+    t.ret_val(nv)
+}
+
 #[test]
 fn bit_not_matches() {
-    let function = shapes::int_un(5, IntUnaryOp::BitNot);
+    let function = int_bit_not_5();
     a::matches(&function, bit_not(int_const(5)), 1);
 }
 
@@ -115,13 +124,16 @@ fn lzcount_matches() {
 
 #[test]
 fn bit_not_wrong_operand_rejects() {
-    let function = shapes::int_un(5, IntUnaryOp::BitNot);
+    let function = int_bit_not_5();
     a::none(&function, bit_not(int_const(99)));
 }
 
 #[test]
 fn unary_wrong_op_rejects() {
-    let function = shapes::int_un(5, IntUnaryOp::BitNot);
+    // `neg(int_const(5))` matches `IntUnaryOp::Neg(IntConst(5))`; the
+    // canonical bit-not shape `Xor(5, all_ones)` is a binary op, so the
+    // `neg` pattern must reject it.
+    let function = int_bit_not_5();
     a::none(&function, neg(int_const(5)));
 }
 

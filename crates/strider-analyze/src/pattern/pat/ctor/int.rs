@@ -69,9 +69,21 @@ pub fn int_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
 decl_pat_unary_ops!(int_unary, IntUnaryOp, Pat, [
     /// Matches a two's-complement negation node (`-operand`).
     (neg, Neg),
-    /// Matches a bitwise complement node (`~operand`).
-    (bit_not, BitNot),
 ]);
+
+/// Matches a bitwise complement node (`~operand`).
+///
+/// the former BitNot unary-op was removed in favour of the canonical
+/// `Xor(x, all_ones)` shape (`~x ≡ x ^ all_ones`), so this constructor
+/// builds the matching `Xor(operand, IntConst(all_ones))` shape.  The
+/// constant operand matches any `IntConst` whose value equals the
+/// node's output-type all-ones mask (`(2^bit_width) - 1`), so the same
+/// `bit_not(x)` matches `~x` at any width.
+pub fn bit_not(operand: impl Into<Pat>) -> Pat {
+    use crate::pattern::pat::IntBinaryOpPat;
+    use crate::pattern::pat::ctor::wildcards::int_const_all_ones;
+    IntBinaryOpPat::new(IntBinaryOp::Xor, operand.into(), int_const_all_ones()).into()
+}
 
 // ── Integer comparisons (→ Bool) ──────────────────────────────────────────────
 

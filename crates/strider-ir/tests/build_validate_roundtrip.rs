@@ -41,22 +41,25 @@ fn every_int_binary_op_validates() {
 
 #[test]
 fn every_int_unary_op_validates() {
-    for op in [IntUnaryOp::Neg, IntUnaryOp::BitNot] {
-        make_empty_fn(|fb| {
-            let x = fb.build_int_const(5u64, NodeOutputType::I64)?;
-            let result = fb
-                .build_int_unary_operation(x, op, NodeOutputType::I64)
-                .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
-            Ok(result)
-        })
-        .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
-    }
+    // `IntUnaryOp` now has only `Neg` (bitwise complement is
+    // `Xor(x, all_ones)`, not a dedicated unary).
+    let op = IntUnaryOp::Neg;
+    make_empty_fn(|fb| {
+        let x = fb.build_int_const(5u64, NodeOutputType::I64)?;
+        let result = fb
+            .build_int_unary_operation(x, op, NodeOutputType::I64)
+            .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
+        Ok(result)
+    })
+    .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
 }
 
 #[test]
 fn bool_ops_validate() {
-    // Booleans are I1 integers now: bitwise And/Or/Xor on I1 model the
-    // former BoolBinaryOp, and BitNot on I1 models the former BoolUnaryOp.
+    // Booleans are I1 integers: bitwise And/Or/Xor on I1 model the former
+    // BoolBinaryOp, and `Xor(x, IntConst(1))` at `I1` models the former
+    // BoolUnaryOp (logical NOT) — the former BitNot unary-op was removed in
+    // favour of `Xor(_, all_ones)`.
     for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
         make_empty_fn(|fb| {
             let t = fb.build_boolean_const(true);
@@ -68,15 +71,16 @@ fn bool_ops_validate() {
         })
         .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
     }
-    // I1 BitNot (former BoolUnaryOp::Neg).
+    // I1 logical NOT — `Xor(x, IntConst(1)):I1`.
     make_empty_fn(|fb| {
         let t = fb.build_boolean_const(true);
+        let one = fb.build_all_ones_const(NodeOutputType::I1)?;
         let result = fb
-            .build_int_unary_operation(t, IntUnaryOp::BitNot, NodeOutputType::I1)
-            .expect("bool unary neg");
+            .build_int_binary_operation(t, one, IntBinaryOp::Xor, NodeOutputType::I1)
+            .expect("bool logical not");
         Ok(result)
     })
-    .expect("bool unary neg validates");
+    .expect("bool logical not validates");
 }
 
 #[test]

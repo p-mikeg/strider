@@ -47,6 +47,32 @@ impl FunctionBuilder {
         Ok(out)
     }
 
+    /// Emits the all-ones integer constant of `output_type` —
+    /// `(2^bit_width) - 1`.  For widths ≤ 128 bits this is an `IntConst`;
+    /// for `I256` / `I512` it is an `IntConstWide` carrying a
+    /// `WideConstStorage::all_ones` payload (interned).  Asm-fingerprint
+    /// plumbing is applied just like [`Self::build_int_const`].
+    ///
+    /// Used by the pcode lifter to materialise the second operand of
+    /// `Xor(x, all_ones)` — the canonical IR form of bitwise complement
+    /// (`~x`) since the the former BitNot unary-op variant was removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `output_type` is not an integer type.
+    pub fn build_all_ones_const(
+        &mut self,
+        output_type: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        let addr = self.lift_addr;
+        let out = self.function_mut().make_all_ones_const(output_type)?;
+        if let Some(addr) = addr {
+            let node = self.function().node_for_output(out);
+            self.function_mut().extend_asm_fingerprint(node, &[addr]);
+        }
+        Ok(out)
+    }
+
     /// Builds an integer constant whose value exceeds `u128` — `I256`
     /// (32 bytes) or `I512` (64 bytes).  Interns `value` via
     /// `crate::Graph::intern_wide_const` so two builds with equal

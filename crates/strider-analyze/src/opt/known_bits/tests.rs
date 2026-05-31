@@ -184,20 +184,20 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
 
 /// Bitwise NOT swaps known-ones and known-zeros.  `(x | 0xFF) NOT NOT`
 /// for I8 returns 0xFF — testing that bitwise-NOT propagation is correct
-/// round-trip.
-///
-/// `IntUnaryOp::BitNot` is bitwise complement (`~x`); `IntUnaryOp::Neg` is
-/// two's-complement negation (`-x`).  rsleigh's `IntNeg` opcode lifts to
-/// `BitNot` (the Sleigh nomenclature predates the rename).
+/// round-trip.  Bitwise complement is `Xor(x, IntConst(all_ones))` since
+/// the former BitNot unary-op was removed; KnownBits' Xor arm handles the
+/// known-bits flip when one operand is a fully-known all-ones constant.
 #[test]
 fn known_bits_neg_round_trip() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xAAu64, NodeOutputType::I8).unwrap();
         let ff = b.build_int_const(0xFFu64, NodeOutputType::I8).unwrap();
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::I8)?;
-        // ~~(x|0xFF) — bitwise-NOT round-trip = identity.
-        let n1 = b.build_int_unary_operation(or_, strider_ir::IntUnaryOp::BitNot, NodeOutputType::I8)?;
-        b.build_int_unary_operation(n1, strider_ir::IntUnaryOp::BitNot, NodeOutputType::I8)
+        // ~~(x|0xFF) — bitwise-NOT round-trip = identity, encoded as two
+        // chained `Xor(_, 0xFF)` at I8.
+        let all_ones = b.build_all_ones_const(NodeOutputType::I8)?;
+        let n1 = b.build_int_binary_operation(or_, all_ones, IntBinaryOp::Xor, NodeOutputType::I8)?;
+        b.build_int_binary_operation(n1, all_ones, IntBinaryOp::Xor, NodeOutputType::I8)
     })?;
     let mut changed = true;
     while changed {

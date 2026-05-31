@@ -287,13 +287,13 @@ fn float_eq_commutes() {
 #[test]
 fn float_ne_commutes() {
     // `FloatCmpOp::NotEqual` is no longer a primitive — `pattern::float_ne`
-    // is an ergonomic alias that constructs `BoolNeg(FloatEqual(_, _))`.
+    // is an ergonomic alias that constructs `Xor(FloatEqual(_, _), 1):I1`.
     let function = {
         let mut t = Tb::empty();
         let a = t.f64(1.0);
         let b = t.f64(2.0);
         let eq = t.fcmp(a, b, FloatCmpOp::Equal);
-        let ne = t.bool_un(eq, strider_ir::IntUnaryOp::BitNot);
+        let ne = t.bool_not(eq);
         let as_int = t.as_int(ne, strider_ir::node::NodeOutputType::I64);
         t.ret_val(as_int)
     };

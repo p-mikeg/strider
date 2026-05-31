@@ -991,11 +991,13 @@ fn update_input_self_redirect_preserves_use_list_order() {
         [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
     let cval = function.node_outputs(c).iter().copied().next().unwrap();
-    // Two consumers of cval to give the use-list real ordering.
+    // Two consumers of cval to give the use-list real ordering.  Use
+    // `Truncate` and `Neg` since `IntUnaryOp` has only the one variant
+    // since `BitNot` was removed in favour of `Xor(_, all_ones)`.
     let _a = function.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        NodeKind::Truncate,
         [cval],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
     );
     let b = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),

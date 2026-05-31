@@ -94,14 +94,16 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         Ok((lhs, rhs))
     }
 
-    /// Builds the `BitNot(FloatEqual(lhs, rhs))` (at `I1`) shape shared by
-    /// `FloatNan` and `FloatNotEqual` and writes it to `out_vn`.
+    /// Builds the `Xor(FloatEqual(lhs, rhs), IntConst(1)):I1` shape shared
+    /// by `FloatNan` and `FloatNotEqual` and writes it to `out_vn`.
     ///
     /// Both operands are cast to a common float type
     /// (via [`Self::cast_float_cmp_operands`]), compared with
-    /// `FloatCmpOp::Equal`, then negated with `IntUnaryOp::BitNot` at `I1`.
-    /// Sound under IEEE 754: `Equal` is false when either operand is NaN,
-    /// so the negation is true (matching `NotEqual` / `is_nan`).
+    /// `FloatCmpOp::Equal`, then xor'd with the I1 all-ones constant
+    /// (`IntConst(1):I1`) to flip the single bit.  Sound under IEEE 754:
+    /// `Equal` is false when either operand is NaN, so the negation is
+    /// true (matching `NotEqual` / `is_nan`).  Logical NOT at I1 is
+    /// `Xor(_, IntConst(1))` since the former BitNot unary-op was removed.
     fn build_float_eq_negated(
         &mut self,
         lhs: strider_ir::Value,
@@ -110,9 +112,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<()> {
         let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.builder.build_int_unary_operation(
+        let one = self
+            .builder
+            .build_all_ones_const(strider_ir::ValueType::I1)?;
+        let result = self.builder.build_int_binary_operation(
             eq,
-            strider_ir::IntUnaryOp::BitNot,
+            one,
+            strider_ir::IntBinaryOp::Xor,
             strider_ir::ValueType::I1,
         )?;
         self.write_vn(out_vn, result)
@@ -123,8 +129,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         // `is_nan(x)` ≡ `x != x` (IEEE 754: NaN ≠ NaN).  Since
         // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
-        // lift to `BitNot(FloatEqual)` at `I1`), build the lowered shape
-        // directly: `BitNot(FloatEqual(input, input))` at `I1`.
+        // lift to `Xor(FloatEqual, 1)` at `I1`), build the lowered shape
+        // directly: `Xor(FloatEqual(input, input), 1):I1`.
         self.build_float_eq_negated(input, input, out_vn)
     }
 
@@ -147,12 +153,12 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         self.write_float_to_vn(out_vn, result)
     }
 
-    /// Lowers `FloatNotEqual(a, b)` to `BitNot(FloatEqual(a, b))` at `I1`.
+    /// Lowers `FloatNotEqual(a, b)` to `Xor(FloatEqual(a, b), IntConst(1)):I1`.
     ///
     /// Sound under IEEE 754: `Equal` is false when either operand is
-    /// NaN, so `!Equal` is true (matching the correct `NotEqual` for
-    /// NaN inputs).  Mirrors the `IntNotEqual → BitNot(IntEqual)`
-    /// precedent.
+    /// NaN, so the I1 xor with 1 (logical NOT) is true (matching the
+    /// correct `NotEqual` for NaN inputs).  Mirrors the
+    /// `IntNotEqual → Xor(IntEqual, 1)` precedent.
     pub(super) fn handle_float_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;

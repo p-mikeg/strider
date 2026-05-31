@@ -110,16 +110,11 @@ impl Match {
         self.bindings.get_bool_binary_op(c, graph)
     }
 
-    /// If the node bound to `c` is a boolean unary op (an `IntUnaryOp`
-    /// typed `I1`), returns the op variant.
-    #[must_use]
-    pub fn get_bool_unary_op(
-        &self,
-        c: Capture,
-        graph: &strider_ir::Graph,
-    ) -> Option<IntUnaryOp> {
-        self.bindings.get_bool_unary_op(c, graph)
-    }
+    // Note: there is no `get_bool_unary_op` accessor.  A boolean
+    // logical NOT is `Xor(x, IntConst(1)):I1` since the former BitNot unary-op
+    // was removed in favour of `Xor(_, all_ones)`, so the op variant is
+    // recovered via [`Self::get_bool_binary_op`] (which returns
+    // `IntBinaryOp::Xor`).
 
     /// If the node bound to `c` is a `FloatBinaryOp`, returns the op variant.
     #[must_use]

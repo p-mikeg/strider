@@ -33,7 +33,7 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
     // IntUnaryOp expects an OutputType input, but we feed it a Control output.
     let control_out = function.node_outputs(entry).iter().copied().next().unwrap();
     let _bad = function.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [control_out],
         [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
@@ -82,7 +82,7 @@ fn use_list_input_missing_from_use_list() {
     let c_out = function.node_outputs(c).iter().copied().next().unwrap();
 
     let neg = function.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [c_out],
         [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
@@ -134,7 +134,7 @@ fn use_list_stale_input_in_use_list() {
     let b_out = function.node_outputs(b).iter().copied().next().unwrap();
 
     let neg = function.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [a_out],
         [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );
@@ -253,7 +253,7 @@ fn use_list_skips_unreachable_zombie_node() {
     );
     let c_out = function.node_outputs(c).iter().copied().next().unwrap();
     let _zombie_consumer = function.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [c_out],
         [NodeOutputKind::OutputType(NodeOutputType::I64)],
     );

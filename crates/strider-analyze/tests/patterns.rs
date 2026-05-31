@@ -27,8 +27,9 @@ per_arch_test!("patterns", "mul_then_add",                mac_pattern_finds_matc
 per_arch_test!("patterns", "chained_xor_mask",            xor_chain_pattern_finds_match);
 // if_returns_const exercises width-aware int_const matching.  ARM's
 // MVN-based -50 lifting (`mvnle r0, #49` → `~49`) requires constant_fold
-// and known_bits to keep `IntUnaryOp::BitNot` (bitwise NOT) distinct from
-// `IntUnaryOp::Neg` (two's complement) in their evaluators.
+// to fold the canonical `Xor(IntConst(49), IntConst(all_ones))` shape
+// (the former BitNot unary-op was removed in favour of `Xor(_, all_ones)`)
+// while keeping `IntUnaryOp::Neg` (two's complement) distinct.
 per_arch_test!("patterns", "if_returns_const",            if_const_pattern_finds_two_consts);
 per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern_finds_load);
 // recursive_with_accumulator relies on -fno-optimize-sibling-calls in

@@ -190,8 +190,19 @@ impl Tb {
             .build_int_binary_operation(l, r, op, ty)
             .expect("int_binary_operation")
     }
+    /// Bitwise complement (`~v`) at `I64`.  Since the former BitNot unary-op was
+    /// removed in favour of `Xor(v, all_ones)`, this builds the Xor shape.
     pub fn neg(&mut self, v: NodeOutputId) -> NodeOutputId {
-        self.int_un(v, IntUnaryOp::BitNot)
+        self.bit_not_at(v, NodeOutputType::I64)
+    }
+    /// Bitwise complement (`~v`) at the given integer width.  Builds
+    /// `Xor(v, IntConst(all_ones)):ty` since the former BitNot unary-op was
+    /// removed in favour of the Xor shape.
+    pub fn bit_not_at(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+        let all_ones = self.fb.build_all_ones_const(ty).expect("all_ones");
+        self.fb
+            .build_int_binary_operation(v, all_ones, IntBinaryOp::Xor, ty)
+            .expect("bit_not as xor")
     }
     pub fn int_un(&mut self, v: NodeOutputId, op: IntUnaryOp) -> NodeOutputId {
         self.fb
@@ -238,8 +249,8 @@ impl Tb {
     // ── Boolean ops ───────────────────────────────────────────────────────────
 
     // Booleans are 1-bit (`I1`) integers: a boolean binary op is an
-    // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`, and a logical NOT is an
-    // `IntUnaryOp::BitNot` at `I1`.
+    // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`, and a logical NOT is
+    // `Xor(_, IntConst(1)):I1` (since the former BitNot unary-op was removed).
     pub fn bool_bin(
         &mut self,
         l: NodeOutputId,
@@ -250,10 +261,18 @@ impl Tb {
             .build_int_binary_operation(l, r, op, NodeOutputType::I1)
             .expect("boolean_operation")
     }
-    pub fn bool_un(&mut self, v: NodeOutputId, op: IntUnaryOp) -> NodeOutputId {
+    /// Logical NOT on the I1 value `v`: builds `Xor(v, IntConst(1)):I1`.
+    /// (`bool_un_with_op` was removed — the former BitNot unary-op no longer
+    /// exists; the only remaining `IntUnaryOp` is `Neg`, which is
+    /// semantically meaningless at I1 and was never legitimately used here.)
+    pub fn bool_not(&mut self, v: NodeOutputId) -> NodeOutputId {
+        let one = self
+            .fb
+            .build_all_ones_const(NodeOutputType::I1)
+            .expect("all_ones I1");
         self.fb
-            .build_int_unary_operation(v, op, NodeOutputType::I1)
-            .expect("boolean_unary_operation")
+            .build_int_binary_operation(v, one, IntBinaryOp::Xor, NodeOutputType::I1)
+            .expect("bool_not as xor")
     }
 
     // ── Float ops ─────────────────────────────────────────────────────────────

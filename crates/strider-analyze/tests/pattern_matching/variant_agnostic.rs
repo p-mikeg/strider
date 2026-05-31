@@ -60,16 +60,17 @@ fn int_binary_any_retries_swap_only_for_commutative() {
 
 #[test]
 fn int_unary_any_captures_variant() {
-    for op in [IntUnaryOp::BitNot, IntUnaryOp::Neg] {
-        let mut t = Tb::empty();
-        let v = t.u64(42);
-        let v = t.int_un(v, op);
-        let function = t.ret_val(v);
+    // `IntUnaryOp` has only `Neg` since `BitNot` was removed (bitwise
+    // complement is `Xor(x, all_ones)`).
+    let op = IntUnaryOp::Neg;
+    let mut t = Tb::empty();
+    let v = t.u64(42);
+    let v = t.int_un(v, op);
+    let function = t.ret_val(v);
 
-        let ov = Capture::new();
-        let m = a::unique(&function, int_unary_any(ov, int_const(42)));
-        assert_eq!(m.get_int_unary_op(ov, &function), Some(op));
-    }
+    let ov = Capture::new();
+    let m = a::unique(&function, int_unary_any(ov, int_const(42)));
+    assert_eq!(m.get_int_unary_op(ov, &function), Some(op));
 }
 
 // ── Int comparison ───────────────────────────────────────────────────────────
@@ -163,20 +164,10 @@ fn bool_binary_any_captures_variant() {
     }
 }
 
-#[test]
-fn bool_unary_any_captures_variant() {
-    // A logical NOT is `IntUnaryOp::BitNot` at I1.
-    let op = IntUnaryOp::BitNot;
-    let mut t = Tb::empty();
-    let v = t.boolean(true);
-    let v = t.bool_un(v, op);
-    let cast = t.as_int(v, NodeOutputType::I64);
-    let function = t.ret_val(cast);
-
-    let ov = Capture::new();
-    let m = a::unique(&function, bool_unary_any(ov, bool_const(true)));
-    assert_eq!(m.get_bool_unary_op(ov, &function), Some(op));
-}
+// Note: `bool_unary_any_captures_variant` / `bool_unary_any_rejects_wide_int_op`
+// removed.  the former BitNot unary-op was deleted in favour of `Xor(_, all_ones)`,
+// so a "bool unary op" is `IntBinaryOp::Xor(_, IntConst(1)):I1` — covered by
+// `bool_binary_any` with an `int_const_all_ones()` operand.
 
 /// `bool_binary_any` must match **only** the `I1`-output op (its doc says "an
 /// `IntBinaryOp` at `I1`"); a structurally identical wide (64-bit) `And` shares
@@ -206,32 +197,6 @@ fn bool_binary_any_rejects_wide_int_op() {
         function.output_kind(out).as_value().map(|ty| ty.bit_width()),
         Some(1),
         "bool_binary_any must match only the I1-output op, not a wide one",
-    );
-}
-
-/// `bool_unary_any` must likewise reject a wide (64-bit) unary op and match
-/// only the `I1`-output one.
-#[test]
-fn bool_unary_any_rejects_wide_int_op() {
-    let mut t = Tb::empty();
-    // I1 `BitNot` (logical NOT).
-    let bt = t.boolean(true);
-    let bool_not = t.bool_un(bt, IntUnaryOp::BitNot);
-    let bool_as_int = t.as_int(bool_not, NodeOutputType::I64);
-    // 64-bit `BitNot` (wide integer complement).
-    let w = t.u64(0xDEAD);
-    let wide_not = t.int_un(w, IntUnaryOp::BitNot);
-    let sum = t.add(bool_as_int, wide_not);
-    let function = t.ret_val(sum);
-
-    // `bool_unary_any` must match exactly one node — the I1 `BitNot`.
-    let ob = Capture::new();
-    let hits = a::matches(&function, bool_unary_any(ob, any()), 1);
-    let out = hits[0].output(ob).expect("matched value output");
-    assert_eq!(
-        function.output_kind(out).as_value().map(|ty| ty.bit_width()),
-        Some(1),
-        "bool_unary_any must match only the I1-output op, not a wide one",
     );
 }
 

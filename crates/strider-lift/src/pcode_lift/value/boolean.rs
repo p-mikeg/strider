@@ -4,11 +4,12 @@
 //! Booleans are modelled as the 1-bit integer `I1`, so these lower to
 //! ordinary integer operations: `BoolAnd`/`BoolOr`/`BoolXor` →
 //! `IntBinaryOp::{And,Or,Xor}` at `I1`, and `BoolNeg` (logical not of a
-//! 1-bit value) → `IntUnaryOp::BitNot` at `I1` (`~0 = 1`, `~1 = 0` once
-//! masked to one bit).  Sleigh always feeds these ops already-`I1` operands
-//! (comparison / flag results), so no int→bool conversion is needed.
+//! 1-bit value) → `Xor(x, IntConst(1)):I1` (the I1 all-ones constant is 1,
+//! and `x ^ 1` flips the single bit).  Sleigh always feeds these ops
+//! already-`I1` operands (comparison / flag results), so no int→bool
+//! conversion is needed.
 
-use strider_ir::{IntBinaryOp, IntUnaryOp, ValueType};
+use strider_ir::{IntBinaryOp, ValueType};
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;
@@ -33,18 +34,22 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     }
 
     /// Translates a p-code boolean unary instruction (`BoolNeg`) into an `I1`
-    /// `IntUnaryOp::BitNot` node and writes the result to the output varnode.
+    /// `Xor(x, IntConst(1)):I1` node and writes the result to the output varnode.
+    ///
+    /// `BoolNeg` is logical NOT of a 1-bit value.  Since the former BitNot unary-op
+    /// was removed in favour of `Xor(x, all_ones)`, a 1-bit complement is
+    /// `Xor(x, IntConst(1))` at `I1` (the I1 all-ones constant is 1).
     pub(super) fn process_bool_unary_op(
         &mut self,
         insn: &rsleigh::Insn,
-        op: IntUnaryOp,
     ) -> Result<()> {
         let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let input = self.builder.convert_to_int_if_needed(input, ValueType::I1)?;
+        let all_ones = self.builder.build_all_ones_const(ValueType::I1)?;
         let out = self
             .builder
-            .build_int_unary_operation(input, op, ValueType::I1)?;
+            .build_int_binary_operation(input, all_ones, IntBinaryOp::Xor, ValueType::I1)?;
         self.write_vn(out_vn, out)
     }
 }

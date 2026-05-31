@@ -371,9 +371,9 @@ class Match:
     def bool_binary_op(self, key: Any) -> Optional[str]:
         """Recover the matched boolean binary op (`IntBinaryOp` at `I1`) name."""
         ...
-    def bool_unary_op(self, key: Any) -> Optional[str]:
-        """Recover the matched boolean unary op (`IntUnaryOp` at `I1`) name."""
-        ...
+    # `bool_unary_op` was removed alongside `IntUnaryOp::BitNot`: a 1-bit
+    # logical NOT is `Xor(_, IntConst(1)):I1`, so the op variant is
+    # recovered via `bool_binary_op` (returns "Xor").
     def float_binary_op(self, key: Any) -> Optional[str]:
         """Recover the matched `FloatBinaryOp` variant name from `key`."""
         ...

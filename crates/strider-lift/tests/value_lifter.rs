@@ -422,10 +422,12 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
         };
         assert!(lifter.lift(&insn).unwrap());
     }
-    // Canonical shape: BoolUnaryOp::Neg over IntCmpOp::Less.
+    // Canonical shape: `Xor(IntLess(_, _), IntConst(1)):I1` (a 1-bit
+    // logical NOT — the former BitNot unary-op was removed in favour of the
+    // Xor-with-all-ones shape).  Pin the I1 Xor and the IntCmpOp::Less.
     assert!(
-        graph_has_kind(&builder, NodeKind::IntUnaryOp(IntUnaryOp::BitNot)),
-        "expected IntUnaryOp::BitNot in graph (the I1 lowering wrap)"
+        graph_has_kind(&builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)),
+        "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap)"
     );
     assert!(
         graph_has_kind(&builder, NodeKind::IntCmpOp(IntCmpOp::Less)),
@@ -567,8 +569,8 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
         assert!(lifter.lift(&insn).unwrap());
     }
     assert!(
-        graph_has_kind(&builder, NodeKind::IntUnaryOp(IntUnaryOp::BitNot)),
-        "expected IntUnaryOp::BitNot in graph (the I1 lowering wrap)"
+        graph_has_kind(&builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)),
+        "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap, post-BitNot removal)"
     );
     assert!(
         graph_has_kind(&builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
@@ -831,8 +833,8 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
         assert!(lifter.lift(&insn).unwrap());
     }
     assert!(
-        graph_has_kind(&builder, NodeKind::IntUnaryOp(IntUnaryOp::BitNot)),
-        "FloatNotEqual lift must produce an IntUnaryOp::BitNot (the I1 lowering wrap)"
+        graph_has_kind(&builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)),
+        "FloatNotEqual lift must produce an IntBinaryOp::Xor (the I1 logical-NOT wrap, post-BitNot removal)"
     );
     assert!(
         graph_has_kind(&builder, NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)),

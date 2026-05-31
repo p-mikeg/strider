@@ -197,11 +197,10 @@ impl PyMatch {
         self.with_function(py, key, |c, g| self.inner.get_bool_binary_op(c, g).map(op_name))
     }
 
-    /// Recover the matched boolean unary op's variant name (an `IntUnaryOp`
-    /// — `BitNot` — at `I1`) from `c`.
-    fn bool_unary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        self.with_function(py, key, |c, g| self.inner.get_bool_unary_op(c, g).map(op_name))
-    }
+    // Note: there is no `bool_unary_op` accessor.  A boolean logical NOT
+    // is `Xor(x, IntConst(1)):I1` since the former BitNot unary-op was removed
+    // in favour of `Xor(_, all_ones)`, so the matching op variant is
+    // recovered via `bool_binary_op` (which returns `"Xor"`).
 
     /// Recover the matched `FloatBinaryOp` variant name from `c`.
     fn float_binary_op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {

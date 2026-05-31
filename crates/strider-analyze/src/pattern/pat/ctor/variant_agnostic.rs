@@ -198,7 +198,7 @@ impl_variant_any!(
 );
 
 impl_variant_any!(
-    unary, int_unary_any, IntUnaryOp, strider_ir::IntUnaryOp::BitNot,
+    unary, int_unary_any, IntUnaryOp, strider_ir::IntUnaryOp::Neg,
     BuildTy::InheritRoot, any_output, "int_unary_any",
     "Matches **any** integer unary operation and binds the matched node to `c`.\n\nRecover the op via `Match::get_int_unary_op(c, &graph)`."
 );
@@ -220,11 +220,11 @@ impl_variant_any!(
     "Matches **any** boolean binary operation (an `IntBinaryOp` at `I1`) and binds the matched node to `c`.\n\nCommutative ops (`And`, `Or`, `Xor`) try both operand orderings automatically.  Recover the op via `Match::get_bool_binary_op(c, &graph)`."
 );
 
-impl_variant_any!(
-    unary, bool_unary_any, IntUnaryOp, strider_ir::IntUnaryOp::BitNot,
-    bool_ty(), output_is_i1, "bool_unary_any",
-    "Matches **any** boolean unary operation (an `IntUnaryOp` at `I1`) and binds the matched node to `c`.\n\nRecover the op via `Match::get_bool_unary_op(c, &graph)`."
-);
+// Note: there is no `bool_unary_any` matcher.  Boolean logical NOT is
+// `Xor(x, IntConst(1)):I1` (since the former BitNot unary-op was removed in
+// favour of `Xor(_, all_ones)`), so a "boolean unary op" is structurally
+// an `IntBinaryOp::Xor` at `I1` and is matched via `bool_binary_any`
+// with an `int_const_all_ones()` operand.
 
 impl_variant_any!(
     binary, float_binary_any, FloatBinaryOp, strider_ir::FloatBinaryOp::Add,

@@ -6,8 +6,40 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::find_unique_if;
 
-use strider_ir::node::NodeKind;
+use strider_ir::node::{NodeKind, NodeOutputId, NodeOutputType};
+use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::RegisterSet;
+
+/// Builds the canonical 1-bit logical NOT shape `Xor(operand, IntConst(1)):I1`
+/// — the post-removal-of-the former BitNot unary-op equivalent of `BoolNeg`.  Used
+/// throughout the `IfCondInversion` tests to construct fixtures whose `If`
+/// cond is an inverted boolean.
+fn build_bool_not(
+    b: &mut strider_ir::FunctionBuilder,
+    operand: NodeOutputId,
+) -> Result<NodeOutputId> {
+    let one = b.build_all_ones_const(NodeOutputType::I1)?;
+    b.build_int_binary_operation(operand, one, IntBinaryOp::Xor, NodeOutputType::I1)
+}
+
+/// True when `node` is the canonical 1-bit logical NOT shape — an
+/// `IntBinaryOp::Xor` at `I1` whose RHS (or LHS, since Xor is commutative
+/// in the dedup cache) is `IntConst(1):I1`.
+fn is_i1_xor_with_one(fg: &strider_ir::Graph, node: strider_ir::node::NodeId) -> bool {
+    if !matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Xor)) {
+        return false;
+    }
+    let Ok([lhs, rhs]) = fg.node_inputs_exact::<2>(node) else {
+        return false;
+    };
+    let is_one = |out: NodeOutputId| {
+        fg.output_kind(out)
+            .as_value()
+            .is_some_and(|t| t.is_bool())
+            && matches!(*fg.kind_of_output(out), NodeKind::IntConst(1))
+    };
+    is_one(lhs) || is_one(rhs)
+}
 
 /// Builds `if (!cond) { return 1 } else { return 2 }`, where `cond` is a
 /// fresh boolean variable read from a register.  Returns the graph and
@@ -19,8 +51,7 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::Function, strider_ir::node::N
         .build_if_then_else_returns(|b| {
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
-            let neg_cond =
-                b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
+            let neg_cond = build_bool_not(b, cond_bool)?;
             Ok((neg_cond, ()))
         })?;
     Ok((fg, if_node))
@@ -37,23 +68,22 @@ fn if_cond_kind(fg: &strider_ir::Graph, if_node: strider_ir::node::NodeId) -> No
 #[test]
 fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
-    // Before: cond is BoolUnaryOp::Neg.
-    assert!(matches!(
-        if_cond_kind(&fg, if_node),
-        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)
-    ));
+    // Before: cond is the canonical 1-bit `Xor(_, IntConst(1))` (logical NOT).
+    let cond_node_pre = fg
+        .node_for_output(fg.node_inputs_exact::<2>(if_node)?[1]);
+    assert!(is_i1_xor_with_one(&fg, cond_node_pre));
 
     let entry = fg.entry().unwrap();
     let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed());
 
-    // After: cond is the inner CastToBool (the BitNot's input was the
-    // CastToBool of the register read).  No `BoolUnaryOp::Neg` remains
-    // on the If's cond input.
-    assert!(!matches!(
-        if_cond_kind(&fg, if_node),
-        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)
-    ));
+    // After: cond is the inner producer (the read variable's I1 cast).
+    // No `Xor(_, IntConst(1))` (logical NOT) remains on the If's cond
+    // input.
+    let cond_node_post = fg
+        .node_for_output(fg.node_inputs_exact::<2>(if_node)?[1]);
+    assert!(!is_i1_xor_with_one(&fg, cond_node_post));
+    let _ = if_cond_kind; // keep helper alive for other tests
     Ok(())
 }
 
@@ -71,10 +101,11 @@ fn idempotent_after_one_application() -> Result<()> {
 
 #[test]
 fn double_neg_collapses_after_constant_fold() -> Result<()> {
-    // Build `if (!!cond) { ... }`.  After ConstantFold's
-    // `BitNot(BitNot(x)) → x` rule (at `I1`), the cond is bare `cond`; after
-    // IfCondInversion (running on the same fixed-point loop in real
-    // pipelines) the If is canonical with no swap.  Pin the
+    // Build `if (!!cond) { ... }`.  After ConstantFold's `!!x → x` rule
+    // (the dedicated `bool_not(bool_not(x)) → x` rule in the bool/float
+    // group, matching `Xor(Xor(x, 1), 1):I1`) the cond is bare `cond`;
+    // after IfCondInversion (running on the same fixed-point loop in
+    // real pipelines) the If is canonical with no swap.  Pin the
     // even-parity-no-swap invariant.
     let cond_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
     let (mut fg, _if_node, ()) = RegisterSet::new()
@@ -82,8 +113,8 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
         .build_if_then_else_returns(|b| {
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
-            let n1 = b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
-            let n2 = b.build_int_unary_operation(n1, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
+            let n1 = build_bool_not(b, cond_bool)?;
+            let n2 = build_bool_not(b, n1)?;
             Ok((n2, ()))
         })?;
 
@@ -93,8 +124,9 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
         let entry = fg.entry().unwrap();
         changed = ConstantFold.optimize(&mut fg, entry)?.changed();
     }
-    // After ConstantFold the cond is no longer `BitNot`, so
-    // IfCondInversion must NOT fire.  Even-parity → no branch swap.
+    // After ConstantFold the cond is no longer an `Xor(_, 1)` (logical
+    // NOT), so IfCondInversion must NOT fire.  Even-parity → no branch
+    // swap.
     let entry = fg.entry().unwrap();
     let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(
@@ -159,23 +191,22 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
             // Stamp distinct lift_addrs on the cond producer and the
-            // BitNot so we can observe absorption.
+            // logical-NOT (Xor with 1) so we can observe absorption.
             b.set_lift_addr(Some(0x500));
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
             b.set_lift_addr(Some(0x504));
-            let neg_cond =
-                b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
+            let neg_cond = build_bool_not(b, cond_bool)?;
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, ()))
         })?;
 
-    // Capture the BitNot's NodeId BEFORE optimisation; after the rewrite
+    // Capture the Xor's NodeId BEFORE optimisation; after the rewrite
     // it becomes dead but stays in the arena.
     let bool_neg_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)))
-        .expect("BoolUnaryOp::Neg present pre-pass");
+        .find(|&n| is_i1_xor_with_one(&fg, n))
+        .expect("I1 Xor(_, 1) (logical NOT) present pre-pass");
 
     let entry = fg.entry().unwrap();
     let r = IfCondInversion.optimize(&mut fg, entry)?;
@@ -208,9 +239,9 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 #[test]
 fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x3000, 1);
-    // Distinct addresses on the cond producer (0x800), the BitNot
-    // (0x804), and the If (0x808) so we can prove the BitNot's
-    // address lands on exactly one of the three.
+    // Distinct addresses on the cond producer (0x800), the I1
+    // Xor-with-1 (0x804), and the If (0x808) so we can prove the
+    // Xor-with-1's address lands on exactly one of the three.
     let (mut fg, _if_node, ()) = RegisterSet::new()
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
@@ -218,24 +249,29 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
             b.set_lift_addr(Some(0x804));
-            let neg_cond =
-                b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
+            let neg_cond = build_bool_not(b, cond_bool)?;
             b.set_lift_addr(Some(0x808));
             Ok((neg_cond, ()))
         })?;
 
-    // Identify pre-pass: the BitNot, the If, and the BitNot's input
-    // producer (the "inner cond producer" that should receive the
-    // absorbed fingerprint).
+    // Identify pre-pass: the Xor-with-1, the If, and the Xor's
+    // non-constant operand producer (the "inner cond producer" that
+    // should receive the absorbed fingerprint).
     let bool_neg_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)))
-        .expect("BoolNeg pre-pass");
+        .find(|&n| is_i1_xor_with_one(&fg, n))
+        .expect("I1 Xor(_, 1) pre-pass");
     let if_node_pre = find_unique_if(&fg);
-    let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
-    let inner_producer_pre = fg.node_for_output(bool_neg_input);
+    // The Xor's non-constant operand is whichever input is *not* the
+    // I1 `IntConst(1)`.
+    let [lhs, rhs] = fg.node_inputs_exact::<2>(bool_neg_node)?;
+    let inner_producer_pre = {
+        let pick = |out: NodeOutputId| !matches!(*fg.kind_of_output(out), NodeKind::IntConst(1));
+        let chosen = if pick(lhs) { lhs } else { rhs };
+        fg.node_for_output(chosen)
+    };
 
-    // 0x804 (the BitNot's address) must be present on BitNot pre-pass,
+    // 0x804 (the Xor-with-1's address) must be present on the Xor pre-pass,
     // absent on inner_producer_pre, and absent on if_node_pre.  Sanity-check
     // the fixture before running the pass.
     assert!(fg.asm_fingerprint(bool_neg_node).contains(&0x804));
@@ -246,24 +282,24 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let r = IfCondInversion.optimize(&mut fg, entry)?;
     assert!(r.changed());
 
-    // After the pass, BitNot's address (0x804) must land on exactly the
-    // inner producer — NOT on the If, and NOT on any sibling reachable
-    // node that wasn't an ancestor of the cond input.
+    // After the pass, the Xor's address (0x804) must land on exactly
+    // the inner producer — NOT on the If, and NOT on any sibling
+    // reachable node that wasn't an ancestor of the cond input.
     assert!(
         fg.asm_fingerprint(inner_producer_pre).contains(&0x804),
-        "BoolNeg's address 0x804 must be absorbed into the inner cond producer"
+        "Xor-with-1's address 0x804 must be absorbed into the inner cond producer"
     );
     assert!(
         !fg.asm_fingerprint(if_node_pre).contains(&0x804),
-        "BoolNeg's address 0x804 must NOT be absorbed into the If node"
+        "Xor-with-1's address 0x804 must NOT be absorbed into the If node"
     );
 
     // After absorption, the inner producer's fingerprint should contain
-    // BOTH its own original address AND the BitNot's.
+    // BOTH its own original address AND the Xor-with-1's.
     let inner_fp = fg.asm_fingerprint(inner_producer_pre);
     assert!(
         inner_fp.contains(&0x804),
-        "inner cond producer must carry the absorbed BoolNeg address 0x804"
+        "inner cond producer must carry the absorbed Xor-with-1 address 0x804"
     );
     Ok(())
 }
@@ -279,9 +315,10 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
 fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Result<()> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x4000, 1);
     // Build `if (!cond) { … }` AND a second consumer of the same
-    // `!cond` value (a chained `BitNot(BitNot(cond))` left
-    // unreachable but still referencing the first BitNot's output
-    // — its use-list counts).
+    // `!cond` value (a chained `Xor(Xor(cond, 1), 1)` whose outer
+    // Xor still references the first Xor's output — that use-list
+    // counts).  The dedup cache will share the I1 IntConst(1) across
+    // both Xors but the Xor nodes themselves stay distinct.
     let (mut fg, _if_node, second_neg_node) = RegisterSet::new()
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
@@ -289,57 +326,56 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
             b.set_lift_addr(Some(0x904));
-            let neg_cond =
-                b.build_int_unary_operation(cond_bool, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
+            let neg_cond = build_bool_not(b, cond_bool)?;
             // Second consumer of the SAME `neg_cond` output.
             b.set_lift_addr(Some(0x908));
-            let second_neg = b
-                .build_int_unary_operation(neg_cond, strider_ir::IntUnaryOp::BitNot, strider_ir::node::NodeOutputType::I1)?;
+            let second_neg = build_bool_not(b, neg_cond)?;
             let second_neg_node = b.function().node_for_output(second_neg);
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, second_neg_node))
         })?;
 
-    // Locate the first BitNot (the one IfCondInversion will redirect
-    // around) and its inner cond producer pre-pass.
+    // Locate the first Xor-with-1 (the one IfCondInversion will
+    // redirect around) and its inner cond producer pre-pass.
     let bool_neg_node = fg
         .all_node_ids()
-        .find(|&n| {
-            n != second_neg_node
-                && matches!(fg.node_kind(n), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot))
-        })
-        .expect("first BoolNeg present pre-pass");
-    let [bool_neg_input] = fg.node_inputs_exact::<1>(bool_neg_node)?;
-    let inner_producer_pre = fg.node_for_output(bool_neg_input);
+        .find(|&n| n != second_neg_node && is_i1_xor_with_one(&fg, n))
+        .expect("first Xor(_, 1) (logical NOT) present pre-pass");
+    let [lhs, rhs] = fg.node_inputs_exact::<2>(bool_neg_node)?;
+    let inner_producer_pre = {
+        let pick = |out: NodeOutputId| !matches!(*fg.kind_of_output(out), NodeKind::IntConst(1));
+        let chosen = if pick(lhs) { lhs } else { rhs };
+        fg.node_for_output(chosen)
+    };
 
-    // Sanity-check the fixture: BitNot has 2 uses (the If and the
-    // chained second BitNot), and inner_producer_pre does NOT carry
+    // Sanity-check the fixture: the first Xor has 2 uses (the If and
+    // the chained second Xor), and inner_producer_pre does NOT carry
     // 0x904 yet.
     let bool_neg_outs = fg.node_outputs(bool_neg_node).to_vec();
     assert_eq!(
         fg.output_uses(bool_neg_outs[0]).count(),
         2,
-        "fixture must have the first BoolNeg with 2 consumers (If + second BoolNeg)"
+        "fixture must have the first Xor(_, 1) with 2 consumers (If + second Xor)"
     );
     assert!(!fg.asm_fingerprint(inner_producer_pre).contains(&0x904));
 
     let entry = fg.entry().unwrap();
     let r = IfCondInversion.optimize(&mut fg, entry)?;
-    assert!(r.changed(), "pass must still fire — the If's cond is BoolNeg(…)");
+    assert!(r.changed(), "pass must still fire — the If's cond is Xor(_, 1)(…)");
 
-    // The headline assertion: the first BitNot's address (0x904) must
-    // NOT have been absorbed into the inner cond producer.  The
-    // BitNot is still live (consumed by second_neg_node), so the
-    // attribution must stay on the BitNot itself.
+    // The headline assertion: the first Xor-with-1's address (0x904)
+    // must NOT have been absorbed into the inner cond producer.  The
+    // Xor is still live (consumed by second_neg_node), so the
+    // attribution must stay on the Xor itself.
     assert!(
         !fg.asm_fingerprint(inner_producer_pre).contains(&0x904),
-        "BoolNeg's address 0x904 must NOT leak into inner_producer when BoolNeg has \
-         remaining consumers (BoolNeg is still live; would be false-positive attribution)"
+        "Xor-with-1's address 0x904 must NOT leak into inner_producer when Xor has \
+         remaining consumers (Xor is still live; would be false-positive attribution)"
     );
-    // Inversely: the BitNot's own fingerprint must still carry 0x904.
+    // Inversely: the Xor's own fingerprint must still carry 0x904.
     assert!(
         fg.asm_fingerprint(bool_neg_node).contains(&0x904),
-        "BoolNeg's own fingerprint must still carry its address"
+        "Xor-with-1's own fingerprint must still carry its address"
     );
     Ok(())
 }

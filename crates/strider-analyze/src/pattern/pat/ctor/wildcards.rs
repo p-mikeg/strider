@@ -35,8 +35,9 @@ pub fn bool_value() -> Pat {
 /// Matches `inner` **and** requires all of the matched node's value inputs
 /// to be `n` bits wide.  The input-side width filter: `inputs_of_width(1, …)`
 /// (a.k.a. [`bool_inputs`]) selects operations that *operate on* booleans
-/// (`And`/`Or`/`Xor`/`BitNot` on `I1`) and excludes comparisons (whose
-/// operands are wider even though they produce `I1`).
+/// (`And`/`Or`/`Xor` on `I1` — a logical NOT is `Xor(_, IntConst(1))` at
+/// `I1` since the former BitNot unary-op was removed) and excludes comparisons
+/// (whose operands are wider even though they produce `I1`).
 #[must_use]
 pub fn inputs_of_width(n: u32, inner: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(InputWidthPat {
@@ -159,6 +160,99 @@ where
             .any(|&v| stored_masked == (v & mask))
     }))
     .into_pat()
+}
+
+/// Matches an `IntConst` (or [`crate::pattern`]-built RHS thereof) whose
+/// stored value, masked to the node's declared output width, equals the
+/// all-ones bit pattern for that width (`(2^bit_width) - 1`).  Wide
+/// constants (`I256` / `I512`) match an `IntConstWide` whose interned
+/// `WideConstStorage::all_ones(byte_size)` matches the node's byte width.
+///
+/// Used by the `bit_not` / `bool_not` builders to recognise the
+/// `Xor(x, all_ones)` canonical form of bitwise complement (`~x`).  In
+/// build position (RHS of a rewrite rule), constructs the corresponding
+/// all-ones constant for the root's output width via
+/// [`strider_ir::Graph::make_all_ones_const`].
+#[must_use]
+pub fn int_const_all_ones() -> Pat {
+    use strider_ir::wide_const::WideConstStorage;
+    // Match either an IntConst or an IntConstWide whose value, masked
+    // to the node's declared output width, equals the all-ones mask.
+    NodePat::matcher(KindSpec::Any, InputsSpec::None)
+        .with_post_match(Arc::new(|ctx, node, _b| {
+            let Some(ty) = ctx
+                .function
+                .node_outputs(node)
+                .iter()
+                .find_map(|&out| ctx.function.output_kind(out).as_value())
+            else {
+                return false;
+            };
+            if !ty.is_integer() {
+                return false;
+            }
+            match *ctx.function.node_kind(node) {
+                NodeKind::IntConst(stored) => {
+                    // For widths ≤ 128 bits this comparison is exact.
+                    // I256 / I512 mask to u128::MAX, but IntConst rejects those
+                    // widths at build time so a stored I128 with u128::MAX
+                    // genuinely is all-ones; an I256 / I512 must use
+                    // IntConstWide (handled below).
+                    if matches!(ty, NodeOutputType::I256 | NodeOutputType::I512) {
+                        return false;
+                    }
+                    let mask = ty.bit_mask_u128();
+                    (stored & mask) == mask
+                }
+                NodeKind::IntConstWide(id) => {
+                    let stored = ctx.function.wide_const(id);
+                    let Some(all_ones) = WideConstStorage::all_ones(ty.byte_size()) else {
+                        return false;
+                    };
+                    *stored == all_ones
+                }
+                _ => false,
+            }
+        }))
+        .with_build_fn(
+            Arc::new(|ctx| {
+                // RHS build: emit either IntConst(mask) or IntConstWide(all_ones)
+                // depending on the root's declared output type.  The match-side
+                // arm above mirrors this distinction.
+                let ty = ctx.root_ty;
+                if matches!(ty, NodeOutputType::I256 | NodeOutputType::I512) {
+                    let storage = WideConstStorage::all_ones(ty.byte_size()).ok_or_else(|| {
+                        crate::pattern::error::skip()
+                    })?;
+                    // Build-side has no direct Graph mutation here; emit
+                    // a placeholder IntConstWide and let the caller's
+                    // build pipeline intern the storage.  In practice the
+                    // RHS-build path goes through Graph::create_node with
+                    // a kind+output_kinds, and IntConstWide carries the
+                    // interned id; we intern via the ctx's bindings'
+                    // function reference.
+                    //
+                    // Since the closure receives a BuildCtx without
+                    // a mutable Function handle, we route the interning
+                    // through a thread-local-free path by interning at
+                    // the Graph level in the apply step.  Pattern crate's
+                    // rewrite engine accepts a NodeKind from the closure;
+                    // it then calls Graph::create_node.  Since
+                    // IntConstWide carries a WideConstId, we need the
+                    // id, which requires intern.  Use ctx.function
+                    // (immutable) to look up... but interning is
+                    // mutating.  Bail out with skip() for wide widths
+                    // — the rewrite-rule infrastructure doesn't yet
+                    // support emitting an IntConstWide RHS.
+                    let _ = storage;
+                    Err(crate::pattern::error::skip())
+                } else {
+                    Ok(NodeKind::IntConst(ty.bit_mask_u128()))
+                }
+            }),
+            BuildTy::InheritRoot,
+        )
+        .into_pat()
 }
 
 /// Matches an `IntConst` whose stored value, interpreted as a signed

@@ -1,36 +1,37 @@
-//! `IfCondInversion` — canonicalises `If(BitNot(C)) {A} {B}` into
-//! `If(C) {B} {A}` so every `If` node in the optimised IR has a non-`BitNot`
-//! condition.  (`BitNot` here is the 1-bit `IntUnaryOp::BitNot` at `I1` —
-//! logical not of a boolean.)
+//! `IfCondInversion` — canonicalises `If(Xor(C, IntConst(1))) {A} {B}` into
+//! `If(C) {B} {A}` so every `If` node in the optimised IR has a non-inverted
+//! condition.  The inverted-cond shape is the canonical lifter output for
+//! 1-bit logical NOT (`Xor(_, IntConst(1)):I1`) — the former BitNot unary-op
+//! was removed in favour of `Xor(_, all_ones)` everywhere.
 //!
 //! Source-level `if (c) A else B` and `if (!c) B else A` are logically
 //! equivalent, but lifters can produce either shape depending on which
 //! branch direction the architecture's flag-test instruction prefers.
 //! Two shapes for one semantic forces every pattern-matcher caller to
-//! handle both.  This pass eagerly rewrites the `BitNot`-cond shape into
-//! the canonical direct shape so [`crate::pattern::IfPat`] only needs to match
-//! one layout.
+//! handle both.  This pass eagerly rewrites the `Xor(_, 1)`-cond shape
+//! into the canonical direct shape so [`crate::pattern::IfPat`] only
+//! needs to match one layout.
 //!
 //! The rewrite is sound because:
-//!   1. `If(BitNot(C))` takes the true branch iff `BitNot(C)` is true,
+//!   1. `If(Xor(C, 1))` takes the true branch iff `C ^ 1` is true,
 //!      iff `C` is false.
 //!   2. `If(C){B}{A}` (after the rewrite) takes the true branch iff `C`
 //!      is true (going to `B`), and the false branch iff `C` is false
 //!      (going to `A`).  Identical control-flow semantics.
 //!
-//! Convergence: each application strictly removes one `BitNot` from the
-//! cond input, and the inner `BitNot(BitNot(x))` shape collapses via
-//! the existing `!!x → x` rule in `ConstantFold` (which we expect to run
-//! first in the pipeline).  No circular rewriting.
+//! Convergence: each application strictly removes one `Xor`-with-1 from
+//! the cond input, and the inner `Xor(Xor(x, 1), 1)` shape collapses via
+//! the existing `x ^ K1 ^ K2 → x ^ (K1 ^ K2)` reassoc rule in
+//! `ConstantFold` (yielding `Xor(x, 0)` which then folds to `x`).  No
+//! circular rewriting.
 //!
 //! ## Pipeline placement
 //!
-//! Add to `stable_default_pipeline` after `ConstantFold` so any
-//! `BitNot(BitNot(x)) → x` simplification has already collapsed
-//! before we look for the canonical shape.  Without that ordering,
-//! `If(BitNot(BitNot(C)))` would land in canonical form via two
-//! applications instead of one — still correct, just one extra
-//! fixed-point iteration.
+//! Add to `stable_default_pipeline` after `ConstantFold` so any chained
+//! `Xor(_, 1)` simplification has already collapsed before we look for
+//! the canonical shape.  Without that ordering, the doubly-inverted form
+//! would land in canonical form via two applications instead of one —
+//! still correct, just one extra fixed-point iteration.
 //!
 //! ## Why this is a dedicated pass and not a `crate::pattern::rewrite_rule`
 //!
@@ -38,24 +39,41 @@
 //! that swap consumers across two of a node's outputs — its model is
 //! "find a matching subtree, replace its single output's consumers with
 //! a fresh node's output."  The cond-inversion rewrite needs:
-//!   - input redirection (cond slot 1 → inner of BitNot);
+//!   - input redirection (cond slot 1 → inner of Xor);
 //!   - bidirectional consumer swap on the two `Control` outputs.
 //!
 //! Both are use-list mutations the pattern-rewrite engine doesn't do, so
 //! we hand-write the surgery.
 
-use strider_ir::node::{NodeId, NodeKind};
+use std::sync::LazyLock;
+
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
 use crate::opt::peephole::impl_optimizer_from_peephole;
 use crate::opt::pipeline::OptimizationResult;
+use crate::pattern::{Capture, Matcher, Pat, bool_not, var};
 
-/// Pass that rewrites `If(BitNot(C))` into `If(C)` with branches swapped.
+/// Pass that rewrites `If(Xor(C, IntConst(1)):I1)` into `If(C)` with branches
+/// swapped.
 ///
-/// Add to `stable_default_pipeline` after `ConstantFold` so the
-/// `BitNot(BitNot) → x` rule (at `I1`) simplifies double-negations first.
+/// Add to `stable_default_pipeline` after `ConstantFold` so chained
+/// `Xor(_, 1)` reassoc simplifies double-negations first.
 #[derive(Clone)]
 pub struct IfCondInversion;
+
+/// Captured `x` slot of the `bool_not(var(x))` pattern that
+/// [`is_inverted_cond_match`] matches against.  Allocated once at
+/// process start so every match reuses the same `Capture` slot.
+static INNER_CAPTURE: LazyLock<Capture> = LazyLock::new(Capture::new);
+
+/// `bool_not(var(x))` — the pattern matched against an `If`'s cond input
+/// producer.  `bool_not` builds the canonical `Xor(_, IntConst(1)):I1`
+/// shape (since the former BitNot unary-op was removed in favour of
+/// `Xor(_, all_ones)`); the `var(x)` slot binds the Xor's non-constant
+/// operand to [`INNER_CAPTURE`] so the caller can substitute it for the
+/// `If`'s cond input.
+static INNER_PAT: LazyLock<Pat> = LazyLock::new(|| bool_not(var(*INNER_CAPTURE)));
 
 impl crate::opt::peephole::PeepholePass for IfCondInversion {
     fn matches_kind(&self, kind: &NodeKind) -> bool {
@@ -67,10 +85,11 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
         ctx: &mut crate::pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
-        if !is_inverted_cond(ctx.graph_ref(), root) {
+        let function = ctx.function_mut();
+        let Some(inner_out) = is_inverted_cond_match(function, root) else {
             return Ok(OptimizationResult::NoChange);
-        }
-        invert(ctx.function_mut(), root)?;
+        };
+        invert(function, root, inner_out)?;
         Ok(OptimizationResult::Changed)
     }
 
@@ -84,57 +103,61 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
 
 impl_optimizer_from_peephole!(IfCondInversion);
 
-/// Returns `true` when the `If` node's cond input (slot 1) consumes the
-/// output of a logical-NOT node — an `IntUnaryOp::BitNot` whose output is
-/// `I1` (a 1-bit complement, i.e. `~0 & 1 == 1` / `~1 & 1 == 0`).
-fn is_inverted_cond(graph: &strider_ir::Graph, if_node: NodeId) -> bool {
-    let Ok([_ctrl, cond_out]) = graph.node_inputs_exact::<2>(if_node) else {
-        return false;
-    };
-    let cond_node = graph.node_for_output(cond_out);
-    if !matches!(
-        graph.node_kind(cond_node),
-        NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::BitNot)
-    ) {
-        return false;
-    }
-    // Only a 1-bit BitNot is a logical NOT; a wider BitNot is a bitwise
-    // complement and inverting the `If` around it would change semantics.
-    graph
-        .output_kind(cond_out)
-        .as_value()
-        .is_some_and(|ty| ty.is_bool())
+/// Returns `Some(inner_out)` when the `If` node's cond input is the
+/// canonical 1-bit logical NOT shape — an `Xor(x, IntConst(1)):I1` — as
+/// matched by the [`bool_not(var(x))`](INNER_PAT) pattern.  The bound
+/// capture is the Xor's non-constant operand `x`, which the caller
+/// substitutes for the cond input.
+///
+/// Why a pattern matcher rather than a hand-rolled check: the
+/// `bool_not` pattern builder already encapsulates the canonical
+/// logical-NOT shape (commutative Xor with the I1 all-ones constant,
+/// `IntConst(1):I1`) and the I1-output guard.  Routing through the
+/// matcher means the LHS shape stays in sync with the rest of the
+/// pattern DSL automatically — if the canonical logical-NOT shape ever
+/// changes, only the `bool_not` builder needs updating.
+fn is_inverted_cond_match(
+    function: &strider_ir::Function,
+    if_node: NodeId,
+) -> Option<NodeOutputId> {
+    let [_ctrl, cond_out] = function.node_inputs_exact::<2>(if_node).ok()?;
+    let cond_node = function.node_for_output(cond_out);
+    // `match_at` is the single-node entry point: try the pattern at
+    // exactly the cond's producer node (not a full graph walk).
+    let m = Matcher::for_function(function, function.entry()?);
+    let hit = m.match_at(cond_node, &INNER_PAT)?;
+    hit.output(*INNER_CAPTURE)
 }
 
 /// Performs the inversion in place:
-///   1. Re-points the `If`'s cond input from `BitNot(X)` to `X`.
+///   1. Re-points the `If`'s cond input from the `Xor(X, 1)` output to `X`.
 ///   2. Swaps the consumers of the two control outputs.
-fn invert(function: &mut strider_ir::Function, if_node: NodeId) -> Result<()> {
+fn invert(
+    function: &mut strider_ir::Function,
+    if_node: NodeId,
+    inner: strider_ir::node::NodeOutputId,
+) -> Result<()> {
     // Redirect cond input.
     //
-    // Read the BitNot node's input first, then call `update_input` on the
-    // If's cond slot to consume it directly.  After this step the BitNot
-    // is unreferenced from the If; its other consumers (if any) keep using
-    // it, which is fine.
+    // After this step the Xor is unreferenced from the If; its other
+    // consumers (if any) keep using it, which is fine.
     let cond_input_id = function.node_input_id_at(if_node, 1)?;
     let cond_out = function.input_output_id(cond_input_id);
-    let bit_not_node = function.node_for_output(cond_out);
-    let [inner] = function.node_inputs_exact::<1>(bit_not_node)?;
-    // Count BitNot's consumers BEFORE redirecting: if we are the only
-    // user, BitNot becomes dead after the redirect and its
+    let xor_node = function.node_for_output(cond_out);
+    // Count Xor's consumers BEFORE redirecting: if we are the only
+    // user, the Xor becomes dead after the redirect and its
     // contributing-asm history needs to be absorbed by the inner-cond
-    // node (the new If consumer).  When BitNot has other live uses,
-    // those uses still produce the value via BitNot's own
-    // fingerprint, so transferring would CONTAMINATE inner_node's
-    // fingerprint with addresses that don't contribute to its value
-    // (false positives violate the contract that a fingerprint names
-    // the asm insns whose lifting or rewrite contributed to that
-    // node's value).
-    let bit_not_uses_before = function.output_uses(cond_out).count();
+    // node (the new If consumer).  When the Xor has other live uses,
+    // those uses still produce the value via its own fingerprint, so
+    // transferring would CONTAMINATE inner_node's fingerprint with
+    // addresses that don't contribute to its value (false positives
+    // violate the contract that a fingerprint names the asm insns
+    // whose lifting or rewrite contributed to that node's value).
+    let xor_uses_before = function.output_uses(cond_out).count();
     function.update_input(cond_input_id, inner);
-    if bit_not_uses_before == 1 {
+    if xor_uses_before == 1 {
         let inner_node = function.node_for_output(inner);
-        function.extend_asm_fingerprint_from(inner_node, bit_not_node);
+        function.extend_asm_fingerprint_from(inner_node, xor_node);
     }
 
     // Swap consumers between output[0] (true) and output[1] (false).

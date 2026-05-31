@@ -103,13 +103,16 @@ pub enum NodeKind {
     /// nodes with the same `id` reference the same value (the
     /// `crate::Graph::intern_wide_const` contract).
     IntConstWide(crate::wide_const::WideConstId),
-    /// Integer unary operation (e.g. bitwise NOT, two's-complement negate).
+    /// Integer unary operation — two's-complement negate (`-x`).  Bitwise
+    /// complement (`~x`) is no longer a unary op; it is `Xor(x, all_ones)`
+    /// at lift time and beyond.
     IntUnaryOp(crate::ops::IntUnaryOp),
     /// Integer binary operation (e.g. add, shift, bitwise AND).
     IntBinaryOp(crate::ops::IntBinaryOp),
     /// Integer comparison operation; produces an `I1` (1-bit) output.
     /// Logical operations on booleans are ordinary integer ops at `I1`
-    /// (`IntBinaryOp::{And,Or,Xor}`, `IntUnaryOp::BitNot`).
+    /// (`IntBinaryOp::{And,Or,Xor}`); logical NOT is `Xor(_, IntConst(1))`
+    /// at `I1`.
     IntCmpOp(crate::ops::IntCmpOp),
     /// Narrow an integer value by dropping high bits.
     Truncate,

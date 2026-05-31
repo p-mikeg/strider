@@ -189,7 +189,7 @@ fn non_cacheable_kinds_are_not_cacheable() {
 fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntConst(0).is_cacheable());
     assert!(NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add).is_cacheable());
-    assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::BitNot).is_cacheable());
+    assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::Neg).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
 }
 
@@ -386,7 +386,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         // pure value: integer
         NodeKind::IntConst(0),
         NodeKind::IntConstWide(crate::wide_const::WideConstId::new(0)),
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntCmpOp(IntCmpOp::Equal),
         NodeKind::Truncate,

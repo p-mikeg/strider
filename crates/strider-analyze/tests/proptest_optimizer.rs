@@ -61,7 +61,9 @@ fn binary_op() -> impl Strategy<Value = IntBinaryOp> {
 }
 
 fn unary_op() -> impl Strategy<Value = IntUnaryOp> {
-    prop_oneof![Just(IntUnaryOp::BitNot), Just(IntUnaryOp::Neg)]
+    // `IntUnaryOp` has only `Neg` since `BitNot` was removed (bitwise
+    // complement is `Xor(x, all_ones)`).
+    Just(IntUnaryOp::Neg)
 }
 
 fn cmp_op() -> impl Strategy<Value = IntCmpOp> {

@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
 use strider_ir::node::NodeId;
-use strider_ir::IntUnaryOp;
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::OptimizationResult;
@@ -302,7 +301,7 @@ static BITCAST_EXTEND_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> =
 /// Builds the rule vec for [`IDENTITY_RULES`].
 fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
     use crate::pattern::{
-        BoxedRule, Pat, Capture, add, and, any_int_const, bit_not, boxed_rule, int_const, mul, or,
+        BoxedRule, Pat, Capture, add, and, any_int_const, boxed_rule, int_const, mul, or,
         rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
 
@@ -319,19 +318,10 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
-    // x ^ all_ones → ~x  (commutative).  Clang lowers `~a` to `xor a, -1`
-    // on PPC at -O0 (gcc emits the `nor` instruction → IntUnaryOp::BitNot);
-    // canonicalize so downstream consumers see one shape regardless of
-    // compiler choice.
-    let xor_all_ones_rule = {
-        let x = Capture::new();
-        let c = Capture::new();
-        let pat: Pat = xor(var(x), any_int_const(c)).into();
-        let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx) == ty.get_unsigned_int(u128::MAX)
-        });
-        boxed_rule(rewrite_rule(pat, bit_not(var(x))))
-    };
+    // (No `x ^ all_ones → ~x` rule: `~x` IS `Xor(x, all_ones)` — the
+    // canonical form — since the former BitNot unary-op was removed in favour
+    // of the Xor shape.  Both compiler lowerings (`nor` and `xor a, -1`)
+    // now lift to the same Xor shape directly at lift time.)
     // x | all_ones → all_ones  (commutative; absorbing element).  The
     // all-ones value depends on the output width, so match the captured
     // constant against the node's all-ones mask and rewrite to that same
@@ -376,7 +366,6 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
         // x >>> 0 → x  (arithmetic / signed shift right)
         boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), var(x))),
         all_ones_rule,
-        xor_all_ones_rule,
         or_all_ones_rule,
     ];
     rules
@@ -420,6 +409,10 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
             ))
         },
         // 2. IntUnaryOp(op)(IntConst(v)) => int_const(op(v) masked to ty, ty)
+        //
+        // `IntUnaryOp` now has only the `Neg` variant (bitwise complement is
+        // `Xor(x, all_ones)`, handled by rule 1 above as an int-binary
+        // const-fold), so the closure unconditionally evaluates `wrapping_neg`.
         {
             let op = Capture::new();
             let v = Capture::new();
@@ -427,8 +420,7 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
                 int_unary_any(op, any_int_const(v)),
                 int_const_with!([op: int_unary_op, v: uint, ty] => {
                     let raw = match op {
-                        IntUnaryOp::BitNot => !v,
-                        IntUnaryOp::Neg => v.wrapping_neg(),
+                        strider_ir::IntUnaryOp::Neg => v.wrapping_neg(),
                     };
                     ty.get_unsigned_int(raw).ok_or_else(crate::pattern::skip)?
                 }),

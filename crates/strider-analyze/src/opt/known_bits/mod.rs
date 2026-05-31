@@ -2,7 +2,7 @@ use cranelift_entity::SecondaryMap;
 use entity_utils::Worklist;
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use strider_ir::{ExtendOp, IntBinaryOp, IntUnaryOp};
+use strider_ir::{ExtendOp, IntBinaryOp};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -257,18 +257,17 @@ pub(crate) fn node_known_bits(
             }
         }
 
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot) => {
-            // Bitwise NOT swaps known ones and zeros.  (Two's-complement
-            // negate — `IntUnaryOp::Neg` — has no closed-form known-bits
-            // propagation: it depends on the borrow chain across the
-            // input's bits, so it falls through to the unknown case.)
-            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
-            let kb = known[input];
-            KnownBitsFacts {
-                ones: kb.zeros & type_mask,
-                zeros: kb.ones & type_mask,
-            }
-        }
+        // Note: bitwise complement (`~x`) is `Xor(x, all_ones)` since
+        // the former BitNot unary-op was removed in favour of the Xor shape.
+        // The `IntBinaryOp::Xor` arm above already swaps known ones/zeros
+        // correctly when one operand is a fully-known all-ones constant
+        // (every bit position has `r.ones = type_mask`, `r.zeros = 0`,
+        // making the result's `ones = l.zeros & type_mask` and
+        // `zeros = l.ones & type_mask` — identical to the old BitNot
+        // arm).  Two's-complement negate — `IntUnaryOp::Neg` — has no
+        // closed-form known-bits propagation: it depends on the borrow
+        // chain across the input's bits, so it falls through to the
+        // unknown case.
 
         NodeKind::Truncate => {
             // Upper bits of the source are discarded; lower bits are preserved.
@@ -423,9 +422,11 @@ pub fn analyze(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> 
 /// Propagates known-bit information and replaces outputs whose every bit is
 /// determined with an equivalent integer constant.
 ///
-/// Handles `IntConst`, `And`, `Or`, `Xor`, `Not`, `Truncate`, `ZeroExtend`,
-/// and constant-shift nodes.  Runs a fixed-point inner loop to propagate
-/// information along data-dependency chains before deciding replacements.
+/// Handles `IntConst`, `And`, `Or`, `Xor`, `Truncate`, `ZeroExtend`,
+/// and constant-shift nodes.  (Bitwise complement is `Xor(x, all_ones)`,
+/// already covered by the Xor arm.)  Runs a fixed-point inner loop to
+/// propagate information along data-dependency chains before deciding
+/// replacements.
 #[derive(Clone)]
 pub struct KnownBits;
 

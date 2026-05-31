@@ -47,13 +47,13 @@ static OPCODE_TO_INT_CMP: &[(Opcode, IntCmpOp)] = &[
     (Opcode::IntSborrow, IntCmpOp::Sborrow),
 ];
 
-/// (Opcode, IntUnaryOp) dispatch table.  Note the Sleigh nomenclature
-/// reversal: rsleigh's `Int2Comp` is two's-complement negate (`-x`) →
-/// IR's `IntUnaryOp::Neg`; rsleigh's `IntNeg` is bitwise complement
-/// (`~x`) → IR's `IntUnaryOp::BitNot`.  See `IntUnaryOp` doc-comment.
+/// (Opcode, IntUnaryOp) dispatch table.  Only `Int2Comp` (two's-complement
+/// negate, `-x`) remains here — rsleigh's `IntNeg` (bitwise complement
+/// `~x`) is lowered out-of-table to `Xor(x, all_ones)` via
+/// [`ValueLifter::handle_int_neg_as_xor`] since the former BitNot unary-op was
+/// removed.  See `IntUnaryOp` doc-comment.
 static OPCODE_TO_INT_UNARY: &[(Opcode, IntUnaryOp)] = &[
     (Opcode::Int2Comp, IntUnaryOp::Neg),
-    (Opcode::IntNeg, IntUnaryOp::BitNot),
 ];
 
 /// (Opcode, ExtendOp) dispatch table for the trivial extend arms.
@@ -70,9 +70,10 @@ static OPCODE_TO_BOOL_BINARY: &[(Opcode, IntBinaryOp)] = &[
     (Opcode::BoolXor, IntBinaryOp::Xor),
 ];
 
-/// (Opcode, IntUnaryOp) dispatch table for the boolean unary opcode.
-/// Logical not of a 1-bit value is bitwise-not at `I1`.
-static OPCODE_TO_BOOL_UNARY: &[(Opcode, IntUnaryOp)] = &[(Opcode::BoolNeg, IntUnaryOp::BitNot)];
+// Note: `BoolNeg` (logical NOT of a 1-bit value) is handled out-of-table
+// by [`ValueLifter::process_bool_unary_op`], which lowers it to
+// `Xor(x, IntConst(1)):I1` — the former BitNot unary-op no longer exists, so
+// a bool not is `Xor(_, all_ones)` at `I1`.
 
 /// (Opcode, FloatBinaryOp) dispatch table.
 static OPCODE_TO_FLOAT_BINARY: &[(Opcode, FloatBinaryOp)] = &[
@@ -135,8 +136,14 @@ pub(crate) fn lift<R: rsleigh::MemReader>(
         Opcode::FloatNotEqual => lifter.handle_float_not_equal(insn)?,
         Opcode::FloatLessEqual => lifter.handle_float_less_equal(insn)?,
         // FloatNan: tests whether input is NaN (unary, → bool).  Lowered to
-        // BitNot(FloatEqual(x, x)) at I1 since IEEE 754 guarantees NaN != NaN.
+        // Xor(FloatEqual(x, x), 1):I1 since IEEE 754 guarantees NaN != NaN.
         Opcode::FloatNan => lifter.handle_float_nan(insn)?,
+        // IntNeg: bitwise complement (`~x`).  Lowered to `Xor(x, all_ones)` —
+        // the former BitNot unary-op was removed in favour of the canonical Xor shape.
+        Opcode::IntNeg => lifter.handle_int_neg_as_xor(insn)?,
+        // BoolNeg: logical NOT of a 1-bit value.  Lowered to
+        // `Xor(x, IntConst(1)):I1` for the same reason.
+        Opcode::BoolNeg => lifter.process_bool_unary_op(insn)?,
         // ── Float / integer conversions ───────────────────────────────────
         Opcode::FloatInt2Float => lifter.handle_float_int_to_float(insn)?,
         Opcode::FloatFloat2Float => lifter.handle_float_float_to_float(insn)?,
@@ -163,8 +170,6 @@ pub(crate) fn lift<R: rsleigh::MemReader>(
                 lifter.process_extend(insn, op)?;
             } else if let Some(op) = lookup(OPCODE_TO_BOOL_BINARY, other) {
                 lifter.process_bool_binary_op(insn, op)?;
-            } else if let Some(op) = lookup(OPCODE_TO_BOOL_UNARY, other) {
-                lifter.process_bool_unary_op(insn, op)?;
             } else if let Some(op) = lookup(OPCODE_TO_FLOAT_BINARY, other) {
                 lifter.process_float_binary_op(insn, op)?;
             } else if let Some(op) = lookup(OPCODE_TO_FLOAT_UNARY, other) {

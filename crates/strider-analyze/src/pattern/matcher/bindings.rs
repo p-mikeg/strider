@@ -339,24 +339,11 @@ impl Bindings {
         Some(*op)
     }
 
-    /// If the node bound to `c` is a boolean unary op (an `IntUnaryOp`
-    /// whose output is `I1`), returns the op variant.
-    #[must_use]
-    pub fn get_bool_unary_op(
-        &self,
-        c: Capture,
-        graph: &Graph,
-    ) -> Option<IntUnaryOp> {
-        let node = self.get_node(c)?;
-        let NodeKind::IntUnaryOp(op) = graph.node_kind(node) else {
-            return None;
-        };
-        let out = self.get_output(c)?;
-        if !graph.output_kind(out).as_value()?.is_bool() {
-            return None;
-        }
-        Some(*op)
-    }
+    // Note: there is no `get_bool_unary_op` accessor.  A boolean
+    // logical NOT is `Xor(x, IntConst(1)):I1` since the former BitNot unary-op
+    // was removed in favour of `Xor(_, all_ones)`, so a "bool unary"
+    // op is recovered via [`Self::get_bool_binary_op`] (returning
+    // `IntBinaryOp::Xor`).
 
     /// If the node bound to `c` is a `FloatBinaryOp`, returns the op variant.
     #[must_use]
@@ -625,7 +612,8 @@ mod tests {
         assert_eq!(bindings.get_int_unary_op(v, &function), None);
         assert_eq!(bindings.get_int_cmp_op(v, &function), None);
         assert_eq!(bindings.get_bool_binary_op(v, &function), None);
-        assert_eq!(bindings.get_bool_unary_op(v, &function), None);
+        // No `get_bool_unary_op` accessor — bool NOT is `Xor(_, 1):I1`,
+        // recovered via `get_bool_binary_op`.
         assert_eq!(bindings.get_float_binary_op(v, &function), None);
         assert_eq!(bindings.get_float_unary_op(v, &function), None);
         assert_eq!(bindings.get_float_cmp_op(v, &function), None);

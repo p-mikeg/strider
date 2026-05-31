@@ -14,6 +14,34 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
+/// Builds the canonical 1-bit logical NOT shape `Xor(operand, IntConst(1)):I1`
+/// (post-removal-of-the former BitNot unary-op).
+fn build_i1_xor_with_one(
+    fb: &mut FunctionBuilder,
+    operand: NodeOutputId,
+) -> Result<NodeOutputId> {
+    let one = fb.build_all_ones_const(NodeOutputType::I1)?;
+    fb.build_int_binary_operation(operand, one, IntBinaryOp::Xor, NodeOutputType::I1)
+}
+
+/// True when `node` is the canonical 1-bit logical NOT shape — an
+/// `IntBinaryOp::Xor` at `I1` whose RHS (or LHS) is `IntConst(1):I1`.
+fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
+    if !matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Xor)) {
+        return false;
+    }
+    let Ok([lhs, rhs]) = fg.node_inputs_exact::<2>(node) else {
+        return false;
+    };
+    let is_one = |out: NodeOutputId| {
+        fg.output_kind(out)
+            .as_value()
+            .is_some_and(|t| t.is_bool())
+            && matches!(*fg.kind_of_output(out), NodeKind::IntConst(1))
+    };
+    is_one(lhs) || is_one(rhs)
+}
+
 // ── Common fixture builder ────────────────────────────────────────────────
 
 /// Build the canonical AArch64 cmp shape for `a` and `b` and return
@@ -31,10 +59,12 @@ fn build_cmp_flags(
 
     let zr = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, NodeOutputType::I32)?;
     let ng = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Sless, NodeOutputType::I32)?;
-    // CY = BitNot(IntLess(a, b))  — post lift-time canonicalisation of IntLessEqual(b, a).
-    // A logical NOT is `IntUnaryOp::BitNot` at I1 (booleans are 1-bit ints).
+    // CY = Xor(IntLess(a, b), IntConst(1)):I1  — post lift-time canonicalisation of IntLessEqual(b, a).
+    // A logical NOT is `Xor(_, IntConst(1)):I1` (since the former BitNot unary-op
+    // was removed in favour of `Xor(_, all_ones)`).
     let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
-    let cy = fb.build_int_unary_operation(alt, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+    let one_i1 = fb.build_all_ones_const(NodeOutputType::I1)?;
+    let cy = fb.build_int_binary_operation(alt, one_i1, IntBinaryOp::Xor, NodeOutputType::I1)?;
     let ov = fb.build_int_cmp_operation(a, b, IntCmpOp::Sborrow, NodeOutputType::I32)?;
 
     Ok((zr, ng, cy, ov))
@@ -108,34 +138,50 @@ fn assert_if_cond_is_intcmp(
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
-/// Asserts the If's cond is `BitNot(IntCmpOp(op, lhs, rhs))` at `I1`.  Used for
-/// the cond shapes whose post-rewrite canonical form is a negated cmp;
-/// `IfCondInversion` (in the full pipeline, not in this test) is the
-/// pass that finally swaps the If's branches and strips the BitNot.
+/// Asserts the If's cond is `Xor(IntCmpOp(op, lhs, rhs), IntConst(1)):I1`.
+/// Used for the cond shapes whose post-rewrite canonical form is a
+/// negated cmp (i.e. a 1-bit logical NOT of the cmp); `IfCondInversion`
+/// (in the full pipeline, not in this test) is the pass that finally
+/// swaps the If's branches and strips the Xor-with-1.  the former BitNot unary-op
+/// was removed in favour of this canonical Xor-with-all-ones shape.
 fn assert_if_cond_is_neg_intcmp(
-    graph: &Graph,
+    function: &strider_ir::Function,
     if_node: NodeId,
     op: IntCmpOp,
     expect_lhs: NodeOutputId,
     expect_rhs: NodeOutputId,
 ) {
-    let cond_out = if_cond_output(graph, if_node);
-    let neg_node = graph.node_for_output(cond_out);
-    assert_eq!(
-        *graph.node_kind(neg_node),
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
-        "If cond should be BoolNeg(...)",
+    let cond_out = if_cond_output(function, if_node);
+    let xor_node = function.node_for_output(cond_out);
+    assert!(
+        is_i1_xor_with_one(function, xor_node),
+        "If cond should be the 1-bit Xor-with-1 (logical NOT) shape, got {:?}",
+        function.node_kind(xor_node),
     );
-    let [inner] = graph
-        .node_inputs_exact::<1>(neg_node)
-        .expect("BoolNeg has 1 input");
-    let inner_node = graph.node_for_output(inner);
+    let [lhs_in, rhs_in] = function
+        .node_inputs_exact::<2>(xor_node)
+        .expect("Xor has 2 inputs");
+    // The non-constant operand is the cmp; the other is the I1
+    // IntConst(1) (might be on either side due to dedup).
+    let is_one_const = |out: NodeOutputId| {
+        matches!(*function.kind_of_output(out), NodeKind::IntConst(1))
+            && function
+                .output_kind(out)
+                .as_value()
+                .is_some_and(|t| t.is_bool())
+    };
+    let cmp_out = if is_one_const(rhs_in) {
+        lhs_in
+    } else {
+        rhs_in
+    };
+    let inner_node = function.node_for_output(cmp_out);
     assert_eq!(
-        *graph.node_kind(inner_node),
+        *function.node_kind(inner_node),
         NodeKind::IntCmpOp(op),
         "Inner cond should be IntCmpOp({op:?})",
     );
-    let [lhs, rhs] = graph
+    let [lhs, rhs] = function
         .node_inputs_exact::<2>(inner_node)
         .expect("IntCmpOp has 2 inputs");
     assert_eq!(lhs, expect_lhs, "lhs of canonicalised cmp");
@@ -160,7 +206,7 @@ fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
 fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
     // AArch64 `b.ne` cond is `BitNot(ZR)` = `BitNot(Equal(Add(a, Neg(b)), 0))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| {
-        fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)
+        build_i1_xor_with_one(fb, zr)
     })?;
 
     let entry = fg.entry().unwrap();
@@ -177,7 +223,7 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
     // simplified to `Equal(a, b)` and the BoolAnd rule fires, the cond
     // is `IntLess(b, a)` (= `a > b unsigned`).
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_zr = fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let neg_zr = build_i1_xor_with_one(fb, zr)?;
         fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, NodeOutputType::I1)
     })?;
 
@@ -203,7 +249,7 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
     // ConstantFold's algebraic-only rewrites preserve that agreement —
     // this test pins the contract.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_zr = fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let neg_zr = build_i1_xor_with_one(fb, zr)?;
         fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, NodeOutputType::I1)
     })?;
 
@@ -224,7 +270,7 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
     // `BoolOr(IntLess(a, b), Equal(a, b))` and our rule rewrites it to
     // `BitNot(IntLess(b, a))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_cy = fb.build_int_unary_operation(cy, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let neg_cy = build_i1_xor_with_one(fb, cy)?;
         fb.build_int_binary_operation(neg_cy, zr, IntBinaryOp::Or, NodeOutputType::I1)
     })?;
 
@@ -249,7 +295,7 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
         let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
         let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
-        fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)
+        build_i1_xor_with_one(fb, eq)
     })?;
 
     let entry = fg.entry().unwrap();
@@ -281,7 +327,7 @@ fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
 fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
     // AArch64 `b.gt` cond is `BoolAnd(BitNot(ZR), Equal(NG, OV))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
-        let neg_zr = fb.build_int_unary_operation(zr, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let neg_zr = build_i1_xor_with_one(fb, zr)?;
         let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
         let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
@@ -303,7 +349,7 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
         let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
         let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
-        let neg_eq = fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let neg_eq = build_i1_xor_with_one(fb, eq)?;
         fb.build_int_binary_operation(zr, neg_eq, IntBinaryOp::Or, NodeOutputType::I1)
     })?;
 
@@ -328,9 +374,14 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
     let r = FlagCmpCanonicalize.optimize(&mut fg, entry)?;
     assert!(!r.changed(), "CS already canonical; pass must not fire");
 
-    assert_eq!(
-        if_cond_node_kind(&fg, if_node),
-        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+    // CY is the canonical 1-bit Xor-with-1 of IntLess (post lift-time
+    // canonicalisation), which the pass leaves untouched.
+    let cond_out = if_cond_output(&fg, if_node);
+    let cond_node = fg.node_for_output(cond_out);
+    assert!(
+        is_i1_xor_with_one(&fg, cond_node),
+        "CY cond should be the I1 Xor-with-1 shape, got {:?}",
+        fg.node_kind(cond_node),
     );
     Ok(())
 }
@@ -368,7 +419,7 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
         let zero = fb.build_int_const(0u64, NodeOutputType::I8)?;
         let zr = fb.convert_to_int_if_needed(zr, NodeOutputType::I8)?;
         let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, NodeOutputType::I8)?;
-        fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)
+        build_i1_xor_with_one(fb, eq)
     })?;
 
     // Run my pass twice (or run it once via the pipeline's fixed-point loop).
@@ -436,9 +487,9 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
     // (a != b) && !(a < b)  ≡  a > b  ≡  b < a  →  Sless(b, a)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
         let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
-        let neq = fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let neq = build_i1_xor_with_one(fb, eq)?;
         let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, NodeOutputType::I32)?;
-        let nlt = fb.build_int_unary_operation(lt, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let nlt = build_i1_xor_with_one(fb, lt)?;
         fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
@@ -468,9 +519,9 @@ fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
     // unsigned: (a != b) && !(a < b)  →  Less(b, a)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
         let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
-        let neq = fb.build_int_unary_operation(eq, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let neq = build_i1_xor_with_one(fb, eq)?;
         let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
-        let nlt = fb.build_int_unary_operation(lt, IntUnaryOp::BitNot, NodeOutputType::I1)?;
+        let nlt = build_i1_xor_with_one(fb, lt)?;
         fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, NodeOutputType::I1)
     })?;
     let entry = fg.entry().unwrap();
