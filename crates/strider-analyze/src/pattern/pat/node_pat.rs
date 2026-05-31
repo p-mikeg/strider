@@ -12,8 +12,10 @@
 //!   `Indexed` covers sparse positional matching for memory ops (`Load` /
 //!   `Store`), `Phi`, and the control
 //!   patterns (`Call`, `CallOther`, `Return`, `If`).
-//! * [`OutputsSpec`] — sub-pattern constraints on specific output slots
-//!   (used by `Call` for return-value captures).
+//! * [`NodePat::outputs`] — sparse positional sub-pattern constraints on
+//!   specific output slots (used by `Call` for return-value captures and
+//!   `CallOther` for clobber-output captures).  Empty means "no output
+//!   constraints" — the matcher's iteration is a no-op.
 //! * [`NodePat::post_match`] — the one place bindings can be installed
 //!   during the match pipeline (op-variant captures, typed-const captures,
 //!   side-table lookups).
@@ -190,8 +192,12 @@ pub(crate) struct NodePat {
     pub(crate) build: Option<BuildSpec>,
     /// How to match the node's inputs.
     pub(crate) inputs: InputsSpec,
-    /// Optional constraints on the node's outputs (by position).
-    pub(crate) outputs: OutputsSpec,
+    /// Sparse positional constraints on the node's outputs.  Empty means
+    /// "no output constraints"; non-empty entries match each listed
+    /// `(slot_idx, sub_pattern)` pair against the node's output at that
+    /// slot.  Used by `CallPat::ret_output` and `CallOtherPat::ret` to
+    /// capture / constrain specific return-value / clobber outputs.
+    pub(crate) outputs: Vec<(usize, crate::pattern::pat::Pat)>,
     /// Runs AFTER inputs/outputs match (and after each commutative
     /// retry).  This is the designated binding site for payload-dependent
     /// captures (op-variant Vars, typed-constant Vars), since it executes
@@ -245,13 +251,6 @@ impl InputsSpec {
             commutative: Arc::new(f),
         }
     }
-}
-
-/// Constraints on output slots by position.  Each entry's sub-pattern is
-/// matched against the `NodeOutputId` at that output index.
-pub(crate) enum OutputsSpec {
-    None,
-    Indexed(Vec<(usize, crate::pattern::pat::Pat)>),
 }
 
 impl Pattern for NodePat {
@@ -332,7 +331,7 @@ impl NodePat {
             kind,
             build: None,
             inputs,
-            outputs: OutputsSpec::None,
+            outputs: Vec::new(),
             post_match: None,
         }
     }
@@ -353,8 +352,8 @@ impl NodePat {
         self
     }
 
-    pub(crate) fn with_outputs(mut self, o: OutputsSpec) -> Self {
-        self.outputs = o;
+    pub(crate) fn with_outputs(mut self, outputs: Vec<(usize, crate::pattern::pat::Pat)>) -> Self {
+        self.outputs = outputs;
         self
     }
 
@@ -452,9 +451,9 @@ fn try_once(
     }
 
     // (b) outputs — sparse positional constraints, lazily fetched.
-    if let OutputsSpec::Indexed(items) = &pat.outputs {
+    if !pat.outputs.is_empty() {
         let outputs = ctx.function.node_outputs(node);
-        for (i, p) in items {
+        for (i, p) in &pat.outputs {
             let Some(&out) = outputs.get(*i) else {
                 return false;
             };

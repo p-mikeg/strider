@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use strider_ir::node::NodeKind;
 
-use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat, OutputsSpec};
+use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat};
 use crate::pattern::pat::{Pat, int_const, int_const_any_of};
 
 // ── CallPat ───────────────────────────────────────────────────────────────────
@@ -78,13 +78,10 @@ impl From<CallPat> for Pat {
             indexed_inputs.push((3 + i, p));
         }
         // Call outputs: [ctrl(0), mem(1), retval0(2), retval1(3), ...].
-        let outputs_spec = if ret_outputs.is_empty() {
-            OutputsSpec::None
-        } else {
-            OutputsSpec::Indexed(ret_outputs.into_iter().map(|(i, p)| (2 + i, p)).collect())
-        };
+        let outputs: Vec<(usize, Pat)> =
+            ret_outputs.into_iter().map(|(i, p)| (2 + i, p)).collect();
         NodePat::matcher(KindSpec::Exact(NodeKind::Call), InputsSpec::Indexed(indexed_inputs))
-            .with_outputs(outputs_spec)
+            .with_outputs(outputs)
             .into_pat()
     }
 }
@@ -201,10 +198,8 @@ impl From<CallOtherPat> for Pat {
                 matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == expected)
             }),
         };
-        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(inputs));
-        if !outputs.is_empty() {
-            pat = pat.with_outputs(OutputsSpec::Indexed(outputs));
-        }
+        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(inputs))
+            .with_outputs(outputs);
         if let Some(want) = name {
             pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
                 ctx.function
