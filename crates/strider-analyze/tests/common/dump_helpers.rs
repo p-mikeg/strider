@@ -29,8 +29,8 @@ fn lift_x86_64_bytes(bytes: Vec<u8>) -> LiftResult {
 
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
+    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, OptionsBuilder::new().build())
         .build()
         .expect("cfg");
 

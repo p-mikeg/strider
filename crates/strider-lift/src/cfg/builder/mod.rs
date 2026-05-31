@@ -35,21 +35,22 @@ use crate::cfg::Result;
 ///
 /// let fn_addr: u64 = 0x1000;
 /// let reader = BufMemReader::new(Vec::<u8>::new(), fn_addr);
-/// let sleigh = rsleigh::Sleigh::new(
+/// let mut sleigh = rsleigh::Sleigh::new(
 ///     rsleigh::sla_spec::SLA_SPEC_X86_64,
 ///     rsleigh::pspec::PSPEC_X86_64,
 ///     reader,
 /// ).expect("create Sleigh");
 /// let opts = OptionsBuilder::new().build();
 /// let arch = SleighArch::x86_64();
-/// let (cfg, _sleigh) = Builder::for_arch(&arch, sleigh, fn_addr, opts).build()?;
+/// let cfg = Builder::for_arch(&arch, &mut sleigh, fn_addr, opts).build()?;
+/// // `sleigh` is still owned + usable here (the builder only borrowed it).
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
 /// See `crates/strider-lift/tests/cfg_build_end_to_end.rs` for runnable
 /// end-to-end examples.
-pub struct Builder<R: rsleigh::MemReader> {
-    pub(super) sleigh: rsleigh::Sleigh<R>,
+pub struct Builder<'a, R: rsleigh::MemReader> {
+    pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: Options,
@@ -91,18 +92,20 @@ pub struct Builder<R: rsleigh::MemReader> {
     pub(super) indirect_resolver: Option<IndirectResolverFn<R>>,
 }
 
-impl<R: rsleigh::MemReader> Builder<R> {
+impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Creates a new `Builder` whose endianness AND `ArchPreset` are
     /// derived atomically from `arch` (which is stored in full).  The
     /// canonical constructor for CFG building — carrying the whole
     /// `SleighArch` (which is `Copy + Eq`) prevents the silent
     /// misclassification that a split endianness/preset ctor would
     /// invite (e.g. a big-endian binary decoded as LE, or AArch64 `brk`
-    /// classified as the x86 stub).
+    /// classified as the x86 stub).  The Sleigh is borrowed mutably
+    /// (`lift_one(&mut self)` is stateful), not owned — the caller
+    /// retains ownership and can reuse it after `build()` returns.
     #[must_use]
     pub fn for_arch(
         arch: &strider_target::SleighArch,
-        sleigh: rsleigh::Sleigh<R>,
+        sleigh: &'a mut rsleigh::Sleigh<R>,
         start_addr: u64,
         options: Options,
     ) -> Self {
@@ -137,7 +140,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///     Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
     ///         resolve_indirect_target(insns, target_vn, sleigh, lr_vn, rom, endianness)
     ///     });
-    /// let cfg = Builder::for_arch(&arch, sleigh, addr, opts)
+    /// let cfg = Builder::for_arch(&arch, &mut sleigh, addr, opts)
     ///     .with_indirect_resolver(resolver)
     ///     .build()?;
     /// ```
@@ -280,13 +283,12 @@ impl<R: rsleigh::MemReader> Builder<R> {
         self
     }
 
-    /// Builds the completed [`Cfg`] and returns it together with the
-    /// [`Sleigh`](rsleigh::Sleigh) handle that drove construction.
+    /// Builds the completed [`Cfg`].
     ///
-    /// The `Cfg` itself is a pure data structure (regions + edges) and no
-    /// longer owns the Sleigh; the caller keeps the returned handle and
-    /// threads it into the IR lifter / dot renderer (and into the next
-    /// CFG rebuild, so the SLA spec is loaded once per analysis).
+    /// The `Cfg` is a pure data structure (regions + edges) and does
+    /// not own the Sleigh; the borrowed Sleigh stays in the caller's
+    /// scope, usable immediately after `build()` returns for the IR
+    /// lifter / dot renderer / next CFG rebuild.
     ///
     /// Seeds the work queue with the entry address, processes items until the
     /// queue is empty, then locates the entry region.
@@ -295,7 +297,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Returns an `anyhow::Error` if disassembly fails, if the start region
     /// cannot be located after processing, or if any region split or edge
     /// routing fails.
-    pub fn build(mut self) -> Result<(Cfg, rsleigh::Sleigh<R>)> {
+    pub fn build(mut self) -> Result<Cfg> {
         self.work_queue.push((None, self.start_pcode_addr()));
         while let Some((parent_region, address)) = self.work_queue.pop() {
             self.explore(parent_region, address)?;
@@ -310,12 +312,11 @@ impl<R: rsleigh::MemReader> Builder<R> {
                 )
             })?;
 
-        let cfg = Cfg {
+        Ok(Cfg {
             region_graph: self.region_graph,
             entry: starting_region,
             start_addr_to_region_id: self.start_addr_to_region_id,
-        };
-        Ok((cfg, self.sleigh))
+        })
     }
 }
 
@@ -372,11 +373,18 @@ mod tests {
         }
     }
 
-    fn make_builder(start_addr: u64) -> Builder<TestReader> {
+    fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-            .expect("create empty Sleigh");
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+            .expect("create empty Sleigh")
+    }
+
+    fn make_builder<'a>(
+        start_addr: u64,
+        sleigh: &'a mut rsleigh::Sleigh<TestReader>,
+    ) -> Builder<'a, TestReader> {
+        let arch = SleighArch::x86_64();
         Builder::for_arch(&arch, sleigh, start_addr, OptionsBuilder::new().build())
     }
 
@@ -384,7 +392,8 @@ mod tests {
 
     #[test]
     fn add_region_inserts_into_graph_and_map() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let r = make_region(&[(0x1000, 0), (0x1004, 0)]);
         let id = b.add_region(r).unwrap();
 
@@ -394,7 +403,8 @@ mod tests {
 
     #[test]
     fn add_region_empty_region_returns_error() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let empty = Region {
             start_addr: addr(0x1000, 0),
             insns: Vec::new(),
@@ -406,7 +416,8 @@ mod tests {
 
     #[test]
     fn add_region_two_regions_both_present_with_distinct_indices() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let r1 = make_region(&[(0x1000, 0)]);
         let r2 = make_region(&[(0x1010, 0)]);
         let id1 = b.add_region(r1).unwrap();
@@ -422,13 +433,15 @@ mod tests {
 
     #[test]
     fn find_region_empty_graph_returns_none() {
-        let b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let b = make_builder(0x1000, &mut sleigh);
         assert!(b.find_region_containing_addr(addr(0x1000, 0)).is_none());
     }
 
     #[test]
     fn find_region_at_start_addr() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
@@ -440,7 +453,8 @@ mod tests {
 
     #[test]
     fn find_region_at_interior_addr() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
@@ -452,7 +466,8 @@ mod tests {
 
     #[test]
     fn find_region_at_last_insn() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
@@ -464,7 +479,8 @@ mod tests {
 
     #[test]
     fn find_region_beyond_end_returns_none() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
         assert!(b.find_region_containing_addr(addr(0x1020, 0)).is_none());
@@ -472,7 +488,8 @@ mod tests {
 
     #[test]
     fn find_region_two_adjacent_regions_route_correctly() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let id1 = b
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
@@ -498,7 +515,8 @@ mod tests {
 
     #[test]
     fn split_at_start_is_noop() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
@@ -514,7 +532,8 @@ mod tests {
 
     #[test]
     fn split_creates_two_regions_second_keeps_original_id() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let original = b
             .add_region(make_region(&[
                 (0x1000, 0),
@@ -530,7 +549,8 @@ mod tests {
 
     #[test]
     fn split_produces_correct_addr_ranges() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let original = b
             .add_region(make_region(&[
                 (0x1000, 0),
@@ -551,7 +571,8 @@ mod tests {
 
     #[test]
     fn split_adds_fallthrough_edge() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let original = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
@@ -564,7 +585,8 @@ mod tests {
 
     #[test]
     fn split_rewires_incoming_edges_to_first_half() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let a = b.add_region(make_region(&[(0x0ff0, 0)])).unwrap();
         let b_id = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
@@ -594,7 +616,8 @@ mod tests {
         // Region [(0x1000), (0x1004), (0x100c)] — hole between 0x1004
         // and 0x100c that 0x1008 falls into.  Mirrors the AArch64 PAC
         // zero-pcode-op case.
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let original = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x100c, 0)]))
             .unwrap();
@@ -614,7 +637,8 @@ mod tests {
 
     #[test]
     fn split_addr_below_every_insn_returns_error() {
-        let mut b = make_builder(0x1000);
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x1010, 0)]))
             .unwrap();

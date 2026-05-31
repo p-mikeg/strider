@@ -25,10 +25,11 @@ type TestReader = BufMemReader<Vec<u8>>;
 fn build_from_bytes(bytes: Vec<u8>, start: u64) -> (Cfg, Sleigh<TestReader>) {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, start);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    Builder::for_arch(&arch, sleigh, start, OptionsBuilder::new().build())
+    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let cfg = Builder::for_arch(&arch, &mut sleigh, start, OptionsBuilder::new().build())
         .build()
-        .expect("Builder::build")
+        .expect("Builder::build");
+    (cfg, sleigh)
 }
 
 fn dot_source(cfg: &Cfg, sleigh: &Sleigh<TestReader>) -> String {

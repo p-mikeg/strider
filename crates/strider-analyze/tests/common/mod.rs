@@ -222,7 +222,7 @@ pub fn analyze_with_known_targets(
 
     let arch = strider_target::SleighArch::x86_64();
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes.to_vec(), base);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create x86_64 sleigh");
     let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(
@@ -230,7 +230,7 @@ pub fn analyze_with_known_targets(
         ResolvedTargets::Multiple(targets.to_vec()),
     );
     let opts = OptionsBuilder::new().build();
-    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
         .with_known_targets(known_targets)
         .build()
         .expect("cfg build with Multiple known targets");
@@ -290,7 +290,7 @@ pub fn lift_for_pipeline(
     let ana = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc())
         .expect("Strider::new");
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
+    let mut sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
     let raw_addr = obj
         .symbol_by_name(fn_name)
@@ -318,7 +318,7 @@ pub fn lift_for_pipeline(
     // from `sleigh_arch` atomically.  (Earlier `Builder::new` /
     // `Builder::with_endianness` ctors silently defaulted the preset
     // to `X86_64`; they are no longer exposed.)
-    let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
+    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let outcome = ana.analyze_cfg(&cfg, &sleigh)

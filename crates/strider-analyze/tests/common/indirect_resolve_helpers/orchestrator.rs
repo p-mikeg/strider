@@ -60,10 +60,10 @@ pub fn run_pipeline_x86_64(
     let base = 0x1000u64;
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create x86_64 sleigh");
     let opts = OptionsBuilder::new().build();
-    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
         .build()
         .expect("cfg build");
 

@@ -694,9 +694,9 @@ mod tests {
             .expect("x86_64_systemv preset must be registered");
         let strider = crate::Strider::new(arch, regs, cc).expect("strider");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+        let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
             .expect("sleigh");
-        let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&arch, sleigh, 0x1000, strider_lift::cfg::OptionsBuilder::new().build())
+        let cfg = strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh, 0x1000, strider_lift::cfg::OptionsBuilder::new().build())
             .build()
             .expect("cfg");
         let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");

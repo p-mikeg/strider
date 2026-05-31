@@ -325,14 +325,11 @@ fn run_with_custom_pipeline(
     let strider_borrow = strider_obj.borrow(py);
     let cfg_borrow = cfg_obj.borrow(py);
     let sleigh_borrow = cfg_borrow.sleigh.borrow(py);
-    let sleigh_inner = sleigh_borrow.inner.as_ref().ok_or_else(|| {
-        into_strider_err(anyhow::anyhow!("Sleigh is in use; cannot analyze CFG"))
-    })?;
     let outcome = strider_borrow
         .inner
         .analyze_cfg_with(
             &cfg_borrow.inner,
-            sleigh_inner,
+            &sleigh_borrow.inner,
             strider_analyze::AnalyzeOptions {
                 per_address_ccs: Some(&per_address_built_ccs),
                 ..strider_analyze::AnalyzeOptions::default()

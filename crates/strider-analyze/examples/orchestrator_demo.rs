@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;
 
     let arch = strider_target::SleighArch::x86();
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
+    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
     let strider = strider_analyze::Strider::new(
         arch,
         sleigh.regs()?,
@@ -35,8 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("'{symbol}' symbol not found in binary {binary_path}"))?
         .address();
 
-    let (cfg, sleigh) =
-        strider_lift::cfg::Builder::for_arch(&arch, sleigh, addr, cfg_options).build()?;
+    let cfg =
+        strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh, addr, cfg_options).build()?;
 
     let dot = dot::GraphDot::new(cfg.dot_dumper(&sleigh), dot::DotStyle::dark_cfg());
     dot.dump_as_html("cfg.html")?;

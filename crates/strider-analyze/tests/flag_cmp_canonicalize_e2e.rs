@@ -28,9 +28,9 @@ mod common;
 fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let base = 0x1000u64;
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
+    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
     let opts = OptionsBuilder::new().build();
-    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
         .build()
         .expect("cfg build");
 

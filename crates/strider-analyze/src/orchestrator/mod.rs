@@ -334,11 +334,10 @@ where
     /// on the next rebuild and the loop diverges.
     known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// The Sleigh handle we thread through every iteration.  Initialised
-    /// from `Config::sleigh` at construction; consumed by
-    /// `Builder::for_arch` per iteration and handed back alongside the
-    /// `Cfg` by `Builder::build` (the `Cfg` no longer owns it).  `None`
-    /// only momentarily inside `build_lift_stable`.
-    sleigh: Option<rsleigh::Sleigh<R>>,
+    /// from `Config::sleigh` at construction; borrowed mutably by
+    /// `Builder::for_arch` per iteration (the builder doesn't own it,
+    /// and the `Cfg` it produces doesn't own it either).
+    sleigh: rsleigh::Sleigh<R>,
     /// The current optimised IR function.  Initialised to an empty
     /// placeholder by [`LoopState::new`] and overwritten with the real
     /// lift result by [`LoopState::build_initial_iteration`] before any
@@ -392,7 +391,7 @@ where
                     .collect::<Result<_>>()?
             };
         Ok(Self {
-            sleigh: Some(config.sleigh),
+            sleigh: config.sleigh,
             known_targets: FxHashMap::default(),
             // Empty placeholder; overwritten by `build_initial_iteration`
             // before any consumer reads it.
@@ -429,16 +428,11 @@ where
     /// Drive `build_lift_stable` once and seat the resulting graph,
     /// region index, and unresolved-branch list onto `self`.  Shared
     /// helper between [`Self::build_initial_iteration`] (initial lift) and
-    /// [`Self::rebuild`] (post-Rebuild re-lift).  `phase` names the
-    /// caller for the error message when the Sleigh handle is
-    /// missing.
-    fn lift_and_seat(&mut self, phase: &'static str) -> Result<()> {
-        let sleigh = self
-            .sleigh
-            .take()
-            .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at {phase}"))?;
-        let (function, unresolved, region_index, sleigh) = self.build_lift_stable(sleigh)?;
-        self.sleigh = Some(sleigh);
+    /// [`Self::rebuild`] (post-Rebuild re-lift).  `phase` is unused now
+    /// that the Sleigh is owned (no take/seat dance) — kept for caller
+    /// symmetry / future diagnostics.
+    fn lift_and_seat(&mut self, _phase: &'static str) -> Result<()> {
+        let (function, unresolved, region_index) = self.build_lift_stable()?;
         self.region_index = region_index;
         self.function = function;
         self.unresolved = unresolved;
@@ -446,8 +440,8 @@ where
     }
 
     /// Build the CFG, lift to IR, run the stable optimiser subset.
-    /// Returns `(graph, unresolved, region_index, sleigh)` so the caller
-    /// can re-use the harvested Sleigh handle across iterations.
+    /// Returns `(graph, unresolved, region_index)`; the Sleigh stays
+    /// owned by `self` across iterations.
     ///
     /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
     /// IR lift via [`Strider::analyze_cfg_with`], harvests the post-lift
@@ -457,18 +451,16 @@ where
     #[allow(clippy::type_complexity)]
     fn build_lift_stable(
         &mut self,
-        sleigh: rsleigh::Sleigh<R>,
     ) -> Result<(
         strider_ir::Function,
         Vec<(PcodeInsnAddr, strider_ir::Value)>,
         RegionIndex,
-        rsleigh::Sleigh<R>,
     )> {
-        // `build_cfg` hands the Sleigh back alongside the CFG (the CFG no
-        // longer owns it); we keep the handle to thread into the IR lift and
-        // to re-use in the next iteration without re-loading the SLA spec.
-        let (cfg, sleigh) = build_cfg(
-            sleigh,
+        // `build_cfg` borrows the Sleigh mutably for its duration; the
+        // owned handle on `self` stays usable for the IR lift below and
+        // for subsequent iterations.
+        let cfg = build_cfg(
+            &mut self.sleigh,
             self.strider,
             self.params.start_addr,
             self.params.rom.clone(),
@@ -486,7 +478,7 @@ where
             region_handles,
         } = self.strider.analyze_cfg_with(
             &cfg,
-            &sleigh,
+            &self.sleigh,
             crate::AnalyzeOptions {
                 all_vns: Some(all_vns),
                 per_address_ccs: Some(&self.params.per_address_built_ccs),
@@ -500,7 +492,7 @@ where
         })?;
         pipeline.run(&mut function, entry)?;
 
-        Ok((function, unresolved, region_index, sleigh))
+        Ok((function, unresolved, region_index))
     }
 
     fn no_unresolved(&self) -> bool {
@@ -1026,7 +1018,7 @@ fn read_or_init_var(
 /// shared decode cache.
 #[allow(clippy::too_many_arguments)]
 fn build_cfg<R>(
-    sleigh: rsleigh::Sleigh<R>,
+    sleigh: &mut rsleigh::Sleigh<R>,
     strider: &Strider,
     start_addr: strider_lift::cfg::MachineInsnAddr,
     rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
@@ -1034,7 +1026,7 @@ fn build_cfg<R>(
     allow_code_before_start_addr: bool,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     decode_cache: &DecodeCache,
-) -> Result<(Cfg, rsleigh::Sleigh<R>)>
+) -> Result<Cfg>
 where
     R: rsleigh::MemReader,
 {

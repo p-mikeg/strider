@@ -256,16 +256,15 @@ mod tests {
         let mem = strider_reader::ElfFileMemReader::from_object(&obj)
             .expect("ElfFileMemReader::from_object");
         let arch = SleighArch::x86_64();
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
+        let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
             .expect("create Sleigh");
         let entry_addr = obj
             .symbol_by_name(fn_name)
             .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
             .address();
-        Builder::for_arch(&arch, sleigh, entry_addr, OptionsBuilder::new().build())
+        Builder::for_arch(&arch, &mut sleigh, entry_addr, OptionsBuilder::new().build())
             .build()
             .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
-            .0
     }
 
     // ── regions / region_ids iteration ───────────────────────────────────

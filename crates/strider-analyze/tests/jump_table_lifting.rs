@@ -130,7 +130,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh =
+    let mut sleigh =
         Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
     let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(
@@ -138,7 +138,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         ResolvedTargets::Multiple(target_addrs.clone()),
     );
     let opts = OptionsBuilder::new().build();
-    let (cfg, sleigh) = Builder::for_arch(&arch, sleigh, base, opts)
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
         .with_known_targets(known_targets)
         .build()
         .expect("cfg build");

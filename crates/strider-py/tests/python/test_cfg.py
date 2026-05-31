@@ -50,9 +50,12 @@ def test_cfg_html_str_returns_html(x86_memory_elf):
 
 
 def test_build_cfg_leaves_sleigh_reusable(x86_memory_elf):
-    """build_cfg puts the inner Sleigh back into the caller's wrapper, so
-    the same PySleigh object stays usable afterwards and the first Cfg
-    can still render via the shared handle."""
+    """build_cfg borrows the inner Sleigh mutably for the duration of the
+    build; the same PySleigh wrapper stays usable for the next build,
+    and the first Cfg can still render via the shared handle.
+
+    Regression guard: pins the borrow contract — re-introducing an
+    ownership transfer that consumes the wrapper would fail here."""
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     mem = strider.load_elf(str(x86_memory_elf)).memory_map()
@@ -60,8 +63,7 @@ def test_build_cfg_leaves_sleigh_reusable(x86_memory_elf):
 
     cfg1 = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
 
-    # Reusing the SAME sleigh object used to raise
-    # StriderError("Sleigh already in use"); it must now succeed.
+    # Reusing the same Sleigh wrapper for a second build must succeed.
     cfg2 = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     assert cfg2 is not None
 

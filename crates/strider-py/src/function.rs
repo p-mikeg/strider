@@ -139,11 +139,7 @@ impl PyFunction {
     ) -> PyResult<DotResult> {
         let cfg_borrow = self.cfg.borrow(py);
         let sleigh_borrow = cfg_borrow.sleigh.borrow(py);
-        let sleigh = sleigh_borrow.inner.as_ref().ok_or_else(|| {
-            crate::errors::into_strider_err(anyhow::anyhow!(
-                "Sleigh is in use; cannot render function"
-            ))
-        })?;
+        let sleigh = &sleigh_borrow.inner;
         self.with_read(|function| {
             let dumper = function
                 .dot_dumper(sleigh)

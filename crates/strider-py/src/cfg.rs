@@ -1,15 +1,12 @@
 //! `PyCfg` — wraps `strider_lift::cfg::Cfg` and exposes dot rendering.
 //!
-//! `build_cfg` moves the inner `Sleigh` out of its `PySleigh` argument
-//! (the Sleigh moves into `strider_lift::cfg::Builder`, which hands it
-//! back from `build()`), then puts that returned Sleigh BACK into the
-//! caller's `PySleigh` before returning.  Net effect: the caller's
-//! `Sleigh` object is usable again after `build_cfg` returns — building
-//! a second CFG, a `Strider`, or any other consumer from the same
-//! handle just works.  `PyCfg` does not own a `Sleigh` of its own;
-//! instead it keeps a shared `Py<PySleigh>` handle (the same wrapper
-//! the caller passed in) and borrows the Sleigh from it on demand for
-//! dot rendering and register-name resolution.
+//! `build_cfg` borrows the inner `Sleigh` of its `PySleigh` argument
+//! mutably for the duration of the build (the cfg builder takes a
+//! `&mut Sleigh`); the wrapper stays usable across builds and any
+//! other consumer with no "in use" bookkeeping.  `PyCfg` keeps a shared
+//! `Py<PySleigh>` handle (the same wrapper the caller passed in) and
+//! borrows the Sleigh from it on demand for dot rendering and
+//! register-name resolution.
 
 use std::path::Path;
 
@@ -35,13 +32,12 @@ pub struct PyCfg {
 
 /// Build a control-flow graph for the function at `entry`.
 ///
-/// Moves the inner `Sleigh` of the `sleigh` argument into the cfg
-/// builder, then puts it back into the same `sleigh` wrapper before
-/// returning — so the `Sleigh` object stays usable afterwards (build a
-/// second CFG, a `Strider`, etc.).  The returned `Cfg` keeps a shared
-/// handle to that same `sleigh` wrapper for dot rendering.  Installs
-/// strider-analyze's indirect-branch resolver so `BranchIndirect` sites
-/// are classified at cfg time.
+/// Borrows the inner `Sleigh` of the `sleigh` argument mutably for the
+/// duration of the build; the `Sleigh` object stays usable afterwards
+/// for the next CFG build, IR lift, dot rendering, etc.  The returned
+/// `Cfg` keeps a shared handle to that same `sleigh` wrapper for dot
+/// rendering.  Installs strider-analyze's indirect-branch resolver so
+/// `BranchIndirect` sites are classified at cfg time.
 ///
 /// Args:
 ///     sleigh: A `Sleigh` built for the target arch + memory.
@@ -51,8 +47,7 @@ pub struct PyCfg {
 ///     function_max_size: Optional byte bound on how far past `entry`
 ///         the lifter may decode.
 ///
-/// Raises `StriderError` on a lift failure or if the Sleigh is already
-/// in use by another in-flight consumer.
+/// Raises `StriderError` on a lift failure.
 #[pyfunction(signature = (sleigh, entry, allow_code_before_start_addr=false, function_max_size=None))]
 pub fn build_cfg(
     py: Python<'_>,
@@ -61,13 +56,6 @@ pub fn build_cfg(
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
 ) -> PyResult<PyCfg> {
-    let mut sleigh_borrow = sleigh.borrow_mut(py);
-    let arch = sleigh_borrow.arch;
-    let inner_sleigh = sleigh_borrow
-        .take_inner()
-        .ok_or_else(|| into_strider_err(anyhow::anyhow!("Sleigh already in use")))?;
-    drop(sleigh_borrow);
-
     let mut opts_builder = strider_lift::cfg::OptionsBuilder::new();
     if allow_code_before_start_addr {
         opts_builder = opts_builder.allow_code_before_start_addr();
@@ -77,51 +65,43 @@ pub fn build_cfg(
     }
     let opts = opts_builder.build();
 
-    // Use `for_arch` so the CallOther classifier sees the actual arch
-    // preset.  (Earlier `Builder::new` ctors silently defaulted to
-    // `X86_64` and mis-classified arch-specific user-ops on non-x86
-    // targets; that ctor is no longer exposed.)
-    //
-    // Install the strider-analyze mini-IR resolver so the cfg-time
-    // resolver classifies `BranchIndirect` rather than deferring every
-    // site via `UnresolvedIndirectBranch`.
-    let resolver: strider_lift::cfg::IndirectResolverFn<AnyMemReader> =
-        std::sync::Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
-            strider_analyze::indirect_resolver::resolve_indirect_target(
-                insns, target_vn, sleigh, lr_vn, rom, endianness,
-            )
-        });
-    let (inner, returned_sleigh) =
-        strider_lift::cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
+    let inner = {
+        let mut sleigh_borrow = sleigh.borrow_mut(py);
+        let arch = sleigh_borrow.arch;
+
+        // Use `for_arch` so the CallOther classifier sees the actual arch
+        // preset.  (Earlier `Builder::new` ctors silently defaulted to
+        // `X86_64` and mis-classified arch-specific user-ops on non-x86
+        // targets; that ctor is no longer exposed.)
+        //
+        // Install the strider-analyze mini-IR resolver so the cfg-time
+        // resolver classifies `BranchIndirect` rather than deferring every
+        // site via `UnresolvedIndirectBranch`.
+        let resolver: strider_lift::cfg::IndirectResolverFn<AnyMemReader> =
+            std::sync::Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
+                strider_analyze::indirect_resolver::resolve_indirect_target(
+                    insns, target_vn, sleigh, lr_vn, rom, endianness,
+                )
+            });
+        strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh_borrow.inner, entry, opts)
             .with_indirect_resolver(resolver)
             .build()
-            .map_err(into_strider_err)?;
+            .map_err(into_strider_err)?
+    };
 
-    // Put the Sleigh the builder handed back into the caller's wrapper,
-    // so the same `sleigh` object is usable again after this returns.
-    sleigh.borrow_mut(py).put_inner(returned_sleigh);
-
-    // Keep the SAME shared handle on the Cfg so dot rendering borrows
-    // the (now restored) Sleigh from it.
     Ok(PyCfg { inner, sleigh })
 }
 
 impl PyCfg {
     /// Borrow the shared `Sleigh` handle and run `f` with the inner
-    /// `rsleigh::Sleigh`.  Returns a `StriderError` (rather than
-    /// panicking) when the Sleigh is currently moved out by some other
-    /// in-flight consumer (`inner == None`).
+    /// `rsleigh::Sleigh`.
     fn with_sleigh<R>(
         &self,
         py: Python<'_>,
         f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
     ) -> PyResult<R> {
         let sleigh_borrow = self.sleigh.borrow(py);
-        let inner = sleigh_borrow
-            .inner
-            .as_ref()
-            .ok_or_else(|| into_strider_err(anyhow::anyhow!("Sleigh is in use; cannot render CFG")))?;
-        f(inner)
+        f(&sleigh_borrow.inner)
     }
 }
 

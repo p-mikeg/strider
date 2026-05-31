@@ -1,9 +1,9 @@
 //! `PySleigh` — wraps a constructed `rsleigh::Sleigh` keyed off a
 //! `PySleighArch` + a memory reader (either `PyMemoryMap` or any
-//! `MemReader` subclass).  Holds the `Sleigh` in an `Option` so it can
-//! be moved into a downstream consumer (`strider_lift::cfg::Builder`, which takes
-//! the Sleigh by value) and then put back when the consumer hands it
-//! back via `Cfg::sleigh`.
+//! `MemReader` subclass).  The wrapper owns the `Sleigh` for its
+//! lifetime; downstream consumers (`strider_lift::cfg::Builder`,
+//! dot rendering) borrow it via `&mut sleigh.inner` for the duration
+//! of their call — no move-out / move-back dance.
 
 use pyo3::prelude::*;
 
@@ -13,13 +13,13 @@ use crate::reader::{AnyMemReader, MemInput};
 
 /// A constructed Sleigh keyed off a (SleighArch, reader) pair.
 ///
-/// The inner `Sleigh<AnyMemReader>` is held in an `Option` so it can
-/// be moved out (into a `strider_lift::cfg::Builder`, for example).
-/// While the inner is `None` the wrapper is "in use" by some
-/// downstream consumer; further moves raise `StriderError`.
+/// The inner `Sleigh<AnyMemReader>` is held directly (not in an
+/// `Option`); consumers borrow it for the duration of their call and
+/// the wrapper stays usable across consecutive consumers without any
+/// "in use" bookkeeping.
 #[pyclass(name = "Sleigh", module = "strider")]
 pub struct PySleigh {
-    pub(crate) inner: Option<rsleigh::Sleigh<AnyMemReader>>,
+    pub(crate) inner: rsleigh::Sleigh<AnyMemReader>,
     pub(crate) arch_name: &'static str,
     /// Retained so `build_cfg` can route through `strider_lift::cfg::Builder::for_arch`
     /// (carrying the actual arch preset, vs. the deleted `Builder::new`'s
@@ -28,26 +28,12 @@ pub struct PySleigh {
     pub(crate) arch: strider_target::SleighArch,
     /// Cached register table.  `Sleigh::regs()` only requires `&self`,
     /// but we eagerly cache it at construction time so callers can read
-    /// the registers after the inner Sleigh has been moved into a
-    /// downstream consumer (e.g. `strider_lift::cfg::Builder`).
+    /// registers without re-running the (non-trivial) regs probe each
+    /// time.
     pub(crate) regs: rsleigh::SleighRegs,
 }
 
 impl PySleigh {
-    /// Move the inner Sleigh out, leaving the wrapper as "in use".
-    /// Returns `None` if it is already in use.
-    pub(crate) fn take_inner(&mut self) -> Option<rsleigh::Sleigh<AnyMemReader>> {
-        self.inner.take()
-    }
-
-    /// Put an inner Sleigh back into the wrapper (the inverse of
-    /// `take_inner`).  `build_cfg` uses this to return the Sleigh the
-    /// cfg builder handed back, so the caller's wrapper is usable again
-    /// after the build instead of staying "in use".
-    pub(crate) fn put_inner(&mut self, sleigh: rsleigh::Sleigh<AnyMemReader>) {
-        self.inner = Some(sleigh);
-    }
-
     /// Internal constructor (mirrors `#[new]`).  Lets the run-style
     /// helpers in `run.rs` build a PySleigh without going through
     /// PyO3's argument-conversion path.
@@ -58,7 +44,7 @@ impl PySleigh {
             .regs()
             .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
         Ok(Self {
-            inner: Some(inner),
+            inner,
             arch_name: arch.preset_name,
             arch: arch.inner,
             regs,

@@ -72,7 +72,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .expect("probe regs");
     let ana = strider_analyze::Strider::new(sleigh_arch, regs, cc).expect("Strider::new");
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
+    let mut sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
     let raw_addr = obj
         .symbol_by_name(c.fn_name)
@@ -92,7 +92,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // atomically.  (The deleted `Builder::with_endianness` ctor would
     // silently default the preset to `X86_64`.)
-    let (cfg, sleigh) = strider_lift::cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
+    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, cfg_opts)
         .build()
         .expect("Cfg build");
     let mut function = ana.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg").function;
