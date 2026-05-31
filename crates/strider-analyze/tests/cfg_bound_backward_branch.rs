@@ -37,7 +37,6 @@ use strider_target::{CallingConvention, SleighArch};
 /// ```text
 /// 0x1000..0x1020:  prev_fn — 32 bytes of `nop`s ending in `ret`.
 /// 0x1020..0x102A:  target_fn — `mov eax, 5; jmp 0x1000` (10 bytes).
-/// 0x102A..      :  trailing `nop` padding (Sleigh over-read safety).
 /// ```
 ///
 /// `jmp 0x1000` from 0x1020+5 (insn after `mov`) = rel32 of
@@ -64,9 +63,6 @@ fn synthetic_bytes() -> Vec<u8> {
     bs.extend_from_slice(&[0xE9, 0xD6, 0xFF, 0xFF, 0xFF]);
     debug_assert_eq!(bs.len() as u64, TARGET_FN_END - PREV_FN);
 
-    // Post-fn padding so any Sleigh over-read past the jmp finds
-    // valid memory rather than a decode error masking the real bug.
-    bs.extend(std::iter::repeat_n(0x90u8, 32));
     bs
 }
 

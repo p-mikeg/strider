@@ -39,13 +39,7 @@ const TAIL_TARGET: u64 = 0x9000;
 /// `mov eax, 5; jmp 0x9000` at 0x1000 (10 bytes).  `jmp` target is
 /// 0x9000 (rel32 = 0x9000 - 0x100A = 0x7FF6 = `F6 7F 00 00` LE).
 fn synthetic_bytes() -> Vec<u8> {
-    let mut bs = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0xE9, 0xF6, 0x7F, 0x00, 0x00];
-    // Pad to a few extra bytes of NOPs so any over-read past the jmp
-    // (e.g. the orchestrator probing the next address) finds valid
-    // memory rather than a Sleigh decode error that would mask the
-    // real bug.
-    bs.extend(std::iter::repeat_n(0x90u8, 32));
-    bs
+    vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0xE9, 0xF6, 0x7F, 0x00, 0x00]
 }
 
 fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
@@ -138,7 +132,6 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     // Layout:
     //   0x1000..0x1080: NOP padding (the "previous function").
     //   0x1080..0x108A: our function — `mov eax, 5; jmp 0x1000`.
-    //   0x108A..      : NOP padding (over-read safety margin).
     //
     // jmp 0x1000 from 0x1080+5 (insn after `mov`) = rel32 of
     //   0x1000 - (0x1085 + 5) = 0x1000 - 0x108A = -0x8A = 0xFFFFFF76 LE.
@@ -148,7 +141,6 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     let mut bs = vec![0x90u8; 0x80]; // 0x1000..0x1080: padding
     bs.extend_from_slice(&[0xB8, 0x05, 0x00, 0x00, 0x00]); // mov eax, 5
     bs.extend_from_slice(&[0xE9, 0x76, 0xFF, 0xFF, 0xFF]); // jmp -0x8A → 0x1000
-    bs.extend(std::iter::repeat_n(0x90u8, 32));            // post-fn padding
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
@@ -200,11 +192,9 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     //   0x1002..0x1008: `lock cmpxchg %r14, 0x58(%rbx)` (multi-pcode-op,
     //                                                  intra-insn CONST
     //                                                  branches).
-    //   0x1008..      : NOP padding.
     const BASE: u64 = 0x1000;
     let mut bs = vec![0x31u8, 0xc0];
     bs.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
-    bs.extend(std::iter::repeat_n(0x90u8, 32));
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
@@ -251,8 +241,7 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
     //   fall-through: 0x1002 (also OOB at end_exclusive=0x1002).
     const BASE: u64 = 0x1000;
     const TAKEN_TARGET: u64 = 0x1080;
-    let mut bs = vec![0x74u8, 0x7e];
-    bs.extend(std::iter::repeat_n(0x90u8, 256));
+    let bs = vec![0x74u8, 0x7e];
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);

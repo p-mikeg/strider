@@ -20,9 +20,7 @@ mod common;
 ///   0x1000:  B8 05 00 00 00     mov eax, 5
 ///   0x1005:  E9 F6 7F 00 00     jmp 0x9000
 fn x86_64_tail_call_bytes() -> (Vec<u8>, u64, u64) {
-    let mut bs = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0xE9, 0xF6, 0x7F, 0x00, 0x00];
-    // NOP padding so any over-read past the jmp finds valid memory.
-    bs.extend(std::iter::repeat_n(0x90u8, 32));
+    let bs = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0xE9, 0xF6, 0x7F, 0x00, 0x00];
     (bs, 0x1000, 0x9000)
 }
 
@@ -41,11 +39,10 @@ fn x86_64_tail_call_bytes() -> (Vec<u8>, u64, u64) {
 ///   0x1000:  48 C7 C0 00 90 00 00     mov rax, 0x9000
 ///   0x1007:  FF E0                    jmp rax
 fn x86_64_indirect_jmp_to_const_bytes() -> (Vec<u8>, u64, u64) {
-    let mut bs = vec![
+    let bs = vec![
         0x48, 0xC7, 0xC0, 0x00, 0x90, 0x00, 0x00, // mov rax, 0x9000
         0xFF, 0xE0,                                // jmp rax
     ];
-    bs.extend(std::iter::repeat_n(0x90u8, 32)); // NOP pad
     (bs, 0x1000, 0x9000)
 }
 

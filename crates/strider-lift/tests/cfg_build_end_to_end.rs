@@ -146,8 +146,7 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
 fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
     // xor eax,eax (2 bytes, sets ZF); je -4 (2 bytes, taken=0x1000 in-range,
     // fall-through=0x1004 OOB at fn_max_size=4).
-    let mut bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
-    bytes.extend(std::iter::repeat_n(0x90u8, 64));
+    let bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
     let opts = OptionsBuilder::new().set_function_max_size(4);
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
 
@@ -161,8 +160,7 @@ fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
 fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
     // je +0x7e (2 bytes) at 0x1000 with fn_max_size=2 -> taken 0x1080 OOB,
     // fall-through 0x1002 also OOB.
-    let mut bytes = vec![0x74u8, 0x7e];
-    bytes.extend(std::iter::repeat_n(0x90u8, 256));
+    let bytes = vec![0x74u8, 0x7e];
     let opts = OptionsBuilder::new().set_function_max_size(2);
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
 
@@ -182,7 +180,6 @@ fn fall_through_past_fn_max_size_is_function_boundary_error() {
     // unterminated), not a tail call.
     let mut bytes = vec![0x31u8, 0xc0];
     bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
-    bytes.extend(std::iter::repeat_n(0x90u8, 16));
     let opts = OptionsBuilder::new().set_function_max_size(2);
     let arch = SleighArch::x86_64();
     let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
