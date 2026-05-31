@@ -79,8 +79,7 @@ impl PeepholePass for FlagCmpCanonicalize {
         root: NodeId,
     ) -> Result<OptimizationResult> {
         RULES.with(|rules| {
-            let apply = apply_rules_in_order(rules);
-            let fired = apply(ctx, root)?;
+            let fired = apply_rules_in_order(rules)(ctx, root)?;
             Ok(if fired {
                 OptimizationResult::Changed
             } else {

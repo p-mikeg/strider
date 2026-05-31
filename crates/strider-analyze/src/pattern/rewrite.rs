@@ -760,10 +760,9 @@ mod tests {
             boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0u64))),
             boxed_rule(rewrite_rule(mul(var(x), int_const(1u64)), var(x))),
         ];
-        let apply = apply_rules_in_order(&rules);
         let add_node = unique_add(&function);
         let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-        assert!(!apply(&mut ctx, add_node).unwrap());
+        assert!(!apply_rules_in_order(&rules)(&mut ctx, add_node).unwrap());
     }
 
     /// Two rules, only the second matches → composed result is `true`.
@@ -781,10 +780,9 @@ mod tests {
             // semantically, but fires on any Add).
             boxed_rule(rewrite_rule(add(var(y), any()), var(y))),
         ];
-        let apply = apply_rules_in_order(&rules);
         let add_node = unique_add(&function);
         let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-        let fired = apply(&mut ctx, add_node).unwrap();
+        let fired = apply_rules_in_order(&rules)(&mut ctx, add_node).unwrap();
         assert!(fired, "second rule should have fired");
     }
 

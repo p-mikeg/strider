@@ -53,19 +53,13 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         if self.value_lifter().lift(insn)? {
             return Ok(());
         }
-        // Coerce the generic closure to a trait object only on the
-        // control-flow paths that actually need it; arithmetic/memory
-        // arms above never see it.
+        // `handle_branch` / `handle_cond_branch` take `&dyn Fn(...)`;
+        // `&region_lookup` (generic `F: Fn(...)`) coerces to the trait
+        // object at the call boundary, so no explicit cast is needed.
         match insn.opcode {
             Opcode::Nop => {}
-            Opcode::Branch => {
-                let lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId> = &region_lookup;
-                self.handle_branch(region_id, lookup)?
-            }
-            Opcode::CondBranch => {
-                let lookup: &dyn Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId> = &region_lookup;
-                self.handle_cond_branch(region_id, insn, lookup)?
-            }
+            Opcode::Branch => self.handle_branch(region_id, &region_lookup)?,
+            Opcode::CondBranch => self.handle_cond_branch(region_id, insn, &region_lookup)?,
             Opcode::Store => self.handle_store(insn)?,
             // `Return` and `BranchIndirect` share a handler that emits a
             // calling-convention `Return`.  This is correct for the

@@ -168,8 +168,7 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// Propagates the first error from any rule.  See [`Self::apply_rule`].
     pub fn apply_rules(&mut self, rules: &[crate::pattern::BoxedRule]) -> Result<usize> {
-        let composed = crate::pattern::apply_rules_in_order(rules);
-        self.apply_rule(composed)
+        self.apply_rule(crate::pattern::apply_rules_in_order(rules))
     }
 
     /// Mutable access to the wrapped function.  Pairs with
