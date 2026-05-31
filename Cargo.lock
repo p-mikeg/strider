@@ -1371,6 +1371,7 @@ dependencies = [
  "expect-test",
  "petgraph",
  "rsleigh",
+ "rustc-hash",
  "smallvec",
  "strider-ir",
  "strider-ir-test-utils",

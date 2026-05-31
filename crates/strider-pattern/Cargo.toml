@@ -13,6 +13,7 @@ cranelift-entity = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 smallvec = { workspace = true }
+rustc-hash = "2"
 
 [dev-dependencies]
 strider-ir-test-utils = { path = "../strider-ir-test-utils" }

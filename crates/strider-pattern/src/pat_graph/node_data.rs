@@ -53,10 +53,11 @@ impl KindSpec {
 pub struct NodeData {
     pub kind: KindSpec,
     pub output_ty: Option<NodeOutputType>,
-    /// Reserved for future capture support (Task 3 will introduce
-    /// `crate::capture::CaptureRef` and wire it here).  Left as a
-    /// type-aliased `()` for now so the field exists structurally.
-    pub capture: Option<()>,
+    /// In-graph reference to a capture variable this pattern node
+    /// binds (`Some`) or no binding (`None`).  The capture itself
+    /// lives in `PatGraph::captures`; this field is the slot that
+    /// records "match against this pat node ⇒ bind capture `c`".
+    pub capture: Option<crate::capture::CaptureRef>,
     pub post_match: Option<PostMatchFn>,
     pub build_spec: Option<BuildSpec>,
 }
