@@ -4,4 +4,6 @@
 //! Public surface: chained builder free-functions (`add`, `int_const`, `var`,
 //! …) plus the `Pattern` and `Template` traits implemented by `PatGraph`.
 
-// Modules added in subsequent tasks.
+pub mod pat_graph;
+
+pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};
