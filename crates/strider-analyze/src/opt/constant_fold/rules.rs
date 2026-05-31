@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 use strider_ir::node::NodeId;
 
 use crate::opt::error::Result;
@@ -11,30 +9,41 @@ use super::eval_int::{eval_int_binary, eval_int_cmp};
 /// Runs every constant-fold rule group on `node`, OR-ing the per-group
 /// `bool` change flags.
 ///
-/// The five `LazyLock` rule statics keep their semantic grouping
+/// The five `thread_local!` rule caches keep their semantic grouping
 /// (identity / const-eval / bool-float / reassoc-and-mask /
 /// bitcast-extend) for readers, but the per-group wrapper functions
 /// they used to feed were byte-identical boilerplate — this single
 /// entry point replaces them.  The bitcast-extend group includes the
 /// `IntBitsToFloat`/`FloatBitsToInt` round-trip identities, so int↔float
 /// bitcasts are folded inline; there is no separate lowering step.
+///
+/// `thread_local!` (rather than `static LazyLock<...>`): a
+/// [`crate::pattern::BoxedRule`] captures patterns whose inner
+/// [`crate::pattern::Pat`] is `!Send + !Sync` now that strider runs
+/// single-threaded.  Strider runs on one thread per session, so the
+/// per-thread cache is observationally equivalent to a process-wide
+/// static; first-use cost is the rule-builder closures running once.
 pub(super) fn apply_all_rules(
     ctx: &mut crate::pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use crate::pattern::apply_rules_in_order;
     let mut changed = false;
-    for group in [
-        &*IDENTITY_RULES,
-        &*CONST_EVAL_RULES,
-        &*BOOL_FLOAT_RULES,
-        &*REASSOC_AND_MASK_RULES,
-        &*BITCAST_EXTEND_RULES,
-    ] {
-        if apply_rules_in_order(group)(ctx, node)? {
-            changed = true;
-        }
+    macro_rules! run_group {
+        ($cache:ident) => {
+            $cache.with(|group| {
+                if apply_rules_in_order(group)(ctx, node)? {
+                    changed = true;
+                }
+                Ok::<(), anyhow::Error>(())
+            })?;
+        };
     }
+    run_group!(IDENTITY_RULES);
+    run_group!(CONST_EVAL_RULES);
+    run_group!(BOOL_FLOAT_RULES);
+    run_group!(REASSOC_AND_MASK_RULES);
+    run_group!(BITCAST_EXTEND_RULES);
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -108,16 +117,18 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-/// Add/sub reassociation and AND-mask merging rules.
-///
-/// Rules:
-/// - `(x + C1) + C2 → x + (C1 + C2)`
-/// - `(x - C1) - C2 → x - (C1 + C2)`
-/// - `(x + C1) - C2 → x + (C1 - C2)`
-/// - `(a & C1) & C2 → a & (C1 & C2)`
-/// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
-static REASSOC_AND_MASK_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> =
-    LazyLock::new(build_reassoc_and_mask_rules);
+thread_local! {
+    /// Add/sub reassociation and AND-mask merging rules.
+    ///
+    /// Rules:
+    /// - `(x + C1) + C2 → x + (C1 + C2)`
+    /// - `(x - C1) - C2 → x - (C1 + C2)`
+    /// - `(x + C1) - C2 → x + (C1 - C2)`
+    /// - `(a & C1) & C2 → a & (C1 & C2)`
+    /// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
+    static REASSOC_AND_MASK_RULES: Vec<crate::pattern::BoxedRule> =
+        build_reassoc_and_mask_rules();
+}
 
 /// Builds the rule vec for [`BITCAST_EXTEND_RULES`].
 fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
@@ -288,15 +299,17 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-/// Bitcast, extend/truncate round-trip, and truncate-folding rules:
-/// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
-/// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
-/// - `Truncate(ZeroExtend(x)) → x` / `Truncate(SignExtend(x)) → x` (width-matched)
-/// - narrow-mul-through-sext: `Truncate(Mul(SignExt(a), SignExt(b))) → Mul(a, b)`
-/// - drop-high-half of a register-merge `Or` under a truncate
-/// - drop a redundant low-bits AND mask under a truncate
-static BITCAST_EXTEND_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> =
-    LazyLock::new(build_bitcast_extend_rules);
+thread_local! {
+    /// Bitcast, extend/truncate round-trip, and truncate-folding rules:
+    /// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
+    /// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
+    /// - `Truncate(ZeroExtend(x)) → x` / `Truncate(SignExtend(x)) → x` (width-matched)
+    /// - narrow-mul-through-sext: `Truncate(Mul(SignExt(a), SignExt(b))) → Mul(a, b)`
+    /// - drop-high-half of a register-merge `Or` under a truncate
+    /// - drop a redundant low-bits AND mask under a truncate
+    static BITCAST_EXTEND_RULES: Vec<crate::pattern::BoxedRule> =
+        build_bitcast_extend_rules();
+}
 
 /// Builds the rule vec for [`IDENTITY_RULES`].
 fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
@@ -371,16 +384,18 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-/// Algebraic identities for integer binary operations.
-///
-/// Rules ported from hand-written arms:
-/// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
-/// - `x ^ x → 0`, `x ^ 0 → x`
-/// - `x * 0 → 0`, `x * 1 → x`
-/// - `x & 0 → 0`, `x & x → x`, `x & all_ones → x`
-/// - `x | 0 → x`, `x | x → x`
-/// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
-static IDENTITY_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_identity_rules);
+thread_local! {
+    /// Algebraic identities for integer binary operations.
+    ///
+    /// Rules ported from hand-written arms:
+    /// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
+    /// - `x ^ x → 0`, `x ^ 0 → x`
+    /// - `x * 0 → 0`, `x * 1 → x`
+    /// - `x & 0 → 0`, `x & x → x`, `x & all_ones → x`
+    /// - `x | 0 → x`, `x | x → x`
+    /// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
+    static IDENTITY_RULES: Vec<crate::pattern::BoxedRule> = build_identity_rules();
+}
 
 /// Builds the rule vec for [`CONST_EVAL_RULES`].
 fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
@@ -548,11 +563,13 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-/// Full constant evaluation for integer binary ops, integer unary ops,
-/// integer comparisons, truncate, extend (zero/sign), popcount, and lzcount.
-/// Boolean ops are 1-bit integers, so they fold through the same integer
-/// rules at `I1`.
-static CONST_EVAL_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_const_eval_rules);
+thread_local! {
+    /// Full constant evaluation for integer binary ops, integer unary
+    /// ops, integer comparisons, truncate, extend (zero/sign),
+    /// popcount, and lzcount.  Boolean ops are 1-bit integers, so they
+    /// fold through the same integer rules at `I1`.
+    static CONST_EVAL_RULES: Vec<crate::pattern::BoxedRule> = build_const_eval_rules();
+}
 
 /// Builds the rule vec for [`BOOL_FLOAT_RULES`].
 fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
@@ -636,9 +653,11 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
     rules
 }
 
-/// Constant evaluation and absorbing-element rules for the I1 boolean ops
-/// (`IntBinaryOp`/`IntUnaryOp` at `I1`) and all float ops.  Also
-/// canonicalises:
-/// - `x ^ true → !x` (commutative)
-/// - `!!x → x`
-static BOOL_FLOAT_RULES: LazyLock<Vec<crate::pattern::BoxedRule>> = LazyLock::new(build_bool_float_rules);
+thread_local! {
+    /// Constant evaluation and absorbing-element rules for the I1
+    /// boolean ops (`IntBinaryOp`/`IntUnaryOp` at `I1`) and all float
+    /// ops.  Also canonicalises:
+    /// - `x ^ true → !x` (commutative)
+    /// - `!!x → x`
+    static BOOL_FLOAT_RULES: Vec<crate::pattern::BoxedRule> = build_bool_float_rules();
+}

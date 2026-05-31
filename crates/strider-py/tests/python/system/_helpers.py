@@ -101,11 +101,13 @@ def analyze(
 
     # Build a Strider so we can construct the convention-aware optimiser
     # pipeline (mirrors `common::analyze`'s `ana.build_optimizer_pipeline`
-    # + `opt::LoadReadOnly(rom)`).
+    # + `opt::LoadReadOnly`).  `LoadReadOnly()` is now a marker — its
+    # rom flows through `strider.run(..., rom=mem)` via the
+    # orchestrator's `OptCtx` plumbing.
     sleigh = strider.Sleigh(arch, mem)
     s = strider.Strider(arch, sleigh, cc)
     pipeline = s.build_optimizer_pipeline()
-    pipeline.add(strider.opt.LoadReadOnly(mem))
+    pipeline.add(strider.opt.LoadReadOnly())
 
     # `strider.run(pipeline=…)` lifts via `analyze_cfg` and applies the
     # supplied pipeline, leaving any `IndirectBranch` placeholder in
@@ -114,6 +116,7 @@ def analyze(
         arch=arch,
         cc=cc,
         mem=mem,
+        rom=mem,
         entry=addr,
         pipeline=pipeline,
         allow_code_before_start_addr=True,

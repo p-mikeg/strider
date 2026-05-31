@@ -132,9 +132,11 @@ def test_read_only_memory_subclass_default_raises():
 
 
 def test_load_readonly_accepts_callback_subclass():
-    # Just confirm we can build a LoadReadOnly pass with a callback ROM.
-    rom = ConstReadOnlyMemory()
-    pipe = LoadReadOnly(rom)
+    # Just confirm we can build a `LoadReadOnly` pass.  The rom flows
+    # through `strider.run(..., rom=...)` rather than being attached
+    # to the pass instance, so the constructor takes no arguments.
+    _ = ConstReadOnlyMemory()
+    pipe = LoadReadOnly()
     assert pipe is not None
 
 

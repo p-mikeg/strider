@@ -616,7 +616,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        p.run(&mut fg).unwrap();
+        p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -659,7 +659,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        p.run(&mut fg).unwrap();
+        p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -712,7 +712,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        p.run(&mut fg).unwrap();
+        p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
@@ -1073,7 +1073,7 @@ mod tests {
         p.add(ConstantFold);
         p.add(KnownBits);
         p.add(RedundantPhis);
-        p.run(&mut fg).unwrap();
+        p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))

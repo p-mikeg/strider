@@ -7,7 +7,7 @@ use anyhow::anyhow;
 
 use crate::cfg::Result;
 
-impl<R: rsleigh::MemReader> Builder<'_, R> {
+impl<R: rsleigh::MemReader> Builder<'_, '_, R> {
     /// Splits the region identified by `region_id` at `addr`, creating two
     /// regions:
     ///

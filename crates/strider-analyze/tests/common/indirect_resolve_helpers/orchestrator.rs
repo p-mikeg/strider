@@ -82,7 +82,7 @@ pub fn run_pipeline_x86_64(
     // RedundantPhis simplifies the trivial Return shape we don't
     // need to walk past.
     let p = strider.build_optimizer_pipeline();
-    p.run(&mut function).expect("optimizer pipeline");
+    p.run(&mut function, &strider_analyze::opt::OptCtx::empty()).expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),

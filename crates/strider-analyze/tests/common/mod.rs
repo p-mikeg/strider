@@ -269,7 +269,7 @@ pub fn lift_for_pipeline(
     strider_analyze::AnalyzeOutcome,
     strider_analyze::LiftDriver,
     strider_target::SleighArch,
-    std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
+    strider_reader::ElfFileMemReader,
 ) {
     let path = binary_path(arch, case);
     if !path.exists() {
@@ -304,12 +304,10 @@ pub fn lift_for_pipeline(
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let rom_for_cfg: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
-        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
-    );
+    let rom_for_cfg = strider_reader::ElfFileMemReader::from_object(&obj)
+        .expect("rom reader (cfg)");
     let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
-        .allow_code_before_start_addr()
-        .set_read_only_memory(rom_for_cfg);
+        .allow_code_before_start_addr();
     if let Some(lr) = ana.calling_convention().link_register_vn {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
@@ -319,13 +317,13 @@ pub fn lift_for_pipeline(
     // `Builder::with_endianness` ctors silently defaulted the preset
     // to `X86_64`; they are no longer exposed.)
     let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, cfg_opts)
+        .with_read_only_memory(&rom_for_cfg)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let outcome = ana.analyze_cfg(&cfg, &sleigh)
         .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"));
-    let rom_for_opt: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory> = std::sync::Arc::new(
-        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)"),
-    );
+    let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj)
+        .expect("rom reader (opt)");
     (outcome, ana, sleigh_arch, rom_for_opt)
 }
 
@@ -351,8 +349,8 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let ana = ana.with_alias_mode(strider_analyze::opt::AliasMode::AssumeStackConstDisjoint);
     let mut function = outcome.function;
     let mut p = ana.build_optimizer_pipeline();
-    p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
-    p.run(&mut function)
+    p.add(strider_analyze::opt::LoadReadOnly);
+    p.run(&mut function, &strider_analyze::opt::OptCtx::with_rom(&rom_for_opt))
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     function
 }

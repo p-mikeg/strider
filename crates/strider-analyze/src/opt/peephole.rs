@@ -118,9 +118,10 @@ macro_rules! impl_optimizer_from_peephole {
             fn optimize(
                 &self,
                 function: &mut strider_ir::Function,
+                _ctx: &$crate::opt::pipeline::OptCtx<'_>,
             ) -> $crate::opt::error::Result<$crate::opt::pipeline::OptimizationResult> {
-                let mut ctx = $crate::pattern::RewriteCtx::try_for_built(function)?;
-                $crate::opt::peephole::run_peephole(self, &mut ctx)
+                let mut rctx = $crate::pattern::RewriteCtx::try_for_built(function)?;
+                $crate::opt::peephole::run_peephole(self, &mut rctx)
             }
         }
     };

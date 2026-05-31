@@ -104,11 +104,12 @@ def test_cc_aware_passes_construct(x86_memory_elf):
     sleigh = strider.Sleigh(arch, mem)
 
     # Construct each CC/arch-aware pass to confirm their constructors
-    # accept the (sleigh, cc[, arch]) triples.
+    # accept the (sleigh, cc[, arch]) triples.  `LoadReadOnly()` is a
+    # marker now — its rom flows via `strider.run(..., rom=mem)`.
     b = strider.opt.LoadForward(sleigh, cc, arch)
     c = strider.opt.FunctionArgDetect(sleigh, cc)
     d = strider.opt.CallStackArgCollect(sleigh, cc)
-    e = strider.opt.LoadReadOnly(mem)
+    e = strider.opt.LoadReadOnly()
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(b)
     pipe.add(e)

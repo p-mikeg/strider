@@ -434,6 +434,7 @@ impl Optimizer for KnownBits {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
+        _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
         let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         // Analyze pass — propagate known bits to fixed point.  Read-only;

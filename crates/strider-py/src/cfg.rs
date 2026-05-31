@@ -78,7 +78,7 @@ pub fn build_cfg(
         // resolver classifies `BranchIndirect` rather than deferring every
         // site via `UnresolvedIndirectBranch`.
         let resolver: strider_lift::cfg::IndirectResolverFn<AnyMemReader> =
-            std::sync::Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
+            Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
                 strider_analyze::indirect_resolver::resolve_indirect_target(
                     insns, target_vn, sleigh, lr_vn, rom, endianness,
                 )

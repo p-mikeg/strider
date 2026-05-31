@@ -75,13 +75,55 @@ impl std::ops::BitOrAssign for OptimizationResult {
     }
 }
 
+/// Per-run context threaded through every [`Optimizer::optimize`] call.
+///
+/// Currently carries the optional borrowed read-only memory image
+/// consumed by [`crate::opt::LoadReadOnly`] (and a future home for any
+/// other per-run, pass-agnostic state).  Passes that don't need the
+/// context simply ignore it (`_ctx: &OptCtx<'_>`).
+///
+/// Borrowed (`&dyn ReadOnlyMemory`), not `Arc`-shared: strider runs
+/// single-threaded and the orchestrator owns the rom for the whole
+/// run, threading it down per pipeline invocation.
+pub struct OptCtx<'mem> {
+    /// Borrowed read-only memory image.  `None` disables every pass
+    /// gated on rom availability ([`crate::opt::LoadReadOnly`]
+    /// short-circuits to `NoChange`).
+    pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
+}
+
+impl<'mem> OptCtx<'mem> {
+    /// Construct an empty context — no rom, used by passes that need
+    /// the type but no per-run state, and by callers driving the
+    /// pipeline without a rom image.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self { rom: None }
+    }
+
+    /// Construct a context carrying a borrowed rom.  Passes that need
+    /// the rom (e.g. [`crate::opt::LoadReadOnly`]) read it via
+    /// `ctx.rom`; passes that don't ignore the ctx.
+    #[must_use]
+    pub const fn with_rom(rom: &'mem dyn strider_ir::ReadOnlyMemory) -> Self {
+        Self { rom: Some(rom) }
+    }
+}
+
+impl Default for OptCtx<'_> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 /// A single IR optimization pass.
 ///
 /// Implement this trait to add a new pass.  The pass receives the
 /// `function` (whose entry [`strider_ir::node::NodeId`] is reachable
-/// via `function.entry()`), applies whatever transformations it can in
-/// one sweep, and returns [`OptimizationResult::Changed`] if anything
-/// was modified (causing the pipeline to run another iteration) or
+/// via `function.entry()`) plus an [`OptCtx`] of per-run state, applies
+/// whatever transformations it can in one sweep, and returns
+/// [`OptimizationResult::Changed`] if anything was modified (causing
+/// the pipeline to run another iteration) or
 /// [`OptimizationResult::NoChange`] if the graph is already in normal
 /// form for this pass.
 ///
@@ -95,7 +137,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// internally at the top of `optimize`:
 ///
 /// ```
-/// # use strider_analyze::opt::{OptimizationResult, Optimizer};
+/// # use strider_analyze::opt::{OptCtx, OptimizationResult, Optimizer};
 /// # use strider_analyze::pattern::RewriteCtx;
 /// # use strider_ir::Function;
 /// #[derive(Clone)]
@@ -104,6 +146,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 ///     fn optimize(
 ///         &self,
 ///         function: &mut Function,
+///         _ctx: &OptCtx<'_>,
 ///     ) -> anyhow::Result<OptimizationResult> {
 ///         let _ctx = RewriteCtx::try_for_built(function)?;
 ///         // ... pass body operating on `_ctx` ...
@@ -118,12 +161,15 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// `function.entry().expect("Optimizer::optimize: function must be built")`
 /// — the pipeline only ever runs over a built function, so the entry
 /// is guaranteed to be `Some(_)`.
-pub trait Optimizer: OptimizerClone + Send + Sync {
+pub trait Optimizer: OptimizerClone {
     /// Run one sweep of this pass over the IR `function`.
     ///
     /// The function is guaranteed to be in its built form (i.e.
     /// `function.entry()` is `Some(_)`); passes that need the entry
     /// derive it via `function.entry().expect(...)`.
+    ///
+    /// `ctx` carries per-run state (currently the borrowed rom image);
+    /// passes that don't consume the ctx ignore it (`_ctx: &OptCtx<'_>`).
     ///
     /// # Errors
     ///
@@ -133,6 +179,7 @@ pub trait Optimizer: OptimizerClone + Send + Sync {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
+        ctx: &OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult>;
 
     /// Symbolic name of this pass.  Defaults to
@@ -235,6 +282,9 @@ impl OptimizerPipeline {
     /// `function` must be in its built form (i.e. `function.entry()` is
     /// `Some(_)`); each pass derives the entry [`strider_ir::node::NodeId`]
     /// internally as needed, and the final validation step requires it.
+    /// `ctx` carries per-run pass-agnostic state (currently the borrowed
+    /// rom image); the orchestrator constructs one per pipeline run, ad-hoc
+    /// callers use [`OptCtx::empty`].
     ///
     /// Returns `Ok(())` when no pass changed the graph in a full iteration
     /// and all post-passes completed without error.  Propagates the first
@@ -250,13 +300,14 @@ impl OptimizerPipeline {
     pub fn run(
         &self,
         function: &mut strider_ir::Function,
+        ctx: &OptCtx<'_>,
     ) -> crate::opt::Result<()> {
         const MAX_ITERS: u32 = 1024;
         let mut iters: u32 = 0;
         loop {
             let mut changed = false;
             for opt in &self.passes {
-                if opt.optimize(function)?.changed() {
+                if opt.optimize(function, ctx)?.changed() {
                     changed = true;
                 }
             }
@@ -269,7 +320,7 @@ impl OptimizerPipeline {
             }
         }
         for opt in &self.post_passes {
-            opt.optimize(function)?;
+            opt.optimize(function, ctx)?;
         }
         let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!(
@@ -287,6 +338,7 @@ mod tests {
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+    use super::OptCtx;
     use strider_ir::FunctionBuilder;
     use strider_ir::node::NodeOutputType;
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
@@ -315,7 +367,7 @@ mod tests {
         let mut function = one_const_fn(3);
         let pipeline = crate::opt::default_pipeline();
         let before = function.walk().count();
-        pipeline.run(&mut function)?;
+        pipeline.run(&mut function, &OptCtx::empty())?;
         let after = function.walk().count();
         // The default pipeline on an already-folded constant cannot fold
         // further; the reachable-count is stable.  This pins that
@@ -338,6 +390,7 @@ mod tests {
             fn optimize(
                 &self,
                 _function: &mut strider_ir::Function,
+                _ctx: &OptCtx<'_>,
             ) -> crate::opt::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)
             }
@@ -347,7 +400,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(&mut function)
+            .run(&mut function, &OptCtx::empty())
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -361,7 +414,7 @@ mod tests {
     #[test]
     fn run_validates_after_default_pipeline() -> crate::opt::Result<()> {
         let mut function = one_const_fn(0);
-        crate::opt::default_pipeline().run(&mut function)?;
+        crate::opt::default_pipeline().run(&mut function, &OptCtx::empty())?;
         Ok(())
     }
 
@@ -390,7 +443,7 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
-        p.run(&mut function)?;
+        p.run(&mut function, &OptCtx::empty())?;
         Ok(())
     }
 
@@ -434,7 +487,7 @@ mod tests {
         p.add(RedundantPhis);
         p.add(DeadBranchElimination);
         p.add(LoadForward::new(sp, Endianness::Little));
-        p.run(&mut function)?;
+        p.run(&mut function, &OptCtx::empty())?;
 
         let ret = function
             .all_node_ids()
@@ -494,7 +547,7 @@ mod tests {
         p.add(DeadBranchElimination);
         p.add(LoadForward::new(sp, Endianness::Little));
         p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
-        p.run(&mut function)?;
+        p.run(&mut function, &OptCtx::empty())?;
 
         let call = function
             .all_node_ids()
@@ -528,7 +581,7 @@ mod tests {
             }
             Ok(acc)
         })?;
-        crate::opt::default_pipeline().run(&mut function)?;
+        crate::opt::default_pipeline().run(&mut function, &OptCtx::empty())?;
         // After fixed point, the 50-deep chain has folded to a single
         // `IntConst(50)`; the reachable set is small.
         assert!(

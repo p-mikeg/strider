@@ -20,7 +20,7 @@ fn known_bits_or_then_and() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg2)?.changed();
+        changed = KnownBits.optimize(&mut fg2, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg2)?, NodeKind::IntConst(4));
     Ok(())
@@ -38,7 +38,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
@@ -49,7 +49,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
 #[test]
 fn known_bits_const_no_change() -> Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(42u64, NodeOutputType::I64).unwrap()))?;
-    assert!(!KnownBits.optimize(&mut fg)?.changed());
+    assert!(!KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed());
     Ok(())
 }
 
@@ -65,7 +65,7 @@ fn known_bits_popcount_range() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
@@ -87,7 +87,7 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
@@ -106,7 +106,7 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
@@ -127,7 +127,7 @@ fn known_bits_long_or_and_chain() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
     Ok(())
@@ -146,7 +146,7 @@ fn known_bits_lzcount_range() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
@@ -167,7 +167,7 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
@@ -192,7 +192,7 @@ fn known_bits_neg_round_trip() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
     Ok(())
@@ -211,7 +211,7 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     // the final state matches.
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     let val = return_value(&fg)?;
     let semantic = fg.int_const_val(val);
@@ -278,7 +278,7 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     let val = return_value(&fg)?;
     assert_eq!(fg.int_const_val(val), Some(1));
@@ -303,7 +303,7 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     let val = return_value(&fg)?;
     assert_eq!(fg.int_const_val(val), Some(0x80));
@@ -336,7 +336,7 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     let val = return_value(&fg)?;
     assert_eq!(
@@ -360,7 +360,7 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     let val = return_value(&fg)?;
     assert_eq!(
@@ -393,7 +393,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     let val = return_value(&fg)?;
     let semantic = fg.int_const_val(val);
@@ -430,7 +430,7 @@ fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(
         return_kind(&fg)?,
@@ -454,7 +454,7 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
     })?;
     let mut changed = true;
     while changed {
-        changed = KnownBits.optimize(&mut fg)?.changed();
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
     }
     assert_eq!(
         return_kind(&fg)?,

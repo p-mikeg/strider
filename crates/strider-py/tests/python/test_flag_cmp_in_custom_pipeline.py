@@ -42,7 +42,13 @@ from .conftest import fixture_path
 
 def _build_user_pipeline_with_fcc(sl, sleigh, cc, mem):
     """A bsdfinder-style custom pipeline that bolts
-    ``FlagCmpCanonicalize`` on top of the user's chosen passes."""
+    ``FlagCmpCanonicalize`` on top of the user's chosen passes.
+
+    The `mem` arg is unused here — `LoadReadOnly()` receives its rom
+    image via the orchestrator's `OptCtx` plumbing (see
+    `strider.run(..., rom=mem)`); the pass instance is now a marker.
+    """
+    del mem
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(opt.ConstantFold())
     pipe.add(opt.KnownBits())
@@ -50,7 +56,7 @@ def _build_user_pipeline_with_fcc(sl, sleigh, cc, mem):
     pipe.add(opt.IfCondInversion())
     pipe.add(opt.RedundantPhis())
     pipe.add(opt.DeadBranchElimination())
-    pipe.add(opt.LoadReadOnly(mem))
+    pipe.add(opt.LoadReadOnly())
     pipe.add(opt.LoadForward(sl, cc, sleigh))
     pipe.add_post(opt.FunctionArgDetect(sl, cc))
     pipe.add_post(opt.CallStackArgCollect(sl, cc))

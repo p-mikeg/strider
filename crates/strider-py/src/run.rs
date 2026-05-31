@@ -190,7 +190,13 @@ fn run_via_orchestrator(
     let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
-    let rom_arc = rom.map(|r| r.into_arc());
+    // The orchestrator owns the rom via `Box<dyn ReadOnlyMemory>` so
+    // it can thread it down as `&dyn ReadOnlyMemory` through the
+    // optimizer's `OptCtx`.  The `PyReadOnlyMemoryAdapter` adapter
+    // refcounts the Python object itself (`Py<PyAny>`), so a single
+    // boxed owner suffices for the duration of the run.
+    let rom_box: Option<Box<dyn strider_analyze::opt::ReadOnlyMemory>> =
+        rom.map(MemInput::into_box);
 
     // per_address_ccs currently only supports preset-form CCs (the
     // orchestrator's RunConfig field resolves them against Sleigh at
@@ -221,7 +227,7 @@ fn run_via_orchestrator(
     // sleigh, the rom, and every CC, so the loop runs without the GIL.
     let arch_inner = arch.inner;
     let options = strider_analyze::RunOptions {
-        rom: rom_arc,
+        rom: rom_box,
         fn_max_size: function_max_size,
         allow_code_before_start_addr,
         compact,
@@ -284,14 +290,16 @@ fn run_with_custom_pipeline(
     compact: bool,
     per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
 ) -> PyResult<PyRunResult> {
-    // Wire the user-supplied rom into the pipeline by prepending a
-    // LoadReadOnly pass.  Previously the rom was silently discarded on
-    // this path — users with custom pipelines who passed `rom=mem`
-    // expecting LoadReadOnly to fold loads got no folding at all.
-    // Pass `rom=None` to opt out.
-    if let Some(rom_input) = rom {
-        let rom_arc = rom_input.into_arc();
-        pipeline.prepend_load_read_only(rom_arc)?;
+    // The rom now travels via the optimizer's `OptCtx` rather than
+    // being attached to a `LoadReadOnly` pass instance.  Prepend a
+    // unit `LoadReadOnly` if the caller supplied a rom so the
+    // pipeline definitely runs the fold step (even if the user's
+    // hand-built pipeline didn't add it explicitly); the actual rom
+    // is bound into the ctx below.  No-op when `rom` is `None`.
+    let rom_box: Option<Box<dyn strider_analyze::opt::ReadOnlyMemory>> =
+        rom.map(MemInput::into_box);
+    if rom_box.is_some() {
+        pipeline.prepend_load_read_only()?;
     }
     let reader: AnyMemReader = mem.into_any();
     let sleigh = Py::new(py, PySleigh::new_internal(arch.clone(), reader)?)?;
@@ -360,8 +368,12 @@ fn run_with_custom_pipeline(
     {
         let py_function_borrow = py_function.borrow(py);
         let mut function = py_function_borrow.write_inner().map_err(into_strider_err)?;
+        let ctx = match rom_box.as_deref() {
+            Some(rom) => strider_analyze::opt::OptCtx::with_rom(rom),
+            None => strider_analyze::opt::OptCtx::empty(),
+        };
         actual_pipeline
-            .run(&mut function)
+            .run(&mut function, &ctx)
             .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
         if compact {
             function.compact().map_err(into_strider_err)?;

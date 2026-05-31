@@ -278,6 +278,7 @@ impl Optimizer for DeadBranchElimination {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
+        _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
         let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         // DBE only fires on `If` nodes; pre-filter via `seeded_kind` for

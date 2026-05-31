@@ -53,6 +53,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let unresolved = outcome.unresolved_branches.clone();
     let mut function = outcome.function;
 
+    let ctx = strider_analyze::opt::OptCtx::with_rom(&rom_for_opt);
     if unresolved.is_empty() {
         // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
         // The test's promise is "no UnresolvedIndirectBranch survives";
@@ -60,8 +61,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // post-lift sanity by running the optimiser pipeline so any
         // pipeline regression on the placeholder code-path is caught.
         let mut p = ana.build_optimizer_pipeline();
-        p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt));
-        p.run(&mut function)
+        p.add(strider_analyze::opt::LoadReadOnly);
+        p.run(&mut function, &ctx)
             .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
         return;
     }
@@ -70,13 +71,13 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     // classification — same shape as the orchestrator's per-iteration
     // pre-classify pass.
     let mut p = ana.build_optimizer_pipeline();
-    p.add(strider_analyze::opt::LoadReadOnly::new(rom_for_opt.clone()));
-    p.run(&mut function)
+    p.add(strider_analyze::opt::LoadReadOnly);
+    p.run(&mut function, &ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn;
     let stack_vn = Some(ana.calling_convention().stack_vn);
-    let rom_for_classify = rom_for_opt;
+    let rom_for_classify: &dyn strider_analyze::opt::ReadOnlyMemory = &rom_for_opt;
     for (anchor_addr, anchor_output) in &unresolved {
         // After the optimizer runs, the placeholder IndirectBranch's
         // current 3rd-input may differ from the cached `anchor_output`
@@ -116,7 +117,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
                 view,
                 *live,
                 lr_vn,
-                Some(rom_for_classify.as_ref()),
+                Some(rom_for_classify),
                 stack_vn,
                 &known,
             );

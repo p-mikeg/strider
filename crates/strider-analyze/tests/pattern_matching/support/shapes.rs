@@ -205,7 +205,7 @@ pub fn function_arg_reg() -> (Function, rsleigh::Vn) {
     let v = t.read_var(&reg);
     let mut function = t.ret_val(v);
     FunctionArgDetect::new(vec![reg], sp, vec![])
-        .optimize(&mut function)
+        .optimize(&mut function, &strider_analyze::opt::OptCtx::empty())
         .expect("FunctionArgDetect");
     (function, reg)
 }

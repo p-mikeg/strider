@@ -119,9 +119,14 @@ pub(crate) fn intern_str(name: &str) -> PyResult<strider_analyze::pattern::Captu
 ///
 /// Held inside an `Arc` so PyPat can be cheaply cloned and passed as
 /// sub-patterns to multiple builder field methods.
+///
+/// `unsendable`: `strider_analyze::pattern::Pat` is no longer
+/// `Send + Sync` (strider runs single-threaded).  PyO3's `unsendable`
+/// marker pins this class to its creating thread instead of asserting
+/// the auto traits at compile time.
 // See PyCapture above for the `#[gen_stub_pyclass]` rationale.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
-#[pyclass(name = "Pat", module = "strider.pattern")]
+#[pyclass(name = "Pat", module = "strider.pattern", unsendable)]
 #[derive(Clone)]
 pub struct PyPat {
     pub(crate) inner: Arc<strider_analyze::pattern::Pat>,
@@ -129,6 +134,10 @@ pub struct PyPat {
 
 impl PyPat {
     pub(crate) fn from_pat(p: strider_analyze::pattern::Pat) -> Self {
+        // `Pat` is `!Send + !Sync`; the surrounding `PyPat` is
+        // `#[pyclass(unsendable)]`, so the `Arc` never crosses
+        // threads.  Suppress the lint locally rather than crate-wide.
+        #[allow(clippy::arc_with_non_send_sync)]
         Self { inner: Arc::new(p) }
     }
 

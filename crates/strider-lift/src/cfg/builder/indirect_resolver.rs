@@ -93,12 +93,11 @@ pub enum ResolvedTargets {
 /// pattern looks like:
 ///
 /// ```text
-/// use std::sync::Arc;
 /// use strider_lift::cfg::Builder;
 /// use strider_analyze::indirect_resolver::resolve_indirect_target;
 ///
 /// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
-///     Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
+///     Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
 ///         resolve_indirect_target(insns, target_vn, sleigh, lr_vn, rom, endianness)
 ///     });
 /// let cfg = Builder::for_arch(&arch, sleigh, addr, opts)
@@ -110,9 +109,10 @@ pub enum ResolvedTargets {
 /// `strider-analyze` — that would create a back-edge.  The snippet is
 /// the canonical pattern downstream consumers wire up.)
 ///
-/// `Send + Sync` is required because resolvers may be shared across
-/// builders in multi-threaded analysis pipelines.
-pub type IndirectResolverFn<R> = std::sync::Arc<
+/// The resolver is single-owner (`Box<dyn Fn>`): strider runs
+/// single-threaded, so the `Send + Sync` bound and `Arc` sharing the
+/// previous shape carried are vestigial.
+pub type IndirectResolverFn<R> = Box<
     dyn Fn(
             &[RegionInstruction],
             rsleigh::Vn,
@@ -120,7 +120,5 @@ pub type IndirectResolverFn<R> = std::sync::Arc<
             Option<rsleigh::Vn>,
             Option<&dyn ReadOnlyMemory>,
             Endianness,
-        ) -> Result<Option<ResolvedTargets>>
-        + Send
-        + Sync,
+        ) -> Result<Option<ResolvedTargets>>,
 >;

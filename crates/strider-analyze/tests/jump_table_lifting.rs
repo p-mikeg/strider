@@ -160,7 +160,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 
     let pipeline = strider.build_optimizer_pipeline();
     pipeline
-        .run(&mut function)
+        .run(&mut function, &strider_analyze::opt::OptCtx::empty())
         .expect("optimizer pipeline");
 
     let if_count_post = common::count_ifs(&function);

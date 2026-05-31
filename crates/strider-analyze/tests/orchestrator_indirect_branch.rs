@@ -12,7 +12,6 @@
 mod common;
 
 use object::{Object, ObjectSymbol};
-use std::sync::Arc;
 
 fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
     -> anyhow::Result<strider_ir::Function>
@@ -35,7 +34,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         _ => raw_addr,
     };
 
-    let rom: Arc<dyn strider_analyze::opt::ReadOnlyMemory> = Arc::new(
+    let rom: Box<dyn strider_analyze::opt::ReadOnlyMemory> = Box::new(
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"),
     );
 

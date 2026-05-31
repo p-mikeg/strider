@@ -17,9 +17,10 @@
 //!    value-producing pcode instructions.
 //! 2. Read the current `NodeOutputId` of `target_vn` and emit a
 //!    `Return(target_value)` so the value is reachable from the entry.
-//! 3. Run `ConstantFold + KnownBits + RedundantPhis` (and optionally
-//!    [`crate::opt::LoadReadOnly`] when the caller passes a [`strider_ir::ReadOnlyMemory`])
-//!    over the resulting [`strider_ir::Graph`].
+//! 3. Run `ConstantFold + KnownBits + LoadReadOnly + RedundantPhis`
+//!    over the resulting [`strider_ir::Graph`].  [`crate::opt::LoadReadOnly`]
+//!    short-circuits when the caller's [`crate::opt::OptCtx`] carries
+//!    no rom, so the pipeline shape is identical with or without one.
 //! 4. Inspect the producer of the post-fold target value:
 //!    - `IntConst(k)` → [`ResolvedTargets::Single`] when `k` fits a `u64`
 //!      (via `u128_to_branch_target`); a constant with high bits set
@@ -46,7 +47,9 @@ use strider_ir::ReadOnlyMemory;
 use strider_lift::cfg::{RegionInstruction, ResolvedTargets, Result};
 use strider_target::Endianness;
 
-use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
+use crate::opt::{
+    ConstantFold, KnownBits, LoadReadOnly, OptCtx, OptimizerPipeline, RedundantPhis,
+};
 
 /// Resolves the target of a `BranchIndirect` against `region_insns`.
 ///
@@ -69,9 +72,11 @@ use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
 /// classification is impossible and the resolver falls through to the
 /// unresolved-error path.
 ///
-/// `rom` enables [`crate::opt::LoadReadOnly`]-equivalent folding inside
-/// the mini-graph's optimizer pipeline so that loads from the binary's
-/// `.rodata` / `.text` resolve to constants.  `None` skips the pass.
+/// `rom` enables [`crate::opt::LoadReadOnly`] folding inside the
+/// mini-graph's optimizer pipeline so that loads from the binary's
+/// `.rodata` / `.text` resolve to constants.  `None` leaves
+/// `LoadReadOnly` in the pipeline as a no-op (it short-circuits when
+/// the caller's [`crate::opt::OptCtx`] carries no rom).
 ///
 /// # Errors
 ///
@@ -97,21 +102,19 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
         cc_link_register_vn,
         endianness,
     )?;
-    make_resolver_pipeline().run(&mut fg)?;
-
-    // If the caller supplied a ReadOnlyMemory, resolve constant-address
-    // loads against it and re-run the core fold pipeline so the loaded
-    // constants propagate.  Iterate to fixed point: each
-    // `resolve_const_loads` sweep folds every Load whose address is
-    // currently constant.  ConstantFold + KnownBits then propagate the
-    // new `IntConst` outputs through any address-arithmetic chain (e.g.
-    // `Add(loaded_const, K)`) so that chained `Load(Load(const_addr))`
-    // shapes resolve in subsequent sweeps.
-    if let Some(rom) = rom {
-        while resolve_const_loads(&mut fg, rom)? {
-            make_resolver_pipeline().run(&mut fg)?;
-        }
-    }
+    // The resolver pipeline carries `LoadReadOnly` unconditionally; the
+    // pass short-circuits when `ctx.rom` is `None`, so a caller that
+    // didn't supply a rom pays only a single reachable-walk per
+    // fixed-point iteration.  When a rom IS available, the pipeline's
+    // shared fixed-point loop drives `ConstantFold` / `KnownBits` /
+    // `LoadReadOnly` / `RedundantPhis` to convergence in one pass —
+    // chained `Load(Load(const_addr))` shapes resolve as each load's
+    // address fold exposes the next.
+    let ctx = match rom {
+        Some(rom) => OptCtx::with_rom(rom),
+        None => OptCtx::empty(),
+    };
+    make_resolver_pipeline().run(&mut fg, &ctx)?;
 
     // Classify by inspecting the `Return` node's value-input (slot
     // index 2 — slots 0/1 are control/memory).  Looking at the
@@ -286,20 +289,21 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // rebuilt per invocation; most binaries have only a handful of
     // indirect branches, so the per-site construction cost (a handful
     // of small allocs) is dominated by the actual fold work.
-    //
-    // `LoadReadOnly` is NOT added to the pipeline by the caller: its
-    // `Optimizer` impl requires `M: 'static` (the pipeline
-    // stores passes as `Box<dyn Optimizer + 'static>`), and `rom`
-    // is borrowed for an arbitrary lifetime.  The with-rom branch
-    // upstream drives an inlined load-folder by hand — see
-    // [`resolve_const_loads`].
     builder.build()
 }
 
 /// Builds a fresh fixed-point pipeline of `ConstantFold + KnownBits +
-/// RedundantPhis` — the resolver runs this once initially and again
-/// after the with-rom load-folding pass to propagate any constants
-/// that loads exposed.
+/// LoadReadOnly + RedundantPhis` for the cfg-time mini-IR resolver.
+///
+/// `LoadReadOnly` is always present: the pass short-circuits to
+/// `NoChange` when the caller's [`OptCtx`] carries no rom, so a
+/// rom-less resolver run pays only one reachable-walk per fixed-point
+/// iteration and never reaches the rom-dispatch path.  When a rom
+/// IS supplied via [`OptCtx::with_rom`], the pipeline's shared
+/// fixed-point loop interleaves `ConstantFold` / `KnownBits` /
+/// `LoadReadOnly` / `RedundantPhis` to convergence — chained
+/// `Load(Load(const_addr))` shapes resolve as each load's address fold
+/// exposes the next, without a separate outer-loop scaffold.
 ///
 /// `RedundantPhis` IS needed: the mini-graph's lone region has a
 /// single predecessor (the function entry), so the lifter creates
@@ -312,79 +316,9 @@ fn make_resolver_pipeline() -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(KnownBits);
+    pipeline.add(LoadReadOnly);
     pipeline.add(RedundantPhis);
     pipeline
-}
-
-/// Inlined equivalent of [`crate::opt::LoadReadOnly::optimize`] that
-/// takes a borrowed `&dyn ReadOnlyMemory` instead of an owned
-/// `M: 'static`.
-///
-/// Walks every `Load(space)` node in `fg`, asks the read-only memory
-/// for the constant value at the load's compile-time address, and
-/// rewrites the load's value output to the resulting `IntConst`.
-///
-/// Why a copy: `OptimizerPipeline::add` requires `O: 'static` because
-/// the pipeline stores passes as `Box<dyn Optimizer + 'static>`.  The
-/// resolver's `rom` is borrowed for an arbitrary (non-'static)
-/// lifetime so it can't be wrapped in `LoadReadOnly` and registered
-/// directly.  Must stay in lockstep with [`crate::opt::LoadReadOnly`]'s impl.
-fn resolve_const_loads(
-    function: &mut strider_ir::Function,
-    rom: &dyn ReadOnlyMemory,
-) -> Result<bool> {
-    let nodes: Vec<_> = function.walk().collect();
-    let mut any_folded = false;
-    for node_id in nodes {
-        let kind = *function.node_kind(node_id);
-        let strider_ir::node::NodeKind::Load(space) = kind else {
-            continue;
-        };
-        // `ReadOnlyMemory` only models RAM; gate at the call site so
-        // non-RAM Load nodes never reach the rom.  Mirrors
-        // `crate::opt::LoadReadOnly::try_rewrite`.
-        if space != rsleigh::VnSpace::RAM {
-            continue;
-        }
-        let inputs = function.node_inputs(node_id);
-        if inputs.len() < 2 {
-            continue;
-        }
-        let addr_input = inputs[1];
-        let Some(addr) = function.int_const_val(addr_input) else {
-            continue;
-        };
-        let [data_out] = function.node_outputs_exact::<1>(node_id)?;
-        let Some(ty) = function.output_kind(data_out).as_value() else {
-            continue;
-        };
-        let size = ty.byte_size();
-        // `ReadOnlyMemory::read` returns `Option<u64>` — bail on
-        // wider loads (I80 / I128 / I256 / I512) rather than asking
-        // the impl to truncate silently into a u64.
-        if size > 8 {
-            continue;
-        }
-        let Some(loaded) = rom.read(addr, size) else {
-            continue;
-        };
-        let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
-            continue;
-        };
-        let new_out = function.make_int_const(masked, ty)?;
-        // Absorb the rewritten Load's asm-fingerprint into the new
-        // IntConst so the Layer-C always-on check sees a non-empty
-        // fingerprint on the freshly-introduced constant even after
-        // the cache-hit dedup path.  `make_int_const` is the
-        // low-level `Graph` method and does NOT stamp on its own.
-        let new_node = function.node_for_output(new_out);
-        let load_node = function.node_for_output(data_out);
-        function.extend_asm_fingerprint_from(new_node, load_node);
-        if function.replace_all_uses(data_out, new_out)? {
-            any_folded = true;
-        }
-    }
-    Ok(any_folded)
 }
 
 /// Locates the unique `Return` node in `fg`.

@@ -48,11 +48,21 @@ use anyhow::{anyhow, bail, Result};
 
 use strider_lift::cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeId, NodeOutputId};
-use crate::opt::ReadOnlyMemory;
+use crate::opt::{OptCtx, ReadOnlyMemory};
 
 use crate::opt::indirect_branch_resolve::{
     apply_link_register, apply_tail_call, classify_anchor,
 };
+
+/// Builds an [`OptCtx`] from the orchestrator's borrowed rom slot.
+/// Threaded into every `pipeline.run` site so every iteration of the
+/// fixed-point loop sees the same rom image as the cfg builder.
+fn ctx_from_rom<'mem>(rom: Option<&'mem dyn ReadOnlyMemory>) -> OptCtx<'mem> {
+    match rom {
+        Some(rom) => OptCtx::with_rom(rom),
+        None => OptCtx::empty(),
+    }
+}
 use crate::pattern::GraphRewriteCtxExt;
 use crate::strider::{LiftDriver, RegionLiftHandles};
 use crate::AnalyzeOutcome;
@@ -68,10 +78,11 @@ use crate::AnalyzeOutcome;
 #[derive(Default)]
 pub struct RunOptions {
     /// Read-only memory image for the optimiser's `LoadReadOnly`
-    /// pass.  `None` to disable.  Borrowed via `as_deref()` for the
-    /// classifier path; `Arc::clone`d once per CFG rebuild for the
-    /// cfg builder's option.
-    pub rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    /// pass and the cfg-time indirect-branch resolver.  `None` to
+    /// disable.  The orchestrator owns it for the whole run via
+    /// `Box<dyn ReadOnlyMemory>` and threads it down by `&dyn`
+    /// reference (no `Arc` sharing — strider runs single-threaded).
+    pub rom: Option<Box<dyn ReadOnlyMemory>>,
     /// Maximum function size in bytes.  When set, a `Single(K)`
     /// resolution with `K >= start_addr + fn_max_size` is treated as a
     /// tail call.  When `None`, only `K < start_addr` is treated as a
@@ -107,9 +118,12 @@ impl RunOptions {
         }
     }
 
-    /// Set the read-only memory image for `LoadReadOnly` folding.
+    /// Set the read-only memory image for `LoadReadOnly` folding and
+    /// the cfg-time indirect-branch resolver.  The orchestrator takes
+    /// ownership via `Box<dyn ReadOnlyMemory>` and threads it through
+    /// each pipeline run by reference (no shared ownership).
     #[must_use]
-    pub fn rom(mut self, rom: std::sync::Arc<dyn ReadOnlyMemory>) -> Self {
+    pub fn rom(mut self, rom: Box<dyn ReadOnlyMemory>) -> Self {
         self.rom = Some(rom);
         self
     }
@@ -176,10 +190,12 @@ where
     /// avoids re-loading the SLA spec on every CFG rebuild.
     pub sleigh: rsleigh::Sleigh<R>,
     /// Read-only memory image for the optimiser's `LoadReadOnly`
-    /// pass.  `None` to disable.  Borrowed via `as_deref()` for the
-    /// classifier path; `Arc::clone`d once per CFG rebuild for the
-    /// cfg builder's option.
-    pub rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    /// pass and the cfg-time indirect-branch resolver.  `None` to
+    /// disable.  Owned via `Box<dyn ReadOnlyMemory>` for the duration
+    /// of the run; threaded by reference (`self.rom.as_deref()`) into
+    /// the [`crate::opt::OptCtx`] each pipeline run and into the cfg
+    /// builder per rebuild.
+    pub rom: Option<Box<dyn ReadOnlyMemory>>,
     /// Maximum function size in bytes.  When set, a `Single(K)`
     /// resolution with `K >= start_addr + fn_max_size` is treated as a
     /// tail call.  When `None`, only `K < start_addr` is treated as a
@@ -657,11 +673,12 @@ where
             ref per_address_ccs,
             ..
         } = self.config;
+        let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
         let cfg = build_cfg(
             sleigh,
             lift_driver,
             start_addr,
-            rom.clone(),
+            rom_ref,
             fn_max_size,
             allow_code_before_start_addr,
             &self.known_targets,
@@ -684,7 +701,8 @@ where
         let region_index = RegionIndex::from_handles(region_handles);
 
         let pipeline = lift_driver.build_stable_optimizer_pipeline();
-        pipeline.run(&mut function)?;
+        let ctx = ctx_from_rom(rom_ref);
+        pipeline.run(&mut function, &ctx)?;
 
         Ok((function, unresolved, region_index))
     }
@@ -742,7 +760,8 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.config.lift_driver.build_stable_optimizer_pipeline();
-        pipeline.run(&mut self.function)?;
+        let ctx = ctx_from_rom(self.config.rom.as_deref());
+        pipeline.run(&mut self.function, &ctx)?;
         Ok(())
     }
 
@@ -769,7 +788,8 @@ where
     fn finalize(mut self) -> Result<strider_ir::Function> {
         let pipeline = self.config.lift_driver.build_destructive_optimizer_pipeline();
         let compact = self.config.compact;
-        pipeline.run(&mut self.function)?;
+        let ctx = ctx_from_rom(self.config.rom.as_deref());
+        pipeline.run(&mut self.function, &ctx)?;
         if compact {
             self.function.compact()?;
         }
@@ -1200,15 +1220,16 @@ fn read_or_init_var(
 /// Build the CFG with the strider's arch + the current `known_targets`
 /// resolution map.
 ///
-/// Constructs the `OptionsBuilder` from `rom` / link-register /
-/// `fn_max_size` / `allow_code_before_start_addr` and installs the
-/// strider-analyze mini-IR indirect-branch resolver.
+/// Constructs the `OptionsBuilder` from link-register /
+/// `fn_max_size` / `allow_code_before_start_addr`, threads the borrowed
+/// `rom` through [`strider_lift::cfg::Builder::with_read_only_memory`],
+/// and installs the strider-analyze mini-IR indirect-branch resolver.
 #[allow(clippy::too_many_arguments)]
 fn build_cfg<R>(
     sleigh: &mut rsleigh::Sleigh<R>,
     strider: &LiftDriver,
     start_addr: strider_lift::cfg::MachineInsnAddr,
-    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    rom: Option<&dyn ReadOnlyMemory>,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
@@ -1217,9 +1238,6 @@ where
     R: rsleigh::MemReader,
 {
     let mut opts_builder = OptionsBuilder::new();
-    if let Some(rom) = rom {
-        opts_builder = opts_builder.set_read_only_memory(rom);
-    }
     if let Some(lr) = strider.calling_convention().link_register_vn {
         opts_builder = opts_builder.set_link_register(lr);
     }
@@ -1242,17 +1260,20 @@ where
     // cfg builder treats every `BranchIndirect` as deferred via
     // `UnresolvedIndirectBranch`.  The closure captures nothing
     // (zero-state) — `resolve_indirect_target` is a free function.
-    let resolver: strider_lift::cfg::IndirectResolverFn<R> = std::sync::Arc::new(
+    let resolver: strider_lift::cfg::IndirectResolverFn<R> = Box::new(
         |insns, target_vn, sleigh, lr_vn, rom, endianness| {
             crate::indirect_resolver::resolve_indirect_target(
                 insns, target_vn, sleigh, lr_vn, rom, endianness,
             )
         },
     );
-    Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
+    let mut builder = Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
         .with_known_targets(known_targets.clone())
-        .with_indirect_resolver(resolver)
-        .build()
+        .with_indirect_resolver(resolver);
+    if let Some(rom) = rom {
+        builder = builder.with_read_only_memory(rom);
+    }
+    builder.build()
 }
 
 /// The induced edge set of a `known_targets` map.  Used to test

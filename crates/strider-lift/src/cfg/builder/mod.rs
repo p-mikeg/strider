@@ -12,6 +12,8 @@ use rustc_hash::FxHashMap;
 
 use petgraph::graph::NodeIndex;
 
+use strider_ir::ReadOnlyMemory;
+
 use crate::cfg::options::Options;
 use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
 use crate::cfg::Cfg;
@@ -49,7 +51,7 @@ use crate::cfg::Result;
 ///
 /// See `crates/strider-lift/tests/cfg_build_end_to_end.rs` for runnable
 /// end-to-end examples.
-pub struct Builder<'a, R: rsleigh::MemReader> {
+pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
@@ -85,9 +87,19 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// `strider_analyze::indirect_resolver::resolve_indirect_target`
     /// free function, wrapped in an [`IndirectResolverFn`] closure.
     pub(super) indirect_resolver: Option<IndirectResolverFn<R>>,
+    /// Borrowed read-only memory image consulted by the indirect-branch
+    /// resolver when folding constant-address loads (e.g. rodata-resident
+    /// jump tables).  `None` disables that step.  Install with
+    /// [`Self::with_read_only_memory`].
+    ///
+    /// Borrowed (not `Arc`) because strider runs single-threaded and the
+    /// rom outlives any single CFG build by construction — the
+    /// orchestrator owns it for the whole run and threads it down per
+    /// iteration.
+    pub(super) read_only_memory: Option<&'rom dyn ReadOnlyMemory>,
 }
 
-impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
+impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// Creates a new `Builder` whose endianness AND `ArchPreset` are
     /// derived atomically from `arch` (which is stored in full).  The
     /// canonical constructor for CFG building — carrying the whole
@@ -113,7 +125,23 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
             indirect_resolver: None,
+            read_only_memory: None,
         }
+    }
+
+    /// Installs the borrowed read-only memory image consulted by the
+    /// indirect-branch resolver when folding constant-address loads
+    /// (e.g. rodata-resident jump tables).  Use the same
+    /// `ReadOnlyMemory` that the optimizer's `LoadReadOnly` pass
+    /// would see (typically the binary's mapped `.rodata` / `.text`).
+    ///
+    /// Borrowed (not `Arc`) because the orchestrator owns the rom for
+    /// the whole run and threads it down per CFG rebuild; the cfg
+    /// builder is short-lived and never outlives the rom.
+    #[must_use]
+    pub fn with_read_only_memory(mut self, rom: &'rom dyn ReadOnlyMemory) -> Self {
+        self.read_only_memory = Some(rom);
+        self
     }
 
     /// Installs the [`IndirectResolverFn`] callback used when the
@@ -366,7 +394,7 @@ mod tests {
     fn make_builder<'a>(
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-    ) -> Builder<'a, TestReader> {
+    ) -> Builder<'static, 'a, TestReader> {
         let arch = SleighArch::x86_64();
         Builder::for_arch(&arch, sleigh, start_addr, OptionsBuilder::new().build())
     }

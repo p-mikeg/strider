@@ -15,14 +15,17 @@ use std::sync::{Mutex, MutexGuard};
 use crate::errors::into_strider_err;
 
 /// Trait-object holder owning a heap-allocated `strider_analyze::opt::Optimizer`.
-/// The wrapper itself is `Send + Sync` so it can move across the
-/// PyO3 boundary safely (Python objects are reachable from any
-/// thread that holds the GIL).
-pub(crate) type ErasedPass = Box<dyn strider_analyze::opt::Optimizer + Send + Sync>;
+///
+/// `Optimizer` is no longer `Send + Sync` — strider runs single-
+/// threaded and the Python wrapper crosses the PyO3 boundary under
+/// the GIL — so the pipeline-state mutex (see `PipelineState`) is the
+/// sole synchronisation point and the boxed pass itself does not need
+/// any thread-safety markers.
+pub(crate) type ErasedPass = Box<dyn strider_analyze::opt::Optimizer>;
 
 /// Adapter that turns an owned `ErasedPass` into something
 /// `strider_analyze::opt::OptimizerPipeline::add` can accept.  `add` requires
-/// `O: Optimizer + 'static`; this newtype satisfies both bounds and
+/// `O: Optimizer + 'static`; this newtype satisfies the bound and
 /// forwards `optimize` straight through.
 struct ForwardPass(ErasedPass);
 
@@ -31,8 +34,6 @@ impl Clone for ForwardPass {
         // The wrapped pass owns its own clone strategy via `OptimizerClone`
         // (the supertrait of `Optimizer`).  Forwarding to it rather than
         // cloning the `Box` itself preserves the concrete pass type.
-        // `Optimizer: Send + Sync` so the resulting `Box<dyn Optimizer>`
-        // satisfies `ErasedPass`'s `Send + Sync` bound automatically.
         ForwardPass(self.0.clone_box())
     }
 }
@@ -41,8 +42,9 @@ impl strider_analyze::opt::Optimizer for ForwardPass {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
+        ctx: &strider_analyze::opt::OptCtx<'_>,
     ) -> strider_analyze::opt::Result<strider_analyze::opt::OptimizationResult> {
-        self.0.optimize(function)
+        self.0.optimize(function, ctx)
     }
 }
 
@@ -105,7 +107,14 @@ impl PipelineState {
 /// Holds the internal state behind a `Mutex` so `add` / `add_post`
 /// don't require `&mut self` (PyO3 method receivers are typically
 /// `&self` for ergonomics).
-#[pyclass(name = "OptimizerPipeline", module = "strider")]
+///
+/// `unsendable`: the boxed `dyn Optimizer` passes are no longer
+/// `Send + Sync` (strider runs single-threaded under the GIL).  The
+/// `unsendable` marker tells PyO3 to keep the wrapper pinned to the
+/// thread that created it; revocation on cross-thread access raises
+/// a `RuntimeError` at the Python boundary rather than silently
+/// allowing UB.
+#[pyclass(name = "OptimizerPipeline", module = "strider", unsendable)]
 pub struct PyOptimizerPipeline {
     state: Mutex<PipelineState>,
 }
@@ -184,15 +193,14 @@ impl PyOptimizerPipeline {
     }
 
     /// Prepend a `LoadReadOnly` pass to the front of the pipeline's
-    /// pass list.  Used by `run_with_custom_pipeline` to wire a
-    /// user-supplied `rom` into the pipeline before draining it
-    /// (otherwise the rom is silently discarded).
-    pub(crate) fn prepend_load_read_only(
-        &self,
-        rom: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
-    ) -> PyResult<()> {
+    /// pass list.  Used by `run_with_custom_pipeline` to ensure the
+    /// user-supplied `rom` is consumed even if the caller's pipeline
+    /// didn't include `LoadReadOnly` explicitly — the rom itself
+    /// flows via the [`strider_analyze::opt::OptCtx`] passed to
+    /// `OptimizerPipeline::run`.
+    pub(crate) fn prepend_load_read_only(&self) -> PyResult<()> {
         let mut state = self.lock_state()?;
-        let pass: ErasedPass = Box::new(strider_analyze::opt::LoadReadOnly::new(rom));
+        let pass: ErasedPass = Box::new(strider_analyze::opt::LoadReadOnly);
         state.passes.insert(0, pass);
         Ok(())
     }
@@ -402,21 +410,23 @@ cc_aware_pass_class!(
      per the calling convention's stack-arg layout."
 );
 
-/// `LoadReadOnly(rom)` — `rom` is a `MemoryMap` or any
-/// `ReadOnlyMemory` subclass (callback path).  Internally stored as
-/// `Arc<dyn ReadOnlyMemory>` so both the fast path and the callback
-/// path share one wrapper class.
+/// `LoadReadOnly()` — folds constant-address loads against the rom
+/// supplied via `strider.run(..., rom=mem)`.  The rom flows through
+/// the orchestrator's `RunConfig.rom` → `OptCtx` plumbing rather
+/// than being attached to the pass; an instance constructed here is
+/// a marker, and the pass short-circuits to no-change when no rom is
+/// available.
 #[pyclass(name = "LoadReadOnly", module = "strider.opt")]
-pub struct PyLoadReadOnly {
-    pub(crate) rom: std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
-}
+#[derive(Clone)]
+pub struct PyLoadReadOnly;
 #[pymethods]
 impl PyLoadReadOnly {
-    /// `LoadReadOnly(rom)` — `rom` is a `MemoryMap` or any
-    /// `ReadOnlyMemory` subclass; folds constant-address loads from it.
+    /// `LoadReadOnly()` — the rom is no longer attached to the pass;
+    /// supply it via `strider.run(..., rom=mem)` (orchestrator path) or
+    /// the analogous custom-pipeline plumbing.
     #[new]
-    fn new(rom: crate::reader::MemInput) -> Self {
-        Self { rom: rom.into_arc() }
+    fn new() -> Self {
+        Self
     }
 }
 
@@ -442,7 +452,7 @@ pub enum PyOptPass<'py> {
     LoadForward(Bound<'py, PyLoadForward>),
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
     CallStackArgCollect(Bound<'py, PyCallStackArgCollect>),
-    LoadReadOnly(Bound<'py, PyLoadReadOnly>),
+    LoadReadOnly(PyLoadReadOnly),
     StackOffsetDetect(Bound<'py, PyStackOffsetDetect>),
 }
 
@@ -458,9 +468,7 @@ impl PyOptPass<'_> {
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
-            PyOptPass::LoadReadOnly(b) => {
-                Box::new(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::clone(&b.borrow().rom)))
-            }
+            PyOptPass::LoadReadOnly(_) => Box::new(strider_analyze::opt::LoadReadOnly),
             PyOptPass::StackOffsetDetect(b) => Box::new(b.borrow().inner.clone()),
         }
     }

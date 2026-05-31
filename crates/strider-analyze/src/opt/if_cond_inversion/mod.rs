@@ -45,8 +45,6 @@
 //! Both are use-list mutations the pattern-rewrite engine doesn't do, so
 //! we hand-write the surgery.
 
-use std::sync::LazyLock;
-
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
@@ -62,18 +60,18 @@ use crate::pattern::{Capture, Matcher, Pat, bool_not, var};
 #[derive(Clone)]
 pub struct IfCondInversion;
 
-/// Captured `x` slot of the `bool_not(var(x))` pattern that
-/// [`is_inverted_cond_match`] matches against.  Allocated once at
-/// process start so every match reuses the same `Capture` slot.
-static INNER_CAPTURE: LazyLock<Capture> = LazyLock::new(Capture::new);
-
-/// `bool_not(var(x))` — the pattern matched against an `If`'s cond input
-/// producer.  `bool_not` builds the canonical `Xor(_, IntConst(1)):I1`
-/// shape (since the former BitNot unary-op was removed in favour of
-/// `Xor(_, all_ones)`); the `var(x)` slot binds the Xor's non-constant
-/// operand to [`INNER_CAPTURE`] so the caller can substitute it for the
-/// `If`'s cond input.
-static INNER_PAT: LazyLock<Pat> = LazyLock::new(|| bool_not(var(*INNER_CAPTURE)));
+// Captured `x` slot of the `bool_not(var(x))` pattern + the pattern
+// itself.  Lazily-initialised, one copy per thread: `Pat` is now
+// `!Send + !Sync` (the trait Pattern dropped its marker bounds when
+// strider went single-threaded), so a `static LazyLock<Pat>` no longer
+// compiles.  Strider runs single-threaded, so the
+// thread-local cache is observationally equivalent to a process-wide
+// `static` for our usage — and the cost of recomputing per thread on
+// first use is trivial (one `bool_not(var(...))` pattern build).
+thread_local! {
+    static INNER_CAPTURE: Capture = Capture::new();
+    static INNER_PAT: Pat = bool_not(var(INNER_CAPTURE.with(|c| *c)));
+}
 
 impl crate::opt::peephole::PeepholePass for IfCondInversion {
     fn matches_kind(&self, kind: &NodeKind) -> bool {
@@ -125,8 +123,10 @@ fn is_inverted_cond_match(
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
     let m = Matcher::try_new(function).ok()?;
-    let hit = m.match_at(cond_node, &INNER_PAT)?;
-    hit.output(*INNER_CAPTURE)
+    INNER_PAT.with(|inner_pat| {
+        let hit = m.match_at(cond_node, inner_pat)?;
+        INNER_CAPTURE.with(|inner_capture| hit.output(*inner_capture))
+    })
 }
 
 /// Performs the inversion in place:

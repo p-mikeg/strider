@@ -387,7 +387,7 @@ pub fn float_const(bits: u64) -> Pat {
 /// `any().when(f)`.
 pub fn predicate<F>(f: F) -> Pat
 where
-    F: Fn(&strider_ir::Graph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
+    F: Fn(&strider_ir::Graph, NodeOutputType, NodeOutputId) -> bool + 'static,
 {
     any().when(f)
 }

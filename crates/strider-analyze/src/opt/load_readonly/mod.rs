@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::ReadOnlyMemory;
 
-use crate::opt::peephole::{PeepholePass, impl_optimizer_from_peephole};
-use crate::opt::pipeline::OptimizationResult;
+use crate::opt::error::Result;
+use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
@@ -29,11 +27,19 @@ use crate::opt::pipeline::OptimizationResult;
 /// [`NodeOutputType::get_unsigned_int`][strider_ir::node::NodeOutputType::get_unsigned_int].
 /// Callers must not double-swap.
 ///
-/// Wrap a concrete memory implementation and add this optimizer to the pipeline:
+/// # Rom plumbing
+///
+/// The rom image is no longer stored on the pass: it flows through the
+/// per-run [`OptCtx`] threaded by [`crate::opt::OptimizerPipeline::run`].
+/// When `ctx.rom` is `None` the pass short-circuits to
+/// [`OptimizationResult::NoChange`] — this is the canonical "no rom
+/// configured" path (`strider.run(..., rom=None)`).  The orchestrator
+/// constructs the `OptCtx` from `RunConfig::rom`; ad-hoc callers
+/// driving the pipeline directly construct one via
+/// [`OptCtx::with_rom`].
 ///
 /// ```rust
-/// use std::sync::Arc;
-/// use strider_analyze::opt::{LoadReadOnly, OptimizerPipeline};
+/// use strider_analyze::opt::{LoadReadOnly, OptCtx, OptimizerPipeline};
 /// use strider_ir::ReadOnlyMemory;
 ///
 /// struct MyRom;
@@ -44,94 +50,122 @@ use crate::opt::pipeline::OptimizationResult;
 /// }
 ///
 /// let mut pipeline = OptimizerPipeline::new();
-/// pipeline.add(LoadReadOnly::new(Arc::new(MyRom)));
+/// pipeline.add(LoadReadOnly);
+/// let rom = MyRom;
+/// let ctx = OptCtx::with_rom(&rom);
+/// # let _ = (pipeline, ctx);
 /// ```
-#[derive(Clone)]
-pub struct LoadReadOnly {
-    rom: Arc<dyn ReadOnlyMemory>,
-}
+#[derive(Clone, Copy)]
+pub struct LoadReadOnly;
 
-impl LoadReadOnly {
-    /// Construct a `LoadReadOnly` pass over an `Arc`-shared rom.  The
-    /// pipeline holds `Box<dyn Optimizer>` and the production callers
-    /// (orchestrator, cfg::options) already carry the rom as
-    /// `Arc<dyn ReadOnlyMemory>`, so taking an `Arc` here makes the
-    /// construction a no-op clone rather than a deep copy.
-    pub fn new(rom: Arc<dyn ReadOnlyMemory>) -> Self {
-        Self { rom }
-    }
-}
-
-impl PeepholePass for LoadReadOnly {
-    fn matches_kind(&self, kind: &NodeKind) -> bool {
-        matches!(kind, NodeKind::Load(_))
-    }
-
-    fn try_rewrite(
+impl Optimizer for LoadReadOnly {
+    fn optimize(
         &self,
-        ctx: &mut crate::pattern::RewriteCtx<'_>,
-        root: NodeId,
-    ) -> crate::opt::Result<OptimizationResult> {
-        let kind = *ctx.node_kind(root);
-        let NodeKind::Load(space) = kind else {
+        function: &mut strider_ir::Function,
+        ctx: &OptCtx<'_>,
+    ) -> Result<OptimizationResult> {
+        let Some(rom) = ctx.rom else {
+            // No rom configured — nothing to fold.
             return Ok(OptimizationResult::NoChange);
         };
-        // `ReadOnlyMemory` only ever models RAM — REGISTER / CONST /
-        // UNIQUE / OTHER Load nodes are folded by varnode aliasing or
-        // constant propagation before reaching this pass.  Gate the
-        // call so a misrouted non-RAM Load doesn't ask the rom for
-        // bytes outside its semantic domain.
-        if space != rsleigh::VnSpace::RAM {
-            return Ok(OptimizationResult::NoChange);
+        let nodes: Vec<NodeId> = function.walk().collect();
+        let mut overall = OptimizationResult::NoChange;
+        for node_id in nodes {
+            // Gate on Load(RAM) — REGISTER / CONST / UNIQUE / OTHER
+            // Load nodes are folded by varnode aliasing or constant
+            // propagation before reaching this pass.
+            let NodeKind::Load(space) = *function.node_kind(node_id) else {
+                continue;
+            };
+            if space != rsleigh::VnSpace::RAM {
+                continue;
+            }
+            if try_fold_const_load_at(function, node_id, rom)? {
+                overall = OptimizationResult::Changed;
+            }
         }
-
-        // Load inputs: [memory_token, addr].
-        let inputs = ctx.node_inputs(root);
-        if inputs.len() < 2 {
-            return Ok(OptimizationResult::NoChange);
-        }
-        let addr_input = inputs[1];
-        let Some(addr) = ctx.int_const_val(addr_input) else {
-            return Ok(OptimizationResult::NoChange);
-        };
-
-        // Load output: the single value output carries the loaded data type.
-        let [data_out] = ctx.node_outputs_exact::<1>(root)?;
-        let Some(ty) = ctx.output_kind(data_out).as_value() else {
-            return Ok(OptimizationResult::NoChange);
-        };
-        let size = ty.byte_size();
-        // `ReadOnlyMemory::read` returns `Option<u64>` — bail on
-        // wider loads (I80 / I128 / I256 / I512) rather than asking
-        // the impl to truncate silently into a u64.
-        if size > 8 {
-            return Ok(OptimizationResult::NoChange);
-        }
-        let Some(loaded) = self.rom.read(addr, size) else {
-            return Ok(OptimizationResult::NoChange);
-        };
-
-        // `size <= 8` (guarded above), so the masked value fits a u64 — but
-        // `make_int_const` takes `impl Into<u128>`, so pass the masked u128
-        // directly rather than round-tripping through an infallible
-        // `u64::try_from`.
-        let Some(masked) = ty.get_unsigned_int(u128::from(loaded)) else {
-            return Ok(OptimizationResult::NoChange);
-        };
-        let new_out = ctx.make_int_const(masked, ty)?;
-        OptimizationResult::NoChange.after_replace(ctx, data_out, new_out)
-    }
-
-    /// Replacing a `Load` with a constant exposes its consumers to
-    /// `ConstantFold` in the next pipeline iteration — no value gained
-    /// from re-enqueuing `Load` consumers within this pass, since they
-    /// won't match `Load(_)` again.
-    fn propagate_to_consumers(&self) -> bool {
-        false
+        Ok(overall)
     }
 }
 
-impl_optimizer_from_peephole!(LoadReadOnly);
+/// Attempts to fold the `Load` node at `node_id` against `rom`,
+/// rewriting its single value output to an `IntConst` when the load's
+/// address is constant and the rom can resolve the bytes.  Returns
+/// `Ok(true)` iff a rewrite fired.
+///
+/// Shared core of [`LoadReadOnly::optimize`] and the cfg-time
+/// indirect-resolver's per-site load-folding loop.  Callers MUST have
+/// already established that `node_id` is a `Load` node (the helper
+/// short-circuits to `Ok(false)` for non-Load kinds or non-RAM spaces,
+/// but exercising it on every reachable node would be wasteful).
+///
+/// Absorbs the rewritten Load's asm-fingerprint into the new
+/// `IntConst` so the always-on Layer-C fingerprint check sees a
+/// non-empty fingerprint on the freshly-introduced constant even when
+/// the cache-hit dedup path returns an existing node.
+///
+/// # Errors
+///
+/// Returns the first error reported by `Graph::make_int_const` or
+/// `Graph::replace_all_uses` — both are structural by-construction
+/// invariants in production, surfaced as `Err` for defensive
+/// completeness.
+pub(crate) fn try_fold_const_load_at(
+    function: &mut strider_ir::Function,
+    node_id: NodeId,
+    rom: &dyn ReadOnlyMemory,
+) -> Result<bool> {
+    // Defensive: callers may dispatch on the node kind themselves; the
+    // double-check is cheap and keeps the helper safe to use on raw
+    // node ids.
+    let NodeKind::Load(space) = *function.node_kind(node_id) else {
+        return Ok(false);
+    };
+    if space != rsleigh::VnSpace::RAM {
+        return Ok(false);
+    }
+    // Load inputs: [memory_token, addr].
+    let inputs = function.node_inputs(node_id);
+    if inputs.len() < 2 {
+        return Ok(false);
+    }
+    let addr_input = inputs[1];
+    let Some(addr) = function.int_const_val(addr_input) else {
+        return Ok(false);
+    };
+    // Load output: the single value output carries the loaded data type.
+    let [data_out] = function.node_outputs_exact::<1>(node_id)?;
+    let Some(ty) = function.output_kind(data_out).as_value() else {
+        return Ok(false);
+    };
+    let size = ty.byte_size();
+    // `ReadOnlyMemory::read` returns `Option<u64>` — bail on wider
+    // loads (I80 / I128 / I256 / I512) rather than asking the impl to
+    // truncate silently into a u64.
+    if size > 8 {
+        return Ok(false);
+    }
+    let Some(loaded) = rom.read(addr, size) else {
+        return Ok(false);
+    };
+    // `size <= 8` (guarded above), so the masked value fits a u64 — but
+    // `make_int_const` takes `impl Into<u128>`, so pass the masked u128
+    // directly rather than round-tripping through an infallible
+    // `u64::try_from`.
+    let Some(masked) = ty.get_unsigned_int(u128::from(loaded)) else {
+        return Ok(false);
+    };
+    let new_out = function.make_int_const(masked, ty)?;
+    // Absorb the rewritten Load's asm-fingerprint into the new
+    // IntConst so the always-on Layer-C check sees a non-empty
+    // fingerprint on the freshly-introduced constant even after the
+    // cache-hit dedup path.  `make_int_const` is the low-level
+    // `Graph` method and does NOT stamp on its own.
+    let new_node = function.node_for_output(new_out);
+    let load_node = function.node_for_output(data_out);
+    function.extend_asm_fingerprint_from(new_node, load_node);
+    function.replace_all_uses(data_out, new_out)
+}
 
 #[cfg(test)]
 mod tests;

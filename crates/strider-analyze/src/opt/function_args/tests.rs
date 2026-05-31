@@ -33,7 +33,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
-    pass.optimize(&mut fg)?;
+    pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Side-table must have arg 0.
     let arg0_nodes = fg.arg_index_to_nodes(0);
@@ -77,10 +77,10 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
-    pass.optimize(&mut fg)?;
+    pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     let after_first = fg.arg_index_to_nodes(0).to_vec();
     // Re-run on the same function (simulating a second StableOnly iteration).
-    pass.optimize(&mut fg)?;
+    pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     let after_second = fg.arg_index_to_nodes(0).to_vec();
 
     assert_eq!(
@@ -117,7 +117,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Side-table must have arg 0.
     let arg0_nodes = fg.arg_index_to_nodes(0);
@@ -171,7 +171,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Only arg 0 registered; arg 1 absent (gap) so arg 2 MUST NOT be registered.
     let arg0_nodes = fg.arg_index_to_nodes(0);
@@ -212,7 +212,7 @@ fn prior_stackstore_shadows() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -280,7 +280,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -318,7 +318,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Both Loads at offset 0 must be registered for arg 0.
     let arg0_nodes = fg.arg_index_to_nodes(0);
@@ -366,7 +366,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi], sp, vec![]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -423,7 +423,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi, rsi], sp, vec![8]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Arg 0 = InitialVar(rdi).
     let arg0 = fg.arg_index_to_nodes(0);
@@ -478,7 +478,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -514,7 +514,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -584,7 +584,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -610,7 +610,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     assert_eq!(
         fg.iter_arg_indices().count(), 0,
@@ -643,7 +643,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -700,7 +700,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -740,7 +740,7 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -778,7 +778,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -851,7 +851,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -895,7 +895,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(
@@ -945,7 +945,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     pipeline.add(ConstantFold);
     // Convention: arg 0 lives at sp+0.
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);
     assert!(

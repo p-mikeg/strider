@@ -61,12 +61,13 @@ pub(crate) enum InsnOutcome {
 /// Created internally by `Builder::explore`; not part of the public API.
 /// Holds a mutable reference back to the parent [`Builder`] so it can
 /// enqueue successor regions and call `Builder::add_region`.
-pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
+pub(super) struct RegionBuilder<'b, 'rom, 'a: 'b, R: rsleigh::MemReader> {
     /// Parent builder — used to access the Sleigh context, options, graph,
-    /// and work queue.  Two lifetimes: `'b` is the borrow of the Builder
+    /// and work queue.  Three lifetimes: `'b` is the borrow of the Builder
     /// itself (short-lived, scoped to one `RegionBuilder::build()` call),
-    /// `'a` is the Sleigh borrow the Builder holds (outlives `'b`).
-    pub(super) builder: &'b mut Builder<'a, R>,
+    /// `'a` is the Sleigh borrow the Builder holds (outlives `'b`), and
+    /// `'rom` is the borrowed read-only memory image (outlives the build).
+    pub(super) builder: &'b mut Builder<'rom, 'a, R>,
     /// Address of the first instruction this region will contain.
     pub(super) start_addr: PcodeInsnAddr,
     /// Instructions accumulated so far.
@@ -77,9 +78,9 @@ pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
     pub(super) parent_edge: Option<NodeIndex>,
 }
 
-impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
+impl<'b, 'rom, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'rom, 'a, R> {
     pub(super) fn new(
-        builder: &'b mut Builder<'a, R>,
+        builder: &'b mut Builder<'rom, 'a, R>,
         start_addr: PcodeInsnAddr,
         parent_edge: Option<NodeIndex>,
     ) -> Self {
@@ -448,7 +449,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 target_vn,
                 self.builder.sleigh,
                 self.builder.options.link_register_vn,
-                self.builder.options.read_only_memory.as_deref(),
+                self.builder.read_only_memory,
                 self.builder.arch.endianness(),
             )?
         } else {
@@ -747,7 +748,7 @@ mod tests {
     fn make_builder<'a>(
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-    ) -> Builder<'a, TestReader> {
+    ) -> Builder<'static, 'a, TestReader> {
         make_builder_opts(start_addr, sleigh, OptionsBuilder::new().build())
     }
 
@@ -755,15 +756,15 @@ mod tests {
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
         options: crate::cfg::options::Options,
-    ) -> Builder<'a, TestReader> {
+    ) -> Builder<'static, 'a, TestReader> {
         let arch = SleighArch::x86_64();
         Builder::for_arch(&arch, sleigh, start_addr, options)
     }
 
     fn make_region_builder<'b, 'a: 'b>(
-        b: &'b mut Builder<'a, TestReader>,
+        b: &'b mut Builder<'static, 'a, TestReader>,
         start: PcodeInsnAddr,
-    ) -> RegionBuilder<'b, 'a, TestReader> {
+    ) -> RegionBuilder<'b, 'static, 'a, TestReader> {
         RegionBuilder::new(b, start, None)
     }
 
@@ -1103,7 +1104,7 @@ mod tests {
     fn make_builder_with_bytes<'a>(
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
         start: u64,
-    ) -> Builder<'a, TestReader> {
+    ) -> Builder<'static, 'a, TestReader> {
         let arch = SleighArch::x86_64();
         Builder::for_arch(&arch, sleigh, start, OptsBldr::new().build())
     }

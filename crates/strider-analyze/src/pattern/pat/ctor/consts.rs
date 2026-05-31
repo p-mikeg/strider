@@ -27,7 +27,7 @@ fn never_match() -> PostMatchFn {
 
 /// Type alias for the closure stored by `int_const_with_fn` /
 /// `bool_const_with_fn` / `float_const_with_fn`.
-pub(crate) type BuildValueFn<T> = Arc<dyn Fn(&BuildCtx<'_>) -> Result<T> + Send + Sync>;
+pub(crate) type BuildValueFn<T> = Arc<dyn Fn(&BuildCtx<'_>) -> Result<T>>;
 
 /// Returns the [`NodeOutputType`] of the matched root's first value input,
 /// or `None` if the root has no inputs or its first input isn't a value
@@ -48,7 +48,7 @@ pub(crate) fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputTyp
 /// Builds an `IntConst` node whose value is computed by `f` at build time.
 pub(crate) fn int_const_with_fn<F>(f: F) -> Pat
 where
-    F: Fn(&BuildCtx<'_>) -> Result<u128> + Send + Sync + 'static,
+    F: Fn(&BuildCtx<'_>) -> Result<u128> + 'static,
 {
     let f: BuildValueFn<u128> = Arc::new(f);
     NodePat::matcher(KindSpec::Any, InputsSpec::None)
@@ -65,7 +65,7 @@ where
 /// typed `I1`.
 pub(crate) fn bool_const_with_fn<F>(f: F) -> Pat
 where
-    F: Fn(&BuildCtx<'_>) -> Result<bool> + Send + Sync + 'static,
+    F: Fn(&BuildCtx<'_>) -> Result<bool> + 'static,
 {
     let f: BuildValueFn<bool> = Arc::new(f);
     NodePat::matcher(KindSpec::Any, InputsSpec::None)
@@ -81,7 +81,7 @@ where
 /// `f` at build time.
 pub(crate) fn float_const_with_fn<F>(f: F) -> Pat
 where
-    F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
+    F: Fn(&BuildCtx<'_>) -> Result<u64> + 'static,
 {
     let f: BuildValueFn<u64> = Arc::new(f);
     NodePat::matcher(KindSpec::Any, InputsSpec::None)

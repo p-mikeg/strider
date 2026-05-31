@@ -57,8 +57,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write("memory-graph.html", dot.as_html_from_dot()?)?;
 
     let mut pipeline = strider.build_optimizer_pipeline();
-    pipeline.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom)));
-    pipeline.run(&mut function)?;
+    pipeline.add(strider_analyze::opt::LoadReadOnly);
+    pipeline.run(&mut function, &strider_analyze::opt::OptCtx::with_rom(&rom))?;
 
     let dot = dot::GraphDot::new(function.dot_dumper(&sleigh)?, dot::DotStyle::dark());
     println!("dumping post-opt IR graph -> memory-graph-opt.html");

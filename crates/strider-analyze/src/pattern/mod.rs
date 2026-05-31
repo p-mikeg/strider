@@ -130,6 +130,15 @@
 //! # let _ = m;
 //! ```
 
+// `Pattern: !Send + !Sync` (strider runs single-threaded), and every
+// `Pat = Arc<dyn Pattern>` constructor in this crate satisfies the
+// clippy `arc_with_non_send_sync` lint's "non-Send/Sync inner" arm.
+// The `Arc` is retained intentionally (per the design: rules clone
+// their inner Pat across builder chains; switching to `Rc` is more
+// invasive than the benefit warrants).  Document the choice once at
+// the module root rather than per-call-site.
+#![allow(clippy::arc_with_non_send_sync)]
+
 pub mod error;
 pub use error::Result;
 pub(crate) use error::{missing_binding, skip};

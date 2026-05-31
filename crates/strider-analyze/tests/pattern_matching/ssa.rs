@@ -117,7 +117,7 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let mut function = t.ret_val(v);
 
     FunctionArgDetect::new(vec![], sp, vec![4])
-        .optimize(&mut function)
+        .optimize(&mut function, &strider_analyze::opt::OptCtx::empty())
         .expect("FunctionArgDetect");
     function
 }

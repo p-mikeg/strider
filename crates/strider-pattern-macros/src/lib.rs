@@ -815,10 +815,16 @@ fn build_pyclass_struct(
     // unqualified so the consumer must have `use pyo3::prelude::*;`
     // and `use pyo3_stub_gen::derive::{gen_stub_pyclass, …};` in
     // scope, which is the contract every PyO3 file already follows.
+    // `unsendable`: the wrapped `*Def` builder owns a
+    // `strider_analyze::pattern::Pat`, which is `Arc<dyn Pattern>` over
+    // a `!Send + !Sync` trait (strider runs single-threaded).  The
+    // marker tells PyO3 to pin the class to its creating thread instead
+    // of asserting the auto traits at compile time; a cross-thread
+    // access raises `RuntimeError` rather than silently allowing UB.
     quote! {
         #(#docs)*
         #[gen_stub_pyclass]
-        #[pyclass(name = #py_name, module = #py_module)]
+        #[pyclass(name = #py_name, module = #py_module, unsendable)]
         pub struct #rust_name {
             inner: ::std::sync::Arc<::std::sync::Mutex<#inner_ident>>,
         }

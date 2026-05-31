@@ -27,7 +27,7 @@ use crate::pattern::pat::traits::{BuildCtx, BuildOutcome};
 /// Errors from the graph layer (`make_value_node`, `replace_all_uses`)
 /// propagate as [`anyhow::Error`].  Errors from user closures inside
 /// `*_const_with!` macros also propagate as [`anyhow::Error`] —
-/// anyhow's blanket `From<E: Error + Send + Sync + 'static>` wraps any
+/// anyhow's blanket `From<E: Error + 'static>` wraps any
 /// custom error type the closure returns, and tests can downcast to
 /// recover the original.  Use `crate::pattern::error::skip` inside a closure
 /// to opt out of the rewrite without a hard error; the interpreter
@@ -45,7 +45,7 @@ use crate::pattern::pat::traits::{BuildCtx, BuildOutcome};
 pub fn rewrite_rule(
     lhs: impl Into<Pat>,
     rhs: impl Into<Pat>,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync + 'static {
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static {
     let lhs: Pat = lhs.into();
     let rhs: Pat = rhs.into();
     move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<bool> {
@@ -436,9 +436,9 @@ impl<'g> std::ops::DerefMut for RewriteCtx<'g> {
 /// other long-lived storage) and compose the per-call closure cheaply.
 pub(crate) fn apply_rules_in_order<R>(
     rules: &[R],
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync + '_
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + '_
 where
-    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync,
+    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>,
 {
     move |ctx, node| {
         let mut any = false;
@@ -459,7 +459,7 @@ where
 /// to box each one to a common trait-object type; this alias plus
 /// [`boxed_rule`] factor that boilerplate out of every call site.
 pub type BoxedRule =
-    Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync>;
+    Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>>;
 
 /// Wraps a rewrite-rule closure in a [`BoxedRule`] for storage in a
 /// `Vec<BoxedRule>` alongside rules built from other LHS/RHS shapes.
@@ -480,7 +480,7 @@ pub type BoxedRule =
 /// ```
 pub fn boxed_rule<R>(r: R) -> BoxedRule
 where
-    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + Send + Sync + 'static,
+    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static,
 {
     Box::new(r)
 }

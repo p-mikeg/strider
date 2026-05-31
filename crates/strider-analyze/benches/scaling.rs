@@ -11,7 +11,6 @@
 
 use std::hint::black_box;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
@@ -79,12 +78,10 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .unwrap_or_else(|| panic!("symbol {:?} not found in {path:?}", c.fn_name))
         .address();
     let addr = raw_addr;
-    let rom_for_cfg: Arc<dyn strider_analyze::opt::ReadOnlyMemory> = Arc::new(
-        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
-    );
+    let rom_for_cfg = strider_reader::ElfFileMemReader::from_object(&obj)
+        .expect("rom reader (cfg)");
     let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new()
-        .allow_code_before_start_addr()
-        .set_read_only_memory(rom_for_cfg);
+        .allow_code_before_start_addr();
     if let Some(lr) = ana.calling_convention().link_register_vn {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
@@ -93,13 +90,15 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     // atomically.  (The deleted `Builder::with_endianness` ctor would
     // silently default the preset to `X86_64`.)
     let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, cfg_opts)
+        .with_read_only_memory(&rom_for_cfg)
         .build()
         .expect("Cfg build");
     let mut function = ana.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg").function;
     let rom_for_opt = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
-    p.add(strider_analyze::opt::LoadReadOnly::new(std::sync::Arc::new(rom_for_opt)));
-    p.run(&mut function).expect("optimizer pipeline");
+    p.add(strider_analyze::opt::LoadReadOnly);
+    p.run(&mut function, &strider_analyze::opt::OptCtx::with_rom(&rom_for_opt))
+        .expect("optimizer pipeline");
     function
 }
 
@@ -188,7 +187,7 @@ mod synthetic {
         // forward-pass cost from the fold-pass cost.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
-        p.run(&mut fg).unwrap();
+        p.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).unwrap();
         fg
     }
 
@@ -254,7 +253,7 @@ mod synthetic {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(RedundantPhis);
-        p.run(&mut fg).unwrap();
+        p.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).unwrap();
         fg
     }
 
@@ -328,7 +327,7 @@ mod synthetic {
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
-        p.run(&mut fg).unwrap();
+        p.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).unwrap();
         fg
     }
 
@@ -364,7 +363,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
                     let pass = LoadForward::new(sp, strider_target::Endianness::Little);
-                    let _ = pass.optimize(&mut fg);
+                    let _ = pass.optimize(&mut fg, &strider_analyze::opt::OptCtx::empty());
                     black_box(fg);
                 },
                 BatchSize::LargeInput,

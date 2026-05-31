@@ -77,7 +77,7 @@ pub use known_bits::{KnownBits, analyze as analyze_known_bits};
 pub(crate) use known_bits::KnownBitsMap;
 pub use load_readonly::LoadReadOnly;
 pub use strider_ir::ReadOnlyMemory;
-pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
+pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
 pub use load_forward::LoadForward;
 pub use stack_offset_detect::StackOffsetDetect;

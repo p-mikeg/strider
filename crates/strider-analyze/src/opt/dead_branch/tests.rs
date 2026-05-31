@@ -51,7 +51,7 @@ fn dead_branch_false() -> Result<()> {
     // (entry, true-branch, false-branch).
     assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
 
-    let result = DeadBranchElimination.optimize(&mut fg)?;
+    let result = DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(result.changed());
 
     // After: true region's Region loses its input (dead branch removed).
@@ -75,7 +75,7 @@ fn dead_branch_true() -> Result<()> {
 
     assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
 
-    let result = DeadBranchElimination.optimize(&mut fg)?;
+    let result = DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(result.changed());
 
     assert_eq!(
@@ -125,7 +125,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
 
     // DeadBranchElimination alone should not fire because the condition
     // is a BoolBinaryOp node, not a BoolConst.
-    assert!(!DeadBranchElimination.optimize(&mut fg)?.changed());
+    assert!(!DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed());
     Ok(())
 }
 
@@ -167,7 +167,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let if_count = fg.count_kind(|k| matches!(k, NodeKind::If));
     assert_eq!(if_count, 0, "both If nodes must be eliminated");
@@ -233,7 +233,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     // Run DBE directly — pipeline.run() would re-validate, and we constructed
     // a deliberately-unusual (but IR-permitted) shape. DBE itself must handle
     // it without leaving a stale reference behind.
-    DeadBranchElimination.optimize(&mut fg)?;
+    DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let post_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
     assert_eq!(
@@ -335,7 +335,7 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     // wired to `dead_ctrl`, so the validator's reachability walk
     // visited the now-zero-input If via backward-data and reported
     // `NodeInputCountMismatch { expected: 2, actual: 0 }`.
-    DeadBranchElimination.optimize(&mut fg)?;
+    DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     strider_ir::validate::validate(&fg, fg.entry().unwrap())
         .map_err(|e| anyhow::anyhow!("post-DBE validation failed: {e:?}"))?;
 
@@ -390,7 +390,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
         .count();
     assert!(pre_phi_count > 0);
 
-    DeadBranchElimination.optimize(&mut fg)?;
+    DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     // A VarPhi at the join should now have only the live predecessor's
     // value input (length = 1 token + 1 value = 2).
     let join_phi = fg

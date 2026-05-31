@@ -84,7 +84,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
     ));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -148,7 +148,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -198,7 +198,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -249,7 +249,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     // Only slot 1 (rel=8) is filled; slot 0 (rel=4) is absent →
     // dense prefix is empty → no args appended.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let after_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
     assert_eq!(
@@ -275,7 +275,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let after_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
     assert_eq!(
@@ -327,7 +327,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -395,7 +395,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -455,7 +455,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -524,7 +524,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
     ));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -594,7 +594,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
     ));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -657,7 +657,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
         vec![4, 8, 12, 16, 20, 24, 28, 32],
         sp,
     ));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -727,7 +727,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let mut pipeline = cf_rp_pipeline();
     // 2-slot cdecl table: anchor at +0 (ret-addr), arg0 at +4, arg1 at +8.
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -802,7 +802,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     // No side-table entry for the Call — pass uses default offsets [4, 8].
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
@@ -862,7 +862,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     // the per-call override [0, 4] and collect the arg at offset 0.
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id_post = fg
         .walk_from(fg.entry().unwrap())
@@ -929,7 +929,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // Canonicalize so `decompose_sp` would work if called.
     {
         let prep = cf_rp_pipeline();
-        prep.run(&mut fg)?;
+        prep.run(&mut fg, &crate::opt::OptCtx::empty())?;
     }
 
     // Find the arg0 store: the Store whose data input is IntConst(77).
@@ -978,7 +978,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
 
     // Run CallStackArgCollect with slot table [4, 8] (offset 0 = anchor).
     let pass = CallStackArgCollect::new(vec![4, 8], sp);
-    pass.optimize(&mut fg)?;
+    pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();

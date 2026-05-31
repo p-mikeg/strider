@@ -36,7 +36,7 @@ use crate::pattern::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 /// place for bindings that depend on payload data (e.g. the `*_any`
 /// op-variant capture binding the matched node's `NodeId`).
 pub(crate) type PostMatchFn =
-    Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool + Send + Sync>;
+    Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool>;
 
 /// Kind-level constraint carried by every [`NodePat`].
 ///
@@ -66,7 +66,7 @@ pub(crate) enum KindSpec {
     /// constrains some but not all payload fields (e.g. `load().space(S)`).
     VariantWith {
         discriminant: std::mem::Discriminant<NodeKind>,
-        check: Arc<dyn Fn(&NodeKind) -> bool + Send + Sync>,
+        check: Arc<dyn Fn(&NodeKind) -> bool>,
     },
 }
 
@@ -81,7 +81,7 @@ impl KindSpec {
     /// Build a `VariantWith` spec with a payload-only predicate.
     pub(crate) fn variant_with<F>(exemplar: &NodeKind, check: F) -> Self
     where
-        F: Fn(&NodeKind) -> bool + Send + Sync + 'static,
+        F: Fn(&NodeKind) -> bool + 'static,
     {
         Self::VariantWith {
             discriminant: std::mem::discriminant(exemplar),
@@ -134,13 +134,13 @@ pub(crate) fn exemplar_vn() -> rsleigh::Vn {
 /// (`|_, _| true` or `|_, _| false`); `*Any` patterns inspect the matched op
 /// variant to decide per-match.
 pub(crate) type CommutativeDecider =
-    Arc<dyn Fn(&MatchCtx, NodeId) -> bool + Send + Sync>;
+    Arc<dyn Fn(&MatchCtx, NodeId) -> bool>;
 
 /// Closure that produces a concrete [`NodeKind`] at build time, reading
 /// any needed captures / root-type info out of the [`BuildCtx`].  Used
 /// in [`BuildKind::Fn`].
 pub(crate) type NodeKindBuilder =
-    Arc<dyn Fn(&BuildCtx<'_>) -> Result<NodeKind> + Send + Sync>;
+    Arc<dyn Fn(&BuildCtx<'_>) -> Result<NodeKind>>;
 
 /// How to pick the output type of a node built by [`NodePat::try_build`].
 pub(crate) enum BuildTy {
@@ -238,7 +238,7 @@ impl InputsSpec {
         f: F,
     ) -> Self
     where
-        F: Fn(&MatchCtx, NodeId) -> bool + Send + Sync + 'static,
+        F: Fn(&MatchCtx, NodeId) -> bool + 'static,
     {
         Self::Fixed {
             pats: vec![lhs, rhs],

@@ -586,7 +586,7 @@ impl rsleigh::MemReader for AnyMemReader {
 }
 
 /// Internal view over a `PyMemoryMap` snapshot used by AnyMemReader::Map
-/// and by `MemInput::into_arc`'s `Arc<dyn ReadOnlyMemory>` lift.
+/// and by `MemInput::into_box`'s `Box<dyn ReadOnlyMemory>` lift.
 /// Decoupling the trait impl from the Python class keeps the rsleigh
 /// dependency local, lets us hand a *snapshot* to Sleigh (Sleigh
 /// consumes its reader by value, so a snapshot avoids observing later
@@ -654,7 +654,7 @@ impl ReadOnlyMemory for PyMemoryMapReader {
 /// subclass implementing `read(...)` (the callback path).
 ///
 /// Consumed in three modes:
-/// - [`into_arc`](Self::into_arc) — lift to `Arc<dyn ReadOnlyMemory>`
+/// - [`into_box`](Self::into_box) — lift to `Box<dyn ReadOnlyMemory>`
 ///   for the ROM-style pipeline pass.
 /// - [`into_any`](Self::into_any) — materialise into the unified
 ///   `AnyMemReader` (used to build a `Sleigh`).
@@ -681,15 +681,22 @@ impl<'py> FromPyObject<'py> for MemInput {
 }
 
 impl MemInput {
-    /// Lift this input to an `Arc<dyn ReadOnlyMemory>` (ROM role).
+    /// Lift this input to a `Box<dyn ReadOnlyMemory>` (ROM role).
     /// For `PyMemoryMap` this mints a `PyMemoryMapReader` snapshot —
     /// the surface pyclass no longer implements `ReadOnlyMemory` so
     /// callers can't accidentally observe later `add_region` calls in
     /// flight (the snapshot semantics match the Sleigh-reader path).
-    pub fn into_arc(self) -> Arc<dyn ReadOnlyMemory> {
+    ///
+    /// `Box` (not `Arc`) because strider runs single-threaded: the
+    /// orchestrator's `RunConfig::rom` owns the rom for the whole run
+    /// and threads it down as `&dyn ReadOnlyMemory` via the optimizer's
+    /// `OptCtx`.  Python callbacks still go through
+    /// [`PyReadOnlyMemoryAdapter`] which holds a refcounted `Py<...>`
+    /// internally — no Rust-level sharing needed.
+    pub fn into_box(self) -> Box<dyn ReadOnlyMemory> {
         match self {
-            MemInput::Map(m) => Arc::new(m.reader_view()),
-            MemInput::Cb(obj) => Arc::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
+            MemInput::Map(m) => Box::new(m.reader_view()),
+            MemInput::Cb(obj) => Box::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
         }
     }
 

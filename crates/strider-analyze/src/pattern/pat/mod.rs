@@ -28,12 +28,12 @@ pub use ctor::*;
 /// [`Match`](crate::pattern::Match)-side accessor (`get_vn` etc.) post-match
 /// rather than during the guard check.
 pub(crate) type PredicateFn =
-    Arc<dyn Fn(&strider_ir::Graph, NodeOutputType, NodeOutputId) -> bool + Send + Sync>;
+    Arc<dyn Fn(&strider_ir::Graph, NodeOutputType, NodeOutputId) -> bool>;
 
 /// Predicate function type used by the [`guards::GuardPat`] combinator
 /// for the bindings-aware variant (produced by [`Pat::when_match`]).
 pub(crate) type MatchPredicateFn = Arc<
-    dyn Fn(&strider_ir::Graph, NodeOutputType, &crate::pattern::matcher::Bindings) -> bool + Send + Sync,
+    dyn Fn(&strider_ir::Graph, NodeOutputType, &crate::pattern::matcher::Bindings) -> bool,
 >;
 
 // ── any_*_const constructors ──────────────────────────────────────────────────
@@ -115,8 +115,6 @@ impl Pat {
     pub fn when_match<F>(self, f: F) -> Pat
     where
         F: Fn(&strider_ir::Graph, NodeOutputType, &crate::pattern::matcher::Bindings) -> bool
-            + Send
-            + Sync
             + 'static,
     {
         Pat::from_dyn(Arc::new(crate::pattern::pat::guards::GuardPat {
@@ -157,7 +155,7 @@ pub trait IntoPat: Into<Pat> + Sized {
     /// bindings instead) when guarding control-flow patterns.
     fn when<F>(self, f: F) -> Pat
     where
-        F: Fn(&strider_ir::Graph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
+        F: Fn(&strider_ir::Graph, NodeOutputType, NodeOutputId) -> bool + 'static,
     {
         let inner: Pat = self.into();
         Pat::from_dyn(Arc::new(crate::pattern::pat::guards::GuardPat {

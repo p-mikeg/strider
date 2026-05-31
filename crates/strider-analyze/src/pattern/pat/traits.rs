@@ -50,7 +50,13 @@ impl MatchCtx<'_, '_> {
 /// [`NodeOutputId`] and fills bindings on success.  Buildable patterns
 /// additionally implement [`Pattern::try_build`] to materialize themselves
 /// on the RHS of a rewrite rule.
-pub trait Pattern: Send + Sync {
+///
+/// `Send + Sync` is intentionally omitted: strider runs single-threaded
+/// and the previous `Pattern: Send + Sync` bound forced every closure
+/// type alias in the crate to drag a `+ Send + Sync` tail.  The
+/// existing `DynPat = Arc<dyn Pattern>` storage still works without
+/// the marker traits — the `Arc` itself never moves between threads.
+pub trait Pattern {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool;
 
     /// Advertises the kind-level constraint this pattern imposes at its

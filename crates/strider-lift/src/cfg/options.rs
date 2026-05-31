@@ -1,8 +1,4 @@
-use std::sync::Arc;
-
 use rustc_hash::FxHashMap;
-
-use strider_ir::ReadOnlyMemory;
 
 use crate::cfg::builder::ResolvedTargets;
 use crate::cfg::types::PcodeInsnAddr;
@@ -11,12 +7,13 @@ use crate::cfg::types::PcodeInsnAddr;
 ///
 /// Construct via [`OptionsBuilder`].
 ///
-/// `Options` is intentionally **not** `Copy` / `Eq` / `Hash` because
-/// `Self::read_only_memory` holds an `Arc<dyn ReadOnlyMemory>` whose
-/// trait object cannot meaningfully be compared by value.  Pre-existing
-/// scalar knobs (`fn_max_size`, `allow_code_before_start_addr`,
-/// `link_register_vn`) keep their cheap-clone semantics.
-#[derive(Clone, Default)]
+/// The read-only memory image consumed by the indirect-branch resolver
+/// no longer lives on `Options`: it threads through
+/// [`crate::cfg::Builder::with_read_only_memory`] as a borrowed
+/// `&dyn ReadOnlyMemory` so the cfg-time mini-IR resolver can see it
+/// without forcing `Options` (and every downstream `Builder` ctor) to
+/// carry an owned trait object.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Options {
     /// When `Some(n)`, any unconditional branch whose target lies at an
     /// address ≥ `start + n` is treated as a tail call.
@@ -37,12 +34,6 @@ pub struct Options {
     /// [`strider_target::BuiltCallingConvention::link_register_vn`] and plumb
     /// it through with [`OptionsBuilder::set_link_register`].
     pub(super) link_register_vn: Option<rsleigh::Vn>,
-    /// Read-only memory image (typically `.rodata` / `.text` from the
-    /// binary being analysed).  Used by the indirect-branch resolver to
-    /// fold constant-address loads into constants so that targets
-    /// stored in jump tables / read-only globals resolve.  `None`
-    /// disables that step.
-    pub(super) read_only_memory: Option<Arc<dyn ReadOnlyMemory>>,
     /// Pre-classified `BranchIndirect` results to thread back into the
     /// CFG build.  When the cfg builder encounters a `BranchIndirect`
     /// at one of these pcode addresses, it skips the cfg-time mini-graph
@@ -53,41 +44,6 @@ pub struct Options {
     /// Default is empty (no known targets).  Populated by the
     /// orchestrator via [`super::Builder::with_known_targets`].
     pub(super) known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-}
-
-// Manual `Debug` impl: `dyn ReadOnlyMemory` doesn't implement `Debug`,
-// so the auto-derive can't handle the `Option<Arc<dyn ReadOnlyMemory>>`
-// field.  We render it as a presence/absence marker instead.
-impl std::fmt::Debug for Options {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Options")
-            .field("fn_max_size", &self.fn_max_size)
-            .field("allow_code_before_start_addr", &self.allow_code_before_start_addr)
-            .field("link_register_vn", &self.link_register_vn)
-            .field("read_only_memory", &self.read_only_memory.as_ref().map(|_| "<rom>"))
-            .field("known_targets", &self.known_targets)
-            .finish()
-    }
-}
-
-// `Options` cannot derive `PartialEq` / `Eq` because
-// `Arc<dyn ReadOnlyMemory>` doesn't implement them (trait objects have
-// no value equality).  We provide a `PartialEq` that compares the
-// scalar knobs by value and the ROM by `Arc::ptr_eq`, which is the
-// strongest equality available without forcing all implementors to
-// derive `PartialEq`.
-impl PartialEq for Options {
-    fn eq(&self, other: &Self) -> bool {
-        self.fn_max_size == other.fn_max_size
-            && self.allow_code_before_start_addr == other.allow_code_before_start_addr
-            && self.link_register_vn == other.link_register_vn
-            && self.known_targets == other.known_targets
-            && match (&self.read_only_memory, &other.read_only_memory) {
-                (None, None) => true,
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                _ => false,
-            }
-    }
 }
 
 /// Builder for `Options`.
@@ -164,16 +120,6 @@ impl OptionsBuilder {
     #[must_use]
     pub fn set_link_register(mut self, vn: rsleigh::Vn) -> Self {
         self.options.link_register_vn = Some(vn);
-        self
-    }
-
-    /// Sets the read-only memory image consulted by the indirect-branch
-    /// resolver when folding constant-address loads.  Use the same
-    /// `ReadOnlyMemory` that the optimizer's `LoadReadOnly` pass would
-    /// see (typically the binary's mapped `.rodata` / `.text`).
-    #[must_use]
-    pub fn set_read_only_memory(mut self, rom: Arc<dyn ReadOnlyMemory>) -> Self {
-        self.options.read_only_memory = Some(rom);
         self
     }
 

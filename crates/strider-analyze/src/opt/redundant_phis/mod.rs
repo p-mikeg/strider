@@ -204,6 +204,7 @@ impl Optimizer for RedundantPhis {
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
+        _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
         let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
         let reachable = strider_ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());

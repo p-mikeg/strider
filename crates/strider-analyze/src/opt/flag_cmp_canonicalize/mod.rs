@@ -51,7 +51,6 @@
 //! infrastructure that hand-rolled the per-node fingerprint absorption
 //! — see `crate::pattern::rewrite::rewrite_rule` for the central walk.
 
-use std::sync::LazyLock;
 
 use strider_ir::node::{NodeId, NodeKind};
 use crate::pattern::{
@@ -79,12 +78,14 @@ impl PeepholePass for FlagCmpCanonicalize {
         ctx: &mut crate::pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
-        let apply = apply_rules_in_order(&RULES);
-        let fired = apply(ctx, root)?;
-        Ok(if fired {
-            OptimizationResult::Changed
-        } else {
-            OptimizationResult::NoChange
+        RULES.with(|rules| {
+            let apply = apply_rules_in_order(rules);
+            let fired = apply(ctx, root)?;
+            Ok(if fired {
+                OptimizationResult::Changed
+            } else {
+                OptimizationResult::NoChange
+            })
         })
     }
 
@@ -106,7 +107,13 @@ impl_optimizer_from_peephole!(FlagCmpCanonicalize);
 // builds the RHS template, and rewires uses with full asm-fingerprint
 // absorption into every fresh interior node.
 
-static RULES: LazyLock<Vec<BoxedRule>> = LazyLock::new(build_rules);
+thread_local! {
+    /// Per-thread cache of the rewrite rule table.  `BoxedRule` captures
+    /// `Pat`-shaped state that is `!Send + !Sync` now that strider runs
+    /// single-threaded; the thread-local cache preserves the
+    /// build-once-per-process feel without needing a `Sync` rule type.
+    static RULES: Vec<BoxedRule> = build_rules();
+}
 
 fn build_rules() -> Vec<BoxedRule> {
     // Fresh captures per rule so cross-rule binding state can't leak.

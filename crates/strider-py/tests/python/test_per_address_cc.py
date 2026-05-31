@@ -80,13 +80,18 @@ def _build_default_equivalent_pipeline(sleigh, sl, cc, mem):
     """Mirrors `Strider::build_optimizer_pipeline` from the Rust side
     (the passes `strider.run(pipeline=None)` runs internally).  Used to
     pin the bug: this pipeline must produce the same matches as the
-    None default once the per_address_ccs plumbing is fixed."""
+    None default once the per_address_ccs plumbing is fixed.
+
+    `mem` is unused — `LoadReadOnly()` receives its rom via the
+    orchestrator's `OptCtx` plumbing (the caller passes
+    `strider.run(..., rom=mem)`)."""
+    del mem
     pipe = OptimizerPipeline.empty()
     pipe.add(opt.ConstantFold())
     pipe.add(opt.KnownBits())
     pipe.add(opt.RedundantPhis())
     pipe.add(opt.DeadBranchElimination())
-    pipe.add(opt.LoadReadOnly(mem))
+    pipe.add(opt.LoadReadOnly())
     pipe.add(opt.LoadForward(sl, cc, sleigh))
     pipe.add_post(opt.FunctionArgDetect(sl, cc))
     pipe.add_post(opt.CallStackArgCollect(sl, cc))
