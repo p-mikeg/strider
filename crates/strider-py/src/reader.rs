@@ -198,8 +198,7 @@ fn elf_to_regions(
             strider_reader::elf::elf_load_with_relocations(obj).map_err(into_strider_err)?;
         Ok(regions)
     } else {
-        strider_reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(obj)
-            .map_err(into_strider_err)
+        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
     }
 }
 

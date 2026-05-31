@@ -13,7 +13,7 @@ import pytest
 import strider
 from strider import _api
 
-from .conftest import fixture_path
+from .conftest import FIXTURES_DIR, fixture_path
 
 
 # ── ARM Thumb interworking arch selection (pure unit, no lifting) ──────
@@ -488,3 +488,37 @@ def test_analyzer_per_call_pipeline_overrides_factory():
     a = azr.analyze("add", pipeline=strider.OptimizerPipeline.default())
     assert calls["n"] == 0, "per-call pipeline must override the factory"
     assert a.function.node_count() > 0
+
+
+# ── ET_REL object-file loading (`*.o`, no PT_LOAD program headers) ──────
+
+
+def test_load_x64_object_file_lifts_tzcount():
+    """`strider.load(<path>.o)` opens an ET_REL relocatable object
+    file and lifts a function from it.  ET_REL has no PT_LOAD program
+    headers — the loader has to walk sections (with first-wins VMA
+    dedup, since `.text` and `.text.startup` share VMA 0 pre-link).
+
+    Pre-fix, the loader produced an empty memory map for `.o` files,
+    so `analyze()` here would lift an empty CFG.  Post-fix the lift
+    succeeds and yields a non-trivial IR graph.
+    """
+    obj = FIXTURES_DIR / "x64" / "tzcount.o"
+    if not obj.exists():
+        pytest.skip(f"fixture missing: {obj} (run `make CASE=tzcount` in fixtures/)")
+    p = strider.load(str(obj))
+    # `tzcount` is the first global function in `.text`.  Note that
+    # `p.symbols()` filters out symbols with address 0 (the safer
+    # default for stripped binaries that have synthetic zero-address
+    # entries), and every ET_REL symbol's `st_value` is a
+    # section-relative offset that's 0 for the first symbol — so we
+    # look it up by direct `symbol()` instead of through the dict.
+    assert p.symbol("tzcount") is not None
+    a = p.analyze("tzcount")
+    # Non-empty IR graph: the loader surfaced the `.text` bytes and
+    # Sleigh / strider-lift turned them into a function.
+    assert a.function.node_count() > 0, (
+        "loading an ET_REL .o should yield a non-empty IR graph; an "
+        "empty graph means the loader produced no readable bytes for "
+        ".text — the section-walker dispatch isn't engaging for ET_REL."
+    )

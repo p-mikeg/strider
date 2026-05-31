@@ -113,9 +113,14 @@ pub fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture
         assert_eq!(text_idx.0, u32::from(text_shndx));
         assert_eq!(dynsym_idx.0, 3);
 
-        // Reserve layout: file header, then each section's bytes, then
-        // shstrtab, then section headers.
+        // Reserve layout: file header, program headers (PT_LOAD for
+        // `.text` and `.data.rel.ro`), then each section's bytes,
+        // then shstrtab, then section headers.  PT_LOADs are
+        // required: the loader dispatches ET_DYN to program headers,
+        // so without them `apply_elf_relocations`'s region map would
+        // be empty and the REL32 site would have no region to patch.
         w.reserve_file_header();
+        w.reserve_program_headers(2);
         // Reserve every block at align 1 so the reserved offsets match
         // the positions `w.write` lands at (no implicit padding the
         // plain `write` calls below wouldn't reproduce).  File-offset
@@ -140,6 +145,32 @@ pub fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture
             e_flags: 0,
         })
         .expect("write file header");
+
+        // Program headers covering `.text` (R + X) and `.data.rel.ro`
+        // (R + W).  These match the sections' `sh_addr` so the
+        // segment-walker and section-walker would produce equivalent
+        // regions; only the segment-walker is consulted for ET_DYN.
+        w.write_align_program_headers();
+        w.write_program_header(&ProgramHeader {
+            p_type: elf::PT_LOAD,
+            p_flags: elf::PF_R | elf::PF_X,
+            p_offset: text_off as u64,
+            p_vaddr: sym_addr,
+            p_paddr: sym_addr,
+            p_filesz: text.len() as u64,
+            p_memsz: text.len() as u64,
+            p_align: 1,
+        });
+        w.write_program_header(&ProgramHeader {
+            p_type: elf::PT_LOAD,
+            p_flags: elf::PF_R | elf::PF_W,
+            p_offset: slot_off as u64,
+            p_vaddr: slot_addr,
+            p_paddr: slot_addr,
+            p_filesz: slot.len() as u64,
+            p_memsz: slot.len() as u64,
+            p_align: 1,
+        });
 
         w.write(&text);
         w.write(&slot);
@@ -280,8 +311,13 @@ fn build_one_section_elf(opts: OneSectionOpts<'_>) -> Vec<u8> {
         let sec_idx = w.reserve_section_index();
         let shstrtab_idx = w.reserve_shstrtab_section_index();
 
-        // Reserve layout: file header, then section data, then section headers.
+        // Reserve layout: file header, program header, then section
+        // data, then section headers.  The PT_LOAD program header is
+        // required for the loader to see this ELF: ET_EXEC dispatches
+        // to PT_LOAD segments (the runtime memory layout), so emitting
+        // sections alone would leave the loader with nothing to map.
         w.reserve_file_header();
+        w.reserve_program_headers(1);
 
         let sec_offset = w.reserve(opts.data.len(), 1);
         w.reserve_shstrtab();
@@ -297,6 +333,30 @@ fn build_one_section_elf(opts: OneSectionOpts<'_>) -> Vec<u8> {
             e_flags: 0,
         })
         .expect("write file header");
+
+        // One PT_LOAD program header covering the single section.
+        // PF_R is always set; PF_X echoes SHF_EXECINSTR; PF_W echoes
+        // SHF_WRITE.  The loader's code+rodata filter rejects PF_W
+        // segments — the corresponding `sh_flags` filter rejects
+        // SHF_WRITE sections — so the two views stay equivalent.
+        let mut p_flags = elf::PF_R;
+        if opts.sh_flags & u64::from(elf::SHF_EXECINSTR) != 0 {
+            p_flags |= elf::PF_X;
+        }
+        if opts.sh_flags & u64::from(elf::SHF_WRITE) != 0 {
+            p_flags |= elf::PF_W;
+        }
+        w.write_align_program_headers();
+        w.write_program_header(&ProgramHeader {
+            p_type: elf::PT_LOAD,
+            p_flags,
+            p_offset: sec_offset as u64,
+            p_vaddr: opts.addr,
+            p_paddr: opts.addr,
+            p_filesz: opts.data.len() as u64,
+            p_memsz: opts.data.len() as u64,
+            p_align: 1,
+        });
 
         w.write(opts.data);
         w.write_shstrtab();
@@ -360,14 +420,23 @@ impl SectionSpec {
     }
 }
 
-/// Builds a 64-bit little-endian x86-64 ELF with the given sections, in
-/// order. Each section lands at its `addr`; the writer emits `SHT_PROGBITS`
-/// (or `SHT_NOBITS` if `spec.nobits`) with `SHF_ALLOC` plus `SHF_EXECINSTR`
-/// / `SHF_WRITE` per the spec.
+/// Builds a 64-bit little-endian x86-64 ELF (ET_REL — a relocatable
+/// object file) with the given sections, in order.  Each section
+/// lands at its `addr`; the writer emits `SHT_PROGBITS` (or
+/// `SHT_NOBITS` if `spec.nobits`) with `SHF_ALLOC` plus
+/// `SHF_EXECINSTR` / `SHF_WRITE` per the spec.
 ///
-/// Sections with `nobits == true` contribute nothing to the file on-disk
-/// but still have a section header with the right `sh_size` and `sh_type`.
-/// This is how `object` models `.bss`.
+/// ET_REL is the right `e_type` for a section-only fixture: a
+/// linked ET_EXEC binary describes its runtime layout via PT_LOAD
+/// program headers (and the analyser dispatches to those for ET_EXEC
+/// / ET_DYN), so a section-only ELF marked ET_EXEC would have no
+/// runtime layout to walk.  ET_REL has no program headers by
+/// definition, so the analyser walks sections — which is exactly
+/// what these fixtures intend to exercise.
+///
+/// Sections with `nobits == true` contribute nothing to the file
+/// on-disk but still have a section header with the right `sh_size`
+/// and `sh_type`.  This is how `object` models `.bss`.
 pub fn build_elf_with_sections(sections: &[SectionSpec]) -> Vec<u8> {
     build_sections_elf(sections, Endianness::Little, true, elf::EM_X86_64)
 }
@@ -407,11 +476,15 @@ fn build_sections_elf(
         w.reserve_shstrtab();
         w.reserve_section_headers();
 
-        // Write file header (no program headers in this builder — sections only).
+        // Write file header — `ET_REL` because this builder emits only
+        // section headers (no program headers).  A linked ET_EXEC binary
+        // describes its runtime layout via PT_LOAD, which the loader
+        // dispatcher walks in preference to sections; ET_REL is the
+        // kind whose layout *is* its section table.
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            e_type: elf::ET_EXEC,
+            e_type: elf::ET_REL,
             e_machine,
             e_entry: 0,
             e_flags: 0,

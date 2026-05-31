@@ -12,11 +12,11 @@ use anyhow::Context as _;
 use crate::{MemRegion, Result};
 
 use super::relocations::{RelocationStats, apply_elf_relocations_autoload};
-use super::sections::elf_get_allocatable_file_backed_sections_as_mem_regions;
+use super::sections::elf_get_loadable_regions_including_writable;
 
-/// Convenience: load every allocatable file-backed section (via
-/// [`elf_get_allocatable_file_backed_sections_as_mem_regions`])
-/// and apply dynamic relocations to the resulting regions in-place.
+/// Convenience: load every code + read-only + writable-allocatable
+/// mapping (via [`elf_get_loadable_regions_including_writable`])
+/// and apply relocations to the resulting regions in-place.
 ///
 /// Use this when you want analysis-grade fidelity for an ET_DYN
 /// binary: code, rodata, and writable-but-relocated data
@@ -30,15 +30,14 @@ use super::sections::elf_get_allocatable_file_backed_sections_as_mem_regions;
 pub fn elf_load_with_relocations(
     obj: &object::File<'_>,
 ) -> Result<(Vec<MemRegion>, RelocationStats)> {
-    let mut regions = elf_get_allocatable_file_backed_sections_as_mem_regions(obj)?;
+    let mut regions = elf_get_loadable_regions_including_writable(obj)?;
     // Use the autoload variant so this bundled path is consistent with
     // the standalone `add_region_from_elf(path)` + `apply_elf_relocations(path)`
     // sequence used from Python.  In practice the upfront
-    // `elf_get_allocatable_file_backed_sections_as_mem_regions` already
-    // covers every relocation-targeted section, so the autoload step
-    // is a no-op; the symmetry just guards against future ELF shapes
-    // that emit relocation sites against sections the upfront loader
-    // misses.
+    // `elf_get_loadable_regions_including_writable` already covers
+    // every relocation-targeted section, so the autoload step is a
+    // no-op; the symmetry just guards against future ELF shapes that
+    // emit relocation sites against sections the upfront loader misses.
     let stats = apply_elf_relocations_autoload(&mut regions, obj)?;
     Ok((regions, stats))
 }

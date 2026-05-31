@@ -7,22 +7,24 @@
 //!
 //! # Submodules
 //!
-//! - [`sections`] — ELF section / segment walkers that produce
-//!   [`MemRegion`](crate::MemRegion) sets from an
-//!   [`object::File`].  Includes the two presets
-//!   [`elf_get_code_and_readonly_sections_as_mem_regions`] (used by
-//!   [`ElfFileMemReader`]) and
-//!   [`elf_get_allocatable_file_backed_sections_as_mem_regions`] (used
-//!   by [`apply_elf_relocations_autoload`] so dynamic relocs targeting
-//!   writable sections like `.got.plt` / `.data.rel.ro` have something
-//!   to patch).
+//! - [`sections`] — ELF segment / section loaders that produce
+//!   [`MemRegion`](crate::MemRegion) sets from an [`object::File`].
+//!   The two public entry points are kind-dispatched on `obj.kind()`:
+//!   ET_EXEC / ET_DYN walk PT_LOAD segments (program headers), ET_REL
+//!   walks sections with first-wins VMA dedup.  The narrower preset
+//!   [`elf_get_loadable_regions`] is used by [`ElfFileMemReader`];
+//!   the broader [`elf_get_loadable_regions_including_writable`] is
+//!   used by [`apply_elf_relocations_autoload`] so dynamic relocs
+//!   targeting writable runtime data (`.got.plt` / `.data.rel.ro`)
+//!   have something to patch.
 //! - [`reader`] — [`ElfFileMemReader`], the
 //!   [`rsleigh::MemReader`] + [`crate::ReadOnlyMemory`] impl that owns
 //!   its regions.
 //! - [`relocations`] — the relocation applier family
 //!   ([`apply_elf_relocations`], [`apply_elf_relocations_autoload`],
 //!   [`RelocationStats`], and the per-arch `R_*_RELATIVE` /
-//!   `R_*_GLOB_DAT` / `R_*_JUMP_SLOT` tables).
+//!   `R_*_GLOB_DAT` / `R_*_JUMP_SLOT` tables).  ET_DYN uses the
+//!   dynamic-relocations table; ET_REL uses per-section relocations.
 //! - [`load`] — the top-level convenience entries
 //!   ([`load_elf`] for `'static`-lifetime ELF parsing,
 //!   [`elf_load_with_relocations`] for an all-in-one regions + relocs
@@ -39,6 +41,5 @@ pub use relocations::{
     RelocationStats, apply_elf_relocations, apply_elf_relocations_autoload,
 };
 pub use sections::{
-    elf_get_allocatable_file_backed_sections_as_mem_regions,
-    elf_get_code_and_readonly_sections_as_mem_regions,
+    elf_get_loadable_regions, elf_get_loadable_regions_including_writable,
 };

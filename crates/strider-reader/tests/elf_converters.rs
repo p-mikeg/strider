@@ -1,8 +1,8 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 //! Integration tests for the section-walker behind
-//! `elf_get_code_and_readonly_sections_as_mem_regions` and
-//! `elf_get_allocatable_file_backed_sections_as_mem_regions`.
+//! `elf_get_loadable_regions` and
+//! `elf_get_loadable_regions_including_writable`.
 //!
 //! These two presets are the only ELF → [`MemRegion`] collectors exposed
 //! by `strider_reader::elf`; both go through the same private
@@ -15,8 +15,8 @@ mod common;
 
 use common::elf_fixture::{SectionSpec, build_elf_with_sections};
 use strider_reader::elf::{
-    elf_get_allocatable_file_backed_sections_as_mem_regions,
-    elf_get_code_and_readonly_sections_as_mem_regions,
+    elf_get_loadable_regions_including_writable,
+    elf_get_loadable_regions,
 };
 
 /// Parses the bytes as an ELF; panics with a clear message if parse fails.
@@ -24,7 +24,7 @@ fn parse(bytes: &[u8]) -> object::File<'_> {
     object::File::parse(bytes).expect("parse synthetic ELF")
 }
 
-// ── elf_get_code_and_readonly_sections_as_mem_regions ─────────────────────
+// ── elf_get_loadable_regions ─────────────────────
 
 #[test]
 fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss() {
@@ -35,7 +35,7 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
         SectionSpec::bss(0x4000, 16),             // NOBITS   → exclude (empty data)
     ]);
     let obj = parse(&bytes);
-    let regions = elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+    let regions = elf_get_loadable_regions(&obj).unwrap();
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be included");
@@ -57,7 +57,7 @@ fn code_and_readonly_preset_skips_nobits() {
         SectionSpec::bss(0x2000, 64),
     ]);
     let obj = parse(&bytes);
-    let regions = elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+    let regions = elf_get_loadable_regions(&obj).unwrap();
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be present");
@@ -97,7 +97,13 @@ fn code_and_readonly_preset_propagates_data_error() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            e_type: elf::ET_EXEC,
+            // ET_REL: a section-only fixture has no PT_LOAD segments,
+            // so the kind-dispatched loader walks sections (the ET_REL
+            // / fallback path).  Marking the ELF as ET_EXEC would
+            // route through the segments path with an empty segment
+            // list, which is not what these section-walker tests aim
+            // to pin.
+            e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
             e_flags: 0,
@@ -121,7 +127,7 @@ fn code_and_readonly_preset_propagates_data_error() {
         w.write_shstrtab_section_header();
     }
     let obj = parse(&buf);
-    let err = elf_get_code_and_readonly_sections_as_mem_regions(&obj)
+    let err = elf_get_loadable_regions(&obj)
         .expect_err("malformed accepted section must surface an error");
     assert!(
         err.to_string().contains("failed to parse ELF"),
@@ -169,7 +175,13 @@ fn code_and_readonly_preset_propagates_region_overflow() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            e_type: elf::ET_EXEC,
+            // ET_REL: a section-only fixture has no PT_LOAD segments,
+            // so the kind-dispatched loader walks sections (the ET_REL
+            // / fallback path).  Marking the ELF as ET_EXEC would
+            // route through the segments path with an empty segment
+            // list, which is not what these section-walker tests aim
+            // to pin.
+            e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
             e_flags: 0,
@@ -195,7 +207,7 @@ fn code_and_readonly_preset_propagates_region_overflow() {
         w.write_shstrtab_section_header();
     }
     let obj = parse(&buf);
-    let err = elf_get_code_and_readonly_sections_as_mem_regions(&obj)
+    let err = elf_get_loadable_regions(&obj)
         .expect_err("addr+len overflow must surface as RegionOverflow");
     let msg = err.to_string();
     let expected_addr = format!("{:#x}", u64::MAX - 1);
@@ -242,7 +254,13 @@ fn code_and_readonly_preset_skips_rejected_malformed_section() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            e_type: elf::ET_EXEC,
+            // ET_REL: a section-only fixture has no PT_LOAD segments,
+            // so the kind-dispatched loader walks sections (the ET_REL
+            // / fallback path).  Marking the ELF as ET_EXEC would
+            // route through the segments path with an empty segment
+            // list, which is not what these section-walker tests aim
+            // to pin.
+            e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
             e_flags: 0,
@@ -270,36 +288,45 @@ fn code_and_readonly_preset_skips_rejected_malformed_section() {
     // The malformed section is writable, so the code+rodata preset
     // rejects it.  The walker must NOT call `section.data()` on a
     // rejected section, so no `object::Error` surfaces.
-    let regions = elf_get_code_and_readonly_sections_as_mem_regions(&obj)
+    let regions = elf_get_loadable_regions(&obj)
         .expect("filter-rejected malformed section must not surface an error");
     assert!(regions.is_empty(), "nothing was accepted");
 }
 
-// ── same start_addr → last wins via lookup table ────────────────────────
+// ── same start_addr (ET_REL) → first wins ────────────────────────────────
 
-/// When two sections share a start_addr, the walker preserves both
-/// entries in iteration order; `MemRegionsLookupTable` collapses them by
-/// its own "last insert wins" rule.  Read through the table to exercise
-/// the real, user-visible behavior.
+/// When two sections share a `sh_addr`, ET_REL's section-walker
+/// applies **first-wins** VMA dedup.  Bytes for the first section
+/// encountered occupy the slot; the second section's bytes are
+/// dropped.
 ///
-/// Both sections here are non-writable PROGBITS (`.rodata`-like), so the
-/// code+rodata preset accepts both.
+/// This pins the ET_REL semantics that motivate the dedup: a `.o`
+/// commonly has `.text`, `.text.startup`, `.text.foo`, … all sitting
+/// at VMA 0 pre-link.  Last-wins would non-deterministically swap
+/// which section's bytes land at VMA 0 depending on iteration order;
+/// first-wins gives a stable result.
+///
+/// Both sections here are non-writable PROGBITS (`.rodata`-like), so
+/// the code+rodata preset accepts both.
 #[test]
-fn code_and_readonly_sections_same_start_last_wins_via_lookup_table() {
+fn et_rel_sections_same_start_first_wins() {
     let bytes = build_elf_with_sections(&[
         SectionSpec { name: b".first",  addr: 0x1000, data: vec![0xaa], exec: true,  writable: false, nobits: false },
         SectionSpec { name: b".second", addr: 0x1000, data: vec![0xbb], exec: false, writable: false, nobits: false },
     ]);
     let obj = parse(&bytes);
-    let regions = elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+    let regions = elf_get_loadable_regions(&obj).unwrap();
+    // Only one region for the shared VMA — the dedup happens at the
+    // collector, not at the lookup table.
+    assert_eq!(regions.len(), 1);
     let table = strider_reader::MemRegionsLookupTable::new(regions);
 
     let mut buf = [0u8; 1];
     assert_eq!(table.read(0x1000, &mut buf), Some(1));
-    assert_eq!(buf[0], 0xbb, "later section wins on duplicate start_addr");
+    assert_eq!(buf[0], 0xaa, "first section wins on duplicate start_addr (ET_REL)");
 }
 
-// ── elf_get_allocatable_file_backed_sections_as_mem_regions ───────────────
+// ── elf_get_loadable_regions_including_writable ───────────────
 //
 // The "allocatable" preset is the broader filter used by
 // `apply_elf_relocations_autoload`: it accepts every section whose
@@ -324,7 +351,7 @@ fn allocatable_sections_include_text_rodata_data_and_exclude_bss() {
     ]);
     let obj = parse(&bytes);
     let regions =
-        elf_get_allocatable_file_backed_sections_as_mem_regions(&obj).unwrap();
+        elf_get_loadable_regions_including_writable(&obj).unwrap();
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be included");
@@ -345,7 +372,7 @@ fn allocatable_preset_skips_nobits() {
     ]);
     let obj = parse(&bytes);
     let regions =
-        elf_get_allocatable_file_backed_sections_as_mem_regions(&obj).unwrap();
+        elf_get_loadable_regions_including_writable(&obj).unwrap();
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be present");
@@ -384,7 +411,13 @@ fn allocatable_preset_propagates_data_error() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            e_type: elf::ET_EXEC,
+            // ET_REL: a section-only fixture has no PT_LOAD segments,
+            // so the kind-dispatched loader walks sections (the ET_REL
+            // / fallback path).  Marking the ELF as ET_EXEC would
+            // route through the segments path with an empty segment
+            // list, which is not what these section-walker tests aim
+            // to pin.
+            e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
             e_flags: 0,
@@ -409,7 +442,7 @@ fn allocatable_preset_propagates_data_error() {
         w.write_shstrtab_section_header();
     }
     let obj = parse(&buf);
-    let err = elf_get_allocatable_file_backed_sections_as_mem_regions(&obj)
+    let err = elf_get_loadable_regions_including_writable(&obj)
         .expect_err("malformed accepted section must surface an error");
     assert!(
         err.to_string().contains("failed to parse ELF"),
@@ -449,7 +482,13 @@ fn allocatable_preset_propagates_region_overflow() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            e_type: elf::ET_EXEC,
+            // ET_REL: a section-only fixture has no PT_LOAD segments,
+            // so the kind-dispatched loader walks sections (the ET_REL
+            // / fallback path).  Marking the ELF as ET_EXEC would
+            // route through the segments path with an empty segment
+            // list, which is not what these section-walker tests aim
+            // to pin.
+            e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
             e_flags: 0,
@@ -475,7 +514,7 @@ fn allocatable_preset_propagates_region_overflow() {
         w.write_shstrtab_section_header();
     }
     let obj = parse(&buf);
-    let err = elf_get_allocatable_file_backed_sections_as_mem_regions(&obj)
+    let err = elf_get_loadable_regions_including_writable(&obj)
         .expect_err("addr+len overflow must surface as RegionOverflow");
     let msg = err.to_string();
     let expected_addr = format!("{:#x}", u64::MAX - 1);

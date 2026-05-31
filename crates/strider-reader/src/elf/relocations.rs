@@ -74,20 +74,25 @@ pub struct RelocationStats {
     pub autoload_section_parse_failures: usize,
 }
 
-/// Patches relocations in `regions` in-place using the ELF's
-/// dynamic relocation table.
+/// Patches relocations in `regions` in-place.
 ///
-/// Walks `obj.dynamic_relocations()` (Relocations from `.rela.dyn`,
-/// `.rela.plt`, …).  For each entry, computes the target address
-/// from the relocation's symbol or section, then writes the encoded
-/// value into the region containing the relocation site.
+/// Walks the relocation table appropriate for `obj.kind()`:
 ///
-/// Used for ET_DYN binaries (FreeBSD kernels, PIE userland) whose
-/// `.text` ships with unresolved `call rel32` placeholders.  ET_REL
-/// binaries (relocatable object files) keep their relocations on
-/// per-section tables and are not currently iterated here — the
-/// dynamic-relocations API is sufficient for the kernel + PIE
-/// shapes that motivated this function.
+/// - **`Executable` / `Dynamic`** (ET_EXEC / ET_DYN): walks
+///   `obj.dynamic_relocations()` (entries from `.rela.dyn`,
+///   `.rela.plt`, …).
+/// - **`Relocatable`** (ET_REL — an `.o` object file): walks each
+///   section's `section.relocations()` table.  ET_REL keeps its
+///   relocations on per-section tables (`.rela.text`, `.rela.data`,
+///   …); `obj.dynamic_relocations()` returns `None` for ET_REL, so
+///   without this branch the loader silently skips every reloc the
+///   `.o` carries.  The site address for a per-section reloc is
+///   `target_section.address() + r_offset` (the relocation's
+///   `r_offset` is relative to the section it targets, not absolute).
+///
+/// For each entry, computes the target address from the relocation's
+/// symbol or section, then writes the encoded value into the region
+/// containing the relocation site.
 ///
 /// # Supported relocation kinds
 ///
@@ -144,145 +149,192 @@ pub fn apply_elf_relocations(
     let endian_le = matches!(obj.endianness(), object::Endianness::Little);
     let mut stats = RelocationStats::default();
 
-    let Some(dyn_relocs) = obj.dynamic_relocations() else {
-        return Ok(stats);
-    };
-
-    for (site_addr, reloc) in dyn_relocs {
-        stats.seen += 1;
-
-        // Image-relative relocations (`R_X86_64_RELATIVE` /
-        // `R_AARCH64_RELATIVE` / `R_386_RELATIVE` / `R_ARM_RELATIVE`)
-        // store `image_base + addend` at the site, with no symbol or
-        // section reference — `RelocationTarget::Absolute` and a
-        // `RelocationKind::Unknown` come out the other side of object
-        // crate's mapping table.  We model the analyser's image base
-        // as the binary's link-time-chosen base (typically 0 for an
-        // ET_DYN), so the patched value is `addend` directly.  Width
-        // is fixed by the relocation type (64-bit on 64-bit ABIs,
-        // 32-bit on 32-bit).  Without this branch every PIE binary's
-        // `dispatch_table[]` slot reads zero post-load.
-        if let Some((value, size_bytes)) = image_relative_reloc(&reloc, obj.architecture()) {
-            locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
-            continue;
-        }
-
-        // GOT-data and PLT-jump slots (`R_*_GLOB_DAT` / `R_*_JUMP_SLOT`).
-        // Object 0.38 reports these as `RelocationKind::Unknown` with
-        // `size = 0`, but they have well-defined "S" semantics: write
-        // the symbol's address at the site.  Resolving eagerly means
-        // analysis-time `Load(GOT[...])` reads the real target without
-        // having to model a PLT.
-        if let Some(size_bytes) = got_or_plt_slot_reloc_size(&reloc, obj.architecture()) {
-            // Need the target symbol for these (no symbol → skip).
-            // The GOT/PLT path classifies non-Symbol targets as
-            // `malformed_target` (consistent with the bad-symbol-
-            // index bucket); pass `require_symbol_target = true`.
-            let Some(target_addr) = resolve_symbol_target(obj, &reloc, true, &mut stats) else {
-                continue;
-            };
-            let value = target_addr.wrapping_add(reloc.addend() as u64);
-            locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
-            continue;
-        }
-
-        // Defined-symbol MIPS `R_MIPS_REL32` — `S + A` semantics.  The
-        // undefined / index-0 case is handled by `image_relative_reloc`
-        // above (addend-only, since `S = 0`); a REL32 against a defined
-        // symbol carries a `RelocationTarget::Symbol(_)` and needs the
-        // symbol's address.  `object` reports REL32 as
-        // `RelocationKind::Unknown`, so the general `match reloc.kind()`
-        // below would mis-bucket it as unsupported — resolve it here
-        // (4-byte field on both MIPS32 and MIPS64).  Pass
-        // `require_symbol_target = true`: the `Symbol`-target gate in
-        // `mips_rel32_symbol_reloc_size` guarantees the target is a
-        // `Symbol`, so this only ever takes the resolve-or-skip arms.
-        if let Some(size_bytes) = mips_rel32_symbol_reloc_size(&reloc, obj.architecture()) {
-            let Some(target_addr) = resolve_symbol_target(obj, &reloc, true, &mut stats) else {
-                continue;
-            };
-            let value = target_addr.wrapping_add(reloc.addend() as u64);
-            locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
-            continue;
-        }
-
-        // Resolve the target.  Per `Object::dynamic_relocations`'s
-        // doc-comment, symbol indices here reference the dynamic
-        // symbol table — `obj.symbol_by_index` looks at `.symtab`
-        // and returns the wrong entry for a given index, so we
-        // must dispatch through `dynamic_symbol_table()` first and
-        // fall back to the static `.symtab` only if the dynamic
-        // table is absent (ET_REL files).  The general path also
-        // handles `RelocationTarget::Section` (the GOT/PLT path
-        // doesn't see those); pass `require_symbol_target = false`
-        // so `Absolute` and unknown future variants bucket as
-        // `skipped_unsupported_kind` via `record_unsupported`.
-        let target_addr = match reloc.target() {
-            RelocationTarget::Symbol(_) => {
-                let Some(addr) = resolve_symbol_target(obj, &reloc, false, &mut stats) else {
-                    continue;
-                };
-                addr
-            }
-            RelocationTarget::Section(idx) => match obj.section_by_index(idx) {
-                Ok(sec) => sec.address(),
-                Err(_) => {
-                    // Bad section index — structurally malformed, NOT a
-                    // legitimate weak-extern.  Matches the GOT/PLT
-                    // path's malformed bucket so callers inspecting
-                    // RelocationStats see a consistent error class
-                    // regardless of which arm fired.
-                    stats.skipped_malformed_target += 1;
-                    continue;
+    match obj.kind() {
+        // ET_REL: relocations live on per-section tables.  Each
+        // section's `relocations()` iterator yields `(r_offset,
+        // Relocation)` pairs where `r_offset` is relative to the
+        // section the relocations apply *to* (the "info" section
+        // pointed at by `sh_info` on the SHT_REL/RELA table).  In
+        // practice for ET_REL `sh_addr == 0`, so the absolute site
+        // address equals `r_offset` for non-overlapping VMAs; but to
+        // stay correct for any future ET_REL shape that does set
+        // `sh_addr`, we add `sec.address()` explicitly.
+        object::ObjectKind::Relocatable => {
+            for sec in obj.sections() {
+                let sec_base = sec.address();
+                for (offset, reloc) in sec.relocations() {
+                    let site_addr = sec_base.wrapping_add(offset);
+                    apply_one_relocation(obj, regions, site_addr, &reloc, endian_le, &mut stats);
                 }
-            },
-            // `Absolute` (sentinel for immediate-value relocations
-            // with no symbol/section) and any future variants get
-            // bucketed as unsupported.
-            _ => {
-                record_unsupported(&reloc, &mut stats);
-                continue;
             }
-        };
-
-        let addend = reloc.addend();
-        // S, A, P naming follows the System V ABI generic relocation
-        // formula (see object::common::RelocationKind doc-comment):
-        //   S = target_addr, A = addend, P = site_addr.
-        let value = match reloc.kind() {
-            RelocationKind::Absolute => target_addr.wrapping_add(addend as u64),
-            // L (PLT entry) is treated as the symbol's own address —
-            // we don't materialise a PLT.  Functionally identical to
-            // `Relative` for analysis purposes.
-            RelocationKind::Relative | RelocationKind::PltRelative => target_addr
-                .wrapping_add(addend as u64)
-                .wrapping_sub(site_addr),
-            _ => {
-                record_unsupported(&reloc, &mut stats);
-                continue;
-            }
-        };
-
-        // The `size` field is in bits; `size == 0` means "use the
-        // kind's default", but the only kinds we patch (Absolute /
-        // Relative / PltRelative) all set `size` explicitly on every
-        // arch we care about, so a 0 size signals an arch-specific
-        // encoding (e.g. ARM Thumb branch) we don't model.
-        let size_bits = reloc.size();
-        if size_bits == 0 || size_bits % 8 != 0 || size_bits > 64 {
-            stats.skipped_unsupported_kind += 1;
-            continue;
         }
-        let size_bytes = (size_bits / 8) as usize;
-
-        // Find the region that contains the [site_addr, site_addr +
-        // size_bytes) range.  Linear scan inside `locate_and_write`
-        // is fine — relocation counts are small relative to the
-        // per-relocation work.
-        locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
+        // ET_EXEC / ET_DYN / Core / Unknown: use the dynamic table.
+        // `dynamic_relocations()` returns `None` for ET_REL and any
+        // ET_EXEC/ET_DYN binary that doesn't ship a dynamic table
+        // (statically-linked, fully-resolved ELF); both are handled
+        // by the `Option::None` arm returning the empty stats.
+        _ => {
+            let Some(dyn_relocs) = obj.dynamic_relocations() else {
+                return Ok(stats);
+            };
+            for (site_addr, reloc) in dyn_relocs {
+                apply_one_relocation(obj, regions, site_addr, &reloc, endian_le, &mut stats);
+            }
+        }
     }
 
     Ok(stats)
+}
+
+/// Applies one relocation entry to `regions`, updating `stats` to
+/// reflect the outcome.  Shared body between the ET_DYN
+/// (`dynamic_relocations()`) and ET_REL (per-section `relocations()`)
+/// iteration paths in [`apply_elf_relocations`].
+///
+/// `site_addr` is the *absolute* virtual address of the relocation
+/// site, already resolved to the same coordinate system the loaded
+/// `regions` live in.
+fn apply_one_relocation(
+    obj: &object::File<'_>,
+    regions: &mut [MemRegion],
+    site_addr: u64,
+    reloc: &object::Relocation,
+    endian_le: bool,
+    stats: &mut RelocationStats,
+) {
+    stats.seen += 1;
+
+    // Image-relative relocations (`R_X86_64_RELATIVE` /
+    // `R_AARCH64_RELATIVE` / `R_386_RELATIVE` / `R_ARM_RELATIVE`)
+    // store `image_base + addend` at the site, with no symbol or
+    // section reference — `RelocationTarget::Absolute` and a
+    // `RelocationKind::Unknown` come out the other side of object
+    // crate's mapping table.  We model the analyser's image base as
+    // the binary's link-time-chosen base (typically 0 for an ET_DYN),
+    // so the patched value is `addend` directly.  Width is fixed by
+    // the relocation type (64-bit on 64-bit ABIs, 32-bit on 32-bit).
+    // Without this branch every PIE binary's `dispatch_table[]` slot
+    // reads zero post-load.
+    if let Some((value, size_bytes)) = image_relative_reloc(reloc, obj.architecture()) {
+        locate_and_write(regions, site_addr, value, size_bytes, endian_le, stats);
+        return;
+    }
+
+    // GOT-data and PLT-jump slots (`R_*_GLOB_DAT` / `R_*_JUMP_SLOT`).
+    // Object 0.38 reports these as `RelocationKind::Unknown` with
+    // `size = 0`, but they have well-defined "S" semantics: write
+    // the symbol's address at the site.  Resolving eagerly means
+    // analysis-time `Load(GOT[...])` reads the real target without
+    // having to model a PLT.
+    if let Some(size_bytes) = got_or_plt_slot_reloc_size(reloc, obj.architecture()) {
+        // Need the target symbol for these (no symbol → skip).  The
+        // GOT/PLT path classifies non-Symbol targets as
+        // `malformed_target` (consistent with the bad-symbol-index
+        // bucket); pass `require_symbol_target = true`.
+        let Some(target_addr) = resolve_symbol_target(obj, reloc, true, stats) else {
+            return;
+        };
+        let value = target_addr.wrapping_add(reloc.addend() as u64);
+        locate_and_write(regions, site_addr, value, size_bytes, endian_le, stats);
+        return;
+    }
+
+    // Defined-symbol MIPS `R_MIPS_REL32` — `S + A` semantics.  The
+    // undefined / index-0 case is handled by `image_relative_reloc`
+    // above (addend-only, since `S = 0`); a REL32 against a defined
+    // symbol carries a `RelocationTarget::Symbol(_)` and needs the
+    // symbol's address.  `object` reports REL32 as
+    // `RelocationKind::Unknown`, so the general `match reloc.kind()`
+    // below would mis-bucket it as unsupported — resolve it here
+    // (4-byte field on both MIPS32 and MIPS64).  Pass
+    // `require_symbol_target = true`: the `Symbol`-target gate in
+    // `mips_rel32_symbol_reloc_size` guarantees the target is a
+    // `Symbol`, so this only ever takes the resolve-or-skip arms.
+    if let Some(size_bytes) = mips_rel32_symbol_reloc_size(reloc, obj.architecture()) {
+        let Some(target_addr) = resolve_symbol_target(obj, reloc, true, stats) else {
+            return;
+        };
+        let value = target_addr.wrapping_add(reloc.addend() as u64);
+        locate_and_write(regions, site_addr, value, size_bytes, endian_le, stats);
+        return;
+    }
+
+    // Resolve the target.  Per `Object::dynamic_relocations`'s
+    // doc-comment, symbol indices in the *dynamic* table reference
+    // the dynamic symbol table — `obj.symbol_by_index` looks at
+    // `.symtab` and returns the wrong entry for a given index, so we
+    // must dispatch through `dynamic_symbol_table()` first and fall
+    // back to the static `.symtab` only if the dynamic table is
+    // absent.  Per-section relocations (ET_REL) reference the static
+    // `.symtab`, which is also what the fallback resolves; the
+    // fallback path is the right one for ET_REL.  The general path
+    // also handles `RelocationTarget::Section` (the GOT/PLT path
+    // doesn't see those); pass `require_symbol_target = false` so
+    // `Absolute` and unknown future variants bucket as
+    // `skipped_unsupported_kind` via `record_unsupported`.
+    let target_addr = match reloc.target() {
+        RelocationTarget::Symbol(_) => {
+            let Some(addr) = resolve_symbol_target(obj, reloc, false, stats) else {
+                return;
+            };
+            addr
+        }
+        RelocationTarget::Section(idx) => match obj.section_by_index(idx) {
+            Ok(sec) => sec.address(),
+            Err(_) => {
+                // Bad section index — structurally malformed, NOT a
+                // legitimate weak-extern.  Matches the GOT/PLT path's
+                // malformed bucket so callers inspecting
+                // RelocationStats see a consistent error class
+                // regardless of which arm fired.
+                stats.skipped_malformed_target += 1;
+                return;
+            }
+        },
+        // `Absolute` (sentinel for immediate-value relocations with
+        // no symbol/section) and any future variants get bucketed as
+        // unsupported.
+        _ => {
+            record_unsupported(reloc, stats);
+            return;
+        }
+    };
+
+    let addend = reloc.addend();
+    // S, A, P naming follows the System V ABI generic relocation
+    // formula (see object::common::RelocationKind doc-comment):
+    //   S = target_addr, A = addend, P = site_addr.
+    let value = match reloc.kind() {
+        RelocationKind::Absolute => target_addr.wrapping_add(addend as u64),
+        // L (PLT entry) is treated as the symbol's own address — we
+        // don't materialise a PLT.  Functionally identical to
+        // `Relative` for analysis purposes.
+        RelocationKind::Relative | RelocationKind::PltRelative => target_addr
+            .wrapping_add(addend as u64)
+            .wrapping_sub(site_addr),
+        _ => {
+            record_unsupported(reloc, stats);
+            return;
+        }
+    };
+
+    // The `size` field is in bits; `size == 0` means "use the kind's
+    // default", but the only kinds we patch (Absolute / Relative /
+    // PltRelative) all set `size` explicitly on every arch we care
+    // about, so a 0 size signals an arch-specific encoding (e.g.
+    // ARM Thumb branch) we don't model.
+    let size_bits = reloc.size();
+    if size_bits == 0 || !size_bits.is_multiple_of(8) || size_bits > 64 {
+        stats.skipped_unsupported_kind += 1;
+        return;
+    }
+    let size_bytes = (size_bits / 8) as usize;
+
+    // Find the region that contains the [site_addr, site_addr +
+    // size_bytes) range.  Linear scan inside `locate_and_write` is
+    // fine — relocation counts are small relative to the
+    // per-relocation work.
+    locate_and_write(regions, site_addr, value, size_bytes, endian_le, stats);
 }
 
 /// A sorted `[start, end)` interval index for O(log n) address-coverage
@@ -398,10 +450,6 @@ pub(crate) fn apply_elf_relocations_with_extender<F>(
 where
     F: FnMut(u64, &object::File<'_>) -> Result<Option<MemRegion>>,
 {
-    let Some(dyn_relocs) = obj.dynamic_relocations() else {
-        return Ok(RelocationStats::default());
-    };
-
     // Pass 1 — collect site addresses not yet covered, ask `extender`
     // to materialise the owning region for each, and stage them.  We
     // never mutate `regions` here so an extender error mid-pass leaves
@@ -417,13 +465,46 @@ where
     // `.any(contains)` predicate, including the overlap case.
     let mut coverage = CoverageIndex::from_regions(regions.iter());
     let mut staged: Vec<MemRegion> = Vec::new();
-    for (site_addr, _reloc) in dyn_relocs {
+    let consider = |site_addr: u64,
+                        coverage: &mut CoverageIndex,
+                        staged: &mut Vec<MemRegion>,
+                        extender: &mut F|
+     -> Result<()> {
         if coverage.covers(site_addr) {
-            continue;
+            return Ok(());
         }
         if let Some(region) = extender(site_addr, obj)? {
             coverage.insert(region.start_addr(), region.end_addr());
             staged.push(region);
+        }
+        Ok(())
+    };
+    match obj.kind() {
+        // ET_REL: per-section relocation iteration mirrors
+        // `apply_elf_relocations`'s ET_REL arm.
+        object::ObjectKind::Relocatable => {
+            for sec in obj.sections() {
+                let sec_base = sec.address();
+                for (offset, _reloc) in sec.relocations() {
+                    consider(
+                        sec_base.wrapping_add(offset),
+                        &mut coverage,
+                        &mut staged,
+                        &mut extender,
+                    )?;
+                }
+            }
+        }
+        // ET_EXEC / ET_DYN / Core / Unknown: dynamic table only.  An
+        // empty `dynamic_relocations()` short-circuits with no
+        // staging, mirroring the original behaviour.
+        _ => {
+            let Some(dyn_relocs) = obj.dynamic_relocations() else {
+                return Ok(RelocationStats::default());
+            };
+            for (site_addr, _reloc) in dyn_relocs {
+                consider(site_addr, &mut coverage, &mut staged, &mut extender)?;
+            }
         }
     }
     let base_len = regions.len();

@@ -6,7 +6,7 @@ use object::Object;
 
 use crate::{MemRegionsLookupTable, Result};
 
-use super::sections::elf_get_code_and_readonly_sections_as_mem_regions;
+use super::sections::elf_get_loadable_regions;
 
 /// An rsleigh [`rsleigh::MemReader`] backed by an ELF file's sections.
 ///
@@ -24,18 +24,22 @@ pub struct ElfFileMemReader {
 impl ElfFileMemReader {
     /// Builds a reader from an already-parsed [`object::File`].
     ///
-    /// Loads every executable section and every non-writable section with
-    /// file-backed data. The parsed object is not retained — the returned
-    /// reader is self-owning.
+    /// Loads every code + read-only mapping the loader surfaces for the
+    /// ELF.  For ET_EXEC / ET_DYN that's the PT_LOAD program headers
+    /// (the runtime memory layout); for ET_REL it's the allocatable
+    /// sections with first-wins VMA dedup (see
+    /// [`elf_get_loadable_regions`] for the full dispatch rules).
+    /// The parsed object is not retained — the returned reader is
+    /// self-owning.
     ///
     /// # Errors
     ///
-    /// Propagates any error from
-    /// [`elf_get_code_and_readonly_sections_as_mem_regions`]: `Object` for
-    /// unreadable section data and `RegionOverflow` if any included
-    /// section's `address() + data.len()` would exceed `u64::MAX`.
+    /// Propagates any error from [`elf_get_loadable_regions`]:
+    /// `Object` for unreadable segment / section data and
+    /// `RegionOverflow` if any included mapping's `address + length`
+    /// would exceed `u64::MAX`.
     pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
-        let regions = elf_get_code_and_readonly_sections_as_mem_regions(obj)?;
+        let regions = elf_get_loadable_regions(obj)?;
         let endianness = match obj.endianness() {
             object::Endianness::Little => strider_target::Endianness::Little,
             object::Endianness::Big => strider_target::Endianness::Big,
