@@ -518,8 +518,8 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     let inner = &req[0];
     assert_eq!(inner.len(), 2);
 
-    let s1 = inner[0].node(shared).expect("shared bound in pat[0]");
-    let s2 = inner[1].node(shared).expect("shared bound in pat[1]");
+    let s1 = inner[0].node(shared, &function).expect("shared bound in pat[0]");
+    let s2 = inner[1].node(shared, &function).expect("shared bound in pat[1]");
     assert_eq!(s1, s2);
 
     let k_val = inner[0].get_uint(k, &function).expect("K bound");

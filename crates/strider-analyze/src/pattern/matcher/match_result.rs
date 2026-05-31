@@ -27,10 +27,12 @@ impl Match {
 
     /// Returns the `NodeId` bound to `c`, or `None` if `c` was not
     /// captured in this match.  Every successful capture binds at
-    /// least the matched node id.
+    /// least the matched node id; for value-producing captures the
+    /// owning node is recovered from the bound `NodeOutputId` via
+    /// [`strider_ir::Graph::node_for_output`], hence the `&Graph` arg.
     #[must_use]
-    pub fn node(&self, c: Capture) -> Option<NodeId> {
-        self.bindings.get_node(c)
+    pub fn node(&self, c: Capture, graph: &strider_ir::Graph) -> Option<NodeId> {
+        self.bindings.get_node(c, graph)
     }
 
     /// Returns the value `NodeOutputId` bound to `c`, or `None` if
@@ -40,6 +42,15 @@ impl Match {
     #[must_use]
     pub fn output(&self, c: Capture) -> Option<NodeOutputId> {
         self.bindings.get_output(c)
+    }
+
+    /// Whether `c` is bound in this match (either variant of the
+    /// internal `Binding` — value or node-only).  Graph-free — useful
+    /// for `c in m` containment checks where the only question is
+    /// "did this capture fire?".
+    #[must_use]
+    pub fn is_bound(&self, c: Capture) -> bool {
+        self.bindings.is_bound(c)
     }
 
     /// If the node bound to `c` is an `IntConst`, returns the stored
@@ -169,7 +180,7 @@ impl Match {
     #[must_use]
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
-        if let Some(out) = binding.1 {
+        if let super::bindings::Binding::Output(out) = binding {
             let (node, slot) = function.output_definition(out);
             let kind = function.node_kind(node);
             // Call: clobber slots start at index 2.
@@ -221,7 +232,12 @@ impl Match {
                 return function.call_other_clobbered_regs().get(idx).copied();
             }
         }
-        match function.node_kind(binding.0) {
+        // Fallback: an `InitialVar` carries its varnode tag on the
+        // owning node — recover the node id (directly for a
+        // [`Binding::Node`], via `node_for_output` for a
+        // [`Binding::Output`]) and inspect the kind.
+        let node = self.bindings.get_node(c, function)?;
+        match function.node_kind(node) {
             NodeKind::InitialVar(vn) => Some(*vn),
             _ => None,
         }
@@ -246,7 +262,7 @@ impl Match {
         c: Capture,
         graph: &'g strider_ir::Function,
     ) -> &'g [u64] {
-        match self.bindings.get_node(c) {
+        match self.bindings.get_node(c, graph) {
             Some(node) => graph.asm_fingerprint(node),
             None => &[],
         }
@@ -259,7 +275,7 @@ impl Match {
     /// [`Self::get_uint`] / [`Self::get_int`] instead.
     #[must_use]
     pub fn get_wide_bytes(&self, c: Capture, graph: &strider_ir::Graph) -> Option<Vec<u8>> {
-        let node = self.bindings.get_node(c)?;
+        let node = self.bindings.get_node(c, graph)?;
         match graph.node_kind(node) {
             strider_ir::node::NodeKind::IntConstWide(id) => Some(graph.wide_const(*id).to_le_bytes()),
             _ => None,

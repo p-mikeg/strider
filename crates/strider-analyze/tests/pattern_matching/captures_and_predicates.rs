@@ -49,7 +49,7 @@ fn node_var_captures_node_id() {
     let function = shapes::call_at(0xABCD);
     let n = Capture::new();
     let m = a::unique(&function, call().at(0xABCD).capture(n));
-    let node = m.node(n).expect("call node");
+    let node = m.node(n, &function).expect("call node");
     assert!(matches!(function.node_kind(node), strider_ir::node::NodeKind::Call));
 }
 
@@ -182,7 +182,7 @@ fn get_node_on_unbound_returns_none() {
     let function = shapes::call_at(0xABCD);
     let m = a::first(&function, call());
     let never_bound = Capture::new();
-    assert_eq!(m.node(never_bound), None);
+    assert_eq!(m.node(never_bound, &function), None);
 }
 
 #[test]

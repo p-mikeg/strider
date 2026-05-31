@@ -130,7 +130,7 @@ impl PyMatch {
     /// a binding in this match.
     fn __contains__(&self, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
-        Ok(self.inner.node(cap).is_some())
+        Ok(self.inner.is_bound(cap))
     }
 
     /// The capture's value as an unsigned `int`, or `None` when the
@@ -162,7 +162,7 @@ impl PyMatch {
     /// Returns True if the capture has a binding.
     fn has(&self, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
-        Ok(self.inner.node(cap).is_some())
+        Ok(self.inner.is_bound(cap))
     }
 
     // ── Op-variant accessors (for *_any captures) ───────────────────
@@ -262,13 +262,15 @@ impl PyMatch {
     fn node(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::node::PyNode>> {
         let cap = key.resolve()?;
         // Re-borrow the function to validate the generation hasn't drifted
-        // before handing out a node id that may point at a stale arena.
-        {
+        // before handing out a node id that may point at a stale arena,
+        // and to resolve an `Output` binding back to its owning node.
+        let nid = {
             let function = self.function.borrow(py);
             let function = function.read_inner().map_err(into_strider_err)?;
             self.assert_generation(&function)?;
-        }
-        match self.inner.node(cap) {
+            self.inner.node(cap, &function)
+        };
+        match nid {
             Some(nid) => {
                 let pynode = crate::node::PyNode::new(
                     py,

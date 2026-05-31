@@ -32,7 +32,7 @@ fn arg_zero_matches_control_input() {
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
     assert!(
-        hits[0].node(c).is_some(),
+        hits[0].node(c, &function).is_some(),
         "ctrl input capture must bind to a real producer node",
     );
 }
@@ -44,7 +44,7 @@ fn arg_one_matches_memory_input() {
     let pat = call_other().name("cpuid").arg(1, any().capture(c));
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].node(c).is_some(), "mem input capture must bind");
+    assert!(hits[0].node(c, &function).is_some(), "mem input capture must bind");
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn ret_zero_matches_control_output_consumer_when_present() {
     let pat = call_other().name("cpuid").ret(0, any().capture(c));
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
-    let captured_node = hits[0].node(c).expect("ret(0) capture binds");
+    let captured_node = hits[0].node(c, &function).expect("ret(0) capture binds");
     assert_eq!(
         captured_node,
         hits[0].root(),
@@ -77,7 +77,7 @@ fn ctrl_alias_equals_arg_zero() {
     let alias_hits = Matcher::try_new(&function).unwrap().find_all(&pat_alias.into());
     assert_eq!(arg_hits.len(), 1);
     assert_eq!(alias_hits.len(), 1);
-    assert_eq!(arg_hits[0].node(c1), alias_hits[0].node(c2));
+    assert_eq!(arg_hits[0].node(c1, &function), alias_hits[0].node(c2, &function));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn mem_alias_equals_arg_one() {
     let pat_alias = call_other().name("cpuid").mem(any().capture(c2));
     let arg_hits = Matcher::try_new(&function).unwrap().find_all(&pat_arg.into());
     let alias_hits = Matcher::try_new(&function).unwrap().find_all(&pat_alias.into());
-    assert_eq!(arg_hits[0].node(c1), alias_hits[0].node(c2));
+    assert_eq!(arg_hits[0].node(c1, &function), alias_hits[0].node(c2, &function));
 }
 
 #[test]
@@ -104,9 +104,9 @@ fn arg_and_ret_compose_in_one_pattern() {
         .ret(0, any().capture(c_out));
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].node(c_in).is_some());
-    assert!(hits[0].node(c_out).is_some());
+    assert!(hits[0].node(c_in, &function).is_some());
+    assert!(hits[0].node(c_out, &function).is_some());
     // ctrl_in and ctrl_out are different nodes (input is the predecessor,
     // output is the CallOther itself).
-    assert_ne!(hits[0].node(c_in), hits[0].node(c_out));
+    assert_ne!(hits[0].node(c_in, &function), hits[0].node(c_out, &function));
 }

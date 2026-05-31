@@ -94,7 +94,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
         .capture(n);
     let m_d = a::unique(&g_direct, pat.clone());
     assert!(matches!(
-        g_direct.node_kind(m_d.node(n).unwrap()),
+        g_direct.node_kind(m_d.node(n, &g_direct).unwrap()),
         strider_ir::node::NodeKind::If
     ));
 
@@ -107,7 +107,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
         .expect("opt");
     let m_i = a::unique(&g_inverted, pat);
     assert!(matches!(
-        g_inverted.node_kind(m_i.node(n).unwrap()),
+        g_inverted.node_kind(m_i.node(n, &g_inverted).unwrap()),
         strider_ir::node::NodeKind::If
     ));
 }

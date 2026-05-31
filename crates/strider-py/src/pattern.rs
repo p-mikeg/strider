@@ -511,7 +511,7 @@ impl PyPartialMatch {
     /// True if the capture has a binding so far in this partial match.
     fn has(&self, key: CaptureKeyOwned) -> PyResult<bool> {
         let cap = self.capture_from_key(&key)?;
-        Ok(self.bindings.get_node(cap).is_some())
+        Ok(self.bindings.is_bound(cap))
     }
 
     /// Look up a capture by key (Python `m[c]`).  Returns an unsigned int,

@@ -100,8 +100,7 @@ impl Pattern for VarPat {
         if ctx.require_value_output(target).is_none() {
             return false;
         }
-        let node = ctx.function.node_for_output(target);
-        b.bind_capture(self.capture, Binding(node, Some(target)))
+        b.bind_capture(self.capture, Binding::Output(target))
     }
 
     fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
@@ -141,9 +140,14 @@ impl Pattern for CapturePat {
             b.restore(mark);
             return false;
         }
-        let node = ctx.function.node_for_output(target);
-        let output = ctx.require_value_output(target).map(|_| target);
-        if b.bind_capture(self.capture, Binding(node, output)) {
+        // A value-producing match binds the output directly; a non-value
+        // (control / memory) target falls back to the owning node id.
+        let binding = if ctx.require_value_output(target).is_some() {
+            Binding::Output(target)
+        } else {
+            Binding::Node(ctx.function.node_for_output(target))
+        };
+        if b.bind_capture(self.capture, binding) {
             true
         } else {
             b.restore(mark);
@@ -171,7 +175,7 @@ impl Pattern for CapturePat {
             b.restore(mark);
             return false;
         }
-        if b.bind_capture(self.capture, Binding(node, None)) {
+        if b.bind_capture(self.capture, Binding::Node(node)) {
             true
         } else {
             b.restore(mark);

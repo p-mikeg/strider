@@ -450,9 +450,9 @@ fn multi_arg_call_in_branch_assertions(function: &strider_ir::Function) {
     // Distinct call sites — captured NodeIds must differ across the
     // two patterns (otherwise we matched the same call twice).
     let abc_ids: std::collections::HashSet<_> =
-        hits_abc.iter().filter_map(|h| h.node(nv_abc)).collect();
+        hits_abc.iter().filter_map(|h| h.node(nv_abc, function)).collect();
     let cba_ids: std::collections::HashSet<_> =
-        hits_cba.iter().filter_map(|h| h.node(nv_cba)).collect();
+        hits_cba.iter().filter_map(|h| h.node(nv_cba, function)).collect();
     assert!(abc_ids.is_disjoint(&cba_ids),
             "expected (a,b,c) and (c,b,a) to match distinct Call NodeIds; \
              abc={abc_ids:?}, cba={cba_ids:?}");

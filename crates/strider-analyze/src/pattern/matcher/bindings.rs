@@ -6,12 +6,25 @@ use crate::pattern::var::Capture;
 
 // ── Bindings ──────────────────────────────────────────────────────────────────
 
-/// One [`Capture`] binding: the matched node id, plus the value
-/// `NodeOutputId` when the pattern that produced the binding is
-/// value-producing.  Control-flow patterns (`Call`, `If`, `Return`,
-/// `CallOther`) bind only the `NodeId` and leave `output = None`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
+/// One [`Capture`] binding: either a value-producing binding (a specific
+/// `NodeOutputId`) or a control-flow / node-only binding (a `NodeId`).
+///
+/// Value-producing patterns (`add`, `int_const`, the variant-agnostic
+/// `*_any` constructors, …) bind [`Binding::Output`] — the bound
+/// `NodeOutputId` uniquely identifies the producing node via
+/// [`strider_ir::Graph::node_for_output`].  Control-flow patterns
+/// (`Call`, `If`, `Return`, `CallOther`) and zero-output captures bind
+/// [`Binding::Node`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Binding {
+    /// Control-flow / zero-output capture: only the owning `NodeId` is
+    /// meaningful.  Produced by `Call` / `If` / `Return` / `CallOther`
+    /// captures.
+    Node(NodeId),
+    /// Value-producing capture: a specific `NodeOutputId` whose owning
+    /// `NodeId` is recoverable via [`strider_ir::Graph::node_for_output`].
+    Output(NodeOutputId),
+}
 
 /// A set of capture-variable bindings accumulated during a single
 /// match attempt.
@@ -99,8 +112,9 @@ impl Bindings {
         true
     }
 
-    /// Returns the [`Binding`] (node + optional value output) bound to
-    /// `c`, or `None` if `c` was not captured in this match.
+    /// Returns the [`Binding`] (an `Output` value binding or a
+    /// `Node`-only binding) bound to `c`, or `None` if `c` was not
+    /// captured in this match.
     ///
     /// O(1) via the `index` overlay.
     #[must_use]
@@ -110,10 +124,14 @@ impl Bindings {
     }
 
     /// Convenience: returns the value `NodeOutputId` bound to `c`, or
-    /// `None` if `c` was not captured or the binding was control-flow.
+    /// `None` if `c` was not captured or the binding was control-flow
+    /// (a `Binding::Node`).
     #[must_use]
     pub fn get_output(&self, c: Capture) -> Option<NodeOutputId> {
-        self.get_binding(c).and_then(|b| b.1)
+        match self.get_binding(c)? {
+            Binding::Output(out) => Some(out),
+            Binding::Node(_) => None,
+        }
     }
 
     /// Alias for [`Self::get_output`] — kept short because it is the
@@ -124,11 +142,26 @@ impl Bindings {
         self.get_output(c)
     }
 
+    /// Whether `c` was bound in this match (either variant of
+    /// `Binding`).  Graph-free — useful when the only question is
+    /// "did this capture fire?" and a `&Graph` isn't already in scope.
+    #[must_use]
+    pub fn is_bound(&self, c: Capture) -> bool {
+        self.index.contains_key(&c)
+    }
+
     /// Convenience: returns the `NodeId` bound to `c`, or `None` if `c`
     /// was not captured.
+    ///
+    /// For a `Binding::Output` the owning node is recovered via
+    /// [`strider_ir::Graph::node_for_output`]; for a `Binding::Node`
+    /// the stored id is returned directly.
     #[must_use]
-    pub fn get_node(&self, c: Capture) -> Option<NodeId> {
-        self.get_binding(c).map(|b| b.0)
+    pub fn get_node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
+        match self.get_binding(c)? {
+            Binding::Node(node) => Some(node),
+            Binding::Output(out) => Some(graph.node_for_output(out)),
+        }
     }
 
     /// Iterates over every `(Capture, Binding)` recorded by this match.
@@ -205,7 +238,7 @@ impl Bindings {
         c: Capture,
         graph: &Graph,
     ) -> Option<IntBinaryOp> {
-        let node = self.get_node(c)?;
+        let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
             NodeKind::IntBinaryOp(op) => Some(*op),
             _ => None,
@@ -219,7 +252,7 @@ impl Bindings {
         c: Capture,
         graph: &Graph,
     ) -> Option<IntUnaryOp> {
-        let node = self.get_node(c)?;
+        let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
             NodeKind::IntUnaryOp(op) => Some(*op),
             _ => None,
@@ -229,7 +262,7 @@ impl Bindings {
     /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
     #[must_use]
     pub fn get_int_cmp_op(&self, c: Capture, graph: &Graph) -> Option<IntCmpOp> {
-        let node = self.get_node(c)?;
+        let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
             NodeKind::IntCmpOp(op) => Some(*op),
             _ => None,
@@ -244,7 +277,7 @@ impl Bindings {
         c: Capture,
         graph: &Graph,
     ) -> Option<IntBinaryOp> {
-        let node = self.get_node(c)?;
+        let node = self.get_node(c, graph)?;
         let NodeKind::IntBinaryOp(op) = graph.node_kind(node) else {
             return None;
         };
@@ -268,7 +301,7 @@ impl Bindings {
         c: Capture,
         graph: &Graph,
     ) -> Option<FloatBinaryOp> {
-        let node = self.get_node(c)?;
+        let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
             NodeKind::FloatBinaryOp(op) => Some(*op),
             _ => None,
@@ -282,7 +315,7 @@ impl Bindings {
         c: Capture,
         graph: &Graph,
     ) -> Option<FloatUnaryOp> {
-        let node = self.get_node(c)?;
+        let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
             NodeKind::FloatUnaryOp(op) => Some(*op),
             _ => None,
@@ -296,7 +329,7 @@ impl Bindings {
         c: Capture,
         graph: &Graph,
     ) -> Option<FloatCmpOp> {
-        let node = self.get_node(c)?;
+        let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
             NodeKind::FloatCmpOp(op) => Some(*op),
             _ => None,
@@ -325,7 +358,7 @@ mod tests {
         // distinct `NodeOutputId`s from the graph.
         let mut a_out = None;
         let mut b_out = None;
-        let function = make_empty_fn(|b| {
+        let _function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
             let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
             a_out = Some(av);
@@ -341,14 +374,11 @@ mod tests {
         let a = a_out.unwrap();
         let b = b_out.unwrap();
 
-        let na = function.node_for_output(a);
-        let nb = function.node_for_output(b);
-
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert_eq!(bindings.get(v), None);
-        let ba = Binding(na, Some(a));
-        let bb = Binding(nb, Some(b));
+        let ba = Binding::Output(a);
+        let bb = Binding::Output(b);
         assert!(bindings.bind_capture(v, ba));
         assert_eq!(bindings.get(v), Some(a));
 
@@ -386,14 +416,14 @@ mod tests {
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert_eq!(bindings.get_node(v), None);
-        let b1 = Binding(n1, None);
-        let b2 = Binding(n2, None);
+        assert_eq!(bindings.get_node(v, &function), None);
+        let b1 = Binding::Node(n1);
+        let b2 = Binding::Node(n2);
         assert!(bindings.bind_capture(v, b1));
-        assert_eq!(bindings.get_node(v), Some(n1));
+        assert_eq!(bindings.get_node(v, &function), Some(n1));
         assert!(bindings.bind_capture(v, b1));
         assert!(!bindings.bind_capture(v, b2));
-        assert_eq!(bindings.get_node(v), Some(n1));
+        assert_eq!(bindings.get_node(v, &function), Some(n1));
     }
 
     // ── Typed extractors read through the graph ──────────────────────────
@@ -408,11 +438,10 @@ mod tests {
         })
         .expect("build graph");
         let c = c_out.unwrap();
-        let n = function.node_for_output(c);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert!(bindings.bind_capture(v, Binding(n, Some(c))));
+        assert!(bindings.bind_capture(v, Binding::Output(c)));
         assert_eq!(bindings.get_uint(v, &function), Some(7));
     }
 
@@ -435,11 +464,10 @@ mod tests {
         })
         .expect("build graph");
         let s = s_out.unwrap();
-        let add_node = function.node_for_output(s);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert!(bindings.bind_capture(v, Binding(add_node, Some(s))));
+        assert!(bindings.bind_capture(v, Binding::Output(s)));
         assert_eq!(bindings.get_uint(v, &function), None);
     }
 
@@ -466,7 +494,7 @@ mod tests {
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert!(bindings.bind_capture(v, Binding(add_node, None)));
+        assert!(bindings.bind_capture(v, Binding::Node(add_node)));
         assert_eq!(
             bindings.get_int_binary_op(v, &function),
             Some(IntBinaryOp::Add)
@@ -482,7 +510,7 @@ mod tests {
         let bindings = Bindings::default();
         let v = Capture::new();
         assert_eq!(bindings.get(v), None);
-        assert_eq!(bindings.get_node(v), None);
+        assert_eq!(bindings.get_node(v, &function), None);
         assert_eq!(bindings.get_uint(v, &function), None);
         assert_eq!(bindings.get_int(v, &function), None);
         assert_eq!(bindings.get_bool(v, &function), None);
@@ -519,10 +547,10 @@ mod tests {
         let dropped_a = Capture::new();
         let dropped_b = Capture::new();
 
-        assert!(bindings.bind_capture(kept, Binding(n, None)));
+        assert!(bindings.bind_capture(kept, Binding::Node(n)));
         let mark = bindings.mark();
-        assert!(bindings.bind_capture(dropped_a, Binding(n, None)));
-        assert!(bindings.bind_capture(dropped_b, Binding(n, None)));
+        assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
+        assert!(bindings.bind_capture(dropped_b, Binding::Node(n)));
 
         // Pre-restore: all three visible via O(1) overlay.
         assert!(bindings.get_binding(kept).is_some());
@@ -539,7 +567,7 @@ mod tests {
         // Rebinding a rolled-back capture to a fresh binding must
         // succeed as brand-new — the overlay must not retain a stale
         // entry pointing at a now-truncated journal index.
-        assert!(bindings.bind_capture(dropped_a, Binding(n, None)));
+        assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
         assert!(bindings.get_binding(dropped_a).is_some());
     }
 
@@ -556,7 +584,7 @@ mod tests {
 
         let mut bindings = Bindings::default();
         let c = Capture::new();
-        assert!(bindings.bind_capture(c, Binding(n, None)));
+        assert!(bindings.bind_capture(c, Binding::Node(n)));
         let mark = bindings.mark();
         bindings.restore(mark);
         assert!(bindings.get_binding(c).is_some());

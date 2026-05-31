@@ -58,7 +58,7 @@ macro_rules! impl_variant_any {
                 Arc::new(move |ctx| {
                     let node = ctx
                         .bindings
-                        .get_node(c)
+                        .get_node(c, ctx.function)
                         .ok_or_else(|| crate::pattern::error::missing_binding($missing))?;
                     match ctx.function.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
@@ -74,10 +74,13 @@ macro_rules! impl_variant_any {
                     // Populate the value output too so callers can use
                     // both `Match::get_*_op(c, &graph)` (op-variant) AND
                     // typed extractors / `Match::output(c)` (value).
-                    let value_out = ctx.function.node_outputs(node).iter().copied().find(|&o| {
-                        ctx.function.output_kind(o).is_value()
-                    });
-                    b.bind_capture(c, Binding(node, value_out))
+                    let binding = ctx.function
+                        .node_outputs(node)
+                        .iter()
+                        .copied()
+                        .find(|&o| ctx.function.output_kind(o).is_value())
+                        .map_or(Binding::Node(node), Binding::Output);
+                    b.bind_capture(c, binding)
                 } else {
                     false
                 }
@@ -102,7 +105,7 @@ macro_rules! impl_variant_any {
                 Arc::new(move |ctx| {
                     let node = ctx
                         .bindings
-                        .get_node(c)
+                        .get_node(c, ctx.function)
                         .ok_or_else(|| crate::pattern::error::missing_binding($missing))?;
                     match ctx.function.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
@@ -116,10 +119,13 @@ macro_rules! impl_variant_any {
                     // Populate the value output too so callers can use
                     // both `Match::get_*_op(c, &graph)` (op-variant) AND
                     // typed extractors / `Match::output(c)` (value).
-                    let value_out = ctx.function.node_outputs(node).iter().copied().find(|&o| {
-                        ctx.function.output_kind(o).is_value()
-                    });
-                    b.bind_capture(c, Binding(node, value_out))
+                    let binding = ctx.function
+                        .node_outputs(node)
+                        .iter()
+                        .copied()
+                        .find(|&o| ctx.function.output_kind(o).is_value())
+                        .map_or(Binding::Node(node), Binding::Output);
+                    b.bind_capture(c, binding)
                 } else {
                     false
                 }
@@ -140,7 +146,7 @@ macro_rules! impl_variant_any {
                 Arc::new(move |ctx| {
                     let node = ctx
                         .bindings
-                        .get_node(c)
+                        .get_node(c, ctx.function)
                         .ok_or_else(|| crate::pattern::error::missing_binding($missing))?;
                     match ctx.function.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
@@ -156,10 +162,13 @@ macro_rules! impl_variant_any {
                     // Populate the value output too so callers can use
                     // both `Match::get_*_op(c, &graph)` (op-variant) AND
                     // typed extractors / `Match::output(c)` (value).
-                    let value_out = ctx.function.node_outputs(node).iter().copied().find(|&o| {
-                        ctx.function.output_kind(o).is_value()
-                    });
-                    b.bind_capture(c, Binding(node, value_out))
+                    let binding = ctx.function
+                        .node_outputs(node)
+                        .iter()
+                        .copied()
+                        .find(|&o| ctx.function.output_kind(o).is_value())
+                        .map_or(Binding::Node(node), Binding::Output);
+                    b.bind_capture(c, binding)
                 } else {
                     false
                 }
