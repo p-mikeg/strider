@@ -21,6 +21,24 @@ use rustc_hash::FxHashMap;
 use crate::graph::{CcMetadata, Graph, NodeIdRemap, SideTableRemap};
 use crate::node::{NodeId, NodeOutputId};
 
+/// Per-node varnode-flavoured metadata.  A single side-table on
+/// [`Function`] (`vn_meta`) carries one of these per `NodeId` that
+/// needs it; the variants are mutually exclusive because they apply
+/// to disjoint node kinds (`Phi` vs `Call`).
+#[derive(Debug, Clone)]
+pub(crate) enum NodeVnMeta {
+    /// Source-level varnode tag for a lift-time
+    /// [`crate::node::NodeKind::Phi`] tracking a specific varnode.
+    /// `None`-typed entries (the `Option` outer layer in
+    /// `vn_meta: SecondaryMap<NodeId, Option<NodeVnMeta>>`) represent
+    /// anonymous phis synthesised by opt passes.
+    PhiVar(rsleigh::Vn),
+    /// Per-[`crate::node::NodeKind::Call`] clobber-list override
+    /// shadowing the function-default [`CcMetadata::call_clobbered`]
+    /// for one call site.
+    CallClobber(Vec<rsleigh::Vn>),
+}
+
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
 /// `FunctionBuilder::build` is the canonical constructor.  For synthetic /
@@ -60,12 +78,12 @@ pub struct Function {
     // `impl IntoIterator<Item = u64>` so callers are unaffected.
     pub(crate) asm_fingerprints:
         SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
-    /// Per-Call clobber-list override (shadows `CcMetadata::call_clobbered`
-    /// for a specific call site).
-    pub(crate) call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>,
-    /// Source-level varnode tag for lift-time [`crate::node::NodeKind::Phi`]
-    /// nodes.  `Some(vn)` = register-identity phi; `None` = anonymous phi.
-    pub(crate) phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>,
+    /// Per-node varnode-flavoured metadata.  A single [`NodeVnMeta`]
+    /// covers both the lift-time `Phi` varnode tag and the per-Call
+    /// clobber-list override; the two never apply to the same `NodeId`
+    /// (a `Phi` is never a `Call`), so a single-tag enum is sound and
+    /// halves the per-`NodeId` overlay footprint.
+    pub(crate) vn_meta: SecondaryMap<NodeId, Option<NodeVnMeta>>,
     /// Per-Call override of stack-arg offsets when the orchestrator
     /// pre-resolved a per-address CC override.  `None` (or no entry)
     /// means use the function-default CC's offsets.
@@ -244,14 +262,17 @@ impl Function {
     #[inline]
     #[must_use]
     pub fn phi_var_tag(&self, node_id: NodeId) -> Option<rsleigh::Vn> {
-        self.phi_var_tag[node_id]
+        match &self.vn_meta[node_id] {
+            Some(NodeVnMeta::PhiVar(vn)) => Some(*vn),
+            _ => None,
+        }
     }
 
     /// Sets the source-level varnode tag for `node_id`.  Callers must
     /// guarantee that `node_id`'s kind is [`crate::node::NodeKind::Phi`].
     #[inline]
     pub fn set_phi_var_tag(&mut self, node_id: NodeId, vn: rsleigh::Vn) {
-        self.phi_var_tag[node_id] = Some(vn);
+        self.vn_meta[node_id] = Some(NodeVnMeta::PhiVar(vn));
     }
 
     /// Returns the per-Call clobber-list override for `node_id`, or `None`
@@ -260,14 +281,17 @@ impl Function {
     #[inline]
     #[must_use]
     pub fn call_clobbered_override(&self, node_id: NodeId) -> Option<&[rsleigh::Vn]> {
-        self.call_clobbered_overrides[node_id].as_deref()
+        match &self.vn_meta[node_id] {
+            Some(NodeVnMeta::CallClobber(c)) => Some(c.as_slice()),
+            _ => None,
+        }
     }
 
     /// Records `clobbered` as the per-Call clobber-list override for
     /// `node_id`.  Replaces any prior value.
     #[inline]
     pub fn set_call_clobbered_override(&mut self, node_id: NodeId, clobbered: Vec<rsleigh::Vn>) {
-        self.call_clobbered_overrides[node_id] = Some(clobbered);
+        self.vn_meta[node_id] = Some(NodeVnMeta::CallClobber(clobbered));
     }
 
     /// Returns the per-Call stack-arg offsets override for `node_id`, or
@@ -519,8 +543,7 @@ impl Function {
         // old→new translation table produced by `retain_reachable`.
         self.call_other_names.remap_node_keyed(&remap);
         self.asm_fingerprints.remap_node_keyed(&remap);
-        self.call_clobbered_overrides.remap_node_keyed(&remap);
-        self.phi_var_tag.remap_node_keyed(&remap);
+        self.vn_meta.remap_node_keyed(&remap);
         self.call_stack_arg_offsets_overrides.remap_node_keyed(&remap);
         // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
         // also references a node — the slot `base` (a `NodeOutputId`).  So
