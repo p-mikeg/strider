@@ -21,6 +21,7 @@ strider-ir = { path = "crates/strider-ir" }
 strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }
 strider-lift = { path = "crates/strider-lift" }
 strider-analyze = { path = "crates/strider-analyze" }
+strider-pattern = { path = "crates/strider-pattern" }
 strider-pattern-macros = { path = "crates/strider-pattern-macros" }
 rsleigh = { path = "../rsleigh" }
 

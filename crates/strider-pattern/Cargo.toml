@@ -1,0 +1,22 @@
+[package]
+name = "strider-pattern"
+version = "0.1.0"
+edition = { workspace = true }
+
+[dependencies]
+strider-ir = { workspace = true }
+strider-target = { workspace = true }
+entity-utils = { workspace = true }
+rsleigh = { workspace = true }
+petgraph = { workspace = true }
+cranelift-entity = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+smallvec = { workspace = true }
+
+[dev-dependencies]
+strider-ir-test-utils = { path = "../strider-ir-test-utils" }
+expect-test = { workspace = true }
+
+[lints]
+workspace = true

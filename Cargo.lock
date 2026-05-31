@@ -1362,6 +1362,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "strider-pattern"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cranelift-entity",
+ "entity-utils",
+ "expect-test",
+ "petgraph",
+ "rsleigh",
+ "smallvec",
+ "strider-ir",
+ "strider-ir-test-utils",
+ "strider-target",
+ "thiserror",
+]
+
+[[package]]
 name = "strider-pattern-macros"
 version = "0.1.0"
 dependencies = [
