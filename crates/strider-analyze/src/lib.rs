@@ -10,7 +10,8 @@
 
 //! Strider analyze: optimization passes, pattern matching, indirect-branch
 //! resolution, and the orchestrator.  Consolidates the optimizer, pattern
-//! matcher, per-region driver, and `Strider` entry point into one crate.
+//! matcher, per-region driver, and the [`orchestrator::run`] entry point
+//! into one crate.
 
 pub mod orchestrator;
 pub mod rewrite;
@@ -20,6 +21,6 @@ pub mod indirect_resolver;
 pub mod opt;
 pub mod pattern;
 
-pub use orchestrator::{dump_neighborhood, dump_per_region, run, Config};
+pub use orchestrator::{dump_neighborhood, dump_per_region, run, RunConfig, RunOptions};
 pub use rewrite::GraphRewriter;
-pub use strider::{AnalyzeOptions, AnalyzeOutcome, Strider};
+pub use strider::{AnalyzeOptions, AnalyzeOutcome, LiftDriver};

@@ -1,10 +1,14 @@
-//! `PyStrider` — wraps `strider_analyze::Strider`, exposes `analyze_cfg`.
+//! `PyStrider` — wraps `strider_analyze::LiftDriver`, exposes `analyze_cfg`.
 //!
 //! Constructed with a `(SleighArch, Sleigh, CallingConvention)`
 //! triple. The Sleigh is needed so we can read the register table to
 //! resolve calling-convention register names; the Sleigh is *not*
 //! consumed (`SleighRegs` is cloned out of the cached copy in
 //! `PySleigh.regs`).
+//!
+//! The Python class is exposed as `strider.Strider` (the user-facing
+//! name has not changed); internally it now holds a `LiftDriver` since
+//! the Rust `Strider` struct collapsed into [`strider_analyze::RunConfig`].
 
 use pyo3::prelude::*;
 
@@ -20,7 +24,7 @@ use crate::sleigh::PySleigh;
 /// produces the canned optimizer pipelines.
 #[pyclass(name = "Strider", module = "strider")]
 pub struct PyStrider {
-    pub(crate) inner: strider_analyze::Strider,
+    pub(crate) inner: strider_analyze::LiftDriver,
 }
 
 /// Mirror of `strider_analyze::AnalyzeOutcome`.
@@ -115,25 +119,25 @@ impl PyStrider {
     }
 }
 
-/// Build a `strider_analyze::Strider` from a `PyCallingConvention`.
-/// Routes through either `Strider::new` (presets — does name
-/// resolution against `sleigh`'s regs) or `Strider::from_built_cc`
+/// Build a `strider_analyze::LiftDriver` from a `PyCallingConvention`.
+/// Routes through either `LiftDriver::new` (presets — does name
+/// resolution against `sleigh`'s regs) or `LiftDriver::from_built_cc`
 /// (custom — CC is already resolved at construction time).
 fn build_strider(
     py: Python<'_>,
     arch: PySleighArch,
     sleigh: &Py<PySleigh>,
     cc: &PyCallingConvention,
-) -> PyResult<strider_analyze::Strider> {
+) -> PyResult<strider_analyze::LiftDriver> {
     let sleigh_borrow = sleigh.borrow(py);
     let regs = sleigh_borrow.regs.clone();
     drop(sleigh_borrow);
     match &cc.inner {
         crate::cc::CcImpl::Preset(preset) => {
-            strider_analyze::Strider::new(arch.inner, regs, *preset).map_err(into_strider_err)
+            strider_analyze::LiftDriver::new(arch.inner, regs, *preset).map_err(into_strider_err)
         }
         crate::cc::CcImpl::Custom(built) => {
-            Ok(strider_analyze::Strider::from_built_cc(
+            Ok(strider_analyze::LiftDriver::from_built_cc(
                 arch.inner,
                 regs,
                 *built.clone(),

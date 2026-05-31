@@ -70,7 +70,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .expect("probe sleigh")
         .regs()
         .expect("probe regs");
-    let ana = strider_analyze::Strider::new(sleigh_arch, regs, cc).expect("Strider::new");
+    let ana = strider_analyze::LiftDriver::new(sleigh_arch, regs, cc).expect("LiftDriver::new");
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let mut sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");

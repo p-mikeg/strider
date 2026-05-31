@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{Config, Strider};
+use strider_analyze::{RunConfig, RunOptions};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -26,9 +26,6 @@ fn x86_64_tail_call_bytes() -> (Vec<u8>, u64, u64) {
     (bs, 0x1000, 0x9000)
 }
 
-fn make_strider() -> Strider {
-    common::strider_x86_64()
-}
 
 /// x86_64: `mov rax, 0x9000; jmp rax` — the indirect jump is lifted
 /// as a placeholder IndirectBranch.  At fixed point KnownBits +
@@ -69,7 +66,6 @@ fn x86_64_indirect_jmp_to_const_bytes() -> (Vec<u8>, u64, u64) {
 #[test]
 fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list() {
     let (bytes, entry, call_target) = x86_64_indirect_jmp_to_const_bytes();
-    let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
@@ -77,18 +73,18 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
 
-    let config = Config {
-        strider: &strider,
-        start_addr: entry.into(),
+    // 9 bytes covers `mov rax, imm` + `jmp rax` exactly; any further
+    // memory access is via the orchestrator's resolver.
+    let config = RunConfig::new(
+        arch,
+        TargetCC::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        // 9 bytes covers `mov rax, imm` + `jmp rax` exactly; any further
-        // memory access is via the orchestrator's resolver.
-        fn_max_size: Some(9),
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: overrides,
-    };
+        entry.into(),
+        RunOptions::new()
+            .fn_max_size(9)
+            .per_address_ccs_unbuilt(overrides),
+    )
+    .unwrap();
     let bfg = strider_analyze::run(config).unwrap();
 
     // The orchestrator's in-place edit spliced in a Call node at the
@@ -118,7 +114,6 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
 #[test]
 fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let (bytes, entry, call_target) = x86_64_tail_call_bytes();
-    let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
@@ -126,16 +121,16 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
 
-    let config = Config {
-        strider: &strider,
-        start_addr: entry.into(),
+    let config = RunConfig::new(
+        arch,
+        TargetCC::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        fn_max_size: Some(10),
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: overrides,
-    };
+        entry.into(),
+        RunOptions::new()
+            .fn_max_size(10)
+            .per_address_ccs_unbuilt(overrides),
+    )
+    .unwrap();
     let bfg = strider_analyze::run(config).unwrap();
 
     let call_id = bfg

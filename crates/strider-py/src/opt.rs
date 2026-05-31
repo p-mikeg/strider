@@ -128,27 +128,27 @@ impl PyOptimizerPipeline {
     }
 
     /// Build the convention-aware "full" pipeline by delegating to
-    /// `strider_analyze::Strider::build_optimizer_pipeline` and snapshotting
+    /// `strider_analyze::LiftDriver::build_optimizer_pipeline` and snapshotting
     /// its passes.  Iterating the canonical Rust pipeline rather than
     /// hand-mirroring it makes drift between the Python wrapper and
-    /// `Strider::build_optimizer_pipeline` structurally impossible.
-    pub(crate) fn new_full_default(strider: &strider_analyze::Strider) -> Self {
+    /// `LiftDriver::build_optimizer_pipeline` structurally impossible.
+    pub(crate) fn new_full_default(strider: &strider_analyze::LiftDriver) -> Self {
         let pipeline = strider.build_optimizer_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
     /// Build the stable-only pipeline by delegating to
-    /// `strider_analyze::Strider::build_stable_optimizer_pipeline` and
+    /// `strider_analyze::LiftDriver::build_stable_optimizer_pipeline` and
     /// snapshotting its passes.
-    pub(crate) fn new_stable_default(strider: &strider_analyze::Strider) -> Self {
+    pub(crate) fn new_stable_default(strider: &strider_analyze::LiftDriver) -> Self {
         let pipeline = strider.build_stable_optimizer_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
     /// Build the destructive-only pipeline by delegating to
-    /// `strider_analyze::Strider::build_destructive_optimizer_pipeline` and
+    /// `strider_analyze::LiftDriver::build_destructive_optimizer_pipeline` and
     /// snapshotting its passes.
-    pub(crate) fn new_destructive_default(strider: &strider_analyze::Strider) -> Self {
+    pub(crate) fn new_destructive_default(strider: &strider_analyze::LiftDriver) -> Self {
         let pipeline = strider.build_destructive_optimizer_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }

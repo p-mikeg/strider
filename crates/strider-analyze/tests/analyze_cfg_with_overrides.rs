@@ -1,4 +1,4 @@
-//! Per-call test: `Strider::analyze_cfg_with` applies the
+//! Per-call test: `LiftDriver::analyze_cfg_with` applies the
 //! per-address-cc override at lift time without going through
 //! `strider_analyze::run`.  Mirrors `tests/per_address_cc.rs` but exercises the
 //! new options-bag API directly so a strider-py custom pipeline
@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{AnalyzeOptions, Strider};
+use strider_analyze::{AnalyzeOptions, LiftDriver};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -23,7 +23,7 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
     (bytes, 0x1000, 0x2000)
 }
 
-fn make_strider() -> Strider {
+fn make_strider() -> LiftDriver {
     common::strider_x86_64()
 }
 

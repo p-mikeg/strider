@@ -27,7 +27,7 @@ use strider_ir::Function;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::Strider;
+use strider_analyze::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
 
 use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
@@ -106,7 +106,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
 /// the load via a single-input `Return(target_value)` — exactly
 /// the shape strider's the strider deferred-anchor lift placeholder lift produces.
 ///
-/// Bypasses the cfg builder + `Strider::analyze_cfg`
+/// Bypasses the cfg builder + `LiftDriver::analyze_cfg`
 /// because the only x86_64 byte sequence that compresses to this
 /// shape requires a `mov [rsp+K], imm; ...; jmp *[rsp+K]` flow with
 /// a real conditional branch — that's a 25+-byte fixture that adds
@@ -835,8 +835,8 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
         .expect("create aarch64 sleigh");
 
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::aarch64_aapcs64().unwrap())
-        .expect("Strider::new");
+    let strider = LiftDriver::new(arch, regs, CallingConvention::aarch64_aapcs64().unwrap())
+        .expect("LiftDriver::new");
     let lr_vn = strider
         .calling_convention()
         .link_register_vn

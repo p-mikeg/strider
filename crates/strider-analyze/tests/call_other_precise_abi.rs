@@ -13,7 +13,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
         .expect("probe sleigh new")
         .regs()
         .expect("probe regs");
-    let strider_h = strider_analyze::Strider::new(
+    let strider_h = strider_analyze::LiftDriver::new(
         arch,
         regs,
         strider_target::CallingConvention::x86_64_systemv().unwrap(),
@@ -86,7 +86,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
         .expect("probe sleigh new")
         .regs()
         .expect("probe regs");
-    let strider_h = strider_analyze::Strider::new(
+    let strider_h = strider_analyze::LiftDriver::new(
         arch,
         regs,
         strider_target::CallingConvention::aarch64_aapcs64().unwrap(),

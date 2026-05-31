@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let arch = strider_target::SleighArch::x86();
     let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
-    let strider = strider_analyze::Strider::new(
+    let strider = strider_analyze::LiftDriver::new(
         arch,
         sleigh.regs()?,
         strider_target::CallingConvention::x86_cdecl()?,

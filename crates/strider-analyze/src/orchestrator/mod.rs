@@ -7,9 +7,9 @@
 //! ## Iteration shape
 //!
 //! 1. Build the CFG with the current `known_targets` map.
-//! 2. Lift the CFG to IR via [`Strider::analyze_cfg`].
+//! 2. Lift the CFG to IR via [`crate::LiftDriver::analyze_cfg`].
 //! 3. Run the **stable** optimiser subset
-//!    ([`Strider::build_stable_optimizer_pipeline`]).
+//!    ([`crate::LiftDriver::build_stable_optimizer_pipeline`]).
 //! 4. For each unresolved anchor, run
 //!    [`crate::opt::indirect_branch_resolve::classify_anchor`].
 //! 5. Apply in-place IR edits for terminal classifications:
@@ -21,7 +21,7 @@
 //!    rebuild the CFG.  Otherwise stay on the same CFG.
 //! 7. At fixed point: if any branch is still unresolved, return
 //!    `Err`.  Otherwise run the destructive subset
-//!    ([`Strider::build_destructive_optimizer_pipeline`]) once and
+//!    ([`crate::LiftDriver::build_destructive_optimizer_pipeline`]) once and
 //!    return the optimised IR.
 //!
 //! ## Iteration cap
@@ -54,18 +54,119 @@ use crate::opt::indirect_branch_resolve::{
     apply_link_register, apply_tail_call, classify_anchor,
 };
 use crate::pattern::GraphRewriteCtxExt;
-use crate::strider::{RegionLiftHandles, Strider};
+use crate::strider::{LiftDriver, RegionLiftHandles};
 use crate::AnalyzeOutcome;
 
-/// Configuration for [`run`].  Held outside the function so callers
-/// can construct one and reuse the strider / sleigh / options across
-/// iterations without re-paying per-iteration setup costs.
-pub struct Config<'a, R>
+/// Optional knobs for [`RunConfig::new`].  The required arguments (arch,
+/// calling convention, sleigh, start address) live on the constructor's
+/// positional list; everything else flows through here so the constructor
+/// signature stays manageable.
+///
+/// Use `RunOptions::default()` for the common case ("just analyse this
+/// function with no overrides, defaults everywhere"), or the chainable
+/// setters below to tweak individual fields.
+#[derive(Default)]
+pub struct RunOptions {
+    /// Read-only memory image for the optimiser's `LoadReadOnly`
+    /// pass.  `None` to disable.  Borrowed via `as_deref()` for the
+    /// classifier path; `Arc::clone`d once per CFG rebuild for the
+    /// cfg builder's option.
+    pub rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    /// Maximum function size in bytes.  When set, a `Single(K)`
+    /// resolution with `K >= start_addr + fn_max_size` is treated as a
+    /// tail call.  When `None`, only `K < start_addr` is treated as a
+    /// tail call.
+    pub fn_max_size: Option<u64>,
+    /// When `true`, `Single(K)` with `K < start_addr` is NOT treated
+    /// as a tail call — i.e. the orchestrator follows it as an
+    /// intra-fn branch.
+    pub allow_code_before_start_addr: bool,
+    /// Compact the IR arena at finalize.  Default `true` (recommended).
+    /// See [`RunConfig::compact`] for the full contract.
+    pub compact: bool,
+    /// Per-target-address calling-convention overrides.  See
+    /// [`RunConfig::per_address_ccs`] for semantics; these are the
+    /// unbuilt presets — [`RunConfig::new`] resolves them against the
+    /// Sleigh register table at construction.
+    pub per_address_ccs_unbuilt: FxHashMap<u64, strider_target::CallingConvention>,
+}
+
+impl RunOptions {
+    /// Construct with `compact = true` (the recommended default).
+    /// Cannot use `#[derive(Default)]` alone because `compact`'s default
+    /// must be `true`, not `false`.  Implemented as `#[must_use]` chain-
+    /// friendly setters; callers do `RunOptions::new().rom(...).compact(false)`.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            rom: None,
+            fn_max_size: None,
+            allow_code_before_start_addr: false,
+            compact: true,
+            per_address_ccs_unbuilt: FxHashMap::default(),
+        }
+    }
+
+    /// Set the read-only memory image for `LoadReadOnly` folding.
+    #[must_use]
+    pub fn rom(mut self, rom: std::sync::Arc<dyn ReadOnlyMemory>) -> Self {
+        self.rom = Some(rom);
+        self
+    }
+
+    /// Set the function-size cap in bytes.
+    #[must_use]
+    pub const fn fn_max_size(mut self, n: u64) -> Self {
+        self.fn_max_size = Some(n);
+        self
+    }
+
+    /// Permit the lifter to follow direct branches to targets below
+    /// `start_addr` as intra-function code.
+    #[must_use]
+    pub const fn allow_code_before_start_addr(mut self) -> Self {
+        self.allow_code_before_start_addr = true;
+        self
+    }
+
+    /// Override the compact-on-finalise flag.
+    #[must_use]
+    pub const fn compact(mut self, c: bool) -> Self {
+        self.compact = c;
+        self
+    }
+
+    /// Install per-target-address CC overrides (unbuilt presets, resolved
+    /// against the Sleigh register table inside [`RunConfig::new`]).
+    #[must_use]
+    pub fn per_address_ccs_unbuilt(
+        mut self,
+        m: FxHashMap<u64, strider_target::CallingConvention>,
+    ) -> Self {
+        self.per_address_ccs_unbuilt = m;
+        self
+    }
+}
+
+/// Configuration for [`run`].  Bundles the stable per-architecture
+/// description (arch, calling convention, sleigh-regs cache, alias mode)
+/// with the per-run knobs (start address, sleigh handle, ROM, function
+/// size cap, code-before-start permission, compact flag, per-address CC
+/// overrides) so callers construct one struct and feed it to [`run`].
+///
+/// All fields are resolved at construction time by [`RunConfig::new`];
+/// the per-address CC overrides are pre-built against the Sleigh register
+/// table so the loop sees a fully-resolved struct.
+pub struct RunConfig<R>
 where
     R: rsleigh::MemReader,
 {
-    /// The strider — stable across iterations.
-    pub strider: &'a Strider,
+    /// Stable lift driver: arch + calling convention + sleigh regs +
+    /// alias mode.  Embedded here so the orchestrator loop and the
+    /// `analyze_cfg` / pipeline-builder helpers all share one source
+    /// of truth; the four fields are also surfaced as `pub` accessors
+    /// on `RunConfig` for direct inspection.
+    lift_driver: LiftDriver,
     /// Function entry address.  Newtype prevents accidental swap with
     /// `fn_max_size` at struct-literal construction sites.  Construct
     /// via `addr.into()` or `strider_lift::cfg::MachineInsnAddr::from(addr)`.
@@ -95,8 +196,9 @@ where
     /// compaction these stay in the arena).  Pre-compaction NodeIds
     /// become invalid across the call.
     pub compact: bool,
-    /// Per-target-address calling-convention overrides.  When a `Call`
-    /// is emitted (either at lift time for a direct call to an
+    /// Per-target-address calling-convention overrides, pre-resolved
+    /// against the Sleigh register table by [`RunConfig::new`].  When
+    /// a `Call` is emitted (either at lift time for a direct call to an
     /// `IntConst(K)` target, or by the indirect-branch resolver as an
     /// in-place tail-call edit to address `K`), if `K` is in this map
     /// the matching CC fully replaces the function-default for that
@@ -107,7 +209,145 @@ where
     /// [`strider_target::CallingConvention::x86_64_all_preserving`] (and the
     /// per-arch siblings).  The user supplies raw addresses; symbol
     /// resolution is the caller's responsibility.
-    pub per_address_ccs_unbuilt: FxHashMap<u64, strider_target::CallingConvention>,
+    pub per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention>,
+}
+
+impl<R> RunConfig<R>
+where
+    R: rsleigh::MemReader,
+{
+    /// Build a `RunConfig` from raw inputs.  Resolves the calling
+    /// convention and every entry of `options.per_address_ccs_unbuilt`
+    /// against the Sleigh register table so the orchestrator sees a
+    /// fully-resolved struct.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `Sleigh::regs()` fails, if the function-default
+    /// calling convention can't be resolved against the resulting
+    /// register table, or if any per-address override CC can't be
+    /// resolved.
+    pub fn new(
+        arch: strider_target::SleighArch,
+        calling_convention: strider_target::CallingConvention,
+        sleigh: rsleigh::Sleigh<R>,
+        start_addr: strider_lift::cfg::MachineInsnAddr,
+        options: RunOptions,
+    ) -> Result<Self> {
+        let sleigh_regs = sleigh
+            .regs()
+            .map_err(|e| anyhow!("RunConfig::new: Sleigh::regs() failed: {e:?}"))?;
+        let lift_driver = LiftDriver::new(arch, sleigh_regs.clone(), calling_convention)?;
+        let per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
+            if options.per_address_ccs_unbuilt.is_empty() {
+                FxHashMap::default()
+            } else {
+                options
+                    .per_address_ccs_unbuilt
+                    .iter()
+                    .map(|(addr, cc)| {
+                        (*cc).build(&sleigh_regs).map(|built| (*addr, built)).map_err(|e| {
+                            anyhow!("per-address CC at {addr:#x} unresolved: {e:?}")
+                        })
+                    })
+                    .collect::<Result<_>>()?
+            };
+        Ok(Self {
+            lift_driver,
+            start_addr,
+            sleigh,
+            rom: options.rom,
+            fn_max_size: options.fn_max_size,
+            allow_code_before_start_addr: options.allow_code_before_start_addr,
+            compact: options.compact,
+            per_address_ccs,
+        })
+    }
+
+    /// Build a `RunConfig` from an already-resolved
+    /// `BuiltCallingConvention`.  Sister of [`Self::new`] for the
+    /// custom-CC path (e.g. CCs constructed from runtime register-name
+    /// lists at the Python boundary).
+    ///
+    /// `options.per_address_ccs_unbuilt` is still resolved against the
+    /// Sleigh register table — only the function-default CC is taken
+    /// pre-resolved.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `Sleigh::regs()` fails or if any per-address
+    /// override CC can't be resolved against the resulting register
+    /// table.
+    pub fn from_built_cc(
+        arch: strider_target::SleighArch,
+        calling_convention: strider_target::BuiltCallingConvention,
+        sleigh: rsleigh::Sleigh<R>,
+        start_addr: strider_lift::cfg::MachineInsnAddr,
+        options: RunOptions,
+    ) -> Result<Self> {
+        let sleigh_regs = sleigh
+            .regs()
+            .map_err(|e| anyhow!("RunConfig::from_built_cc: Sleigh::regs() failed: {e:?}"))?;
+        let lift_driver = LiftDriver::from_built_cc(arch, sleigh_regs.clone(), calling_convention);
+        let per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
+            if options.per_address_ccs_unbuilt.is_empty() {
+                FxHashMap::default()
+            } else {
+                options
+                    .per_address_ccs_unbuilt
+                    .iter()
+                    .map(|(addr, cc)| {
+                        (*cc).build(&sleigh_regs).map(|built| (*addr, built)).map_err(|e| {
+                            anyhow!("per-address CC at {addr:#x} unresolved: {e:?}")
+                        })
+                    })
+                    .collect::<Result<_>>()?
+            };
+        Ok(Self {
+            lift_driver,
+            start_addr,
+            sleigh,
+            rom: options.rom,
+            fn_max_size: options.fn_max_size,
+            allow_code_before_start_addr: options.allow_code_before_start_addr,
+            compact: options.compact,
+            per_address_ccs,
+        })
+    }
+
+    /// Override the alias-analysis precision propagated to every
+    /// SP-aware pass the pipeline builders construct.
+    #[must_use]
+    pub fn with_alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
+        self.lift_driver = self.lift_driver.with_alias_mode(mode);
+        self
+    }
+
+    /// Returns the target architecture description.
+    #[must_use]
+    pub fn arch(&self) -> &strider_target::SleighArch {
+        &self.lift_driver.arch
+    }
+
+    /// Returns the resolved function-default calling convention.
+    #[must_use]
+    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
+        self.lift_driver.calling_convention()
+    }
+
+    /// Returns the cached Sleigh register-name table.
+    #[must_use]
+    pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
+        &self.lift_driver.sleigh_regs
+    }
+
+    /// Borrow the embedded lift driver — exposed so callers that want
+    /// the lift surface (`analyze_cfg`, `build_optimizer_pipeline`,
+    /// etc.) without owning a `RunConfig` can route through it.
+    #[must_use]
+    pub fn lift_driver(&self) -> &LiftDriver {
+        &self.lift_driver
+    }
 }
 
 /// A single region's exit `vn_to_value` table: maps each exit varnode
@@ -150,16 +390,20 @@ impl RegionIndex {
 
 /// Drives the iterate-resolve-feed-back loop.
 ///
+/// Consumes the [`RunConfig`] — the loop's `LoopState` takes ownership
+/// of every field (including the sleigh) so iteration can mutate the
+/// shared state freely.
+///
 /// # Errors
 ///
 /// Returns an error when the iteration cap is hit, when unresolved
 /// branches remain at fixed point, or any error propagated from
 /// strider / cfg / opt.
-pub fn run<R>(config: Config<'_, R>) -> Result<strider_ir::Function>
+pub fn run<R>(config: RunConfig<R>) -> Result<strider_ir::Function>
 where
     R: rsleigh::MemReader,
 {
-    let mut state = LoopState::new(config)?;
+    let mut state = LoopState::new(config);
     state.build_initial_iteration()?;
     if state.no_unresolved() {
         return state.finalize();
@@ -257,25 +501,6 @@ impl StallGuard {
     }
 }
 
-/// Immutable parameters for the whole run, resolved once at construction
-/// from [`Config`].  Pure data, never mutated across iterations — grouped
-/// so `Config` is their single source.
-struct RunParams {
-    /// Function entry address; from [`Config::start_addr`].
-    start_addr: strider_lift::cfg::MachineInsnAddr,
-    /// Read-only memory image; from [`Config::rom`].
-    rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
-    /// Function-size cap; from [`Config::fn_max_size`].
-    fn_max_size: Option<u64>,
-    /// Code-before-start permission; from [`Config::allow_code_before_start_addr`].
-    allow_code_before_start_addr: bool,
-    /// Compaction flag for the finalize step; from [`Config::compact`].
-    compact: bool,
-    /// Per-target-address CC overrides, register-resolved once at
-    /// construction from [`Config::per_address_ccs_unbuilt`].
-    per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention>,
-}
-
 /// Cross-rebuild cache of the varnodes seen so far, feeding
 /// `analyze_cfg_with`'s `all_vns`.  A pure performance optimisation:
 /// dropping it only re-scans regions that were already scanned.
@@ -315,14 +540,18 @@ impl VnCache {
 }
 
 /// The fixed-point loop's spanning state.
-struct LoopState<'a, R>
+///
+/// Owns the [`RunConfig`] for the whole run — `LoopState::finalize`
+/// consumes `self` and returns the lifted IR function.
+struct LoopState<R>
 where
     R: rsleigh::MemReader,
 {
-    /// The strider — stable across iterations.
-    strider: &'a Strider,
-    /// Immutable run parameters, resolved once from [`Config`].
-    params: RunParams,
+    /// Configuration owned for the duration of the run.  Carries the
+    /// stable lift driver, the sleigh handle (borrowed mutably by
+    /// `Builder::for_arch` per iteration), the run knobs, and the
+    /// pre-resolved per-address CC overrides.
+    config: RunConfig<R>,
     /// Accumulator of IR-level indirect-branch resolver resolutions across iterations.
     /// Monotonically grows: once an anchor's targets land here, the
     /// CFG-rebuild path keeps using them.  Per-iteration classifications
@@ -333,11 +562,6 @@ where
     /// edges) MUST stay — wiping them re-introduces the placeholder
     /// on the next rebuild and the loop diverges.
     known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-    /// The Sleigh handle we thread through every iteration.  Initialised
-    /// from `Config::sleigh` at construction; borrowed mutably by
-    /// `Builder::for_arch` per iteration (the builder doesn't own it,
-    /// and the `Cfg` it produces doesn't own it either).
-    sleigh: rsleigh::Sleigh<R>,
     /// The current optimised IR function.  Initialised to an empty
     /// placeholder by [`LoopState::new`] and overwritten with the real
     /// lift result by [`LoopState::build_initial_iteration`] before any
@@ -357,36 +581,13 @@ where
     vn_cache: VnCache,
 }
 
-impl<'a, R> LoopState<'a, R>
+impl<R> LoopState<R>
 where
     R: rsleigh::MemReader,
 {
-    fn new(config: Config<'a, R>) -> Result<Self> {
-        // Pre-resolve per-address CC overrides against the same Sleigh
-        // register table the function-default CC was built against.
-        let per_address_built_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
-            if config.per_address_ccs_unbuilt.is_empty() {
-                FxHashMap::default()
-            } else {
-                let sleigh_regs = config
-                    .sleigh
-                    .regs()
-                    .map_err(|e| anyhow!("orchestrator: Sleigh::regs() failed: {e:?}"))?;
-                config
-                    .per_address_ccs_unbuilt
-                    .iter()
-                    .map(|(addr, cc)| {
-                        (*cc)
-                            .build(&sleigh_regs)
-                            .map(|built| (*addr, built))
-                            .map_err(|e| {
-                                anyhow!("per-address CC at {addr:#x} unresolved: {e:?}")
-                            })
-                    })
-                    .collect::<Result<_>>()?
-            };
-        Ok(Self {
-            sleigh: config.sleigh,
+    fn new(config: RunConfig<R>) -> Self {
+        Self {
+            config,
             known_targets: FxHashMap::default(),
             // Empty placeholder; overwritten by `build_initial_iteration`
             // before any consumer reads it.
@@ -399,16 +600,7 @@ where
                 by_exit_control: rustc_hash::FxHashMap::default(),
             },
             vn_cache: VnCache::default(),
-            strider: config.strider,
-            params: RunParams {
-                start_addr: config.start_addr,
-                rom: config.rom,
-                fn_max_size: config.fn_max_size,
-                allow_code_before_start_addr: config.allow_code_before_start_addr,
-                compact: config.compact,
-                per_address_built_ccs,
-            },
-        })
+        }
     }
 
     /// Iteration 0: build the CFG, lift, run stable opt, snapshot the
@@ -438,7 +630,7 @@ where
     /// owned by `self` across iterations.
     ///
     /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
-    /// IR lift via [`Strider::analyze_cfg_with`], harvests the post-lift
+    /// IR lift via [`LiftDriver::analyze_cfg_with`], harvests the post-lift
     /// accumulated varnode set via [`VnCache::scan_new_regions`], and finishes with the stable
     /// optimiser pipeline.  The named helpers carry the per-step
     /// commentary.
@@ -451,15 +643,27 @@ where
         RegionIndex,
     )> {
         // `build_cfg` borrows the Sleigh mutably for its duration; the
-        // owned handle on `self` stays usable for the IR lift below and
-        // for subsequent iterations.
+        // owned handle on `self.config` stays usable for the IR lift
+        // below and for subsequent iterations.  Decompose the borrow
+        // so we can pass `&mut sleigh` while still borrowing `&lift_driver`
+        // / `&rom` / `&known_targets`.
+        let RunConfig {
+            ref lift_driver,
+            ref mut sleigh,
+            start_addr,
+            ref rom,
+            fn_max_size,
+            allow_code_before_start_addr,
+            ref per_address_ccs,
+            ..
+        } = self.config;
         let cfg = build_cfg(
-            &mut self.sleigh,
-            self.strider,
-            self.params.start_addr,
-            self.params.rom.clone(),
-            self.params.fn_max_size,
-            self.params.allow_code_before_start_addr,
+            sleigh,
+            lift_driver,
+            start_addr,
+            rom.clone(),
+            fn_max_size,
+            allow_code_before_start_addr,
             &self.known_targets,
         )?;
 
@@ -469,17 +673,17 @@ where
             mut function,
             unresolved_branches: unresolved,
             region_handles,
-        } = self.strider.analyze_cfg_with(
+        } = lift_driver.analyze_cfg_with(
             &cfg,
-            &self.sleigh,
+            sleigh,
             crate::AnalyzeOptions {
                 all_vns: Some(all_vns),
-                per_address_ccs: Some(&self.params.per_address_built_ccs),
+                per_address_ccs: Some(per_address_ccs),
             },
         )?;
         let region_index = RegionIndex::from_handles(region_handles);
 
-        let pipeline = self.strider.build_stable_optimizer_pipeline();
+        let pipeline = lift_driver.build_stable_optimizer_pipeline();
         let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!("seat: entry node is not set")
         })?;
@@ -540,7 +744,7 @@ where
     /// Re-run the stable subset on the current graph (after in-place
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
-        let pipeline = self.strider.build_stable_optimizer_pipeline();
+        let pipeline = self.config.lift_driver.build_stable_optimizer_pipeline();
         let entry = self.function.entry().ok_or_else(|| {
             anyhow::anyhow!("run_stable_only: entry node is not set")
         })?;
@@ -569,8 +773,8 @@ where
     /// Run the destructive subset and consume `self`, returning the
     /// final graph.
     fn finalize(mut self) -> Result<strider_ir::Function> {
-        let pipeline = self.strider.build_destructive_optimizer_pipeline();
-        let compact = self.params.compact;
+        let pipeline = self.config.lift_driver.build_destructive_optimizer_pipeline();
+        let compact = self.config.compact;
         let entry = self.function.entry().ok_or_else(|| {
             anyhow::anyhow!("finalize: graph has not been built (entry is None)")
         })?;
@@ -591,7 +795,7 @@ where
         Vec<(NodeId, ResolvedTargets)>,
     )> {
         let function = &self.function;
-        let rom_ref: Option<&dyn ReadOnlyMemory> = self.params.rom.as_deref();
+        let rom_ref: Option<&dyn ReadOnlyMemory> = self.config.rom.as_deref();
         // Start from the previous iteration's resolutions so anchors
         // already lowered to switch edges by an earlier Rebuild stay in
         // the known_targets map.  Wiping them would re-introduce the
@@ -604,7 +808,7 @@ where
         // suffices for every anchor we classify.
         let view = crate::pattern::RewriteCtxView::from_built(function)?;
         let known = crate::opt::analyze_known_bits(view)?;
-        let cc = self.strider.calling_convention();
+        let cc = self.config.calling_convention();
         for (addr, anchor_output) in &self.unresolved {
             let resolved_opt = classify_anchor(
                 view,
@@ -623,9 +827,9 @@ where
                 (ResolvedTargets::LinkRegister, Some(_)) => true,
                 (ResolvedTargets::Single(target), Some(_)) => is_tail_call(
                     *target,
-                    self.params.start_addr,
-                    self.params.fn_max_size,
-                    self.params.allow_code_before_start_addr,
+                    self.config.start_addr,
+                    self.config.fn_max_size,
+                    self.config.allow_code_before_start_addr,
                 ),
                 _ => false,
             };
@@ -644,9 +848,9 @@ where
         &mut self,
         in_place_edits: &[(NodeId, ResolvedTargets)],
     ) -> Result<()> {
-        let strider = self.strider;
+        let strider = &self.config.lift_driver;
         let region_index = &self.region_index;
-        let per_address_built_ccs = &self.params.per_address_built_ccs;
+        let per_address_built_ccs = &self.config.per_address_ccs;
         let function = &mut self.function;
         // `Graph::initial_var_for` is maintained on the graph itself
         // (populated by `FunctionBuilder::set_entry_region` at lift
@@ -709,7 +913,7 @@ fn is_tail_call(
 
 fn apply_in_place_edit(
     function: &mut strider_ir::Function,
-    strider: &Strider,
+    strider: &LiftDriver,
     region_index: &RegionIndex,
     placeholder: NodeId,
     resolved: &ResolvedTargets,
@@ -832,7 +1036,7 @@ impl crate::opt::AnchorCallingContext {
     fn for_anchor(
         function: &mut strider_ir::Function,
         placeholder: NodeId,
-        strider: &Strider,
+        strider: &LiftDriver,
         region_index: &RegionIndex,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
@@ -939,7 +1143,7 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Nod
 fn override_clobber_vars<'a>(
     function: &'a strider_ir::Function,
     cc: &'a strider_target::BuiltCallingConvention,
-    strider: &'a Strider,
+    strider: &'a LiftDriver,
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
     let stack_vn = strider.calling_convention().stack_vn;
     function
@@ -1011,7 +1215,7 @@ fn read_or_init_var(
 #[allow(clippy::too_many_arguments)]
 fn build_cfg<R>(
     sleigh: &mut rsleigh::Sleigh<R>,
-    strider: &Strider,
+    strider: &LiftDriver,
     start_addr: strider_lift::cfg::MachineInsnAddr,
     rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
     fn_max_size: Option<u64>,
@@ -1243,12 +1447,12 @@ mod tests {
         PcodeInsnAddr { machine_addr: MachineInsnAddr::from(machine), insn_index: 0 }
     }
 
-    fn make_strider_x86_64() -> Strider {
+    fn make_strider_x86_64() -> LiftDriver {
         let arch = strider_target::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
         let cc = strider_target::CallingConvention::x86_64_systemv()
             .expect("x86_64_systemv preset must be registered");
-        Strider::new(arch, regs, cc).expect("strider")
+        LiftDriver::new(arch, regs, cc).expect("strider")
     }
 
 

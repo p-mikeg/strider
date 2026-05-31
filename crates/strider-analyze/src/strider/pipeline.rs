@@ -25,7 +25,7 @@ pub(crate) struct RegionLiftHandles {
 /// placeholder-anchor side-table the indirect-branch resolver consumes
 /// plus per-region IR-handle snapshots.
 ///
-/// Returned by [`Strider::analyze_cfg`].  Callers that only need the
+/// Returned by [`LiftDriver::analyze_cfg`].  Callers that only need the
 /// function can use `outcome.function` directly; indirect-branch-resolver-aware
 /// callers read `unresolved_branches` and `region_handles`.
 pub struct AnalyzeOutcome {
@@ -79,14 +79,14 @@ impl std::fmt::Display for AnalyzeOutcome {
     }
 }
 
-/// Per-call lift options for [`Strider::analyze_cfg_with`].  Empty
-/// defaults match [`Strider::analyze_cfg`]'s convenience
+/// Per-call lift options for [`LiftDriver::analyze_cfg_with`].  Empty
+/// defaults match [`LiftDriver::analyze_cfg`]'s convenience
 /// behaviour: the orchestrator uses this with both fields set;
 /// strider-py's custom-pipeline path uses it with `per_address_ccs` set.
 #[derive(Default)]
 pub struct AnalyzeOptions<'a> {
-    /// Pre-computed varnode set.  When `None`, `Strider` calls
-    /// `Strider::find_all_unique_vns` itself.  When `Some`, must be
+    /// Pre-computed varnode set.  When `None`, [`LiftDriver`] computes
+    /// it internally.  When `Some`, must be
     /// sorted by `strider_lift::pcode_lift::vn_sort_key` and must include every
     /// varnode any instruction in `cfg` references.  Under-tracking
     /// drops pcode reads; over-tracking is safe but allocates one
@@ -105,38 +105,42 @@ pub struct AnalyzeOptions<'a> {
         Option<&'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 }
 
-/// Architecture-level binary analyser that lifts a [`strider_lift::cfg::Cfg`] to an IR
-/// function graph.
+/// Architecture-level lift driver that translates a [`strider_lift::cfg::Cfg`]
+/// into an IR function graph.
 ///
-/// Holds the target architecture description and the resolved calling
-/// convention.  Create one `Strider` per architecture/ABI combination and
-/// reuse it to analyse multiple functions.
+/// Bundles the four "stable across runs" inputs the lift needs: the target
+/// `SleighArch`, the resolved calling convention, a cached `SleighRegs`
+/// table, and the [`crate::opt::AliasMode`] used by the SP-aware
+/// pipelines.  `LiftDriver` is the internal handle behind both
+/// [`crate::orchestrator::RunConfig`] (which embeds one) and the Python
+/// `strider.Strider` class (`PyStrider`), so the lift surface lives in one
+/// place.
 ///
 /// `Clone` copies the resolved calling convention and the cached
 /// `SleighRegs` table — the latter a register-name lookup table that isn't
 /// free to clone, but far cheaper than re-running the "expensive"
 /// `Sleigh::regs()` to rebuild it.  The strider-py `run` path uses this to
-/// detach a `Strider` snapshot from a `PyRef` so it can release the GIL
+/// detach a snapshot from a `PyRef` so it can release the GIL
 /// across `strider::run` (otherwise Python threads would be unable to make
 /// progress while a long lift / fixed-point loop runs).
 #[derive(Clone)]
-pub struct Strider {
-    pub(super) calling_convention: strider_target::BuiltCallingConvention,
+pub struct LiftDriver {
+    pub(crate) calling_convention: strider_target::BuiltCallingConvention,
     pub(crate) arch: strider_target::SleighArch,
-    /// Cached `SleighRegs` table from Strider construction.  Used by the
+    /// Cached `SleighRegs` table from construction.  Used by the
     /// CallOther per-op-ABI dispatch in `PerRegionDriver::handle_call_other`
     /// to resolve `CallOtherAbi::implicit_reads`/`implicit_writes` register
     /// names to `rsleigh::Vn`s without paying the per-call cost of
     /// `Sleigh::regs()` (an "expensive operation" per its docstring).
-    pub(super) sleigh_regs: rsleigh::SleighRegs,
+    pub(crate) sleigh_regs: rsleigh::SleighRegs,
     /// Alias-analysis precision propagated to every SP-aware pass the
     /// pipeline builders construct.  Default is
     /// [`crate::opt::AliasMode::Strict`].
-    pub(super) alias_mode: crate::opt::AliasMode,
+    pub(crate) alias_mode: crate::opt::AliasMode,
 }
 
-impl Strider {
-    /// Creates a new `Strider` for `arch` with the given Sleigh register list
+impl LiftDriver {
+    /// Creates a new `LiftDriver` for `arch` with the given Sleigh register list
     /// and calling convention.
     ///
     /// Resolves all register names in `calling_convention` against
@@ -161,7 +165,7 @@ impl Strider {
         })
     }
 
-    /// Constructs a `Strider` from an already-resolved
+    /// Constructs a `LiftDriver` from an already-resolved
     /// `BuiltCallingConvention`.  Use this when the CC was built
     /// outside the standard preset path (e.g. a custom CC constructed
     /// from runtime register-name lists at the Python boundary).
@@ -185,7 +189,7 @@ impl Strider {
         }
     }
 
-    /// Returns the resolved calling convention this Strider was built with.
+    /// Returns the resolved calling convention this `LiftDriver` was built with.
     #[must_use]
     pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
         &self.calling_convention
@@ -227,7 +231,7 @@ impl Strider {
     /// SP-relative Store / Load's concrete offset) followed by
     /// [`crate::opt::LoadForward`] (forwards stack-tagged stores to
     /// later same-offset loads).  Both are constructed from the
-    /// convention with the Strider's `alias_mode`.
+    /// convention with the lift driver's `alias_mode`.
     fn add_sp_loop_passes(&self, p: &mut crate::opt::OptimizerPipeline) {
         p.add(crate::opt::StackOffsetDetect::from_convention(
             &self.calling_convention,
@@ -391,7 +395,7 @@ impl Strider {
     }
 }
 
-/// `init_region_map` — first stage of [`Strider::analyze_cfg_with`]:
+/// `init_region_map` — first stage of [`LiftDriver::analyze_cfg_with`]:
 /// build_entry, allocate one IR region per CFG region, set the
 /// entry region.  Returns the CFG-region-id list (in iteration
 /// order) and the `RegionId.index() -> Option<strider_ir::RegionId>`
@@ -422,7 +426,7 @@ fn init_region_map<R: rsleigh::MemReader>(
 }
 
 /// `translate_regions` — second stage of
-/// [`Strider::analyze_cfg_with`]: translate every region's
+/// [`LiftDriver::analyze_cfg_with`]: translate every region's
 /// instructions + (when present) its special terminator into IR.
 /// The special terminator's p-code insn is skipped inside the
 /// per-insn loop and lifted via a dedicated handler with
@@ -508,7 +512,7 @@ where
     Ok(())
 }
 
-/// `link_region_edges` — third stage of [`Strider::analyze_cfg_with`]:
+/// `link_region_edges` — third stage of [`LiftDriver::analyze_cfg_with`]:
 /// wire the region successors that no per-terminator handler wired.
 /// CFG edges are unweighted, so the gate is the *source region's
 /// terminator*: only `Unconditional` regions are wired here
@@ -547,7 +551,7 @@ where
 }
 
 /// `finalise_outcome` — final stage of
-/// [`Strider::analyze_cfg_with`]: capture per-region exit handles
+/// [`LiftDriver::analyze_cfg_with`]: capture per-region exit handles
 /// before `build()` consumes the builder, then materialise the final
 /// `AnalyzeOutcome` with the post-build generation snapshot.
 fn finalise_outcome<R, F>(
@@ -691,7 +695,7 @@ mod tests {
         let regs = arch.probe_regs().expect("probe regs");
         let cc = strider_target::CallingConvention::x86_64_systemv()
             .expect("x86_64_systemv preset must be registered");
-        let strider = crate::Strider::new(arch, regs, cc).expect("strider");
+        let strider = crate::LiftDriver::new(arch, regs, cc).expect("strider");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
         let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
             .expect("sleigh");

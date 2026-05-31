@@ -30,8 +30,8 @@ mod common;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{run, Config};
-use strider_target::SleighArch;
+use strider_analyze::{run, RunConfig, RunOptions};
+use strider_target::{CallingConvention, SleighArch};
 
 const BASE: u64 = 0x1000;
 const TAIL_TARGET: u64 = 0x9000;
@@ -56,17 +56,14 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 
 #[test]
 fn bounded_lift_handles_tail_call_terminator() {
-    let strider = common::strider_x86_64();
-    let config = Config {
-        strider: &strider,
-        start_addr: BASE.into(),
-        sleigh: make_sleigh(),
-        rom: None,
-        fn_max_size: Some(10),
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    };
+    let config = RunConfig::new(
+        SleighArch::x86_64(),
+        CallingConvention::x86_64_systemv().unwrap(),
+        make_sleigh(),
+        BASE.into(),
+        RunOptions::new().fn_max_size(10),
+    )
+    .unwrap();
     let function = run(config).expect("orchestrator must lift TailCall as Call+Return");
 
     // Post-condition: the graph contains a `Call` whose target operand
@@ -157,18 +154,18 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let strider = common::strider_x86_64();
-    let function = run(Config {
-        strider: &strider,
-        start_addr: FN_START.into(),
+    let config = RunConfig::new(
+        SleighArch::x86_64(),
+        CallingConvention::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        fn_max_size: Some(10),
-        allow_code_before_start_addr: true,
-        compact: true,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    })
-    .expect("backward jmp + fn_max_size must classify as tail call regardless of reach-back flag");
+        FN_START.into(),
+        RunOptions::new()
+            .fn_max_size(10)
+            .allow_code_before_start_addr(),
+    )
+    .unwrap();
+    let function = run(config)
+        .expect("backward jmp + fn_max_size must classify as tail call regardless of reach-back flag");
 
     assert!(
         graph_has_tail_call_to(&function, TAIL_TARGET),
@@ -211,18 +208,16 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let strider = common::strider_x86_64();
-    let function = run(Config {
-        strider: &strider,
-        start_addr: BASE.into(),
+    let config = RunConfig::new(
+        SleighArch::x86_64(),
+        CallingConvention::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        fn_max_size: Some(2),
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    })
-    .expect("fall-through past fn_max_size must truncate cleanly, not crash on OOB lift");
+        BASE.into(),
+        RunOptions::new().fn_max_size(2),
+    )
+    .unwrap();
+    let function = run(config)
+        .expect("fall-through past fn_max_size must truncate cleanly, not crash on OOB lift");
 
     assert!(
         graph_has_tail_call_to(&function, TAIL_TARGET),
@@ -254,18 +249,16 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let strider = common::strider_x86_64();
-    let function = run(Config {
-        strider: &strider,
-        start_addr: BASE.into(),
+    let config = RunConfig::new(
+        SleighArch::x86_64(),
+        CallingConvention::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        fn_max_size: Some(2),
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    })
-    .expect("cond-branch with both OOB targets must collapse to TailCall, not crash");
+        BASE.into(),
+        RunOptions::new().fn_max_size(2),
+    )
+    .unwrap();
+    let function = run(config)
+        .expect("cond-branch with both OOB targets must collapse to TailCall, not crash");
 
     assert!(
         graph_has_tail_call_to(&function, TAKEN_TARGET),

@@ -175,33 +175,27 @@ fn run_via_orchestrator(
         )?,
     )?;
 
-    // Build a Strider for the orchestrator.
-    let strider_obj = Py::new(
+    // Build a Strider (the Python-facing wrapper) so callers that pass
+    // the user-facing `Strider` class through `analyze_cfg` see the same
+    // resolved CC the orchestrator does.  The orchestrator itself doesn't
+    // consume this — it constructs its own RunConfig below — but
+    // building it here surfaces CC-resolution errors early.
+    let _strider_obj = Py::new(
         py,
         PyStrider::new_internal(py, arch.clone(), &sleigh_arc, cc.clone())?,
     )?;
 
     // Build the second Sleigh handle (orchestrator-owned, fresh
-    // reader).  This is consumed by Config.
+    // reader).  This is consumed by RunConfig.
     let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
     let rom_arc = rom.map(|r| r.into_arc());
 
-    // Snapshot the Strider out of the PyRef so we can release the GIL
-    // across the long-running strider_analyze::run call.  Strider is cheap to
-    // clone (three Clone fields), and detaching the borrow lets other
-    // Python threads run during the lift / fixed-point loop.  Callback
-    // readers (PyMemReaderAdapter::read) re-acquire the GIL via
-    // Python::with_gil per-call, so Cb readers stay correct.
-    let strider_owned: strider_analyze::Strider = {
-        let borrow = strider_obj.borrow(py);
-        borrow.inner.clone()
-    };
     // per_address_ccs currently only supports preset-form CCs (the
-    // orchestrator's Config field resolves them against Sleigh at
+    // orchestrator's RunConfig field resolves them against Sleigh at
     // startup).  Custom CCs are already resolved, so feeding them
-    // here would mean carrying two parallel maps through Config —
+    // here would mean carrying two parallel maps through RunConfig —
     // not yet wired.  Surface a clear error rather than silently
     // dropping the override.
     let per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::CallingConvention> =
@@ -219,20 +213,40 @@ fn run_via_orchestrator(
                 )),
             })
             .collect::<PyResult<_>>()?;
-    let function = py.allow_threads(|| {
-        let config = strider_analyze::Config {
-            strider: &strider_owned,
-            start_addr: entry.into(),
-            sleigh: orch_sleigh,
-            rom: rom_arc,
-            fn_max_size: function_max_size,
-            allow_code_before_start_addr,
-            compact,
-            per_address_ccs_unbuilt: per_address_ccs,
-        };
-        strider_analyze::run(config)
-    })
-    .map_err(into_strider_err)?;
+    // Construct the RunConfig before `allow_threads`: `RunConfig::new` /
+    // `from_built_cc` need the function-default CC and resolve it
+    // against the sleigh's register table, paths that may surface a
+    // typed `StriderError` that must be turned into `PyErr` while we
+    // still hold the GIL.  After construction the `RunConfig` owns the
+    // sleigh, the rom, and every CC, so the loop runs without the GIL.
+    let arch_inner = arch.inner;
+    let options = strider_analyze::RunOptions {
+        rom: rom_arc,
+        fn_max_size: function_max_size,
+        allow_code_before_start_addr,
+        compact,
+        per_address_ccs_unbuilt: per_address_ccs,
+    };
+    let config = match cc.inner {
+        crate::cc::CcImpl::Preset(preset) => strider_analyze::RunConfig::new(
+            arch_inner,
+            preset,
+            orch_sleigh,
+            entry.into(),
+            options,
+        )
+        .map_err(into_strider_err)?,
+        crate::cc::CcImpl::Custom(built) => strider_analyze::RunConfig::from_built_cc(
+            arch_inner,
+            *built,
+            orch_sleigh,
+            entry.into(),
+            options,
+        )
+        .map_err(into_strider_err)?,
+    };
+    let function = py.allow_threads(|| strider_analyze::run(config))
+        .map_err(into_strider_err)?;
 
     // If a Python callback inside the orchestrator (e.g. a custom
     // `ReadOnlyMemory.read` that raised `KeyboardInterrupt` /

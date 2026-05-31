@@ -14,7 +14,7 @@
 //! These tests intentionally do NOT use the per-arch fixture suite —
 //! that infrastructure runs the full optimizer pipeline against a real
 //! ELF.  This is a per-region lifting concern; we use a direct
-//! `Builder + Strider::new + analyze_cfg` call sequence so the test
+//! `Builder + LiftDriver::new + analyze_cfg` call sequence so the test
 //! exercises *only* the strider IR-lift step.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

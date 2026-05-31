@@ -159,27 +159,27 @@ impl Arch {
 
 // ── Synthetic-fixture Strider builders ───────────────────────────────────────
 
-/// Construct a `Strider` for x86_64 SystemV.  Used by tests that build
+/// Construct a `LiftDriver` for x86_64 SystemV.  Used by tests that build
 /// hand-assembled byte sequences and don't care about ELF loading.
-pub fn strider_x86_64() -> strider_analyze::Strider {
+pub fn strider_x86_64() -> strider_analyze::LiftDriver {
     strider_for(Arch::X64)
 }
 
-/// Construct a `Strider` for AArch64 AAPCS64.  Sibling of
+/// Construct a `LiftDriver` for AArch64 AAPCS64.  Sibling of
 /// [`strider_x86_64`] for the handful of synthetic-fixture tests that
 /// need an LR-bearing CC (e.g. `bug_on_lifts_cleanly`'s `bx lr`
 /// regression case).
-pub fn strider_aarch64() -> strider_analyze::Strider {
+pub fn strider_aarch64() -> strider_analyze::LiftDriver {
     strider_for(Arch::Aarch64)
 }
 
-/// Construct a `Strider` for `arch` using its preset calling
+/// Construct a `LiftDriver` for `arch` using its preset calling
 /// convention.  Probes Sleigh against an empty memory reader to
 /// extract the register list.
-pub fn strider_for(arch: Arch) -> strider_analyze::Strider {
+pub fn strider_for(arch: Arch) -> strider_analyze::LiftDriver {
     let sleigh_arch = arch.sleigh();
     let regs = sleigh_arch.probe_regs().expect("probe sleigh regs");
-    strider_analyze::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new")
+    strider_analyze::LiftDriver::new(sleigh_arch, regs, arch.cc()).expect("LiftDriver::new")
 }
 
 // ── Synthetic x86-64 jump-table fixture builders ─────────────────────────────
@@ -216,7 +216,7 @@ pub fn analyze_with_known_targets(
     base: u64,
     branch_indirect_addr: u64,
     targets: &[u64],
-) -> (strider_ir::Function, strider_analyze::Strider) {
+) -> (strider_ir::Function, strider_analyze::LiftDriver) {
     use rustc_hash::FxHashMap;
     use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 
@@ -267,7 +267,7 @@ pub fn lift_for_pipeline(
     fn_name: &str,
 ) -> (
     strider_analyze::AnalyzeOutcome,
-    strider_analyze::Strider,
+    strider_analyze::LiftDriver,
     strider_target::SleighArch,
     std::sync::Arc<dyn strider_analyze::opt::ReadOnlyMemory>,
 ) {
@@ -287,8 +287,8 @@ pub fn lift_for_pipeline(
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
-    let ana = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc())
-        .expect("Strider::new");
+    let ana = strider_analyze::LiftDriver::new(sleigh_arch, regs, arch.cc())
+        .expect("LiftDriver::new");
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let mut sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
@@ -331,7 +331,7 @@ pub fn lift_for_pipeline(
 
 /// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
 /// production optimiser pipeline
-/// ([`Strider::build_optimizer_pipeline`] + `LoadReadOnly`) over the
+/// ([`LiftDriver::build_optimizer_pipeline`] + `LoadReadOnly`) over the
 /// lifted IR, and returns the resulting graph.
 ///
 /// Test fixtures are well-behaved compiler-emitted binaries (gcc/clang

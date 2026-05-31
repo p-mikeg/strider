@@ -29,8 +29,8 @@ mod common;
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{Config, run};
-use strider_target::SleighArch;
+use strider_analyze::{run, RunConfig, RunOptions};
+use strider_target::{CallingConvention, SleighArch};
 
 /// Synthetic layout:
 ///
@@ -83,22 +83,22 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 /// lies in `[TARGET_FN, TARGET_FN_END)`.
 #[test]
 fn bounded_lift_does_not_walk_backward_into_prev_fn() {
-    let strider = common::strider_x86_64();
-    let function = run(Config {
-        strider: &strider,
-        start_addr: TARGET_FN.into(),
-        sleigh: make_sleigh(),
-        rom: None,
-        fn_max_size: Some(TARGET_FN_SIZE),
-        // The bug only surfaced with the reach-back flag ON — without
-        // it the lower-bound check alone would have blocked the
-        // backward jmp.  This pin is what guards against regression
-        // of the `allow_code_before_start_addr && fn_max_size` combo.
-        allow_code_before_start_addr: true,
-        compact: true,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    })
-    .expect("bounded lift with reach-back flag must complete without reaching prev_fn");
+    // The bug only surfaced with the reach-back flag ON — without
+    // it the lower-bound check alone would have blocked the
+    // backward jmp.  This pin is what guards against regression
+    // of the `allow_code_before_start_addr && fn_max_size` combo.
+    let config = RunConfig::new(
+        SleighArch::x86_64(),
+        CallingConvention::x86_64_systemv().unwrap(),
+        make_sleigh(),
+        TARGET_FN.into(),
+        RunOptions::new()
+            .fn_max_size(TARGET_FN_SIZE)
+            .allow_code_before_start_addr(),
+    )
+    .unwrap();
+    let function = run(config)
+        .expect("bounded lift with reach-back flag must complete without reaching prev_fn");
 
     // Walk every reachable node and collect every asm-fingerprint
     // contributor address.  Filter out the empty-fingerprint nodes

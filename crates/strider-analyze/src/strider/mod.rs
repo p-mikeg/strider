@@ -4,16 +4,16 @@ mod insn;
 mod pipeline;
 mod vn_io;
 
-pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, Strider};
+pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, LiftDriver};
 pub(crate) use pipeline::RegionLiftHandles;
 
 /// Per-function translation context that converts a [`strider_lift::cfg::Cfg`] into an IR
 /// graph region by region.
 ///
-/// Holds a reference to the shared [`Strider`] (register / calling-convention
+/// Holds a reference to the shared [`LiftDriver`] (register / calling-convention
 /// information) and a fresh [`strider_ir::FunctionBuilder`].
 pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
-    pub(crate) strider: &'a Strider,
+    pub(crate) strider: &'a LiftDriver,
     pub(crate) builder: strider_ir::FunctionBuilder,
     pub(crate) cfg: &'a strider_lift::cfg::Cfg,
     /// The Sleigh handle that built `cfg`.  The CFG is a pure data
@@ -42,7 +42,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// `VarId` numbering).  `per_address_ccs` is the lift-time CC
     /// override map; pass `None` when the caller has no overrides.
     pub(crate) fn new(
-        strider: &'a Strider,
+        strider: &'a LiftDriver,
         cfg: &'a strider_lift::cfg::Cfg,
         sleigh: &'a rsleigh::Sleigh<R>,
         all_vns: Vec<rsleigh::Vn>,

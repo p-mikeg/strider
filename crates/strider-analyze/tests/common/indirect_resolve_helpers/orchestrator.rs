@@ -13,7 +13,7 @@ use strider_ir::Function;
 use strider_ir::node::NodeKind;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::Strider;
+use strider_analyze::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
 
 /// Walk every reachable `IndirectBranch` node and return the value-
@@ -44,7 +44,7 @@ pub fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
     found
 }
 
-/// Run `Strider::analyze_cfg` on a hand-assembled byte
+/// Run `LiftDriver::analyze_cfg` on a hand-assembled byte
 /// sequence + the standard SystemV-x86_64 calling convention, then run
 /// the full optimiser pipeline.  Returns the resulting graph plus the
 /// (single) IR-level placeholder anchor's `NodeOutputId` and the
@@ -69,7 +69,7 @@ pub fn run_pipeline_x86_64(
 
     let regs = arch.probe_regs().expect("probe regs");
     let strider =
-        Strider::new(arch, regs, CallingConvention::x86_64_systemv().unwrap()).expect("Strider::new");
+        LiftDriver::new(arch, regs, CallingConvention::x86_64_systemv().unwrap()).expect("LiftDriver::new");
     let lr_vn = strider.calling_convention().link_register_vn;
     let outcome = strider
         .analyze_cfg(&cfg, &sleigh)

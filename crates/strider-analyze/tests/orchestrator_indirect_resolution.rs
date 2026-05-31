@@ -13,8 +13,8 @@ mod common;
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{run, Config, Strider};
-use strider_target::SleighArch;
+use strider_analyze::{run, RunConfig, RunOptions};
+use strider_target::{CallingConvention, SleighArch};
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
     let arch = SleighArch::x86_64();
@@ -22,30 +22,27 @@ fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>>
     Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh")
 }
 
-fn make_config<'a>(
-    strider: &'a Strider,
+fn make_config(
     bytes: Vec<u8>,
     base: u64,
-) -> Config<'a, BufMemReader<Vec<u8>>> {
-    Config {
-        strider,
-        start_addr: base.into(),
-        sleigh: make_sleigh_value(bytes, base),
-        rom: None,
-        fn_max_size: None,
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    }
+) -> RunConfig<BufMemReader<Vec<u8>>> {
+    RunConfig::new(
+        SleighArch::x86_64(),
+        CallingConvention::x86_64_systemv().unwrap(),
+        make_sleigh_value(bytes, base),
+        base.into(),
+        RunOptions::new(),
+    )
+    .unwrap()
 }
 
 #[test]
 fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
     // A function with no BranchIndirect: just `ret`.  The fast path
     // skips the loop entirely; the result is the optimised IR.
-    let strider = common::strider_x86_64();
+    
     let bytes = vec![0xc3u8]; // ret
-    let config = make_config(&strider, bytes, 0x1000);
+    let config = make_config(bytes, 0x1000);
     let function = run(config).expect("orchestrator");
     let mut had_return = false;
     for nid in function.walk() {
@@ -62,10 +59,10 @@ fn outer_loop_unresolved_at_fixed_point_returns_error() {
     // write), and x86_64 has no link register, so IR-level indirect-branch resolver cannot
     // classify.  The orchestrator must reach a fixed point and return
     // an informative error — never panic, never loop forever.
-    let strider = common::strider_x86_64();
+    
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let config = make_config(&strider, bytes, 0x1000);
+    let config = make_config(bytes, 0x1000);
     let result = run(config);
     match result {
         Err(e) => {
@@ -93,8 +90,8 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     ];
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
 
-    let strider = common::strider_x86_64();
-    let config = make_config(&strider, bytes, 0x1000);
+    
+    let config = make_config(bytes, 0x1000);
     let result = run(config);
     match result {
         Ok(_graph) => {}
@@ -113,9 +110,9 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
 
 #[test]
 fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
-    let strider = common::strider_x86_64();
+    
     let bytes = vec![0xc3u8]; // ret
-    let config = make_config(&strider, bytes, 0x1000);
+    let config = make_config(bytes, 0x1000);
     let function = run(config).expect("orchestrator must succeed in fast path");
     let mut had_return = false;
     for nid in function.walk() {
@@ -128,10 +125,10 @@ fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
 
 #[test]
 fn orchestrator_owned_sleigh_succeeds_in_error_path() {
-    let strider = common::strider_x86_64();
+    
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let config = make_config(&strider, bytes, 0x1000);
+    let config = make_config(bytes, 0x1000);
     let _ = run(config);
 }
 
@@ -140,11 +137,11 @@ fn orchestrator_correctness_unchanged_after_sleigh_persistence() {
     // CORRECTNESS: the resulting graph for a function that does NOT
     // need indirect resolution is identical regardless of how many
     // times Sleigh is reused across runs.
-    let strider = common::strider_x86_64();
+    
 
     let make_run = || {
         let bytes = vec![0xc3u8]; // ret
-        let config = make_config(&strider, bytes, 0x1000);
+        let config = make_config(bytes, 0x1000);
         run(config).expect("orchestrator")
     };
     let g1 = make_run();

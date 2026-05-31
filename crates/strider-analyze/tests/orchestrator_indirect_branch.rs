@@ -23,13 +23,6 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = arch.sleigh();
-    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
-        .expect("probe sleigh new")
-        .regs()
-        .expect("probe sleigh regs");
-    let s = strider_analyze::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new");
-
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
@@ -46,16 +39,16 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"),
     );
 
-    let config = strider_analyze::Config {
-        strider: &s,
-        start_addr: addr.into(),
+    let config = strider_analyze::RunConfig::new(
+        sleigh_arch,
+        arch.cc(),
         sleigh,
-        rom: Some(rom),
-        fn_max_size: None,
-        allow_code_before_start_addr: true,
-        compact: true,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    };
+        addr.into(),
+        strider_analyze::RunOptions::new()
+            .rom(rom)
+            .allow_code_before_start_addr(),
+    )
+    .expect("RunConfig::new");
     strider_analyze::run(config)
 }
 

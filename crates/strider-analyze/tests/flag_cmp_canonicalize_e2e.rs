@@ -17,7 +17,7 @@ use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::Strider;
+use strider_analyze::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
 
 mod common;
@@ -35,7 +35,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
         .expect("cfg build");
 
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, cc).expect("Strider::new");
+    let strider = LiftDriver::new(arch, regs, cc).expect("LiftDriver::new");
     let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
     let mut function = outcome.function;
 

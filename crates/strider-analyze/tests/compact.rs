@@ -8,8 +8,8 @@
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{Config, Strider};
-use strider_target::SleighArch;
+use strider_analyze::{RunConfig, RunOptions};
+use strider_target::{CallingConvention, SleighArch};
 
 mod common;
 
@@ -22,26 +22,19 @@ fn x86_64_call_then_ret_bytes() -> (Vec<u8>, u64) {
     (bytes, entry)
 }
 
-fn make_strider() -> Strider {
-    common::strider_x86_64()
-}
-
 fn run_with(compact: bool) -> strider_ir::Function {
-    let strider = make_strider();
     let (bytes, entry) = x86_64_call_then_ret_bytes();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
-    let config = Config {
-        strider: &strider,
-        start_addr: entry.into(),
+    let config = RunConfig::new(
+        arch,
+        CallingConvention::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        fn_max_size: None,
-        allow_code_before_start_addr: false,
-        compact,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    };
+        entry.into(),
+        RunOptions::new().compact(compact),
+    )
+    .unwrap();
     strider_analyze::run(config).unwrap()
 }
 

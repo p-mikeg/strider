@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 
 use strider_ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider_analyze::{Config, Strider};
+use strider_analyze::{RunConfig, RunOptions};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -26,14 +26,9 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
     (bytes, entry, call_target)
 }
 
-fn make_strider() -> Strider {
-    common::strider_x86_64()
-}
-
 #[test]
 fn call_to_overridden_address_has_zero_clobber_outputs() {
     let (bytes, entry, call_target) = x86_64_call_then_ret();
-    let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
@@ -41,16 +36,14 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
 
-    let config = Config {
-        strider: &strider,
-        start_addr: entry.into(),
+    let config = RunConfig::new(
+        arch,
+        TargetCC::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        fn_max_size: None,
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: overrides,
-    };
+        entry.into(),
+        RunOptions::new().per_address_ccs_unbuilt(overrides),
+    )
+    .unwrap();
     let bfg = strider_analyze::run(config).unwrap();
 
     let call_id = bfg
@@ -89,21 +82,18 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
 #[test]
 fn call_without_override_uses_function_default_clobber_set() {
     let (bytes, entry, _call_target) = x86_64_call_then_ret();
-    let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
-    let config = Config {
-        strider: &strider,
-        start_addr: entry.into(),
+    let config = RunConfig::new(
+        arch,
+        TargetCC::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        fn_max_size: None,
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: FxHashMap::default(),
-    };
+        entry.into(),
+        RunOptions::new(),
+    )
+    .unwrap();
     let bfg = strider_analyze::run(config).unwrap();
 
     let call_id = bfg

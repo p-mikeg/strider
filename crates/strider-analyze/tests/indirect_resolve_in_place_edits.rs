@@ -202,9 +202,8 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     // panic or return malformed IR.
     use rsleigh::Sleigh;
     use rsleigh::mem_readers::BufMemReader;
-    use strider_analyze::{run, Config};
-    use strider_target::SleighArch;
-    let strider = common::strider_x86_64();
+    use strider_analyze::{run, RunConfig, RunOptions};
+    use strider_target::{CallingConvention, SleighArch};
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![
@@ -214,16 +213,14 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     let arch_ref = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes.clone(), 0x1000);
     let sleigh = Sleigh::new(arch_ref.sla_spec(), arch_ref.pspec(), reader).expect("sleigh");
-    let config = Config {
-        strider: &strider,
-        start_addr: strider_lift::cfg::MachineInsnAddr::from(0x1000),
+    let config = RunConfig::new(
+        arch_ref,
+        CallingConvention::x86_64_systemv().unwrap(),
         sleigh,
-        rom: None,
-        fn_max_size: None,
-        allow_code_before_start_addr: false,
-        compact: true,
-        per_address_ccs_unbuilt: rustc_hash::FxHashMap::default(),
-    };
+        strider_lift::cfg::MachineInsnAddr::from(0x1000),
+        RunOptions::new(),
+    )
+    .unwrap();
     // The contract pinned here: `run` returns a typed result, never
     // panics, regardless of whether the optimiser folds the
     // push+pop+jmp into a Single tail call.
