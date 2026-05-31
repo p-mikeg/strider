@@ -316,32 +316,41 @@ def test_analyzer_configure_once_reuse():
 
 def test_analyzer_per_call_override_function_max_size():
     """A per-call keyword overrides the frozen default for that one
-    call: a frozen `function_max_size=None` overridden with a small
-    bound still builds a valid analysis."""
+    call.  Frozen `function_max_size=None` (unbounded) with a per-call
+    override of `4` clips `add` mid-function — sequential fall-through
+    past the bound is a function-boundary error, not a tail call, so
+    the override is observable by the error it triggers."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load(str(elf))
     azr = s.analyzer(function_max_size=None)
-    a = azr.analyze("add", function_max_size=4)
+    # Frozen None lifts cleanly.
+    a = azr.analyze("add")
     assert a.entry == s.symbol("add")
     assert a.function.node_count() > 0
+    # Per-call override to 4 clips mid-function -> function-boundary error.
+    with pytest.raises(strider.errors.StriderError) as exc:
+        azr.analyze("add", function_max_size=4)
+    assert "function-boundary error" in str(exc.value)
 
 
 def test_analyzer_explicit_none_overrides_frozen_bound():
     """An explicit `function_max_size=None` is honored as an override
     distinct from leaving the keyword unset — the crux of the `_UNSET`
     sentinel.  With a frozen tiny bound and an address target (so the
-    symbol-size default doesn't mask it), the unset call stays bounded
-    while the explicit-`None` call lifts the whole function."""
+    symbol-size default doesn't mask it), the unset call hits the
+    function-boundary error from sequential overflow, while the
+    explicit-`None` call lifts the whole function cleanly."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.load(str(elf))
     addr = s.symbol("add")
     azr = s.analyzer(function_max_size=4)  # frozen tiny bound
-    bounded = azr.analyze(addr)  # keyword unset -> frozen bound (4)
-    full = azr.analyze(addr, function_max_size=None)  # explicit None -> unbounded
-    assert full.function.node_count() > bounded.function.node_count(), (
-        "explicit function_max_size=None did not override the frozen bound "
-        "(the _UNSET sentinel is not distinguishing None from unset)"
-    )
+    # Keyword unset -> frozen bound (4) -> sequential overflow error.
+    with pytest.raises(strider.errors.StriderError) as exc:
+        azr.analyze(addr)
+    assert "function-boundary error" in str(exc.value)
+    # Explicit None -> unbounded -> lifts cleanly, distinct from unset.
+    full = azr.analyze(addr, function_max_size=None)
+    assert full.function.node_count() > 0
 
 
 def test_analyzer_per_call_override_allow_code_before():

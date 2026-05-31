@@ -174,18 +174,56 @@ fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
 }
 
 #[test]
-fn fall_through_past_fn_max_size_terminates_as_tail_call() {
+fn fall_through_past_fn_max_size_is_function_boundary_error() {
     // xor eax,eax (2 bytes); lock cmpxchg %r14, 0x58(%rbx) (6 bytes,
-    // multi-pcode-op with intra-insn CONST branches).
+    // multi-pcode-op with intra-insn CONST branches).  Sequential decoding
+    // running off `fn_max_size=2` without an explicit terminator opcode is
+    // a function-boundary error (the bound is too small / the function is
+    // unterminated), not a tail call.
     let mut bytes = vec![0x31u8, 0xc0];
     bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
     bytes.extend(std::iter::repeat_n(0x90u8, 16));
     let opts = OptionsBuilder::new().set_function_max_size(2);
-    let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
+    let arch = SleighArch::x86_64();
+    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
+    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, opts.build())
+        .build()
+        .expect_err("sequential fall-through past fn_max_size must error, not classify as tail call");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("function-boundary error"),
+        "expected function-boundary error message; got {msg}"
+    );
+    assert!(
+        msg.contains("sequential decoding overflowed"),
+        "expected overflow detail in error message; got {msg}"
+    );
+}
 
-    assert_eq!(
-        cfg.region_graph[cfg.entry].terminator,
-        RegionTerminator::TailCall { target: 0x1002 }
+#[test]
+fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
+    // `mov eax, 5` (5 bytes) at 0x1000 with `fn_max_size=3` — the single
+    // instruction starts inside the bound but its sequential fall-through
+    // lands at 0x1005, past `start + fn_max_size = 0x1003`.  No explicit
+    // terminator opcode — must surface as a function-boundary error, not a
+    // synthetic tail call to 0x1005.  This is the shape the user-reported
+    // `tzcount.o` reproducer hits (a smallish function whose natural body
+    // has no terminator within the recorded bound).
+    let bytes = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90];
+    let opts = OptionsBuilder::new().set_function_max_size(3);
+    let arch = SleighArch::x86_64();
+    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
+    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, opts.build())
+        .build()
+        .expect_err("single-insn fall-through past fn_max_size must error");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("function-boundary error"),
+        "expected function-boundary error message; got {msg}"
+    );
+    assert!(
+        msg.contains("sequential decoding overflowed"),
+        "expected overflow detail in error message; got {msg}"
     );
 }
 

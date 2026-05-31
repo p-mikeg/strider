@@ -181,17 +181,20 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     );
 }
 
-/// Synthetic dounmount-shape: a function whose body has no explicit
-/// terminator inside the bound and whose fall-through crosses
-/// `start + fn_max_size` into a multi-pcode-op machine instruction
-/// (e.g. `lock cmpxchg`).  Pre-fix the lifter kept fall-through-
-/// decoding past the bound and eventually surfaced "invalid tail call
-/// at opcode ..." when the OOB instruction's CONST-arm `Branch`
-/// produced a non-zero `insn_index` paired with an OOB `machine_addr`.
-/// Post-fix, `RegionBuilder::build` truncates at the bound and the IR
-/// carries `Call(IntConst(<oob_addr>)) + Return`.
+/// A function whose body has no explicit terminator inside the bound
+/// and whose fall-through crosses `start + fn_max_size` is a
+/// **function-boundary error**, not a tail call: a legitimate tail call
+/// has an explicit `jmp <oob>` / `je <oob>` opcode, which reaches
+/// `is_branch_tail_call_nocheck` via `process_branch` /
+/// `process_cond_branch` and classifies correctly.  Sequential
+/// fall-through past the bound means the user's `fn_max_size` is too
+/// small or the function is unterminated — silently classifying it as
+/// a tail call hides the bug (the user-reported `tzcount.o` reproducer
+/// surfaces here).  The cfg builder must surface an error with a clear
+/// "function-boundary error" / "sequential decoding overflowed"
+/// message instead.
 #[test]
-fn bounded_lift_truncates_fall_through_past_fn_max_size() {
+fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     // Layout:
     //   0x1000..0x1002: `xor eax, eax`              (2 bytes, ≥1 pcode op).
     //   0x1002..0x1008: `lock cmpxchg %r14, 0x58(%rbx)` (multi-pcode-op,
@@ -199,7 +202,6 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
     //                                                  branches).
     //   0x1008..      : NOP padding.
     const BASE: u64 = 0x1000;
-    const TAIL_TARGET: u64 = 0x1002;
     let mut bs = vec![0x31u8, 0xc0];
     bs.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
     bs.extend(std::iter::repeat_n(0x90u8, 32));
@@ -216,13 +218,20 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
         RunOptions::new().fn_max_size(2),
     )
     .unwrap();
-    let function = run(config)
-        .expect("fall-through past fn_max_size must truncate cleanly, not crash on OOB lift");
-
+    let err = match run(config) {
+        Ok(_) => panic!(
+            "fall-through past fn_max_size must surface as a function-boundary error, not Ok"
+        ),
+        Err(e) => e,
+    };
+    let msg = format!("{err:#}");
     assert!(
-        graph_has_tail_call_to(&function, TAIL_TARGET),
-        "expected Call(IntConst({:#x})) + Return from the fall-through truncation",
-        TAIL_TARGET
+        msg.contains("function-boundary error"),
+        "expected function-boundary error message; got {msg}"
+    );
+    assert!(
+        msg.contains("sequential decoding overflowed"),
+        "expected overflow detail in error message; got {msg}"
     );
 }
 

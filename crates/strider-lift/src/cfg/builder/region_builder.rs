@@ -645,40 +645,40 @@ impl<'b, 'rom, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'rom, 'a, R> {
             }
             // We're done exploring a single machine insn, continue to the next one
             cur_addr = next_pcode_addr(cur_addr, &lift_res)?;
-            if self.detect_fallthrough_oob_tail_call(cur_addr)? {
-                return Ok(());
-            }
+            self.detect_fallthrough_oob_tail_call(cur_addr)?;
         }
     }
 
-    /// If fall-through to `cur_addr` crossed `start + fn_max_size`, terminate
-    /// the current region with a synthetic `TailCall { target: cur_addr }`
-    /// rather than continuing to lift OOB instructions, and return `Ok(true)`.
+    /// Detects sequential-decode fall-through across `start + fn_max_size`
+    /// and surfaces it as a hard error.
     ///
-    /// Lifting past the bound is what surfaced as `"invalid tail call at
-    /// opcode ..."` when a multi-pcode-op insn (e.g. `lock cmpxchg`) past the
-    /// bound returned a CONST-arm `PcodeInsnAddr` with non-zero `insn_index`
-    /// and an OOB `machine_addr`.  `next_pcode_addr` only advances forward in
-    /// machine address, so the upper-bound check is sufficient —
-    /// `is_branch_tail_call_nocheck` happens to also check the lower bound,
-    /// but `cur_addr.machine_addr >= self.start_addr.addr` always holds here.
+    /// Sequential decoding running off the recorded function extent without
+    /// an explicit terminator opcode is a **function-boundary error**, not a
+    /// tail call: a legitimate tail call has an explicit `jmp <oob>` /
+    /// `je <oob>` opcode and reaches `is_branch_tail_call_nocheck` through
+    /// [`Self::process_branch`] / [`Self::process_cond_branch`] — those
+    /// classify as [`RegionTerminator::TailCall`] correctly.  Sequential
+    /// fall-through means the user's `fn_max_size` is too small or the
+    /// function is unterminated within its recorded extent; silently
+    /// classifying that as a tail call hides the bug.
     ///
     /// Empty-`insns` guard: if every machine instruction so far decoded to
     /// zero pcode ops (true NOPs on some Sleigh specs), the inner `for` loop
-    /// never appended to `self.insns` and `add_region` would reject the empty
-    /// region.  Skip the truncation in that degenerate case — the next
-    /// iteration will keep lifting.
-    ///
-    /// Mirrors how [`Self::process_branch`] uses
-    /// [`Self::is_branch_tail_call_nocheck`] for explicit branches.
-    fn detect_fallthrough_oob_tail_call(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
+    /// never appended to `self.insns`.  In that degenerate case we cannot
+    /// have advanced past anything yet — return `Ok(())` so the outer loop
+    /// keeps lifting.
+    fn detect_fallthrough_oob_tail_call(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
         if self.insns.is_empty() || !self.is_branch_tail_call_nocheck(cur_addr) {
-            return Ok(false);
+            return Ok(());
         }
-        self.finish_current_region(RegionTerminator::TailCall {
-            target: cur_addr.machine_addr.addr,
-        })?;
-        Ok(true)
+        let start = self.builder.start_addr.addr;
+        let fn_max_size = self.builder.options.fn_max_size;
+        anyhow::bail!(
+            "function-boundary error at {cur_addr:?}: sequential decoding overflowed past \
+             [start={start:#x}, start + fn_max_size={fn_max_size:?}); function is unterminated \
+             within its recorded extent (likely cause: `fn_max_size` is too small for the \
+             function, OR the binary ends mid-function)"
+        );
     }
 }
 
