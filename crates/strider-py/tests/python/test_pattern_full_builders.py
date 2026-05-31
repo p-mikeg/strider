@@ -455,22 +455,11 @@ def test_load_bit_width_compiles():
     assert isinstance(p.into_pat(), Pat)
 
 
-def test_store_mem_in_next_mem_bit_width_chain_compiles():
+def test_store_mem_in_bit_width_chain_compiles():
     p = (
         store()
         .addr(int_const(0x100))
         .mem_in(load().addr(int_const(0x200)))
-        .next_mem(store().addr(int_const(0x300)))
         .bit_width(64)
-    )
-    assert isinstance(p.into_pat(), Pat)
-
-
-def test_callother_next_ctrl_next_mem_compile():
-    p = (
-        call_other()
-        .name("LOCK")
-        .next_ctrl(load().addr(int_const(0x100)))
-        .next_mem(store().addr(int_const(0x200)))
     )
     assert isinstance(p.into_pat(), Pat)

@@ -9,7 +9,6 @@ pub use function_arg_handle::{ArgSource, FunctionArgHandle};
 pub(crate) mod bindings;
 pub(crate) mod cast_mask;
 mod match_result;
-pub(crate) mod consumer;
 pub(crate) mod walk_through;
 
 pub use bindings::Bindings;

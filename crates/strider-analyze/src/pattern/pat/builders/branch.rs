@@ -140,10 +140,16 @@ fn match_branch_consumer(
     let Some(&out) = outputs.get(output_index) else {
         return false;
     };
-    let Some(consumer) = crate::pattern::matcher::consumer::next_unique_consumer(ctx.matcher, out) else {
+    // Single-consumer lookup, inlined: we refuse to pick arbitrarily when
+    // a control output forks (zero or multiple consumers → no match).
+    let mut uses = ctx.function.output_uses(out);
+    let Some(first) = uses.next() else {
         return false;
     };
-    crate::pattern::pat::node_pat::match_consumer_node(ctx, consumer, pat, b)
+    if uses.next().is_some() {
+        return false;
+    }
+    crate::pattern::pat::node_pat::match_consumer_node(ctx, first.0, pat, b)
 }
 
 impl From<IfPat> for Pat {

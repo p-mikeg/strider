@@ -1410,11 +1410,6 @@ pub struct StorePatDef {
     #[field(accepts = "Pat", arg = "p")]
     mem_in: Option<strider_analyze::pattern::Pat>,
 
-    /// Match against the unique consumer of the store's memory output
-    /// (outputs[0]).  No match if zero or multiple consumers.
-    #[field(accepts = "Pat", arg = "p")]
-    next_mem: Option<strider_analyze::pattern::Pat>,
-
     /// Filter stores by data width in bits (matches I32 and F32 on
     /// bit_width(32), etc.).
     #[field(arg = "n")]
@@ -1564,17 +1559,6 @@ pub struct CallOtherPatDef {
     /// value (when present), `idx>=2+has_value` are ABI clobbers.
     #[field(multi, accepts = "Pat", arg = "idx")]
     ret: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
-
-    /// Match against the unique consumer of the CallOther's control
-    /// output (outputs[0]).  No match if zero or multiple consumers.
-    #[field(accepts = "Pat", arg = "p")]
-    next_ctrl: Option<strider_analyze::pattern::Pat>,
-
-    /// Match against the unique consumer of the CallOther's memory
-    /// output (outputs[1]).  No match if zero or multiple consumers,
-    /// or when the ABI's `mem_clobbers` set is empty.
-    #[field(accepts = "Pat", arg = "p")]
-    next_mem: Option<strider_analyze::pattern::Pat>,
 }
 
 // `ctrl` / `mem` / `ctrl_out` / `mem_out` are convenience aliases that

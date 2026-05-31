@@ -14,9 +14,6 @@
 //!   patterns (`Call`, `CallOther`, `Return`, `If`).
 //! * [`OutputsSpec`] — sub-pattern constraints on specific output slots
 //!   (used by `Call` for return-value captures).
-//! * [`ConsumersSpec`] — sub-pattern against the single consumer of an
-//!   output slot (used by `If` for branch successors via direct-step
-//!   forward walk).
 //! * [`NodePat::post_match`] — the one place bindings can be installed
 //!   during the match pipeline (op-variant captures, typed-const captures,
 //!   side-table lookups).
@@ -30,13 +27,12 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::pattern::error::Result;
 use crate::pattern::matcher::Bindings;
-use crate::pattern::matcher::consumer;
 use crate::pattern::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 
 /// Post-match hook closure used by [`NodePat::post_match`].
 ///
 /// Post-match runs after the kind spec has already accepted the candidate
-/// and all input / output / consumer constraints have passed — it is the
+/// and all input / output constraints have passed — it is the
 /// place for bindings that depend on payload data (e.g. the `*_any`
 /// op-variant capture binding the matched node's `NodeId`).
 pub(crate) type PostMatchFn =
@@ -172,14 +168,14 @@ pub(crate) struct BuildSpec {
 }
 
 /// A generic node-level pattern. Covers every pattern shape: "check node
-/// kind, match inputs in some arrangement, optionally constrain outputs
-/// and consumers, optionally bind output/node captures".  Buildable
-/// patterns additionally populate [`NodePat::build`].
+/// kind, match inputs in some arrangement, optionally constrain outputs,
+/// optionally bind output/node captures".  Buildable patterns
+/// additionally populate [`NodePat::build`].
 ///
 /// Kind-phase purity: the [`KindSpec::VariantWith`] closure is
 /// payload-only (`&NodeKind -> bool`) and can therefore never touch
 /// [`Bindings`].  All data-dependent binding happens strictly in
-/// [`Self::post_match`], which runs after the inputs/outputs/consumers
+/// [`Self::post_match`], which runs after the inputs/outputs
 /// pass — so the commutative retry path can safely snapshot-restore
 /// without worrying about bindings made during the kind check.
 pub(crate) struct NodePat {
@@ -196,9 +192,7 @@ pub(crate) struct NodePat {
     pub(crate) inputs: InputsSpec,
     /// Optional constraints on the node's outputs (by position).
     pub(crate) outputs: OutputsSpec,
-    /// Optional constraints on the single consumer of outputs (by position).
-    pub(crate) consumers: ConsumersSpec,
-    /// Runs AFTER inputs/outputs/consumers match (and after each commutative
+    /// Runs AFTER inputs/outputs match (and after each commutative
     /// retry).  This is the designated binding site for payload-dependent
     /// captures (op-variant Vars, typed-constant Vars), since it executes
     /// once bindings from sub-matches are already in place.
@@ -258,17 +252,6 @@ impl InputsSpec {
 pub(crate) enum OutputsSpec {
     None,
     Indexed(Vec<(usize, crate::pattern::pat::Pat)>),
-}
-
-/// Constraints on the consumer of an output slot by position.
-///
-/// Today only `None` is in use — `IfPat` (the only consumer-walk client)
-/// owns its own forward-step traversal in
-/// [`crate::pattern::pat::builders::branch`].  The variant is retained to preserve
-/// the `NodePat` shape and keep future consumer-style patterns (e.g. a
-/// generic "match the user of output N") trivially addable.
-pub(crate) enum ConsumersSpec {
-    None,
 }
 
 impl Pattern for NodePat {
@@ -350,7 +333,6 @@ impl NodePat {
             build: None,
             inputs,
             outputs: OutputsSpec::None,
-            consumers: ConsumersSpec::None,
             post_match: None,
         }
     }
@@ -482,15 +464,7 @@ fn try_once(
         }
     }
 
-    // (c) consumers — currently no `NodePat` user installs an indexed
-    // consumer constraint; `IfPat` does its own forward walk.  Match
-    // `pat.consumers` exhaustively so adding a future variant is a
-    // compile-time prompt to handle it here.
-    match &pat.consumers {
-        ConsumersSpec::None => {}
-    }
-
-    // (d) post_match (op-var binding for *Any patterns)
+    // (c) post_match (op-var binding for *Any patterns)
     if let Some(pm) = &pat.post_match
         && !pm(ctx, node, b)
     {
@@ -554,9 +528,17 @@ pub(crate) fn match_consumer_node(
         }) else {
             return false;
         };
-        let Some(next) = consumer::next_unique_consumer(ctx.matcher, ctrl_out) else {
+        // Inline single-consumer lookup: walk forward to the unique
+        // consumer of `ctrl_out`.  Returns `None` (and so bails the walk)
+        // when the output has zero or multiple consumers — we refuse to
+        // pick arbitrarily when a control output forks.
+        let mut uses = ctx.function.output_uses(ctrl_out);
+        let Some(first) = uses.next() else {
             return false;
         };
-        cur = next;
+        if uses.next().is_some() {
+            return false;
+        }
+        cur = first.0;
     }
 }

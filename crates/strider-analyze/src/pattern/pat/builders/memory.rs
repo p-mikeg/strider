@@ -5,6 +5,12 @@
 //! [`crate::pattern::pat::IntoPat`].  Value-kind filtering at bind time (see
 //! [`crate::pattern::pat::any::CapturePat`]) ensures the captured `NodeOutputId`
 //! refers to the node's value output, not its memory / control slots.
+//!
+//! Neither builder exposes a consumer-walk method any more.  To match
+//! on the consumer of a Store's memory output (or a Load's value
+//! output), capture the matched node and inspect its uses through
+//! [`strider_ir::Function::output_uses`] from a [`crate::pattern::pat::Pat::when`]
+//! guard.
 
 use std::sync::Arc;
 
@@ -83,8 +89,8 @@ impl StackAccessSpec {
 /// Builder for `Load` node patterns.  Created by [`crate::pattern::pat::load`].
 ///
 /// Note: `Load` is a single-output node (the loaded value at `outputs[0]`).
-/// It does not produce a memory edge, so there is no `.next_mem(p)` method
-/// on `LoadPat` — only `.mem_in(p)` for the backward-walk constraint and
+/// It does not produce a memory edge, so it has no memory-chain forward
+/// edge to walk; only `.mem_in(p)` for the backward-walk constraint and
 /// `.bit_width(n)` for the value-width filter.
 pub struct LoadPat {
     space: Option<rsleigh::VnSpace>,
@@ -217,7 +223,6 @@ pub struct StorePat {
     addr: Option<Pat>,
     data: Option<Pat>,
     mem_in: Option<Pat>,
-    next_mem: Option<Pat>,
     bit_width: Option<u32>,
     stack: StackAccessSpec,
 }
@@ -229,7 +234,6 @@ impl StorePat {
             addr: None,
             data: None,
             mem_in: None,
-            next_mem: None,
             bit_width: None,
             stack: StackAccessSpec::default(),
         }
@@ -254,13 +258,6 @@ impl StorePat {
     /// pattern walks back from the input edge to its producer.
     pub fn mem_in(mut self, p: impl Into<Pat>) -> Self {
         self.mem_in = Some(p.into());
-        self
-    }
-    /// Match `p` against the unique consumer of the store's memory
-    /// output (`outputs[0]`).  Returns no match if the output has zero
-    /// or multiple consumers (deterministic; no arbitrary pick).
-    pub fn next_mem(mut self, p: impl Into<Pat>) -> Self {
-        self.next_mem = Some(p.into());
         self
     }
     /// Restrict the match to stores whose data input (`inputs[2]`) is
@@ -310,7 +307,6 @@ impl From<StorePat> for Pat {
             addr,
             data,
             mem_in,
-            next_mem,
             bit_width,
             stack,
         } = b;
@@ -334,13 +330,12 @@ impl From<StorePat> for Pat {
         };
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
-        // Combined post-match closure: bit_width, next_mem, plus the shared
+        // Combined post-match closure: bit_width plus the shared
         // SP-relative checks (stack_offset / stack_only).
         // `with_post_match` replaces the existing closure (single slot), so
         // all checks must live in one callback.
-        if bit_width.is_some() || next_mem.is_some() || stack.needs_post() {
+        if bit_width.is_some() || stack.needs_post() {
             let want_width = bit_width;
-            let next_mem_pat = next_mem;
             pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
                 if let Some(w) = want_width {
                     // Store's data input is at `inputs[2]`; its producer's
@@ -355,11 +350,6 @@ impl From<StorePat> for Pat {
                     if ty.bit_width() != w as usize {
                         return false;
                     }
-                }
-                if let Some(ref p) = next_mem_pat
-                    && !super::consumer_match::match_unique_output_consumer(ctx, node, 0, p, b)
-                {
-                    return false;
                 }
                 stack.check(ctx, node, b)
             }));

@@ -10,8 +10,8 @@
 //!     a `.when_match()` predicate that checks `count_ones() == 1`.
 //!   * On arm_thumb gcc emits a `setISAMode` user-op as a `CallOther`
 //!     between the If and the following Call to set up the ISA-mode
-//!     context bit.  The matcher's ConsumersSpec walk does not pass
-//!     through CallOther, but `strider_target::call_other_abi::classify("setISAMode")`
+//!     context bit.  `IfPat`'s branch walk does not pass through a
+//!     CallOther, but `strider_target::call_other_abi::classify("setISAMode")`
 //!     returns `NoOp` so the IR builder skips emitting the CallOther
 //!     entirely, and structural compositions like
 //!     `if_node().true_branch(call().arg(0, function_arg(1)))` match
@@ -257,8 +257,8 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
     // Call.arg(0) ↔ FunctionArg(1).
     //
     // On Thumb-2, gcc emits a `setISAMode` user-op as a `CallOther`
-    // between the If and the Call to set up the ISA-mode context.  The
-    // matcher's ConsumersSpec walk doesn't pass through CallOther, but
+    // between the If and the Call to set up the ISA-mode context.
+    // `IfPat`'s branch walk doesn't pass through a CallOther, but
     // `strider_target::call_other_abi::classify("setISAMode")` returns `NoOp` so the
     // IR builder skips the node entirely, and the strict composition
     // `If(true_branch=Call(...))` matches on Thumb just like every
