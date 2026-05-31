@@ -575,7 +575,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// the start of a known region.
     ///
     /// If so, the current region has fallen through into an already-explored
-    /// region: the current region is finalised with a `Fallthrough` terminator
+    /// region: the current region is finalised with an `Unconditional` terminator
     /// and an (unweighted) edge is added to the existing region.
     /// Otherwise delegates to [`process_new_insn`](Self::process_new_insn).
     ///
@@ -597,7 +597,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
         // If `addr` is the start of an already-explored region, the current region
-        // fell through to it: finalise the current region and add a Fallthrough edge.
+        // fell through to it: finalise the current region and add an Unconditional edge.
         if let Some(&existing_region_id) = self.builder.start_addr_to_region_id.get(&addr) {
             if self.insns.is_empty() {
                 if let Some(parent_id) = self.parent_edge {
