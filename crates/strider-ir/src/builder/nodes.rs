@@ -55,7 +55,7 @@ impl FunctionBuilder {
     ///
     /// Used by the pcode lifter to materialise the second operand of
     /// `Xor(x, all_ones)` — the canonical IR form of bitwise complement
-    /// (`~x`) since the the former BitNot unary-op variant was removed.
+    /// (`~x`) since the former BitNot unary-op variant was removed.
     ///
     /// # Errors
     ///

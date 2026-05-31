@@ -244,7 +244,7 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 | `ConstantFold` | Constant arithmetic, comparisons, booleans, truncation, extension; algebraic identities. |
 | `KnownBits` | Bit-level zero/one propagation. Folds outputs whose every bit is determined to a constant. |
 | `FlagCmpCanonicalize` | Recognises CPU-flag-tree comparisons (AArch64 NZCV / x86 EFLAGS / ARM+Thumb) — both the raw flag trees and the decomposed shapes left after an inverted-sense branch is normalised — and rewrites them to high-level `IntCmpOp`. |
-| `IfCondInversion` | Canonicalises `If(BitNot(C)){A}{B}` into `If(C){B}{A}` so every `If` has a non-negated cond (logical NOT is the 1-bit `BitNot`). |
+| `IfCondInversion` | Canonicalises `If(Xor(C, IntConst(1)):I1){A}{B}` into `If(C){B}{A}` so every `If` has a non-negated cond (logical NOT is `Xor(_, IntConst(1)):I1` since bitwise complement is `Xor(x, all_ones)`). |
 | `RedundantPhis` | Eliminates `Phi`/`MemPhi`/`Region` with a single reachable predecessor.  (The phi's optional source-varnode tag lives in `Graph::phi_var_tag`.) |
 | `DeadBranchElimination` | Removes `If` whose condition is constant; strips dead control edges. |
 | `LoadReadOnly` | Folds `Load`s of constant addresses against a caller-supplied ROM. |
@@ -261,9 +261,9 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 
 A few common surprises when a pattern that "should obviously match" returns no hits:
 
-1. **`If(BitNot(C))` doesn't exist in optimised IR.**  `IfCondInversion` rewrites it to `If(C){B}{A}` (the 1-bit `BitNot` is logical NOT).  Write your `if_node()` pattern against the canonical (non-negated) form.
+1. **`If(Xor(C, IntConst(1)):I1)` doesn't exist in optimised IR.**  `IfCondInversion` rewrites it to `If(C){B}{A}` (logical NOT is `Xor(_, IntConst(1)):I1` since bitwise complement is `Xor(x, all_ones)`).  Write your `if_node()` pattern against the canonical (non-negated) form.
 
-2. **Lift-time canonicalisation aliases.**  `IntSub`/`IntLessEqual`/`IntSlessEqual`/`IntNotEqual`/`FloatSub`/`FloatNotEqual`/`FloatLessEqual`/`FloatNan` are NOT IR primitives — the lifter lowers them at lift time.  Use the alias constructors (`pattern::sub`, `pattern::int_le`, `pattern::int_sle`, `pattern::float_sub`, `pattern::float_ne`, `pattern::float_le`) rather than the raw cmp ops.  The `FLOAT_NAN(x)` shape lowers to `BitNot(FloatEqual(x, x))` at `I1` — match it in Rust by composing `bool_not(float_eq(x, x))`.  The Python binding exposes a `pattern.float_is_nan(x)` convenience constructor that builds the same shape.
+2. **Lift-time canonicalisation aliases.**  `IntSub`/`IntLessEqual`/`IntSlessEqual`/`IntNotEqual`/`FloatSub`/`FloatNotEqual`/`FloatLessEqual`/`FloatNan` are NOT IR primitives — the lifter lowers them at lift time.  Use the alias constructors (`pattern::sub`, `pattern::int_le`, `pattern::int_sle`, `pattern::float_sub`, `pattern::float_ne`, `pattern::float_le`) rather than the raw cmp ops.  The `FLOAT_NAN(x)` shape lowers to `Xor(FloatEqual(x, x), IntConst(1)):I1` — match it in Rust by composing `bool_not(float_eq(x, x))` (the `bool_not` builder emits the Xor-with-1 shape).  The Python binding exposes a `pattern.float_is_nan(x)` convenience constructor that builds the same shape.
 
 3. **Commutativity.**  `add` / `mul` / `and` / `or` / `xor` (and the boolean equivalents) and `IntCmpOp::{Equal,Carry,Scarry}` plus `FloatCmpOp::Equal` automatically try both operand orderings.  Non-commutative ops (`sub`, `div`, `shl`, `int_lt`, …) keep stated order.  Use `int_binary("Add", l, r).ordered()` to force left-to-right matching on a typed binary builder.  `.ordered()` on a finalised `Pat` (returned by free constructors like `add(x, y)`) raises `PatternError` because commutativity is baked in at construction.
 

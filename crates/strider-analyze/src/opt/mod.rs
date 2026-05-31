@@ -100,10 +100,12 @@ pub use call_stack_args::CallStackArgCollect;
 /// — section "Stable vs destructive optimizer passes" — for the
 /// pass-by-pass rationale.
 ///
-/// Note: [`LoadReadOnly`] is also stable per the spec table but takes
-/// a caller-supplied ROM image, so it can't be added with a default
-/// configuration.  Callers that have a ROM (e.g. strider's
-/// `build_optimizer_pipeline`) layer it on top of this subset.
+/// Note: [`LoadReadOnly`] is also stable per the spec table; it reads
+/// its ROM from the per-run [`OptCtx`] rather than from pass state.
+/// `OptimizerPipeline::run` threads the ctx into every pass; callers
+/// that ran with `rom = None` see `LoadReadOnly` short-circuit to a
+/// no-op.  The PyO3 wrapper auto-prepends a `LoadReadOnly` pass for
+/// any custom pipeline that omitted it.
 ///
 /// Passes (in order):
 /// 1. [`ConstantFold`] — operand-rewriting; old nodes become dead but

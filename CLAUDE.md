@@ -105,7 +105,7 @@ consumed by `ReadOnlyMemory::read`.  The graph is a DAG rooted at
 `strider-py` with `strider-target` at the bottom — there are no
 back-edges.  `strider-lift` calls
 back into `strider-analyze`'s indirect-branch resolver through the
-`strider_lift::cfg::IndirectResolverFn` callback type (an `Arc<dyn Fn>`
+`strider_lift::cfg::IndirectResolverFn` callback type (a `Box<dyn Fn>`
 alias) — the resolver function lives in `strider-analyze` and is
 installed on the cfg builder via `Builder::with_indirect_resolver`,
 so the resolver-bearing dependency stays one-way.
@@ -291,9 +291,10 @@ so the resolver-bearing dependency stays one-way.
     decoding (Sleigh's `lift_one(&mut self)` carries context-register
     state, so out-of-order per-insn lifting across regions is not safe),
     funnels each lift through the `set_lift_addr` fingerprint attribution
-    point, and consults the `DecodeCache`.  Bounded-lift semantics
-    (`function_max_size`) and `is_addr_tail_call` live alongside it.
-    Exposes the `IndirectResolverFn<R>` callback type (an `Arc<dyn Fn>`
+    point, and delegates to GHIDRA's internal `DisassemblyCache` (rsleigh's
+    `Sleigh` owns it) for per-address memoisation.  Bounded-lift
+    semantics (`function_max_size`) and `is_addr_tail_call` live alongside
+    it.  Exposes the `IndirectResolverFn<R>` callback type (a `Box<dyn Fn>`
     alias) — the cfg builder calls back through the installed closure for
     indirect-branch resolution, so the cfg-to-analyze direction stays
     clean.  The only public construction path is
@@ -318,8 +319,9 @@ so the resolver-bearing dependency stays one-way.
       decomposed `(a≠b)∧¬(a<b)` / `(a=b)∨(a<b)` shapes that ARM/Thumb
       (and post-`ConstantFold` trees) leave once the branch's inverted
       sense is stripped, so every flag arch folds to a direct comparison.
-    - `IfCondInversion` — `If(BitNot(C)){A}{B}` → `If(C){B}{A}` (the
-      1-bit `BitNot` is logical NOT).
+    - `IfCondInversion` — matches an `If` whose cond is `Xor(C, IntConst(1)):I1`
+      (the canonical shape of logical NOT after the BitNot→Xor lift) and
+      rewrites it to `If(C){B}{A}` (branches swapped).
     - `RedundantPhis` — eliminates `Phi` (tagged or anonymous) /
       `MemPhi` / `Region` with a single reachable predecessor.
     - `DeadBranchElimination` — removes `If(const)` branches and strips
@@ -484,8 +486,9 @@ truth for every node's input/output shape.  Node kinds, grouped:
   `NodeId`; the underlying node kind stays `Store(VnSpace)` /
   `Load(VnSpace)`.
 - **Integer (incl. booleans):** `IntConst(u128)`, `IntConstWide(WideConstId)`
-  (I256 / I512, interned in `Graph::wide_const_interner`), `IntUnaryOp` (`BitNot`
-  for `~x`, `Neg` for `-x`), `IntBinaryOp` (`And` / `Or` / `Xor` /
+  (I256 / I512, interned in `Graph::wide_const_interner`), `IntUnaryOp`
+  (`Neg` for `-x`; bitwise complement `~x` is `Xor(x, all_ones)` — no
+  dedicated `BitNot` variant), `IntBinaryOp` (`And` / `Or` / `Xor` /
   `Add` / `Mul` / shifts / …; no `Sub`; lifter lowers to
   `Add(_, Neg(_))`), `IntCmpOp` (`Equal`, `Less`, `Sless`, `Carry`,
   `Scarry`, `Sborrow`; no `LessEqual` / `SlessEqual` — both are
@@ -494,14 +497,14 @@ truth for every node's input/output shape.  Node kinds, grouped:
   integer `I1`** — there is no `BoolConst` / `BoolBinaryOp` /
   `BoolUnaryOp` / `CastToBool` / `CastToInt`: a bool constant is
   `IntConst(0|1):I1`, logical and/or/xor are `IntBinaryOp::{And,Or,Xor}`
-  at `I1`, logical not is `IntUnaryOp::BitNot` at `I1`, bool→int widening
+  at `I1`, logical not is `Xor(x, IntConst(1)):I1`, bool→int widening
   is `Extend(ZeroExtend)`, and int→bool conversion is never needed (Sleigh
   always feeds an already-`I1` condition).
 - **Float:** `FloatConst(u64)` (bits), `FloatUnaryOp`, `FloatBinaryOp`
   (`Add` / `Mul` / `Div`; no `Sub`, lifter lowers to
   `Add(_, Neg(_))`), `FloatCmpOp` (`Equal`, `Less`; output `I1`; no
   `NotEqual` / `LessEqual` — both lifted to lowered shapes; `FLOAT_NAN(x)`
-  is lowered to `BitNot(FloatEqual(x, x))` at `I1`).
+  is lowered to `Xor(FloatEqual(x, x), IntConst(1)):I1`).
 - **Float / int conversions:** `IntToFloat`, `FloatToInt`,
   `FloatToFloat`, `IntBitsToFloat`, `FloatBitsToInt`.  There is no
   `CastToFloat`: an int→float cast is a same-width `IntBitsToFloat`, and a
@@ -536,16 +539,17 @@ truth for every node's input/output shape.  Node kinds, grouped:
 - **Lift-time canonicalisation** (the lifter applies these so patterns
   match the canonical shape):
   - `IntSub(a, b)` → `Add(a, Neg(b))`.
-  - `IntLessEqual(a, b)` → `BitNot(IntLess(b, a))` at `I1` (swap args;
-    logical-not of a 1-bit value is `IntUnaryOp::BitNot`).
-  - `IntNotEqual(a, b)` → `BitNot(IntEqual(a, b))` at `I1`.
+  - `IntLessEqual(a, b)` → `Xor(IntLess(b, a), IntConst(1)):I1` (swap
+    args; logical-not of a 1-bit value is `Xor(_, IntConst(1)):I1` since
+    bitwise complement `~x` is `Xor(x, all_ones)`).
+  - `IntNotEqual(a, b)` → `Xor(IntEqual(a, b), IntConst(1)):I1`.
   - `FloatSub(a, b)` → `FloatAdd(a, Neg(b))`.
-  - `FloatNotEqual(a, b)` → `BitNot(FloatEqual(a, b))` at `I1`.
+  - `FloatNotEqual(a, b)` → `Xor(FloatEqual(a, b), IntConst(1)):I1`.
   - `FloatLessEqual(a, b)` → `Or(FloatLess(a, b), FloatEqual(a, b))` at
     `I1` (NaN-aware; `Or` is `IntBinaryOp::Or`).
-  - `FLOAT_NAN(x)` → `BitNot(FloatEqual(x, x))` at `I1`.
-  - `If(BitNot(C)){A}{B}` → `If(C){B}{A}` (via `opt::IfCondInversion`,
-    matching a 1-bit `BitNot`).
+  - `FLOAT_NAN(x)` → `Xor(FloatEqual(x, x), IntConst(1)):I1`.
+  - `If(Xor(C, IntConst(1)):I1){A}{B}` → `If(C){B}{A}` (via
+    `opt::IfCondInversion`).
 - **Commutative matching:** `add`, `mul`, `and`, `or`, `xor` (and bool
   equivalents), `int_cmp(Equal/Carry/Scarry)`, and `float_cmp(Equal)`
   automatically try both operand orderings.  Driven by

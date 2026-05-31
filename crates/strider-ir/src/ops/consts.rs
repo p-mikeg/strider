@@ -93,7 +93,7 @@ impl Graph {
     ///
     /// Used by the pcode lifter to materialise the second operand of
     /// `Xor(x, all_ones)` — the canonical IR form of bitwise complement
-    /// (`~x`) after the the former BitNot unary-op variant was deleted.
+    /// (`~x`) after the former BitNot unary-op variant was deleted.
     ///
     /// # Errors
     ///

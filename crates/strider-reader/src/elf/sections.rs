@@ -206,11 +206,16 @@ fn collect_loadable_sections_dedup(
         if data.is_empty() {
             continue;
         }
-        let region = MemRegion::new(sec.address(), data.to_vec())?;
-        // First-wins: only insert if no region already occupies this
-        // start address.  `entry().or_insert_with` would still build the
-        // region; checking first lets us skip the alloc on the loser.
-        by_addr.entry(region.start_addr()).or_insert(region);
+        // First-wins: only build a `MemRegion` (which copies `data`) when
+        // no region already occupies this start address.  Avoids the
+        // copy on the loser of a VMA collision (`.text` vs `.text.foo`
+        // in an ET_REL `.o` before linking).
+        if let std::collections::btree_map::Entry::Vacant(e) =
+            by_addr.entry(sec.address())
+        {
+            let region = MemRegion::new(sec.address(), data.to_vec())?;
+            e.insert(region);
+        }
     }
     Ok(by_addr.into_values().collect())
 }

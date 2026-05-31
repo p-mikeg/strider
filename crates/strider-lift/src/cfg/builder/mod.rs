@@ -154,12 +154,11 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// canonical implementation:
     ///
     /// ```text
-    /// use std::sync::Arc;
     /// use strider_lift::cfg::Builder;
     /// use strider_analyze::indirect_resolver::resolve_indirect_target;
     ///
     /// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
-    ///     Arc::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
+    ///     Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
     ///         resolve_indirect_target(insns, target_vn, sleigh, lr_vn, rom, endianness)
     ///     });
     /// let cfg = Builder::for_arch(&arch, &mut sleigh, addr, opts)
