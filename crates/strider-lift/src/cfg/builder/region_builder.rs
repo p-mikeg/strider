@@ -91,27 +91,18 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Lift a single machine instruction at `addr`, consulting the
-    /// optional [`crate::cfg::DecodeCache`] when present.  Returns an
-    /// `Rc<LiftRes>` so successive callers at the same address
-    /// (across CFG rebuilds within one `strider::run`) share the
-    /// underlying decoded pcode without re-invoking Sleigh.
-    fn lift_one_cached(&mut self, addr: u64) -> Result<std::rc::Rc<rsleigh::LiftRes>> {
-        if let Some(cache) = &self.builder.decode_cache
-            && let Some(rc) = cache.get(addr)
-        {
-            return Ok(rc);
-        }
-        let res = self
-            .builder
+    /// Lift a single machine instruction at `addr`.  Thin wrapper over
+    /// `Sleigh::lift_one` that converts the rsleigh error into an
+    /// `anyhow::Error` so the rest of the region-builder pipeline can
+    /// use `?` uniformly.  GHIDRA's C++ `DisassemblyCache`
+    /// (`sleigh.hh:107-120`) already memoises recently-parsed
+    /// instructions inside the `Sleigh` instance, so no outer cache is
+    /// needed.
+    fn lift_one(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
+        self.builder
             .sleigh
             .lift_one(addr)
-            .map_err(|e| anyhow!("generic sleigh error {e:?}"))?;
-        let rc = std::rc::Rc::new(res);
-        if let Some(cache) = &self.builder.decode_cache {
-            cache.insert(addr, std::rc::Rc::clone(&rc));
-        }
-        Ok(rc)
+            .map_err(|e| anyhow!("generic sleigh error {e:?}"))
     }
 
     /// Decodes a pcode branch-target varnode into a [`PcodeInsnAddr`].
@@ -633,7 +624,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     pub(super) fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
-            let lift_res = self.lift_one_cached(cur_addr.machine_addr.addr)?;
+            let lift_res = self.lift_one(cur_addr.machine_addr.addr)?;
             // `enumerate` before `skip` so `i` is the absolute pcode index.
             // On the very first machine instruction this may start at a non-zero
             // index (the work queue delivered a mid-instruction entry point);

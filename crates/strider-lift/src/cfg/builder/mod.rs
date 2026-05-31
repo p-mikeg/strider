@@ -75,11 +75,6 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from. Treated as a LIFO stack (depth-first traversal).
     pub(super) work_queue: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
-    /// Optional cache of `(machine_addr) → Arc<LiftRes>`.  When
-    /// present, [`super::region_builder::RegionBuilder::lift_one_cached`]
-    /// consults it before invoking Sleigh's decoder.  The cache must be
-    /// scoped to a single Sleigh context (see [`crate::cfg::DecodeCache`]).
-    pub(super) decode_cache: Option<crate::cfg::DecodeCache>,
     /// Optional callback that resolves the target of a `BranchIndirect`
     /// when no pre-classified entry in `options.known_targets` matches.
     /// When `None`, the builder treats every unresolved `BranchIndirect`
@@ -117,7 +112,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
-            decode_cache: None,
             indirect_resolver: None,
         }
     }
@@ -160,17 +154,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         resolver: IndirectResolverFn<R>,
     ) -> Self {
         self.indirect_resolver = Some(resolver);
-        self
-    }
-
-    /// Attaches a Sleigh-decode cache to this builder.  When set,
-    /// every machine-instruction lift consults the cache before
-    /// invoking `Sleigh::lift_one`, and inserts on miss.  See
-    /// [`crate::cfg::DecodeCache`] for the cache's invariants (in
-    /// particular: it must be scoped to one Sleigh context).
-    #[must_use]
-    pub fn with_decode_cache(mut self, cache: crate::cfg::DecodeCache) -> Self {
-        self.decode_cache = Some(cache);
         self
     }
 

@@ -46,7 +46,7 @@ use rustc_hash::FxHashMap;
 
 use anyhow::{anyhow, bail, Result};
 
-use strider_lift::cfg::{Builder, Cfg, DecodeCache, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::{NodeId, NodeOutputId};
 use crate::opt::ReadOnlyMemory;
 
@@ -353,11 +353,6 @@ where
     /// Per-iteration region index, rebuilt by `build_initial_iteration` /
     /// `rebuild` from the latest `RegionLiftHandles` snapshot.
     region_index: RegionIndex,
-    /// Decode cache shared across CFG rebuilds.  The Sleigh handle
-    /// persists for the whole `run`, so this cache stays valid for
-    /// every iteration; threaded into each fresh `strider_lift::cfg::Builder` so
-    /// machine-instruction decodes are paid once per address per run.
-    decode_cache: DecodeCache,
     /// Cross-rebuild varnode cache (see [`VnCache`]).
     vn_cache: VnCache,
 }
@@ -403,7 +398,6 @@ where
             region_index: RegionIndex {
                 by_exit_control: rustc_hash::FxHashMap::default(),
             },
-            decode_cache: DecodeCache::new(),
             vn_cache: VnCache::default(),
             strider: config.strider,
             params: RunParams {
@@ -467,7 +461,6 @@ where
             self.params.fn_max_size,
             self.params.allow_code_before_start_addr,
             &self.known_targets,
-            &self.decode_cache,
         )?;
 
         let all_vns = self.vn_cache.scan_new_regions(&cfg);
@@ -1013,9 +1006,8 @@ fn read_or_init_var(
 /// resolution map.
 ///
 /// Constructs the `OptionsBuilder` from `rom` / link-register /
-/// `fn_max_size` / `allow_code_before_start_addr`, installs the
-/// strider-analyze mini-IR indirect-branch resolver, and threads the
-/// shared decode cache.
+/// `fn_max_size` / `allow_code_before_start_addr` and installs the
+/// strider-analyze mini-IR indirect-branch resolver.
 #[allow(clippy::too_many_arguments)]
 fn build_cfg<R>(
     sleigh: &mut rsleigh::Sleigh<R>,
@@ -1025,7 +1017,6 @@ fn build_cfg<R>(
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-    decode_cache: &DecodeCache,
 ) -> Result<Cfg>
 where
     R: rsleigh::MemReader,
@@ -1065,7 +1056,6 @@ where
     );
     Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
         .with_known_targets(known_targets.clone())
-        .with_decode_cache(decode_cache.clone())
         .with_indirect_resolver(resolver)
         .build()
 }

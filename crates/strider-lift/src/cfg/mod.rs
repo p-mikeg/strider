@@ -16,7 +16,6 @@
 //!   conditional-branch region
 
 mod builder;
-mod decode_cache;
 mod dot;
 mod options;
 mod query;
@@ -28,7 +27,6 @@ pub type Result<T> = anyhow::Result<T>;
 
 pub use builder::Builder;
 pub use builder::{IndirectResolverFn, ResolvedTargets};
-pub use decode_cache::DecodeCache;
 pub use options::OptionsBuilder;
 
 pub use query::{IfRegionSuccessors, is_addr_tail_call};
