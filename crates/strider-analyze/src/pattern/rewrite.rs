@@ -52,7 +52,11 @@ pub fn rewrite_rule(
         // 1. Match LHS.  Keep the matcher borrow in a tight scope so we can
         //    mutate `ctx.function` afterwards.
         let bindings = {
-            let matcher = Matcher::for_function(ctx.function, ctx.entry());
+            // `ctx` wraps a built function (the `RewriteCtx::try_for_built`
+            // invariant), so `Matcher::try_new` cannot fail here; the `?`
+            // surfaces a defensive error rather than panicking if the
+            // invariant is ever violated.
+            let matcher = Matcher::try_new(ctx.function)?;
             match matcher.match_at(node, &lhs) {
                 Some(m) => m.bindings_clone(),
                 None => return Ok(false),
@@ -262,12 +266,15 @@ impl<'g> RewriteCtx<'g> {
         self.function
     }
 
-    /// Build a [`Matcher`] anchored at this context's `(graph, entry)`.
-    /// Single-source the `Matcher::for_function(ctx.graph_ref(), ctx.entry())`
-    /// pairing so call sites don't have to spell out both fields.
+    /// Build a [`Matcher`] anchored at this context's wrapped function.
+    /// The `try_for_built` constructor already validated the post-build
+    /// invariant, so `Matcher::try_new` cannot fail here; the `expect()`
+    /// surfaces a clear panic message if the invariant is ever violated.
     #[must_use]
+    #[allow(clippy::expect_used)]
     pub fn matcher(&self) -> Matcher<'_> {
-        Matcher::for_function(self.function, self.entry())
+        Matcher::try_new(self.function)
+            .expect("RewriteCtx::matcher: try_for_built invariant guarantees a built Function")
     }
 }
 
@@ -319,12 +326,15 @@ impl<'g> RewriteCtxView<'g> {
             .expect("RewriteCtxView wraps a built Function with an entry node (from_built invariant)")
     }
 
-    /// Build a [`Matcher`] anchored at this view's `(graph, entry)`.
-    /// Single-source the `Matcher::for_function(ctx.graph_ref(), ctx.entry())`
-    /// pairing so call sites don't have to spell out both fields.
+    /// Build a [`Matcher`] anchored at this view's wrapped function.
+    /// The `from_built` constructor already validated the post-build
+    /// invariant, so `Matcher::try_new` cannot fail here; the `expect()`
+    /// surfaces a clear panic message if the invariant is ever violated.
     #[must_use]
+    #[allow(clippy::expect_used)]
     pub fn matcher(&self) -> Matcher<'g> {
-        Matcher::for_function(self.function, self.entry())
+        Matcher::try_new(self.function)
+            .expect("RewriteCtxView::matcher: from_built invariant guarantees a built Function")
     }
 
     /// Borrows a built [`strider_ir::Function`] as a shared

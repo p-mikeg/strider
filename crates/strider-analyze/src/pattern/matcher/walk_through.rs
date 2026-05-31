@@ -67,7 +67,7 @@ mod tests {
     //!
     //! These tests construct realistic multi-region IRs and exercise
     //! the walk-through helper through the public `Matcher` API
-    //! (`Matcher::for_function(...).ignore_regions()`).  Direct
+    //! (`Matcher::try_new(...).ignore_regions()`).  Direct
     //! invocation isn't useful here — the helper needs a `MatchCtx`
     //! anchored on a real `Matcher`, and the matcher's own
     //! `match_output_with_walk_through` is the only legitimate caller.
@@ -94,7 +94,7 @@ mod tests {
         // even with walk-through enabled.  Pins the "non-CS producer →
         // no fan-out" behaviour.
         let pat: Pat = ret().preceded_by(call()).into();
-        let hits = Matcher::for_function(&fg, fg.entry().unwrap())
+        let hits = Matcher::try_new(&fg).unwrap()
             .ignore_regions()
             .find_all(&pat);
         assert!(hits.is_empty(), "no Call in graph: no match");
@@ -121,7 +121,7 @@ mod tests {
         let fg = b.build().unwrap();
 
         let pat: Pat = ret().preceded_by(call()).into();
-        let hits = Matcher::for_function(&fg, fg.entry().unwrap())
+        let hits = Matcher::try_new(&fg).unwrap()
             .ignore_regions()
             .find_all(&pat);
         assert_eq!(hits.len(), 1, "ret(call) through 1-pred Region must match");
@@ -163,7 +163,7 @@ mod tests {
         let fg = b.build().unwrap();
 
         let pat: Pat = ret().preceded_by(call()).into();
-        let hits = Matcher::for_function(&fg, fg.entry().unwrap())
+        let hits = Matcher::try_new(&fg).unwrap()
             .ignore_regions()
             .find_all(&pat);
         assert_eq!(
@@ -208,7 +208,7 @@ mod tests {
         let fg = b.build().unwrap();
 
         let pat: Pat = ret().preceded_by(call()).into();
-        let hits = Matcher::for_function(&fg, fg.entry().unwrap())
+        let hits = Matcher::try_new(&fg).unwrap()
             .ignore_regions()
             .find_all(&pat);
         // One Return, but the walk-through must reach into the Call arm
@@ -239,7 +239,7 @@ mod tests {
         let pat: Pat = ret().preceded_by(call()).into();
         // No `.ignore_regions()` — direct match through the Region
         // fails, and the helper is gated off.
-        let hits = Matcher::for_function(&fg, fg.entry().unwrap()).find_all(&pat);
+        let hits = Matcher::try_new(&fg).unwrap().find_all(&pat);
         assert!(hits.is_empty(), "flag off: no walk-through");
     }
 
@@ -277,7 +277,7 @@ mod tests {
         assert!(cs_count >= 2, "chain produces >=2 Region nodes (got {cs_count})");
 
         let pat: Pat = ret().preceded_by(call()).into();
-        let hits = Matcher::for_function(&fg, fg.entry().unwrap())
+        let hits = Matcher::try_new(&fg).unwrap()
             .ignore_regions()
             .find_all(&pat);
         assert_eq!(hits.len(), 1, "chained Region walk-through must reach Call");

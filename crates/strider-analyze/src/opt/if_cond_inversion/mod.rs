@@ -124,7 +124,7 @@ fn is_inverted_cond_match(
     let cond_node = function.node_for_output(cond_out);
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
-    let m = Matcher::for_function(function, function.entry()?);
+    let m = Matcher::try_new(function).ok()?;
     let hit = m.match_at(cond_node, &INNER_PAT)?;
     hit.output(*INNER_CAPTURE)
 }

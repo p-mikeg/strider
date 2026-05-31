@@ -44,10 +44,10 @@ pub(crate) struct MatcherOptions {
     pub ignore_regions: bool,
 }
 
-/// Executes pattern queries against a [`strider_ir::Graph`].
+/// Executes pattern queries against a [`strider_ir::Function`].
 ///
 /// Construction is O(1).  `find_all` / `match_at` do a single preorder
-/// walk of the graph each call and try the pattern against every
+/// walk of the function each call and try the pattern against every
 /// candidate node (kind-prefiltered when the pattern's
 /// `KindSpec` is concrete).
 ///
@@ -55,22 +55,27 @@ pub(crate) struct MatcherOptions {
 /// `function_arg_index_upper_bound`, `function_arg_count`) reads the
 /// `Function::arg_index_to_nodes` side-table directly — O(1) per call,
 /// no scan.
+///
+/// The function's entry [`NodeId`] is derived on demand via
+/// [`Self::entry`] from `Function::entry()`; the wrapped function is
+/// required to be in its built form (i.e. `function.entry()` is
+/// `Some(_)`), which is checked at construction time by
+/// [`Self::try_new`].
 pub struct Matcher<'g> {
     pub(super) function: &'g strider_ir::Function,
-    pub(super) entry: NodeId,
     pub(crate) options: MatcherOptions,
-    /// Lazily-cached preorder traversal of `graph`.  Built on
+    /// Lazily-cached preorder traversal of `function`.  Built on
     /// first call to [`Self::walk_cached`]; stays valid for the
     /// `Matcher`'s lifetime because the matcher holds an immutable
-    /// borrow of `graph` (any mutation would require a fresh
-    /// `&mut Graph`, which forces this `Matcher` out of scope).
+    /// borrow of `function` (any mutation would require a fresh
+    /// `&mut Function`, which forces this `Matcher` out of scope).
     ///
     /// Used by [`Self::find_all`], [`Self::find_all_multi`], and the
     /// kind-index bootstrap to avoid M independent preorder walks per
     /// session.
     walk: std::cell::OnceCell<Vec<NodeId>>,
     /// Lazily-cached `Discriminant<NodeKind> → Vec<NodeId>` index of
-    /// the graph.  Populated on first call to [`Self::kind_index`];
+    /// the function.  Populated on first call to [`Self::kind_index`];
     /// consulted by [`Self::find_all`] and [`Self::find_all_multi`]
     /// to skip every node whose `NodeKind` discriminant is
     /// incompatible with the pattern's root kind.
@@ -82,39 +87,48 @@ pub struct Matcher<'g> {
 }
 
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher` over a built [`strider_ir::Function`].  Wrapper around
-    /// [`Self::for_function`] for callers that hold the fully-built form
-    /// (the common query path).  Rewrite-only callers that have just
-    /// `&Function + NodeId` should use [`Self::for_function`] directly.
+    /// Creates a new `Matcher` over a built [`strider_ir::Function`].
     ///
     /// # Errors
     ///
-    /// Returns an error if the function has not been built (i.e. `entry`
-    /// is `None`).
+    /// Returns an error if the function has not been built (i.e.
+    /// `function.entry()` is `None`).
     pub fn try_new(function: &'g strider_ir::Function) -> anyhow::Result<Self> {
-        let entry = function.entry().ok_or_else(|| {
+        // Validate the post-build invariant up front so subsequent
+        // [`Self::entry`] calls can derive the entry node infallibly
+        // via `function.entry().expect(...)`.
+        let _entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!("Matcher::try_new: entry node is not set")
         })?;
-        Ok(Self::for_function(function, entry))
-    }
-
-    /// Creates a new `Matcher` over a `(function, entry)` pair.
-    #[must_use]
-    pub fn for_function(function: &'g strider_ir::Function, entry: NodeId) -> Self {
-        Self {
+        Ok(Self {
             function,
-            entry,
             options: MatcherOptions::default(),
             walk: std::cell::OnceCell::new(),
             kind_index: std::cell::OnceCell::new(),
-        }
+        })
     }
 
-    /// Returns the cached preorder traversal of the graph, computing
+    /// Function-entry `NodeId` anchor.  Derived from
+    /// `Function::entry()`; the `try_new` constructor enforces the
+    /// post-build invariant.
+    ///
+    /// The `expect()` cannot panic in practice: [`Self::try_new`]
+    /// validates `function.entry().is_some()` at construction time,
+    /// and `Function::entry` is monotonic — once set it never reverts
+    /// to `None`.
+    #[must_use]
+    #[allow(clippy::expect_used)]
+    pub fn entry(&self) -> NodeId {
+        self.function
+            .entry()
+            .expect("Matcher wraps a built Function with an entry node (try_new invariant)")
+    }
+
+    /// Returns the cached preorder traversal of the function, computing
     /// it on first call.
     fn walk_cached(&self) -> &[NodeId] {
         self.walk
-            .get_or_init(|| self.function.walk_from(self.entry).collect())
+            .get_or_init(|| self.function.walk_from(self.entry()).collect())
             .as_slice()
     }
 
