@@ -336,10 +336,6 @@ enum FieldKind {
     VnSpace,
     /// `PyVn` — reads `.inner` to get the underlying `rsleigh::Vn`.
     Vn,
-    /// `#[field(accepts = "OffsetCapture")]` — accepts a
-    /// `PyOffsetCapture` and reads `.inner` to get the underlying
-    /// `strider_analyze::pattern::OffsetCapture`.
-    OffsetCapture,
     /// `#[field(multi, accepts = "Pat")]` — accumulating `(idx, p)`
     /// setter that pushes onto a `Vec<(usize, Pat)>` (or
     /// `Vec<(u32, Pat)>`).  The carried type is the **tuple-inner**
@@ -543,12 +539,11 @@ fn field_kind_from_bag(
         Some("Pat") => Ok(FieldKind::PatLike),
         Some("VnSpace") => Ok(FieldKind::VnSpace),
         Some("Vn") => Ok(FieldKind::Vn),
-        Some("OffsetCapture") => Ok(FieldKind::OffsetCapture),
         Some(other) => Err(syn::Error::new_spanned(
             attr,
             format!(
                 "unknown #[field(accepts = \"{other}\")] target; expected one of \
-                 \"Pat\", \"VnSpace\", \"Vn\", \"OffsetCapture\"",
+                 \"Pat\", \"VnSpace\", \"Vn\"",
             ),
         )),
     }
@@ -901,14 +896,6 @@ fn build_finalise_impl(
             // setter signature is the only difference, handled in
             // `emit_field_method`.
             FieldKind::VnSpace | FieldKind::Vn => {
-                quote! {
-                    if let ::core::option::Option::Some(v) = guard.#rust_ident {
-                        b = b.#py_name(v);
-                    }
-                }
-            }
-            FieldKind::OffsetCapture => {
-                // `OffsetCapture` is `Copy`; forward by value like VnSpace/Vn.
                 quote! {
                     if let ::core::option::Option::Some(v) = guard.#rust_ident {
                         b = b.#py_name(v);
@@ -1305,23 +1292,6 @@ fn emit_field_method(_rust_name: &Ident, field: &Field) -> TokenStream2 {
                 fn #py_name(
                     slf: ::pyo3::PyRef<'_, Self>,
                     #arg_name: crate::sleigh::PyVn,
-                ) -> ::pyo3::PyRef<'_, Self> {
-                    let mut guard = slf
-                        .inner
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner());
-                    guard.#rust_ident = ::core::option::Option::Some(#arg_name.inner);
-                    ::core::mem::drop(guard);
-                    slf
-                }
-            }
-        }
-        FieldKind::OffsetCapture => {
-            quote! {
-                #(#doc_attrs)*
-                fn #py_name(
-                    slf: ::pyo3::PyRef<'_, Self>,
-                    #arg_name: crate::pattern::PyOffsetCapture,
                 ) -> ::pyo3::PyRef<'_, Self> {
                     let mut guard = slf
                         .inner

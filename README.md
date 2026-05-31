@@ -152,17 +152,18 @@ for tup in g.find_joined([
     print(f"field offset = {field_offset:#x}")
 ```
 
-### Stack-offset recovery
+### Stack-only filter
 
-Capture an SP-relative `Store` and read its compile-time offset (`g` is
-`a.function` from the quickstart):
+Restrict a `Load` / `Store` match to SP-relative accesses (i.e. nodes
+that `StackOffsetDetect` has stamped with an offset).  Use `.stack_only()`
+to gate the match without pinning a specific offset, or `.stack_offset(k)`
+to require exactly `sp + k`:
 
 ```python
-from strider.pattern import OffsetCapture, store
+from strider.pattern import store
 
-c = OffsetCapture()
-for hit in g.find_all(store().offset_capture(c)):
-    print(f"stack store at offset {hit.captured_offset(c)}")
+for hit in g.find_all(store().stack_only()):
+    print(f"stack store: {hit}")
 ```
 
 ### Asm-fingerprint attribution

@@ -1,11 +1,13 @@
-//! Tests for the `stack_only`, `offset_capture` features on `LoadPat` and `StorePat`.
+//! Tests for the `stack_only` / `stack_offset` filters on `LoadPat` and `StorePat`,
+//! plus the regular-`Capture` + `Function::stack_offset` side-table recovery
+//! pattern (capture the matched node, then read its offset off the side-table).
 //!
 //! The `Function::stack_offset` side-table is populated manually via
 //! `Function::set_stack_offset` — the same side-table that `StackOffsetDetect`
 //! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
-use strider_analyze::pattern::{Capture, IntoPat, Matcher, OffsetCapture, load, store};
+use strider_analyze::pattern::{Capture, IntoPat, Matcher, load, store};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 
 use super::support::Tb;
@@ -129,10 +131,9 @@ fn stack_only_matches_only_stack_stores() {
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap store");
 }
 
-// ── store().stack_offset(k) — exact-offset filter (existing) ─────────────────
+// ── store().stack_offset(k) — exact-offset filter ────────────────────────────
 
-/// The existing `.stack_offset(k)` filter still works after adding the new
-/// fields.
+/// The `.stack_offset(k)` filter restricts to a single concrete offset.
 #[test]
 fn offset_exact_filter_store() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
@@ -147,96 +148,38 @@ fn offset_exact_filter_store() {
     assert_eq!(hits_miss.len(), 0, "stack_offset(0x20) must reject the store");
 }
 
-// ── store().offset_capture(c) ────────────────────────────────────────────────
+// ── Capture + Function::stack_offset side-table recovery ─────────────────────
 
-/// `store().offset_capture(c)` must bind the offset into the match and the
-/// captured value must equal the side-table entry.
+/// Capturing a stack-relative store with a regular `Capture` lets the caller
+/// recover its SP offset by reading `Function::stack_offset` on the bound node.
+/// One accessor, no dedicated capture / journal.
 #[test]
-fn offset_capture_round_trip_store() {
-    let (g, _stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
-    let oc = OffsetCapture::new();
-    let pat: strider_analyze::pattern::Pat = store().offset_capture(oc).into();
-    let hits = matcher.find_all(&pat);
-    assert_eq!(hits.len(), 1, "offset_capture implies stack_only; only 1 store qualifies");
-    assert_eq!(
-        hits[0].captured_offset(oc),
-        Some(0x10_i64),
-        "captured offset must match the side-table value"
-    );
-}
-
-/// `store().offset_capture(c)` must fail on non-stack stores (implies stack_only).
-#[test]
-fn offset_capture_implies_stack_only_store() {
-    let (g, _stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
-    let oc = OffsetCapture::new();
-    let pat: strider_analyze::pattern::Pat = store().offset_capture(oc).into();
-    let hits = matcher.find_all(&pat);
-    // Only the stack store matches; the heap store has no stack_offset entry.
-    assert_eq!(hits.len(), 1);
-    // Verify the heap store didn't slip through by checking the matched node.
-    let matched_node = hits[0].root();
-    let inputs = g.node_inputs(matched_node);
-    let addr_out = inputs[1];
-    if let NodeKind::IntConst(v) = g.kind_of_output(addr_out) {
-        assert_eq!(*v, 0x1000_u128, "matched node must be the stack store, not the heap store");
-    } else {
-        panic!("unexpected addr input kind");
-    }
-}
-
-// ── load().offset_capture(c) ─────────────────────────────────────────────────
-
-/// `load().offset_capture(c)` round-trip for loads.
-#[test]
-fn offset_capture_round_trip_load() {
-    let (g, _stack_node, _heap_node) = two_loads_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
-    let oc = OffsetCapture::new();
-    let pat: strider_analyze::pattern::Pat = load().offset_capture(oc).into();
-    let hits = matcher.find_all(&pat);
-    assert_eq!(hits.len(), 1, "offset_capture implies stack_only; only 1 load qualifies");
-    assert_eq!(
-        hits[0].captured_offset(oc),
-        Some(0x10_i64),
-        "captured offset must match the side-table value"
-    );
-}
-
-/// `captured_offset` returns `None` for an unbound `OffsetCapture`.
-#[test]
-fn captured_offset_returns_none_for_unbound_capture() {
-    let (g, _stack_node, _heap_node) = two_loads_one_stack();
-    let matcher = Matcher::try_new(&g).expect("matcher");
-    let oc_bound = OffsetCapture::new();
-    let oc_unbound = OffsetCapture::new();
-    let pat: strider_analyze::pattern::Pat = load().offset_capture(oc_bound).into();
-    let hits = matcher.find_all(&pat);
-    assert_eq!(hits.len(), 1);
-    assert_eq!(
-        hits[0].captured_offset(oc_unbound),
-        None,
-        "unbound OffsetCapture must yield None"
-    );
-}
-
-// ── Capture (node id) alongside offset_capture ────────────────────────────────
-
-/// Combining `.capture(c)` (for the node id) with `.offset_capture(oc)` works:
-/// both bindings are available on the same match.
-#[test]
-fn node_capture_and_offset_capture_coexist() {
-    let (g, _stack_store, _heap_store) = two_stores_one_stack();
+fn capture_then_read_stack_offset_via_side_table() {
+    let (g, stack_store, _heap_store) = two_stores_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
     let node_cap = Capture::new();
-    let off_cap = OffsetCapture::new();
-    let pat: strider_analyze::pattern::Pat =
-        store().offset_capture(off_cap).capture(node_cap);
+    let pat: strider_analyze::pattern::Pat = store().stack_only().capture(node_cap);
+    let hits = matcher.find_all(&pat);
+    assert_eq!(hits.len(), 1, "stack_only must restrict to the annotated store");
+    let m = &hits[0];
+    let bound = m.node(node_cap).expect("captured node");
+    assert_eq!(bound, stack_store, "capture must bind the stack store");
+    let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
+    assert_eq!(offset, 0x10_i64, "side-table offset must round-trip");
+}
+
+/// The same recovery applies to loads.
+#[test]
+fn capture_then_read_stack_offset_via_side_table_load() {
+    let (g, stack_load, _heap_load) = two_loads_one_stack();
+    let matcher = Matcher::try_new(&g).expect("matcher");
+    let node_cap = Capture::new();
+    let pat: strider_analyze::pattern::Pat = load().stack_only().capture(node_cap);
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 1);
     let m = &hits[0];
-    assert!(m.node(node_cap).is_some(), "node capture must be bound");
-    assert_eq!(m.captured_offset(off_cap), Some(0x10_i64));
+    let bound = m.node(node_cap).expect("captured node");
+    assert_eq!(bound, stack_load);
+    let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
+    assert_eq!(offset, 0x10_i64);
 }

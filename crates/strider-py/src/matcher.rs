@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
-use crate::pattern::{intern_str, PyCapture, PyOffsetCapture};
+use crate::pattern::{intern_str, PyCapture};
 
 /// Result of a successful pattern match.
 ///
@@ -227,23 +227,6 @@ impl PyMatch {
         self.with_function(py, key, |c, g| {
             self.inner.get_vn(c, g).map(crate::sleigh::PyVn::from_inner)
         })
-    }
-
-    /// Returns the SP-relative stack offset bound by a preceding
-    /// `LoadPat.offset_capture(c)` or `StorePat.offset_capture(c)`.
-    /// Returns `None` when `c` was not captured in this match.
-    ///
-    /// The offset is the `i64` value from
-    /// `Function.stack_offset(node)` recorded at match time.  It is
-    /// always `Some` when `offset_capture` was specified on the
-    /// pattern and the match succeeded, because `offset_capture`
-    /// implies `stack_only` (a non-stack Load/Store cannot satisfy
-    /// the pattern).
-    fn captured_offset(
-        &self,
-        c: ::pyo3::PyRef<'_, PyOffsetCapture>,
-    ) -> Option<i64> {
-        self.inner.captured_offset(c.inner)
     }
 
     /// Returns the asm-instruction-address fingerprint of the node

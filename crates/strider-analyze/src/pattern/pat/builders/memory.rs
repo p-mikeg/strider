@@ -14,7 +14,6 @@ use crate::pattern::matcher::Bindings;
 use crate::pattern::pat::Pat;
 use crate::pattern::pat::node_pat::{InputsSpec, KindSpec, NodePat};
 use crate::pattern::pat::traits::MatchCtx;
-use crate::pattern::var::OffsetCapture;
 
 // ── StackOffsetFilter ─────────────────────────────────────────────────────────
 
@@ -42,46 +41,35 @@ impl StackOffsetFilter {
 /// SP-relative match state shared verbatim by `LoadPat` and `StorePat`.
 ///
 /// Both builders expose the same `stack_offset` / `stack_offset_any` /
-/// `stack_only` / `offset_capture` knobs and run the same base+offset
-/// post-match fragment against `Function::stack_offset`.  Hoisting that
-/// state and its check here keeps the binding logic in one place; the
-/// memory builders differ only in input-slot indices and Store's extra
-/// `data` / `next_mem`.
+/// `stack_only` knobs and run the same offset post-match fragment against
+/// `Function::stack_offset`.  Hoisting that state and its check here keeps
+/// the binding logic in one place; the memory builders differ only in
+/// input-slot indices and Store's extra `data` / `next_mem`.
 #[derive(Clone, Default)]
 struct StackAccessSpec {
     stack_offset_filter: Option<StackOffsetFilter>,
     /// When `true`, rejects matches where `Function::stack_offset` is `None`.
     stack_only: bool,
-    /// When `Some(oc)`, records the matched node's stack offset in the
-    /// match's offset-capture map keyed by `oc`.  Implies `stack_only`:
-    /// a non-stack access cannot bind an offset.
-    offset_capture: Option<OffsetCapture>,
 }
 
 impl StackAccessSpec {
     /// True when any SP-relative constraint is set, so the caller must
     /// install a post-match closure that runs [`Self::check`].
     fn needs_post(&self) -> bool {
-        self.stack_offset_filter.is_some() || self.stack_only || self.offset_capture.is_some()
+        self.stack_offset_filter.is_some() || self.stack_only
     }
 
-    /// Run the shared base+offset post-match fragment: look up
+    /// Run the shared offset post-match fragment: look up
     /// `Function::stack_offset` (failing the match when absent and any
-    /// SP-relative constraint is active), apply the offset filter, and
-    /// bind the captured offset.  Returns `false` to reject the match.
-    fn check(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
-        let do_stack_only = self.stack_only || self.offset_capture.is_some();
-        if do_stack_only || self.stack_offset_filter.is_some() {
-            let Some((base, offset)) = ctx.function.stack_offset(node) else {
+    /// SP-relative constraint is active) and apply the offset filter.
+    /// Returns `false` to reject the match.
+    fn check(&self, ctx: &MatchCtx, node: NodeId, _b: &mut Bindings) -> bool {
+        if self.stack_only || self.stack_offset_filter.is_some() {
+            let Some((_base, offset)) = ctx.function.stack_offset(node) else {
                 return false;
             };
             if let Some(ref f) = self.stack_offset_filter
                 && !f.matches(offset)
-            {
-                return false;
-            }
-            if let Some(oc) = self.offset_capture
-                && !b.bind_offset(oc, base, offset)
             {
                 return false;
             }
@@ -164,22 +152,12 @@ impl LoadPat {
     ///
     /// Use this when you want to find any SP-relative load without
     /// constraining the exact offset.  Combine with `.stack_offset(k)`
-    /// or `.offset_capture(c)` to further restrict or capture the offset.
+    /// to further restrict the offset.  Recover the matched node via
+    /// `.capture(c)` and read its SP-relative offset directly from the
+    /// `Function::stack_offset` side-table.
     #[must_use]
     pub fn stack_only(mut self) -> Self {
         self.stack.stack_only = true;
-        self
-    }
-    /// Capture the matched load's SP-relative offset into `c`.  At query
-    /// time, `match_.captured_offset(c)` returns the `i64` offset.
-    ///
-    /// Implies `stack_only`: if `Function::stack_offset(node)` is `None`
-    /// (i.e. the load is not SP-relative) the match fails.
-    ///
-    /// Requires that `StackOffsetDetect` has run before the matcher is invoked.
-    #[must_use]
-    pub fn offset_capture(mut self, c: OffsetCapture) -> Self {
-        self.stack.offset_capture = Some(c);
         self
     }
 }
@@ -205,7 +183,7 @@ impl From<LoadPat> for Pat {
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
         // Combined post-match closure: bit_width plus the shared SP-relative
-        // checks (stack_offset / stack_only / offset_capture).
+        // checks (stack_offset / stack_only).
         // `with_post_match` replaces the existing closure (single slot), so
         // all checks must live in one callback.
         if bit_width.is_some() || stack.needs_post() {
@@ -315,22 +293,12 @@ impl StorePat {
     ///
     /// Use this when you want to find any SP-relative store without
     /// constraining the exact offset.  Combine with `.stack_offset(k)`
-    /// or `.offset_capture(c)` to further restrict or capture the offset.
+    /// to further restrict the offset.  Recover the matched node via
+    /// `.capture(c)` and read its SP-relative offset directly from the
+    /// `Function::stack_offset` side-table.
     #[must_use]
     pub fn stack_only(mut self) -> Self {
         self.stack.stack_only = true;
-        self
-    }
-    /// Capture the matched store's SP-relative offset into `c`.  At query
-    /// time, `match_.captured_offset(c)` returns the `i64` offset.
-    ///
-    /// Implies `stack_only`: if `Function::stack_offset(node)` is `None`
-    /// (i.e. the store is not SP-relative) the match fails.
-    ///
-    /// Requires that `StackOffsetDetect` has run before the matcher is invoked.
-    #[must_use]
-    pub fn offset_capture(mut self, c: OffsetCapture) -> Self {
-        self.stack.offset_capture = Some(c);
         self
     }
 }
@@ -367,7 +335,7 @@ impl From<StorePat> for Pat {
         let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
 
         // Combined post-match closure: bit_width, next_mem, plus the shared
-        // SP-relative checks (stack_offset / stack_only / offset_capture).
+        // SP-relative checks (stack_offset / stack_only).
         // `with_post_match` replaces the existing closure (single slot), so
         // all checks must live in one callback.
         if bit_width.is_some() || next_mem.is_some() || stack.needs_post() {

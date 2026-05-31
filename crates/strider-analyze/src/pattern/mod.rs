@@ -155,7 +155,7 @@ pub use pat::{IntoPat, Pat};
 
 // ── Capture variable ─────────────────────────────────────────────────────────
 
-pub use var::{Capture, OffsetCapture};
+pub use var::Capture;
 
 // ── Wildcards, captures, predicates ──────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::pattern::var::{Capture, OffsetCapture};
+use crate::pattern::var::Capture;
 
 use super::bindings::Bindings;
 
@@ -264,20 +264,6 @@ impl Match {
             strider_ir::node::NodeKind::IntConstWide(id) => Some(graph.wide_const(*id).to_le_bytes()),
             _ => None,
         }
-    }
-
-    /// Returns the SP-relative stack offset bound to `oc` by a preceding
-    /// `LoadPat::offset_capture` or `StorePat::offset_capture` call, or
-    /// `None` if `oc` was not captured in this match.
-    ///
-    /// The offset is the value from [`strider_ir::Function::stack_offset`]
-    /// recorded at match time — it is always present when `offset_capture`
-    /// was specified and the match succeeded, because `offset_capture`
-    /// implies a stack-only gate (a non-stack Load/Store cannot satisfy the
-    /// pattern).
-    #[must_use]
-    pub fn captured_offset(&self, oc: OffsetCapture) -> Option<i64> {
-        self.bindings.get_offset(oc)
     }
 
     /// Returns an owned copy of the full [`Bindings`] captured by this match.

@@ -387,10 +387,6 @@ class Match:
         """Recover the varnode bound by `key` (InitialVar / tagged Phi /
         FunctionArg node), else `None`."""
         ...
-    def captured_offset(self, c: Any) -> Optional[int]:
-        """The SP-relative stack offset bound by a `LoadPat`/`StorePat`
-        `offset_capture(c)`, else `None`."""
-        ...
     def asm_fingerprint(self, key: Any) -> List[int]: ...
     def node(self, key: Any) -> Optional[Node]:
         """A `Node` handle on the node bound to `key` (a `Capture` or

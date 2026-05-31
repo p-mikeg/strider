@@ -79,5 +79,5 @@ mod bit_width;
 #[path = "pattern_matching/get_vn_call_other_clobber.rs"]
 mod get_vn_call_other_clobber;
 
-#[path = "pattern_matching/load_store_stack_offset_capture.rs"]
-mod load_store_stack_offset_capture;
+#[path = "pattern_matching/load_store_stack_only.rs"]
+mod load_store_stack_only;

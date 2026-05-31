@@ -2,7 +2,7 @@ use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::pattern::var::{Capture, OffsetCapture};
+use crate::pattern::var::Capture;
 
 // ── Bindings ──────────────────────────────────────────────────────────────────
 
@@ -38,12 +38,6 @@ pub(crate) struct Binding(pub(crate) NodeId, pub(crate) Option<NodeOutputId>);
 /// atomic counter), so the overlay is `FxHashMap` rather than
 /// `SecondaryMap`.
 ///
-/// A parallel journal `offset_entries: Vec<(OffsetCapture, i64)>` and
-/// `offset_index: FxHashMap<OffsetCapture, usize>` stores `i64` values
-/// bound by `LoadPat::offset_capture` / `StorePat::offset_capture`.
-/// The mark/restore scheme covers both journals atomically via
-/// `BindingsMark`, which carries cursors for both.
-///
 /// External callers see `Bindings` as read-only: construction is via
 /// `Default::default()`, and the production mutation path
 /// (`Self::bind_capture`) is `pub(crate)`.  The `mark` / `restore`
@@ -58,33 +52,19 @@ pub struct Bindings {
     /// O(1) `Capture → index-into-entries` overlay.  Kept in sync with
     /// `entries` on every push and on `restore`.
     index: rustc_hash::FxHashMap<Capture, usize>,
-    /// Parallel journal for `OffsetCapture` bindings — the captured stack
-    /// slot `(base, offset)` from `LoadPat::offset_capture` /
-    /// `StorePat::offset_capture`.  The base is part of the binding so the
-    /// same-`OffsetCapture` join can't unify accesses at equal numeric
-    /// offset on different SP bases (entry SP vs an aligned SP).
-    offset_entries: Vec<(OffsetCapture, (NodeOutputId, i64))>,
-    /// O(1) `OffsetCapture → index-into-offset_entries` overlay.
-    offset_index: rustc_hash::FxHashMap<OffsetCapture, usize>,
 }
 
 /// Opaque marker returned by [`Bindings::mark`] and consumed by
 /// [`Bindings::restore`].  Represents "the binding state at the moment of
 /// marking"; rolling back discards entries appended after the mark.
-///
-/// Carries cursors for both the node-binding journal and the
-/// offset-capture journal so both are rolled back atomically.
 #[derive(Clone, Copy)]
-pub struct BindingsMark(usize, usize);
+pub struct BindingsMark(usize);
 
 impl Bindings {
     /// Snapshot the current state in O(1) with no allocations.
     /// Use with [`Self::restore`] to roll back failed match attempts.
-    ///
-    /// The returned mark covers both the node-binding journal and the
-    /// offset-capture journal; [`Self::restore`] rolls back both atomically.
     pub(crate) fn mark(&self) -> BindingsMark {
-        BindingsMark(self.entries.len(), self.offset_entries.len())
+        BindingsMark(self.entries.len())
     }
 
     /// Discard every entry appended after `mark` was taken.  Idempotent:
@@ -93,20 +73,13 @@ impl Bindings {
     /// Iterates the dropped tail to evict the matching overlay entries
     /// — every overlay key is also in the journal at exactly one index,
     /// so dropping `entries[mark.0..]` and removing each `Capture` from
-    /// `index` keeps the two views in sync.  The offset journal is
-    /// rolled back analogously using `mark.1`.
+    /// `index` keeps the two views in sync.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
         if mark.0 < self.entries.len() {
             for (c, _) in &self.entries[mark.0..] {
                 self.index.remove(c);
             }
             self.entries.truncate(mark.0);
-        }
-        if mark.1 < self.offset_entries.len() {
-            for (c, _) in &self.offset_entries[mark.1..] {
-                self.offset_index.remove(c);
-            }
-            self.offset_entries.truncate(mark.1);
         }
     }
 
@@ -134,63 +107,6 @@ impl Bindings {
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
         let idx = *self.index.get(&c)?;
         Some(self.entries[idx].1)
-    }
-
-    // ── Offset-capture accessors ──────────────────────────────────────
-
-    /// Bind `oc` to the stack slot `(base, offset)`.  Returns `true` on a
-    /// new or idempotent (same base AND offset) bind, `false` on conflict
-    /// (no mutation).  The base is compared too: the same `OffsetCapture`
-    /// reused across positions only unifies accesses on the SAME SP base —
-    /// equal numeric offsets on different bases (entry SP vs an aligned SP)
-    /// address different memory and must NOT join.
-    ///
-    /// O(1) via the `offset_index` overlay.
-    pub(crate) fn bind_offset(&mut self, oc: OffsetCapture, base: NodeOutputId, offset: i64) -> bool {
-        if let Some(&idx) = self.offset_index.get(&oc) {
-            return self.offset_entries[idx].1 == (base, offset);
-        }
-        let idx = self.offset_entries.len();
-        self.offset_entries.push((oc, (base, offset)));
-        self.offset_index.insert(oc, idx);
-        true
-    }
-
-    /// Returns the `i64` offset bound to `oc` (relative to its slot's base),
-    /// or `None` if `oc` was not captured in this match.  The base is an
-    /// internal join key (within one match `bind_offset` pins it consistent).
-    ///
-    /// O(1) via the `offset_index` overlay.
-    #[must_use]
-    pub fn get_offset(&self, oc: OffsetCapture) -> Option<i64> {
-        let idx = *self.offset_index.get(&oc)?;
-        let (_base, offset) = self.offset_entries[idx].1;
-        Some(offset)
-    }
-
-    /// Returns the full `(base, offset)` stack slot bound to `oc`, or `None`
-    /// if `oc` was not captured.  Unlike [`Self::get_offset`] this exposes the
-    /// base so the cross-pattern shared-`OffsetCapture` join in
-    /// [`crate::pattern::Matcher::find_joined`] can require BOTH
-    /// base and offset to agree — matching the within-match `bind_offset`
-    /// semantics.
-    ///
-    /// O(1) via the `offset_index` overlay.
-    #[must_use]
-    pub(crate) fn get_offset_binding(&self, oc: OffsetCapture) -> Option<(NodeOutputId, i64)> {
-        let idx = *self.offset_index.get(&oc)?;
-        Some(self.offset_entries[idx].1)
-    }
-
-    /// Iterates over every `(OffsetCapture, (base, offset))` recorded by this
-    /// match.  Mirrors [`Self::iter`] for the offset journal; used by
-    /// [`crate::pattern::Matcher::find_joined`] to compute
-    /// cross-pattern shared-offset agreement.  Order is the order offsets were
-    /// bound during matching.
-    pub(crate) fn offset_iter(
-        &self,
-    ) -> impl Iterator<Item = (OffsetCapture, (NodeOutputId, i64))> + '_ {
-        self.offset_entries.iter().map(|(oc, slot)| (*oc, *slot))
     }
 
     /// Convenience: returns the value `NodeOutputId` bound to `c`, or
@@ -443,43 +359,6 @@ mod tests {
         // Conflict preserves original.
         assert!(!bindings.bind_capture(v, bb));
         assert_eq!(bindings.get(v), Some(a));
-    }
-
-    #[test]
-    fn offset_bind_join_requires_matching_base_not_just_offset() {
-        // Harvest two distinct NodeOutputIds to stand in for two distinct SP
-        // bases (e.g. InitialVar(sp) vs an aligned `sp & -16`).
-        let mut a_out = None;
-        let mut b_out = None;
-        let _function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
-            a_out = Some(av);
-            b_out = Some(bv);
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, NodeOutputType::I64)
-        })
-        .expect("build graph");
-        let base_a = a_out.unwrap();
-        let base_b = b_out.unwrap();
-
-        let mut bindings = Bindings::default();
-        let oc = OffsetCapture::new();
-
-        // First bind: slot (base_a, 8).
-        assert!(bindings.bind_offset(oc, base_a, 8));
-        assert_eq!(bindings.get_offset(oc), Some(8));
-        // Idempotent: same (base, offset) re-binds fine.
-        assert!(bindings.bind_offset(oc, base_a, 8));
-
-        // Same numeric offset, DIFFERENT base: must conflict — they address
-        // different memory.  An offset-only join (the pre-fix behavior) would
-        // have wrongly unified them.
-        assert!(
-            !bindings.bind_offset(oc, base_b, 8),
-            "equal offset on a different SP base must NOT unify"
-        );
-        // Same base, different offset: also a conflict.
-        assert!(!bindings.bind_offset(oc, base_a, 16));
     }
 
     #[test]

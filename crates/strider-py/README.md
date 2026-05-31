@@ -250,10 +250,10 @@ The `_` and `any_` strings are reserved wildcards (they convert to
   `cast_to_*` builders: booleans are the integer `I1`, an int→float
   cast is `int_bits_to_float`, and a float reprecision is
   `float_to_float` — see the conversions list above.)
-* **Memory & control:** `load`, `store` (use
-  `store().offset_capture(c)` / `.stack_only()` for SP-relative stores),
-  `call`, `call_other`, `ret`, `if_`, `phi`, `mem_phi`, `value_phi`,
-  `initial_var`, `function_arg`, `function_arg_any`.
+* **Memory & control:** `load`, `store` (use `.stack_only()` /
+  `.stack_offset(k)` for SP-relative accesses), `call`, `call_other`,
+  `ret`, `if_`, `phi`, `mem_phi`, `value_phi`, `initial_var`,
+  `function_arg`, `function_arg_any`.
 * **Typed family dispatchers:** `int_binary(op_str, l, r)`,
   `bool_binary(op_str, l, r)`, `float_binary(op_str, l, r)` —
   return builder objects that chain `.ordered()` / `.capture(c)` /

@@ -89,7 +89,6 @@ EXPECTED_PATTERN = {
     "IfPat",
     "LoadPat", "StorePat",
     "MemPhiPat",
-    "OffsetCapture",
     "PhiPat", "ValuePhiPat",
     "RetPat",
     # Wildcards / consts / phi / initial.

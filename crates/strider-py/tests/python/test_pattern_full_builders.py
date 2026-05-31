@@ -17,7 +17,7 @@ import pytest
 
 import strider
 from strider.pattern import (
-    Capture, OffsetCapture, Pat, CastMask, any_, var, add, mul, load, store,
+    Capture, Pat, CastMask, any_, var, add, mul, load, store,
     call, call_other, ret, if_, phi,
     phi_for, initial_var, initial_var_for, function_arg,
     function_arg_any, function_arg_reg, function_arg_stack,
@@ -172,18 +172,12 @@ def test_load_pat_via_addr_chain():
     assert isinstance(hits, list)
 
 
-# ── StorePat stack_only / offset_capture ─────────────────────────────
+# ── StorePat stack_only ──────────────────────────────────────────────
 
 
 def test_store_stack_only_chain():
     # stack_only() restricts the match to stores whose SP offset is known.
     p = store().stack_only().data(int_const(42))
-    assert isinstance(p.into_pat(), Pat)
-
-
-def test_store_offset_capture_chain():
-    c = OffsetCapture()
-    p = store().offset_capture(c)
     assert isinstance(p.into_pat(), Pat)
 
 
