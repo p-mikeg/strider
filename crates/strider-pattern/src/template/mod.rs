@@ -1,8 +1,8 @@
 //! Template instantiation support.
 //!
-//! Phase 1 carries only the minimal [`TemplateKind`] enum that the
-//! bipartite `PatNode` references for its `build` slot; the full
-//! template builder + instantiation engine is built in a later phase.
+//! Minimal stub: only the [`TemplateKind`] enum that the bipartite
+//! `PatNode` references for its `build` slot. The full template builder
+//! + instantiation engine lands in a later change.
 
 /// How a buildable pattern node materialises into fresh IR during
 /// template instantiation.

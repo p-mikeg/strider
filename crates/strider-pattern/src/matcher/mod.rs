@@ -1,8 +1,8 @@
 //! Pattern matcher over a lifted [`strider_ir::Function`].
 //!
-//! Phase 1 carries only the minimal handle that the bipartite
-//! `Pattern` representation references in its closure type aliases; the
-//! full matching engine is built in a later phase.
+//! Minimal stub: only the handle that the bipartite `Pattern`
+//! representation references in its closure type aliases. The full
+//! matching engine lands in a later change.
 
 pub use strider_ir::walk::CastMask;
 

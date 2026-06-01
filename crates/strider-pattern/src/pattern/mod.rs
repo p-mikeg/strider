@@ -17,8 +17,8 @@ mod vertex;
 pub use edge::PatEdge;
 pub use vertex::{KindSpec, LocalLimit, OutputKindSpec, PatNode, PatOutput, PostMatchFn};
 
-// Re-exported for the builder + template engines in later phases; the
-// inline topo test is the only Phase-1 consumer.
+// Re-exported for the builder + template engines in later changes; the
+// inline topo test is the only current consumer.
 #[allow(unused_imports)]
 pub(crate) use topo::{assert_dag, reachable_topo};
 
