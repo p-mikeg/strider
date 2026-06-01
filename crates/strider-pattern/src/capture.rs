@@ -2,8 +2,8 @@
 //!
 //! [`Capture`] is the unified data/control capture handle: every
 //! pattern position that wants to bind a matched node uses the same
-//! type.  After a successful match, [`crate::Match::node`] returns the
-//! `NodeId` and [`crate::Match::output`] returns the value
+//! type.  After a successful match, `Match::node` returns the
+//! `NodeId` and `Match::output` returns the value
 //! `NodeOutputId` (or `None` for control-flow nodes that have no
 //! single value output).
 

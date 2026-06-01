@@ -7,12 +7,13 @@
 
 //! Capture-to-binding journal that backs every pattern match.
 //!
-//! [`Bindings`] is the per-match journal of capture-to-binding entries
-//! with O(1) rebind-conflict detection and journal-based rollback
-//! (`mark` / `restore`).  Typed extraction of constant values and
-//! op-variant discriminants happens through [`crate::Match`] /
-//! [`Bindings`] helpers (`get_uint`, `get_int_binary_op`, …) which look
-//! up the bound `NodeId` and inspect the underlying `NodeKind`.
+//! [`Bindings`] is the per-match list of capture-to-binding entries.
+//! Rebind-conflict detection is a linear scan over the (typically tiny)
+//! entry list, and rollback (`mark` / `restore`) truncates that list.
+//! Typed extraction of constant values and op-variant discriminants
+//! happens through `Match` / [`Bindings`] helpers (`get_uint`,
+//! `get_int_binary_op`, …) which look up the bound `NodeId` and inspect
+//! the underlying `NodeKind`.
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp};
@@ -75,7 +76,7 @@ pub struct Bindings {
 /// [`Bindings::restore`].  Represents "the binding state at the moment of
 /// marking"; rolling back discards entries appended after the mark.
 #[derive(Clone, Copy)]
-pub struct BindingsMark(usize);
+pub(crate) struct BindingsMark(usize);
 
 impl Bindings {
     /// Snapshot the current state in O(1) with no allocations.
@@ -476,13 +477,13 @@ mod tests {
 
     // ── mark / restore rollback ──────────────────────────────────────────
 
-    /// `restore` after a speculative `bind_capture` must wipe both the
-    /// journal and the index overlay so the post-rollback view is
-    /// indistinguishable from the pre-mark view — and a subsequent
-    /// `bind_capture(c, _)` for the rolled-back capture must succeed as
-    /// brand-new (not bounce off a stale overlay entry).
+    /// `restore` after a speculative `bind_capture` must drop the tail
+    /// entries so the post-rollback view is indistinguishable from the
+    /// pre-mark view — and a subsequent `bind_capture(c, _)` for the
+    /// rolled-back capture must succeed as brand-new (not bounce off a
+    /// stale entry).
     #[test]
-    fn restore_evicts_overlay_entries_for_dropped_journal_tail() {
+    fn restore_drops_tail_and_allows_rebind() {
         let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::I64))
             .expect("build graph");
         let n = function
@@ -500,7 +501,7 @@ mod tests {
         assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
         assert!(bindings.bind_capture(dropped_b, Binding::Node(n)));
 
-        // Pre-restore: all three visible via O(1) overlay.
+        // Pre-restore: all three visible in the entry list.
         assert!(bindings.get_binding(kept).is_some());
         assert!(bindings.get_binding(dropped_a).is_some());
         assert!(bindings.get_binding(dropped_b).is_some());
@@ -513,14 +514,14 @@ mod tests {
         assert!(bindings.get_binding(dropped_b).is_none());
 
         // Rebinding a rolled-back capture to a fresh binding must
-        // succeed as brand-new — the overlay must not retain a stale
-        // entry pointing at a now-truncated journal index.
+        // succeed as brand-new — no stale entry may survive the
+        // truncate.
         assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
         assert!(bindings.get_binding(dropped_a).is_some());
     }
 
     /// Restoring to a mark that's already the current cursor must be a
-    /// no-op — covers the early-return guard in `restore`.
+    /// no-op — truncating to the current length leaves the list intact.
     #[test]
     fn restore_to_current_mark_is_noop() {
         let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::I64))

@@ -21,6 +21,6 @@ pub mod matcher;
 pub mod pattern;
 pub mod template;
 
-pub use bindings::{Bindings, BindingsMark};
+pub use bindings::Bindings;
 pub use capture::Capture;
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};

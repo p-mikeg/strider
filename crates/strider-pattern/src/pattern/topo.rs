@@ -26,7 +26,10 @@ pub(crate) fn reachable_topo(
     Ok(sorted.into_iter().filter(|n| reachable.contains(n)).collect())
 }
 
-/// Asserts that the cone reachable from `root` is acyclic.
+/// Asserts that the pattern graph is acyclic.
+///
+/// Cycle detection runs over the whole graph (`toposort(g, None)`), not
+/// just the cone reachable from `root`.
 pub(crate) fn assert_dag(
     g: &StableDiGraph<PatVertex, PatEdge>,
     root: NodeIndex,

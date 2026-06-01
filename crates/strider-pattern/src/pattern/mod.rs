@@ -6,7 +6,7 @@
 //! output) and `Consumes` (output → consuming node at a slot).
 
 // `dead_code` allow: several accessors / constructors here are consumed
-// only by the builder + matcher engines landing in later phases; this
+// only by the builder + matcher engines landing in later changes; this
 // crate's lints run with `-D warnings`.
 #![allow(dead_code)]
 
