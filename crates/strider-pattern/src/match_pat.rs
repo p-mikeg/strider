@@ -40,7 +40,6 @@ pub trait MatchPat: Sized {
 /// nodes — the bipartite store allows one output vertex to fan out to
 /// several `Consumes` edges (still a DAG), so the operand sub-pattern is
 /// shared rather than duplicated.
-#[allow(dead_code)] // consumed by the lowered builders in `crate::typed`.
 pub(crate) struct Pre(pub(crate) PatOutRef);
 impl MatchPat for Pre {
     fn compile(self, _b: &mut MatcherBuilder) -> PatOutRef {

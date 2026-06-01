@@ -1,0 +1,205 @@
+//! Wildcard / capture / width-filter typed builders.
+//!
+//! `any` accepts every node kind; `var` additionally binds a capture;
+//! `predicate` gates on a closure; `value_of_width` / `inputs_of_width`
+//! and their `bool_*` aliases filter by output / input bit-width;
+//! `initial_var` / `initial_var_for` match the register-arg carrier
+//! kind.
+
+use strider_ir::node::{NodeId, NodeOutputType};
+
+use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::capture::Capture;
+use crate::match_pat::{CaptureExt, MatchPat};
+use crate::pattern::KindSpec;
+
+/// Match any node. Match-only (no template counterpart).
+pub struct Any;
+
+impl MatchPat for Any {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        b.leaf(KindSpec::Any)
+    }
+}
+
+/// Match any node. Wildcard — not usable as a rewrite RHS.
+#[must_use]
+pub fn any() -> Any {
+    Any
+}
+
+/// Match any node and bind it to `c`.
+pub struct Var {
+    cap: Capture,
+}
+
+impl MatchPat for Var {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let o = b.leaf(KindSpec::Any);
+        b.capture_node(o, self.cap);
+        o
+    }
+}
+
+/// Match any node and bind its output to `c`.
+#[must_use]
+pub fn var(c: Capture) -> Var {
+    Var { cap: c }
+}
+
+/// Match any node for which `f` returns `true`. Equivalent to
+/// `any().when_match(move |m, ty, _| f(m, ty))`, spelled as a single
+/// free function for the simple type/context-predicate case.
+#[must_use]
+pub fn predicate<F>(f: F) -> impl MatchPat
+where
+    F: Fn(&crate::Matcher, NodeOutputType) -> bool + 'static,
+{
+    any().when_match(move |m, ty, _b| f(m, ty))
+}
+
+/// Match any value output exactly `n` bits wide. Pins the declarative
+/// output width on the root output vertex.
+pub struct ValueOfWidth {
+    bits: u32,
+}
+
+impl MatchPat for ValueOfWidth {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let want = self.bits;
+        let o = b.leaf(KindSpec::Any);
+        // Declarative width on the root output vertex narrows value-rooted
+        // attempts to the matching slot.
+        b.set_output_width(o, want);
+        // Plus a node-level guard mirroring the old `value_of_width`
+        // node-filter: the matched node must have a value output of
+        // exactly `want` bits. This closes the slot-mismatch hole where
+        // `find_all` iterates a node's non-value outputs (Control /
+        // PhiToken) and the output vertex's declarative width is skipped
+        // because the IR slot doesn't line up with the pattern's slot 0.
+        b.set_node_limit(
+            o,
+            Box::new(move |matcher, node, _ty| {
+                let f = matcher.function();
+                f.node_outputs(node)
+                    .iter()
+                    .find_map(|&out| f.output_kind(out).as_value())
+                    .is_some_and(|ty| ty.bit_width() == want as usize)
+            }),
+        );
+        o
+    }
+}
+
+/// Match any value output that is exactly `n` bits wide.
+#[must_use]
+pub fn value_of_width(n: u32) -> ValueOfWidth {
+    ValueOfWidth { bits: n }
+}
+
+/// Match any boolean value — any value output 1 bit wide (`I1`).
+#[must_use]
+pub fn bool_value() -> ValueOfWidth {
+    value_of_width(1)
+}
+
+/// Match `inner` and require all of the matched node's value inputs to
+/// be `n` bits wide. Preserves the old guard: at least one value input,
+/// every value input width == `n`, and the matched node has a value
+/// output.
+pub struct InputsOfWidth<I> {
+    bits: u32,
+    inner: I,
+}
+
+impl<I: MatchPat> MatchPat for InputsOfWidth<I> {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let o = self.inner.compile(b);
+        let want = self.bits;
+        // Declarative per-input width on the wired value-input vertices.
+        b.constrain_input_widths(o, want);
+        // Plus the "≥1 value input & has value output" guard the old
+        // builder enforced via its node filter.
+        b.set_node_limit(
+            o,
+            Box::new(move |matcher, node, _ty| inputs_of_width_check(matcher, node, want as usize)),
+        );
+        o
+    }
+}
+
+/// Whether every value input of `node` has width `want`, the node has at
+/// least one value input, and the node has at least one value output.
+fn inputs_of_width_check(matcher: &crate::Matcher, node: NodeId, want: usize) -> bool {
+    let f = matcher.function();
+    // Reject zero-value-output kinds (Return, IndirectBranch, …): the old
+    // input-width pattern was only dispatched against value-producing
+    // nodes.
+    let has_value_output = f
+        .node_outputs(node)
+        .iter()
+        .any(|&out| f.output_kind(out).as_value().is_some());
+    if !has_value_output {
+        return false;
+    }
+    let mut value_inputs = 0usize;
+    for inp in f.node_inputs(node) {
+        if let Some(ty) = f.output_kind(inp).as_value() {
+            value_inputs += 1;
+            if ty.bit_width() != want {
+                return false;
+            }
+        }
+    }
+    value_inputs > 0
+}
+
+/// Match `inner` whose value inputs are all `n` bits wide.
+#[must_use]
+pub fn inputs_of_width<I: MatchPat>(n: u32, inner: I) -> InputsOfWidth<I> {
+    InputsOfWidth { bits: n, inner }
+}
+
+/// Match `inner` whose value inputs are all booleans (1-bit `I1`).
+#[must_use]
+pub fn bool_inputs<I: MatchPat>(inner: I) -> InputsOfWidth<I> {
+    inputs_of_width(1, inner)
+}
+
+/// Match any `InitialVar(_)` node (the register-arg carrier kind).
+pub struct InitialVar;
+
+impl MatchPat for InitialVar {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let sentinel = rsleigh::Vn {
+            size: 0,
+            addr_off: 0,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let exemplar = strider_ir::node::NodeKind::InitialVar(sentinel);
+        b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)))
+    }
+}
+
+/// Match any `InitialVar(_)` node (any varnode).
+#[must_use]
+pub fn initial_var() -> InitialVar {
+    InitialVar
+}
+
+/// Match `InitialVar(vn)` for the exact varnode `vn`.
+pub struct InitialVarFor {
+    vn: rsleigh::Vn,
+}
+
+impl MatchPat for InitialVarFor {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        b.leaf(KindSpec::Exact(strider_ir::node::NodeKind::InitialVar(self.vn)))
+    }
+}
+
+/// Match `InitialVar(vn)` for the exact varnode `vn`.
+#[must_use]
+pub fn initial_var_for(vn: rsleigh::Vn) -> InitialVarFor {
+    InitialVarFor { vn }
+}
