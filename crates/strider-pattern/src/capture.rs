@@ -49,32 +49,6 @@ impl Capture {
         self.0
     }
 
-    /// Intern (or look up) the [`Capture`] associated with the given
-    /// `name`.  Two calls with equal `name` strings return the same
-    /// `Capture`, so the same name across pat positions enforces
-    /// capture-equality in the matcher.
-    ///
-    /// Backed by a process-wide table guarded by a mutex; intern hits
-    /// are cheap O(1) hashmap lookups.  The table is append-only —
-    /// captures interned this way share the same id space as
-    /// [`Capture::new`] (both pull from the same atomic counter at
-    /// first-time interning).
-    #[must_use]
-    pub fn named(name: &str) -> Self {
-        use std::collections::HashMap;
-        use std::sync::Mutex;
-        static TABLE: std::sync::OnceLock<Mutex<HashMap<String, Capture>>> =
-            std::sync::OnceLock::new();
-        let table = TABLE.get_or_init(|| Mutex::new(HashMap::new()));
-        // Lock-poisoning here means a prior call panicked while holding
-        // the table — recover the inner map and continue (the worst-case
-        // outcome is allocating a duplicate capture for a re-entry).
-        let mut t = match table.lock() {
-            Ok(t) => t,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        *t.entry(name.to_string()).or_insert_with(Capture::new)
-    }
 }
 
 impl Default for Capture {
@@ -90,16 +64,11 @@ mod tests {
     use super::*;
 
     /// `Capture::new()` uses a process-wide atomic counter; allocating
-    /// many must produce all-distinct IDs.  `Debug` output is the only
-    /// public handle on the raw ID, so the test uses it as a set key.
+    /// many must produce all-distinct IDs.
     #[test]
-    fn capture_ids_are_globally_unique_across_many_allocations() {
-        const N: usize = 256;
-        let mut ids: Vec<String> = Vec::with_capacity(N);
-        for _ in 0..N {
-            ids.push(format!("{:?}", Capture::new()));
-        }
-        let unique: std::collections::HashSet<&String> = ids.iter().collect();
-        assert_eq!(unique.len(), ids.len());
+    fn capture_ids_are_globally_unique() {
+        let n = 256;
+        let ids: std::collections::HashSet<u32> = (0..n).map(|_| Capture::new().id()).collect();
+        assert_eq!(ids.len(), n);
     }
 }
