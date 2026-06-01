@@ -123,46 +123,56 @@ impl Default for OptCtx<'_> {
 /// [`OptimizationResult::NoChange`] if the graph is already in normal
 /// form for this pass.
 ///
-/// # Why `&mut Function` and not `&mut strider_pattern::RewriteCtx<'_>`
+/// # Why `apply(&mut RewriteCtx)` and a build-one `optimize` shim
 ///
-/// `RewriteCtx<'_>` carries a lifetime parameter, which prevents it
+/// The pipeline runs many passes over one function per run.  Each pass
+/// mutates the IR through a [`strider_pattern::RewriteCtx`], so building
+/// a fresh ctx inside every pass would reconstruct the same wrapper
+/// once per pass per fixed-point iteration.  Instead the pipeline builds
+/// **one** `RewriteCtx` for the whole run and hands it to every pass via
+/// [`Optimizer::apply`] — the real entry point.
+///
+/// [`Optimizer::optimize`] is the build-one-ctx convenience for direct /
+/// one-off callers (tests, benches) that hold a `&mut Function` and want
+/// to run a single pass: it constructs a `RewriteCtx` for that function
+/// and delegates to `apply`.  The pipeline never calls it.
+///
+/// `RewriteCtx<'_>` carries a lifetime parameter, which would prevent it
 /// appearing as the receiver type of a trait object
 /// (`Box<dyn Optimizer>`).  The pipeline stores type-erased passes, so
-/// the trait must be object-safe with no lifetime parameter.  Pass
-/// authors that want the ergonomic `RewriteCtx` API construct one
-/// internally at the top of `optimize`:
+/// the trait itself must stay object-safe with no lifetime parameter on
+/// `Self`.  `apply` keeps the trait object-safe by late-binding the ctx
+/// lifetime on the method (`RewriteCtx<'_>`) rather than on the trait.
 ///
 /// ```
 /// # use strider_analyze::opt::{OptCtx, OptimizationResult, Optimizer};
 /// # use strider_pattern::RewriteCtx;
-/// # use strider_ir::Function;
 /// #[derive(Clone)]
 /// struct MyPass;
 /// impl Optimizer for MyPass {
-///     fn optimize(
+///     fn apply(
 ///         &self,
-///         function: &mut Function,
+///         _rctx: &mut RewriteCtx<'_>,
 ///         _ctx: &OptCtx<'_>,
 ///     ) -> anyhow::Result<OptimizationResult> {
-///         let _ctx = RewriteCtx::try_for_built(function)?;
-///         // ... pass body operating on `_ctx` ...
+///         // ... pass body operating on `_rctx` ...
 ///         Ok(OptimizationResult::NoChange)
 ///     }
 /// }
 /// ```
 ///
 /// Passes that need the entry [`strider_ir::node::NodeId`] directly
-/// (for `function.preorder(entry)` or
-/// `strider_ir::walk::cfg_reachable(function, entry)`) derive it from
-/// `function.entry().expect("Optimizer::optimize: function must be built")`
-/// — the pipeline only ever runs over a built function, so the entry
-/// is guaranteed to be `Some(_)`.
+/// (for `rctx.walk()` or
+/// `strider_ir::walk::cfg_reachable(rctx.graph_ref(), rctx.entry())`)
+/// derive it via `rctx.entry()` — `RewriteCtx::try_for_built` enforces
+/// the post-build invariant, so the entry is guaranteed `Some(_)`.
 pub trait Optimizer: OptimizerClone {
-    /// Run one sweep of this pass over the IR `function`.
+    /// Real entry point: passes mutate the function through the shared
+    /// `RewriteCtx` the pipeline built once for this run.
     ///
-    /// The function is guaranteed to be in its built form (i.e.
-    /// `function.entry()` is `Some(_)`); passes that need the entry
-    /// derive it via `function.entry().expect(...)`.
+    /// `rctx` wraps the built function (entry is `Some(_)`); passes that
+    /// need a `&mut Function` use `rctx.function_mut()`, and reads go
+    /// through `rctx`'s deref to `Function` / `Graph`.
     ///
     /// `ctx` carries per-run state (currently the borrowed rom image);
     /// passes that don't consume the ctx ignore it (`_ctx: &OptCtx<'_>`).
@@ -172,11 +182,31 @@ pub trait Optimizer: OptimizerClone {
     /// Returns the first error encountered by the pass — typically an IR
     /// validation failure or a pattern-rewrite error propagated up through
     /// `anyhow::Error`.
+    fn apply(
+        &self,
+        rctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &OptCtx<'_>,
+    ) -> crate::opt::Result<OptimizationResult>;
+
+    /// Convenience for direct/one-off callers (tests, benches): build a
+    /// `RewriteCtx` for `function` and delegate to [`Self::apply`]. The
+    /// pipeline does NOT use this — it shares one ctx across all passes.
+    ///
+    /// `function` must be in its built form (`function.entry()` is
+    /// `Some(_)`); otherwise `RewriteCtx::try_for_built` errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `function` is not built, or propagates the
+    /// first error returned by [`Self::apply`].
     fn optimize(
         &self,
         function: &mut strider_ir::Function,
         ctx: &OptCtx<'_>,
-    ) -> crate::opt::Result<OptimizationResult>;
+    ) -> crate::opt::Result<OptimizationResult> {
+        let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+        self.apply(&mut rctx, ctx)
+    }
 
     /// Symbolic name of this pass.  Defaults to
     /// `std::any::type_name::<Self>()`, which yields fully-qualified
@@ -299,25 +329,34 @@ impl OptimizerPipeline {
         ctx: &OptCtx<'_>,
     ) -> crate::opt::Result<()> {
         const MAX_ITERS: u32 = 1024;
-        let mut iters: u32 = 0;
-        loop {
-            let mut changed = false;
-            for opt in &self.passes {
-                if opt.optimize(function, ctx)?.changed() {
-                    changed = true;
+        {
+            // Build ONE RewriteCtx for the whole run and share it across
+            // every pass, instead of each pass reconstructing one.  The
+            // borrow of `function` is held for the duration of this scope
+            // and released before the final validation step below.
+            let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+            let mut iters: u32 = 0;
+            loop {
+                let mut changed = false;
+                for opt in &self.passes {
+                    if opt.apply(&mut rctx, ctx)?.changed() {
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+                iters += 1;
+                if iters >= MAX_ITERS {
+                    anyhow::bail!(
+                        "optimizer pipeline did not converge after {MAX_ITERS} iterations"
+                    );
                 }
             }
-            if !changed {
-                break;
+            for opt in &self.post_passes {
+                opt.apply(&mut rctx, ctx)?;
             }
-            iters += 1;
-            if iters >= MAX_ITERS {
-                anyhow::bail!("optimizer pipeline did not converge after {MAX_ITERS} iterations");
-            }
-        }
-        for opt in &self.post_passes {
-            opt.optimize(function, ctx)?;
-        }
+        } // rctx dropped here → function borrow released
         let entry = function.entry().ok_or_else(|| {
             anyhow::anyhow!(
                 "OptimizerPipeline::run: function must be built (entry is None)"
@@ -383,9 +422,9 @@ mod tests {
         #[derive(Clone)]
         struct AlwaysChanged;
         impl Optimizer for AlwaysChanged {
-            fn optimize(
+            fn apply(
                 &self,
-                _function: &mut strider_ir::Function,
+                _rctx: &mut strider_pattern::RewriteCtx<'_>,
                 _ctx: &OptCtx<'_>,
             ) -> crate::opt::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)

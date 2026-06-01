@@ -390,12 +390,11 @@ impl CallStackArgCollect {
 }
 
 impl Optimizer for CallStackArgCollect {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         let calls: Vec<NodeId> = ctx
             .walk()
             .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
@@ -413,7 +412,7 @@ impl Optimizer for CallStackArgCollect {
                 .as_deref()
                 .unwrap_or(&default_offsets);
             result |= try_collect_stack_args(
-                &mut ctx,
+                ctx,
                 call_id,
                 stack_arg_offsets,
                 stack_vn,

@@ -26,7 +26,9 @@ pub(crate) type ErasedPass = Box<dyn strider_analyze::opt::Optimizer>;
 /// Adapter that turns an owned `ErasedPass` into something
 /// `strider_analyze::opt::OptimizerPipeline::add` can accept.  `add` requires
 /// `O: Optimizer + 'static`; this newtype satisfies the bound and
-/// forwards `optimize` straight through.
+/// forwards `apply` (the real entry point) straight through, so a
+/// `ForwardPass` driven by the shared-ctx pipeline shares the same
+/// `RewriteCtx` as every other pass.
 struct ForwardPass(ErasedPass);
 
 impl Clone for ForwardPass {
@@ -39,12 +41,12 @@ impl Clone for ForwardPass {
 }
 
 impl strider_analyze::opt::Optimizer for ForwardPass {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        rctx: &mut strider_pattern::RewriteCtx<'_>,
         ctx: &strider_analyze::opt::OptCtx<'_>,
     ) -> strider_analyze::opt::Result<strider_analyze::opt::OptimizationResult> {
-        self.0.optimize(function, ctx)
+        self.0.apply(rctx, ctx)
     }
 }
 

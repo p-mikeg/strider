@@ -100,12 +100,11 @@ impl FunctionArgDetect {
 }
 
 impl Optimizer for FunctionArgDetect {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         // `layout.register_args()` yields slots in ABI order, with
         // canonical positional indices stamped at layout-construction
         // time.  `layout.first_stack_index()` replaces the local
@@ -118,9 +117,9 @@ impl Optimizer for FunctionArgDetect {
         // re-run on the same function across stable iterations (otherwise
         // carrier ids would accumulate duplicates).
         ctx.function_mut().clear_arg_nodes();
-        detect_register_args(&mut ctx, &arg_passing_regs)?;
+        detect_register_args(ctx, &arg_passing_regs)?;
         detect_stack_args(
-            &mut ctx,
+            ctx,
             self.stack_vn,
             &stack_arg_offsets,
             self.layout.first_stack_index() as usize,

@@ -431,12 +431,11 @@ pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap>
 pub struct KnownBits;
 
 impl Optimizer for KnownBits {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).
@@ -489,7 +488,7 @@ impl Optimizer for KnownBits {
                 // Absorb the rewritten node's fingerprint into the new
                 // const via `after_replace` (handles fingerprint union +
                 // replace_all_uses).
-                let after = OptimizationResult::NoChange.after_replace(&mut ctx, out, new_out)?;
+                let after = OptimizationResult::NoChange.after_replace(ctx, out, new_out)?;
                 if after.changed() {
                     result = OptimizationResult::Changed;
                     for &consumer in &consumers {

@@ -272,22 +272,21 @@ fn dead_subgraph_has_live_data_consumer(
 pub struct DeadBranchElimination;
 
 impl Optimizer for DeadBranchElimination {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         // DBE only fires on `If` nodes; pre-filter via `seeded_kind` for
         // symmetry with the other peephole-style passes (ConstantFold,
         // IfCondInversion, LoadReadOnly).  Chained constant-branch
         // patterns are caught by the outer OptimizerPipeline fixed-
         // point loop, which re-runs this pass until it reports
         // NoChange.
-        let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::If));
+        let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::If));
         let mut result = OptimizationResult::NoChange;
         while let Some(node_id) = work.dequeue() {
-            result |= try_eliminate_dead_branch(&mut ctx, node_id)?;
+            result |= try_eliminate_dead_branch(ctx, node_id)?;
         }
         Ok(result)
     }

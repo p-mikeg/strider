@@ -195,12 +195,11 @@ fn try_simplify_phi_like(
 pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         let reachable = strider_ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `try_simplify_phi_like`, so don't
@@ -215,7 +214,7 @@ impl Optimizer for RedundantPhis {
             })
             .collect();
         for node_id in candidates {
-            res |= try_simplify_phi_like(&mut ctx, node_id, &reachable)?;
+            res |= try_simplify_phi_like(ctx, node_id, &reachable)?;
         }
         // Detaching unreachable zombies is bookkeeping, not progress: an
         // unreachable node cannot be a consumer of a reachable producer, so

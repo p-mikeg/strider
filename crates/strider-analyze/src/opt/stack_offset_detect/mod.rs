@@ -42,11 +42,12 @@ impl StackOffsetDetect {
 }
 
 impl Optimizer for StackOffsetDetect {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut Function,
+        rctx: &mut strider_pattern::RewriteCtx<'_>,
         _ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
+        let function: &mut Function = rctx.function_mut();
         let mut memo = SpExprMemo::default();
         let mut to_stamp: Vec<(NodeId, NodeOutputId, i64)> = Vec::new();
 

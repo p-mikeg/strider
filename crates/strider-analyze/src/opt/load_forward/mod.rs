@@ -76,18 +76,17 @@ impl LoadForward {
 }
 
 impl Optimizer for LoadForward {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
-        let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Load(_)));
+        let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         let stack_vn = self.stack_vn;
         while let Some(load) = work.dequeue() {
-            result |= try_forward_load(&mut ctx, load, stack_vn, self.endianness, &mut memo, self.alias_mode)?;
+            result |= try_forward_load(ctx, load, stack_vn, self.endianness, &mut memo, self.alias_mode)?;
         }
         Ok(result)
     }

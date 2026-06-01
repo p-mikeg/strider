@@ -100,19 +100,18 @@ pub(crate) fn run_peephole<P: PeepholePass>(
 }
 
 /// Blanket [`Optimizer`](crate::opt::pipeline::Optimizer) impl for every
-/// [`PeepholePass`]: the `optimize` body is always the same two-liner (build a
-/// `RewriteCtx`, hand it to [`run_peephole`]), so a `PeepholePass` type gets its
-/// `Optimizer` impl for free — no per-pass macro invocation. `Clone + 'static`
-/// satisfies the `OptimizerClone` super-trait so the pipeline can box-clone the
-/// pass.
+/// [`PeepholePass`]: the `apply` body is always the same one-liner (hand the
+/// pipeline's shared `RewriteCtx` to [`run_peephole`]), so a `PeepholePass`
+/// type gets its `Optimizer` impl for free — no per-pass macro invocation.
+/// `Clone + 'static` satisfies the `OptimizerClone` super-trait so the
+/// pipeline can box-clone the pass.
 impl<P: PeepholePass + Clone + 'static> crate::opt::pipeline::Optimizer for P {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        rctx: &mut strider_pattern::RewriteCtx<'_>,
         _ctx: &crate::opt::pipeline::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
-        run_peephole(self, &mut rctx)
+        run_peephole(self, rctx)
     }
 }
 

@@ -59,24 +59,21 @@ use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 pub struct LoadReadOnly;
 
 impl Optimizer for LoadReadOnly {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        rctx: &mut strider_pattern::RewriteCtx<'_>,
         ctx: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let Some(rom) = ctx.rom else {
             // No rom configured — nothing to fold.
             return Ok(OptimizationResult::NoChange);
         };
-        // Snapshot the reachable nodes before building the rewrite ctx:
-        // `walk()` only needs `&function`, and the borrow ends before the
-        // `&mut` ctx is constructed.
-        let nodes: Vec<NodeId> = function.walk().collect();
-        // All composite rewrites route through `RewriteCtx`; build one for
-        // the per-node folding loop.  `ctx` here is the read-only `OptCtx`
-        // (carrying the rom) — name the rewrite ctx `rctx` to keep them
-        // distinct.
-        let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+        // Snapshot the reachable nodes up front: `walk()` only needs the
+        // immutable view, and the borrow ends (the `Vec` is owned) before
+        // the per-node folding loop takes `rctx` mutably.  `ctx` here is the
+        // read-only `OptCtx` (carrying the rom) — `rctx` is the shared
+        // rewrite ctx.
+        let nodes: Vec<NodeId> = rctx.walk().collect();
         let mut overall = OptimizationResult::NoChange;
         for node_id in nodes {
             // Gate on Load(RAM) — REGISTER / CONST / UNIQUE / OTHER
@@ -88,7 +85,7 @@ impl Optimizer for LoadReadOnly {
             if space != rsleigh::VnSpace::RAM {
                 continue;
             }
-            if try_fold_const_load_at(&mut rctx, node_id, rom)? {
+            if try_fold_const_load_at(rctx, node_id, rom)? {
                 overall = OptimizationResult::Changed;
             }
         }

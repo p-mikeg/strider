@@ -37,11 +37,15 @@ mod tests;
 pub struct CfgDetach;
 
 impl Optimizer for CfgDetach {
-    fn optimize(
+    fn apply(
         &self,
-        function: &mut strider_ir::Function,
+        rctx: &mut strider_pattern::RewriteCtx<'_>,
         _ctx: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
+        // Read off the function (via deref) to compute the dead-slot map;
+        // the immutable borrow ends once `dead` is owned, then the slot
+        // surgery runs through `rctx`.
+        let function: &strider_ir::Function = rctx;
         let entry = function
             .entry()
             .ok_or_else(|| anyhow::anyhow!("CfgDetach: function must be built (entry not set)"))?;
@@ -75,14 +79,13 @@ impl Optimizer for CfgDetach {
         }
 
         // All composite rewrites route through `RewriteCtx`.  `dead` is fully
-        // owned, so the immutable borrow of `function` used to compute it has
-        // ended — build the rewrite ctx and perform the slot surgery through it.
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+        // owned, so the immutable borrow used to compute it has ended —
+        // perform the slot surgery through the shared `rctx`.
         // Hand each region its full set of dead predecessor indices in one
         // call — `remove_region_predecessors` removes them highest-first
         // internally, so there's no per-index loop or ordering concern here.
         for (region, idxs) in dead {
-            ctx.remove_region_predecessors(region, &idxs)?;
+            rctx.remove_region_predecessors(region, &idxs)?;
         }
         Ok(OptimizationResult::Changed)
     }
