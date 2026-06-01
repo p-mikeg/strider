@@ -53,7 +53,9 @@ use crate::opt::load_forward::{StackStoredValueMemo, find_stack_stored_value_at_
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
-use strider_pattern::{Capture, and as and_pat, any_int_const, or as or_pat, var};
+use strider_pattern::{
+    Capture, CaptureExt, MatchPat, and as and_pat, any_int_const, or as or_pat, var,
+};
 
 /// Top-level classifier hook for the stack-array arm.  Called by
 /// [`super::classify::classify_anchor`] when the rodata jump-table arm
@@ -278,7 +280,7 @@ fn strip_target_mask(
         // And-with-constant: mask narrows.
         let c_var = Capture::new();
         let other_var = Capture::new();
-        let and_p = and_pat(any_int_const().capture(c_var), var(other_var));
+        let and_p = and_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &and_p)
             && let (Some(c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
         {
@@ -299,7 +301,7 @@ fn strip_target_mask(
         // and we defer to the orchestrator).
         let c_var = Capture::new();
         let other_var = Capture::new();
-        let or_p = or_pat(any_int_const().capture(c_var), var(other_var));
+        let or_p = or_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &or_p)
             && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
         {
@@ -499,7 +501,7 @@ fn extract_idx_and_stride(
     // are non-commutative) — the rhs must still be the const stride
     // exponent.  We try the multiplication shape first, then the
     // shift shape, mirroring the prior match's arm order.
-    use strider_pattern::{Capture, any_int_const, mul, shl, var};
+    use strider_pattern::{Capture, CaptureExt, MatchPat, any_int_const, mul, shl, var};
 
     let candidate_node = ctx.node_for_output(candidate);
     let matcher = ctx.matcher();
@@ -507,7 +509,7 @@ fn extract_idx_and_stride(
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();
     let idx_var = Capture::new();
-    let mul_pat = mul(var(idx_var), any_int_const().capture(stride_var));
+    let mul_pat = mul(var(idx_var), any_int_const().capture(stride_var)).into_pattern();
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat) {
         let stride_u128 = m.get_uint(stride_var, ctx.graph_ref())?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
@@ -522,7 +524,7 @@ fn extract_idx_and_stride(
     // ShiftLeft(idx, IntConst(s)) — non-commutative; rhs must be const.
     let s_var = Capture::new();
     let idx_var = Capture::new();
-    let shl_pat = shl(var(idx_var), any_int_const().capture(s_var));
+    let shl_pat = shl(var(idx_var), any_int_const().capture(s_var)).into_pattern();
     let m = matcher.match_at(candidate_node, &shl_pat)?;
     let s_u128 = m.get_uint(s_var, ctx.graph_ref())?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
