@@ -35,9 +35,13 @@
 //! and returns its memory-token output handle, which the consumer
 //! (`load` / `store`) wires at its memory input slot.
 
+pub mod flow;
 pub mod memory;
 pub mod phi;
 
+pub use flow::{
+    CallOtherPat, CallPat, IfPat, RetPat, call, call_other, if_node, ret,
+};
 pub use memory::{LoadPat, StorePat, load, store};
 pub use phi::{MemPhiPat, PhiPat, ValuePhiPat, mem_phi, phi, phi_for, value_phi};
 

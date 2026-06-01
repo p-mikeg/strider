@@ -148,6 +148,15 @@ impl BuilderCore {
         }
     }
 
+    /// Mutable access to the `PatNode` weight at a node vertex handle.
+    #[allow(clippy::unreachable)]
+    fn node_at(&mut self, node: PatNodeRef) -> &mut PatNode {
+        match self.p.inner.node_weight_mut(node.0) {
+            Some(PatVertex::Node(n)) => n,
+            _ => unreachable!("PatNodeRef references a node vertex"),
+        }
+    }
+
     #[allow(clippy::unreachable)]
     fn out_of(&mut self, out: PatOutRef) -> &mut PatOutput {
         match self.p.inner.node_weight_mut(out.0) {
@@ -278,6 +287,14 @@ impl MatcherBuilder {
         self.core.out_of(out).kind = OutputKindSpec::Value(Some(ty));
     }
 
+    /// Relaxes `out`'s declarative kind to match a control-flow output
+    /// instead of a value output. Used by the control builders to wire a
+    /// control-predecessor sub-pattern (`ctrl` / `preceded_by`) whose
+    /// root produces a `Control` edge, not a value.
+    pub fn set_output_control(&mut self, out: PatOutRef) {
+        self.core.out_of(out).kind = OutputKindSpec::Control;
+    }
+
     /// Pins `out`'s value-output bit width.
     pub fn set_output_width(&mut self, out: PatOutRef, bits: u32) {
         self.core.out_of(out).width = Some(bits);
@@ -288,9 +305,20 @@ impl MatcherBuilder {
         self.core.node_of(out).capture = Some(c);
     }
 
+    /// Captures a node vertex directly (for zero-value-output roots like
+    /// `Return` / `If` that have no value output to anchor on).
+    pub fn capture_node_for(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
+        self.core.node_at(node).capture = Some(c);
+    }
+
     /// Sets a node-local limit on the node producing `out`.
     pub fn set_node_limit(&mut self, out: PatOutRef, f: crate::pattern::LocalLimit) {
         self.core.node_of(out).node_limit = Some(f);
+    }
+
+    /// Sets a node-local limit on a node vertex directly.
+    pub fn set_node_limit_for(&mut self, node: PatNodeRef, f: crate::pattern::LocalLimit) {
+        self.core.node_at(node).node_limit = Some(f);
     }
 
     /// Sets a post-match hook on the node producing `out`.

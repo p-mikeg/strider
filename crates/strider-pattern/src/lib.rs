@@ -33,8 +33,8 @@ pub mod typed;
 pub use bindings::Bindings;
 pub use capture::Capture;
 pub use control::{
-    LoadPat, MemPat, MemPhiPat, PhiPat, StorePat, ValuePhiPat, load, mem_phi, phi, phi_for, store,
-    value_phi,
+    CallOtherPat, CallPat, IfPat, LoadPat, MemPat, MemPhiPat, PhiPat, RetPat, StorePat,
+    ValuePhiPat, call, call_other, if_node, load, mem_phi, phi, phi_for, ret, store, value_phi,
 };
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
 pub use match_pat::{CaptureExt, Captured, Guarded, Limited, MatchPat, Ordered};

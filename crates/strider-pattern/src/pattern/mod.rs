@@ -119,6 +119,18 @@ impl Pattern {
             .filter(|v| matches!(v, PatVertex::Output(_)))
             .count()
     }
+
+    /// Number of control-output vertices. Used to assert the `If`
+    /// representation invariant (two control outputs: true + false).
+    #[must_use]
+    pub fn control_output_count(&self) -> usize {
+        self.inner
+            .node_weights()
+            .filter(|v| {
+                matches!(v, PatVertex::Output(o) if matches!(o.kind, OutputKindSpec::Control))
+            })
+            .count()
+    }
 }
 
 #[cfg(test)]
