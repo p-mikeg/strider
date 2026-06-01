@@ -54,8 +54,9 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 use strider_pattern::{
-    BoxedRule, Capture, add, apply_rules_in_order, bool_and, bool_not, bool_or, boxed_rule,
-    int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var, zero_extend,
+    BoxedRule, Capture, CaptureExt, add, apply_rules_in_order, bool_and, bool_not, bool_or,
+    boxed_rule, int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var,
+    zero_extend,
 };
 
 use crate::opt::error::Result;
@@ -145,14 +146,14 @@ fn build_rules() -> Vec<BoxedRule> {
     vec![
         // 1. EQ / ZR identity:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
         boxed_rule(rewrite_rule(
-            int_eq(add(var(r1_a), neg(var(r1_b))), int_const(0)),
+            int_eq(add(var(r1_a), neg(var(r1_b))), int_const(0u128)),
             int_eq(var(r1_a), var(r1_b)),
         )),
         // 2. HI:  BoolAnd(BitNot(IntLess(a, b)), BitNot(Equal(diff, 0))) → IntLess(b, a)
         boxed_rule(rewrite_rule(
             bool_and(
                 bool_not(int_lt(var(r2_a), var(r2_b))),
-                bool_not(int_eq(add(var(r2_a), neg(var(r2_b))), int_const(0))),
+                bool_not(int_eq(add(var(r2_a), neg(var(r2_b))), int_const(0u128))),
             ),
             int_lt(var(r2_b), var(r2_a)),
         )),
@@ -162,14 +163,14 @@ fn build_rules() -> Vec<BoxedRule> {
         boxed_rule(rewrite_rule(
             bool_or(
                 int_lt(var(r3_a), var(r3_b)),
-                int_eq(add(var(r3_a), neg(var(r3_b))), int_const(0)),
+                int_eq(add(var(r3_a), neg(var(r3_b))), int_const(0u128)),
             ),
             bool_not(int_lt(var(r3_b), var(r3_a))),
         )),
         // 4. LT:  BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))) → IntSless(a, b)
         boxed_rule(rewrite_rule(
             bool_not(int_eq(
-                zero_extend(int_slt(add(var(r4_a), neg(var(r4_b))), int_const(0))),
+                zero_extend(int_slt(add(var(r4_a), neg(var(r4_b))), int_const(0u128))),
                 zero_extend(int_sborrow(var(r4_a), var(r4_b))),
             )),
             int_slt(var(r4_a), var(r4_b)),
@@ -177,7 +178,7 @@ fn build_rules() -> Vec<BoxedRule> {
         // 5. GE:  Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))) → BitNot(IntSless(a, b))
         boxed_rule(rewrite_rule(
             int_eq(
-                zero_extend(int_slt(add(var(r5_a), neg(var(r5_b))), int_const(0))),
+                zero_extend(int_slt(add(var(r5_a), neg(var(r5_b))), int_const(0u128))),
                 zero_extend(int_sborrow(var(r5_a), var(r5_b))),
             ),
             bool_not(int_slt(var(r5_a), var(r5_b))),
@@ -187,9 +188,9 @@ fn build_rules() -> Vec<BoxedRule> {
         //         → IntSless(b, a)
         boxed_rule(rewrite_rule(
             bool_and(
-                bool_not(int_eq(add(var(r6_a), neg(var(r6_b))), int_const(0))),
+                bool_not(int_eq(add(var(r6_a), neg(var(r6_b))), int_const(0u128))),
                 int_eq(
-                    zero_extend(int_slt(add(var(r6_a), neg(var(r6_b))), int_const(0))),
+                    zero_extend(int_slt(add(var(r6_a), neg(var(r6_b))), int_const(0u128))),
                     zero_extend(int_sborrow(var(r6_a), var(r6_b))),
                 ),
             ),
@@ -200,9 +201,9 @@ fn build_rules() -> Vec<BoxedRule> {
         //         → BitNot(IntSless(b, a))
         boxed_rule(rewrite_rule(
             bool_or(
-                int_eq(add(var(r7_a), neg(var(r7_b))), int_const(0)),
+                int_eq(add(var(r7_a), neg(var(r7_b))), int_const(0u128)),
                 bool_not(int_eq(
-                    zero_extend(int_slt(add(var(r7_a), neg(var(r7_b))), int_const(0))),
+                    zero_extend(int_slt(add(var(r7_a), neg(var(r7_b))), int_const(0u128))),
                     zero_extend(int_sborrow(var(r7_a), var(r7_b))),
                 )),
             ),
@@ -216,7 +217,7 @@ fn build_rules() -> Vec<BoxedRule> {
         //    zero-extend (e.g. `I1 → I8 → I32`) would bind `b` to the wider
         //    intermediate, yielding a malformed `BitNot` of a non-`I1` value.
         boxed_rule(rewrite_rule(
-            int_eq(zero_extend(var(r8_b)), int_const(0)).when_match(move |ctx, _ty, b| {
+            int_eq(zero_extend(var(r8_b)), int_const(0u128)).when_match(move |ctx, _ty, b| {
                 b.get(r8_b)
                     .and_then(|o| ctx.function().output_kind(o).as_value())
                     .is_some_and(|t| t.bit_width() == 1)
@@ -230,7 +231,7 @@ fn build_rules() -> Vec<BoxedRule> {
         //    guard as rule 8: replacing the test with `b` only preserves
         //    booleanness when `b` is the 1-bit flag.
         boxed_rule(rewrite_rule(
-            bool_not(int_eq(zero_extend(var(r9_b)), int_const(0))).when_match(move |ctx, _ty, b| {
+            bool_not(int_eq(zero_extend(var(r9_b)), int_const(0u128))).when_match(move |ctx, _ty, b| {
                 b.get(r9_b)
                     .and_then(|o| ctx.function().output_kind(o).as_value())
                     .is_some_and(|t| t.bit_width() == 1)

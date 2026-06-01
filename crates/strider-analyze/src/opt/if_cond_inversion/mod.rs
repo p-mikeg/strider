@@ -50,7 +50,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use crate::opt::error::Result;
 use crate::opt::peephole::impl_optimizer_from_peephole;
 use crate::opt::pipeline::OptimizationResult;
-use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};
+use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 
 /// Pass that rewrites `If(Xor(C, IntConst(1)):I1)` into `If(C)` with branches
 /// swapped.
@@ -61,16 +61,16 @@ use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};
 pub struct IfCondInversion;
 
 // Captured `x` slot of the `bool_not(var(x))` pattern + the pattern
-// itself.  Lazily-initialised, one copy per thread: `Pat` is now
-// `!Send + !Sync` (the trait Pattern dropped its marker bounds when
-// strider went single-threaded), so a `static LazyLock<Pat>` no longer
-// compiles.  Strider runs single-threaded, so the
-// thread-local cache is observationally equivalent to a process-wide
-// `static` for our usage — and the cost of recomputing per thread on
-// first use is trivial (one `bool_not(var(...))` pattern build).
+// itself.  Lazily-initialised, one copy per thread: a built [`Pattern`]
+// is `!Send + !Sync` now that strider runs single-threaded, so a
+// `static LazyLock<Pattern>` no longer compiles.  Strider runs
+// single-threaded, so the thread-local cache is observationally
+// equivalent to a process-wide `static` for our usage — and the cost of
+// recomputing per thread on first use is trivial (one
+// `bool_not(var(...))` pattern build).
 thread_local! {
     static INNER_CAPTURE: Capture = Capture::new();
-    static INNER_PAT: Pat<Concrete> = bool_not(var(INNER_CAPTURE.with(|c| *c)));
+    static INNER_PAT: Pattern = bool_not(var(INNER_CAPTURE.with(|c| *c))).into_pattern();
 }
 
 impl crate::opt::peephole::PeepholePass for IfCondInversion {
