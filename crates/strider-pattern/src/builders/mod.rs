@@ -2,12 +2,14 @@
 //! `Pat<R>` values; binary / unary / etc. builders (next commits)
 //! compose them by merging child PatGraphs into a parent.
 
+pub mod casts;
 pub mod cmps;
 pub mod consts;
 pub mod int_ops;
 pub mod unary_ops;
 pub mod wildcards;
 
+pub use casts::*;
 pub use cmps::*;
 pub use consts::*;
 pub use int_ops::*;

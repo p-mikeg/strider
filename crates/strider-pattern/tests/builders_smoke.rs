@@ -13,8 +13,8 @@ use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    add, any_int_const, int_const, int_eq, int_le, int_lt, int_ne, lzcount, mul, popcount, var,
-    xor, Capture, Matcher,
+    add, any_int_const, float_to_int, int_const, int_eq, int_le, int_lt, int_ne, int_to_float,
+    lzcount, mul, popcount, sign_extend, truncate, var, xor, zero_extend, Capture, Matcher,
 };
 
 #[test]
@@ -228,6 +228,49 @@ fn popcount_and_lzcount_match_unit_kinds() {
     let lz_pat = lzcount(var(Capture::default()));
     assert_eq!(matcher.find_all(&pc_pat).len(), 1);
     assert_eq!(matcher.find_all(&lz_pat).len(), 1);
+}
+
+#[test]
+fn truncate_zero_extend_sign_extend_int_to_float_float_to_int_match() {
+    // Construct an IR scaffolded with: I64 const → trunc to I32 → zero_extend
+    // back to I64 → sign_extend (no-op same width? we need a width change so
+    // pick I8 → I32) → int_to_float → float_to_int.  Build each cast with the
+    // strict, non-coercing FunctionBuilder methods.
+
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    // Build a non-const I64 value so `truncate_if_needed` doesn't fold it.
+    // We can use Add(0, IntConst) to get a non-const I64 — but that itself
+    // gets constant-folded.  Easier: take the result of build_popcount on
+    // an int const; popcount isn't constant-folded by the builder.
+    let i64v = b.build_int_const(0x1234_5678u64, NodeOutputType::I64).unwrap();
+    let pc = b.build_popcount(i64v, NodeOutputType::I64).unwrap();
+    let trunc = b.truncate_if_needed(pc, NodeOutputType::I32).unwrap();
+    let zext = b
+        .extend_if_needed(trunc, NodeOutputType::I64, strider_ir::ExtendOp::ZeroExtend)
+        .unwrap();
+    let sext_input = b.truncate_if_needed(zext, NodeOutputType::I8).unwrap();
+    let sext = b
+        .extend_if_needed(sext_input, NodeOutputType::I32, strider_ir::ExtendOp::SignExtend)
+        .unwrap();
+    let f = b.build_int_to_float(sext, NodeOutputType::F32).unwrap();
+    let back = b.build_float_to_int(f, NodeOutputType::I32).unwrap();
+    b.build_return(Some(back), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    let trunc_pat = truncate(var(Capture::default()));
+    let zext_pat = zero_extend(var(Capture::default()));
+    let sext_pat = sign_extend(var(Capture::default()));
+    let i2f_pat = int_to_float(var(Capture::default()));
+    let f2i_pat = float_to_int(var(Capture::default()));
+
+    // `truncate_if_needed` was called twice (pc → I32 and zext → I8), so the
+    // graph contains two `Truncate` nodes.
+    assert_eq!(matcher.find_all(&trunc_pat).len(), 2);
+    assert_eq!(matcher.find_all(&zext_pat).len(), 1);
+    assert_eq!(matcher.find_all(&sext_pat).len(), 1);
+    assert_eq!(matcher.find_all(&i2f_pat).len(), 1);
+    assert_eq!(matcher.find_all(&f2i_pat).len(), 1);
 }
 
 #[test]
