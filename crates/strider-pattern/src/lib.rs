@@ -18,6 +18,7 @@ pub mod bindings;
 pub mod capture;
 pub mod error;
 pub mod matcher;
+pub mod pattern;
 pub mod template;
 
 pub use bindings::{Bindings, BindingsMark};
