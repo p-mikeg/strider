@@ -125,18 +125,20 @@ pub struct Matcher<'f> {
 }
 
 impl<'f> Matcher<'f> {
-    /// Validate the function then return a matcher bound to it.
+    /// Validate the post-build invariant (`function.entry()` is set) and
+    /// return a matcher bound to the function.  Mirrors the looser
+    /// `strider-analyze::pattern::Matcher::try_new` contract: only checks
+    /// the entry-node post-build invariant up front, not whole-graph
+    /// validation — that's left to callers (the orchestrator pipeline
+    /// drives `validate::validate` separately and integration tests for
+    /// in-place editors deliberately work with partially-built fixtures).
     ///
     /// # Errors
-    /// Returns an error if `function` has no entry node or if whole-graph
-    /// validation (`strider_ir::validate::validate`) reports any
-    /// invariant failure.
+    /// Returns an error if `function` has no entry node.
     pub fn try_new(function: &'f Function) -> anyhow::Result<Self> {
-        let entry = function
+        let _entry = function
             .entry()
             .ok_or_else(|| anyhow::anyhow!("Function has no entry"))?;
-        strider_ir::validate::validate(function, entry)
-            .map_err(|errs| anyhow::anyhow!("validation: {errs:?}"))?;
         Ok(Self {
             function,
             options: MatcherOptions::default(),
