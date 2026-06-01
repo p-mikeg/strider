@@ -12,9 +12,10 @@
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatOutRef, TemplateBuilder};
 use crate::match_pat::{MatchPat, Pre};
 use crate::pattern::KindSpec;
+use crate::template_pat::TemplatePat;
 use crate::typed::consts::int_const_all_ones_pre;
 
 // ── Integer binary ops ────────────────────────────────────────────────
@@ -28,6 +29,14 @@ pub struct IntBinaryFixed<L, R> {
 
 impl<L: MatchPat, R: MatchPat> MatchPat for IntBinaryFixed<L, R> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let l = self.lhs.compile(b);
+        let r = self.rhs.compile(b);
+        b.binary(self.op, l, r)
+    }
+}
+
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntBinaryFixed<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
         let l = self.lhs.compile(b);
         let r = self.rhs.compile(b);
         b.binary(self.op, l, r)
@@ -49,6 +58,14 @@ impl<L: MatchPat, R: MatchPat> MatchPat for IntBinary<L, R> {
             rhs: self.rhs,
         }
         .compile(b)
+    }
+}
+
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntBinary<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let l = self.lhs.compile(b);
+        let r = self.rhs.compile(b);
+        b.binary(self.op, l, r)
     }
 }
 
@@ -126,6 +143,17 @@ impl<L: MatchPat, R: MatchPat> MatchPat for Sub<L, R> {
     }
 }
 
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for Sub<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let l = self.lhs.compile(b);
+        let neg_rhs = {
+            let r = self.rhs.compile(b);
+            b.unary(KindSpec::Exact(NodeKind::IntUnaryOp(IntUnaryOp::Neg)), r)
+        };
+        b.binary(IntBinaryOp::Add, l, neg_rhs)
+    }
+}
+
 /// Match `lhs - rhs` (the lifter's `Add(lhs, Neg(rhs))` shape).
 #[must_use]
 pub fn sub<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> Sub<L, R> {
@@ -142,6 +170,13 @@ pub struct IntUnaryFixed<I> {
 
 impl<I: MatchPat> MatchPat for IntUnaryFixed<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let i = self.inner.compile(b);
+        b.unary(KindSpec::Exact(self.kind), i)
+    }
+}
+
+impl<I: TemplatePat> TemplatePat for IntUnaryFixed<I> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
         let i = self.inner.compile(b);
         b.unary(KindSpec::Exact(self.kind), i)
     }
@@ -194,6 +229,14 @@ impl<I: MatchPat> MatchPat for BitNot<I> {
     }
 }
 
+impl<I: TemplatePat> TemplatePat for BitNot<I> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let i = self.inner.compile(b);
+        let ones_out = crate::typed::consts::template_all_ones(b);
+        b.binary(IntBinaryOp::Xor, i, ones_out)
+    }
+}
+
 /// Match a bitwise complement `~inner` (the canonical `xor(_, all_ones)`).
 #[must_use]
 pub fn bit_not<I: MatchPat>(inner: I) -> BitNot<I> {
@@ -216,6 +259,13 @@ pub struct Cast<I> {
 
 impl<I: MatchPat> MatchPat for Cast<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let i = self.inner.compile(b);
+        b.unary(KindSpec::Exact(self.kind), i)
+    }
+}
+
+impl<I: TemplatePat> TemplatePat for Cast<I> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
         let i = self.inner.compile(b);
         b.unary(KindSpec::Exact(self.kind), i)
     }
@@ -271,6 +321,19 @@ impl<L: MatchPat, R: MatchPat> MatchPat for IntCmpFixed<L, R> {
     }
 }
 
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntCmpFixed<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let l = self.lhs.compile(b);
+        let r = self.rhs.compile(b);
+        let o = b.node(KindSpec::Exact(NodeKind::IntCmpOp(self.op)));
+        b.input(o, 0, l);
+        b.input(o, 1, r);
+        let out = b.value_output(o, 0);
+        b.set_output_ty(out, NodeOutputType::I1);
+        out
+    }
+}
+
 /// Runtime-variant integer comparison `int_cmp(op, l, r)` (output `I1`).
 pub struct IntCmp<L, R> {
     op: IntCmpOp,
@@ -280,6 +343,17 @@ pub struct IntCmp<L, R> {
 
 impl<L: MatchPat, R: MatchPat> MatchPat for IntCmp<L, R> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        IntCmpFixed {
+            op: self.op,
+            lhs: self.lhs,
+            rhs: self.rhs,
+        }
+        .compile(b)
+    }
+}
+
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntCmp<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
         IntCmpFixed {
             op: self.op,
             lhs: self.lhs,
@@ -381,6 +455,17 @@ impl<L: MatchPat, R: MatchPat> MatchPat for FloatBinaryFixed<L, R> {
     }
 }
 
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatBinaryFixed<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let n = b.node(KindSpec::Exact(NodeKind::FloatBinaryOp(self.op)));
+        let l = self.lhs.compile(b);
+        let r = self.rhs.compile(b);
+        b.input(n, 0, l);
+        b.input(n, 1, r);
+        b.value_output(n, 0)
+    }
+}
+
 /// Variant-agnostic float binary op `float_binary(op, l, r)`.
 pub struct FloatBinary<L, R> {
     op: FloatBinaryOp,
@@ -390,6 +475,17 @@ pub struct FloatBinary<L, R> {
 
 impl<L: MatchPat, R: MatchPat> MatchPat for FloatBinary<L, R> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        FloatBinaryFixed {
+            op: self.op,
+            lhs: self.lhs,
+            rhs: self.rhs,
+        }
+        .compile(b)
+    }
+}
+
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatBinary<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
         FloatBinaryFixed {
             op: self.op,
             lhs: self.lhs,
@@ -473,6 +569,21 @@ impl<L: MatchPat, R: MatchPat> MatchPat for FloatSub<L, R> {
     }
 }
 
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatSub<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let neg_rhs = FloatUnaryFixed {
+            op: FloatUnaryOp::Neg,
+            inner: self.rhs,
+        };
+        FloatBinaryFixed {
+            op: FloatBinaryOp::Add,
+            lhs: self.lhs,
+            rhs: neg_rhs,
+        }
+        .compile(b)
+    }
+}
+
 /// Match a float subtraction `lhs - rhs`.
 #[must_use]
 pub fn float_sub<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> FloatSub<L, R> {
@@ -487,6 +598,13 @@ pub struct FloatUnaryFixed<I> {
 
 impl<I: MatchPat> MatchPat for FloatUnaryFixed<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let i = self.inner.compile(b);
+        b.unary(KindSpec::Exact(NodeKind::FloatUnaryOp(self.op)), i)
+    }
+}
+
+impl<I: TemplatePat> TemplatePat for FloatUnaryFixed<I> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
         let i = self.inner.compile(b);
         b.unary(KindSpec::Exact(NodeKind::FloatUnaryOp(self.op)), i)
     }
@@ -551,6 +669,19 @@ impl<L: MatchPat, R: MatchPat> MatchPat for FloatCmpFixed<L, R> {
     }
 }
 
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatCmpFixed<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let n = b.node(KindSpec::Exact(NodeKind::FloatCmpOp(self.op)));
+        let l = self.lhs.compile(b);
+        let r = self.rhs.compile(b);
+        b.input(n, 0, l);
+        b.input(n, 1, r);
+        let out = b.value_output(n, 0);
+        b.set_output_ty(out, NodeOutputType::I1);
+        out
+    }
+}
+
 /// Runtime-variant float comparison `float_cmp(op, l, r)` (output `I1`).
 pub struct FloatCmp<L, R> {
     op: FloatCmpOp,
@@ -560,6 +691,17 @@ pub struct FloatCmp<L, R> {
 
 impl<L: MatchPat, R: MatchPat> MatchPat for FloatCmp<L, R> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        FloatCmpFixed {
+            op: self.op,
+            lhs: self.lhs,
+            rhs: self.rhs,
+        }
+        .compile(b)
+    }
+}
+
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatCmp<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
         FloatCmpFixed {
             op: self.op,
             lhs: self.lhs,
@@ -701,6 +843,14 @@ impl<L: MatchPat, R: MatchPat> MatchPat for BoolBinaryFixed<L, R> {
     }
 }
 
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for BoolBinaryFixed<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let l = self.lhs.compile(b);
+        let r = self.rhs.compile(b);
+        bool_binary_out_tpl(b, self.op, l, r)
+    }
+}
+
 /// Runtime-variant boolean binary op `bool_binary(op, l, r)` (output `I1`).
 pub struct BoolBinary<L, R> {
     op: IntBinaryOp,
@@ -713,6 +863,14 @@ impl<L: MatchPat, R: MatchPat> MatchPat for BoolBinary<L, R> {
         let l = self.lhs.compile(b);
         let r = self.rhs.compile(b);
         bool_binary_out(b, self.op, l, r)
+    }
+}
+
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for BoolBinary<L, R> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let l = self.lhs.compile(b);
+        let r = self.rhs.compile(b);
+        bool_binary_out_tpl(b, self.op, l, r)
     }
 }
 
@@ -779,6 +937,14 @@ impl<I: MatchPat> MatchPat for BoolNot<I> {
     }
 }
 
+impl<I: TemplatePat> TemplatePat for BoolNot<I> {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        let i = self.inner.compile(b);
+        let one = bool_one_out_tpl(b);
+        bool_binary_out_tpl(b, IntBinaryOp::Xor, i, one)
+    }
+}
+
 /// Match a boolean NOT — `xor(operand, IntConst(1)):I1`.
 #[must_use]
 pub fn bool_not<I: MatchPat>(operand: I) -> BoolNot<I> {
@@ -815,4 +981,25 @@ fn bool_one_out(b: &mut MatcherBuilder) -> PatOutRef {
 /// A `bool_one` operand re-presented as a [`MatchPat`].
 fn bool_one() -> impl MatchPat {
     crate::typed::consts::bool_const(true)
+}
+
+/// Template-side counterpart of [`bool_binary_out`]: wire a binary
+/// `IntBinaryOp` consuming `l` / `r`, pinning the output to `I1`.
+fn bool_binary_out_tpl(
+    b: &mut TemplateBuilder,
+    op: IntBinaryOp,
+    l: PatOutRef,
+    r: PatOutRef,
+) -> PatOutRef {
+    let out = b.binary(op, l, r);
+    b.set_output_ty(out, NodeOutputType::I1);
+    out
+}
+
+/// Template-side counterpart of [`bool_one_out`]: a `bool_const(true)`
+/// operand (`IntConst(1):I1`), built into `b`.
+fn bool_one_out_tpl(b: &mut TemplateBuilder) -> PatOutRef {
+    let out = b.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
+    b.set_output_ty(out, NodeOutputType::I1);
+    out
 }

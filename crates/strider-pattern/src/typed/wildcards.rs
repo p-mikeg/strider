@@ -41,6 +41,15 @@ impl MatchPat for Var {
     }
 }
 
+impl crate::template_pat::TemplatePat for Var {
+    fn compile(self, b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+        // A captured node resolves to its LHS binding at instantiation.
+        let o = b.leaf(KindSpec::Any);
+        b.capture_node(o, self.cap);
+        o
+    }
+}
+
 /// Match any node and bind its output to `c`.
 #[must_use]
 pub fn var(c: Capture) -> Var {

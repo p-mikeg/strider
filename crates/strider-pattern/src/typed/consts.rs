@@ -39,6 +39,14 @@ impl MatchPat for IntConst {
     }
 }
 
+impl crate::template_pat::TemplatePat for IntConst {
+    fn compile(self, b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+        // Build a concrete `IntConst(v)`; its output type inherits the
+        // rewrite root.
+        b.leaf(KindSpec::Exact(NodeKind::IntConst(self.v)))
+    }
+}
+
 /// Match the integer constant `v` (any width).
 #[must_use]
 pub fn int_const(v: impl Into<u128>) -> IntConst {
@@ -105,6 +113,15 @@ impl MatchPat for SignedIntConst {
     }
 }
 
+impl crate::template_pat::TemplatePat for SignedIntConst {
+    fn compile(self, b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+        // Materialise the sign-extended two's-complement bit pattern as
+        // an `IntConst`; the output type inherits the rewrite root.
+        let v: u128 = i128::from(self.v) as u128;
+        b.leaf(KindSpec::Exact(NodeKind::IntConst(v)))
+    }
+}
+
 /// Match a signed integer constant `v` across width encodings.
 #[must_use]
 pub fn signed_int_const(v: i64) -> SignedIntConst {
@@ -125,6 +142,15 @@ impl MatchPat for BoolConst {
     }
 }
 
+impl crate::template_pat::TemplatePat for BoolConst {
+    fn compile(self, builder: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+        let v: u128 = u128::from(self.b);
+        let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
+        builder.set_output_ty(o, NodeOutputType::I1);
+        o
+    }
+}
+
 /// Match the boolean constant `b` at width `I1`.
 #[must_use]
 pub fn bool_const(b: bool) -> BoolConst {
@@ -138,6 +164,12 @@ pub struct FloatConst {
 
 impl MatchPat for FloatConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        b.leaf(KindSpec::Exact(NodeKind::FloatConst(self.bits)))
+    }
+}
+
+impl crate::template_pat::TemplatePat for FloatConst {
+    fn compile(self, b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
         b.leaf(KindSpec::Exact(NodeKind::FloatConst(self.bits)))
     }
 }
@@ -280,4 +312,21 @@ pub fn int_const_all_ones() -> IntConstAllOnes {
 /// all-ones operand into an `xor`.
 pub(crate) fn int_const_all_ones_pre(b: &mut MatcherBuilder) -> Pre {
     Pre(IntConstAllOnes.compile(b))
+}
+
+/// Build a width-relative all-ones `IntConst` operand into the template
+/// `b`, returning its handle. The concrete value is computed at
+/// instantiation time from the rewrite root's resolved output width
+/// (the build-side counterpart of [`int_const_all_ones`]). Used by the
+/// `bit_not` template lowering to feed the all-ones operand into an
+/// `xor`.
+pub(crate) fn template_all_ones(b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+    let o = b.leaf(KindSpec::Exact(NodeKind::IntConst(0)));
+    b.set_template_kind(
+        o,
+        crate::template::TemplateKind::Fn(Box::new(|ctx| {
+            Ok(NodeKind::IntConst(ctx.root_ty.bit_mask_u128()))
+        })),
+    );
+    o
 }
