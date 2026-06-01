@@ -34,11 +34,14 @@ pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, s
 pub use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
-pub use matcher::{BuildCtx, CastMask, MatchCtx, Matcher, MatcherOptions, Pattern, PatternExt};
+pub use matcher::{
+    ArgSource, BuildCtx, CastMask, FunctionArgHandle, MatchCtx, Matcher, MatcherOptions,
+    Pattern, PatternExt,
+};
 pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};
 pub use rewrite::{
-    BoxedRule, GraphRewriter, Rewrite, RewriteCtx, RewriteCtxView, apply_rules_in_order,
-    boxed_rule, rewrite_rule,
+    BoxedRule, GraphRewriteCtxExt, GraphRewriter, Rewrite, RewriteCtx, RewriteCtxView,
+    apply_rules_in_order, boxed_rule, rewrite_rule,
 };
 pub use template::Template;
 

@@ -104,6 +104,16 @@ pub struct MatcherOptions {
     /// matcher transparently traverses on a producer kind-mismatch.
     /// `CastMask::empty()` (the default) is strict — no walk-through.
     pub cast_mask: CastMask,
+    /// Walk through `Region` (region-join) nodes when traversing
+    /// control chains.  Lets `ret(call(...))` cross region joins
+    /// between the Return and the Call.  Off by default.
+    ///
+    /// **Note:** the new matcher does not yet honour this flag at the
+    /// walk site — it is accepted for API compatibility with the
+    /// strider-analyze matcher during the migration but currently has
+    /// no effect on Region traversal.  Callers needing semantic Region
+    /// walk-through must reshape their patterns.
+    pub ignore_regions: bool,
 }
 
 /// Top-level matcher.  Owns no per-match state; `try_new` validates
@@ -155,6 +165,27 @@ impl<'f> Matcher<'f> {
         self.ignore_casts_mask(CastMask::all())
     }
 
+    /// Walk through `Region` (region-join) nodes when traversing
+    /// control chains.  Currently accepted as a no-op for API
+    /// compatibility with strider-analyze's matcher during the
+    /// migration — see [`MatcherOptions::ignore_regions`].
+    #[must_use]
+    pub fn ignore_regions(mut self) -> Self {
+        self.options.ignore_regions = true;
+        self
+    }
+
+    /// Function-entry [`NodeId`] of the wrapped function.  Panics-free
+    /// because [`Self::try_new`] validates the post-build invariant up
+    /// front.
+    #[must_use]
+    #[allow(clippy::expect_used)]
+    pub fn entry(&self) -> NodeId {
+        self.function
+            .entry()
+            .expect("Matcher wraps a built function with an entry node (try_new invariant)")
+    }
+
     /// Find every match for `pat` in the function.  Currently scans
     /// every reachable node and filters by the pattern's
     /// `root_kind_discriminant`; future revisions may add a kind index
@@ -172,6 +203,49 @@ impl<'f> Matcher<'f> {
             self.try_at_node(node, pat, &ctx, &mut out);
         }
         out
+    }
+
+    /// Find the first match of `pat` in the function, or `None` if
+    /// `pat` doesn't match anywhere.  Streamed variant of
+    /// [`Self::find_all`] that stops at the first hit.
+    pub fn find_first<P: Pattern + ?Sized>(&self, pat: &P) -> Option<Match> {
+        let ctx = MatchCtx { matcher: self, function: self.function };
+        let target_disc = pat.root_kind_discriminant();
+        for node in self.function.walk() {
+            if let Some(d) = target_disc
+                && std::mem::discriminant(self.function.node_kind(node)) != d
+            {
+                continue;
+            }
+            let outputs = self.function.node_outputs(node);
+            if outputs.is_empty() {
+                let mut bindings = Bindings::default();
+                if pat.try_match_node_id(&ctx, node, &mut bindings) {
+                    return Some(Match::from_root(node, bindings));
+                }
+                continue;
+            }
+            for &out_id in outputs {
+                let mut bindings = Bindings::default();
+                if pat.try_match(&ctx, out_id, &mut bindings) {
+                    return Some(Match::from_root(node, bindings));
+                }
+            }
+        }
+        None
+    }
+
+    /// Run several patterns independently against the function and
+    /// return the per-pattern matches.  The outer index corresponds to
+    /// the input pattern index; the inner Vec is that pattern's match
+    /// list (same shape as [`Self::find_all`]).
+    ///
+    /// Unlike [`Self::find_joined`], this does NOT filter on shared-
+    /// capture agreement — each pattern's matches stand alone.  Useful
+    /// when callers need every match list separately (e.g. for
+    /// side-by-side reporting).
+    pub fn find_all_multi(&self, pats: &[&dyn Pattern]) -> Vec<Vec<Match>> {
+        pats.iter().map(|p| self.find_all(*p)).collect()
     }
 
     /// Try `pat` at a specific IR node; returns the first match if any
@@ -289,6 +363,88 @@ impl<'f> Matcher<'f> {
             }
         }
         acc
+    }
+
+    /// Returns a [`FunctionArgHandle`] for the first carrier node
+    /// registered at side-table index `index`, or `None` if no such
+    /// carrier exists.  Mirrors the strider-analyze matcher's
+    /// `function_arg` accessor for migration source-compat.
+    #[must_use]
+    pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'f>> {
+        let node = *self.function.arg_index_to_nodes(index).first()?;
+        Some(FunctionArgHandle { function: self.function, node })
+    }
+
+    /// Iterate `(index, handle)` for every registered function-arg
+    /// carrier in side-table-index order.
+    pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'f>)> + '_ {
+        let f = self.function;
+        // Collect + sort to give stable, index-ordered iteration; the
+        // underlying side-table is a `FxHashMap<u32, Vec<NodeId>>`.
+        let mut indices: Vec<u32> = f.iter_arg_indices().collect();
+        indices.sort_unstable();
+        indices.into_iter().filter_map(move |i| {
+            f.arg_index_to_nodes(i)
+                .first()
+                .copied()
+                .map(|node| (i, FunctionArgHandle { function: f, node }))
+        })
+    }
+
+    /// Smallest `idx + 1` such that no `idx' >= idx + 1` has a
+    /// registered carrier.  Equivalent to `max(registered idx) + 1`,
+    /// or `0` if no carriers are registered.
+    #[must_use]
+    pub fn function_arg_index_upper_bound(&self) -> usize {
+        self.function
+            .iter_arg_indices()
+            .max()
+            .map_or(0, |m| (m as usize) + 1)
+    }
+
+    /// Count of registered function-arg carriers.
+    #[must_use]
+    pub fn function_arg_count(&self) -> usize {
+        self.function.iter_arg_indices().count()
+    }
+}
+
+/// Returned by [`FunctionArgHandle::source`] when the caller needs to
+/// distinguish register- vs stack-passed args.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArgSource {
+    /// Register-passed arg: carrier is an `InitialVar(vn)`.
+    Register(rsleigh::Vn),
+    /// Stack-passed arg: carrier is a `Load` node.
+    Stack,
+    /// Other kinds (defensive — should not occur in well-formed IR).
+    Other,
+}
+
+/// Handle to a single function-arg carrier registered in
+/// `Function::arg_index_to_nodes`.  Returned by
+/// [`Matcher::function_arg`] / [`Matcher::function_args`].
+#[derive(Clone, Copy)]
+pub struct FunctionArgHandle<'g> {
+    function: &'g Function,
+    node: NodeId,
+}
+
+impl<'g> FunctionArgHandle<'g> {
+    /// Carrier [`NodeId`].
+    #[must_use]
+    pub fn node(&self) -> NodeId {
+        self.node
+    }
+
+    /// Classify the carrier's source (register vs stack vs other).
+    #[must_use]
+    pub fn source(&self) -> ArgSource {
+        match self.function.node_kind(self.node) {
+            NodeKind::InitialVar(vn) => ArgSource::Register(*vn),
+            NodeKind::Load(_) => ArgSource::Stack,
+            _ => ArgSource::Other,
+        }
     }
 }
 

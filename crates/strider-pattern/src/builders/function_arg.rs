@@ -187,6 +187,14 @@ pub fn function_arg(idx: u32) -> FunctionArgPat {
     FunctionArgPat::new().index(idx)
 }
 
+/// Match any carrier registered in the side-table, regardless of index
+/// or source.  Used by passes that want to enumerate every
+/// function-arg carrier in a function.
+#[must_use]
+pub fn function_arg_any() -> FunctionArgPat {
+    FunctionArgPat::new()
+}
+
 /// Match the carrier at side-table index `idx`, restricted to a
 /// register-passed `InitialVar(vn)`.
 #[must_use]

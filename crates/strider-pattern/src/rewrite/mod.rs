@@ -484,6 +484,46 @@ impl<'g> std::ops::DerefMut for RewriteCtx<'g> {
     }
 }
 
+// ── GraphRewriteCtxExt — `with_rewrite_ctx` helper on Function ────────
+
+/// Extension trait on [`strider_ir::Function`] providing a
+/// `with_rewrite_ctx` callback that absorbs the
+/// `let mut ctx = RewriteCtx::try_for_built(&mut f)?; apply_*(&mut ctx, …)`
+/// construct-then-pass pattern into a single
+/// `f.with_rewrite_ctx(|ctx| apply_*(ctx, …))?` call.
+///
+/// The callback's `Result<T>` output is flattened into the method's
+/// return type — the un-built case and the closure's failure path
+/// share one `?` at the call site.
+///
+/// `Function` lives in `strider-ir`, which doesn't know about
+/// `RewriteCtx`, so the helper has to ride on an extension trait
+/// defined here.
+pub trait GraphRewriteCtxExt {
+    /// Borrow `self` as a [`RewriteCtx`] and run `f` with mutable
+    /// access.  The closure's `Result<T>` and the un-built case are
+    /// merged into one outer `Result<T>` — call sites need a single
+    /// `?` to surface either failure mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `self.entry()` is `None` (function not
+    /// built), or if the closure returns an `Err`.
+    fn with_rewrite_ctx<F, T>(&mut self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut RewriteCtx<'_>) -> Result<T>;
+}
+
+impl GraphRewriteCtxExt for Function {
+    fn with_rewrite_ctx<F, T>(&mut self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut RewriteCtx<'_>) -> Result<T>,
+    {
+        let mut ctx = RewriteCtx::try_for_built(self)?;
+        f(&mut ctx)
+    }
+}
+
 // ── GraphRewriter — pattern-rewrite facade ──────────────────────────
 
 /// Pattern-rewrite facade over [`rewrite_rule`].  Walks every reachable

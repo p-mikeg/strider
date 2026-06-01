@@ -213,6 +213,13 @@ pub fn phi() -> PhiPat {
     PhiPat::new()
 }
 
+/// Starts building a tagged-`Phi` pattern (see [`phi`]) pinned to
+/// varnode `vn` in `Function::phi_var_tag`.
+#[must_use]
+pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
+    PhiPat::new().for_vn(vn)
+}
+
 /// Construct a fresh [`MemPhiPat`].
 #[must_use]
 pub fn mem_phi() -> MemPhiPat {

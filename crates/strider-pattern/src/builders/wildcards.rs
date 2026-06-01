@@ -4,11 +4,6 @@
 //! storage shape is different (one-node `PatGraph<R>` instead of a
 //! `NodePat`) but the semantics — `any` accepts every node kind, `var`
 //! additionally binds a capture — are identical.
-//!
-//! `predicate`, `value_of_width`, `inputs_of_width`, `bool_value`, and
-//! `bool_inputs` are deferred to a follow-up commit: they need a
-//! widened `post_match` closure signature that exposes the `MatchCtx`
-//! and bindings, which the current crate scaffold doesn't expose yet.
 
 use crate::capture::Capture;
 use crate::pat_graph::{Concrete, KindSpec, NodeData, PatGraph, Wildcard};
@@ -64,4 +59,94 @@ where
     F: Fn(&crate::MatchCtx, strider_ir::node::NodeOutputType) -> bool + 'static,
 {
     any().when_match(move |ctx, ty, _b| f(ctx, ty))
+}
+
+/// Matches any value output that is exactly `n` bits wide.
+///
+/// The width-limit mechanism for querying by output type: `value_of_width(1)`
+/// (a.k.a. [`bool_value`]) selects booleans (the 1-bit `I1`); `value_of_width(32)`
+/// matches any `I32`- or `F32`-typed value, etc.
+#[must_use]
+pub fn value_of_width(n: u32) -> Pat<Wildcard> {
+    any().when_match(move |_ctx, ty, _b| ty.bit_width() == n as usize)
+}
+
+/// Matches any boolean value — i.e. any value output 1 bit wide (`I1`).
+/// Sugar for [`value_of_width`]`(1)`.
+#[must_use]
+pub fn bool_value() -> Pat<Wildcard> {
+    value_of_width(1)
+}
+
+/// Matches `inner` **and** requires all of the matched node's value
+/// inputs to be `n` bits wide.  The input-side width filter:
+/// `inputs_of_width(1, …)` (a.k.a. [`bool_inputs`]) selects operations
+/// that *operate on* booleans (`And`/`Or`/`Xor` on `I1` — a logical NOT
+/// is `Xor(_, IntConst(1))` at `I1` since the former BitNot unary-op
+/// was removed) and excludes comparisons (whose operands are wider
+/// even though they produce `I1`).
+///
+/// The `inner` pattern is the wrapping shape — typically a `var(c)` or
+/// an operation builder; the input-width check runs after `inner`'s
+/// own match via the `post_match` hook on the root node.
+///
+/// Reaches into the underlying [`PatGraph`] to install a [`PostMatchFn`]
+/// that has direct `NodeId` access, since the user-facing
+/// `Pat::when_match` doesn't expose the matched node id.
+#[must_use]
+#[allow(clippy::expect_used)]
+pub fn inputs_of_width<R: crate::pat_graph::Role>(
+    n: u32,
+    inner: Pat<R>,
+) -> Pat<crate::pat_graph::Wildcard> {
+    let mut g = inner.0.into_wildcard();
+    let root = g.root().expect("Pat has no root");
+    let want = n as usize;
+    let nd = g
+        .inner
+        .node_weight_mut(root)
+        .expect("root index invalid");
+    let new_fn: crate::pat_graph::PostMatchFn = if let Some(prev) = nd.post_match.take() {
+        Box::new(move |ctx, node, ty, b| {
+            if !prev(ctx, node, ty, b) {
+                return false;
+            }
+            inputs_of_width_check(ctx, node, want)
+        })
+    } else {
+        Box::new(move |ctx, node, _ty, _b| inputs_of_width_check(ctx, node, want))
+    };
+    nd.post_match = Some(new_fn);
+    Pat::from_graph(g)
+}
+
+/// Check that every value input of `node` has width `want`, and that the
+/// node has at least one value input.  Non-value inputs (control / memory)
+/// are ignored.  Mirrors the strider-analyze `InputWidthPat::try_match`
+/// semantics.
+fn inputs_of_width_check(
+    ctx: &crate::MatchCtx,
+    node: strider_ir::node::NodeId,
+    want: usize,
+) -> bool {
+    let f = ctx.function;
+    let mut value_inputs = 0usize;
+    for inp in f.node_inputs(node) {
+        if let Some(ty) = f.output_kind(inp).as_value() {
+            value_inputs += 1;
+            if ty.bit_width() != want {
+                return false;
+            }
+        }
+    }
+    value_inputs > 0
+}
+
+/// Matches `inner` whose value inputs are all booleans (1-bit `I1`).
+/// Sugar for [`inputs_of_width`]`(1, inner)`.
+#[must_use]
+pub fn bool_inputs<R: crate::pat_graph::Role>(
+    inner: Pat<R>,
+) -> Pat<crate::pat_graph::Wildcard> {
+    inputs_of_width(1, inner)
 }
