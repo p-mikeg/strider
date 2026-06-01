@@ -248,6 +248,18 @@ impl Graph {
         crate::walk::walk_graph(self, entry)
     }
 
+    /// Reverse-post-order walk of the data-input cone reachable from `seed`.
+    ///
+    /// Yields every producer node before the node that consumes it
+    /// (defs-before-uses); the producer of `seed` is yielded last.  Follows
+    /// only data inputs — see [`crate::walk::rpo_walk`].  Used by value-cone
+    /// analyses (e.g. SP-expression decomposition) that need each operand
+    /// classified before the node that uses it.
+    #[must_use]
+    pub fn rpo(&self, seed: crate::node::NodeOutputId) -> crate::walk::RpoWalk<'_> {
+        crate::walk::rpo_walk(self, seed)
+    }
+
     /// Iterates over **every** node id in the graph, including nodes that are
     /// not reachable from any entry (e.g. detached zombies left behind by
     /// optimizer passes).

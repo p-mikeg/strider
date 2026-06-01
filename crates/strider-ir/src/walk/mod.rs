@@ -150,6 +150,47 @@ impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
 /// The concrete pre-order walk type used by [`Graph::walk_from`].
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
+/// A [`graphwalk::GraphRef`] whose successors are a node's **data-input
+/// producers only** (no forward control edges).  Driving a post-order walk
+/// with this relation yields every producer before the node that consumes
+/// it — the defs-before-uses order used by value-cone analyses such as
+/// `decompose_sp`.
+#[derive(Clone, Copy)]
+pub struct InputSuccs<'a>(&'a Graph);
+
+impl graphwalk::GraphRef for InputSuccs<'_> {
+    type NodeId = NodeId;
+
+    fn try_successors(
+        &self,
+        node: NodeId,
+        f: impl FnMut(NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        self.0
+            .node_inputs(node)
+            .into_iter()
+            .map(|input| self.0.output_definition(input).0)
+            .try_for_each(f)
+    }
+}
+
+/// The concrete post-order walk type backing [`Graph::rpo`].
+pub type RpoWalk<'a> = graphwalk::PostOrder<InputSuccs<'a>, DenseEntitySet<NodeId>>;
+
+/// Walks the data-input cone of `seed`'s producer in defs-before-uses order:
+/// every producer is yielded before the node consuming it, and the seed's
+/// producer is yielded last.  Follows only data inputs (value, memory,
+/// dispatch) — never forward control edges.
+///
+/// Cyclic data edges (a loop-carried `Phi` back-edge) are visited once via
+/// the `DenseEntitySet` tracker; callers that care about cycles
+/// (`decompose_sp`) handle the back-edge explicitly.
+#[must_use]
+pub(crate) fn rpo_walk(graph: &Graph, seed: NodeOutputId) -> RpoWalk<'_> {
+    let seed_node = graph.node_for_output(seed);
+    graphwalk::PostOrder::new(InputSuccs(graph), iter::once(seed_node))
+}
+
 /// Walks all nodes reachable in `graph` from `entry` in an unspecified order.
 ///
 /// Note that "reachable" nodes here include dead CFG inputs.
@@ -775,6 +816,66 @@ mod tests {
         // data closure runs over spine nodes (which here is just `entry`
         // since the seed is entry and entry has no control predecessors).
         assert!(!mem.contains(src), "src is not a data ancestor of entry");
+    }
+
+    // ── rpo (defs-before-uses data-cone walk) ─────────────────────────────────
+
+    /// `rpo` over `Add(InitialVar, IntConst)` must emit BOTH operands before
+    /// the `Add` that consumes them (defs-before-uses). The seed node is last.
+    #[test]
+    fn rpo_emits_operands_before_consumer() {
+        let mut graph = Graph::new();
+        let a = graph.create_node(
+            NodeKind::InitialVar(rsleigh::Vn {
+                addr_off: 0x10,
+                addr_space: rsleigh::VnSpace::REGISTER,
+                size: 8,
+            }),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [a_out] = graph.node_outputs_exact::<1>(a).unwrap();
+        let c = graph.create_node(
+            NodeKind::IntConst(4),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [c_out] = graph.node_outputs_exact::<1>(c).unwrap();
+        let add = graph.create_node(
+            NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
+            [a_out, c_out],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [add_out] = graph.node_outputs_exact::<1>(add).unwrap();
+
+        let order: Vec<NodeId> = graph.rpo(add_out).collect();
+
+        assert_eq!(order.len(), 3, "rpo must visit each cone node once: {order:?}");
+        let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
+        assert!(pos(a) < pos(add), "InitialVar must precede Add");
+        assert!(pos(c) < pos(add), "IntConst must precede Add");
+        assert_eq!(order[2], add, "seed (Add) is emitted last");
+    }
+
+    /// `rpo` follows only data inputs and visits a shared operand once.
+    #[test]
+    fn rpo_visits_shared_operand_once() {
+        let mut graph = Graph::new();
+        let c = graph.create_node(
+            NodeKind::IntConst(7),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [c_out] = graph.node_outputs_exact::<1>(c).unwrap();
+        let add = graph.create_node(
+            NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
+            [c_out, c_out],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [add_out] = graph.node_outputs_exact::<1>(add).unwrap();
+
+        let order: Vec<NodeId> = graph.rpo(add_out).collect();
+        assert_eq!(order, vec![c, add], "shared operand visited once, before Add");
     }
 
     /// General no-duplicate-visit property: build a richer graph
