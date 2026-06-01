@@ -287,6 +287,23 @@ fn phi_matches_tagged_phi() {
 }
 
 #[test]
+fn phi_capture_binds_value_output() {
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .build_fn_single_region()
+        .unwrap();
+    let v = b.read_variable(&rax).unwrap();
+    b.build_return(Some(v), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+    let c = Capture::new();
+    let hits = matcher.find_all(&phi().capture(c).build());
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].output(c).is_some(), "phi().capture(c) must bind the matched phi's output");
+}
+
+#[test]
 fn phi_for_vn_filters() {
     let rax = strider_ir_test_utils::reg_vn(0, 8);
     let rbx = strider_ir_test_utils::reg_vn(16, 8);
@@ -389,6 +406,12 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
         .all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Load(_)))
         .expect("Load carrier");
+    // Stamp the stack-arg offset that `StackOffsetDetect` would record so
+    // `function_arg_stack`'s offset enforcement has something to check
+    // against. `function_arg_stack` only reads the offset, so any valid
+    // base output handle suffices here.
+    let base = function.node_outputs(stack_carrier)[0];
+    function.set_stack_offset(stack_carrier, base, 0x40);
     function.register_arg_node(0, reg_carrier);
     function.register_arg_node(1, stack_carrier);
     (function, rax)
@@ -449,6 +472,30 @@ fn function_arg_stack_matches_only_stack_carrier() {
             .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 0).build())
             .len(),
         0
+    );
+}
+
+#[test]
+fn function_arg_stack_rejects_wrong_offset() {
+    use strider_pattern::function_arg_stack;
+    let (function, _rax) = two_arg_carriers();
+    let matcher = Matcher::try_new(&function).unwrap();
+    // The stack carrier at index 1 has recorded offset 0x40. A pattern
+    // with the correct space + index but a DIFFERENT offset must not
+    // match — the offset is enforced against `Function::stack_offset`.
+    assert_eq!(
+        matcher
+            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x48, 1).build())
+            .len(),
+        0,
+        "wrong offset must not match the registered stack carrier"
+    );
+    // Sanity: the correct offset still matches.
+    assert_eq!(
+        matcher
+            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build())
+            .len(),
+        1
     );
 }
 

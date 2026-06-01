@@ -35,10 +35,7 @@ use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
 use crate::typed::{int_const, int_const_any_of};
 
-use super::{MemPat, SubCompiler};
-
-/// Sparse indexed sub-pattern constraints (raw input slot → compiler).
-type IndexedInputs = Vec<(usize, SubCompiler)>;
+use super::{IndexedInputs, MemPat, SubCompiler};
 
 /// A forward-branch-walk predicate for [`IfPat`]: given the matched If
 /// node, walk to a control output's single consumer and match a

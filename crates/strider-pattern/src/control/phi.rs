@@ -19,10 +19,11 @@
 use strider_ir::node::NodeKind;
 
 use crate::builder::{MatcherBuilder, PatNodeRef, PatOutRef};
+use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
 
-use super::{MemPat, SubCompiler};
+use super::{IndexedInputs, MemPat};
 
 /// Filter applied at match time over `Function::phi_var_tag`.
 #[derive(Clone, Copy)]
@@ -32,9 +33,6 @@ enum PhiVarFilter {
     /// Match only anonymous phis (`tag == None`).
     Anonymous,
 }
-
-/// Collected sparse predecessor sub-patterns (raw input slot → compiler).
-type IndexedInputs = Vec<(usize, SubCompiler)>;
 
 /// Lower a phi-family node (`kind_exemplar`) onto `b` with the given
 /// indexed predecessor sub-patterns and optional `phi_var_tag` filter,
@@ -46,6 +44,7 @@ fn lower_phi(
     kind_exemplar: NodeKind,
     inputs: IndexedInputs,
     var_filter: Option<PhiVarFilter>,
+    capture: Option<Capture>,
 ) -> (PatNodeRef, PatOutRef) {
     let node = b.node(KindSpec::Variant(std::mem::discriminant(&kind_exemplar)));
     // The slot-0 output models the phi's produced token: a value output
@@ -72,6 +71,9 @@ fn lower_phi(
             }),
         );
     }
+    if let Some(c) = capture {
+        b.capture_node(anchor, c);
+    }
     (node, anchor)
 }
 
@@ -86,6 +88,7 @@ fn lower_phi(
 pub struct PhiPat {
     inputs: IndexedInputs,
     var_filter: Option<PhiVarFilter>,
+    capture: Option<Capture>,
 }
 
 impl PhiPat {
@@ -106,11 +109,19 @@ impl PhiPat {
         self
     }
 
+    /// Bind the matched `Phi`'s value output to `c`.
+    #[must_use]
+    pub fn capture(mut self, c: Capture) -> Self {
+        self.capture = Some(c);
+        self
+    }
+
     /// Seal the builder into a finished [`Pattern`].
     #[must_use]
     pub fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
-        let (node, _out) = lower_phi(&mut b, NodeKind::Phi, self.inputs, self.var_filter);
+        let (node, _out) =
+            lower_phi(&mut b, NodeKind::Phi, self.inputs, self.var_filter, self.capture);
         b.finish_node(node)
     }
 }
@@ -138,6 +149,7 @@ pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
 #[derive(Default)]
 pub struct MemPhiPat {
     inputs: IndexedInputs,
+    capture: Option<Capture>,
 }
 
 impl MemPhiPat {
@@ -151,18 +163,26 @@ impl MemPhiPat {
         self
     }
 
+    /// Bind the matched `MemPhi`'s memory-token output to `c`.
+    #[must_use]
+    pub fn capture(mut self, c: Capture) -> Self {
+        self.capture = Some(c);
+        self
+    }
+
     /// Seal the builder into a finished [`Pattern`].
     #[must_use]
     pub fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
-        let (node, _out) = lower_phi(&mut b, NodeKind::MemPhi, self.inputs, None);
+        let (node, _out) =
+            lower_phi(&mut b, NodeKind::MemPhi, self.inputs, None, self.capture);
         b.finish_node(node)
     }
 }
 
 impl MemPat for MemPhiPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let (_node, mem_out) = lower_phi(b, NodeKind::MemPhi, self.inputs, None);
+        let (_node, mem_out) = lower_phi(b, NodeKind::MemPhi, self.inputs, None, self.capture);
         mem_out
     }
 }
@@ -182,6 +202,7 @@ pub fn mem_phi() -> MemPhiPat {
 #[derive(Default)]
 pub struct ValuePhiPat {
     inputs: IndexedInputs,
+    capture: Option<Capture>,
 }
 
 impl ValuePhiPat {
@@ -194,6 +215,13 @@ impl ValuePhiPat {
         self
     }
 
+    /// Bind the matched anonymous `Phi`'s value output to `c`.
+    #[must_use]
+    pub fn capture(mut self, c: Capture) -> Self {
+        self.capture = Some(c);
+        self
+    }
+
     /// Seal the builder into a finished [`Pattern`].
     #[must_use]
     pub fn build(self) -> Pattern {
@@ -203,6 +231,7 @@ impl ValuePhiPat {
             NodeKind::Phi,
             self.inputs,
             Some(PhiVarFilter::Anonymous),
+            self.capture,
         );
         b.finish_node(node)
     }

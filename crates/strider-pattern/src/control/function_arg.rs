@@ -107,7 +107,24 @@ impl FunctionArgPat {
                     (FunctionArgSource::Register(want), NodeKind::InitialVar(actual)) => {
                         want == *actual
                     }
-                    (FunctionArgSource::Stack { .. }, NodeKind::Load(_)) => true,
+                    (
+                        FunctionArgSource::Stack {
+                            space: want_space,
+                            offset: want_offset,
+                        },
+                        NodeKind::Load(actual_space),
+                    ) => {
+                        // Enforce the carrier's address space (the `Load`
+                        // payload) and its SP-relative offset (the
+                        // `StackOffsetDetect`-populated `stack_offset`
+                        // side-table). A carrier with no recorded stack
+                        // offset, or one at a different (space, offset),
+                        // is rejected.
+                        if want_space != *actual_space {
+                            return false;
+                        }
+                        matches!(f.stack_offset(node), Some((_, off)) if off == want_offset)
+                    }
                     _ => false,
                 }
             }),

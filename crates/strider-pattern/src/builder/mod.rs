@@ -316,11 +316,6 @@ impl MatcherBuilder {
         self.core.node_of(out).node_limit = Some(f);
     }
 
-    /// Sets a node-local limit on a node vertex directly.
-    pub fn set_node_limit_for(&mut self, node: PatNodeRef, f: crate::pattern::LocalLimit) {
-        self.core.node_at(node).node_limit = Some(f);
-    }
-
     /// Sets a post-match hook on the node producing `out`.
     pub fn set_post_match(&mut self, out: PatOutRef, f: crate::pattern::PostMatchFn) {
         self.core.node_of(out).post_match = Some(f);
