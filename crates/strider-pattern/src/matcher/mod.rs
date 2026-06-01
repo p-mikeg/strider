@@ -1,9 +1,9 @@
 // `dead_code` allow: the `PatGraph` `Pattern` impl that exercises this
 // trait + engine lands in a subsequent task.  Until then, `Matcher`
-// constructors, `find_all`, `match_at`, and the `PatternExt` blanket
-// have no call sites in this crate and clippy --release runs with
-// `-D warnings`.  Module-level allow keeps the build green; the items
-// themselves are `pub` for the upcoming consumers.
+// constructors, `find_all`, and `match_at` have no call sites in this
+// crate and clippy --release runs with `-D warnings`.  Module-level
+// allow keeps the build green; the items themselves are `pub` for the
+// upcoming consumers.
 #![allow(dead_code)]
 
 //! Pattern matcher.
@@ -55,43 +55,6 @@ pub trait Pattern {
         _node: NodeId,
         _bindings: &mut Bindings,
     ) -> bool {
-        false
-    }
-}
-
-/// Default extension: match against a node directly (used for
-/// zero-output kinds like `Return`).  Implemented for every `Pattern`
-/// via a blanket impl.
-pub trait PatternExt {
-    fn try_match_node_id(
-        &self,
-        matcher: &Matcher,
-        node: NodeId,
-        bindings: &mut Bindings,
-    ) -> bool;
-}
-
-impl<T: Pattern + ?Sized> PatternExt for T {
-    fn try_match_node_id(
-        &self,
-        matcher: &Matcher,
-        node: NodeId,
-        bindings: &mut Bindings,
-    ) -> bool {
-        let outputs = matcher.function().node_outputs(node);
-        if outputs.is_empty() {
-            // Zero-output kinds (e.g. `Return`) — dispatch through the
-            // `try_match_node` hook, which `Pattern` impls can override
-            // to match without a `NodeOutputId`.
-            return self.try_match_node(matcher, node, bindings);
-        }
-        for &out in outputs {
-            let mark = bindings.mark();
-            if self.try_match(matcher, out, bindings) {
-                return true;
-            }
-            bindings.restore(mark);
-        }
         false
     }
 }
@@ -216,7 +179,7 @@ impl<'f> Matcher<'f> {
             let outputs = self.function.node_outputs(node);
             if outputs.is_empty() {
                 let mut bindings = Bindings::default();
-                if pat.try_match_node_id(self, node, &mut bindings) {
+                if pat.try_match_node(self, node, &mut bindings) {
                     return Some(Match::from_root(node, bindings));
                 }
                 continue;
@@ -251,7 +214,7 @@ impl<'f> Matcher<'f> {
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
             let mut bindings = Bindings::default();
-            if pat.try_match_node_id(self, node, &mut bindings) {
+            if pat.try_match_node(self, node, &mut bindings) {
                 return Some(Match::from_root(node, bindings));
             }
             return None;
@@ -274,7 +237,7 @@ impl<'f> Matcher<'f> {
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
             let mut bindings = Bindings::default();
-            if pat.try_match_node_id(self, node, &mut bindings) {
+            if pat.try_match_node(self, node, &mut bindings) {
                 out.push(Match::from_root(node, bindings));
             }
             return;

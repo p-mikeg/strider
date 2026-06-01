@@ -39,6 +39,7 @@ pub fn int_const(v: u128) -> Pat<Concrete> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: Some(post_match),
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Fn(Box::new(move |ctx| {
@@ -64,6 +65,7 @@ pub fn bool_const(b: bool) -> Pat<Concrete> {
         kind: KindSpec::Exact(NodeKind::IntConst(v)),
         output_ty: Some(NodeOutputType::I1),
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(NodeKind::IntConst(v)),
@@ -84,6 +86,7 @@ pub fn float_const(bits: u64) -> Pat<Concrete> {
         kind: KindSpec::Exact(NodeKind::FloatConst(bits)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(NodeKind::FloatConst(bits)),
@@ -106,6 +109,7 @@ pub fn any_int_const() -> Pat<Wildcard> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
     
@@ -129,6 +133,7 @@ pub fn any_bool_const() -> Pat<Wildcard> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: Some(NodeOutputType::I1),
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
     
@@ -147,6 +152,7 @@ pub fn any_float_const() -> Pat<Wildcard> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
     
@@ -173,6 +179,7 @@ pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> Pat<Wildcard> {
         },
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
     
@@ -268,6 +275,7 @@ pub fn signed_int_const(v: i64) -> Pat<Concrete> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: Some(post_match),
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Fn(Box::new(move |ctx| {
@@ -324,6 +332,7 @@ fn build_only_const_pat(
         kind: KindSpec::Any,
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: Some(never_match),
         template_spec: Some(TemplateSpec {
             kind: template_kind,

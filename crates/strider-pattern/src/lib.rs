@@ -39,8 +39,7 @@ pub use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 pub use matcher::{
-    ArgSource, CastMask, FunctionArgHandle, Matcher, MatcherOptions, Pattern, PatternExt,
-    TemplateCtx,
+    ArgSource, CastMask, FunctionArgHandle, Matcher, MatcherOptions, Pattern, TemplateCtx,
 };
 pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};
 pub use rewrite::{

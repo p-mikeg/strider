@@ -2,7 +2,8 @@
 //!
 //! `Phi` and `MemPhi` are distinguished by `NodeKind` discriminant.
 //! Tagged vs. anonymous `Phi` distinction reads `Function::phi_var_tag`
-//! at match time via the post_match closure:
+//! at match time via the `node_filter` closure (a node-only predicate
+//! that short-circuits before child recursion):
 //!
 //! * `PhiPat::for_vn(vn)` — restrict matches to `Phi` nodes whose
 //!   `phi_var_tag` is `Some(vn)`.
@@ -24,8 +25,8 @@
 use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{
-    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, PatGraph, PostMatchFn, Role,
-    Wildcard, merge_subgraph,
+    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, NodeFilterFn, PatGraph,
+    Role, Wildcard, merge_subgraph,
 };
 
 use super::Pat;
@@ -162,15 +163,18 @@ impl From<ValuePhiPat> for Pat<Wildcard> {
 /// predecessor sub-patterns, and an optional `phi_var_tag` filter.
 /// Used by `Phi`, `MemPhi`, and anonymous `Phi` finalisers; the only
 /// difference between the three is the kind discriminant and the
-/// optional post-match filter.
+/// optional `phi_var_tag` pre-match filter.
 fn finalise_phi_kind(
     kind_exemplar: NodeKind,
     inputs: Vec<(usize, Pat<Wildcard>)>,
     var_filter: Option<PhiVarFilter>,
 ) -> Pat<Wildcard> {
     let mut parent: PatGraph<Wildcard> = PatGraph::new();
-    let post_match: Option<PostMatchFn> = var_filter.map(|f| -> PostMatchFn {
-        Box::new(move |m, node, _ty, _b| {
+    // `phi_var_tag` lookup is node-only — no cross-binding state — so
+    // it lives on `node_filter` and short-circuits before child
+    // recursion walks into the phi's predecessors.
+    let node_filter: Option<NodeFilterFn> = var_filter.map(|f| -> NodeFilterFn {
+        Box::new(move |m, node, _ty| {
             let tag = m.function().phi_var_tag(node);
             match f {
                 PhiVarFilter::Exact(want) => tag == Some(want),
@@ -182,7 +186,8 @@ fn finalise_phi_kind(
         kind: KindSpec::Variant(std::mem::discriminant(&kind_exemplar)),
         output_ty: None,
         capture: None,
-        post_match,
+        node_filter,
+        post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(kind_exemplar),
             ty: TemplateTy::InheritRoot,

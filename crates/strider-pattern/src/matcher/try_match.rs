@@ -100,6 +100,20 @@ fn try_match_at<R>(
         }
     }
 
+    // Pre-match filter.  Fires after kind + output_ty pass and BEFORE
+    // walking into child inputs — node-only predicates short-circuit
+    // here, sparing the recursive descent.  Zero-output kinds fall
+    // back to `NodeOutputType::I1` as a placeholder, matching the
+    // post-match hook's convention.
+    if let Some(filter) = &nd.node_filter {
+        let ty = root_out
+            .and_then(|out| matcher.function().output_kind(out).as_value())
+            .unwrap_or(NodeOutputType::I1);
+        if !filter(matcher, ir_node, ty) {
+            return false;
+        }
+    }
+
     // Collect incoming pattern edges (producers feeding this pat node).
     // Each carries the `consumer_slot` (which IR input position to walk
     // against) plus the producer pat node.  `producer_output_slot` is

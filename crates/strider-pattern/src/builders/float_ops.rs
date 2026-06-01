@@ -53,6 +53,7 @@ where
         kind: KindSpec::Exact(kind),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(kind),
@@ -110,6 +111,7 @@ where
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
     
@@ -201,6 +203,7 @@ pub fn float_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
     
@@ -273,6 +276,7 @@ where
         kind: KindSpec::Exact(kind),
         output_ty: Some(NodeOutputType::I1),
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(kind),
@@ -330,6 +334,7 @@ where
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: Some(NodeOutputType::I1),
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
     
@@ -483,10 +488,11 @@ fn clone_pat(src: &Pat<Wildcard>) -> Pat<Wildcard> {
             kind: new_kind,
             output_ty: src_nd.output_ty,
             capture: src_nd.capture,
-            // post_match is move-only; clones drop the hook (the matcher
-            // treats `None` as "always accept post-match", which is
-            // strictly weaker — acceptable for the leaf shapes used by
-            // float_le / float_is_nan).
+            // node_filter / post_match are move-only; clones drop the
+            // hook (the matcher treats `None` as "always accept", which
+            // is strictly weaker — acceptable for the leaf shapes used
+            // by float_le / float_is_nan).
+            node_filter: None,
             post_match: None,
             template_spec: new_template,
             force_ordered: src_nd.force_ordered,

@@ -42,6 +42,7 @@ where
         kind: KindSpec::Exact(kind),
         output_ty: Some(NodeOutputType::I1),
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(kind),
@@ -105,6 +106,7 @@ where
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: Some(NodeOutputType::I1),
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
         force_ordered: false,

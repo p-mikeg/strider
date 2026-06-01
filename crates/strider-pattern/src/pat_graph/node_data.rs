@@ -62,6 +62,14 @@ pub struct NodeData {
     /// binding (`None`).  Records "match against this pat node ⇒ bind
     /// capture `c`".
     pub capture: Option<crate::capture::Capture>,
+    /// Pre-match filter.  Fires AFTER the kind + `output_ty` check
+    /// passes and BEFORE the recursive matcher walks into child
+    /// inputs.  No bindings are available — children haven't matched
+    /// yet.  Use for node-only predicates (output width, varnode tag,
+    /// side-table lookups) that should short-circuit before paying for
+    /// child recursion; for predicates that need cross-binding state,
+    /// see [`PostMatchFn`].
+    pub node_filter: Option<NodeFilterFn>,
     pub post_match: Option<PostMatchFn>,
     pub template_spec: Option<TemplateSpec>,
     /// When `true`, the matcher MUST NOT trigger commutative-operand
@@ -69,6 +77,24 @@ pub struct NodeData {
     /// allow it.  Default `false` — the matcher honours commutativity.
     pub force_ordered: bool,
 }
+
+/// Pre-match filter closure.  Fires right after the kind + `output_ty`
+/// check passes and BEFORE the recursive matcher walks into child
+/// inputs.  Returning `false` rejects the match.  No bindings are
+/// available — children haven't matched yet, so this hook is the
+/// fastest short-circuit for node-only predicates (width, varnode
+/// tag, side-table lookups).
+///
+/// Arguments:
+/// - `matcher` — the active [`Matcher`]; reach the function under
+///   inspection via [`Matcher::function`].
+/// - `node` — the matched IR `NodeId`.
+/// - `ty` — the matched IR output's `NodeOutputType` (zero-output
+///   match sites pass `NodeOutputType::I1` as a placeholder).
+///
+/// `Box` (single-threaded; no Arc / Rc / Send / Sync in this crate's
+/// public surface).  Move-only.
+pub type NodeFilterFn = Box<dyn Fn(&Matcher, NodeId, NodeOutputType) -> bool>;
 
 /// Post-match hook closure.  Runs after the recursive matcher has
 /// bound every sub-pattern and the current pat node's capture (if any).

@@ -42,6 +42,7 @@ where
         kind: KindSpec::Exact(kind),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(kind),
@@ -110,6 +111,7 @@ where
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
         force_ordered: false,
@@ -203,6 +205,7 @@ pub fn int_const_all_ones() -> Pat<Concrete> {
         kind: KindSpec::Any,
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: Some(post_match),
         template_spec: Some(TemplateSpec {
             kind: template_kind,

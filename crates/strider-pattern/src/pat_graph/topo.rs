@@ -73,6 +73,7 @@ mod tests {
             kind: KindSpec::Any,
             output_ty: Some(NodeOutputType::I64),
             capture: None,
+            node_filter: None,
             post_match: None,
             template_spec: None,
             force_ordered: false,

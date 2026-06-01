@@ -5,7 +5,10 @@ mod node_data;
 mod role;
 mod topo;
 
-pub use node_data::{TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, PostMatchFn};
+pub use node_data::{
+    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, NodeFilterFn,
+    PostMatchFn,
+};
 pub use role::{Combine, Concrete, Role, Wildcard};
 // `merge_subgraph`, `topo_order_from_root`, and `assert_dag` are wired in
 // the next batch of tasks (builders + `into_pat` finalisation); the

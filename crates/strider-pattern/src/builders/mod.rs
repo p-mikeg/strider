@@ -116,6 +116,50 @@ impl<R: Role> Pat<R> {
         Pat(g)
     }
 
+    /// Attach a pre-match filter that fires AFTER the kind +
+    /// `output_ty` check passes and BEFORE the matcher walks into
+    /// child inputs.  Use for node-only predicates (output width,
+    /// varnode tag, side-table lookups) that should short-circuit
+    /// before paying for the recursive child match; for
+    /// binding-aware predicates use [`Pat::when_match`] instead.
+    ///
+    /// Like [`Pat::when_match`], this coerces the role to
+    /// [`Wildcard`](crate::pat_graph::Wildcard) — a custom predicate
+    /// has no template counterpart.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pattern has no root (cannot happen for builders
+    /// that funnel through [`Pat::from_graph`], every of which sets a
+    /// root).
+    #[allow(clippy::expect_used)]
+    #[must_use]
+    pub fn filter<F>(self, f: F) -> Pat<crate::pat_graph::Wildcard>
+    where
+        F: Fn(
+                &crate::Matcher,
+                strider_ir::node::NodeId,
+                strider_ir::node::NodeOutputType,
+            ) -> bool
+            + 'static,
+    {
+        let mut g = self.0.into_wildcard();
+        let root = g.root().expect("Pat has no root");
+        let nd = g
+            .inner
+            .node_weight_mut(root)
+            .expect("root index invalid");
+        // Compose with any existing node_filter: both must accept.
+        let new_fn: crate::pat_graph::NodeFilterFn =
+            if let Some(prev) = nd.node_filter.take() {
+                Box::new(move |m, node, ty| prev(m, node, ty) && f(m, node, ty))
+            } else {
+                Box::new(f)
+            };
+        nd.node_filter = Some(new_fn);
+        Pat(g)
+    }
+
     /// Bind the matched root to `c`.  Preserves the pattern's role.
     /// For control-flow patterns (`Call`, `If`, `Return`, `CallOther`)
     /// only the [`NodeId`](strider_ir::node::NodeId) is bound; for

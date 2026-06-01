@@ -15,9 +15,9 @@
 //!
 //! All three need to read `Function::arg_index_to_nodes` (and
 //! `Function::stack_offsets` for the stack variant) at match time.
-//! The current `PostMatchFn` stub `Box<dyn Fn() -> bool>` cannot
-//! reach the `Matcher`, so the side-table-aware matchers are deferred
-//! to a follow-up alongside the closure widening.
+//! These are node-only predicates (no cross-binding state), so they
+//! route through the pre-match `node_filter` hook for faster
+//! short-circuit before the matcher walks into any child inputs.
 //!
 //! What lands today: the [`initial_var`] / [`initial_var_for`]
 //! factories that match `InitialVar` nodes directly by `NodeKind`
@@ -62,6 +62,7 @@ pub fn initial_var() -> Pat<Wildcard> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
     
@@ -82,6 +83,7 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat<Concrete> {
         kind: KindSpec::Exact(kind),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(kind),
@@ -98,16 +100,17 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat<Concrete> {
 
 use strider_ir::node::FunctionArgSource;
 
-use crate::pat_graph::PostMatchFn;
+use crate::pat_graph::NodeFilterFn;
 
 /// Match a function-argument carrier registered in
 /// `Function::arg_index_to_nodes`.
 ///
 /// Hand-written builder (the enum-dispatch source — kind-`Any` plus
-/// post_match guard — doesn't fit the field-based PatGraph storage
-/// the rest of the crate uses).  All filters operate via the
-/// post_match closure; the kind-spec is `Any` since register-passed
-/// args are `InitialVar` and stack-passed args are `Load`.
+/// pre-match `node_filter` guard — doesn't fit the field-based
+/// PatGraph storage the rest of the crate uses).  All filters operate
+/// via the `node_filter` closure; the kind-spec is `Any` since
+/// register-passed args are `InitialVar` and stack-passed args are
+/// `Load`.
 pub struct FunctionArgPat {
     source: Option<FunctionArgSource>,
     index: Option<u32>,
@@ -137,7 +140,10 @@ impl From<FunctionArgPat> for Pat<Wildcard> {
     fn from(b: FunctionArgPat) -> Pat<Wildcard> {
         let FunctionArgPat { source, index } = b;
         let mut g: PatGraph<Wildcard> = PatGraph::new();
-        let post_match: PostMatchFn = Box::new(move |m, node, _ty, _b| {
+        // Index + source predicates are node-only — no cross-binding
+        // state — so they live on `node_filter` and short-circuit
+        // before child recursion.
+        let node_filter: NodeFilterFn = Box::new(move |m, node, _ty| {
             let f = m.function();
             // Index constraint.
             match index {
@@ -171,7 +177,8 @@ impl From<FunctionArgPat> for Pat<Wildcard> {
             kind: KindSpec::Any,
             output_ty: None,
             capture: None,
-            post_match: Some(post_match),
+            node_filter: Some(node_filter),
+            post_match: None,
             template_spec: None,
             force_ordered: false,
         });

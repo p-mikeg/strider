@@ -28,6 +28,7 @@ pub(crate) fn unary_node_pat<R: Role>(kind: NodeKind, inner: Pat<R>) -> Pat<R> {
         kind: KindSpec::Exact(kind),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(kind),
@@ -74,6 +75,7 @@ pub fn int_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
+        node_filter: None,
         post_match: None,
         template_spec: None,
         force_ordered: false,

@@ -21,15 +21,18 @@
 //!
 //! Both builders expose `.bit_width(n)`, `.stack_offset(k)`,
 //! `.stack_offset_any(ks)`, and `.stack_only()`.  Each is enforced by
-//! a `post_match` closure that reads `Function::output_kind` or
-//! `Function::stack_offset` at match time.  Mirrors the proven
-//! semantics of `strider-analyze::pattern::pat::builders::memory`.
+//! a `node_filter` closure that reads `Function::output_kind` or
+//! `Function::stack_offset` at match time — these predicates are
+//! node-only (no cross-binding state), so they fire BEFORE child
+//! recursion and short-circuit faster than a post-match hook.
+//! Mirrors the proven semantics of
+//! `strider-analyze::pattern::pat::builders::memory`.
 
 use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{
-    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, PatGraph, PostMatchFn, Wildcard,
-    merge_subgraph,
+    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, NodeFilterFn, PatGraph,
+    Wildcard, merge_subgraph,
 };
 
 use super::Pat;
@@ -185,9 +188,12 @@ impl From<LoadPat> for Pat<Wildcard> {
                 check: Box::new(move |k| matches!(k, NodeKind::Load(actual) if *actual == s)),
             },
         };
-        let post_match: Option<PostMatchFn> = if bit_width.is_some() || stack.needs_post() {
+        // bit_width + stack filter are node-only (no bindings touched),
+        // so they live on `node_filter` and short-circuit before child
+        // recursion.
+        let node_filter: Option<NodeFilterFn> = if bit_width.is_some() || stack.needs_post() {
             let want_width = bit_width;
-            Some(Box::new(move |m, node, ty, _b| {
+            Some(Box::new(move |m, node, ty| {
                 if let Some(w) = want_width
                     && ty.bit_width() != w as usize
                 {
@@ -205,7 +211,8 @@ impl From<LoadPat> for Pat<Wildcard> {
             kind,
             output_ty: None,
             capture: None,
-            post_match,
+            node_filter,
+            post_match: None,
             template_spec: Some(TemplateSpec {
                 kind: TemplateKind::Exact(exemplar),
                 ty: TemplateTy::InheritRoot,
@@ -360,9 +367,12 @@ impl From<StorePat> for Pat<Wildcard> {
                 check: Box::new(move |k| matches!(k, NodeKind::Store(actual) if *actual == s)),
             },
         };
-        let post_match: Option<PostMatchFn> = if bit_width.is_some() || stack.needs_post() {
+        // bit_width + stack filter are node-only (no bindings touched),
+        // so they live on `node_filter` and short-circuit before child
+        // recursion.
+        let node_filter: Option<NodeFilterFn> = if bit_width.is_some() || stack.needs_post() {
             let want_width = bit_width;
-            Some(Box::new(move |m, node, _ty, _b| {
+            Some(Box::new(move |m, node, _ty| {
                 let f = m.function();
                 if let Some(w) = want_width {
                     // Store's data input is at `inputs[2]`; its producer's
@@ -388,7 +398,8 @@ impl From<StorePat> for Pat<Wildcard> {
             kind,
             output_ty: None,
             capture: None,
-            post_match,
+            node_filter,
+            post_match: None,
             template_spec: Some(TemplateSpec {
                 kind: TemplateKind::Exact(exemplar),
                 ty: TemplateTy::InheritRoot,

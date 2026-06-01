@@ -23,13 +23,17 @@
 //!   writes slot 0 (the ctrl input).
 //! * `If` inputs: `[ctrl(0), cond(1)]`.  `IfPat::cond(p)` writes slot 1.
 //!
-//! ## Deferred features (need post_match closure signature widening)
+//! ## Hook routing
 //!
-//! * `CallOtherPat::name(s)` — needs `Function::call_other_name(node)`
-//!   at match time.
-//! * `IfPat::true_branch(p)` / `false_branch(p)` — need a forward-walk
-//!   from the matched If's `Control` outputs to their single consumer,
-//!   which the current backward-edge matcher doesn't support.
+//! * `CallOtherPat::name(s)` — node-only (`Function::call_other_name`
+//!   lookup), routes through the pre-match `node_filter` hook for
+//!   faster short-circuit.
+//! * `IfPat::true_branch(p)` / `false_branch(p)` — forward-walk from
+//!   the matched If's `Control` outputs to their single consumer.
+//!   Keeps the post-match `post_match` hook because the sub-pattern
+//!   may install bindings (even though those bindings are evaluated
+//!   against a throwaway `Bindings` and discarded — see the inline
+//!   comment in the finaliser below).
 
 use strider_ir::node::NodeKind;
 
@@ -225,12 +229,15 @@ impl From<CallOtherPat> for Pat<Wildcard> {
                 }),
             },
         };
-        let post_match = name_filter.map(|want| -> crate::pat_graph::PostMatchFn {
-            Box::new(move |matcher, node, _ty, _b| {
+        // `call_other_name` lookup is node-only — no cross-binding
+        // state — so it lives on `node_filter` and short-circuits
+        // before child recursion walks into the CallOther's args.
+        let node_filter = name_filter.map(|want| -> crate::pat_graph::NodeFilterFn {
+            Box::new(move |matcher, node, _ty| {
                 matcher.function().call_other_name(node) == Some(want.as_str())
             })
         });
-        finalise_kind_with_post(kind, exemplar, inputs, post_match)
+        finalise_kind_with_hooks(kind, exemplar, inputs, node_filter, None)
     }
 }
 
@@ -389,10 +396,11 @@ impl From<IfPat> for Pat<Wildcard> {
                 }
                 true
             });
-        finalise_kind_with_post(
+        finalise_kind_with_hooks(
             KindSpec::Exact(NodeKind::If),
             NodeKind::If,
             indexed,
+            None,
             Some(post_match),
         )
     }
@@ -401,12 +409,18 @@ impl From<IfPat> for Pat<Wildcard> {
 /// Walk forward to the single consumer of the If's Control output at
 /// `output_index` and match `pat` against it.  Returns `false` when the
 /// output has zero or multiple consumers, or when `pat` doesn't match.
+///
+/// The consumer may be a value-producing node (e.g. `Phi`) or a
+/// zero-output kind (e.g. `Return`); we dispatch through the
+/// `Pattern::try_match_node` entry point, which `PatGraph` implements
+/// for both shapes.
 fn match_branch_consumer(
     matcher: &crate::Matcher,
     if_node: strider_ir::node::NodeId,
     output_index: usize,
     pat: &Pat<Wildcard>,
 ) -> bool {
+    use crate::Pattern;
     let f = matcher.function();
     let outputs = f.node_outputs(if_node);
     let Some(&out) = outputs.get(output_index) else {
@@ -420,7 +434,7 @@ fn match_branch_consumer(
         return false;
     }
     let mut throwaway = crate::Bindings::default();
-    crate::PatternExt::try_match_node_id(pat, matcher, first, &mut throwaway)
+    pat.try_match_node(matcher, first, &mut throwaway)
 }
 
 /// Construct a fresh [`IfPat`].
@@ -438,16 +452,18 @@ fn finalise_kind(
     build_exemplar: NodeKind,
     indexed: Vec<(usize, Pat<Wildcard>)>,
 ) -> Pat<Wildcard> {
-    finalise_kind_with_post(kind, build_exemplar, indexed, None)
+    finalise_kind_with_hooks(kind, build_exemplar, indexed, None, None)
 }
 
-/// Same as [`finalise_kind`] but with an optional `post_match` closure
-/// installed on the root pat node.  Used by `CallOtherPat::name` and
-/// `IfPat::true_branch / false_branch`.
-fn finalise_kind_with_post(
+/// Same as [`finalise_kind`] but with optional pre-match (`node_filter`)
+/// and post-match (`post_match`) hooks installed on the root pat node.
+/// Used by `CallOtherPat::name` (node-only → `node_filter`) and
+/// `IfPat::true_branch / false_branch` (binding-aware → `post_match`).
+fn finalise_kind_with_hooks(
     kind: KindSpec,
     build_exemplar: NodeKind,
     indexed: Vec<(usize, Pat<Wildcard>)>,
+    node_filter: Option<crate::pat_graph::NodeFilterFn>,
     post_match: Option<crate::pat_graph::PostMatchFn>,
 ) -> Pat<Wildcard> {
     let mut parent: PatGraph<Wildcard> = PatGraph::new();
@@ -455,6 +471,7 @@ fn finalise_kind_with_post(
         kind,
         output_ty: None,
         capture: None,
+        node_filter,
         post_match,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Exact(build_exemplar),
